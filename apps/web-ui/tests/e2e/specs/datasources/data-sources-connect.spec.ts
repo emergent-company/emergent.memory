@@ -6,7 +6,7 @@ import { createDriveSource, deleteDriveSource } from '../../helpers/datasources'
 
 test.describe('Connect a data source', () => {
   test('renders the schema-driven connect form', async ({ page }) => {
-    await page.goto('/data-sources/new');
+    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
     await expect(page.getByTestId('ds-connect-form')).toBeVisible();
     await expect(page.getByTestId('ds-field-name')).toBeVisible();
     await expect(page.getByTestId('ds-field-sync-mode')).toBeVisible();
@@ -18,7 +18,7 @@ test.describe('Connect a data source', () => {
   });
 
   test('tests a valid config and reports success inline', async ({ page }) => {
-    await page.goto('/data-sources/new');
+    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
     await page.getByTestId('ds-field-folder_id').fill('folder-ok');
     await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
     await page.getByTestId('ds-test-config').click();
@@ -26,7 +26,7 @@ test.describe('Connect a data source', () => {
   });
 
   test('reports a failed config test inline', async ({ page }) => {
-    await page.goto('/data-sources/new');
+    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
     await page.getByTestId('ds-field-folder_id').fill('folder-fail');
     await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
     await page.getByTestId('ds-test-config').click();
@@ -34,7 +34,7 @@ test.describe('Connect a data source', () => {
   });
 
   test('rejects a config without a folder', async ({ page }) => {
-    await page.goto('/data-sources/new');
+    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
     await page.getByTestId('ds-field-name').fill(`e2e-drive-${Date.now()}`);
     await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
     await page.getByRole('button', { name: 'Connect', exact: true }).click();

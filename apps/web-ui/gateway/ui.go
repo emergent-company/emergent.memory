@@ -199,8 +199,15 @@ func flashToast(kind, message string) templ.Component {
 
 // redirectWithError redirects to path, carrying the real error message as ?err=
 // so the target page can surface it instead of a generic "operation failed".
+// When path already carries a query (e.g. a form selector like
+// ?providerType=google_drive&method=credentials), the error is appended with
+// `&` so the existing params are preserved and the URL stays well-formed.
 func redirectWithError(c echo.Context, path string, err error) error {
-	return c.Redirect(http.StatusSeeOther, path+"?err="+url.QueryEscape(err.Error()))
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return c.Redirect(http.StatusSeeOther, path+sep+"err="+url.QueryEscape(err.Error()))
 }
 
 // flashError decodes the ?err= query param into an error for PRG flash feedback.

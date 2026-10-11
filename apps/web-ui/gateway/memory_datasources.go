@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 )
 
 // --- data-source integrations (Data Source Integrations API) ---
@@ -17,6 +18,31 @@ type DSProvider struct {
 	SourceType  string `json:"sourceType"`
 	IconURL     string `json:"iconUrl,omitempty"`
 	Available   bool   `json:"available"`
+	// AuthMethods is the provider's advertised connect methods ("oauth" and/or
+	// "credentials"). The chooser renders from it rather than a hard-coded list.
+	AuthMethods []string `json:"authMethods,omitempty"`
+	// Strategies is the provider's advertised org-selectable OAuth scope
+	// strategies (e.g. ["drive.file","drive.readonly"]). The org OAuth-client
+	// form renders its strategy control from it.
+	Strategies []string `json:"strategies,omitempty"`
+}
+
+// DSProviderSupportsOAuth reports whether a provider advertises the oauth auth
+// method.
+func (p DSProvider) DSProviderSupportsOAuth() bool {
+	return slices.Contains(p.AuthMethods, "oauth")
+}
+
+// DSProviderSupportsStrategy reports whether the provider advertises an
+// org-selectable OAuth scope strategy.
+func (p DSProvider) DSProviderSupportsStrategy(strategy string) bool {
+	return slices.Contains(p.Strategies, strategy)
+}
+
+// DSProviderSupportsCredentials reports whether a provider advertises the
+// credentials auth method.
+func (p DSProvider) DSProviderSupportsCredentials() bool {
+	return slices.Contains(p.AuthMethods, "credentials")
 }
 
 // DSProviderSchema is a provider's JSON config schema
@@ -132,10 +158,118 @@ type DSTestConfigRequest struct {
 	Config       map[string]any `json:"config"`
 }
 
+// DSOAuthAuthorizeResponse is the provider authorization URL returned by the
+// server's OAuth authorize endpoint (GET .../providers/:type/oauth/authorize).
+type DSOAuthAuthorizeResponse struct {
+	AuthorizeURL string `json:"authorizeUrl"`
+}
+
+// DSOAuthClientConfig is an org-scoped OAuth client config. The client secret is
+// write-only: the server never returns it, so this shape carries none.
+type DSOAuthClientConfig struct {
+	ProviderType string   `json:"providerType"`
+	ClientID     string   `json:"clientId"`
+	Scopes       []string `json:"scopes,omitempty"`
+	Strategy     string   `json:"strategy,omitempty"`
+	// Config carries non-secret provider settings (e.g. the Google Picker
+	// developer key and app id). Credential material never lives here.
+	Config     map[string]any `json:"config,omitempty"`
+	Configured bool           `json:"configured"`
+	CreatedAt  string         `json:"createdAt"`
+	UpdatedAt  string         `json:"updatedAt"`
+}
+
+// DSSetOAuthClientRequest is the write shape for an org OAuth client config. On
+// an update an empty ClientSecret preserves the stored secret.
+type DSSetOAuthClientRequest struct {
+	ClientID     string   `json:"clientId"`
+	ClientSecret string   `json:"clientSecret,omitempty"`
+	Scopes       []string `json:"scopes,omitempty"`
+	Strategy     string   `json:"strategy,omitempty"`
+	// Config carries non-secret provider settings (e.g. the Google Picker
+	// developer key and app id). Never secret material.
+	Config map[string]any `json:"config,omitempty"`
+}
+
+// DSResource is a selectable sync target for a source (a Drive folder or a
+// GitHub repository) returned by the provider's resource listing.
+type DSResource struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+}
+
 // ListDSProviders returns the available data-source providers.
 func (m *MemoryClient) ListDSProviders(ctx context.Context) ([]DSProvider, error) {
 	var out []DSProvider
 	if err := m.doH(ctx, http.MethodGet, "/api/data-source-integrations/providers", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StartDSOAuth starts an OAuth connect for a provider: it builds the provider
+// authorization URL (state + PKCE) server-side and returns it. config is the
+// intended (non-secret) source config; scopes optionally overrides the default.
+func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string) (*DSOAuthAuthorizeResponse, error) {
+	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/oauth/authorize"
+	var body any
+	if len(config) > 0 || len(scopes) > 0 {
+		body = map[string]any{"config": config, "scopes": scopes}
+	}
+	var out DSOAuthAuthorizeResponse
+	if err := m.doH(ctx, http.MethodGet, path, body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ListDSOAuthClients lists an org's configured OAuth clients (GET
+// /api/orgs/:orgId/data-source-integrations/oauth-clients). Secrets are redacted.
+func (m *MemoryClient) ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error) {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-clients"
+	var out []DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetDSOAuthClient returns an org's OAuth client for a provider. An unconfigured
+// provider returns configured=false rather than an error.
+func (m *MemoryClient) GetDSOAuthClient(ctx context.Context, orgID, providerType string) (*DSOAuthClientConfig, error) {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	var out DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpsertDSOAuthClient creates or replaces an org's OAuth client for a provider
+// (PUT; secret write-only).
+func (m *MemoryClient) UpsertDSOAuthClient(ctx context.Context, orgID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error) {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	var out DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteDSOAuthClient removes an org's OAuth client for a provider (DELETE).
+func (m *MemoryClient) DeleteDSOAuthClient(ctx context.Context, orgID, providerType string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+// ListDSResources lists a source's selectable sync resources (folders /
+// repositories). Providers without a listing (e.g. github today) surface an
+// error the UI renders as "selection unavailable".
+func (m *MemoryClient) ListDSResources(ctx context.Context, id string) ([]DSResource, error) {
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/resources"
+	var out []DSResource
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -216,6 +350,13 @@ func (m *MemoryClient) UpdateDSIntegration(ctx context.Context, id string, req *
 		return nil, err
 	}
 	return &out, nil
+}
+
+// SaveDSResource persists a chosen sync resource onto a source's config. It is a
+// thin convenience wrapper over UpdateDSIntegration (PATCH
+// /api/data-source-integrations/:id), which owns the config merge semantics.
+func (m *MemoryClient) SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error) {
+	return m.UpdateDSIntegration(ctx, id, &DSUpdateIntegrationRequest{Config: cfg})
 }
 
 // DeleteDSIntegration deletes a data source.

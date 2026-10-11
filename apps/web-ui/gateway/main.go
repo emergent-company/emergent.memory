@@ -227,6 +227,12 @@ func main() {
 	api.GET("/data-source-integrations/:id/sync-jobs/latest", s.getDSLatestSyncJob)
 	api.GET("/data-source-integrations/:id/sync-jobs/:jobId", s.getDSSyncJob)
 	api.POST("/data-source-integrations/:id/sync-jobs/:jobId/cancel", s.cancelDSSyncJob)
+	// OAuth connect + org OAuth-client config (see datasources.go; §4.2).
+	api.POST("/data-source-integrations/providers/:providerType/oauth/authorize", s.startDSOAuth)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients", s.listDSOAuthClients)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
+	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
+	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
 	api.GET("/blueprints/installed", s.listInstalledBlueprints)
 	api.GET("/blueprints/available", s.listAvailableBlueprints)
 	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
@@ -374,7 +380,11 @@ func main() {
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.POST("/data-sources/new", s.uiDataSourceCreate)
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
+	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
+	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)
 	e.POST("/data-sources/:id/update", s.uiDataSourceUpdate)
 	e.POST("/data-sources/:id/test-connection", s.uiDataSourceTestConnection)
 	e.POST("/data-sources/:id/sync", s.uiDataSourceTriggerSync)
@@ -527,6 +537,11 @@ func main() {
 	e.GET("/orgs/:id/settings", s.uiOrgSettings)
 	e.GET("/orgs/:id/settings/general", s.uiOrgSettingsGeneral)
 	e.GET("/orgs/:id/settings/danger-zone", s.uiOrgSettingsDangerZone)
+	// Org-level OAuth clients for data-source providers (org-admin only; the
+	// handler 404s for anyone else).
+	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
 	// Rename is a native PRG form (hx-boost="false"): POST then redirect to the
 	// General section with a flash.
 	e.POST("/orgs/:id/rename", s.uiOrgRename)

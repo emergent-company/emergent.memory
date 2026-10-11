@@ -1,0 +1,192 @@
+package main
+
+import (
+	"net/url"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- resource selection step (§5.3 scaffold) ---
+
+// DataSourceResourceSelectPage renders the resource-selection step for a source:
+// the provider-driven prompt plus the provider's selectable resources, each a
+// select-and-save form. Providers without a listing (e.g. github today) get a
+// graceful placeholder instead.
+templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		<div data-testid="ds-resource-step">
+			if src == nil {
+				@pageError("Data source unavailable", loadErr)
+			} else {
+				@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsResourceStepTitle(*src), providerName) {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/" + url.PathEscape(src.ID),
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--arrow-left",
+					}) {
+						Back to source
+					}
+				}
+				@flashToasts(flashMsg, flashErr)
+				@components.PanelCard("", nil) {
+					<div class="flex items-start gap-3">
+						@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "neutral"})
+						<div>
+							<h2 class="text-base font-semibold">{ dsResourceStepTitle(*src) }</h2>
+							<p class="text-muted mt-1 text-sm">{ dsResourceStepDescription(*src) }</p>
+						</div>
+					</div>
+					if loadErr != nil || len(resources) == 0 {
+						<div class="mt-4" data-testid="ds-resource-empty">
+							@ui.Alert(ui.AlertProps{
+								Type:    ui.AlertInfo,
+								Style:   ui.AlertStyleSoft,
+								Icon:    "lucide--construction",
+								Message: "Resource selection will be available when the " + providerName + " connector lands.",
+							})
+						</div>
+					} else {
+						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
+							for _, r := range resources {
+								<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/resources") } class="flex items-center gap-3 rounded-box border border-base-content/10 px-4 py-3" data-testid="ds-resource-row">
+									<input type="hidden" name="resource_id" value={ r.ID }/>
+									@ui.IconSpan("lucide--folder", "size-4 shrink-0 text-muted-faint")
+									<div class="min-w-0 grow">
+										<p class="truncate text-sm font-medium">{ r.Name }</p>
+										if r.Type != "" {
+											<p class="text-muted-faint text-xs">{ r.Type }</p>
+										}
+									</div>
+									@ui.Button(ui.ButtonProps{
+										Type:    ui.ButtonTypeSubmit,
+										Variant: ui.ButtonPrimary,
+										Style:   ui.ButtonStyleOutline,
+										Size:    ui.ButtonSM,
+										Icon:    "lucide--check",
+										Attrs:   templ.Attributes{"data-testid": "ds-resource-select"},
+									}) {
+										{ dsResourceUseLabel(*src) }
+									}
+								</form>
+							}
+						</div>
+					}
+				}
+			}
+		</div>
+	}
+}
+
+// --- org OAuth-client settings (org-admin only, §5.4) ---
+
+// OrgOAuthClientsPage renders the org's OAuth client configuration: one card per
+// provider that advertises the oauth method, each with its own save form and a
+// delete form when already configured. The client secret is write-only — never
+// prefilled, and a blank value preserves the stored secret.
+templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName))
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("OAuth clients unavailable", loadErr)
+		} else {
+			<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
+				for _, p := range providers {
+					if p.DSProviderSupportsOAuth() {
+						@dsOAuthClientCard(orgID, p, clients[p.Type])
+					}
+				}
+			</div>
+		}
+	}
+}
+
+// dsOAuthClientCard is one provider's OAuth client config card. Saving posts the
+// client id/secret/scopes/strategy; a blank secret preserves the stored one.
+templ dsOAuthClientCard(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
+	@components.PanelCard("", nil) {
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
+				<div>
+					<h2 class="text-base font-semibold">{ p.Name }</h2>
+					<p class="text-muted text-sm">OAuth client used when connecting { p.Name }.</p>
+				</div>
+			</div>
+			if cfg.Configured {
+				@ui.Badge(ui.BadgeProps{Label: "Configured", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+			}
+		</div>
+		<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "client_id-" + p.Type }>Client ID <span class="text-error" aria-hidden="true">*</span></label>
+				<input id={ "client_id-" + p.Type } name="client_id" type="text" class="input input-bordered w-full" value={ cfg.ClientID } data-testid="ds-field-client_id"/>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "client_secret-" + p.Type }>Client secret</label>
+				<p class="text-muted-faint text-xs">Stored encrypted and never shown again. Leave blank to keep the stored secret.</p>
+				<input id={ "client_secret-" + p.Type } name="client_secret" type="password" autocomplete="new-password" class="input input-bordered w-full" data-testid="ds-field-client_secret"/>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "scopes-" + p.Type }>Scopes</label>
+				<p class="text-muted-faint text-xs">One scope per line; commas are also accepted. Optional — the provider default is used when empty.</p>
+				<textarea id={ "scopes-" + p.Type } name="scopes" rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid="ds-field-scopes">{ dsScopesText(cfg.Scopes) }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "strategy-" + p.Type }>Strategy</label>
+				<p class="text-muted-faint text-xs">Optional provider strategy override.</p>
+				if len(p.Strategies) > 0 {
+					<select id={ "strategy-" + p.Type } name="strategy" class="select select-bordered w-full" data-testid="ds-field-strategy">
+						<option value="" selected?={ cfg.Strategy == "" }>Provider default</option>
+						for _, s := range dsStrategyOptions(p, cfg.Strategy) {
+							<option value={ s } selected?={ cfg.Strategy == s }>{ s }</option>
+						}
+					</select>
+				} else {
+					<input id={ "strategy-" + p.Type } name="strategy" type="text" class="input input-bordered w-full" value={ cfg.Strategy } data-testid="ds-field-strategy"/>
+				}
+			</div>
+			if p.DSProviderSupportsStrategy("drive.file") {
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "picker_developer_key-" + p.Type }>Picker developer key</label>
+					<input id={ "picker_developer_key-" + p.Type } name="picker_developer_key" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerDeveloperKey") } data-testid="ds-field-picker_developer_key"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "picker_app_id-" + p.Type }>Picker app ID</label>
+					<input id={ "picker_app_id-" + p.Type } name="picker_app_id" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerAppId") } data-testid="ds-field-picker_app_id"/>
+				</div>
+				<p class="text-muted-faint text-xs">Optional, non-secret. Used to mount the Google Picker for the drive.file strategy; the Picker itself lands in a follow-up.</p>
+			}
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+				}) {
+					Save
+				}
+			</div>
+		</form>
+		if cfg.Configured {
+			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients/" + url.PathEscape(p.Type) + "/delete") } data-testid="ds-oauth-client-delete" class="mt-4 border-t border-base-content/10 pt-4">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Style:   ui.ButtonStyleOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Remove client
+				}
+			</form>
+		}
+	}
+}

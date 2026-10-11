@@ -133,52 +133,68 @@ type fakeMemory struct {
 	documentVersions    []DocumentVersion
 	documentVersionsErr error
 	// Data-source integrations (see memory_datasources.go).
-	dsProviders         []DSProvider
-	dsSchema            *DSProviderSchema
-	dsSourceTypes       []DSSourceType
-	dsIntegrations      []DSIntegration
-	dsErr               error // failure for any DS read/list method
-	dsCreateErr         error
-	dsUpdateErr         error
-	dsDeleteErr         error
-	dsTestConfigResp    *DSTestConnectionResponse
-	dsTestConfigErr     error
-	dsTestConnResp      *DSTestConnectionResponse
-	dsTestConnErr       error
-	dsTriggerResp       *DSTriggerSyncResponse
-	dsTriggerErr        error
-	dsSyncJobs          map[string][]DSSyncJob // jobs per source id
-	dsSyncJobsErr       error
-	dsCancelResp        *DSCancelSyncJobResponse
-	dsCancelErr         error
-	dsCreatedReq        *DSCreateIntegrationRequest // last create request forwarded
-	dsUpdatedReq        *DSUpdateIntegrationRequest // last update request forwarded
-	dsUpdatedID         string                      // last id passed to UpdateDSIntegration
-	dsDeletedID         string                      // last id passed to DeleteDSIntegration
-	dsLastTestConfig    *DSTestConfigRequest        // last test-config request forwarded
-	dsLastTestConnID    string                      // last id passed to TestDSConnection
-	dsLastTriggerID     string                      // last id passed to TriggerDSSync
-	dsLastCancelJobID   string                      // last job id passed to CancelDSSyncJob
-	mergeReadiness      *MergeReadiness             // returned by GetMergeReadiness
-	mergeResult         *BranchMergeResult          // returned by MergeBranch
-	mergeErr            error                       // GetMergeReadiness/MergeBranch failure
-	lastMergeBranchID   string                      // last sourceBranchID passed to MergeBranch
-	lastMergePolicy     string                      // last policy passed to MergeBranch
-	similar             []SimilarObject             // returned by GetSimilarObjects
-	similarErr          error                       // GetSimilarObjects failure
-	updateResult        *GraphObject                // returned by UpdateObject
-	updateObjectErr     error                       // UpdateObject failure
-	lastUpdateID        string                      // last id passed to UpdateObject
-	lastUpdateReq       *UpdateObjectRequest        // last request passed to UpdateObject
-	createObjectResult  *GraphObject                // returned by CreateObject
-	createObjectErr     error                       // CreateObject failure
-	lastCreateObjectReq *CreateObjectRequest        // last request passed to CreateObject
-	createRelErr        error                       // CreateRelationship failure
-	lastCreateRelReq    *CreateRelationshipRequest  // last request passed to CreateRelationship
-	ftsResults          []GraphObject               // returned by SearchObjectsFTS
-	ftsErr              error                       // SearchObjectsFTS failure
-	ftsQuery            string                      // last query passed to SearchObjectsFTS
-	ftsTypeFilter       string                      // last type filter passed to SearchObjectsFTS
+	dsProviders       []DSProvider
+	dsSchema          *DSProviderSchema
+	dsSourceTypes     []DSSourceType
+	dsIntegrations    []DSIntegration
+	dsErr             error // failure for any DS read/list method
+	dsCreateErr       error
+	dsUpdateErr       error
+	dsDeleteErr       error
+	dsTestConfigResp  *DSTestConnectionResponse
+	dsTestConfigErr   error
+	dsTestConnResp    *DSTestConnectionResponse
+	dsTestConnErr     error
+	dsTriggerResp     *DSTriggerSyncResponse
+	dsTriggerErr      error
+	dsSyncJobs        map[string][]DSSyncJob // jobs per source id
+	dsSyncJobsErr     error
+	dsCancelResp      *DSCancelSyncJobResponse
+	dsCancelErr       error
+	dsCreatedReq      *DSCreateIntegrationRequest // last create request forwarded
+	dsUpdatedReq      *DSUpdateIntegrationRequest // last update request forwarded
+	dsUpdatedID       string                      // last id passed to UpdateDSIntegration
+	dsDeletedID       string                      // last id passed to DeleteDSIntegration
+	dsLastTestConfig  *DSTestConfigRequest        // last test-config request forwarded
+	dsLastTestConnID  string                      // last id passed to TestDSConnection
+	dsLastTriggerID   string                      // last id passed to TriggerDSSync
+	dsLastCancelJobID string                      // last job id passed to CancelDSSyncJob
+	// OAuth connect + org OAuth-client config (see memory_datasources.go).
+	dsOAuthAuthorizeResp *DSOAuthAuthorizeResponse  // returned by StartDSOAuth
+	dsOAuthAuthorizeErr  error                      // StartDSOAuth failure
+	dsLastOAuthProvider  string                     // last providerType passed to StartDSOAuth
+	dsLastOAuthConfig    map[string]any             // last config passed to StartDSOAuth
+	dsOrgOAuthClients    []DSOAuthClientConfig      // returned by List/GetDSOAuthClient
+	dsOrgOAuthClientErr  error                      // any org OAuth-client method failure
+	dsUpsertedOAuthReq   *DSSetOAuthClientRequest   // last request passed to UpsertDSOAuthClient
+	dsUpsertedOAuthOrg   string                     // last org id passed to UpsertDSOAuthClient
+	dsUpsertedOAuthProv  string                     // last provider passed to UpsertDSOAuthClient
+	dsDeletedOAuthOrg    string                     // last org id passed to DeleteDSOAuthClient
+	dsDeletedOAuthProv   string                     // last provider passed to DeleteDSOAuthClient
+	dsResources          []DSResource               // returned by ListDSResources
+	dsResourcesErr       error                      // ListDSResources failure
+	dsSavedResourceID    string                     // last id passed to SaveDSResource
+	dsSavedResourceCfg   map[string]any             // last cfg passed to SaveDSResource
+	mergeReadiness       *MergeReadiness            // returned by GetMergeReadiness
+	mergeResult          *BranchMergeResult         // returned by MergeBranch
+	mergeErr             error                      // GetMergeReadiness/MergeBranch failure
+	lastMergeBranchID    string                     // last sourceBranchID passed to MergeBranch
+	lastMergePolicy      string                     // last policy passed to MergeBranch
+	similar              []SimilarObject            // returned by GetSimilarObjects
+	similarErr           error                      // GetSimilarObjects failure
+	updateResult         *GraphObject               // returned by UpdateObject
+	updateObjectErr      error                      // UpdateObject failure
+	lastUpdateID         string                     // last id passed to UpdateObject
+	lastUpdateReq        *UpdateObjectRequest       // last request passed to UpdateObject
+	createObjectResult   *GraphObject               // returned by CreateObject
+	createObjectErr      error                      // CreateObject failure
+	lastCreateObjectReq  *CreateObjectRequest       // last request passed to CreateObject
+	createRelErr         error                      // CreateRelationship failure
+	lastCreateRelReq     *CreateRelationshipRequest // last request passed to CreateRelationship
+	ftsResults           []GraphObject              // returned by SearchObjectsFTS
+	ftsErr               error                      // SearchObjectsFTS failure
+	ftsQuery             string                     // last query passed to SearchObjectsFTS
+	ftsTypeFilter        string                     // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
 	workItems         []WorkItem      // returned by ListWorkItems
@@ -4172,4 +4188,72 @@ func (f *fakeMemory) CancelDSSyncJob(ctx context.Context, id, jobID string) (*DS
 		return f.dsCancelResp, nil
 	}
 	return &DSCancelSyncJobResponse{Success: true, Message: "cancelled"}, nil
+}
+
+func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string) (*DSOAuthAuthorizeResponse, error) {
+	f.dsLastOAuthProvider = providerType
+	f.dsLastOAuthConfig = config
+	if f.dsOAuthAuthorizeErr != nil {
+		return nil, f.dsOAuthAuthorizeErr
+	}
+	if f.dsOAuthAuthorizeResp != nil {
+		return f.dsOAuthAuthorizeResp, nil
+	}
+	return &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"}, nil
+}
+
+func (f *fakeMemory) ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error) {
+	if f.dsOrgOAuthClientErr != nil {
+		return nil, f.dsOrgOAuthClientErr
+	}
+	return f.dsOrgOAuthClients, nil
+}
+
+func (f *fakeMemory) GetDSOAuthClient(ctx context.Context, orgID, providerType string) (*DSOAuthClientConfig, error) {
+	if f.dsOrgOAuthClientErr != nil {
+		return nil, f.dsOrgOAuthClientErr
+	}
+	for i := range f.dsOrgOAuthClients {
+		if f.dsOrgOAuthClients[i].ProviderType == providerType {
+			return &f.dsOrgOAuthClients[i], nil
+		}
+	}
+	return &DSOAuthClientConfig{ProviderType: providerType, Configured: false}, nil
+}
+
+func (f *fakeMemory) UpsertDSOAuthClient(ctx context.Context, orgID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error) {
+	f.dsUpsertedOAuthOrg = orgID
+	f.dsUpsertedOAuthProv = providerType
+	f.dsUpsertedOAuthReq = req
+	if f.dsOrgOAuthClientErr != nil {
+		return nil, f.dsOrgOAuthClientErr
+	}
+	return &DSOAuthClientConfig{ProviderType: providerType, ClientID: req.ClientID, Strategy: req.Strategy, Config: req.Config, Configured: true}, nil
+}
+
+func (f *fakeMemory) DeleteDSOAuthClient(ctx context.Context, orgID, providerType string) error {
+	f.dsDeletedOAuthOrg = orgID
+	f.dsDeletedOAuthProv = providerType
+	return f.dsOrgOAuthClientErr
+}
+
+func (f *fakeMemory) ListDSResources(ctx context.Context, id string) ([]DSResource, error) {
+	if f.dsResourcesErr != nil {
+		return nil, f.dsResourcesErr
+	}
+	return f.dsResources, nil
+}
+
+func (f *fakeMemory) SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error) {
+	if f.dsUpdateErr != nil {
+		return nil, f.dsUpdateErr
+	}
+	f.dsSavedResourceID = id
+	f.dsSavedResourceCfg = cfg
+	for i := range f.dsIntegrations {
+		if f.dsIntegrations[i].ID == id {
+			return &f.dsIntegrations[i], nil
+		}
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
 }

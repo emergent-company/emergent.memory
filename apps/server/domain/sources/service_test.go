@@ -7,13 +7,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
-	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -26,18 +26,15 @@ func newTestService(key []byte) *Service {
 	if key != nil {
 		cfg.LLMProvider.EncryptionKey = hex.EncodeToString(key)
 	}
-	return NewService(nil, cfg, discardLog())
+	return NewService(nil, cfg, discardLog(), NewDefaultRegistry())
 }
 
 func TestListProviders_IncludesGoogleDrive(t *testing.T) {
 	svc := newTestService(nil)
 	providers := svc.ListProviders(context.Background())
-	if len(providers) != 1 {
-		t.Fatalf("ListProviders() = %d providers, want 1", len(providers))
-	}
-	p := providers[0]
-	if p.Type != ProviderTypeGoogleDrive {
-		t.Errorf("provider type = %q, want %q", p.Type, ProviderTypeGoogleDrive)
+	p, ok := findProvider(providers, ProviderTypeGoogleDrive)
+	if !ok {
+		t.Fatalf("ListProviders() = %v, want a %q entry", providers, ProviderTypeGoogleDrive)
 	}
 	if !p.Available {
 		t.Error("google_drive provider must be marked available")
@@ -45,6 +42,18 @@ func TestListProviders_IncludesGoogleDrive(t *testing.T) {
 	if p.SourceType != SourceTypeDrive {
 		t.Errorf("provider sourceType = %q, want %q", p.SourceType, SourceTypeDrive)
 	}
+}
+
+// findProvider returns the catalog entry with the given type and whether it was
+// present. The registry ships multiple providers (google_drive + github), so
+// tests locate entries by type rather than by count/index.
+func findProvider(providers []Provider, typ string) (Provider, bool) {
+	for _, p := range providers {
+		if p.Type == typ {
+			return p, true
+		}
+	}
+	return Provider{}, false
 }
 
 func TestGetProviderSchema_Shape(t *testing.T) {
@@ -89,7 +98,7 @@ func TestValidateConfig(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateConfig(tc.config)
+			err := newGoogleDriveProvider().ValidateConfig(tc.config)
 			if tc.wantErr && err == nil {
 				t.Fatal("validateConfig() = nil, want error")
 			}
@@ -107,7 +116,7 @@ func TestEncryptDecryptCredentials_RoundTrip(t *testing.T) {
 	}
 	svc := newTestService(key)
 
-	creds := gdrive.Credentials{ClientID: "cid", ClientSecret: "secret", RefreshToken: "rt"}
+	creds := Credentials{"client_id": "cid", "client_secret": "secret", "refresh_token": "rt"}
 	blob, err := svc.encryptCredentials(creds)
 	if err != nil {
 		t.Fatalf("encryptCredentials() error = %v", err)
@@ -116,14 +125,14 @@ func TestEncryptDecryptCredentials_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decryptCredentials() error = %v", err)
 	}
-	if got != creds {
+	if !reflect.DeepEqual(got, creds) {
 		t.Errorf("round-trip creds = %+v, want %+v", got, creds)
 	}
 }
 
 func TestEncryptCredentials_NoKey(t *testing.T) {
 	svc := newTestService(nil)
-	if _, err := svc.encryptCredentials(gdrive.Credentials{RefreshToken: "x"}); err == nil {
+	if _, err := svc.encryptCredentials(Credentials{"refresh_token": "x"}); err == nil {
 		t.Fatal("encryptCredentials() with no key = nil, want error")
 	}
 }
@@ -136,7 +145,7 @@ func TestStripCredentialKeys_RemovesSecrets(t *testing.T) {
 		"refresh_token": "rt",
 		"recursive":     true,
 	}
-	out := stripCredentialKeys(in)
+	out := stripCredentialKeys(in, credentialKeyNames)
 	for _, k := range []string{"client_id", "client_secret", "refresh_token"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("stripCredentialKeys() left secret key %q", k)
@@ -162,7 +171,7 @@ func TestToIntegration_NoSecrets(t *testing.T) {
 		SyncIntervalMinutes:  &interval,
 		Status:               "active",
 	}
-	it := toIntegration(src)
+	it := newTestService(nil).toIntegration(src)
 	if it.ID != id.String() {
 		t.Errorf("integration ID = %q, want %q", it.ID, id.String())
 	}

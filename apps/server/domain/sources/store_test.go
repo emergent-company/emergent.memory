@@ -36,7 +36,7 @@ func TestSourceStore_CRUD_ProjectScoped(t *testing.T) {
 	}
 	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
 	repo := NewRepository(db, log)
-	svc := NewService(repo, cfg, log)
+	svc := NewService(repo, cfg, log, NewDefaultRegistry())
 
 	projectA := uuid.New()
 	projectB := uuid.New()
@@ -158,7 +158,7 @@ func TestSourceStore_Update_PreservesCredentials(t *testing.T) {
 	key := make([]byte, 32)
 	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
 	repo := NewRepository(db, log)
-	svc := NewService(repo, cfg, log)
+	svc := NewService(repo, cfg, log, NewDefaultRegistry())
 
 	projectID := uuid.New()
 	created, err := svc.Create(ctx, projectID, &CreateIntegrationRequest{

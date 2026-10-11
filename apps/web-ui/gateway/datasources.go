@@ -244,6 +244,76 @@ func (s *Server) cancelDSSyncJob(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// startDSOAuth implements POST
+// /api/data-source-integrations/providers/:providerType/oauth/authorize. It
+// returns the provider authorization URL for the browser to follow. The body is
+// optional: {config, scopes}.
+func (s *Server) startDSOAuth(c echo.Context) error {
+	providerType := strings.TrimSpace(c.Param("providerType"))
+	if providerType == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "providerType is required"})
+	}
+	var req struct {
+		Config map[string]any `json:"config,omitempty"`
+		Scopes []string       `json:"scopes,omitempty"`
+	}
+	if c.Request().ContentLength > 0 {
+		if err := c.Bind(&req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		}
+	}
+	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, req.Config, req.Scopes)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, resp)
+}
+
+// listDSOAuthClients implements GET /api/orgs/:orgId/data-source-integrations/oauth-clients.
+func (s *Server) listDSOAuthClients(c echo.Context) error {
+	items, err := s.memory.ListDSOAuthClients(c.Request().Context(), c.Param("orgId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	if items == nil {
+		items = []DSOAuthClientConfig{}
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+// getDSOAuthClient implements GET /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) getDSOAuthClient(c echo.Context) error {
+	item, err := s.memory.GetDSOAuthClient(c.Request().Context(), c.Param("orgId"), c.Param("providerType"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// upsertDSOAuthClient implements PUT /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) upsertDSOAuthClient(c echo.Context) error {
+	var req DSSetOAuthClientRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if strings.TrimSpace(req.ClientID) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "clientId is required"})
+	}
+	item, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), c.Param("orgId"), c.Param("providerType"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// deleteDSOAuthClient implements DELETE /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) deleteDSOAuthClient(c echo.Context) error {
+	if err := s.memory.DeleteDSOAuthClient(c.Request().Context(), c.Param("orgId"), c.Param("providerType")); err != nil {
+		return dsError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // listDocumentVersions implements GET /api/documents/:id/versions.
 func (s *Server) listDocumentVersions(c echo.Context) error {
 	versions, err := s.memory.ListDocumentVersions(c.Request().Context(), c.Param("id"))

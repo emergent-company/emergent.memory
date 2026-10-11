@@ -105,6 +105,10 @@ type Config struct {
 	// MCPRegistry configures the official MCP registry client.
 	MCPRegistry MCPRegistryConfig
 
+	// SourceOAuth configures the deployment-default OAuth clients used by the
+	// data-source connect flow when an org has no client of its own.
+	SourceOAuth SourceOAuthConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -831,6 +835,41 @@ type MCPRegistryConfig struct {
 	// BaseURL overrides the official MCP registry endpoint. Empty means the
 	// default DefaultRegistryBaseURL (https://registry.modelcontextprotocol.io).
 	BaseURL string `env:"MCP_REGISTRY_BASE_URL" envDefault:""`
+}
+
+// SourceOAuthConfig holds the deployment-default OAuth client material and the
+// public base URL used to build data-source OAuth redirect URIs. Per-org client
+// config (BYO) is layered on top in a later phase; this is the fallback.
+type SourceOAuthConfig struct {
+	// RedirectBaseURL is the public origin of the API (e.g.
+	// https://api.dev.emergent-company.ai). The OAuth redirect URI is
+	// <RedirectBaseURL>/api/data-source-integrations/oauth/<provider>/callback,
+	// and the post-callback browser landing path is <RedirectBaseURL>/data-sources.
+	// Empty disables the connect flow with an actionable error.
+	RedirectBaseURL string `env:"SOURCES_OAUTH_REDIRECT_BASE_URL" envDefault:""`
+
+	// GoogleClientID/GoogleClientSecret are the deployment-default Google OAuth
+	// client credentials. Empty means a connect requires an org-level client.
+	GoogleClientID     string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_ID" envDefault:""`
+	GoogleClientSecret string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_SECRET" envDefault:""`
+}
+
+// OAuthClientDefaults is the deployment-default OAuth client material for one
+// provider.
+type OAuthClientDefaults struct {
+	ClientID     string
+	ClientSecret string
+}
+
+// OAuthClientsByProvider returns the deployment-default OAuth client material
+// keyed by data-source provider type. It is the fallback layer beneath the
+// per-org client configs (design D3); adding a provider appends one entry.
+func (c SourceOAuthConfig) OAuthClientsByProvider() map[string]OAuthClientDefaults {
+	out := map[string]OAuthClientDefaults{}
+	if c.GoogleClientID != "" && c.GoogleClientSecret != "" {
+		out["google_drive"] = OAuthClientDefaults{ClientID: c.GoogleClientID, ClientSecret: c.GoogleClientSecret}
+	}
+	return out
 }
 
 // AgentSafeguardsConfig holds configuration for agent queue explosion safeguards.

@@ -31,6 +31,11 @@ func newDSAPIServer(f *fakeMemory, apiKey string) (*Server, *echo.Echo) {
 	api.GET("/data-source-integrations/:id/sync-jobs/latest", s.getDSLatestSyncJob)
 	api.GET("/data-source-integrations/:id/sync-jobs/:jobId", s.getDSSyncJob)
 	api.POST("/data-source-integrations/:id/sync-jobs/:jobId/cancel", s.cancelDSSyncJob)
+	api.POST("/data-source-integrations/providers/:providerType/oauth/authorize", s.startDSOAuth)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients", s.listDSOAuthClients)
+	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
+	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
+	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
 	api.GET("/documents/:id/versions", s.listDocumentVersions)
 	return s, e
 }
@@ -212,5 +217,88 @@ func TestListDocumentVersionsHandlerError(t *testing.T) {
 	rec := dsJSONReq(e, http.MethodGet, "/api/documents/d1/versions", "", nil)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- OAuth connect + org OAuth-client config handlers (§4.2) ---
+
+func TestStartDSOAuthHandler(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations/providers/google_drive/oauth/authorize", `{"config":{"name":"Team Drive"}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsLastOAuthProvider != "google_drive" {
+		t.Errorf("provider = %q", f.dsLastOAuthProvider)
+	}
+	if f.dsLastOAuthConfig["name"] != "Team Drive" {
+		t.Errorf("config = %+v", f.dsLastOAuthConfig)
+	}
+	if !strings.Contains(rec.Body.String(), "authorizeUrl") {
+		t.Errorf("body = %s", rec.Body.String())
+	}
+}
+
+func TestStartDSOAuthHandlerMemoryError(t *testing.T) {
+	f := &fakeMemory{dsOAuthAuthorizeErr: errors.New("no client configured")}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations/providers/google_drive/oauth/authorize", "", nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUpsertDSOAuthClientHandler(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodPut, "/api/orgs/org-1/data-source-integrations/oauth-clients/google_drive", `{"clientId":"cid","clientSecret":"secret","strategy":"drive.file"}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsUpsertedOAuthOrg != "org-1" || f.dsUpsertedOAuthProv != "google_drive" {
+		t.Errorf("upsert target = %q/%q", f.dsUpsertedOAuthOrg, f.dsUpsertedOAuthProv)
+	}
+	if f.dsUpsertedOAuthReq == nil || f.dsUpsertedOAuthReq.ClientID != "cid" {
+		t.Fatalf("upsert req = %+v", f.dsUpsertedOAuthReq)
+	}
+	// The response never echoes the secret.
+	if strings.Contains(rec.Body.String(), "secret") {
+		t.Errorf("response leaks secret: %s", rec.Body.String())
+	}
+}
+
+func TestUpsertDSOAuthClientHandlerValidation(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodPut, "/api/orgs/org-1/data-source-integrations/oauth-clients/google_drive", `{"clientSecret":"secret"}`, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsUpsertedOAuthReq != nil {
+		t.Fatal("memory must not be called on validation failure")
+	}
+}
+
+func TestListDSOAuthClientsHandlerEmptyArray(t *testing.T) {
+	_, e := newDSAPIServer(&fakeMemory{}, "")
+	rec := dsJSONReq(e, http.MethodGet, "/api/orgs/org-1/data-source-integrations/oauth-clients", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "[]") {
+		t.Errorf("want empty array, got %s", rec.Body.String())
+	}
+}
+
+func TestDeleteDSOAuthClientHandler(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodDelete, "/api/orgs/org-1/data-source-integrations/oauth-clients/google_drive", "", nil)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsDeletedOAuthOrg != "org-1" || f.dsDeletedOAuthProv != "google_drive" {
+		t.Errorf("delete target = %q/%q", f.dsDeletedOAuthOrg, f.dsDeletedOAuthProv)
 	}
 }

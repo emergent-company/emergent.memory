@@ -377,6 +377,10 @@ routes:
       path: /api/data-source-integrations/:id
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
+      path: /api/data-source-integrations/:id/resources
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
     - method: POST
       path: /api/data-source-integrations/:id/sync
       level: project-member
@@ -402,9 +406,17 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
+      path: /api/data-source-integrations/oauth/:providerType/callback
+      level: public
+      note: ""
+    - method: GET
       path: /api/data-source-integrations/providers
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: GET
+      path: /api/data-source-integrations/providers/:providerType/oauth/authorize
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
       path: /api/data-source-integrations/providers/:providerType/schema
       level: project-member
@@ -991,6 +1003,22 @@ routes:
       note: RequireAuth
     - method: GET
       path: /api/orgs/:id/members
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType
       level: auth
       note: RequireAuth
     - method: GET

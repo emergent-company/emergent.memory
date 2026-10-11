@@ -5,31 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
-	"github.com/emergent-company/emergent.memory/internal/gdrive"
-	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
-
-// DriveClient is the Drive transport surface the sync worker needs. It is the
-// subset of *gdrive.Client used for enumeration and content fetch, and it is
-// satisfied by a fake in integration tests (no live Google calls).
-type DriveClient interface {
-	ListFolderItems(ctx context.Context, folderID string, mimeTypes []string, recursive bool, sharedDriveID string) ([]gdrive.Item, error)
-	ExportText(ctx context.Context, fileID, mimeType string) ([]byte, error)
-	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
-}
-
-// DriveClientFactory builds a DriveClient from decrypted credentials. Injectable
-// (constructor injection) so an integration test can substitute a fake.
-type DriveClientFactory func(ctx context.Context, creds gdrive.Credentials) (DriveClient, error)
 
 // DiscoveryStarter delegates schema discovery to domain/discoveryjobs after a
 // sync ingests new documents. It is optional (nil-safe): a source with no new
@@ -40,11 +24,11 @@ type DiscoveryStarter interface {
 
 // SyncWorker polls for pending sync jobs and drives them through
 // pending → processing → completed|failed|cancelled, isolating per-item errors
-// and persisting durable progress as it advances.
+// and persisting durable progress as it advances. It is provider-agnostic: it
+// resolves the source's provider from the registry and drives its Connector.
 type SyncWorker struct {
 	svc       *Service
 	docs      *documents.Service
-	newDrive  DriveClientFactory
 	xberg     *xberg.Client
 	discovery DiscoveryStarter
 	log       *slog.Logger
@@ -60,22 +44,20 @@ type SyncWorker struct {
 	wg        sync.WaitGroup
 }
 
-// NewSyncWorker creates a sync worker. The Drive client factory, xberg client,
-// and discovery starter are constructor-injected (not setters) so tests can
-// substitute fakes. A nil discovery/xberg is handled by skipping those paths.
+// NewSyncWorker creates a sync worker. The xberg client and discovery starter
+// are constructor-injected (not setters) so tests can substitute fakes. A nil
+// discovery/xberg is handled by skipping those paths.
 func NewSyncWorker(
 	svc *Service,
 	docs *documents.Service,
-	newDrive DriveClientFactory,
-	xberg *xberg.Client,
+	xbergClient *xberg.Client,
 	discovery DiscoveryStarter,
 	log *slog.Logger,
 ) *SyncWorker {
 	return &SyncWorker{
 		svc:               svc,
 		docs:              docs,
-		newDrive:          newDrive,
-		xberg:             xberg,
+		xberg:             xbergClient,
 		discovery:         discovery,
 		log:               log.With(logger.Scope("sources.worker")),
 		interval:          5 * time.Second,
@@ -192,19 +174,19 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, err)
 	}
 
+	provider, ok := w.svc.providers.Get(src.Provider)
+	if !ok {
+		return w.failJob(ctx, job, fmt.Errorf("unknown provider %q", src.Provider))
+	}
+
 	creds, err := w.svc.decryptCredentials(src.EncryptedCredentials)
 	if err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("decrypt credentials: %w", err))
 	}
 
-	client, err := w.newDrive(ctx, creds)
+	connector, err := provider.NewConnector(ctx, creds, ConnectorDeps{Extract: w.extractText})
 	if err != nil {
-		return w.failJob(ctx, job, fmt.Errorf("initialize drive client: %w", err))
-	}
-
-	folderID, mimeTypes, recursive, sharedDriveID, err := parseSyncConfig(src.Config)
-	if err != nil {
-		return w.failJob(ctx, job, err)
+		return w.failJob(ctx, job, fmt.Errorf("initialize connector: %w", err))
 	}
 
 	headRevs, err := w.svc.repo.ListHeadSourceRevisions(ctx, job.ProjectID, job.SourceID)
@@ -221,9 +203,9 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, err)
 	}
 
-	items, err := client.ListFolderItems(ctx, folderID, mimeTypes, recursive, sharedDriveID)
+	items, err := connector.Enumerate(ctx, src.Config)
 	if err != nil {
-		return w.failJob(ctx, job, fmt.Errorf("enumerate drive folder: %w", err))
+		return w.failJob(ctx, job, fmt.Errorf("enumerate source: %w", err))
 	}
 
 	syncing := "syncing"
@@ -264,8 +246,8 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 
 		// Cheap pre-filter: skip when the HEAD revision already matches. A HEAD
 		// marked deleted_from_source is never skipped — a revived item (e.g.
-		// restored from Drive trash) may keep the same headRevisionId and still
-		// needs ApplySourceItem to reactivate it.
+		// restored from trash) may keep the same head revision and still needs
+		// ApplySourceItem to reactivate it.
 		if rev, ok := headRevs[item.ID]; ok && rev == item.RevisionID && !deletedHeads[item.ID] {
 			skipped++
 			if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
@@ -274,7 +256,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			continue
 		}
 
-		content, mimeType, err := w.fetchItem(ctx, client, item)
+		content, mimeType, err := connector.Fetch(ctx, item)
 		if err != nil {
 			failed++
 			itemErrors = append(itemErrors, map[string]any{"externalId": item.ID, "error": err.Error()})
@@ -292,7 +274,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 			Filename:   item.Name,
 			MimeType:   mimeType,
 			Content:    content,
-			SourceType: SourceTypeDrive,
+			SourceType: provider.Catalog().SourceType,
 		})
 		if err != nil {
 			failed++
@@ -344,7 +326,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return err
 	}
 
-	// Delegate schema discovery with newly ingested documents (§4.10).
+	// Delegate schema discovery with newly ingested documents.
 	if len(createdDocIDs) > 0 && w.discovery != nil {
 		ids := make([]uuid.UUID, 0, len(createdDocIDs))
 		for _, id := range createdDocIDs {
@@ -377,35 +359,18 @@ func (w *SyncWorker) isCancelled(ctx context.Context, jobID uuid.UUID) bool {
 	return job.Status == SyncStatusCancelled
 }
 
-// fetchItem fetches and converts one item to parsed text. Google-native docs are
-// exported to text (pass-through); other files are downloaded and, when
-// xberg-routable, parsed through xberg; plain-text downloads pass through.
-func (w *SyncWorker) fetchItem(ctx context.Context, client DriveClient, item gdrive.Item) (content, mimeType string, err error) {
-	if isGoogleNative(item.MimeType) {
-		data, err := client.ExportText(ctx, item.ID, item.MimeType)
-		if err != nil {
-			return "", "", err
-		}
-		return string(data), googleNativeExportMime(item.MimeType), nil
+// extractText adapts the xberg client to the connector's generic text-extraction
+// dependency. A nil client reports extraction as unavailable, which the provider
+// surfaces as a per-item error for formats it cannot decode itself.
+func (w *SyncWorker) extractText(ctx context.Context, content []byte, filename, mimeType string) (string, error) {
+	if w.xberg == nil {
+		return "", errors.New("text extraction unavailable")
 	}
-
-	data, err := client.DownloadFile(ctx, item.ID)
+	result, err := w.xberg.ExtractText(ctx, content, filename, mimeType, nil)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-
-	if xberg.ShouldUseXberg(item.MimeType, item.Name) {
-		if w.xberg == nil {
-			return "", "", errors.New("xberg unavailable for binary conversion")
-		}
-		result, err := w.xberg.ExtractText(ctx, data, item.Name, item.MimeType, nil)
-		if err != nil {
-			return "", "", err
-		}
-		return result.Content, item.MimeType, nil
-	}
-
-	return string(data), item.MimeType, nil
+	return result.Content, nil
 }
 
 // failJob transitions a job to terminal failed and records the error on the
@@ -419,39 +384,4 @@ func (w *SyncWorker) failJob(ctx context.Context, job *SyncJob, err error) error
 		w.log.Error("failed to record source error", "source_id", job.SourceID, "error", rErr)
 	}
 	return err
-}
-
-// parseSyncConfig extracts the enumeration scope from a source config.
-func parseSyncConfig(cfg map[string]any) (folderID string, mimeTypes []string, recursive bool, sharedDriveID string, err error) {
-	folderID, _ = cfg["folder_id"].(string)
-	if strings.TrimSpace(folderID) == "" {
-		return "", nil, false, "", apperror.NewValidation("config.folder_id is required")
-	}
-	sharedDriveID, _ = cfg["shared_drive_id"].(string)
-	recursive, _ = cfg["recursive"].(bool)
-	switch mt := cfg["mime_types"].(type) {
-	case []string:
-		mimeTypes = mt
-	case []any:
-		for _, v := range mt {
-			if s, ok := v.(string); ok {
-				mimeTypes = append(mimeTypes, s)
-			}
-		}
-	}
-	return folderID, mimeTypes, recursive, sharedDriveID, nil
-}
-
-// isGoogleNative reports whether a MIME type is a Google-native editable doc.
-func isGoogleNative(mimeType string) bool {
-	return strings.HasPrefix(mimeType, "application/vnd.google-apps.")
-}
-
-// googleNativeExportMime maps a Google-native MIME type to the text export
-// target's MIME type (mirrors gdrive.exportMime).
-func googleNativeExportMime(mimeType string) string {
-	if mimeType == "application/vnd.google-apps.spreadsheet" {
-		return "text/csv"
-	}
-	return "text/plain"
 }

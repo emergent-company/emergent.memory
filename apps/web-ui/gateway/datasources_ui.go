@@ -3,6 +3,8 @@ package main
 import (
 	"cmp"
 	"errors"
+	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
@@ -280,8 +282,13 @@ func dsTestMessage(resp *DSTestConnectionResponse) string {
 
 // --- UI handlers ---
 
-// uiDataSources renders the Data Sources list.
+// uiDataSources renders the Data Sources list. The memory OAuth callback lands
+// on /data-sources?connected=... or ?oauth_error=... (see the server's
+// OAuthLandingURL), so those requests are delegated to the callback handler.
 func (s *Server) uiDataSources(c echo.Context) error {
+	if c.QueryParam("connected") != "" || c.QueryParam("oauth_error") != "" {
+		return s.uiDataSourceOAuthCallback(c)
+	}
 	ctx := c.Request().Context()
 	items, err := s.memory.ListDSIntegrations(ctx)
 	if err != nil {
@@ -301,17 +308,329 @@ func (s *Server) uiDataSources(c echo.Context) error {
 	return s.page(c, pageTitle("Data Sources"), DataSourcesPage(items, names, err, flashMsg, flashErr))
 }
 
-// uiDataSourceNew renders the connect form for the google_drive provider,
-// driven by the provider's config schema.
+// uiDataSourceNew renders the provider chooser, or the connect surface for a
+// chosen provider. The catalog drives the page: ?providerType selects a provider
+// (absent → chooser), and ?method narrows a dual-capability provider (Google
+// Drive advertises both oauth and credentials) to one connect path.
 func (s *Server) uiDataSourceNew(c echo.Context) error {
 	ctx := c.Request().Context()
-	schema, err := s.memory.GetDSProviderSchema(ctx, dsProviderTypeGoogleDrive)
+	providerType := strings.TrimSpace(c.QueryParam("providerType"))
+	method := strings.TrimSpace(c.QueryParam("method"))
+	providers, err := s.memory.ListDSProviders(ctx)
 	if err != nil {
 		err = userFacingError(err)
 	}
-	configFields, credentialFields := dsConfigFields(schema)
+	selected := dsSelectProvider(providers, providerType, method)
+
+	var configFields, credentialFields []dsConfigField
+	var schemaErr error
+	if selected != nil {
+		schema, serr := s.memory.GetDSProviderSchema(ctx, selected.Type)
+		if serr != nil {
+			schemaErr = userFacingError(serr)
+		}
+		configFields, credentialFields = dsConfigFields(schema)
+	}
+	if err == nil {
+		err = schemaErr
+	}
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(configFields, credentialFields, err, flashErr))
+	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, selected, configFields, credentialFields, err, flashErr))
+}
+
+// dsSelectProvider picks the selected provider from the catalog by type, applying
+// the optional ?method= hint: when the named method is one the provider
+// advertises, the returned copy is narrowed to it so the page renders exactly
+// that connect path. A dual-capability provider without a method hint keeps its
+// full capability set (its OAuth surface is shown). The catalog slice entry is
+// copied, never mutated.
+func dsSelectProvider(providers []DSProvider, providerType, method string) *DSProvider {
+	if providerType == "" {
+		return nil
+	}
+	for i := range providers {
+		if providers[i].Type != providerType {
+			continue
+		}
+		narrowed := providers[i]
+		switch {
+		case method == "oauth" && narrowed.DSProviderSupportsOAuth():
+			narrowed.AuthMethods = []string{"oauth"}
+		case method == "credentials" && narrowed.DSProviderSupportsCredentials():
+			narrowed.AuthMethods = []string{"credentials"}
+		}
+		return &narrowed
+	}
+	return nil
+}
+
+// uiDataSourceOAuthStart begins the provider OAuth flow: it asks memory for the
+// provider's authorization URL and redirects the browser to it.
+func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
+	providerType := strings.TrimSpace(c.QueryParam("providerType"))
+	if providerType == "" {
+		return redirectWithError(c, "/data-sources/new", errors.New("providerType is required"))
+	}
+	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, nil, nil)
+	if err != nil {
+		return redirectWithError(c, "/data-sources/new", err)
+	}
+	return c.Redirect(http.StatusFound, resp.AuthorizeURL)
+}
+
+// uiDataSourceOAuthCallback is the memory OAuth callback's landing handler: it
+// surfaces an authorization failure, redirects to the freshly connected source,
+// or falls back to the list. Registered both on /data-sources/oauth/callback and
+// as the delegate for /data-sources?connected=... (the server's OAuthLandingURL).
+func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
+	if oauthErr := c.QueryParam("oauth_error"); oauthErr != "" {
+		return redirectWithError(c, "/data-sources", errors.New("Authorization failed: "+oauthErr))
+	}
+	if connected := c.QueryParam("connected"); connected != "" {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(connected)+"?created=1")
+		return nil
+	}
+	return c.Redirect(http.StatusSeeOther, "/data-sources")
+}
+
+// uiDataSourceResources renders the resource-selection step for a source. It
+// lists the provider's real resources and renders each as a select-and-save
+// form. Providers without a listing (e.g. github today) get a graceful
+// placeholder.
+func (s *Server) uiDataSourceResources(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, userFacingError(err), "", nil))
+	}
+	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
+	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
+		providerName = dsProviderLabel(dsProviderNameMap(providers), src.ProviderType)
+	} else {
+		captureError(perr)
+	}
+	resources, rerr := s.memory.ListDSResources(ctx, id)
+	if rerr != nil {
+		rerr = userFacingError(rerr)
+	}
+	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, rerr, "", nil))
+}
+
+// uiDataSourceResourceSave saves the chosen resource onto a source's config
+// (PRG). It maps the picked resource id to the provider's config key and asks
+// memory to persist it. The mapping is deliberately small and provider-specific;
+// a provider with no mapping fails closed rather than writing a stray key.
+func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	back := "/data-sources/" + url.PathEscape(id) + "/resources"
+	resourceID := strings.TrimSpace(c.FormValue("resource_id"))
+	if resourceID == "" {
+		return redirectWithError(c, back, errors.New("resource_id is required"))
+	}
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, back, err)
+	}
+	key, ok := dsResourceConfigKey(src.ProviderType)
+	if !ok {
+		return redirectWithError(c, back, fmt.Errorf("resource selection is not supported for provider %s", src.ProviderType))
+	}
+	if _, err := s.memory.SaveDSResource(ctx, id, map[string]any{key: resourceID}); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(id)+"?updated=1")
+	return nil
+}
+
+// dsResourceConfigKey maps a provider type to the config key its chosen sync
+// resource is stored under. A provider absent from the switch has no resource
+// step (the caller fails closed).
+func dsResourceConfigKey(providerType string) (string, bool) {
+	switch providerType {
+	case dsProviderTypeGoogleDrive:
+		return "folder_id", true
+	case "github":
+		return "repo", true
+	default:
+		return "", false
+	}
+}
+
+// uiOrgOAuthClients renders the org's OAuth client settings page (org-admin
+// only; hidden and 404 for anyone else).
+func (s *Server) uiOrgOAuthClients(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := c.Param("id")
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providers, err := s.memory.ListDSProviders(ctx)
+	if err != nil {
+		err = userFacingError(err)
+	}
+	clients, cerr := s.memory.ListDSOAuthClients(ctx, orgID)
+	if cerr != nil {
+		cerr = userFacingError(cerr)
+	}
+	byType := make(map[string]DSOAuthClientConfig, len(clients))
+	for _, cl := range clients {
+		byType[cl.ProviderType] = cl
+	}
+	orgName := ""
+	if org, oerr := s.memory.GetOrg(ctx, orgID); oerr == nil && org != nil {
+		orgName = org.Name
+	}
+	if err == nil {
+		err = cerr
+	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "saved", msg: "OAuth client saved."},
+		{key: "deleted", msg: "OAuth client removed."},
+	})
+	return s.page(c, pageTitle("OAuth clients"), OrgOAuthClientsPage(orgID, orgName, providers, byType, err, flashMsg, flashError(c)))
+}
+
+// uiOrgOAuthClientUpsert saves an org's OAuth client for a provider (org-admin
+// only). A blank secret preserves the stored one; scopes accept one per line or
+// comma-separated. Non-secret Picker settings are merged into Config, preserving
+// stored keys the form does not manage.
+func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
+	orgID := c.Param("id")
+	back := "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients"
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	clientID := strings.TrimSpace(c.FormValue("client_id"))
+	if clientID == "" {
+		return redirectWithError(c, back, errors.New("clientId is required"))
+	}
+	req := &DSSetOAuthClientRequest{
+		ClientID:     clientID,
+		ClientSecret: strings.TrimSpace(c.FormValue("client_secret")),
+		Scopes:       dsScopesFromForm(c.FormValue("scopes")),
+		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
+		Config:       s.dsOAuthClientConfigFromForm(c, orgID, c.Param("providerType")),
+	}
+	if _, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType"), req); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back+"?saved=1")
+	return nil
+}
+
+// dsOAuthClientConfigFromForm builds the non-secret config map for an org OAuth
+// client from the form, preserving any stored keys the form does not manage (the
+// form only manages the two Picker fields). The two managed keys are set when
+// the form supplies them and cleared when blank. Secret material never belongs
+// in Config.
+func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, orgID, providerType string) map[string]any {
+	cfg := map[string]any{}
+	if stored, err := s.memory.GetDSOAuthClient(c.Request().Context(), orgID, providerType); err != nil {
+		captureError(err)
+	} else if stored != nil {
+		for k, v := range stored.Config {
+			cfg[k] = v
+		}
+	}
+	for _, f := range []struct{ form, key string }{
+		{"picker_developer_key", "pickerDeveloperKey"},
+		{"picker_app_id", "pickerAppId"},
+	} {
+		if v := strings.TrimSpace(c.FormValue(f.form)); v != "" {
+			cfg[f.key] = v
+		} else {
+			delete(cfg, f.key)
+		}
+	}
+	if len(cfg) == 0 {
+		return nil
+	}
+	return cfg
+}
+
+// uiOrgOAuthClientDelete removes an org's OAuth client for a provider
+// (org-admin only).
+func (s *Server) uiOrgOAuthClientDelete(c echo.Context) error {
+	orgID := c.Param("id")
+	back := "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients"
+	if !s.orgAdminForCaller(c, orgID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err := s.memory.DeleteDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType")); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back+"?deleted=1")
+	return nil
+}
+
+// dsScopesFromForm splits a scopes textarea into a list, accepting one scope per
+// line or comma-separated on a single line.
+func dsScopesFromForm(raw string) []string {
+	var scopes []string
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' }) {
+		if sc := strings.TrimSpace(part); sc != "" {
+			scopes = append(scopes, sc)
+		}
+	}
+	return scopes
+}
+
+// dsScopesText renders a scopes list as one-per-line textarea content.
+func dsScopesText(scopes []string) string {
+	return strings.Join(scopes, "\n")
+}
+
+// dsOAuthClientsSubtitle builds the org clients page subtitle from the org name.
+func dsOAuthClientsSubtitle(orgName string) string {
+	if orgName != "" {
+		return "OAuth client credentials for " + orgName + ", used when connecting providers with OAuth."
+	}
+	return "OAuth client credentials, used when connecting providers with OAuth."
+}
+
+// dsResourceStepTitle is the provider-driven heading for the resource step.
+func dsResourceStepTitle(src DSIntegration) string {
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		return "Choose a Drive folder"
+	}
+	return "Choose a resource (repository or folder)"
+}
+
+// dsResourceStepDescription is the provider-driven prompt for the resource step.
+func dsResourceStepDescription(src DSIntegration) string {
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		return "Select the Drive folder to sync into this project."
+	}
+	return "Select the repository or folder to sync into this project."
+}
+
+// dsResourceUseLabel is the submit label for a resource row, provider-driven.
+func dsResourceUseLabel(src DSIntegration) string {
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		return "Use this folder"
+	}
+	return "Use this resource"
+}
+
+// dsStrategyOptions lists a provider's advertised org-selectable OAuth
+// strategies, keeping a currently-stored value selectable even when the provider
+// no longer advertises it.
+func dsStrategyOptions(p DSProvider, current string) []string {
+	if curr := strings.TrimSpace(current); curr != "" && !slices.Contains(p.Strategies, curr) {
+		return append(slices.Clone(p.Strategies), curr)
+	}
+	return p.Strategies
+}
+
+// dsConfigString reads a string value from a non-secret config map, returning ""
+// when absent or not a string.
+func dsConfigString(cfg map[string]any, key string) string {
+	if v, ok := cfg[key].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // uiDataSourceTestConfig tests an unsaved config from the connect form and
@@ -323,16 +642,21 @@ func (s *Server) uiDataSourceTestConfig(c echo.Context) error {
 	return nil
 }
 
+// dsConnectFormPath is the google_drive credentials connect form. The chooser at
+// /data-sources/new now precedes it, so a form validation error bounces back
+// here (with ?err=) rather than to the chooser the user just came from.
+const dsConnectFormPath = "/data-sources/new?providerType=" + dsProviderTypeGoogleDrive + "&method=credentials"
+
 // uiDataSourceCreate handles the connect form (PRG): it creates the source and
 // redirects to its detail page, or back to the form with ?err=.
 func (s *Server) uiDataSourceCreate(c echo.Context) error {
 	cfg := dsConfigFromForm(c)
 	if msg := validateDSConfig(cfg); msg != "" {
-		return redirectWithError(c, "/data-sources/new", errors.New(msg))
+		return redirectWithError(c, dsConnectFormPath, errors.New(msg))
 	}
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
-		return redirectWithError(c, "/data-sources/new", errors.New("name is required"))
+		return redirectWithError(c, dsConnectFormPath, errors.New("name is required"))
 	}
 	mode := cmp.Or(c.FormValue("sync_mode"), "manual")
 	req := &DSCreateIntegrationRequest{
@@ -347,7 +671,7 @@ func (s *Server) uiDataSourceCreate(c echo.Context) error {
 	}
 	item, err := s.memory.CreateDSIntegration(c.Request().Context(), req)
 	if err != nil {
-		return redirectWithError(c, "/data-sources/new", err)
+		return redirectWithError(c, dsConnectFormPath, err)
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(item.ID)+"?created=1")
 	return nil

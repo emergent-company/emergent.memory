@@ -51,11 +51,17 @@ func (s *SourceSyncSuite) SetupSuite() {
 	s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// newService builds a sources.Service on the test transaction with a real key.
-func (s *SourceSyncSuite) newService() *sources.Service {
+// newServiceWith builds a sources.Service on the test transaction with a real
+// key and the given provider registry.
+func (s *SourceSyncSuite) newServiceWith(registry *sources.Registry) *sources.Service {
 	cfg := &config.Config{}
 	cfg.LLMProvider.EncryptionKey = hex.EncodeToString(s.testKey)
-	return sources.NewService(sources.NewRepository(s.DB(), s.log), cfg, s.log)
+	return sources.NewService(sources.NewRepository(s.DB(), s.log), cfg, s.log, registry)
+}
+
+// newService builds a sources.Service on the test transaction with a real key.
+func (s *SourceSyncSuite) newService() *sources.Service {
+	return s.newServiceWith(sources.NewDefaultRegistry())
 }
 
 func (s *SourceSyncSuite) newDocsService() *documents.Service {
@@ -148,11 +154,16 @@ func (f *fakeDrive) fetched() []string {
 	return append(f.exported(), f.downloaded()...)
 }
 
+func (f *fakeDrive) TestConnection(_ context.Context) error { return nil }
+
+func (f *fakeDrive) ListFolders(_ context.Context, _ string) ([]gdrive.Item, error) { return nil, nil }
+
 func (s *SourceSyncSuite) newWorker(fake *fakeDrive) *sources.SyncWorker {
-	factory := func(_ context.Context, _ gdrive.Credentials) (sources.DriveClient, error) {
+	provider := sources.NewGoogleDriveProvider(func(_ context.Context, _ gdrive.Credentials) (sources.DriveTransport, error) {
 		return fake, nil
-	}
-	return sources.NewSyncWorker(s.newService(), s.newDocsService(), factory, nil, nil, s.log)
+	})
+	svc := s.newServiceWith(sources.NewRegistry(provider))
+	return sources.NewSyncWorker(svc, s.newDocsService(), nil, nil, s.log)
 }
 
 // ---------------------------------------------------------------------------

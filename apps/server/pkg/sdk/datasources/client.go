@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,12 +52,13 @@ func (c *Client) SetContext(orgID, projectID string) {
 
 // Provider represents an available data source provider.
 type Provider struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	SourceType  string `json:"sourceType"`
-	IconURL     string `json:"iconUrl,omitempty"`
-	Available   bool   `json:"available"`
+	Type        string   `json:"type"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	SourceType  string   `json:"sourceType"`
+	IconURL     string   `json:"iconUrl,omitempty"`
+	Available   bool     `json:"available"`
+	AuthMethods []string `json:"authMethods,omitempty"`
 }
 
 // ProviderSchema represents the configuration schema for a provider.
@@ -64,6 +66,39 @@ type ProviderSchema struct {
 	Type       string                 `json:"type"`
 	Properties map[string]interface{} `json:"properties"`
 	Required   []string               `json:"required,omitempty"`
+}
+
+// OAuthAuthorizeRequest is the optional input for starting an OAuth connect.
+type OAuthAuthorizeRequest struct {
+	Config map[string]interface{} `json:"config,omitempty"`
+	Scopes []string               `json:"scopes,omitempty"`
+}
+
+// OAuthAuthorizeResponse is the result of starting an OAuth connect.
+type OAuthAuthorizeResponse struct {
+	AuthorizeURL string `json:"authorizeUrl"`
+}
+
+// OAuthClientConfig is an org-scoped OAuth client config (secret redacted/never returned).
+type OAuthClientConfig struct {
+	ProviderType string                 `json:"providerType"`
+	ClientID     string                 `json:"clientId"`
+	Scopes       []string               `json:"scopes,omitempty"`
+	Strategy     string                 `json:"strategy,omitempty"`
+	Configured   bool                   `json:"configured"`
+	CreatedAt    time.Time              `json:"createdAt"`
+	UpdatedAt    time.Time              `json:"updatedAt"`
+	Config       map[string]interface{} `json:"config,omitempty"`
+}
+
+// SetOAuthClientRequest is the write shape for an org OAuth client config.
+// The client secret is write-only; on update an empty ClientSecret preserves the stored one.
+type SetOAuthClientRequest struct {
+	ClientID     string                 `json:"clientId"`
+	ClientSecret string                 `json:"clientSecret"`
+	Scopes       []string               `json:"scopes,omitempty"`
+	Strategy     string                 `json:"strategy,omitempty"`
+	Config       map[string]interface{} `json:"config,omitempty"`
 }
 
 // Integration represents a data source integration.
@@ -736,4 +771,179 @@ func (c *Client) CancelSyncJob(ctx context.Context, integrationID, jobID string)
 	}
 
 	return &result, nil
+}
+
+// --- OAuth Connect ---
+
+// StartOAuth starts an OAuth connect for a provider.
+// GET /api/data-source-integrations/providers/:providerType/oauth/authorize
+func (c *Client) StartOAuth(ctx context.Context, providerType string, oauthReq *OAuthAuthorizeRequest) (*OAuthAuthorizeResponse, error) {
+	var bodyReader io.Reader
+	if oauthReq != nil {
+		body, err := json.Marshal(oauthReq)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/providers/"+url.PathEscape(providerType)+"/oauth/authorize", bodyReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if oauthReq != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result OAuthAuthorizeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// OAuthCallbackURL builds the OAuth callback URL for a provider.
+func (c *Client) OAuthCallbackURL(baseURL, providerType string) string {
+	return strings.TrimRight(baseURL, "/") + "/api/data-source-integrations/oauth/" + url.PathEscape(providerType) + "/callback"
+}
+
+// --- Org OAuth Client Config ---
+
+// ListOrgOAuthClients returns all OAuth client configs for an org.
+// GET /api/orgs/:orgID/data-source-integrations/oauth-clients
+func (c *Client) ListOrgOAuthClients(ctx context.Context, orgID string) ([]OAuthClientConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-clients", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result []OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetOrgOAuthClient returns a specific OAuth client config for an org.
+// GET /api/orgs/:orgID/data-source-integrations/oauth-clients/:providerType
+func (c *Client) GetOrgOAuthClient(ctx context.Context, orgID, providerType string) (*OAuthClientConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// UpsertOrgOAuthClient creates or updates an OAuth client config for an org.
+// PUT /api/orgs/:orgID/data-source-integrations/oauth-clients/:providerType
+func (c *Client) UpsertOrgOAuthClient(ctx context.Context, orgID, providerType string, req *SetOAuthClientRequest) (*OAuthClientConfig, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteOrgOAuthClient deletes an OAuth client config for an org.
+// DELETE /api/orgs/:orgID/data-source-integrations/oauth-clients/:providerType
+// Returns 204 No Content on success.
+func (c *Client) DeleteOrgOAuthClient(ctx context.Context, orgID, providerType string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
 }

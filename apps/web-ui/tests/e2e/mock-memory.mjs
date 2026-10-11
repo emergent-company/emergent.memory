@@ -193,26 +193,72 @@ const dsProviders = [
     description: "Sync documents from a Google Drive folder.",
     sourceType: "drive",
     available: true,
+    authMethods: ["oauth", "credentials"],
+    strategies: ["drive.file", "drive.readonly"],
+  },
+  {
+    type: "github",
+    name: "GitHub",
+    description: "Sync documentation from a GitHub repository.",
+    sourceType: "repo",
+    available: true,
+    authMethods: ["oauth", "credentials"],
   },
 ];
 
-const dsProviderSchema = {
-  type: "google_drive",
-  properties: {
-    folder_id: { type: "string", description: "The Drive folder to sync." },
-    shared_drive_id: { type: "string" },
-    mime_types: { type: "array" },
-    recursive: { type: "boolean" },
-    client_id: { type: "string" },
-    client_secret: { type: "string" },
-    refresh_token: { type: "string" },
+// Per-provider config schemas (the connect form is schema-driven). The
+// google_drive schema keeps the credentials-fallback fields so the manual
+// connect form still renders them; github carries its repo/paths/ref contract.
+const dsSchemas = {
+  google_drive: {
+    type: "google_drive",
+    properties: {
+      folder_id: { type: "string", description: "The Drive folder to sync." },
+      shared_drive_id: { type: "string" },
+      mime_types: { type: "array" },
+      recursive: { type: "boolean" },
+      client_id: { type: "string" },
+      client_secret: { type: "string" },
+      refresh_token: { type: "string" },
+    },
+    required: ["folder_id", "refresh_token"],
   },
-  required: ["folder_id", "refresh_token"],
+  github: {
+    type: "github",
+    properties: {
+      repo: { type: "string" },
+      paths: { type: "array" },
+      ref: { type: "string" },
+    },
+    required: ["repo"],
+  },
 };
 
 const dsSourceTypes = [{ sourceType: "drive", documentCount: 3 }];
 
-let dsSources = []; // [{ row, config }] — config is server-side only.
+// Seeded with the source the OAuth bounce-back lands on (`connected=s1`), so the
+// OAuth callback → detail flow resolves. Specs that create their own sources are
+// unaffected — they filter the list by name.
+let dsSources = [
+  {
+    row: {
+      id: "s1",
+      projectId: "p1",
+      name: "Team Drive",
+      providerType: "google_drive",
+      sourceType: "drive",
+      syncMode: "manual",
+      syncIntervalMinutes: null,
+      lastSyncedAt: null,
+      nextSyncAt: null,
+      status: "active",
+      errorCount: 0,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    },
+    config: {},
+  },
+]; // [{ row, config }] — config is server-side only.
 let dsJobsBySource = {}; // sourceId -> [job], newest first.
 let dsCounter = 1;
 let dsJobCounter = 1;
@@ -543,6 +589,68 @@ const server = http.createServer((req, res) => {
     return json(res, { skills: [] });
   }
 
+  // --- data-source integrations (provider-generic OAuth connect) ------------
+  //
+  // Mirrors the provider-generic data-source connect surface: the provider
+  // catalog (with OAuth + credentials auth methods and org-selectable scope
+  // strategies), per-provider config schemas, a seeded source for the OAuth
+  // round trip, and the org-scoped OAuth-client config (write-only secret).
+
+  // Org access tree the shell + org-admin gating read (GET /api/user/orgs-and-projects).
+  if (path === "/api/user/orgs-and-projects" && req.method === "GET") {
+    return json(res, [
+      { id: "org-1", name: "E2E Org", role: "org_admin", projects: [{ id: "p1", name: "E2E Main", orgId: "org-1", role: "project_admin" }] },
+    ]);
+  }
+
+  // Compiled schema types (best-effort shell call; empty is fine).
+  if (path === "/api/schemas/projects/p1/compiled-types" && req.method === "GET") {
+    return json(res, { objectTypes: [], relationshipTypes: [] });
+  }
+
+  // Org record (GET /api/orgs/:id), used by the org OAuth-clients page header.
+  if (path === "/api/orgs/org-1" && req.method === "GET") {
+    return json(res, { id: "org-1", name: "E2E Org" });
+  }
+
+  // OAuth authorize: the gateway's UI flow (StartDSOAuth) issues a GET here and
+  // follows the returned authorizeUrl; the JSON API handler is POST. Both are
+  // served the same bounce-back URL so the browser lands on the gateway's
+  // /data-sources/oauth/callback, which redirects to the connected source.
+  const dsAuthorizeMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/oauth\/authorize$/);
+  if (dsAuthorizeMatch && (req.method === "GET" || req.method === "POST")) {
+    return json(res, { authorizeUrl: "http://localhost:8097/data-sources/oauth/callback?connected=s1" });
+  }
+
+  // --- org OAuth-client config (org-admin only; write-only secret) -----------
+
+  const dsOrgClientsList = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-clients$/);
+  if (dsOrgClientsList && req.method === "GET") {
+    return json(res, []);
+  }
+
+  const dsOrgClientMatch = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-clients\/([^/]+)$/);
+  if (dsOrgClientMatch && req.method === "GET") {
+    return json(res, { providerType: dsOrgClientMatch[2], clientId: "", configured: false });
+  }
+  if (dsOrgClientMatch && req.method === "PUT") {
+    return readBody(req, (payload) => {
+      // Echo the saved client WITHOUT the secret (write-only, never returned).
+      return json(res, {
+        providerType: dsOrgClientMatch[2],
+        clientId: String(payload.clientId || ""),
+        strategy: String(payload.strategy || ""),
+        configured: true,
+        createdAt: "2026-09-01T00:00:00Z",
+        updatedAt: "2026-09-01T00:00:00Z",
+      });
+    });
+  }
+  if (dsOrgClientMatch && req.method === "DELETE") {
+    res.statusCode = 204;
+    return res.end();
+  }
+
   // --- legacy chat surface (kept for the existing smoke path) ----------------
 
   if (path === "/api/v1/models" && req.method === "GET") {
@@ -619,11 +727,12 @@ const server = http.createServer((req, res) => {
 
   const dsSchemaMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/schema$/);
   if (dsSchemaMatch && req.method === "GET") {
-    if (dsSchemaMatch[1] !== "google_drive") {
+    const schema = dsSchemas[dsSchemaMatch[1]];
+    if (!schema) {
       res.statusCode = 404;
       return json(res, { error: { code: "not_found", message: "unknown provider" } });
     }
-    return json(res, dsProviderSchema);
+    return json(res, schema);
   }
 
   if (path === "/api/data-source-integrations/source-types" && req.method === "GET") {

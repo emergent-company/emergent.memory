@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -187,5 +188,109 @@ func TestListDocumentVersions(t *testing.T) {
 	}
 	if versions[0].SourceRevisionID == nil || *versions[0].SourceRevisionID != "r1" {
 		t.Errorf("v1 revision = %+v", versions[0].SourceRevisionID)
+	}
+}
+
+// --- OAuth connect + org OAuth-client config (§4.2) ---
+
+func TestStartDSOAuth(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"authorizeUrl":"https://accounts.example/a?state=s"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	resp, err := m.StartDSOAuth(context.Background(), "google_drive", map[string]any{"name": "Team Drive"}, []string{"scope-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/api/data-source-integrations/providers/google_drive/oauth/authorize" {
+		t.Errorf("method=%q path=%q", gotMethod, gotPath)
+	}
+	if resp.AuthorizeURL != "https://accounts.example/a?state=s" {
+		t.Errorf("authorizeUrl = %q", resp.AuthorizeURL)
+	}
+	cfg, _ := gotBody["config"].(map[string]any)
+	if cfg["name"] != "Team Drive" {
+		t.Errorf("body config = %+v", gotBody)
+	}
+}
+
+func TestListDSOAuthClients(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"providerType":"google_drive","clientId":"cid","configured":true,"strategy":"drive.file","createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}]`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	items, err := m.ListDSOAuthClients(context.Background(), "org-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/orgs/org-1/data-source-integrations/oauth-clients" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(items) != 1 || items[0].ClientID != "cid" || !items[0].Configured {
+		t.Fatalf("items = %+v", items)
+	}
+	// The DTO must never carry the client secret.
+	b, _ := json.Marshal(items)
+	if strings.Contains(string(b), "clientSecret") {
+		t.Errorf("org OAuth client JSON leaks a secret field: %s", b)
+	}
+}
+
+func TestUpsertDSOAuthClient(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody DSSetOAuthClientRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"providerType":"google_drive","clientId":"cid","configured":true,"createdAt":"2026-09-01T00:00:00Z","updatedAt":"2026-09-01T00:00:00Z"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	resp, err := m.UpsertDSOAuthClient(context.Background(), "org-1", "google_drive", &DSSetOAuthClientRequest{ClientID: "cid", ClientSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/api/orgs/org-1/data-source-integrations/oauth-clients/google_drive" {
+		t.Errorf("method=%q path=%q", gotMethod, gotPath)
+	}
+	if gotBody.ClientID != "cid" || gotBody.ClientSecret != "secret" {
+		t.Errorf("body = %+v", gotBody)
+	}
+	if !resp.Configured || resp.ProviderType != "google_drive" {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+func TestDeleteDSOAuthClient(t *testing.T) {
+	var gotMethod, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.DeleteDSOAuthClient(context.Background(), "org-1", "google_drive"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodDelete || gotPath != "/api/orgs/org-1/data-source-integrations/oauth-clients/google_drive" {
+		t.Errorf("method=%q path=%q", gotMethod, gotPath)
 	}
 }

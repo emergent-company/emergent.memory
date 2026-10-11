@@ -400,7 +400,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 
 	// Register sources routes
 	sourcesRepo := sources.NewRepository(db, log)
-	sourcesSvc := sources.NewService(sourcesRepo, testDB.Config, log)
+	sourcesSvc := sources.NewService(sourcesRepo, testDB.Config, log, sources.NewDefaultRegistry())
 	sourcesHandler := sources.NewHandler(sourcesSvc)
 	sources.RegisterRoutes(e, sourcesHandler, authMiddleware)
 

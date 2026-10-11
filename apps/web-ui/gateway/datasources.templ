@@ -130,77 +130,205 @@ templ dsSourceStatusBadge(status string) {
 
 // --- connect form ---
 
-// DataSourceNewPage renders the connect form for the google_drive provider. The
-// config and credential inputs are rendered from the provider schema.
-templ DataSourceNewPage(configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
+// DataSourceNewPage renders the provider-driven connect surface. With no
+// selection it renders the chooser (one selectable card per catalog provider);
+// with a selected provider it renders either the OAuth confirmation panel or the
+// write-only credentials form the provider advertises. The provider list and
+// each connect action come from the catalog, never a hard-coded provider list.
+// loadErr surfaces a provider-list or schema fetch failure.
+templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Integrations", "Connect a data source", "Sync documents from a Google Drive folder into this project.")
-		@flashToasts("", flashErr)
-		if loadErr != nil {
-			@pageError("Provider schema unavailable", loadErr)
-		} else {
-			<form method="post" action="/data-sources/new" data-testid="ds-connect-form" class="flex flex-col gap-4">
-				@components.PanelCard("", nil) {
-					<h2 class="text-base font-semibold">Source</h2>
-					<p class="text-muted mt-1 text-sm">Name this connection and choose how it syncs.</p>
-					<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-						<div class="flex flex-col gap-1">
-							<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
-							<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder="Team Drive"/>
-						</div>
-						@dsSyncModeSelect("manual", nil)
-					</div>
-				}
-				@components.PanelCard("", nil) {
-					<h2 class="text-base font-semibold">Folder scope</h2>
-					<p class="text-muted mt-1 text-sm">The folder to sync, plus optional filters.</p>
-					<div class="mt-3">
-						@dsConfigFieldInputs(configFields)
-					</div>
-				}
-				@components.PanelCard("", nil) {
-					<h2 class="text-base font-semibold">Credentials</h2>
-					<p class="text-muted mt-1 text-sm">OAuth2 credentials are stored encrypted and are never shown again.</p>
-					<div class="mt-3">
-						@dsCredentialFieldInputs(credentialFields)
-					</div>
-				}
-				<div id="ds-test-result" data-testid="ds-test-result"></div>
-				<div class="flex flex-wrap items-center gap-2">
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--plus",
-					}) {
-						Connect
-					}
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeButton,
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--plug-zap",
-						Attrs: templ.Attributes{
-							"data-testid": "ds-test-config",
-							"hx-post":     "/data-sources/test-config",
-							"hx-include":  "closest form",
-							"hx-target":   "#ds-test-result",
-							"hx-swap":     "innerHTML",
-						},
-					}) {
-						Test connection
-					}
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources",
-						Variant: ui.ButtonGhost,
-						Size:    ui.ButtonSM,
-					}) {
-						Cancel
+		if selected == nil {
+			@pageHeader("Integrations", "Connect a data source", "Choose how to connect an external system and sync its documents into this project.")
+			@flashToasts("", flashErr)
+			if loadErr != nil {
+				@pageError("Providers unavailable", loadErr)
+			} else if len(providers) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--cloud",
+					Title:       "No providers available",
+					Description: "No data-source providers are available to connect right now.",
+					Bordered:    true,
+					Class:       "py-12",
+				})
+			} else {
+				<div class="flex flex-col gap-4" data-testid="ds-provider-chooser">
+					for _, p := range providers {
+						@dsProviderChoice(p)
 					}
 				</div>
-			</form>
+			}
+		} else if selected.DSProviderSupportsOAuth() {
+			@pageHeader("Integrations", "Connect with "+selected.Name, "Authorize "+selected.Name+" for this project.")
+			@flashToasts("", flashErr)
+			@dsOAuthConnectPanel(*selected)
+		} else if selected.DSProviderSupportsCredentials() {
+			@dsCredentialsConnectPage(*selected, configFields, credentialFields, loadErr, flashErr)
+		} else {
+			@pageHeader("Integrations", "Connect a data source", "This provider does not advertise a supported connect method.")
+			@flashToasts("", flashErr)
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--alert-triangle",
+				Message: "This provider cannot be connected yet.",
+			})
 		}
+	}
+}
+
+// dsProviderChoice is one selectable provider card in the chooser. It renders
+// exactly the connect actions the provider advertises (OAuth and/or credentials),
+// so a new catalog provider needs no code change here.
+templ dsProviderChoice(p DSProvider) {
+	@components.PanelCard("", nil) {
+		<div class="flex flex-col gap-3" data-testid="ds-provider-choice">
+			<div class="flex items-start gap-3">
+				@ui.IconTile("lucide--cloud", ui.IconTileProps{Tone: "info"})
+				<div class="min-w-0 grow">
+					<h2 class="text-base font-semibold">{ p.Name }</h2>
+					if p.Description != "" {
+						<p class="text-muted mt-1 text-sm">{ p.Description }</p>
+					}
+				</div>
+			</div>
+			<div class="flex flex-wrap items-center gap-2">
+				if p.DSProviderSupportsOAuth() {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plug-zap",
+						Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect"},
+					}) {
+						Connect with { p.Name }
+					}
+				}
+				if p.DSProviderSupportsCredentials() {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=credentials",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--key-round",
+						Attrs:   templ.Attributes{"data-testid": "ds-credentials-connect"},
+					}) {
+						Enter credentials
+					}
+				}
+			</div>
+		</div>
+	}
+}
+
+// dsOAuthConnectPanel is the confirmation step before the browser is sent to the
+// provider. No credentials are pasted: the provider authorizes the connection
+// and the memory callback stores it on the way back.
+templ dsOAuthConnectPanel(p DSProvider) {
+	@components.PanelCard("", nil) {
+		<div class="flex items-start gap-3">
+			@ui.IconTile("lucide--plug-zap", ui.IconTileProps{Tone: "info"})
+			<div>
+				<h2 class="text-base font-semibold">Authorize with { p.Name }</h2>
+				<p class="text-muted mt-1 text-sm">Your browser will be sent to { p.Name } to authorize access for this project. No credentials are pasted here — the connection is stored once { p.Name } redirects you back.</p>
+			</div>
+		</div>
+		<div class="mt-4 flex flex-wrap items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plug-zap",
+				Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect"},
+			}) {
+				Connect with { p.Name }
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/data-sources",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+			}) {
+				Cancel
+			}
+		</div>
+	}
+}
+
+// dsCredentialsConnectPage renders the write-only credentials form for a
+// provider that advertises the credentials method (the pre-OAuth Google Drive
+// path). Config and credential inputs come from the provider schema; the hidden
+// providerType carries the chosen provider through the POST.
+templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
+	@pageHeader("Integrations", "Connect a data source", "Sync documents from "+p.Name+" into this project.")
+	@flashToasts("", flashErr)
+	if loadErr != nil {
+		@pageError("Provider schema unavailable", loadErr)
+	} else {
+		<form method="post" action="/data-sources/new" data-testid="ds-connect-form" class="flex flex-col gap-4">
+			<input type="hidden" name="providerType" value={ p.Type }/>
+			@components.PanelCard("", nil) {
+				<h2 class="text-base font-semibold">Source</h2>
+				<p class="text-muted mt-1 text-sm">Name this connection and choose how it syncs.</p>
+				<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div class="flex flex-col gap-1">
+						<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
+						<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder="Team Drive"/>
+					</div>
+					@dsSyncModeSelect("manual", nil)
+				</div>
+			}
+			@components.PanelCard("", nil) {
+				<h2 class="text-base font-semibold">Folder scope</h2>
+				<p class="text-muted mt-1 text-sm">The folder to sync, plus optional filters.</p>
+				<div class="mt-3">
+					@dsConfigFieldInputs(configFields)
+				</div>
+			}
+			@components.PanelCard("", nil) {
+				<h2 class="text-base font-semibold">Credentials</h2>
+				<p class="text-muted mt-1 text-sm">OAuth2 credentials are stored encrypted and are never shown again.</p>
+				<div class="mt-3">
+					@dsCredentialFieldInputs(credentialFields)
+				</div>
+			}
+			<div id="ds-test-result" data-testid="ds-test-result"></div>
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+				}) {
+					Connect
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-test-config",
+						"hx-post":     "/data-sources/test-config",
+						"hx-include":  "closest form",
+						"hx-target":   "#ds-test-result",
+						"hx-swap":     "innerHTML",
+					},
+				}) {
+					Test connection
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+				}) {
+					Cancel
+				}
+			</div>
+		</form>
 	}
 }
 

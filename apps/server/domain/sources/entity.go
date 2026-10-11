@@ -41,13 +41,22 @@ const (
 
 // Provider type identifiers.
 const (
-	// ProviderTypeGoogleDrive is the only supported data-source provider in this
-	// iteration.
+	// ProviderTypeGoogleDrive syncs documents from a Google Drive folder.
 	ProviderTypeGoogleDrive = "google_drive"
+
+	// ProviderTypeGitHub syncs documentation from a GitHub repository. The
+	// provider is a readiness stub in this iteration: catalog, config schema,
+	// credential handling, and OAuth are wired, while enumeration/sync ship in a
+	// follow-up change (§7.3).
+	ProviderTypeGitHub = "github"
 
 	// SourceTypeDrive is the source-type category advertised for the Google
 	// Drive provider and stamped on the SDK Integration.sourceType field.
 	SourceTypeDrive = "drive"
+
+	// SourceTypeRepo is the source-type category advertised for the GitHub
+	// provider (and future repository-backed providers).
+	SourceTypeRepo = "repo"
 )
 
 // Source is the kb.sources row model. EncryptedCredentials is deliberately
@@ -76,12 +85,16 @@ type Source struct {
 
 // Provider mirrors pkg/sdk/datasources.Provider — the provider-catalog entry.
 type Provider struct {
-	Type        string `json:"type"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	SourceType  string `json:"sourceType"`
-	IconURL     string `json:"iconUrl,omitempty"`
-	Available   bool   `json:"available"`
+	Type        string   `json:"type"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	SourceType  string   `json:"sourceType"`
+	IconURL     string   `json:"iconUrl,omitempty"`
+	Available   bool     `json:"available"`
+	AuthMethods []string `json:"authMethods,omitempty"`
+	// Strategies advertises the org-selectable OAuth scope strategies (design
+	// D6); empty when the provider's scopes are fixed.
+	Strategies []string `json:"strategies,omitempty"`
 }
 
 // ProviderSchema mirrors pkg/sdk/datasources.ProviderSchema.

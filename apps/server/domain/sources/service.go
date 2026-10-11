@@ -3,51 +3,87 @@ package sources
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"log/slog"
-	"strings"
+	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
-	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
-// driveClient is the narrow surface of the Drive transport used by connection
-// testing. *gdrive.Client satisfies it.
-type driveClient interface {
-	TestConnection(ctx context.Context) error
-}
-
-// driveClientFactory constructs a Drive client from decrypted credentials.
-// Injectable so tests can substitute a fake without any live Google call.
-type driveClientFactory func(ctx context.Context, creds gdrive.Credentials) (driveClient, error)
-
-// defaultDriveClientFactory builds a real Drive client from OAuth2 credentials.
-func defaultDriveClientFactory(ctx context.Context, creds gdrive.Credentials) (driveClient, error) {
-	return gdrive.New(ctx, creds)
-}
-
-// Service handles business logic for data sources.
+// Service handles business logic for data sources. It resolves providers from
+// the Registry and never branches on a concrete provider.
 type Service struct {
-	repo     *Repository
-	key      []byte // raw AES-256 key bytes (hex-decoded from config)
-	newDrive driveClientFactory
-	log      *slog.Logger
+	repo      *Repository
+	key       []byte // raw AES-256 key bytes (hex-decoded from config)
+	providers *Registry
+	log       *slog.Logger
+
+	oauthCfg     config.SourceOAuthConfig
+	oauthClients map[string]OAuthClient // deployment-default clients by provider
+	oauthHTTP    *http.Client
+
+	// orgOAuth resolves and manages org-scoped OAuth client configs. It defaults
+	// to the repository and is overridable in tests.
+	orgOAuth OrgOAuthClientStore
+}
+
+// ServiceOption customises a Service at construction (keeps the API setter-free).
+type ServiceOption func(*Service)
+
+// WithOAuthClients overrides the deployment-default OAuth clients by provider.
+func WithOAuthClients(clients map[string]OAuthClient) ServiceOption {
+	return func(s *Service) { s.oauthClients = clients }
+}
+
+// WithOAuthHTTPClient overrides the HTTP client used for token exchange.
+func WithOAuthHTTPClient(c *http.Client) ServiceOption {
+	return func(s *Service) {
+		if c != nil {
+			s.oauthHTTP = c
+		}
+	}
+}
+
+// WithOrgOAuthClientStore overrides the org OAuth client store (defaults to the
+// repository). Used by tests.
+func WithOrgOAuthClientStore(store OrgOAuthClientStore) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.orgOAuth = store
+		}
+	}
 }
 
 // NewService creates a new sources service. The credential-encryption key is
 // derived from config.Config.LLMProvider.EncryptionKey — the same config-sourced
-// key the provider domain uses — so provider credentials and Drive source
-// credentials share one operator-managed secret (LLM_ENCRYPTION_KEY).
-func NewService(repo *Repository, cfg *config.Config, log *slog.Logger) *Service {
+// key the provider domain uses — so provider credentials and source credentials
+// share one operator-managed secret (LLM_ENCRYPTION_KEY). The provider registry
+// is injected (fx supplies NewDefaultRegistry); a nil registry falls back to the
+// default set.
+func NewService(repo *Repository, cfg *config.Config, log *slog.Logger, registry *Registry, opts ...ServiceOption) *Service {
+	if registry == nil {
+		registry = NewDefaultRegistry()
+	}
 	s := &Service{
-		repo:     repo,
-		newDrive: defaultDriveClientFactory,
-		log:      log.With(logger.Scope("sources.svc")),
+		repo:         repo,
+		providers:    registry,
+		oauthClients: map[string]OAuthClient{},
+		oauthHTTP:    http.DefaultClient,
+		log:          log.With(logger.Scope("sources.svc")),
+	}
+	if repo != nil {
+		s.orgOAuth = repo
+	}
+	if cfg != nil {
+		s.oauthCfg = cfg.SourceOAuth
+		for provider, d := range cfg.SourceOAuth.OAuthClientsByProvider() {
+			s.oauthClients[provider] = OAuthClient{ClientID: d.ClientID, ClientSecret: d.ClientSecret}
+		}
 	}
 	if cfg != nil && cfg.LLMProvider.IsEncryptionConfigured() {
 		if key, err := hex.DecodeString(cfg.LLMProvider.EncryptionKey); err == nil {
@@ -56,63 +92,50 @@ func NewService(repo *Repository, cfg *config.Config, log *slog.Logger) *Service
 			s.log.Error("invalid credential encryption key", logger.Error(err))
 		}
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
 	return s
 }
 
+// Registry exposes the provider registry (wiring/inspection).
+func (s *Service) Registry() *Registry { return s.providers }
+
 // ---- Provider catalog + schema ----
 
-// ListProviders returns the available data-source providers. Today that is the
-// single google_drive provider.
+// ListProviders returns the registered data-source providers' catalog entries.
+// The catalog advertises each provider's auth method(s) so the connect UI can be
+// provider-agnostic (design D5).
 func (s *Service) ListProviders(ctx context.Context) []Provider {
-	return []Provider{{
-		Type:        ProviderTypeGoogleDrive,
-		Name:        "Google Drive",
-		Description: "Sync documents from a Google Drive folder into your knowledge base.",
-		SourceType:  SourceTypeDrive,
-		Available:   true,
-	}}
+	ps := s.providers.List()
+	out := make([]Provider, len(ps))
+	for i, p := range ps {
+		entry := p.Catalog()
+		methods := p.AuthMethods()
+		entry.AuthMethods = make([]string, len(methods))
+		for j, m := range methods {
+			entry.AuthMethods[j] = string(m)
+		}
+		if ss, ok := p.(ScopeStrategies); ok {
+			strategies := ss.Strategies()
+			entry.Strategies = make([]string, len(strategies))
+			for j, s := range strategies {
+				entry.Strategies[j] = string(s)
+			}
+		}
+		out[i] = entry
+	}
+	return out
 }
 
 // GetProviderSchema returns the config schema for a provider type.
 func (s *Service) GetProviderSchema(ctx context.Context, providerType string) (*ProviderSchema, error) {
-	if providerType != ProviderTypeGoogleDrive {
+	p, ok := s.providers.Get(providerType)
+	if !ok {
 		return nil, apperror.ErrNotFound
 	}
-	return &ProviderSchema{
-		Type: ProviderTypeGoogleDrive,
-		Properties: map[string]any{
-			"folder_id": map[string]any{
-				"type":        "string",
-				"description": "The Google Drive folder id to sync from.",
-			},
-			"shared_drive_id": map[string]any{
-				"type":        "string",
-				"description": "Optional shared-drive id when the folder lives in a shared drive.",
-			},
-			"mime_types": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Optional MIME-type allowlist; empty syncs all non-folder types.",
-			},
-			"recursive": map[string]any{
-				"type":        "boolean",
-				"description": "Recurse into subfolders when true.",
-			},
-			"client_id": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 client id (write-only).",
-			},
-			"client_secret": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 client secret (write-only).",
-			},
-			"refresh_token": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 refresh token (write-only).",
-			},
-		},
-		Required: []string{"folder_id"},
-	}, nil
+	schema := p.ConfigSchema()
+	return &schema, nil
 }
 
 // ListSourceTypes returns document counts grouped by source type for a project.
@@ -122,45 +145,76 @@ func (s *Service) ListSourceTypes(ctx context.Context, projectID uuid.UUID) ([]S
 
 // ---- Connection testing ----
 
-// TestConfig tests an unsaved provider config, building a Drive client from the
+// TestConfig tests an unsaved provider config, building a connector from the
 // credentials carried in the request config. It never persists anything.
 func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*TestConnectionResponse, error) {
-	if req.ProviderType != ProviderTypeGoogleDrive {
-		return nil, apperror.NewValidation("providerType must be google_drive")
+	p, ok := s.providers.Get(req.ProviderType)
+	if !ok {
+		return nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
 	}
-	if err := validateConfig(req.Config); err != nil {
+	if err := p.ValidateConfig(req.Config); err != nil {
 		return nil, err
 	}
-	creds := extractCredentials(req.Config)
-	if creds.RefreshToken == "" {
-		return nil, apperror.NewValidation("config.refresh_token is required")
+	creds, err := p.ExtractCredentials(req.Config)
+	if err != nil {
+		return nil, err
 	}
-	return s.testCredentials(ctx, creds)
+	return s.testProviderConnection(ctx, p, creds)
 }
 
 // TestConnection tests an existing source's connection by decrypting its stored
-// credentials and performing a bounded Drive call.
+// credentials and performing a bounded provider call.
 func (s *Service) TestConnection(ctx context.Context, projectID, id uuid.UUID) (*TestConnectionResponse, error) {
 	src, err := s.repo.GetByIDWithCredentials(ctx, id, projectID)
 	if err != nil {
 		return nil, err
 	}
+	p, ok := s.providers.Get(src.Provider)
+	if !ok {
+		return &TestConnectionResponse{Success: false, Message: "unknown provider: " + src.Provider}, nil
+	}
 	creds, err := s.decryptCredentials(src.EncryptedCredentials)
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
-	return s.testCredentials(ctx, creds)
+	return s.testProviderConnection(ctx, p, creds)
 }
 
-func (s *Service) testCredentials(ctx context.Context, creds gdrive.Credentials) (*TestConnectionResponse, error) {
-	client, err := s.newDrive(ctx, creds)
+func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials) (*TestConnectionResponse, error) {
+	connector, err := p.NewConnector(ctx, creds, ConnectorDeps{})
 	if err != nil {
-		return &TestConnectionResponse{Success: false, Message: "failed to initialize Drive client: " + err.Error()}, nil
+		return &TestConnectionResponse{Success: false, Message: "failed to initialize connector: " + err.Error()}, nil
 	}
-	if err := client.TestConnection(ctx); err != nil {
+	if err := connector.TestConnection(ctx); err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
 	return &TestConnectionResponse{Success: true, Message: "connection successful"}, nil
+}
+
+// ListResources lists the selectable sync targets for an existing source (a
+// Drive folder, a GitHub repository) by decrypting its stored credentials and
+// asking its provider. Backs the post-consent resource-selection step.
+func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID) ([]Resource, error) {
+	src, err := s.repo.GetByIDWithCredentials(ctx, id, projectID)
+	if err != nil {
+		return nil, err
+	}
+	p, ok := s.providers.Get(src.Provider)
+	if !ok {
+		return nil, apperror.NewValidation("unsupported providerType: " + src.Provider)
+	}
+	creds, err := s.decryptCredentials(src.EncryptedCredentials)
+	if err != nil {
+		return nil, err
+	}
+	resources, err := p.ListResources(ctx, creds, src.Config)
+	if err != nil {
+		return nil, apperror.NewValidation("list resources failed: " + err.Error())
+	}
+	if resources == nil {
+		resources = []Resource{}
+	}
+	return resources, nil
 }
 
 // ---- CRUD ----
@@ -173,7 +227,7 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 	}
 	out := make([]*Integration, len(srcs))
 	for i, src := range srcs {
-		out[i] = toIntegration(src)
+		out[i] = s.toIntegration(src)
 	}
 	return out, nil
 }
@@ -181,15 +235,16 @@ func (s *Service) List(ctx context.Context, projectID uuid.UUID) ([]*Integration
 // Create validates the request, encrypts the supplied credentials, strips the
 // credential keys from the persisted config, and stores the source.
 func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIntegrationRequest) (*Integration, error) {
-	if req.ProviderType != ProviderTypeGoogleDrive {
-		return nil, apperror.NewValidation("providerType must be google_drive")
+	p, ok := s.providers.Get(req.ProviderType)
+	if !ok {
+		return nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
 	}
-	if err := validateConfig(req.Config); err != nil {
+	if err := p.ValidateConfig(req.Config); err != nil {
 		return nil, err
 	}
-	creds := extractCredentials(req.Config)
-	if creds.RefreshToken == "" {
-		return nil, apperror.NewValidation("config.refresh_token is required")
+	creds, err := p.ExtractCredentials(req.Config)
+	if err != nil {
+		return nil, err
 	}
 	blob, err := s.encryptCredentials(creds)
 	if err != nil {
@@ -200,9 +255,9 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	src := &Source{
 		ID:                   uuid.New(),
 		ProjectID:            projectID,
-		Provider:             ProviderTypeGoogleDrive,
+		Provider:             req.ProviderType,
 		DisplayName:          req.Name,
-		Config:               stripCredentialKeys(req.Config),
+		Config:               stripCredentialKeys(req.Config, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		SyncPolicy:           "manual",
 		SyncIntervalMinutes:  req.SyncIntervalMinutes,
@@ -219,7 +274,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if err != nil {
 		return nil, err
 	}
-	return toIntegration(created), nil
+	return s.toIntegration(created), nil
 }
 
 // Get returns a single source scoped by project (cross-project → not-found).
@@ -228,7 +283,7 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 	if err != nil {
 		return nil, err
 	}
-	return toIntegration(src), nil
+	return s.toIntegration(src), nil
 }
 
 // Update applies a partial update. When the request config carries credential
@@ -257,13 +312,17 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		}
 	}
 	if req.Config != nil {
-		if err := validateConfig(req.Config); err != nil {
+		p, ok := s.providers.Get(existing.Provider)
+		if !ok {
+			return nil, apperror.NewValidation("unsupported providerType: " + existing.Provider)
+		}
+		if err := p.ValidateConfig(req.Config); err != nil {
 			return nil, err
 		}
-		if hasCredentialKeys(req.Config) {
-			creds := extractCredentials(req.Config)
-			if creds.RefreshToken == "" {
-				return nil, apperror.NewValidation("config.refresh_token is required")
+		if hasCredentialKeys(req.Config, p.CredentialKeys()) {
+			creds, err := p.ExtractCredentials(req.Config)
+			if err != nil {
+				return nil, err
 			}
 			blob, err := s.encryptCredentials(creds)
 			if err != nil {
@@ -271,14 +330,14 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			}
 			existing.EncryptedCredentials = blob
 		}
-		existing.Config = stripCredentialKeys(req.Config)
+		existing.Config = stripCredentialKeys(req.Config, p.CredentialKeys())
 	}
 
 	updated, err := s.repo.Update(ctx, existing)
 	if err != nil {
 		return nil, err
 	}
-	return toIntegration(updated), nil
+	return s.toIntegration(updated), nil
 }
 
 // Delete removes a source scoped by project.
@@ -286,15 +345,15 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID) error {
 	return s.repo.Delete(ctx, id, projectID)
 }
 
-// ---- Credential + config helpers ----
+// ---- Credential helpers ----
 
-// encryptCredentials encrypts the credential struct into a single self-contained
-// blob using the config-sourced key.
-func (s *Service) encryptCredentials(creds gdrive.Credentials) ([]byte, error) {
+// encryptCredentials encrypts a provider credential map into a single
+// self-contained blob using the config-sourced key.
+func (s *Service) encryptCredentials(creds Credentials) ([]byte, error) {
 	if len(s.key) == 0 {
 		return nil, apperror.NewInternal("credential encryption is not configured (LLM_ENCRYPTION_KEY missing)", nil)
 	}
-	blob, err := gdrive.EncryptCredentials(s.key, creds)
+	blob, err := encryptCredentialMap(s.key, creds)
 	if err != nil {
 		return nil, apperror.NewInternal("encrypt credentials", err)
 	}
@@ -302,13 +361,13 @@ func (s *Service) encryptCredentials(creds gdrive.Credentials) ([]byte, error) {
 }
 
 // decryptCredentials reverses encryptCredentials.
-func (s *Service) decryptCredentials(blob []byte) (gdrive.Credentials, error) {
+func (s *Service) decryptCredentials(blob []byte) (Credentials, error) {
 	if len(s.key) == 0 {
-		return gdrive.Credentials{}, fmt.Errorf("credential encryption is not configured (LLM_ENCRYPTION_KEY missing)")
+		return nil, apperror.NewInternal("credential encryption is not configured (LLM_ENCRYPTION_KEY missing)", nil)
 	}
-	creds, err := gdrive.DecryptCredentials(s.key, blob)
+	creds, err := decryptCredentialMap(s.key, blob)
 	if err != nil {
-		return gdrive.Credentials{}, fmt.Errorf("decrypt credentials: %w", err)
+		return nil, err
 	}
 	return creds, nil
 }
@@ -317,21 +376,9 @@ func (s *Service) now() time.Time {
 	return time.Now().UTC()
 }
 
-// credentialKeyNames are the config keys that carry OAuth2 credential material.
-var credentialKeyNames = []string{"client_id", "client_secret", "refresh_token"}
-
-// extractCredentials reads the OAuth2 credential fields out of a config map.
-func extractCredentials(cfg map[string]any) gdrive.Credentials {
-	var creds gdrive.Credentials
-	creds.ClientID, _ = cfg["client_id"].(string)
-	creds.ClientSecret, _ = cfg["client_secret"].(string)
-	creds.RefreshToken, _ = cfg["refresh_token"].(string)
-	return creds
-}
-
-// hasCredentialKeys reports whether any credential key is present in the config.
-func hasCredentialKeys(cfg map[string]any) bool {
-	for _, k := range credentialKeyNames {
+// hasCredentialKeys reports whether any of keys is present in the config.
+func hasCredentialKeys(cfg map[string]any, keys []string) bool {
+	for _, k := range keys {
 		if _, ok := cfg[k]; ok {
 			return true
 		}
@@ -339,56 +386,33 @@ func hasCredentialKeys(cfg map[string]any) bool {
 	return false
 }
 
-// stripCredentialKeys returns a copy of cfg with the credential keys removed so
-// no plaintext secret is ever stored in the config jsonb column.
-func stripCredentialKeys(cfg map[string]any) map[string]any {
+// stripCredentialKeys returns a copy of cfg with the given credential keys
+// removed so no plaintext secret is ever stored in the config jsonb column.
+func stripCredentialKeys(cfg map[string]any, keys []string) map[string]any {
 	out := make(map[string]any, len(cfg))
 	for k, v := range cfg {
-		skip := false
-		for _, ck := range credentialKeyNames {
-			if k == ck {
-				skip = true
-				break
-			}
+		if slices.Contains(keys, k) {
+			continue
 		}
-		if !skip {
-			out[k] = v
-		}
+		out[k] = v
 	}
 	return out
 }
 
-// validateConfig enforces the google_drive config contract: folder_id required,
-// mime_types (when present) an array of non-empty strings.
-func validateConfig(cfg map[string]any) error {
-	if folderID, _ := cfg["folder_id"].(string); strings.TrimSpace(folderID) == "" {
-		return apperror.NewValidation("config.folder_id is required")
-	}
-	if mimeTypes, ok := cfg["mime_types"].([]any); ok {
-		for _, m := range mimeTypes {
-			if s, ok := m.(string); !ok || strings.TrimSpace(s) == "" {
-				return apperror.NewValidation("config.mime_types must be an array of non-empty strings")
-			}
-		}
-	} else if mimeTypes, ok := cfg["mime_types"].([]string); ok {
-		for _, s := range mimeTypes {
-			if strings.TrimSpace(s) == "" {
-				return apperror.NewValidation("config.mime_types must be an array of non-empty strings")
-			}
-		}
-	}
-	return nil
-}
-
 // toIntegration maps a persisted source to the SDK integration shape. It never
-// includes credential material.
-func toIntegration(src *Source) *Integration {
+// includes credential material, and derives the source type from the provider
+// catalog so it stays provider-agnostic.
+func (s *Service) toIntegration(src *Source) *Integration {
+	sourceType := src.Provider
+	if p, ok := s.providers.Get(src.Provider); ok {
+		sourceType = p.Catalog().SourceType
+	}
 	return &Integration{
 		ID:                  src.ID.String(),
 		ProjectID:           src.ProjectID.String(),
 		Name:                src.DisplayName,
 		ProviderType:        src.Provider,
-		SourceType:          SourceTypeDrive,
+		SourceType:          sourceType,
 		SyncMode:            src.SyncPolicy,
 		SyncIntervalMinutes: src.SyncIntervalMinutes,
 		LastSyncedAt:        src.LastSyncedAt,

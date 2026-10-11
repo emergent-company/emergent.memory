@@ -30,6 +30,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/source-types", h.ListSourceTypes)
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.Get)
+	readGroup.GET("/:id/resources", h.ListResources)
 	readGroup.GET("/:id/sync-jobs", h.ListSyncJobs)
 	readGroup.GET("/:id/sync-jobs/latest", h.GetLatestSyncJob)
 	readGroup.GET("/:id/sync-jobs/:jobId", h.GetSyncJob)
@@ -43,9 +44,26 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("/:id/test-connection", h.TestConnection)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)
+	writeGroup.GET("/providers/:providerType/oauth/authorize", h.StartOAuth)
 
 	// Delete operation.
 	deleteGroup := g.Group("")
 	deleteGroup.Use(authMiddleware.RequireAPITokenScopes("documents:delete"))
 	deleteGroup.DELETE("/:id", h.Delete)
+
+	// OAuth callback: intentionally unauthenticated (the browser arrives
+	// cross-site from the provider). The single-use, short-lived, unguessable
+	// state is the trust anchor; project scope is carried in the state.
+	e.GET("/api/data-source-integrations/oauth/:providerType/callback", h.CompleteOAuth)
+
+	// Org-scoped OAuth client configs (§3.3). Registered under /api/orgs so the
+	// addressed org is explicit; only RequireAuth is applied at the route layer —
+	// org-admin authority is enforced inside the handler via the shared
+	// org-administration check (pkg/auth.CanAdministerOrg).
+	orgClients := e.Group("/api/orgs/:orgId/data-source-integrations/oauth-clients")
+	orgClients.Use(authMiddleware.RequireAuth())
+	orgClients.GET("", h.ListOrgOAuthClients)
+	orgClients.GET("/:providerType", h.GetOrgOAuthClient)
+	orgClients.PUT("/:providerType", h.UpsertOrgOAuthClient)
+	orgClients.DELETE("/:providerType", h.DeleteOrgOAuthClient)
 }

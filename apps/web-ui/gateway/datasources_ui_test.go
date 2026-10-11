@@ -3,6 +3,8 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -78,11 +80,53 @@ func TestRenderDataSourcesPage(t *testing.T) {
 }
 
 func TestRenderDataSourceNewPage(t *testing.T) {
-	config, creds := dsConfigFields(testDSSchema())
-	html := renderHTML(t, DataSourceNewPage(config, creds, nil, nil))
+	oauth := &DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth", "credentials"}}
+	credsOnly := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}
+
+	// Chooser: one card per provider, actions driven by advertised methods.
+	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, nil, nil))
+	for _, want := range []string{
+		"Connect a data source",
+		`data-testid="ds-provider-chooser"`,
+		`data-testid="ds-provider-choice"`,
+		"Google Drive", "GitHub",
+		`data-testid="ds-oauth-connect"`,
+		"/data-sources/oauth/start?providerType=google_drive",
+		"Connect with",
+		`data-testid="ds-credentials-connect"`,
+		"/data-sources/new?providerType=github",
+	} {
+		if !strings.Contains(chooser, want) {
+			t.Errorf("chooser missing %q", want)
+		}
+	}
+	if strings.Contains(chooser, `data-testid="ds-connect-form"`) {
+		t.Error("chooser must not render the credentials form")
+	}
+
+	// An OAuth provider renders the confirmation panel (no credentials form).
+	oauthOnly := &DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}
+	confirm := renderHTML(t, DataSourceNewPage([]DSProvider{*oauthOnly}, oauthOnly, nil, nil, nil, nil))
+	for _, want := range []string{
+		"Authorize with Google Drive",
+		`data-testid="ds-oauth-connect"`,
+		"/data-sources/oauth/start?providerType=google_drive",
+	} {
+		if !strings.Contains(confirm, want) {
+			t.Errorf("oauth confirmation missing %q", want)
+		}
+	}
+	if strings.Contains(confirm, `data-testid="ds-connect-form"`) {
+		t.Error("oauth confirmation must not render the credentials form")
+	}
+
+	// A credentials provider renders the write-only form from the schema.
+	config, credFields := dsConfigFields(testDSSchema())
+	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
 		`data-testid="ds-connect-form"`,
+		`name="providerType" value="github"`,
 		`data-testid="ds-field-name"`,
 		`data-testid="ds-field-folder_id"`,
 		`name="mime_types"`,
@@ -94,16 +138,183 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 		`name="sync_mode"`,
 		"Folder ID",
 	} {
-		if !strings.Contains(html, want) {
+		if !strings.Contains(form, want) {
 			t.Errorf("connect form missing %q", want)
 		}
 	}
 	// Credentials must never be prefilled.
-	if strings.Contains(html, `name="refresh_token" value`) {
+	if strings.Contains(form, `name="refresh_token" value`) {
 		t.Error("refresh_token must not be prefilled")
 	}
-	if strings.Contains(html, `name="client_secret" value`) {
+	if strings.Contains(form, `name="client_secret" value`) {
 		t.Error("client_secret must not be prefilled")
+	}
+}
+
+func TestRenderDataSourceResourceSelectPage(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
+
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, nil, "", nil))
+	for _, want := range []string{
+		`data-testid="ds-resource-step"`,
+		"Choose a Drive folder",
+		`data-testid="ds-resource-row"`,
+		"Reports", "Contracts",
+		`name="resource_id"`,
+		`value="f1"`,
+		`data-testid="ds-resource-select"`,
+		"Use this folder",
+		`href="/data-sources/s1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("resource step missing %q", want)
+		}
+	}
+
+	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, nil, "", nil))
+	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
+		t.Error("resource empty state missing")
+	}
+	if !strings.Contains(empty, "will be available") {
+		t.Error("resource empty copy missing")
+	}
+
+	// A non-Drive provider gets the generic copy and a generic action label.
+	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, nil, "", nil))
+	if !strings.Contains(generic, "Choose a resource (repository or folder)") {
+		t.Error("generic provider copy missing")
+	}
+	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, nil, "", nil))
+	if !strings.Contains(genericList, "Use this resource") {
+		t.Error("generic resource action label missing")
+	}
+
+	// A failed listing renders the empty/error state, not a broken list.
+	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, errTest, "", nil))
+	if !strings.Contains(errored, `data-testid="ds-resource-empty"`) {
+		t.Error("resource error state missing")
+	}
+}
+
+func TestRenderOrgOAuthClientsPage(t *testing.T) {
+	providers := []DSProvider{
+		{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth", "credentials"}},
+		{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}},
+	}
+	clients := map[string]DSOAuthClientConfig{
+		"google_drive": {ProviderType: "google_drive", ClientID: "cid-123", Scopes: []string{"scope.a", "scope.b"}, Strategy: "drive.file", Configured: true},
+	}
+	html := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, clients, nil, "", nil))
+	for _, want := range []string{
+		"Data source OAuth clients",
+		"Acme",
+		"Google Drive",
+		`data-testid="ds-oauth-client-form"`,
+		`action="/orgs/org-1/settings/oauth-clients/google_drive"`,
+		`data-testid="ds-field-client_id"`,
+		`name="client_id"`,
+		`value="cid-123"`,
+		`data-testid="ds-field-client_secret"`,
+		`type="password"`,
+		`data-testid="ds-field-scopes"`,
+		"scope.a",
+		"scope.b",
+		`data-testid="ds-field-strategy"`,
+		`value="drive.file"`,
+		`data-testid="ds-oauth-client-delete"`,
+		"Configured",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("org clients page missing %q", want)
+		}
+	}
+	// The client secret is write-only: never prefilled, even when configured.
+	if regexp.MustCompile(`name="client_secret"[^>]*value=`).MatchString(html) {
+		t.Error("client_secret must not be prefilled")
+	}
+	// A credentials-only provider is not rendered on the OAuth clients page.
+	if strings.Contains(html, "GitHub") {
+		t.Error("credentials-only provider must not appear on the OAuth clients page")
+	}
+
+	// An unconfigured provider shows no delete form.
+	unconfigured := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, nil, nil, "", nil))
+	if !strings.Contains(unconfigured, "Not configured") {
+		t.Error("unconfigured badge missing")
+	}
+	if strings.Contains(unconfigured, `data-testid="ds-oauth-client-delete"`) {
+		t.Error("unconfigured provider must not render a delete form")
+	}
+}
+
+func TestRenderOrgOAuthClientsPageStrategySelectAndPicker(t *testing.T) {
+	providers := []DSProvider{
+		{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}, Strategies: []string{"drive.file", "drive.readonly"}},
+	}
+	clients := map[string]DSOAuthClientConfig{
+		"google_drive": {
+			ProviderType: "google_drive",
+			ClientID:     "cid-123",
+			Strategy:     "drive.file",
+			Config:       map[string]any{"pickerDeveloperKey": "dev-key-1", "pickerAppId": "app-42"},
+			Configured:   true,
+		},
+	}
+	html := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme", providers, clients, nil, "", nil))
+	for _, want := range []string{
+		`<select`,
+		`name="strategy"`,
+		`data-testid="ds-field-strategy"`,
+		`value=""`,
+		"Provider default",
+		`<option value="drive.readonly"`,
+		`<option value="drive.file" selected`,
+		`data-testid="ds-field-picker_developer_key"`,
+		`name="picker_developer_key"`,
+		`value="dev-key-1"`,
+		`data-testid="ds-field-picker_app_id"`,
+		`name="picker_app_id"`,
+		`value="app-42"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("org clients strategy/picker page missing %q", want)
+		}
+	}
+	// The client secret stays write-only.
+	if regexp.MustCompile(`name="client_secret"[^>]*value=`).MatchString(html) {
+		t.Error("client_secret must not be prefilled")
+	}
+
+	// A provider without the drive.file strategy renders neither picker field.
+	noPicker := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme",
+		[]DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}, Strategies: []string{"repo"}}}, nil, nil, "", nil))
+	if strings.Contains(noPicker, `data-testid="ds-field-picker_developer_key"`) || strings.Contains(noPicker, `data-testid="ds-field-picker_app_id"`) {
+		t.Error("picker fields must not render without the drive.file strategy")
+	}
+	// A provider with no advertised strategies falls back to a text input.
+	noStrategies := renderHTML(t, OrgOAuthClientsPage("org-1", "Acme",
+		[]DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}}, nil, nil, "", nil))
+	if strings.Contains(noStrategies, `<select`) || !strings.Contains(noStrategies, `type="text"`) {
+		t.Error("a provider without strategies should keep a text strategy input")
+	}
+}
+
+func TestDSStrategyOptions(t *testing.T) {
+	p := DSProvider{Strategies: []string{"drive.file", "drive.readonly"}}
+	// The advertised list is returned as-is when the current value is in it.
+	opts := dsStrategyOptions(p, "drive.file")
+	if len(opts) != 2 || opts[0] != "drive.file" {
+		t.Fatalf("opts = %v", opts)
+	}
+	// A stored value the provider no longer advertises stays selectable.
+	opts = dsStrategyOptions(p, "legacy")
+	if !slices.Contains(opts, "legacy") || len(opts) != 3 {
+		t.Fatalf("opts = %v", opts)
+	}
+	// The input slice is never mutated.
+	if len(p.Strategies) != 2 {
+		t.Fatalf("provider strategies mutated: %v", p.Strategies)
 	}
 }
 
@@ -184,12 +395,19 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.POST("/data-sources/new", s.uiDataSourceCreate)
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
+	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
+	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
+	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)
 	e.POST("/data-sources/:id/update", s.uiDataSourceUpdate)
 	e.POST("/data-sources/:id/test-connection", s.uiDataSourceTestConnection)
 	e.POST("/data-sources/:id/sync", s.uiDataSourceTriggerSync)
 	e.POST("/data-sources/:id/sync-jobs/:jobId/cancel", s.uiDataSourceCancelSync)
 	e.POST("/data-sources/:id/delete", s.uiDataSourceDelete)
+	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
+	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
 	e.GET("/documents/:id/versions", s.uiDocumentVersions)
 	return e
 }
@@ -290,5 +508,275 @@ func TestUIDataSourceTestConfigFailurePartial(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), "invalid credentials") {
 		t.Errorf("failure partial = %s", rec.Body.String())
+	}
+}
+
+// --- OAuth connect (§5.1/5.2) ---
+
+func TestUIDataSourceOAuthStart(t *testing.T) {
+	f := &fakeMemory{dsOAuthAuthorizeResp: &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"}}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://accounts.example/authorize?state=s1" {
+		t.Errorf("location = %q", loc)
+	}
+	if f.dsLastOAuthProvider != "google_drive" {
+		t.Errorf("provider = %q", f.dsLastOAuthProvider)
+	}
+
+	// Missing providerType redirects back to the chooser with an error flash.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("missing provider status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/new?err=") {
+		t.Errorf("missing provider location = %q", loc)
+	}
+
+	// A backend failure redirects back to the chooser.
+	f.dsOAuthAuthorizeErr = errTest
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/new?err=") {
+		t.Errorf("failure location = %q", loc)
+	}
+}
+
+func TestUIDataSourceOAuthCallback(t *testing.T) {
+	e := newDSUIServer(&fakeMemory{})
+
+	// connected → redirect to the new source's detail with the created flash.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?connected=s1", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("connected status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?created=1" {
+		t.Errorf("connected location = %q", loc)
+	}
+
+	// oauth_error → redirect to the list with a real error message.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?oauth_error=denied", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("oauth_error status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources?err=") {
+		t.Errorf("oauth_error location = %q", loc)
+	}
+
+	// Neither param → plain redirect to the list.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback", nil))
+	if loc := rec.Header().Get("Location"); loc != "/data-sources" {
+		t.Errorf("bare callback location = %q", loc)
+	}
+
+	// The memory callback lands on /data-sources?connected=... directly.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources?connected=s1", nil))
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?created=1" {
+		t.Errorf("delegated callback location = %q", loc)
+	}
+}
+
+func TestUIDataSourceResourcesRoute(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-resource-step"`) || !strings.Contains(body, "Choose a Drive folder") {
+		t.Errorf("resource step body = %s", body)
+	}
+	if !strings.Contains(body, "Reports") {
+		t.Errorf("resource row missing: %s", body)
+	}
+}
+
+func TestUIDataSourceResourceSave(t *testing.T) {
+	// google_drive maps the picked resource to folder_id and redirects to ?updated=1.
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?updated=1" {
+		t.Errorf("location = %q", loc)
+	}
+	if f.dsSavedResourceID != "s1" || f.dsSavedResourceCfg["folder_id"] != "f1" {
+		t.Fatalf("save = %q %+v", f.dsSavedResourceID, f.dsSavedResourceCfg)
+	}
+
+	// github maps the picked resource to repo.
+	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s2", ProviderType: "github"}}}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s2/resources", strings.NewReader("resource_id=acme/repo"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if f.dsSavedResourceCfg["repo"] != "acme/repo" {
+		t.Fatalf("github save cfg = %+v", f.dsSavedResourceCfg)
+	}
+
+	// A missing resource id redirects back with an error and never reaches memory.
+	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("validation status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
+		t.Errorf("validation location = %q", loc)
+	}
+	if f.dsSavedResourceID != "" {
+		t.Error("memory must not be called without a resource id")
+	}
+
+	// A backend failure redirects back with an error.
+	f = &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}},
+		dsUpdateErr:    errTest,
+	}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
+		t.Errorf("failure location = %q", loc)
+	}
+}
+
+// --- org OAuth clients (§5.4) ---
+func orgOAuthAdminFake() *fakeMemory {
+	return &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+		dsProviders:     []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth", "credentials"}}},
+		dsOrgOAuthClients: []DSOAuthClientConfig{
+			{ProviderType: "google_drive", ClientID: "cid-123", Strategy: "drive.file", Config: map[string]any{"unmanaged": "keep-me"}, Configured: true},
+		},
+	}
+}
+
+func TestUIOrgOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
+	// Admin sees the page.
+	e := newDSUIServer(orgOAuthAdminFake())
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orgs/o1/settings/oauth-clients", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Google Drive") || !strings.Contains(body, "cid-123") {
+		t.Errorf("admin body = %s", body)
+	}
+
+	// A non-admin gets a 404 (hide, fail closed).
+	e = newDSUIServer(&fakeMemory{orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}}})
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/orgs/o1/settings/oauth-clients", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("non-admin status = %d, want 404", rec.Code)
+	}
+}
+
+func TestUIOrgOAuthClientUpsertValidationAndSuccess(t *testing.T) {
+	f := orgOAuthAdminFake()
+	e := newDSUIServer(f)
+
+	// Missing client id → 303 back with an error, memory untouched.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_secret=sec"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("validation status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/orgs/o1/settings/oauth-clients?err=") {
+		t.Errorf("validation location = %q", loc)
+	}
+	if f.dsUpsertedOAuthReq != nil {
+		t.Error("memory must not be called on validation failure")
+	}
+
+	// Success → 303 with the saved flash, request forwarded with the picker
+	// config merged over the stored (unmanaged) keys.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_id=cid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file&picker_developer_key=dev-key&picker_app_id=app-7"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("success status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/orgs/o1/settings/oauth-clients?saved=1" {
+		t.Errorf("success location = %q", loc)
+	}
+	got := f.dsUpsertedOAuthReq
+	if got == nil || got.ClientID != "cid" || got.ClientSecret != "sec" || got.Strategy != "drive.file" {
+		t.Fatalf("upsert req = %+v", got)
+	}
+	if len(got.Scopes) != 2 || got.Scopes[0] != "scope.a" || got.Scopes[1] != "scope.b" {
+		t.Errorf("scopes = %v", got.Scopes)
+	}
+	if got.Config["pickerDeveloperKey"] != "dev-key" || got.Config["pickerAppId"] != "app-7" {
+		t.Errorf("picker config = %+v", got.Config)
+	}
+	if got.Config["unmanaged"] != "keep-me" {
+		t.Errorf("stored unmanaged config key not preserved: %+v", got.Config)
+	}
+	if f.dsUpsertedOAuthOrg != "o1" || f.dsUpsertedOAuthProv != "google_drive" {
+		t.Errorf("upsert target = %q/%q", f.dsUpsertedOAuthOrg, f.dsUpsertedOAuthProv)
+	}
+
+	// Blank picker fields are dropped while unmanaged stored keys survive.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_id=cid&picker_developer_key="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if got := f.dsUpsertedOAuthReq; got == nil || got.Config["unmanaged"] != "keep-me" {
+		t.Fatalf("config = %+v", got)
+	} else if _, ok := got.Config["pickerDeveloperKey"]; ok {
+		t.Errorf("blank picker key must be dropped: %+v", got.Config)
+	}
+}
+
+func TestUIOrgOAuthClientDelete(t *testing.T) {
+	f := orgOAuthAdminFake()
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive/delete", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/orgs/o1/settings/oauth-clients?deleted=1" {
+		t.Errorf("delete location = %q", loc)
+	}
+	if f.dsDeletedOAuthOrg != "o1" || f.dsDeletedOAuthProv != "google_drive" {
+		t.Errorf("delete target = %q/%q", f.dsDeletedOAuthOrg, f.dsDeletedOAuthProv)
 	}
 }

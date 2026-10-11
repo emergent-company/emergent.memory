@@ -7,15 +7,14 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
-	"github.com/emergent-company/emergent.memory/internal/gdrive"
 )
 
 var Module = fx.Module("sources",
 	fx.Provide(
 		NewRepository,
+		NewDefaultRegistry,
 		NewService,
 		NewHandler,
-		NewDriveClientFactory,
 		NewDiscoveryStarter,
 		NewSyncWorker,
 	),
@@ -25,14 +24,6 @@ var Module = fx.Module("sources",
 		RegisterSyncSchedulerTask,
 	),
 )
-
-// NewDriveClientFactory provides the production Drive client factory. It builds
-// a real *gdrive.Client from OAuth2 credentials; tests substitute a fake.
-func NewDriveClientFactory() DriveClientFactory {
-	return func(ctx context.Context, creds gdrive.Credentials) (DriveClient, error) {
-		return gdrive.New(ctx, creds)
-	}
-}
 
 // discoveryStarterAdapter adapts *discoveryjobs.Service to the DiscoveryStarter
 // interface used by the sync worker, building a StartDiscoveryRequest from the

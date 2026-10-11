@@ -14,7 +14,9 @@ export async function createDriveSource(
   page: Page,
   opts: { name: string; folder: string; token?: string },
 ): Promise<DriveSource> {
-  await page.goto('/data-sources/new');
+  // /data-sources/new is the provider chooser; the google_drive credentials form
+  // (the pre-chooser connect surface) lives behind the method query.
+  await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
   await expect(page.getByTestId('ds-connect-form')).toBeVisible();
   await page.getByTestId('ds-field-name').fill(opts.name);
   await page.getByTestId('ds-field-folder_id').fill(opts.folder);

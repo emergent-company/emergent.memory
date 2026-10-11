@@ -41,7 +41,8 @@ func (s *SourcesHandlerSuite) TestUnauthenticatedIs401() {
 		"unauthenticated list must be 401, got %d: %s", resp.StatusCode, resp.String())
 }
 
-// TestListProviders verifies the provider catalog includes google_drive.
+// TestListProviders verifies the provider catalog includes google_drive (the
+// registry ships multiple providers, so the assertion locates it by type).
 func (s *SourcesHandlerSuite) TestListProviders() {
 	resp := s.Client.GET("/api/data-source-integrations/providers",
 		testutil.WithAuth("e2e-test-user"))
@@ -49,9 +50,16 @@ func (s *SourcesHandlerSuite) TestListProviders() {
 
 	var providers []map[string]any
 	s.Require().NoError(resp.JSON(&providers))
-	s.Require().Len(providers, 1)
-	s.Require().Equal("google_drive", providers[0]["type"])
-	s.Require().Equal(true, providers[0]["available"])
+
+	var drive map[string]any
+	for _, p := range providers {
+		if p["type"] == "google_drive" {
+			drive = p
+			break
+		}
+	}
+	s.Require().NotNil(drive, "provider catalog missing google_drive entry: %v", providers)
+	s.Require().Equal(true, drive["available"])
 }
 
 // TestProviderSchema verifies the schema shape and the unknown-provider 404.
@@ -222,4 +230,27 @@ func (s *SourcesHandlerSuite) TestPatchEnabledTogglesStatus() {
 		testutil.WithJSONBody(map[string]any{"enabled": true}))
 	s.Require().Equal(http.StatusOK, enable.StatusCode, enable.String())
 	s.Require().Equal("active", statusOf(), "enabled=true must re-activate the source")
+}
+
+// TestOAuthAuthorizeRequiresAuth verifies the OAuth authorize endpoint is gated.
+func (s *SourcesHandlerSuite) TestOAuthAuthorizeRequiresAuth() {
+	resp := s.Client.GET("/api/data-source-integrations/providers/google_drive/oauth/authorize")
+	s.Require().Equal(http.StatusUnauthorized, resp.StatusCode, resp.String())
+}
+
+// TestOAuthCallbackInvalidStateRedirects verifies an unknown/expired state lands
+// on the error path (and that the callback is reachable unauthenticated).
+func (s *SourcesHandlerSuite) TestOAuthCallbackInvalidStateRedirects() {
+	resp := s.Client.GET("/api/data-source-integrations/oauth/google_drive/callback?state=unknown-state&code=x")
+	s.Require().Equal(http.StatusSeeOther, resp.StatusCode, resp.String())
+	s.Require().Contains(resp.Headers.Get("Location"), "oauth_error=",
+		"invalid state must not create a source and must redirect to the error path")
+}
+
+// TestOAuthCallbackProviderErrorRedirects verifies a provider-denied consent
+// (?error=access_denied) redirects without touching the pending-state store.
+func (s *SourcesHandlerSuite) TestOAuthCallbackProviderErrorRedirects() {
+	resp := s.Client.GET("/api/data-source-integrations/oauth/google_drive/callback?error=access_denied")
+	s.Require().Equal(http.StatusSeeOther, resp.StatusCode, resp.String())
+	s.Require().Contains(resp.Headers.Get("Location"), "access_denied")
 }

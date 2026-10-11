@@ -29,9 +29,20 @@ const (
 	// folderMimeType identifies a Drive folder item.
 	folderMimeType = "application/vnd.google-apps.folder"
 
-	// driveReadonlyScope is the OAuth2 scope requested for the client.
+	// driveReadonlyScope is the OAuth2 scope requested for the client when the
+	// stored credential carries no scope (legacy pasted-credential sources).
 	driveReadonlyScope = "https://www.googleapis.com/auth/drive.readonly"
 )
+
+// requestedScope resolves the OAuth2 scope for a credential: the stored scope
+// (the org-selected strategy at connect time) when present, else the legacy
+// drive.readonly default.
+func requestedScope(scope string) string {
+	if strings.TrimSpace(scope) != "" {
+		return scope
+	}
+	return driveReadonlyScope
+}
 
 // Credentials holds the OAuth2 client credentials and refresh token for a
 // Drive source. It is never stored in plaintext (see EncryptCredentials).
@@ -39,6 +50,10 @@ type Credentials struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	RefreshToken string `json:"refresh_token"`
+	// Scope is the OAuth2 scope the refresh token was authorized for (the
+	// org-selected strategy at connect time). Empty falls back to
+	// driveReadonlyScope for legacy pasted-credential sources.
+	Scope string `json:"scope,omitempty"`
 }
 
 // Item is a single in-scope Drive item after enumeration.
@@ -94,7 +109,7 @@ func New(ctx context.Context, creds Credentials, opts ...option.ClientOption) (*
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
 		Endpoint:     google.Endpoint,
-		Scopes:       []string{driveReadonlyScope},
+		Scopes:       []string{requestedScope(creds.Scope)},
 	}
 	tokenSource := oauthCfg.TokenSource(ctx, &oauth2.Token{RefreshToken: creds.RefreshToken})
 	hc := oauth2.NewClient(ctx, tokenSource)
@@ -165,6 +180,43 @@ func (c *Client) ListFolderItems(ctx context.Context, folderID string, mimeTypes
 		}
 	}
 
+	return out, nil
+}
+
+// ListFolders lists Drive folders (optionally under parentID — empty lists all
+// accessible non-trashed folders) for the resource-selection step.
+func (c *Client) ListFolders(ctx context.Context, parentID string) ([]Item, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	q := "mimeType = '" + folderMimeType + "' and trashed = false"
+	if strings.TrimSpace(parentID) != "" {
+		q = "'" + escapeDriveQueryValue(parentID) + "' in parents and " + q
+	}
+
+	var out []Item
+	pageToken := ""
+	for {
+		call := c.svc.Files.List().
+			Q(q).
+			SupportsAllDrives(true).
+			IncludeItemsFromAllDrives(true).
+			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,trashed,modifiedTime)")
+		if pageToken != "" {
+			call = call.PageToken(pageToken)
+		}
+		fileList, err := call.Context(ctx).Do()
+		if err != nil {
+			return nil, fmt.Errorf("google drive: list folders: %w", err)
+		}
+		for _, f := range fileList.Files {
+			out = append(out, toItem(f))
+		}
+		if fileList.NextPageToken == "" {
+			break
+		}
+		pageToken = fileList.NextPageToken
+	}
 	return out, nil
 }
 
