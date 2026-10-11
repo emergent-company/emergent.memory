@@ -1,2 +1,17 @@
 .env
 !.env.example
+
+# Xcode
+#
+# User-specific Xcode state (window layout, breakpoints, scheme selections).
+xcuserdata/
+*.xcuserstate
+
+# XcodeGen output.
+#
+# MemoryConnector/project.yml is the source of truth; MemoryConnector.xcodeproj
+# is generated on the Mac build machine (`xcodegen generate`, driven by
+# apps/web-ui/tools/mac-build.sh) and must never be committed. Unlike
+# apps/ios/VoiceAgent.xcodeproj — which is hand-maintained and tracked — this
+# project is fully reproducible from project.yml.
+MemoryConnector/MemoryConnector.xcodeproj/
