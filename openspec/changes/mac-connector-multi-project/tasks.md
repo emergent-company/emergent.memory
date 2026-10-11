@@ -28,6 +28,7 @@
 - [x] 3.9 Legacy migration: an existing single connected project reads as a one-element set; legacy config path + port `8931` unchanged.
 - [x] 3.10 Per-child logging is attributable (primary → shared app log; others → `memory-connector-app-<projectID>.log`).
 - [x] 3.11 Unit tests updated/added; full suite green on the Mac build machine; SwiftFormat + SwiftLint ratchet clean.
+- [x] 3.12 `MCPRegistryAPIClient`/`MCPRegistryBrowseSheet`: registry browse project-scoped to the active project's management port, mirroring `MCPServersPage` (#1728).
 
 ## 4. Spec + archive
 

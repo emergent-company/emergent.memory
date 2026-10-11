@@ -153,9 +153,12 @@ page becomes project-scoped (talks to the active project's child/port).
   shared. Resolves the former shared-engine limitation (#1727); no Mac/hub change
   is required — the engine derives isolation from the `--config` path it is
   already handed.
-- **Secondary surface** — the MCP registry *browse* sheet still targets the
-  default port; it is read-only and not yet project-scoped. Tracked as a
-  follow-up.
+
+- **Registry browse surface** — the MCP registry *browse* sheet
+  (`MCPRegistryBrowseSheet`/`MCPRegistryAPIClient`) is project-scoped too: it
+  re-points its client at the active project's management port when the sheet
+  opens and whenever the active project changes, mirroring `MCPServersPage`.
+  Resolved in #1728.
 
 ## Spec impact
 

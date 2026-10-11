@@ -11,8 +11,15 @@ import Foundation
 /// `baseURL` and `session` are injectable so tests can stub the network.
 struct MCPRegistryAPIClient: Sendable {
     /// Default loopback base URL; the engine serves the management API on
-    /// `--api-port 8931` (see ``MCPServersAPIClient/defaultBaseURL``).
-    static let defaultBaseURL = MCPServersAPIClient.defaultBaseURL
+    /// `--api-port 8931` (see ``MCPServersAPIClient/defaultBaseURL``). Additional
+    /// connected projects serve on probed ports, so callers project-scope their
+    /// client via `baseURL(port:)`.
+    static let defaultBaseURL = baseURL(port: 8931)
+
+    /// The loopback base URL for a management port.
+    static func baseURL(port: Int) -> String {
+        MCPServersAPIClient.baseURL(port: port)
+    }
 
     let baseURL: String
     let session: URLSession

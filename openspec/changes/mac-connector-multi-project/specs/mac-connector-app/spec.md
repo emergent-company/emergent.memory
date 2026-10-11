@@ -265,3 +265,10 @@ the default management port so a single-project user sees no behavioural change.
   children with management ports
 - **THEN** a free port is selected and persisted for the new project, and no two
   project children share a port
+
+#### Scenario: Registry browse targets the active project
+
+- **WHEN** the user opens the MCP registry browse sheet while a non-primary
+  project is the active connected project
+- **THEN** registry search and detail requests go to that project's management
+  port, not the default `8931`, and re-target if the active project changes

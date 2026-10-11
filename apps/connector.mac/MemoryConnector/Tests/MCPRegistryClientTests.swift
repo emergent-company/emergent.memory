@@ -59,6 +59,28 @@ final class MCPRegistryClientTests: XCTestCase {
         MCPRegistryAPIClient(baseURL: baseURL, session: StubURLProtocol.makeSession())
     }
 
+    // MARK: - Project scoping
+
+    func testDefaultBaseURLMatchesLegacyManagementPort() {
+        XCTAssertEqual(MCPRegistryAPIClient.defaultBaseURL, "http://127.0.0.1:8931")
+    }
+
+    func testBaseURLTargetsManagementPort() {
+        XCTAssertEqual(MCPRegistryAPIClient.baseURL(port: 9012), "http://127.0.0.1:9012")
+    }
+
+    func testClientBuiltForPortHitsThatPort() async {
+        StubURLProtocol.registry.setHandler { _ in .ok(self.searchJSON) }
+
+        let client = MCPRegistryAPIClient(baseURL: MCPRegistryAPIClient.baseURL(port: 9012),
+                                          session: StubURLProtocol.makeSession())
+        _ = try? await client.search(query: "chrome")
+
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.port, 9012,
+                       "a client built for a port targets that project's management port")
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.host, "127.0.0.1")
+    }
+
     // MARK: - Search
 
     func testSearchRegistryDecodesResultsAndForwardsQuery() async throws {

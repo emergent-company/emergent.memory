@@ -14,6 +14,12 @@ final class MCPRegistryBrowseModelTests: XCTestCase {
 
     private let emptyJSON = #"{"servers":[],"nextCursor":"","count":0}"#
 
+    private let detailJSON = """
+    {"server":{"name":"io.github.example/one","packages":[],"remotes":[],"envVars":[]},
+     "suggested":{"name":"one","transport":"stdio","enabled":true,"command":"npx","args":["-y","one"]},
+     "warnings":[]}
+    """
+
     override func setUp() {
         super.setUp()
         StubURLProtocol.registry.reset()
@@ -78,5 +84,44 @@ final class MCPRegistryBrowseModelTests: XCTestCase {
 
         XCTAssertNil(detail)
         XCTAssertEqual(model.errorMessage, "registry unavailable")
+    }
+
+    // MARK: - Project scoping
+
+    @MainActor
+    func testSetPortRoutesSearchToActiveProjectPort() async {
+        StubURLProtocol.registry.setHandler { _ in .ok(self.searchJSON) }
+        let model = makeModel()
+
+        model.setPort(9012)
+        await model.search()
+
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.port, 9012,
+                       "the registry client targets the active project's management port")
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.host, "127.0.0.1")
+    }
+
+    @MainActor
+    func testSetPortRoutesDetailToActiveProjectPort() async {
+        StubURLProtocol.registry.setHandler { _ in .ok(self.detailJSON) }
+        let model = makeModel()
+
+        model.setPort(9013)
+        _ = await model.detail(name: "io.github.example/one")
+
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.port, 9013)
+    }
+
+    @MainActor
+    func testSetPortNilFallsBackToDefaultPort() async {
+        StubURLProtocol.registry.setHandler { _ in .ok(self.searchJSON) }
+        let model = makeModel()
+
+        model.setPort(9012)
+        model.setPort(nil)
+        await model.search()
+
+        XCTAssertEqual(StubURLProtocol.registry.capturedRequest?.url?.port, 8931,
+                       "a nil active port falls back to the default management port")
     }
 }

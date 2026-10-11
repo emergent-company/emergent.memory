@@ -23,10 +23,21 @@ final class MCPRegistryBrowseModel: ObservableObject {
     /// Registry id whose detail is currently being fetched (for a row spinner).
     @Published private(set) var loadingName: String?
 
-    private let client: MCPRegistryAPIClient
+    private var client: MCPRegistryAPIClient
 
     init(client: MCPRegistryAPIClient = MCPRegistryAPIClient()) {
         self.client = client
+    }
+
+    /// Re-points the registry client at the active project's management port so
+    /// the browse surface reads that project's engine (mirrors
+    /// ``MCPServersStore/setBaseURL(_:)``). Keeps the same `URLSession` so a
+    /// configured/stubbed transport is preserved; a `nil` port (no connected
+    /// active project) falls back to the default loopback base URL.
+    func setPort(_ port: Int?) {
+        let baseURL = port.map(MCPRegistryAPIClient.baseURL(port:)) ?? MCPRegistryAPIClient.defaultBaseURL
+        guard baseURL != client.baseURL else { return }
+        client = MCPRegistryAPIClient(baseURL: baseURL, session: client.session)
     }
 
     /// Runs a search. Keeps any existing results visible while a new query is
@@ -78,9 +89,21 @@ struct MCPRegistryBrowseSheet: View {
     // Qualified: the app declares its own `Environment` type (Sources/Environment.swift),
     // which shadows SwiftUI's, so the property wrapper must be namespaced.
     @SwiftUI.Environment(\.dismiss) private var dismiss
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
     @StateObject private var model = MCPRegistryBrowseModel()
     @State private var install: MCPRegistryInstall?
     @State private var notice: String?
+
+    /// The active project's management port (when that project is connected),
+    /// mirroring ``MCPServersPage/activePort``. Project-scopes the registry
+    /// client so browsing an additional connected project reads that project's
+    /// engine instead of the primary project's.
+    private var activePort: Int? {
+        guard let id = projectStore.activeProjectID, projectStore.isConnected(id) else {
+            return nil
+        }
+        return projectStore.managementPort(for: id)
+    }
 
     /// A loaded suggestion ready to prefill the Add sheet. Identifiable so it
     /// can drive `.sheet(item:)`.
@@ -99,10 +122,12 @@ struct MCPRegistryBrowseSheet: View {
             content
         }
         .frame(width: 560, height: 600)
-        .task {
-            if model.phase == .idle {
-                await model.search()
-            }
+        // Scope the registry client to the active project's management port and
+        // (re-)search whenever that project changes, so a browse is never served
+        // by another connected project's engine.
+        .task(id: activePort) {
+            model.setPort(activePort)
+            await model.search()
         }
         .sheet(item: $install) { install in
             AddMCPServerSheet(store: store,
