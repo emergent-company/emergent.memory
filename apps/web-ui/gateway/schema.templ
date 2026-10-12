@@ -61,7 +61,7 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 // schemaHeader is the Schema page header: title, subtitle, and the two primary
 // actions (Add schema, Save as blueprint).
 templ schemaHeader(compiled *CompiledSchemaTypes) {
-	@pageHeader("Knowledge", "Schema", "Compiled object and relationship types from active blueprints and built-in system types.") {
+	@pageHeader("Knowledge", "Schema", "Compiled object and relationship types from active schema packs and built-in system types.") {
 		<div class="flex flex-wrap items-center gap-2">
 			@countBadgeLabel(compiledTypeCountLabel(compiled), "lucide--git-branch")
 			@ui.Button(ui.ButtonProps{

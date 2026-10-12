@@ -29,6 +29,10 @@ project's schema should reflect the blueprints it actually installed, not the pl
 ### Modified Capabilities
 - `session-message-types`: Session and Message are read-time-resolved system schemas (is_system=true)
   rather than pre-registered into every project at startup.
+- `schema-navigation`: the schema packs list gains a `System` owner for the read-time system pack and
+  drops the "global pack without an owning blueprint" case.
+- `schema-editing`: object-type provenance renders a `System` badge for system-pack types instead of
+  the project-authored "Not from an installed blueprint" marker.
 
 ## Impact
 
