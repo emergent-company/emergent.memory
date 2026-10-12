@@ -117,11 +117,13 @@ WHERE ps.schema_id = gs.id
 --     by exactly one APPLIED blueprint, so a later unapply can remove them. Rows
 --     claimed by more than one applied blueprint are left untouched: ownership
 --     is ambiguous and DeleteAssignmentIfOwned's claims guard remains the gate.
+--     The single claiming blueprint id is selected with array_agg rather than
+--     MIN/MAX because Postgres defines no aggregate over uuid (SQLSTATE 42883).
 UPDATE kb.project_schemas ps
 SET source_blueprint_id = sub.blueprint_id,
     updated_at = now()
 FROM (
-    SELECT bpc.project_id, bpc.schema_id, MIN(bpc.blueprint_id) AS blueprint_id
+    SELECT bpc.project_id, bpc.schema_id, (array_agg(DISTINCT bpc.blueprint_id))[1] AS blueprint_id
     FROM kb.blueprint_pack_claims bpc
     JOIN kb.blueprint_applications bpa
       ON bpa.blueprint_id = bpc.blueprint_id

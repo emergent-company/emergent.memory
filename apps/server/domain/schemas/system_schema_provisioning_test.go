@@ -58,11 +58,17 @@ func TestMigration00235_00236_SystemSchemaFlag(t *testing.T) {
 		"UPDATE kb.project_schemas ps",
 		"source_blueprint_id",
 		"HAVING COUNT(DISTINCT bpc.blueprint_id) = 1",
+		"array_agg(DISTINCT bpc.blueprint_id)",
 		"ps.source_blueprint_id IS NULL",
 	} {
 		if !strings.Contains(s236, want) {
 			t.Errorf("00236 missing %q", want)
 		}
+	}
+	// Postgres has no MIN/MAX aggregate over uuid (SQLSTATE 42883); the backfill
+	// must select the single claiming blueprint id with array_agg instead.
+	if strings.Contains(s236, "MIN(bpc.blueprint_id)") || strings.Contains(s236, "MAX(bpc.blueprint_id)") {
+		t.Errorf("00236 must not aggregate uuid with MIN/MAX (use array_agg)")
 	}
 }
 
