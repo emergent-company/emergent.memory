@@ -7,22 +7,39 @@ Schema pre-registration and embedding policies for Session and Message graph obj
 ## Requirements
 
 ### Requirement: Session schema pre-registered at startup
-The system SHALL pre-register a `Session` schema type in the schema registry at server startup with the following properties: `title` (string), `started_at` (datetime), `ended_at` (datetime, optional), `message_count` (integer, default 0), `summary` (string, optional), `agent_version` (string, optional). The upsert MUST be idempotent — safe to run on every boot.
+The system SHALL register a `Session` object type as a read-time-resolved **system** schema: a single
+`kb.graph_schemas` row with `source='builtin'` and `is_system=true` (name `session-message-types`,
+version `1.0.0`), upserted idempotently at server startup. The `Session` type SHALL be available in
+every project through the compiled-types and extraction-schema paths WITHOUT a `kb.project_schemas`
+row, and SHALL NOT be auto-assigned to projects. The type SHALL define: `title` (string),
+`started_at` (datetime), `ended_at` (datetime, optional), `message_count` (integer, default 0),
+`summary` (string, optional), `agent_version` (string, optional).
 
 #### Scenario: Session schema available on fresh project
 - **WHEN** a new project is created
-- **THEN** the `Session` type SHALL be available for object creation without manual schema setup
+- **THEN** the `Session` type SHALL be available for object creation without manual schema setup and
+  without any `kb.project_schemas` row for the system pack
+
+#### Scenario: System pack is not project-assigned
+- **WHEN** the system pack is resolved for a project
+- **THEN** no `kb.project_schemas` row SHALL exist for the `session-message-types` pack, and the type
+  is still returned by the compiled-types and extraction-schema endpoints
 
 #### Scenario: Startup idempotency
-- **WHEN** the server restarts with an existing Session schema
+- **WHEN** the server restarts with an existing system `Session` schema
 - **THEN** the schema MUST NOT be duplicated or cause an error
 
 ### Requirement: Message schema pre-registered at startup
-The system SHALL pre-register a `Message` schema type with properties: `role` (enum: user/assistant/system), `content` (string), `sequence_number` (integer), `timestamp` (datetime), `token_count` (integer, optional), `tool_calls` (JSON array, optional). The schema MUST mark `content` as the embedding target field.
+The system SHALL register a `Message` object type as a read-time-resolved **system** schema
+(`source='builtin'`, `is_system=true`), available in every project without a `kb.project_schemas` row.
+The type SHALL define: `role` (enum: user/assistant/system), `content` (string), `sequence_number`
+(integer), `timestamp` (datetime), `token_count` (integer, optional), `tool_calls` (JSON array,
+optional). The schema MUST mark `content` as the embedding target field.
 
 #### Scenario: Message schema available on fresh project
 - **WHEN** a new project is created
-- **THEN** the `Message` type SHALL be available without manual setup
+- **THEN** the `Message` type SHALL be available without manual setup and without any
+  `kb.project_schemas` row for the system pack
 
 ### Requirement: System embedding policy for Message content
 The system SHALL auto-register a system-level embedding policy for the `Message` type targeting the `content` field. This policy MUST be applied to all projects and MUST NOT be deletable by users.
