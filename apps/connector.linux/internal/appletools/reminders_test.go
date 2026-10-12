@@ -126,7 +126,14 @@ func TestRemindersAddSuccessWithDueAndNotes(t *testing.T) {
 	f, _, add := newRemindersTools(t)
 	f.out = `{"title":"Ship the release","added":true}`
 
-	result, err := add.Handler(context.Background(), jsonArgs(t, `{"title":"Ship the release","due_date":"2026-10-01T09:00:00Z","notes":"with changelog"}`))
+	// Derive the due date relative to now so the test never decays: a fixed
+	// past date flips dueDateExpr's sign and breaks the "+" assertion below.
+	futureDue := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	result, err := add.Handler(context.Background(), map[string]any{
+		"title":    "Ship the release",
+		"due_date": futureDue,
+		"notes":    "with changelog",
+	})
 	if err != nil {
 		t.Fatalf("Handler: %v", err)
 	}
