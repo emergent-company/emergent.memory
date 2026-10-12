@@ -253,6 +253,9 @@ func linkBaseFromContext(ctx context.Context) string {
 var globalLinkPrefixes = []string{
 	"/api", "/auth/", "/share/", "/static/", "/assets/",
 	"/webhooks/", "/internal/", "/o/", "/profile", "/invites", "/projects",
+	// Dev-gated component-gallery previews/nav are global paths (see
+	// globalScopePath); their src must never be scoped.
+	"/dev/",
 }
 
 // resolveProjectRefAnyOrg finds a project by ref across every org in the
@@ -376,9 +379,12 @@ func scopedPathFor(base, path string) string {
 }
 
 // scopeAttrRe matches URL-bearing HTML attributes whose value is an absolute
-// internal path. src/data-* are deliberately excluded (assets and share
-// endpoints are global); the global prefixes are filtered in scopedPathFor.
-var scopeAttrRe = regexp.MustCompile(`(?i)\b(href|action|hx-get|hx-post|hx-put|hx-delete|hx-patch|data-href|data-autosave-url|data-activate-url)="(/[^"]*)"`)
+// internal path. src/data-src are included so sub-resource URLs on app-internal
+// paths (e.g. the document preview embed/img file proxy) carry the scope base.
+// Global prefixes are filtered in scopedPathFor, so assets/API/share and the
+// dev gallery stay untouched; data:* URIs and https:// URLs never match because
+// the value must start with a leading "/".
+var scopeAttrRe = regexp.MustCompile(`(?i)\b(href|action|src|data-src|hx-get|hx-post|hx-put|hx-delete|hx-patch|data-href|data-autosave-url|data-activate-url)="(/[^"]*)"`)
 
 // rewriteScopedHTML rewrites the URL-bearing attributes of a rendered page or
 // fragment so links and htmx/form actions stay in the page's context. Doing it

@@ -700,6 +700,40 @@ func TestDocumentPreviewMode(t *testing.T) {
 	}
 }
 
+// TestDocumentPreviewSrcScoped pins that the PDF/image preview embed carries the
+// page's scope base on a scoped request, and stays unchanged when unscoped. The
+// sub-resource URLs otherwise 404 under the session-mode hard cut (the embed
+// src is rendered by rewriteScopedHTML at render time, not by linkURL).
+func TestDocumentPreviewSrcScoped(t *testing.T) {
+	const base = "/o/o1/p/p1"
+	for _, tc := range []struct {
+		name   string
+		doc    *Document
+		marker string
+	}{
+		{"pdf", &Document{ID: "d1", Filename: "a.pdf", MimeType: "application/pdf"}, `data-testid="document-preview-pdf"`},
+		{"image", &Document{ID: "d1", Filename: "a.png", MimeType: "image/png"}, `data-testid="document-preview-image"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preview := documentPreview{Mode: previewModeFor(tc.doc)}
+			html := renderHTML(t, DocumentDetailPage(tc.doc, preview, nil, "", nil, false))
+			if !strings.Contains(html, tc.marker) {
+				t.Fatalf("preview mode missing %q", tc.marker)
+			}
+			scoped := rewriteScopedHTML(html, base)
+			if !strings.Contains(scoped, `src="/o/o1/p/p1/documents/d1/file"`) {
+				t.Errorf("scoped preview missing scoped src: %s", scoped)
+			}
+			if strings.Contains(scoped, `src="/documents/d1/file"`) {
+				t.Errorf("scoped preview retained unscoped src: %s", scoped)
+			}
+			if got := rewriteScopedHTML(html, ""); !strings.Contains(got, `src="/documents/d1/file"`) {
+				t.Errorf("unscoped preview changed src: %s", got)
+			}
+		})
+	}
+}
+
 // TestDocumentPreviewUnavailable asserts a failed server-side text fetch
 // degrades to a note with a Chunks link rather than an error.
 func TestDocumentPreviewUnavailable(t *testing.T) {

@@ -345,6 +345,35 @@ func TestRewriteScopedHTML(t *testing.T) {
 	}
 }
 
+// TestRewriteScopedHTMLSrc pins the sub-resource URL rule: src/data-src on
+// app-internal paths (the document preview file proxy) carry the scope base,
+// while global prefixes (/assets), scheme-relative/external URLs, and data URIs
+// pass through unchanged. Dev gallery previews stay global via /dev/.
+func TestRewriteScopedHTMLSrc(t *testing.T) {
+	in := `<embed data-testid="document-preview-pdf" src="/documents/d1/file">` +
+		`<img src="/assets/js/app.js?v=1">` +
+		`<img data-src="/documents/d2/file">` +
+		`<script src="https://x/y.js"></script>` +
+		`<img src="data:image/png;base64,AAAA">` +
+		`<iframe src="/dev/components/preview/x?variant=a"></iframe>`
+	got := rewriteScopedHTML(in, "/o/o1/p/p1")
+	for _, want := range []string{
+		`src="/o/o1/p/p1/documents/d1/file"`,
+		`data-src="/o/o1/p/p1/documents/d2/file"`,
+		`src="/assets/js/app.js?v=1"`,
+		`src="https://x/y.js"`,
+		`src="data:image/png;base64,AAAA"`,
+		`src="/dev/components/preview/x?variant=a"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rewriteScopedHTML missing %q in %s", want, got)
+		}
+	}
+	if got := rewriteScopedHTML(in, ""); got != in {
+		t.Errorf("unscoped rewrite changed src:\n got %s\nwant %s", got, in)
+	}
+}
+
 func TestScopeLocationRewritesRedirects(t *testing.T) {
 	s := &Server{}
 	e := echo.New()
