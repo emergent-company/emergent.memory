@@ -430,6 +430,34 @@ would need a stub gateway + memory fixtures that cover every surface. The
 data-source-integrations + document-version endpoints (see the data-sources
 note below); the remaining surfaces are still tracked as follow-up.
 
+### Hermetic Data Sources gate
+
+The Data Sources (Google Drive) suite — `specs/datasources/*` under
+`datasources.config.ts` — is likewise credential-free and deterministic: it
+drives the gateway against the dev-mode mock harness (`mock-memory.mjs`), with
+no live Drive and no OIDC session. It runs in CI as the `datasources` job in
+the same `web-ui.yml` workflow, and is folded into the advisory `web-ui-ci`
+aggregate alongside `gateway` and `js`.
+
+Unlike the `js` gate it does need the gateway binary:
+`datasources.config.ts` boots `bash run-e2e.sh` as its Playwright `webServer`,
+which builds the gateway (generating the gitignored templ + `app.css` assets on
+a cold tree — see the cold-tree note under **Notes**) and starts
+`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on `http://localhost:8097`.
+
+```bash
+cd tests/e2e
+npm ci
+npx playwright install chromium   # once
+npx playwright test --config=datasources.config.ts   # or: task e2e:datasources
+```
+
+The CI job provisions the same generated-asset prerequisites as the `gateway`
+job (Go toolchain + `templ` + `task`) plus Node/Playwright, and the suite stays
+excluded from the live session-mode `playwright.config.ts` via `testIgnore`
+(`specs/datasources/**`), so a local full-suite run never schedules it behind
+`setup`.
+
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.
@@ -437,10 +465,14 @@ note below); the remaining surfaces are still tracked as follow-up.
 - `E2E_MEMORY_API_URL` overrides the memory API origin the token-lifecycle specs
   probe directly (default `https://api.dev.emergent-company.ai`); those specs use it
   to prove a regenerated/revoked secret is rejected with HTTP 401.
-- **Fresh Git worktree:** `apps/web-ui/gateway/*_templ.go` are gitignored, so a new
-  worktree has no generated templates and the gateway will **not** compile until you
-  run `PATH="/root/go/bin:$PATH" templ generate` (or `-f <file>.templ` for one file).
-  Run it before `go build ./...` in any worktree-based lane.
+- **Fresh Git worktree:** `apps/web-ui/gateway/*_templ.go` and
+  `apps/web-ui/gateway/webui/static/css/app.css` are gitignored, so a new
+  worktree has no generated templates or stylesheet and the gateway will **not**
+  compile until you run `PATH="/root/go/bin:$PATH" templ generate` (or
+  `-f <file>.templ` for one file) and `PATH="/root/go/bin:$PATH" task css`.
+  Run them before `go build ./...` in any worktree-based lane. The mock-harness
+  configs (`datasources.config.ts`, `dev-gallery.config.ts`, `share.config.ts`)
+  generate both on the fly via `run-e2e.sh`, so they boot on a cold tree.
 - **One suite at a time per tenant.** All runs share the same bootstrap `E2E Main`
   tenant and the same running gateway. Two suites running concurrently (e.g. another
   session, or a worktree lane) produce scattered, unrelated failures across documents/

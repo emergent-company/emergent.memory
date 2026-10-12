@@ -4,9 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
-# build the gateway binary; on an unwarmed tree (generated *_templ.go absent,
-# e.g. a fresh worktree) generate templ first — otherwise the build fails.
-(cd gateway && { compgen -G '*_templ.go' >/dev/null || templ generate ./... ; } && go build -o memory .)
+# Build the gateway binary. On an unwarmed tree (e.g. a fresh worktree) the
+# generated *_templ.go files and the compiled Tailwind stylesheet
+# (webui/static/css/app.css) are gitignored and absent, and `go build` fails
+# without them — webui.go's cssGuard turns a missing app.css into a compile
+# error. Generate whichever is missing, then build fresh so a stale binary is
+# never served.
+(cd gateway && {
+  if ! compgen -G '*_templ.go' >/dev/null; then
+    # `go run` pins templ to the go.mod version (same invocation as the
+    # gateway CI job) and needs only the Go toolchain — no global templ binary.
+    go run github.com/a-h/templ/cmd/templ generate ./...
+  fi
+  if [ ! -f webui/static/css/app.css ]; then
+    command -v task >/dev/null || { echo "run-e2e.sh: task not found — add it to PATH (e.g. export PATH=\"/root/go/bin:\$PATH\") to compile app.css" >&2; exit 1; }
+    task css
+  fi
+  go build -o memory .
+})
 
 # mock memory
 node tests/e2e/mock-memory.mjs &

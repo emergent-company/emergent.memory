@@ -154,6 +154,75 @@ jobs:
       - name: Run DOM wiring specs
         run: npx playwright test --config=js-dom.config.ts
 
+  # ───────────────────────────────────────────────────────────────────────────
+  # datasources: hermetic Data Sources (Google Drive) e2e. The specs drive the
+  # gateway against the dev-mode mock harness (`datasources.config.ts` boots
+  # `bash run-e2e.sh`, which starts mock-memory.mjs + the gateway with
+  # AUTH_MODE=dev), so it is credential-free and deterministic — no live Drive,
+  # no OIDC session. Unlike the `js` gate it needs the gateway binary, so it
+  # also provisions the Go toolchain + `templ` + `task` (the same generated
+  # templ/CSS prerequisites as the `gateway` job; run-e2e.sh generates them on
+  # a cold tree).
+  # ───────────────────────────────────────────────────────────────────────────
+  datasources:
+    name: Data sources e2e (Playwright)
+    # Fork PRs must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/web-ui/tests/e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/web-ui/gateway/go.sum
+          cache: false
+
+      - name: Add gateway toolchain to PATH
+        # run-e2e.sh shells out to `task` (in /root/go/bin) to compile app.css
+        # on a cold tree; `templ` is generated via `go run` so needs only Go.
+        run: echo "/root/go/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No `cache:` here — setup-node's cache input only accepts a package
+          # manager (npm/yarn/pnpm), not a boolean, and the `memory` self-hosted
+          # runner's npm cache root (`npm config get cache` → /srv/cache/npm)
+          # does not exist, so `cache: npm` fails with "Some specified paths
+          # were not resolved". Deps come from `npm ci` regardless.
+
+      - name: Install e2e deps
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # apt-get, but the Chromium runtime libs and browser cache are already
+        # installed on the host, so `--with-deps` (which shells out to apt)
+        # must be skipped there. Keep the dependency install on Debian runners.
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+
+      - name: Run datasources specs
+        run: npx playwright test --config=datasources.config.ts
+
   web-ui-ci:
     name: web-ui-ci
     # Advisory aggregate gate for this path-filtered workflow; not the required
@@ -162,7 +231,7 @@ jobs:
     # Fork PRs must not run on the self-hosted runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
-    needs: [gateway, js]
+    needs: [gateway, js, datasources]
     steps:
       - name: CI gate
         run: echo "CI passed"
