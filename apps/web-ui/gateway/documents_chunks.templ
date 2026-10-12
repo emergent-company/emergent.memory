@@ -79,14 +79,13 @@ templ chunkRow(c Chunk) {
 					Icon:    "lucide--pencil",
 				})
 			</span>
-		</div>
-
-		<div class="mb-1.5 flex items-center gap-1">
 			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeButton,
-				Variant: ui.ButtonGhost,
-				Size:    ui.ButtonXS,
-				Icon:    "lucide--pencil",
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonPrimary,
+				Style:      ui.ButtonStyleOutline,
+				Size:       ui.ButtonXS,
+				Icon:       "lucide--pencil",
+				ExtraClass: "ms-auto",
 				Attrs: templ.Attributes{
 					"data-chunk-action": "edit",
 					"aria-expanded":     "false",
@@ -98,7 +97,8 @@ templ chunkRow(c Chunk) {
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,
-				Variant: ui.ButtonGhost,
+				Variant: ui.ButtonPrimary,
+				Style:   ui.ButtonStyleOutline,
 				Size:    ui.ButtonXS,
 				Icon:    "lucide--history",
 				Attrs: templ.Attributes{
