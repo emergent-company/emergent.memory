@@ -51,28 +51,9 @@ The dashboard SHALL list the agent's most recent conversations (not other agents
 - **WHEN** the dashboard loads for an agent with no conversations
 - **THEN** a clear "no chats yet" state is shown
 
-### Requirement: Navigate agent sections
-
-The agent pages SHALL show a vertical sub-menu with Dashboard, Settings, Sandbox, and Sessions sections scoped to that agent. On any agent Settings subpage, the Settings entry SHALL expand into a group of six indented subpage links — General, Model, Tools, Skills, Delegation, and MCP sharing — with the active subpage highlighted.
-
-#### Scenario: Sub-menu present
-
-- **WHEN** an agent page loads
-- **THEN** the sub-menu shows Dashboard, Settings, Sandbox, and Sessions links for that agent only
-
-#### Scenario: Settings group lists the six subpages
-
-- **WHEN** an agent Settings subpage loads
-- **THEN** the Settings entry shows six indented children — General, Model, Tools, Skills, Delegation, and MCP sharing — and the current subpage is highlighted
-
-#### Scenario: Subpages are distinct routes
-
-- **WHEN** the owner opens any Settings subpage
-- **THEN** each subpage renders only its own panel at `/agents/:id/settings[/<section>]`, and an unknown section returns 404
-
 ### Requirement: Edit an agent in-page
 
-The Settings surface SHALL be split into one form per concern — General (name, system prompt, language), Model (model, temperature, max tokens), Tools (default approval + tool picker), Skills, and Delegation — each with its own Save action that persists ONLY that concern's fields. It SHALL NOT use a modal.
+The Settings surface SHALL be split into one form per concern — General (name, short description, system prompt, language, project context, appearance, visibility), Graph (object-type and relationship-type scope), Model (model, temperature, max tokens), Tools (default approval + tool picker), Skills, and Delegation — each with its own Save action that persists ONLY that concern's fields. It SHALL NOT use a modal.
 
 #### Scenario: Edit form shows current values
 
@@ -88,6 +69,11 @@ The Settings surface SHALL be split into one form per concern — General (name,
 
 - **WHEN** the name is empty or delegation is enabled with no targets
 - **THEN** the page shows an error and does not persist the change
+
+#### Scenario: Graph scope is not owned by General
+
+- **WHEN** the owner saves the General form
+- **THEN** the agent's stored `config.objectTypes` and `config.relationshipTypes` are left unchanged
 
 ### Requirement: Choose tools from available MCP tools
 
@@ -208,3 +194,22 @@ SHALL NOT run the `<summary>` activation behaviour and SHALL NOT be
 
 - **WHEN** the owner picks an option in a capability group's policy select, which lives in the group body
 - **THEN** the group stays open/closed as it was — the disclosure does not toggle, and the select's click is not default-prevented
+
+### Requirement: Navigate agent sections and settings subpages
+
+The agent pages SHALL show a vertical sub-menu with Dashboard, Settings, Sandbox, and Sessions sections scoped to that agent. On any agent Settings subpage, the Settings entry SHALL expand into a group of seven indented subpage links — General, Graph, Model, Tools, Skills, Delegation, and MCP sharing — with the active subpage highlighted.
+
+#### Scenario: Sub-menu present
+
+- **WHEN** an agent page loads
+- **THEN** the sub-menu shows Dashboard, Settings, Sandbox, and Sessions links for that agent only
+
+#### Scenario: Settings group lists the seven subpages
+
+- **WHEN** an agent Settings subpage loads
+- **THEN** the Settings entry shows seven indented children — General, Graph, Model, Tools, Skills, Delegation, and MCP sharing — and the current subpage is highlighted
+
+#### Scenario: Subpages are distinct routes
+
+- **WHEN** the owner opens any Settings subpage
+- **THEN** each subpage renders only its own panel at `/agents/:id/settings[/<section>]`, and an unknown section returns 404
