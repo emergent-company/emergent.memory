@@ -333,15 +333,72 @@ func TestGraphSubgraph_CreateSubgraph_KeylessBoardEnabledRejected(t *testing.T) 
 
 	projectID, _ := setupProjectLogged(t, rl)
 
-	// Task is board-enabled in the e2e schema. The subgraph/bulk path must
-	// reject a keyless board-enabled object with work_status_key_required, just
-	// like the single-create path (issue #1655), and create nothing.
+	// Task is board-enabled only after the built-in task-board blueprint is
+	// applied; builtin packs are no longer auto-provisioned into fresh projects.
+	// Apply it explicitly so the keyless-rejection precondition actually holds,
+	// and assert the install happened via the compiled-types endpoint.
+	applyTaskBoardBlueprint(t, rl, projectID)
+
+	// The subgraph/bulk path must reject a keyless board-enabled object with
+	// work_status_key_required, just like the single-create path (issue #1655),
+	// and create nothing.
 	resp := doAPILogged(t, rl, "POST", "/api/graph/subgraph", e2eTestToken(), projectID, jsonBody(map[string]any{
 		"objects": []map[string]any{
 			{"_ref": "a", "type": "Task", "properties": map[string]any{"title": "Keyless Task"}},
 		},
 	}))
 	mustStatus(t, resp, http.StatusBadRequest)
+}
+
+// applyTaskBoardBlueprint finds the globally-seeded built-in task-board
+// blueprint, applies it to the project, and asserts the project's compiled
+// types now contain a board-enabled Task. This replaces the auto-provisioning
+// that previously made Task board-enabled in every fresh project.
+func applyTaskBoardBlueprint(t *testing.T, rl *runLog, projectID string) {
+	t.Helper()
+
+	// Find the globally-seeded built-in task-board blueprint.
+	listResp := doAPILogged(t, rl, "GET", "/api/blueprints?name=task-board", e2eTestToken(), projectID, nil)
+	listBody := mustStatus(t, listResp, http.StatusOK)
+	var blueprints []struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Origin string `json:"origin"`
+	}
+	parseBodyJSON(t, listBody, &blueprints)
+
+	var bpID string
+	for _, b := range blueprints {
+		if b.Name == "task-board" && b.Origin == "builtin" {
+			bpID = b.ID
+			break
+		}
+	}
+	if bpID == "" {
+		t.Fatalf("expected a built-in task-board blueprint, got %+v", blueprints)
+	}
+
+	// Apply it to this project.
+	applyResp := doAPILogged(t, rl, "POST", "/api/blueprints/"+bpID+"/apply", e2eTestToken(), projectID, jsonBody(map[string]any{}))
+	mustStatus(t, applyResp, http.StatusOK)
+
+	// Assert the project's compiled types now contain a board-enabled Task, so
+	// the test cannot silently pass if the install did not happen.
+	compiledResp := doAPILogged(t, rl, "GET", "/api/schemas/projects/"+projectID+"/compiled-types", e2eTestToken(), "", nil)
+	compiledBody := mustStatus(t, compiledResp, http.StatusOK)
+	var compiled struct {
+		ObjectTypes []struct {
+			Name         string `json:"name"`
+			BoardEnabled bool   `json:"boardEnabled"`
+		} `json:"objectTypes"`
+	}
+	parseBodyJSON(t, compiledBody, &compiled)
+	for _, ot := range compiled.ObjectTypes {
+		if ot.Name == "Task" && ot.BoardEnabled {
+			return
+		}
+	}
+	t.Fatalf("expected compiled types to contain board-enabled Task after applying task-board, got %+v", compiled.ObjectTypes)
 }
 
 // strPtr returns a pointer to a string.

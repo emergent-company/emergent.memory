@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/internal/testutil"
 	"github.com/emergent-company/emergent.memory/migrations"
 )
@@ -73,10 +74,10 @@ func TestMigration00235_00236_SystemSchemaFlag(t *testing.T) {
 }
 
 // migrationUpStatements returns the individual SQL statements in a migration's
-// "-- +goose Up" body, with goose markers stripped. The provisioning-removal
-// migrations contain no embedded semicolons in the Up path (no procedural
-// bodies), so splitting on ";" is safe and each statement can be executed
-// standalone against a test database.
+// "-- +goose Up" body, with goose markers and SQL line comments stripped. The
+// provisioning-removal migrations contain no embedded semicolons in the Up path
+// (no procedural bodies), so after removing full-line comments splitting on ";"
+// is safe and each statement can be executed standalone against a test database.
 func migrationUpStatements(t *testing.T, name string) []string {
 	t.Helper()
 	b, err := migrations.FS.ReadFile(name)
@@ -93,8 +94,18 @@ func migrationUpStatements(t *testing.T, name string) []string {
 	if j := strings.Index(s, "-- +goose Down"); j >= 0 {
 		s = s[:j]
 	}
-	s = strings.ReplaceAll(s, "-- +goose StatementBegin", "")
-	s = strings.ReplaceAll(s, "-- +goose StatementEnd", "")
+
+	// Drop full-line SQL comments (including -- +goose StatementBegin/End) so a
+	// semicolon inside a comment is not mistaken for a statement boundary.
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	s = strings.Join(lines, "\n")
+
 	var out []string
 	for _, stmt := range strings.Split(s, ";") {
 		stmt = strings.TrimSpace(stmt)
@@ -112,7 +123,7 @@ func migrationUpStatements(t *testing.T, name string) []string {
 // kb.project_schemas row exists for the system pack.
 func TestSystemSchemasResolvedWithoutAssignment(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysschemas")
@@ -179,7 +190,7 @@ func TestSystemSchemasResolvedWithoutAssignment(t *testing.T) {
 // later identify and remove it.
 func TestAssignPackWithTypesStampsExistingAssignment(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "stampassign")
@@ -249,7 +260,7 @@ func TestAssignPackWithTypesStampsExistingAssignment(t *testing.T) {
 // blueprint name (a newer version).
 func TestAssignPackWithTypesOwnershipStampFamily(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "stampfamily")
@@ -359,7 +370,7 @@ func TestAssignPackWithTypesOwnershipStampFamily(t *testing.T) {
 // index that backs the read-time system lookup.
 func TestSystemSchemaIndexExists(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysidx")
@@ -382,7 +393,7 @@ func TestSystemSchemaIndexExists(t *testing.T) {
 // while keeping its graph_schemas row.
 func TestMigration00236SystemPackCleanup(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "syscleanup")
@@ -467,7 +478,7 @@ func TestMigration00236SystemPackCleanup(t *testing.T) {
 // blueprint, and skips rows claimed by more than one.
 func TestMigration00236BackfillsSourceBlueprintID(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping database integration test in short mode")
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
 	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysbackfill")
