@@ -35,7 +35,11 @@ The rail SHALL highlight the item for the current Schema section, marking it as 
 
 ### Requirement: List the project's active schema packs
 
-`GET /schema/packs` SHALL list the project's active schema packs. Each row SHALL show the pack's name, version, owner (Global or Project), type counts, and description, and SHALL link to the pack detail.
+`GET /schema/packs` SHALL list the project's active schema packs. Each row SHALL show the pack's
+name, version, owner (Global, Project, or System), type counts, and description, and SHALL link to
+the pack detail. A project's packs come only from applied blueprints, a manual Add-schema install,
+or the read-time-resolved system pack (`is_system=true`); there is no longer a built-in blueprint
+pack listed with no owning blueprint.
 
 #### Scenario: Active packs listed
 
@@ -44,8 +48,10 @@ The rail SHALL highlight the item for the current Schema section, marking it as 
 
 #### Scenario: Global pack without a blueprint
 
-- **WHEN** a global pack contributes compiled types but has no owning blueprint
-- **THEN** the pack is listed and labelled Global
+- **WHEN** a built-in pack contributes compiled types but has no owning blueprint (the read-time
+  system pack, `is_system=true`)
+- **THEN** the pack is listed and labelled System, distinct from blueprint-derived and project-owned
+  packs
 
 #### Scenario: Project override pack
 
