@@ -33,25 +33,12 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
-// GetCompiledTypesByProject returns compiled object and relationship types for a project
+// GetCompiledTypesByProject returns compiled object and relationship types for a project.
+// System packs (is_system=true) are compiled first so they are always present, then
+// project-assigned packs are compiled on top (ordered by install date ascending) so a
+// project pack of the same type name shadows the system type — system types are the
+// softest priority.
 func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
-	// Get all active schemas for the project, ordered by install date ascending
-	// (so later installs have higher priority; shadowing detected by seeing a name twice)
-	var projectPacks []ProjectMemorySchema
-	err := r.db.NewSelect().
-		Model(&projectPacks).
-		Relation("MemorySchema").
-		Where("ptp.project_id = ?", projectID).
-		Where("ptp.active = true").
-		Where("ptp.removed_at IS NULL").
-		Order("ptp.installed_at ASC").
-		Scan(ctx)
-
-	if err != nil {
-		r.log.Error("failed to get project schemas", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-
 	response := &CompiledTypesResponse{
 		ObjectTypes:       []ObjectTypeSchema{},
 		RelationshipTypes: []RelationshipTypeSchema{},
@@ -64,66 +51,104 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 	// Cross-pack shadowing only applies to the exact same (name, source, target) triple.
 	seenRelIdx := map[string]int{} // "name|sourceType|targetType" → index in response.RelationshipTypes
 
+	// System packs are resolved at read time and available in every project,
+	// without a kb.project_schemas row.
+	var systemPacks []GraphMemorySchema
+	err := r.db.NewSelect().
+		Model(&systemPacks).
+		Where("gtp.is_system = true").
+		Order("gtp.name ASC").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to get system schemas", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	for i := range systemPacks {
+		r.compilePack(&systemPacks[i], response, seenObjIdx, seenRelIdx)
+	}
+
+	// Get all active schemas for the project, ordered by install date ascending
+	// (so later installs have higher priority; shadowing detected by seeing a name twice)
+	var projectPacks []ProjectMemorySchema
+	err = r.db.NewSelect().
+		Model(&projectPacks).
+		Relation("MemorySchema").
+		Where("ptp.project_id = ?", projectID).
+		Where("ptp.active = true").
+		Where("ptp.removed_at IS NULL").
+		Order("ptp.installed_at ASC").
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to get project schemas", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
 	// Compile types from all active packs
 	for _, pp := range projectPacks {
 		if pp.MemorySchema == nil {
 			continue
 		}
+		r.compilePack(pp.MemorySchema, response, seenObjIdx, seenRelIdx)
+	}
 
-		tp := pp.MemorySchema
+	return response, nil
+}
 
-		// Type-level UI config may be declared either inline per type (a "ui"
-		// key inside the object type schema, as blueprint manifests write it)
-		// or in the pack's top-level ui_configs map (typeName → {icon, color}),
-		// which the schema registry surfaces today. Prefer the inline form and
-		// fall back to ui_configs so both conventions reach the compiled view.
-		uiConfigs := map[string]json.RawMessage{}
-		if len(tp.UIConfigs) > 0 {
-			if err := json.Unmarshal(tp.UIConfigs, &uiConfigs); err != nil {
-				uiConfigs = map[string]json.RawMessage{}
-				r.log.Warn("failed to parse ui_configs", logger.Error(err))
-			}
+// compilePack compiles one graph schema pack's object and relationship types into
+// the response, applying cross-pack shadowing and propagating the pack's is_system
+// flag onto each compiled type.
+func (r *Repository) compilePack(tp *GraphMemorySchema, response *CompiledTypesResponse, seenObjIdx, seenRelIdx map[string]int) {
+	// Type-level UI config may be declared either inline per type (a "ui"
+	// key inside the object type schema, as blueprint manifests write it)
+	// or in the pack's top-level ui_configs map (typeName → {icon, color}),
+	// which the schema registry surfaces today. Prefer the inline form and
+	// fall back to ui_configs so both conventions reach the compiled view.
+	uiConfigs := map[string]json.RawMessage{}
+	if len(tp.UIConfigs) > 0 {
+		if err := json.Unmarshal(tp.UIConfigs, &uiConfigs); err != nil {
+			uiConfigs = map[string]json.RawMessage{}
+			r.log.Warn("failed to parse ui_configs", logger.Error(err))
 		}
+	}
 
-		// Parse object type schemas (supports both array and map storage formats)
-		if len(tp.ObjectTypeSchemas) > 0 {
-			objectTypes := parseObjectTypeSchemas(tp.ObjectTypeSchemas, tp.ID, tp.Name, tp.Version)
-			if objectTypes == nil {
-				r.log.Warn("failed to parse object type schemas",
-					slog.String("packId", tp.ID))
-			} else {
-				applyUIConfigFallback(objectTypes, uiConfigs)
-				for i := range objectTypes {
-					if prevIdx, seen := seenObjIdx[objectTypes[i].Name]; seen {
-						// Mark the earlier one as shadowed
-						response.ObjectTypes[prevIdx].Shadowed = true
-					}
-					seenObjIdx[objectTypes[i].Name] = len(response.ObjectTypes)
-					response.ObjectTypes = append(response.ObjectTypes, objectTypes[i])
+	// Parse object type schemas (supports both array and map storage formats)
+	if len(tp.ObjectTypeSchemas) > 0 {
+		objectTypes := parseObjectTypeSchemas(tp.ObjectTypeSchemas, tp.ID, tp.Name, tp.Version)
+		if objectTypes == nil {
+			r.log.Warn("failed to parse object type schemas",
+				slog.String("packId", tp.ID))
+		} else {
+			applyUIConfigFallback(objectTypes, uiConfigs)
+			for i := range objectTypes {
+				objectTypes[i].IsSystem = tp.IsSystem
+				if prevIdx, seen := seenObjIdx[objectTypes[i].Name]; seen {
+					// Mark the earlier one as shadowed
+					response.ObjectTypes[prevIdx].Shadowed = true
 				}
-			}
-		}
-
-		// Parse relationship type schemas
-		if len(tp.RelationshipTypeSchemas) > 0 {
-			relTypes := parseRelationshipTypeSchemas(tp.RelationshipTypeSchemas, tp.ID, tp.Name, tp.Version)
-			if relTypes == nil {
-				r.log.Warn("failed to parse relationship type schemas",
-					slog.String("packId", tp.ID))
-			} else {
-				for i := range relTypes {
-					relKey := relTypes[i].Name + "|" + relTypes[i].SourceType + "|" + relTypes[i].TargetType
-					if prevIdx, seen := seenRelIdx[relKey]; seen {
-						response.RelationshipTypes[prevIdx].Shadowed = true
-					}
-					seenRelIdx[relKey] = len(response.RelationshipTypes)
-					response.RelationshipTypes = append(response.RelationshipTypes, relTypes[i])
-				}
+				seenObjIdx[objectTypes[i].Name] = len(response.ObjectTypes)
+				response.ObjectTypes = append(response.ObjectTypes, objectTypes[i])
 			}
 		}
 	}
 
-	return response, nil
+	// Parse relationship type schemas
+	if len(tp.RelationshipTypeSchemas) > 0 {
+		relTypes := parseRelationshipTypeSchemas(tp.RelationshipTypeSchemas, tp.ID, tp.Name, tp.Version)
+		if relTypes == nil {
+			r.log.Warn("failed to parse relationship type schemas",
+				slog.String("packId", tp.ID))
+		} else {
+			for i := range relTypes {
+				relTypes[i].IsSystem = tp.IsSystem
+				relKey := relTypes[i].Name + "|" + relTypes[i].SourceType + "|" + relTypes[i].TargetType
+				if prevIdx, seen := seenRelIdx[relKey]; seen {
+					response.RelationshipTypes[prevIdx].Shadowed = true
+				}
+				seenRelIdx[relKey] = len(response.RelationshipTypes)
+				response.RelationshipTypes = append(response.RelationshipTypes, relTypes[i])
+			}
+		}
+	}
 }
 
 // applyUIConfigFallback fills each object type's ui metadata from the pack's
@@ -818,7 +843,7 @@ func (r *Repository) GetAssignablePack(ctx context.Context, packID, projectID st
 	err := r.db.NewSelect().
 		Model(&pack).
 		Where("id = ?", packID).
-		Where("(project_id = ? OR source = 'builtin')", projectID).
+		Where("(project_id = ? OR (source = 'builtin' AND NOT is_system))", projectID).
 		Scan(ctx)
 	if err != nil {
 		r.log.Error("failed to get assignable schema", logger.Error(err))
@@ -1052,6 +1077,20 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 
 	// If already installed and merge=true and not dry-run, return early with the existing assignment.
 	if alreadyAssigned && req.Merge && !req.DryRun {
+		// Stamp the owning blueprint onto an existing assignment so blueprint
+		// unapply can remove it; a pre-existing row may have been assigned
+		// outside any blueprint (source_blueprint_id IS NULL).
+		if req.SourceBlueprintID != nil {
+			if _, err := r.db.NewUpdate().
+				Model((*ProjectMemorySchema)(nil)).
+				Set("source_blueprint_id = ?", req.SourceBlueprintID).
+				Set("updated_at = ?", time.Now()).
+				Where("id = ?", existingAssignment.ID).
+				Exec(ctx); err != nil {
+				r.log.Error("failed to stamp source blueprint on existing assignment", logger.Error(err))
+				return nil, apperror.ErrDatabase.WithInternal(err)
+			}
+		}
 		result.AssignmentID = existingAssignment.ID
 		return result, nil
 	}
@@ -1694,30 +1733,6 @@ func (r *Repository) UpdateMigrationJob(ctx context.Context, job *SchemaMigratio
 	if err != nil {
 		r.log.Error("failed to update migration job", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
-	}
-	return nil
-}
-
-// ProvisionBuiltinSchemasToAllProjects installs every source='builtin' schema
-// into every non-deleted project that lacks a project_schemas row for it.
-// Idempotent; respects explicit uninstalls (any existing row, incl. removed).
-// Runs at server startup outside any project/RLS context.
-func (r *Repository) ProvisionBuiltinSchemasToAllProjects(ctx context.Context) error {
-	_, err := r.db.NewRaw(`
-		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
-		SELECT p.id, gs.id, true, now()
-		FROM kb.projects p
-		JOIN kb.graph_schemas gs ON gs.source = 'builtin'
-		WHERE p.deleted_at IS NULL
-		  AND NOT EXISTS (
-		      SELECT 1 FROM kb.project_schemas ps
-		      WHERE ps.project_id = p.id AND ps.schema_id = gs.id
-		  )
-		ON CONFLICT (project_id, schema_id) DO NOTHING
-	`).Exec(ctx)
-	if err != nil {
-		r.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
-		return apperror.NewDatabase(apperror.ErrDatabase.Message, err)
 	}
 	return nil
 }

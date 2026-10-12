@@ -75,7 +75,8 @@ func assertOrigin(t *testing.T, db bun.IDB, id, want string) {
 
 // TestBuiltinSeeder_CreatesGlobals_Idempotent verifies the seeder upserts every
 // bundled pack as a global published blueprint (project_id NULL, origin=builtin)
-// plus a global source='builtin' schema pack, and that a re-run is idempotent.
+// and that a re-run is idempotent. Built-in schema packs are NOT seeded here —
+// they materialize only on blueprint apply.
 func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 	db := connectTestDB(t)
 	repo := NewRepository(db, testLogger())
@@ -84,9 +85,9 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 
 	require.NoError(t, seeder.Seed(ctx))
 
-	// 4 bundled packs; 3 carry a schema (operator is agent-only).
+	// 4 bundled packs; no schema packs are seeded (they materialize on apply).
 	assertBlueprintCount(t, db, 4)
-	assertSchemaPackCount(t, db, 3)
+	assertSchemaPackCount(t, db, 0)
 
 	// Every seeded blueprint is a global published builtin with a checksum.
 	var rows []struct {
@@ -120,7 +121,7 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 	// Re-run: idempotent.
 	require.NoError(t, seeder.Seed(ctx))
 	assertBlueprintCount(t, db, 4)
-	assertSchemaPackCount(t, db, 3)
+	assertSchemaPackCount(t, db, 0)
 }
 
 func assertBlueprintCount(t *testing.T, db bun.IDB, want int) {
@@ -134,7 +135,7 @@ func assertBlueprintCount(t *testing.T, db bun.IDB, want int) {
 func assertSchemaPackCount(t *testing.T, db bun.IDB, want int) {
 	t.Helper()
 	var n int
-	err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE source = 'builtin' AND project_id IS NULL`).Scan(context.Background(), &n)
+	err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE source = 'builtin' AND project_id IS NULL AND NOT is_system`).Scan(context.Background(), &n)
 	require.NoError(t, err)
 	assert.Equal(t, want, n)
 }

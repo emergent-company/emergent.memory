@@ -23,18 +23,6 @@ their assignment id, active state, and install timestamp.
 - **WHEN** a client sends `GET /api/blueprints/installed` and memory is unreachable
 - **THEN** the API returns HTTP 502 with a JSON body containing an `error` field
 
-### Requirement: List available blueprint packs
-The API SHALL return packs that are not yet installed, drawn from both the memory schema
-registry and the bundled `blueprints/` directory, and SHALL identify each pack's source.
-
-#### Scenario: Available packs returned
-- **WHEN** a client sends `GET /api/blueprints/available`
-- **THEN** the API returns HTTP 200 with a JSON array, each element containing `id`, `name`, `version`, `description`, `author`, and `source` (either `registry` or `bundled`)
-
-#### Scenario: Bundled packs surfaced
-- **WHEN** a pack exists in the local `blueprints/` directory but not in the memory registry
-- **THEN** the API includes it in the available list with `source` equal to `bundled`
-
 ### Requirement: View compiled schema types
 The API SHALL return the project's merged object and relationship types across all active
 installed packs.
@@ -251,6 +239,11 @@ project context, publish the blueprint, and apply it atomically — on an apply
 failure the just-created row SHALL be hard-deleted so a retry re-imports cleanly
 (no 409), and the apply error is returned.
 
+When a blueprint with the same `(name, version)` already exists in the caller's
+scope, the import SHALL adopt the existing row — refreshing it when it is a
+draft, reusing it when published — and then publish and apply as requested,
+instead of returning a conflict.
+
 Only `https://github.com/<org>/<repo>` URLs are accepted, with an optional
 `#<ref>` fragment and/or `/tree/<ref>` suffix; every other host and all
 non-https schemes are rejected. The archive is fetched only from
@@ -283,13 +276,13 @@ for a fetch failure, and 401/403 for authorization failures.
 #### Scenario: Non-github host rejected
 
 - **WHEN** a client sends `POST /api/blueprints/import` with a `url` whose host
-  is not `github.com` (for example, `https://example.com/org/repo`)
+  is not `github.com` (for example `https://example.com/org/repo`)
 - **THEN** the API returns HTTP 400 and performs no fetch
 
 #### Scenario: Non-https scheme rejected
 
 - **WHEN** a client sends `POST /api/blueprints/import` with a `url` using a
-  non-https scheme (for example, `http://github.com/org/repo` or
+  non-https scheme (for example `http://github.com/org/repo` or
   `git+ssh://github.com/org/repo`)
 - **THEN** the API returns HTTP 400 and performs no fetch
 
@@ -320,6 +313,13 @@ for a fetch failure, and 401/403 for authorization failures.
   caller
 - **THEN** the API creates and publishes a blueprint scoped to the caller's
   project (global only for an authorized superadmin) and returns success
+
+#### Scenario: Existing name and version is adopted
+
+- **WHEN** a client imports a blueprint whose `(name, version)` already exists in
+  its scope
+- **THEN** the API adopts the existing blueprint, publishes and applies it as
+  requested, and does not return 409
 
 #### Scenario: Model override rewrites the stored manifest
 
@@ -863,3 +863,67 @@ across reloads.
 - **WHEN** the update job has finished
 - **THEN** the returned latest job status reflects `succeeded` or `failed` and
   carries the recorded result or error
+
+### Requirement: List available registry blueprints
+
+The API SHALL return blueprints that are published in the caller's read scope (global built-in
+blueprints plus the project's own) and not yet applied to the project, showing the newest version of
+each name, and SHALL identify each blueprint's source. The source is `builtin` for platform
+blueprints (`origin="builtin"`) and `registry` for the project's own user/imported blueprints.
+
+#### Scenario: Available registry blueprints returned
+
+- **WHEN** a client sends `GET /api/blueprints/available`
+- **THEN** the API returns HTTP 200 with a JSON array whose elements carry `id` (blueprint id),
+  `name`, `version`, `description`, `author`, `source` (`builtin` or `registry`), and the blueprint's
+  `origin`
+
+#### Scenario: Built-in blueprints surfaced
+
+- **WHEN** a global built-in blueprint exists and is not applied to the project
+- **THEN** the API includes it in the available list with `source` equal to `builtin`
+
+#### Scenario: Applied blueprints excluded
+
+- **WHEN** a blueprint is applied to the project
+- **THEN** it is not returned by `GET /api/blueprints/available`
+
+### Requirement: Apply a blueprint with origin-appropriate pack scope
+
+Applying a blueprint SHALL materialize its schema pack according to the blueprint's origin: a
+`builtin` blueprint SHALL use the shared global `source="builtin"` pack, while a `user` or `import`
+blueprint SHALL use a project-scoped pack and SHALL NOT reuse another project's pack.
+
+#### Scenario: Built-in apply shares the pack
+
+- **WHEN** a built-in blueprint is applied
+- **THEN** the project is assigned the global built-in schema pack for that name and version
+
+#### Scenario: User apply does not reuse another project's pack
+
+- **WHEN** a user or imported blueprint is applied and another project already owns a pack with the
+  same name and version
+- **THEN** this project gets its own pack rather than the other project's
+
+### Requirement: Delete a blueprint from the registry
+
+The API SHALL expose `DELETE /api/blueprints/:id` to remove a project-private blueprint. A global
+built-in blueprint SHALL NOT be deletable. A blueprint that is currently applied to the caller's
+project SHALL NOT be deletable and the API SHALL return a conflict explaining that it must be
+uninstalled first. A successful delete SHALL clear the blueprint's pack claims and delete
+project-owned schema packs it orphaned.
+
+#### Scenario: Delete an unapplied blueprint
+
+- **WHEN** a client sends `DELETE /api/blueprints/:id` for an unapplied project-private blueprint
+- **THEN** the API returns 204 and the blueprint is removed
+
+#### Scenario: Applied blueprint rejected
+
+- **WHEN** a client sends `DELETE /api/blueprints/:id` for a blueprint applied to the project
+- **THEN** the API returns 409 with a message to uninstall first and deletes nothing
+
+#### Scenario: Built-in rejected
+
+- **WHEN** a client sends `DELETE /api/blueprints/:id` for a global built-in blueprint
+- **THEN** the API returns 409 and the blueprint is unchanged

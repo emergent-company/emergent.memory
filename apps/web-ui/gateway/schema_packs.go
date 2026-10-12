@@ -25,6 +25,9 @@ type schemaPackSummary struct {
 	Description string
 	ProjectID   string // "" => global/built-in pack
 	Source      string
+	// IsSystem is true for the read-time-resolved system pack
+	// (session-message-types), which has no project_schemas assignment.
+	IsSystem bool
 
 	ObjectTypes       []CompiledType
 	RelationshipTypes []CompiledType
@@ -48,6 +51,9 @@ func (p schemaPackSummary) global() bool { return p.ProjectID == "" }
 
 // ownerLabel is the plain owner label shown as a badge.
 func (p schemaPackSummary) ownerLabel() string {
+	if p.IsSystem {
+		return "System"
+	}
 	if p.global() {
 		return "Global"
 	}
@@ -103,6 +109,7 @@ func buildSchemaPackSummaries(compiled *CompiledSchemaTypes, metas []SchemaInfo,
 			Version:       t.SchemaVersion,
 			schemaName:    t.SchemaName,
 			schemaVersion: t.SchemaVersion,
+			IsSystem:      t.IsSystem,
 		}
 		if m, ok := metaByID[id]; ok {
 			p.Name = m.Name

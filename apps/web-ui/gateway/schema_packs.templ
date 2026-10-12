@@ -160,9 +160,11 @@ templ schemaPackMetaRow(label, value string, mono bool) {
 	@components.MetaRow(label, value, components.MetaRowOpts{Mono: mono})
 }
 
-// ownerBadge is the shared Global / Project marker for pack rows and detail.
+// ownerBadge is the shared System / Global / Project marker for pack rows and detail.
 templ ownerBadge(pack schemaPackSummary, size ui.BadgeSize) {
-	if pack.global() {
+	if pack.IsSystem {
+		@components.StatusBadge("System", ui.BadgeInfo, "lucide--cpu", components.StatusBadgeOpts{Size: size, Dot: true})
+	} else if pack.global() {
 		@components.StatusBadge("Global", ui.BadgeNeutral, "", components.StatusBadgeOpts{Size: size, Dot: true})
 	} else {
 		@components.StatusBadge("Project", ui.BadgePrimary, "", components.StatusBadgeOpts{Size: size, Dot: true})

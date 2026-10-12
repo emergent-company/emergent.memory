@@ -11,9 +11,11 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
-// BuiltinSeeder seeds system-level schema definitions at server startup.
-// These schemas (Session, Message) are available globally and enable conversation
-// storage without any per-project setup.
+// BuiltinSeeder upserts the platform's system-level schema definitions at server
+// startup. These schemas (Session, Message) are SYSTEM types resolved at read
+// time — they are available in every project WITHOUT a kb.project_schemas row
+// and are never provisioned into projects. The seeder only keeps the global
+// source='builtin', is_system=true registry row in sync with the definitions.
 type BuiltinSeeder struct {
 	repo *Repository
 	log  *slog.Logger
@@ -121,8 +123,10 @@ var builtinSessionRelationshipSchemas = []map[string]any{
 	},
 }
 
-// Seed upserts the built-in Session/Message schema definitions.
-// It is idempotent — safe to call on every server boot.
+// Seed upserts the built-in Session/Message system schema definitions as the
+// single is_system=true registry row. It is idempotent — safe to call on every
+// server boot. It does NOT assign the pack to any project: system types are
+// resolved at read time (compiled-types and extraction-schema paths).
 func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 	objectSchemas, err := json.Marshal(builtinSessionObjectSchemas)
 	if err != nil {
@@ -151,11 +155,11 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 		// Insert new built-in schema.
 		_, insertErr := s.repo.DB().NewRaw(`
 			INSERT INTO kb.graph_schemas (
-				name, version, description, source,
+				name, version, description, source, is_system,
 				object_type_schemas, relationship_type_schemas,
 				published_at, created_at, updated_at
 			) VALUES (
-				'session-message-types', ?, ?, ?,
+				'session-message-types', ?, ?, ?, true,
 				?, ?,
 				?, ?, ?
 			)
@@ -172,6 +176,7 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 			UPDATE kb.graph_schemas SET
 				object_type_schemas = ?,
 				relationship_type_schemas = ?,
+				is_system = true,
 				updated_at = ?
 			WHERE name = 'session-message-types' AND version = ?
 		`, string(objectSchemas), string(relSchemas), now, version).Exec(ctx)
@@ -179,14 +184,6 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 			s.log.Error("failed to update builtin session-message schemas", logger.Error(updateErr))
 			return updateErr
 		}
-	}
-
-	// Provision builtin schemas into every non-deleted project. Builtins are
-	// otherwise invisible now that schema listing is strictly project-scoped.
-	// Runs with the startup context (empty RLS GUC), outside any request scope.
-	if err := s.repo.ProvisionBuiltinSchemasToAllProjects(ctx); err != nil {
-		s.log.Error("failed to provision builtin schemas to projects", logger.Error(err))
-		return err
 	}
 
 	s.log.Info("builtin session-message schemas seeded successfully")

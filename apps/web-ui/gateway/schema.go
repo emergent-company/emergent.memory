@@ -36,6 +36,7 @@ type SchemaObjectTypeView struct {
 	Provenance    *ProvenanceInfo
 	SchemaName    string
 	SchemaVersion string
+	IsSystem      bool
 	History       []SchemaHistoryItem
 	HistoryErr    bool
 	FlashMsg      string
@@ -145,6 +146,7 @@ func (s *Server) uiSchemaObjectType(c echo.Context) error {
 		Color:         compiledTypeColor(*found),
 		SchemaName:    found.SchemaName,
 		SchemaVersion: found.SchemaVersion,
+		IsSystem:      found.IsSystem,
 	}
 	for _, r := range compiled.RelationshipTypes {
 		if r.SourceType == name || r.TargetType == name {
