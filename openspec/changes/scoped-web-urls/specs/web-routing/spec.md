@@ -108,6 +108,13 @@ context.
 - **WHEN** a scoped page renders a mutation form
 - **THEN** the form's action targets the same scoped base
 
+#### Scenario: Sub-resource URLs carry scope
+
+- **WHEN** a scoped page renders a sub-resource URL (an embed or image `src`
+  pointing at the gateway's document file proxy)
+- **THEN** the `src` is prefixed with `/o/{orgRef}/p/{projectRef}` so the
+  browser fetches it within the page's scope
+
 ### Requirement: Client-side scope propagation
 
 Client-side requests made by a scoped page (htmx, `fetch`, and event streams)
