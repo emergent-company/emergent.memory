@@ -33,6 +33,9 @@ project's schema should reflect the blueprints it actually installed, not the pl
   drops the "global pack without an owning blueprint" case.
 - `schema-editing`: object-type provenance renders a `System` badge for system-pack types instead of
   the project-authored "Not from an installed blueprint" marker.
+- `blueprint-registry`: pack-assignment ownership is stamped only when unowned (or the same blueprint
+  name family), and unapply removes only assignments the blueprint owns while leaving ones another
+  applied blueprint still claims.
 
 ## Impact
 

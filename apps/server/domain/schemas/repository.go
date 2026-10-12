@@ -1079,14 +1079,27 @@ func (r *Repository) AssignPackWithTypes(ctx context.Context, projectID, userID 
 	if alreadyAssigned && req.Merge && !req.DryRun {
 		// Stamp the owning blueprint onto an existing assignment so blueprint
 		// unapply can remove it; a pre-existing row may have been assigned
-		// outside any blueprint (source_blueprint_id IS NULL).
+		// outside any blueprint (source_blueprint_id IS NULL). Only stamp when
+		// the assignment is unowned or already owned by this blueprint's name
+		// family (a version upgrade), mirroring applyAgents: never overwrite a
+		// different blueprint's ownership. DeleteAssignmentIfOwned's claims
+		// guard remains the real correctness gate.
 		if req.SourceBlueprintID != nil {
-			if _, err := r.db.NewUpdate().
-				Model((*ProjectMemorySchema)(nil)).
-				Set("source_blueprint_id = ?", req.SourceBlueprintID).
-				Set("updated_at = ?", time.Now()).
-				Where("id = ?", existingAssignment.ID).
-				Exec(ctx); err != nil {
+			if _, err := r.db.NewRaw(`
+				UPDATE kb.project_schemas ps
+				SET source_blueprint_id = ?, updated_at = now()
+				WHERE ps.id = ?
+				  AND (
+				      ps.source_blueprint_id IS NULL
+				      OR EXISTS (
+				          SELECT 1
+				          FROM kb.blueprints owner, kb.blueprints incoming
+				          WHERE owner.id = ps.source_blueprint_id
+				            AND incoming.id = ?
+				            AND owner.name = incoming.name
+				      )
+				  )
+			`, req.SourceBlueprintID, existingAssignment.ID, req.SourceBlueprintID).Exec(ctx); err != nil {
 				r.log.Error("failed to stamp source blueprint on existing assignment", logger.Error(err))
 				return nil, apperror.ErrDatabase.WithInternal(err)
 			}

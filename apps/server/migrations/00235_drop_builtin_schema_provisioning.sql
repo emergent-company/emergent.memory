@@ -26,10 +26,18 @@ UPDATE kb.graph_schemas
 SET is_system = true
 WHERE source = 'builtin' AND name = 'session-message-types';
 
+-- The read-time system lookup filters on is_system on a hot path (every object
+-- write / property validation / extraction). A partial index keeps that lookup
+-- cheap without indexing the (mostly false) column wholesale.
+CREATE INDEX IF NOT EXISTS graph_schemas_is_system_idx
+    ON kb.graph_schemas (is_system) WHERE is_system = true;
+
 -- +goose Down
 -- Restore the auto-provisioning mechanism and drop the column. Data cleanup
 -- from 00236 is not reversible here; this only reinstates the trigger/function
 -- (copied from 00146) and removes the is_system flag.
+
+DROP INDEX IF EXISTS kb.graph_schemas_is_system_idx;
 
 ALTER TABLE kb.graph_schemas DROP COLUMN IF EXISTS is_system;
 

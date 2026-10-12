@@ -8,9 +8,19 @@
 -- blueprint. 00235 marked the single system pack (session-message-types)
 -- is_system=true; every other source='builtin' pack is a blueprint pack.
 --
--- Target packs = source='builtin' AND NOT is_system.
+-- Two kinds of cleanup:
 --
--- Cleanup removes, for each target pack:
+-- A. System pack (is_system=true): session-message-types is now read-time
+--    resolved, so NO kb.project_schemas assignment or object/edge registry row
+--    may remain for it anywhere. Delete them all. The graph_schemas row itself
+--    is KEPT — it is the read-time source.
+--
+-- B. Blueprint packs (source='builtin' AND NOT is_system): remove assignments,
+--    registry rows, and orphaned global pack rows that no APPLIED blueprint
+--    claims, and backfill source_blueprint_id on the kept assignments so a
+--    later unapply can still remove them.
+--
+-- For each blueprint pack, cleanup removes:
 --   1. project_object_schema_registry / project_edge_schema_registry rows in
 --      projects that have no APPLIED blueprint claiming the pack;
 --   2. kb.project_schemas rows in projects that have no APPLIED blueprint
@@ -27,10 +37,29 @@
 -- graph_schemas_builtin_name_version_key guarantees at most one builtin row per
 -- (name, version), so there is no duplicate to repoint references at.
 
--- The "keep" test: an APPLIED blueprint claims the pack for this project.
--- Inlined per DELETE because a migration cannot share a CTE across statements.
+-- The "keep" test for a blueprint pack: an APPLIED blueprint claims the pack
+-- for this project. Inlined per DELETE because a migration cannot share a CTE
+-- across statements.
 
--- 1a. Object registry rows for target packs in projects that never applied a
+-- 0a. System-pack object registry rows (read-time resolved; none may remain).
+DELETE FROM kb.project_object_schema_registry por
+USING kb.graph_schemas gs
+WHERE por.schema_id = gs.id
+  AND gs.is_system = true;
+
+-- 0b. System-pack edge registry rows.
+DELETE FROM kb.project_edge_schema_registry per
+USING kb.graph_schemas gs
+WHERE per.schema_id = gs.id
+  AND gs.is_system = true;
+
+-- 0c. System-pack assignments.
+DELETE FROM kb.project_schemas ps
+USING kb.graph_schemas gs
+WHERE ps.schema_id = gs.id
+  AND gs.is_system = true;
+
+-- 1a. Object registry rows for blueprint packs in projects that never applied a
 --     blueprint claiming them.
 DELETE FROM kb.project_object_schema_registry por
 USING kb.graph_schemas gs
@@ -65,7 +94,7 @@ WHERE per.schema_id = gs.id
         AND bpa.status = 'applied'
   );
 
--- 2. Assignment rows for target packs in projects that never applied a
+-- 2. Assignment rows for blueprint packs in projects that never applied a
 --    blueprint claiming them.
 DELETE FROM kb.project_schemas ps
 USING kb.graph_schemas gs
@@ -82,6 +111,32 @@ WHERE ps.schema_id = gs.id
         AND bpc.schema_id = ps.schema_id
         AND bpa.status = 'applied'
   );
+
+-- 2b. Backfill source_blueprint_id on kept (active) blueprint-pack assignments
+--     that were auto-provisioned (source_blueprint_id IS NULL) and are claimed
+--     by exactly one APPLIED blueprint, so a later unapply can remove them. Rows
+--     claimed by more than one applied blueprint are left untouched: ownership
+--     is ambiguous and DeleteAssignmentIfOwned's claims guard remains the gate.
+UPDATE kb.project_schemas ps
+SET source_blueprint_id = sub.blueprint_id,
+    updated_at = now()
+FROM (
+    SELECT bpc.project_id, bpc.schema_id, MIN(bpc.blueprint_id) AS blueprint_id
+    FROM kb.blueprint_pack_claims bpc
+    JOIN kb.blueprint_applications bpa
+      ON bpa.blueprint_id = bpc.blueprint_id
+     AND bpa.project_id = bpc.project_id
+    JOIN kb.graph_schemas gs ON gs.id = bpc.schema_id
+    WHERE bpa.status = 'applied'
+      AND gs.source = 'builtin'
+      AND gs.is_system = false
+    GROUP BY bpc.project_id, bpc.schema_id
+    HAVING COUNT(DISTINCT bpc.blueprint_id) = 1
+) sub
+WHERE ps.project_id = sub.project_id
+  AND ps.schema_id = sub.schema_id
+  AND ps.source_blueprint_id IS NULL
+  AND ps.removed_at IS NULL;
 
 -- 3. Orphaned global pack rows: no blueprint claim, no assignment, no registry
 --    reference remains. project_edge_schema_registry is already empty of these
