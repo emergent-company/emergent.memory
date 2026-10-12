@@ -119,12 +119,9 @@ jobs:
         with:
           node-version: '20'
           # No `cache:` here — see the `datasources` job below for the full note.
-          # setup-node's cache input only accepts a package manager (npm/yarn/
-          # pnpm), not a boolean, and the `memory` self-hosted runner's npm cache
-          # root (`npm config get cache` → /srv/cache/npm) is not reliably
-          # resolvable, so `cache: npm` fails the job at setup-node with "Some
-          # specified paths were not resolved, unable to cache dependencies"
-          # (#1758). Deps come from `npm ci` regardless.
+          # Short version: setup-node's cache step can fail resolving the
+          # lockfile glob and red this job before any step runs (#1758), and
+          # `npm ci` installs deps regardless.
 
       - name: Install e2e deps
         run: npm ci
@@ -198,11 +195,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # No `cache:` here — setup-node's cache input only accepts a package
-          # manager (npm/yarn/pnpm), not a boolean, and the `memory` self-hosted
-          # runner's npm cache root (`npm config get cache` → /srv/cache/npm)
-          # does not exist, so `cache: npm` fails with "Some specified paths
-          # were not resolved". Deps come from `npm ci` regardless.
+          # No `cache:` here. setup-node's cache input accepts only a package
+          # manager (npm/yarn/pnpm), not a boolean, and its cache step throws
+          # "Some specified paths were not resolved, unable to cache
+          # dependencies" when `glob.hashFiles(<cache-dependency-path>)` fails
+          # to resolve the lockfile in the job workspace — intermittently
+          # reddening this job before any step runs (#1758). The exact mechanism
+          # is not fully confirmed there (the npm cache root `/srv/cache/npm`
+          # does exist), but dropping the input removes the failure mode while
+          # `npm ci` still installs deps.
 
       - name: Install e2e deps
         run: npm ci
