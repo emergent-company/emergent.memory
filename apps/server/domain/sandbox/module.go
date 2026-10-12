@@ -217,7 +217,11 @@ func startCleanupJob(lc fx.Lifecycle, job *CleanupJob, rec *Reconciler, cfg *con
 
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			job.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the cleanup goroutine before its next tick. The loop terminates via
+			// job.Stop() (stopCh), and Stop() does not rely on this ctx.
+			job.Start(context.Background())
 			return nil
 		},
 		OnStop: func(_ context.Context) error {
