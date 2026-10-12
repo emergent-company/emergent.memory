@@ -38,7 +38,10 @@ var Module = fx.Module("mcp",
 func registerAgentMCPSessionReaper(lc fx.Lifecycle, reaper *AgentMCPSessionReaper) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			reaper.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
 			return nil
 		},
 		OnStop: func(_ context.Context) error {

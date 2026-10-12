@@ -417,7 +417,10 @@ func registerWorkStatusReaper(lc fx.Lifecycle, reaper *WorkStatusReaper, store W
 	reaper.SetWorkObjectStore(store)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			reaper.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -431,7 +434,10 @@ func registerWorkReconciler(lc fx.Lifecycle, rc *WorkReconciler, store WorkObjec
 	rc.SetWorkObjectStore(store)
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			rc.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reconciler goroutine before its first tick.
+			rc.Start(context.Background())
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -444,7 +450,10 @@ func registerWorkReconciler(lc fx.Lifecycle, rc *WorkReconciler, store WorkObjec
 func registerStaleRunReaper(lc fx.Lifecycle, reaper *StaleRunReaper) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			reaper.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
@@ -483,7 +492,10 @@ func provideShareRunReaper(repo *Repository, log *slog.Logger) *ShareRunReaper {
 func registerShareRunReaper(lc fx.Lifecycle, reaper *ShareRunReaper) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			reaper.Start(ctx)
+			// Use context.Background() — the fx lifecycle ctx is cancelled after
+			// OnStart returns (or its 15s StartTimeout elapses), which would kill
+			// the reaper goroutine before its first tick.
+			reaper.Start(context.Background())
 			return nil
 		},
 		OnStop: func(ctx context.Context) error {
