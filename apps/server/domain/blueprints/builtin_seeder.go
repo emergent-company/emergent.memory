@@ -25,8 +25,11 @@ var builtinPacksFS embed.FS
 
 // BuiltinSeeder seeds the platform's built-in blueprints at server startup: each
 // bundled pack becomes a global published blueprint (project_id NULL,
-// origin='builtin') plus a global source='builtin' schema pack. It runs on every
-// boot and is idempotent by (name, version).
+// origin='builtin'). It runs on every boot and is idempotent by (name, version).
+//
+// It does NOT seed schema packs: built-in blueprint packs materialize only when
+// their blueprint is applied (the defensive resolvePack -> upsertBuiltinSchemaPack
+// path in apply.go), and are never auto-assigned to projects.
 type BuiltinSeeder struct {
 	repo *Repository
 	log  *slog.Logger
@@ -49,9 +52,9 @@ func RegisterBuiltinSeederLifecycle(lc fx.Lifecycle, seeder *BuiltinSeeder) {
 	})
 }
 
-// Seed upserts every bundled pack as a global published blueprint and its schema
-// packs as global source='builtin' rows. Idempotent by (name, version); safe to
-// call on every boot.
+// Seed upserts every bundled pack as a global published blueprint. Idempotent by
+// (name, version); safe to call on every boot. Built-in schema packs are NOT
+// seeded here — they materialize only on blueprint apply.
 func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 	entries, err := fs.ReadDir(builtinPacksFS, "builtin_packs")
 	if err != nil {
@@ -82,15 +85,6 @@ func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 			return err
 		}
 
-		for _, p := range desc.Packs {
-			if p.Name == "" || p.Version == "" || len(p.ObjectTypes) == 0 {
-				continue
-			}
-			if _, err := upsertBuiltinSchemaPack(ctx, s.repo.DB(), p); err != nil {
-				s.log.Error("failed to seed builtin schema pack", slog.String("pack", p.Name), logger.Error(err))
-				return err
-			}
-		}
 		seeded++
 	}
 

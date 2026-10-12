@@ -191,6 +191,7 @@ type GraphMemorySchema struct {
 	Description             *string               `bun:"description" json:"description,omitempty"`
 	Author                  *string               `bun:"author" json:"author,omitempty"`
 	Source                  *string               `bun:"source" json:"source,omitempty"`
+	IsSystem                bool                  `bun:"is_system,notnull,default:false" json:"isSystem"`
 	License                 *string               `bun:"license" json:"license,omitempty"`
 	RepositoryURL           *string               `bun:"repository_url" json:"repositoryUrl,omitempty"`
 	DocumentationURL        *string               `bun:"documentation_url" json:"documentationUrl,omitempty"`
@@ -246,6 +247,10 @@ type ObjectTypeSchema struct {
 	SchemaName    string          `json:"schemaName,omitempty"`
 	SchemaVersion string          `json:"schemaVersion,omitempty"`
 	Shadowed      bool            `json:"shadowed,omitempty"`
+	// IsSystem is true when the type is contributed by a system pack
+	// (is_system=true, e.g. session-message-types) resolved at read time rather
+	// than via a kb.project_schemas assignment.
+	IsSystem bool `json:"isSystem,omitempty"`
 	// Object-driven work configuration (P4): board-enabled flag, allowed work
 	// status values, and operational pipeline skip-flags.
 	BoardEnabled      bool     `json:"boardEnabled,omitempty"`
@@ -266,6 +271,9 @@ type RelationshipTypeSchema struct {
 	SchemaName    string `json:"schemaName,omitempty"`
 	SchemaVersion string `json:"schemaVersion,omitempty"`
 	Shadowed      bool   `json:"shadowed,omitempty"`
+	// IsSystem is true when the relationship type is contributed by a system
+	// pack (is_system=true) resolved at read time.
+	IsSystem bool `json:"isSystem,omitempty"`
 }
 
 // MemorySchemaListItem is a simplified schema for listing
