@@ -58,6 +58,7 @@ if $TESTS_ONLY; then
     -e TEST_LOG_DIR="/test-logs" \
     -e TEST_RUNNER="docker" \
     -e CI=true \
+    -e GOWORK=off \
     -e TEST_RUN="${TEST_RUN:-}" \
     -v "$LOG_DIR:/test-logs" \
     -v "$RUNS_DB_DIR:/tests/logs" \

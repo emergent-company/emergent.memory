@@ -24,8 +24,5 @@ use (
 	./blueprints/code-memory-blueprint/tools/service-exposes-seed
 	./blueprints/code-memory-blueprint/tools/test-coverage
 	./blueprints/code-memory-blueprint/tools/uml-gen
-	./e2e
-	./e2e/stubs/mailgun
-	./e2e/stubs/mcp-registry
 	./tools/opencode-test-suite
 )

@@ -6,6 +6,18 @@ Tests run inside Docker where the `memory` binary is built from the checked-out 
 - **CLI Install Tests** (`TestCLIInstalled_*`, `TestOpencode*`): full Docker Compose stack with ephemeral server + Postgres
 - **Production Smoke Tests** (`TestProduction_*`): runs against live production server (skipped when `MEMORY_PROD_TEST_TOKEN` is absent)
 
+## Module isolation
+
+`e2e` is **not** part of the repo-root `go.work`; it has its own workspace at
+`e2e/go.work`. Its test framework (runlog) pins an older
+`google.golang.org/adk` whose telemetry does not compile against the `otel/log`
+version the server's `adk/v2` selects, so sharing the root build list would let a
+server dependency bump break e2e. A plain `go build ./...` / `go test ./...`
+inside `e2e/` resolves through `e2e/go.work`; CI runs the module with
+`GOWORK=off`. When you add a module under `e2e/`, list it in `e2e/go.work` — the
+root coverage guard (`.github/scripts/check-go-work-coverage.sh`) requires every
+module to be claimed by some workspace.
+
 ## Run Tests
 
 ### Task shortcuts (recommended)

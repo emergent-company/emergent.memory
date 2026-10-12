@@ -1,0 +1,19 @@
+// e2e keeps its own workspace, deliberately separate from the root go.work.
+//
+// Its test framework (runlog) pins an older google.golang.org/adk whose telemetry
+// does not compile against the otel/log version the server's adk/v2 pulls, so
+// sharing the root build list would let a server ADK bump break e2e. CI runs
+// these modules with GOWORK=off; this file is what keeps a bare `go build ./...` /
+// `go test ./...` inside e2e working locally.
+//
+// See openspec/specs/server-agent-runtime/spec.md — "E2E module SHALL be isolated
+// from the workspace build list". Modules listed here are exempt from the root
+// coverage guard (.github/scripts/check-go-work-coverage.sh) because they are
+// covered by this workspace instead.
+go 1.25.6
+
+use (
+	.
+	./stubs/mailgun
+	./stubs/mcp-registry
+)

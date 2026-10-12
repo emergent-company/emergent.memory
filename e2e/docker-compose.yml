@@ -241,6 +241,10 @@ services:
       # Only set in the Mailgun-transport run; empty by default so the
       # Mailgun invite-email test skips when the stack runs in SMTP mode.
       MAILGUN_STUB_URL: "${E2E_MAILGUN_STUB_URL:-}"
+      # The image ships e2e/go.work (the module's own workspace). Run the suite
+      # in module mode, exactly as before that file existed — the module's own
+      # dependency graph, never the repo root's build list.
+      GOWORK: "off"
     volumes:
       # Persist test session logs to the host so they survive container exit.
       - ./test-logs:/test-logs

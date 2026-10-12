@@ -62,9 +62,11 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
-      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
-      # so sharing the repo go.work build list would let a server ADK upgrade
-      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
       GOWORK: "off"
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
@@ -141,9 +143,11 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
-      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
-      # so sharing the repo go.work build list would let a server ADK upgrade
-      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
       GOWORK: "off"
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
@@ -254,9 +258,11 @@ jobs:
 
     env:
       MEMORY_SERVER_IMAGE: memory-server:ci
-      # e2e is a standalone module: runlog pins an old google.golang.org/adk,
-      # so sharing the repo go.work build list would let a server ADK upgrade
-      # perturb e2e's dependency graph (otel bump breaks runlog). Isolate it.
+      # e2e is a standalone module with its own workspace (e2e/go.work), so the
+      # root build list cannot perturb it: runlog pins an older
+      # google.golang.org/adk whose telemetry does not compile against the
+      # otel/log version adk/v2 selects. GOWORK=off keeps CI independent of the
+      # workspace files entirely.
       GOWORK: "off"
       # Switch the stack's email transport from SMTP/Mailpit to Mailgun and
       # point the Mailgun SDK base URL at the local stub. The override includes
