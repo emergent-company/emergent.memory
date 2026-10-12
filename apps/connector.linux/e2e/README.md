@@ -39,8 +39,41 @@ with it):
 go test -short ./e2e/...
 ```
 
-The test is Linux-only: it asserts the Linux built-in tool set
-(`linux-host-info`) and is skipped on other hosts.
+The Linux test asserts the Linux built-in tool set (`linux-host-info`) and is
+skipped on other hosts.
+
+## Darwin variant
+
+A second test (`TestDarwinDaemonRegisterAndStatus` in
+`mac_daemon_e2e_test.go`) covers the darwin engine↔hub handshake. It builds the
+real `memory-connector` binary (the same `TestMain`/`buildConnectorBinary` build,
+no duplication) and runs it against the same in-process fake hub, asserting:
+
+1. a `register` frame arrives whose tool list **contains** the Apple tool ids the
+   engine registers on darwin (`notes_search`, `notes_create`, `reminders_list`,
+   `reminders_lists`, `reminders_add`, `reminders_update`, `reminders_delete` —
+   sourced from `internal/appletools` and cross-checked against
+   `MemoryConnector/Sources/ToolCatalog.swift`);
+2. `status --config <cfg> --json` reports the matching `instance_id`,
+   `hub_state == "connected"`, and `schema_version == 1`.
+
+It is gated on `runtime.GOOS == "darwin"` and skips under `-short`, so on Linux
+it skips (the Linux test runs) and the Linux test is unchanged. It is run on a
+macOS host the same way as the Linux test:
+
+```sh
+cd apps/connector.linux
+go test -count=1 ./e2e/...
+```
+
+On macOS the native `go build` produces a darwin binary, so the harness exercises
+the real darwin engine path end to end.
+
+The tool-*call* round-trip stays **Linux-only**: the permission-free probe tool
+(`linux-host-info`) has no darwin analogue, and invoking the Apple tools would
+require live TCC/EventKit/AppleScript grants a hermetic test must not assume.
+Darwin asserts the handshake and registration only (registration does not
+execute the tool).
 
 ## Notes
 

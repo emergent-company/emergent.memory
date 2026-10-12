@@ -97,6 +97,7 @@ struct MainWindowView: View {
         .padding(.horizontal, 24)
         .frame(height: 24)
         .help(Text(status.label) + Text(verbatim: hubHelpSuffix))
+        .accessibilityIdentifier("status.footer")
     }
 
     // MARK: - Sidebar
@@ -108,6 +109,7 @@ struct MainWindowView: View {
                     ForEach(group.items) { item in
                         Label(item.title, systemImage: item.systemIcon)
                             .tag(item)
+                            .accessibilityIdentifier("sidebar.\(item.rawValue)")
                     }
                 }
             }
@@ -130,6 +132,7 @@ struct MainWindowView: View {
             List(selection: sidebarSelection) {
                 Label(SidebarItem.about.title, systemImage: SidebarItem.about.systemIcon)
                     .tag(SidebarItem.about)
+                    .accessibilityIdentifier("sidebar.about")
             }
             .listStyle(.sidebar)
             .scrollDisabled(true)
@@ -156,13 +159,13 @@ struct MainWindowView: View {
     /// shallow so `NavigationSplitView` + `List` initialization stays cheap.
     private var contentView: AnyView {
         switch appState.selectedSidebarItem {
-        case .dashboard: AnyView(DashboardPage())
-        case .project: AnyView(ProjectAccountPage())
-        case .tools: AnyView(ToolsPage())
-        case .mcpServers: AnyView(MCPServersPage())
-        case .permissions: AnyView(PermissionsPage())
-        case .connection: AnyView(ConnectionPage())
-        case .about: AnyView(AboutPage())
+        case .dashboard: AnyView(DashboardPage().accessibilityIdentifier("page.dashboard"))
+        case .project: AnyView(ProjectAccountPage().accessibilityIdentifier("page.project"))
+        case .tools: AnyView(ToolsPage().accessibilityIdentifier("page.tools"))
+        case .mcpServers: AnyView(MCPServersPage().accessibilityIdentifier("page.mcpServers"))
+        case .permissions: AnyView(PermissionsPage().accessibilityIdentifier("page.permissions"))
+        case .connection: AnyView(ConnectionPage().accessibilityIdentifier("page.connection"))
+        case .about: AnyView(AboutPage().accessibilityIdentifier("page.about"))
         }
     }
 }

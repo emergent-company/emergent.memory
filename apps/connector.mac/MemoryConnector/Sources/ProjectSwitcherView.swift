@@ -12,6 +12,7 @@ struct ProjectSwitcherView: View {
 
     var body: some View {
         content
+            .accessibilityIdentifier("toolbar.project")
             // Self-heal: if bootstrap ran before the session was restored (or
             // failed), load once when the picker appears with no projects.
             .task { await ensureProjectsLoaded() }

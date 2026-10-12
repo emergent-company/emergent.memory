@@ -19,11 +19,14 @@ struct AccountToolbarView: View {
     @SwiftUI.Environment(AppState.self) private var appState
 
     var body: some View {
-        if accountStore.isEffectivelySignedIn {
-            accountMenu
-        } else {
-            signInButton
+        Group {
+            if accountStore.isEffectivelySignedIn {
+                accountMenu
+            } else {
+                signInButton
+            }
         }
+        .accessibilityIdentifier("toolbar.account")
     }
 
     // MARK: - Signed in

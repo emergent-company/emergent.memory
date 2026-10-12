@@ -28,7 +28,14 @@ final class EngineManager {
 
     /// Legacy config path for the FIRST/primary connected project:
     /// `relay --config ~/.config/memory-connector.yml`.
-    nonisolated static let defaultConfigPath = NSHomeDirectory() + "/.config/memory-connector.yml"
+    ///
+    /// Under UI-test isolation (`-uiTestMode`) this resolves to an isolated
+    /// profile path instead, so `importExistingConfigIfNeeded` reads a
+    /// non-existent file and never adopts the real engine config. Inert without
+    /// the flag (the value is unchanged for normal launches).
+    nonisolated static var defaultConfigPath: String {
+        UITestMode.isActive ? UITestMode.engineConfigPath : NSHomeDirectory() + "/.config/memory-connector.yml"
+    }
 
     /// Shared app log at `~/Library/Logs/memory-connector-app.log` (primary
     /// project's child logs here, so a single-project user sees no change).
