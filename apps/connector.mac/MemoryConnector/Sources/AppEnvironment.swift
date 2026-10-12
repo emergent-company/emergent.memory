@@ -50,16 +50,31 @@ final class AppEnvironment {
     /// - Parameter legacyMigrator: injectable override for tests. `nil` builds
     ///   the real migrator (unless the process is a hosted test run).
     init(legacyMigrator: LegacyMigrator? = nil) {
-        let settings = ConnectorSettings()
+        // UI-test isolation: a UI test launches the app as a SEPARATE process,
+        // so `HostedTest.isRunning` is FALSE there. Redirect every storage seam
+        // to an isolated profile BEFORE any store is constructed — a temp
+        // Application Support directory + an isolated UserDefaults suite — so
+        // the app never reads or writes the real config, Keychain, or signed-in
+        // account state. The seam selection is the only branch; nothing else
+        // checks `UITestMode`.
+        let isolated = UITestMode.isActive
+        let defaults: UserDefaults = isolated ? UITestMode.defaults : .standard
+        let rootDirectory: URL = isolated ? UITestMode.rootDirectory : AccountStore.defaultRootDirectory
+
+        let settings = ConnectorSettings(defaults: defaults)
         self.settings = settings
         // The updater reads the selected channel lazily on each check, so a
         // channel change in the About page redirects the feed without a rebuild.
         updater = UpdaterModel(
             channelProvider: { [weak settings] in settings?.updateChannel ?? .stable }
         )
-        let accountStore = AccountStore()
+        let accountStore = AccountStore(rootDirectory: rootDirectory, defaults: defaults)
         self.accountStore = accountStore
-        let migrator = legacyMigrator ?? Self.defaultLegacyMigrator()
+        // The one-time legacy migrator must never touch the real
+        // Keychain/session/config — under hosted unit tests (shared process) and
+        // under UI-test isolation (launched process). An injected migrator
+        // always wins.
+        let migrator = legacyMigrator ?? (isolated ? nil : Self.defaultLegacyMigrator())
         self.legacyMigrator = migrator
         // Capture the composition root's engine directly rather than via
         // `self`: these closures are built before `projectStore` is assigned,
@@ -67,6 +82,7 @@ final class AppEnvironment {
         let engine = EngineManager.shared
         projectStore = ProjectStore(
             settings: settings,
+            defaults: defaults,
             restart: { projectID, configPath, port in
                 engine.restart(projectID: projectID, configPath: configPath, port: port)
             },

@@ -17,6 +17,7 @@
 #   apps/connector.mac/Scripts/mac-build.sh                  # sync + generate + build
 #   apps/connector.mac/Scripts/mac-build.sh --gen            # regenerate project only (no build)
 #   apps/connector.mac/Scripts/mac-build.sh --test           # run hosted unit tests (test action)
+#   apps/connector.mac/Scripts/mac-build.sh --uitest         # build UI-test bundle only (run it in a GUI session)
 #   apps/connector.mac/Scripts/mac-build.sh --install        # build + copy .app to ~/Applications + open
 #   apps/connector.mac/Scripts/mac-build.sh --clean          # wipe build/DerivedData before building
 #   apps/connector.mac/Scripts/mac-build.sh --no-sync        # skip rsync (build what's on the Mac now)
@@ -51,6 +52,7 @@ MAC_SRC="$ROOT/apps/connector.mac"
 SYNC=1
 GEN_ONLY=0
 RUN_TESTS=0
+RUN_UITESTS=0
 INSTALL=0
 CLEAN=0
 MAC_DRY_RUN=0
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --gen)      GEN_ONLY=1; shift ;;
     --test)     RUN_TESTS=1; shift ;;
+    --uitest)   RUN_UITESTS=1; shift ;;
     --install)  INSTALL=1; shift ;;
     --clean)    CLEAN=1; shift ;;
     --no-sync)  SYNC=0; shift ;;
@@ -127,10 +130,21 @@ BUILD_CMD="$BUILD_CMD -derivedDataPath 'build/DerivedData'"
 # re-signed afterwards with the stable identity when a GUI session can do it.
 BUILD_CMD="$BUILD_CMD CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=-"
 
-if [[ "$RUN_TESTS" == 1 ]]; then
+if [[ "$RUN_UITESTS" == 1 ]]; then
+  # XCUITest cannot run over ssh (no WindowServer/launchd session); the `test`
+  # action would hang or fail. Build the app + UI-test bundle only
+  # (`build-for-testing`), then the post-build note prints the GUI-session
+  # command to actually run it on the Mac.
+  BUILD_CMD="$BUILD_CMD ENABLE_HARDENED_RUNTIME=NO build-for-testing"
+  BUILD_CMD="$BUILD_CMD -only-testing:MemoryConnectorUITests"
+elif [[ "$RUN_TESTS" == 1 ]]; then
   # Ad-hoc signing of embedded XCTest frameworks fails with hardened runtime
   # ("invalid or unsupported format"); tests do not need it.
-  BUILD_CMD="$BUILD_CMD ENABLE_HARDENED_RUNTIME=NO test"
+  # Run ONLY the hosted unit tests: MemoryConnectorUITests is in the scheme's
+  # test action, and XCUITest cannot run over ssh (no WindowServer/launchd
+  # session) — running the whole scheme here would hang/fail. The UI suite is
+  # built+run in a GUI session instead (see --uitest).
+  BUILD_CMD="$BUILD_CMD ENABLE_HARDENED_RUNTIME=NO test -only-testing:MemoryConnectorTests"
 else
   BUILD_CMD="$BUILD_CMD build"
 fi
@@ -157,7 +171,7 @@ REMOTE_CMD="$REMOTE_CMD && $GEN_CMD && $GOWORK_CMD && $BUILD_CMD"
 #   3. ad-hoc (always works; identity changes per rebuild -> Keychain/TCC may
 #      re-prompt).
 # A signing failure never fails the build.
-if [[ "$RUN_TESTS" != 1 ]]; then
+if [[ "$RUN_TESTS" != 1 && "$RUN_UITESTS" != 1 ]]; then
   SIGN_CMD="$(cat <<'REMOTE_SIGN'
 APP='build/DerivedData/Build/Products/Debug/Memory.app'
 SIGN_ENV="$HOME/.config/memory-connector/signing.env"
@@ -224,6 +238,22 @@ fi
 
 echo "==> ssh $MAC_HOST: xcodegen + xcodebuild + codesign"
 mac_ssh "$REMOTE_CMD"
+
+# ---- UI-test runner contract ---------------------------------------------
+# XCUITest needs a GUI/WindowServer session, so it cannot run over the headless
+# ssh path above — `--uitest` only builds the app + UI-test bundle. Print the
+# exact command to run the suite ON THE MAC in a GUI session, plus the stable
+# signing requirement (ad-hoc signing resets Automation/TCC grants).
+if [[ "$RUN_UITESTS" == 1 ]]; then
+  echo "==> UI-test bundle built (NOT run): XCUITest requires a GUI/WindowServer session."
+  echo "    Run it on the Mac in a GUI session (e.g. over Screen Sharing / locally):"
+  echo "      cd $MAC_CHECKOUT_PATH/$MAC_SUBTREE/MemoryConnector"
+  echo "      xcodebuild test -project MemoryConnector.xcodeproj -scheme MemoryConnector \\"
+  echo "        -destination 'platform=macOS' -derivedDataPath build/DerivedData \\"
+  echo "        -only-testing:MemoryConnectorUITests"
+  echo "    Sign with a stable identity first (apps/connector.mac/Scripts/mac-setup-signing.sh,"
+  echo "    run once); ad-hoc signing resets Automation (TCC) grants and will fail the suite."
+fi
 
 # ---- optional: install to ~/Applications and launch ---------------------
 if [[ "$INSTALL" == 1 ]]; then

@@ -21,12 +21,19 @@
 # environment or in the gitignored apps/connector.mac/.env (loaded by
 # mac_resolve_target; an explicitly-set environment variable always wins).
 #
-#   MEMORY_MAC_HOST        Required. SSH host of the Mac build machine.
-#                          An explicitly EMPTY value ('') means "local
-#                          destination" (used by tests / --dry-run); an UNSET
-#                          value is an error.
-#   MEMORY_MAC_PATH        Required. Project dir on the Mac, absolute or
-#                          ~-rooted, no spaces. Example: ~/code/emergent.memory
+#   MEMORY_MAC_HOST        SSH host of the Mac build machine. An explicitly
+#                          EMPTY value ('') means "local destination" (used by
+#                          tests / --dry-run); an UNSET value is an error.
+#   MEMORY_MAC_HOST_NAME   Optional selector for a NAMED host. When set (and
+#                          MEMORY_MAC_HOST is not explicitly set), it resolves
+#                          MEMORY_MAC_HOST_<NAME>, where <NAME> is the selector
+#                          uppercased with every non-alphanumeric -> '_'.
+#                          e.g. MEMORY_MAC_HOST_NAME=mini -> MEMORY_MAC_HOST_MINI.
+#   MEMORY_MAC_HOST_<NAME> Named-host SSH targets, e.g. MEMORY_MAC_HOST_TOOL=mcj@tool.
+#   MEMORY_MAC_PATH        Project dir on the Mac, absolute or ~-rooted, no
+#                          spaces. Example: ~/code/emergent.memory.
+#   MEMORY_MAC_PATH_<NAME> Optional per-host project dir; overrides
+#                          MEMORY_MAC_PATH when the matching named host is selected.
 #   MEMORY_MAC_SUBTREE     Optional override of the per-script remote subtree
 #                          (iOS scripts: client/ios; Mac connector:
 #                          client/macos). Must be relative to MEMORY_MAC_PATH.
@@ -71,6 +78,14 @@ mac_die() {
   exit 1
 }
 
+# mac_normalize_name <name> — uppercase <name> and replace every non-alphanumeric
+# character with '_', mapping a friendly host name to the suffix used in
+# MEMORY_MAC_HOST_<NAME> / MEMORY_MAC_PATH_<NAME>. Uses tr (bash 3.2-safe; no
+# ${var^^}, which is bash 4+ only).
+mac_normalize_name() {
+  printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]' | tr -c '[:alnum:]' '_'
+}
+
 # mac_load_env [<file>] — load the whitelisted MEMORY_MAC_* / ALLOW_* keys from
 # the gitignored env file. Only keys we understand are read (the file is never
 # sourced/executed), and any variable already present in the environment —
@@ -84,7 +99,9 @@ mac_load_env() {
     key="${line%%=*}"
     case "$key" in
       MEMORY_MAC_HOST | MEMORY_MAC_PATH | MEMORY_MAC_SUBTREE | \
-        MEMORY_MAC_IOS_SUBDIR | ALLOW_SYNC_INTO_GIT | ALLOW_DELETE_IN_GIT) ;;
+        MEMORY_MAC_IOS_SUBDIR | MEMORY_MAC_HOST_NAME | \
+        MEMORY_MAC_HOST_* | MEMORY_MAC_PATH_* | \
+        ALLOW_SYNC_INTO_GIT | ALLOW_DELETE_IN_GIT) ;;
       *) continue ;;
     esac
     val="${line#*=}"
@@ -93,11 +110,16 @@ mac_load_env() {
       \"*\") val="${val#\"}"; val="${val%\"}" ;;
       \'*\') val="${val#\'}"; val="${val%\'}" ;;
     esac
+    # Only export a key that is NOT already set in the environment — an
+    # explicitly-set variable (including an explicitly empty one) always wins.
     case "$key" in
       MEMORY_MAC_HOST)       [[ -n "${MEMORY_MAC_HOST+x}" ]]       || export MEMORY_MAC_HOST="$val" ;;
       MEMORY_MAC_PATH)       [[ -n "${MEMORY_MAC_PATH+x}" ]]       || export MEMORY_MAC_PATH="$val" ;;
       MEMORY_MAC_SUBTREE)    [[ -n "${MEMORY_MAC_SUBTREE+x}" ]]    || export MEMORY_MAC_SUBTREE="$val" ;;
       MEMORY_MAC_IOS_SUBDIR) [[ -n "${MEMORY_MAC_IOS_SUBDIR+x}" ]] || export MEMORY_MAC_IOS_SUBDIR="$val" ;;
+      MEMORY_MAC_HOST_NAME)  [[ -n "${MEMORY_MAC_HOST_NAME+x}" ]]  || export MEMORY_MAC_HOST_NAME="$val" ;;
+      MEMORY_MAC_HOST_*)     [[ -n "${!key+x}" ]]                  || export "$key=$val" ;;
+      MEMORY_MAC_PATH_*)     [[ -n "${!key+x}" ]]                  || export "$key=$val" ;;
       ALLOW_SYNC_INTO_GIT)   [[ -n "${ALLOW_SYNC_INTO_GIT+x}" ]]   || export ALLOW_SYNC_INTO_GIT="$val" ;;
       ALLOW_DELETE_IN_GIT)   [[ -n "${ALLOW_DELETE_IN_GIT+x}" ]]   || export ALLOW_DELETE_IN_GIT="$val" ;;
     esac
@@ -117,22 +139,74 @@ mac_resolve_target() {
   local default_subtree="${1:?mac_resolve_target: missing default subtree}"
   local override_var="${2:-MEMORY_MAC_SUBTREE}"
 
+  # Snapshot the explicit environment BEFORE the env file is consulted, so an
+  # explicitly-set MEMORY_MAC_HOST / MEMORY_MAC_PATH (even empty) wins over a
+  # selector or a value defined in the file.
+  local explicit_host=0 explicit_path=0
+  [[ -n "${MEMORY_MAC_HOST+x}" ]] && explicit_host=1
+  [[ -n "${MEMORY_MAC_PATH+x}" ]] && explicit_path=1
+
   mac_load_env "$MAC_ENV_FILE"
 
-  if [[ -z "${MEMORY_MAC_HOST+x}" ]]; then
+  # Normalized selector suffix (uppercase, non-alphanumerics -> '_'); empty when
+  # no selector is set.
+  local selector_suffix=""
+  [[ -n "${MEMORY_MAC_HOST_NAME:-}" ]] \
+    && selector_suffix="$(mac_normalize_name "$MEMORY_MAC_HOST_NAME")"
+
+  # ---- host -------------------------------------------------------------
+  # Precedence:
+  #   1. MEMORY_MAC_HOST set explicitly in the environment (highest; empty
+  #      = local-destination mode).
+  #   2. MEMORY_MAC_HOST_NAME (selector) -> MEMORY_MAC_HOST_<NAME>.
+  #   3. MEMORY_MAC_HOST set in the env file (single-host).
+  #   4. neither -> fail fast, naming both options.
+  local host_from_selector=0
+  if [[ "$explicit_host" == 1 ]]; then
+    MAC_HOST="$MEMORY_MAC_HOST"
+  elif [[ -n "$selector_suffix" ]]; then
+    local host_var="MEMORY_MAC_HOST_${selector_suffix}"
+    if [[ -n "${!host_var+x}" ]]; then
+      MAC_HOST="${!host_var}"
+      host_from_selector=1
+    else
+      mac_die "MEMORY_MAC_HOST_NAME='$MEMORY_MAC_HOST_NAME' selects $host_var, but it is not set.
+  Define $host_var in the environment or in $app_dir/.env, or set MEMORY_MAC_HOST
+  directly (see apps/connector.mac/.env.example)."
+    fi
+  elif [[ -n "${MEMORY_MAC_HOST+x}" ]]; then
+    MAC_HOST="$MEMORY_MAC_HOST"
+  else
     mac_die "MEMORY_MAC_HOST is not set. Point it at the Mac build machine, e.g.:
     export MEMORY_MAC_HOST=mcj-mini
+  or pick a named host, e.g.:
+    export MEMORY_MAC_HOST_NAME=mini   # resolves MEMORY_MAC_HOST_MINI=<ssh-target>
   or set MEMORY_MAC_HOST (and MEMORY_MAC_PATH) in $app_dir/.env
   (see apps/connector.mac/.env.example)."
   fi
-  MAC_HOST="$MEMORY_MAC_HOST"
 
-  if [[ -z "${MEMORY_MAC_PATH:-}" ]]; then
+  # ---- checkout path -----------------------------------------------------
+  # A named host may have its own project dir (MEMORY_MAC_PATH_<NAME>); it only
+  # applies when the host was resolved via the selector. Otherwise fall back to
+  # MEMORY_MAC_PATH.
+  local path_var=""
+  [[ "$host_from_selector" == 1 ]] && path_var="MEMORY_MAC_PATH_${selector_suffix}"
+  if [[ "$explicit_path" == 1 ]]; then
+    MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"
+  elif [[ -n "$path_var" && -n "${!path_var+x}" ]]; then
+    MAC_CHECKOUT_PATH="${!path_var}"
+  elif [[ -n "${MEMORY_MAC_PATH:-}" ]]; then
+    MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"
+  elif [[ -n "$path_var" ]]; then
+    mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
+    export MEMORY_MAC_PATH=~/code/emergent.memory
+  or set $path_var for the selected named host
+  (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
+  else
     mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
     export MEMORY_MAC_PATH=~/code/emergent.memory
   (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
   fi
-  MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"
 
   # Matching a literal ~ / $HOME input (not an expanded path) is intentional.
   # shellcheck disable=SC2088,SC2016

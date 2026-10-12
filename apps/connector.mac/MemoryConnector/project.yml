@@ -125,6 +125,20 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Memory.app/Contents/MacOS/Memory"
 
+  MemoryConnectorUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: UITests
+    dependencies:
+      - target: MemoryConnector
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: MemoryConnector
+
 schemes:
   MemoryConnector:
     build:
@@ -137,4 +151,6 @@ schemes:
       config: Debug
       targets:
         - name: MemoryConnectorTests
+          parallelizable: false
+        - name: MemoryConnectorUITests
           parallelizable: false

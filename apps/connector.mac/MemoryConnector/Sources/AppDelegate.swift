@@ -11,6 +11,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // engine or status polling there.
         let env = ProcessInfo.processInfo.environment
         guard !HostedTest.isRunning(environment: env) else { return }
+        // A UI-test launch runs the app as a separate process (the hosted-test
+        // check is false there); it must never start the engine or the status
+        // poller. The isolated profile already yields no connected projects, so
+        // this guard is belt-and-suspenders that also skips the status item.
+        guard !UITestMode.isActive else { return }
         let app = AppEnvironment.shared
         // Gated: start engine children + status polling ONLY for connected
         // projects with valid configs; otherwise stop and publish "not running"
