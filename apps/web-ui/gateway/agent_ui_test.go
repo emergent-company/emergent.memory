@@ -565,7 +565,7 @@ func TestUIAgentsRouteRendersWithoutSkills(t *testing.T) {
 
 // TestRenderAgentSettingsPage covers the split in-page edit subpages: each
 // section renders its own panel with the current values, the settings nav
-// renders as a group with all six children (active child highlighted), and the
+// renders as a group with all seven children (active child highlighted), and the
 // per-section regression guards hold (bare boolean attrs, unlisted tools,
 // delegation-managed tool exclusion, synthetic current model).
 func TestRenderAgentSettingsPage(t *testing.T) {
@@ -597,17 +597,18 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 		return renderHTML(t, AgentSettingsPage(d))
 	}
 
-	// Every settings subpage renders the six-item settings nav group (General /
-	// Model / Tools / Skills / Delegation / MCP sharing) plus the sibling rail
-	// items (Dashboard / Settings / Sandbox / Sessions).
+	// Every settings subpage renders the seven-item settings nav group (General /
+	// Graph / Model / Tools / Skills / Delegation / MCP sharing) plus the sibling
+	// rail items (Dashboard / Settings / Sandbox / Sessions).
 	settingsNavHrefs := []string{
 		`href="/agents/a1"`, `href="/agents/a1/settings"`,
+		`href="/agents/a1/settings/graph"`,
 		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
 		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
 		`href="/agents/a1/settings/mcp"`,
 		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
 	}
-	for _, section := range []string{"", "general", "model", "tools", "skills", "delegation", "mcp"} {
+	for _, section := range []string{"", "general", "graph", "model", "tools", "skills", "delegation", "mcp"} {
 		h := render(section)
 		for _, want := range settingsNavHrefs {
 			if !strings.Contains(h, want) {
@@ -636,6 +637,22 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	// The auto-saving General form drops the shared explicit save button.
 	if strings.Contains(general, "Save changes") {
 		t.Error("general settings page must not render the explicit Save changes button")
+	}
+	// The graph type-scope pickers moved off General to the Graph subpage.
+	if strings.Contains(general, `name="objectType"`) || strings.Contains(general, `name="relationshipType"`) {
+		t.Error("general settings page must not render the graph type-scope pickers (moved to the Graph page)")
+	}
+
+	// Graph page: the moved type-scope pickers (hidden companions guarantee the
+	// fields submit even when every box is cleared) and their POST target.
+	graph := render("graph")
+	for _, want := range []string{
+		`name="objectType"`, `name="relationshipType"`,
+		`/agents/a1/settings/graph`,
+	} {
+		if !strings.Contains(graph, want) {
+			t.Errorf("graph settings page missing %q", want)
+		}
 	}
 
 	// Model page: model picker + temperature + max tokens.
@@ -685,7 +702,7 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	// Delegation page: enable toggle + target picker; self is excluded. The
 	// versioned control id is the contract the agent-delegation e2e scenario
 	// waits on (#1506: the scenario was pointed at the General page after the
-	// six-subpage split moved delegation here) — pin it so a rename cannot
+	// settings-subpage split moved delegation here) — pin it so a rename cannot
 	// silently break the scenario again.
 	delegation := render("delegation")
 	for _, want := range []string{
@@ -817,7 +834,7 @@ func activeNavHrefs(rail string) []string {
 }
 
 // TestRenderAgentSubNavSettingsAlwaysVisible guards the agent details rail: the
-// second level (Settings parent + its six children) stays visible on every agent
+// second level (Settings parent + its seven children) stays visible on every agent
 // section, not only on settings subpages. Off the settings surface the only
 // active item is that surface's own entry; on a settings section exactly the
 // matching child is active (the parent Settings link shares the General child's
@@ -831,13 +848,14 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 		href    string
 	}{
 		{"general", settingsParent},
+		{"graph", settingsParent + "/graph"},
 		{"model", settingsParent + "/model"},
 		{"tools", settingsParent + "/tools"},
 		{"skills", settingsParent + "/skills"},
 		{"delegation", settingsParent + "/delegation"},
 		{"mcp", settingsParent + "/mcp"},
 	}
-	// Every agent section must expose the Settings parent plus all six children.
+	// Every agent section must expose the Settings parent plus all seven children.
 	allSettingsHrefs := []string{settingsParent}
 	for _, c := range children {
 		allSettingsHrefs = append(allSettingsHrefs, c.href)
@@ -994,10 +1012,11 @@ func TestUIAgentSettingsRoute(t *testing.T) {
 
 // TestLoadAgentSettingsScopesCatalogFetches proves the settings loader fetches
 // only the catalogs the requested subpage renders (see loadAgentSettings):
-// "tools" is the only subpage that loads the MCP server catalog + relay nodes,
-// "model" loads the model config/providers/catalog, "skills" loads skills,
-// "delegation" loads the other agents, and "general"/"mcp" load none of those.
-// GetAgentDefinition (+ deriveDelegation) always run for every section.
+// "graph" is the only subpage that loads the project's compiled graph types,
+// "tools" loads the MCP server catalog + relay nodes, "model" loads the model
+// config/providers/catalog, "skills" loads skills, "delegation" loads the other
+// agents, and "general"/"mcp" load none of those. GetAgentDefinition
+// (+ deriveDelegation) always run for every section.
 func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 	agent := &AgentDefinition{ID: "a1", Name: "diane"}
 	newFake := func() *fakeMemory {
@@ -1017,7 +1036,7 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 	allCatalogs := []string{
 		"GetProjectModelConfig", "ListProjectProviders", "ListModels", "ListProviderModels",
 		"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools",
-		"ListSkills", "ListAgentDefinitions",
+		"ListSkills", "ListAgentDefinitions", "GetCompiledTypes",
 	}
 
 	cases := []struct {
@@ -1025,6 +1044,7 @@ func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
 		loads   []string // methods that MUST be fetched
 	}{
 		{section: "general"},
+		{section: "graph", loads: []string{"GetCompiledTypes"}},
 		{section: "model", loads: []string{"GetProjectModelConfig", "ListProjectProviders", "ListProviderModels"}},
 		{section: "tools", loads: []string{"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools"}},
 		{section: "skills", loads: []string{"ListSkills"}},

@@ -341,7 +341,7 @@ test.describe('Agent delegation scenario', () => {
 
       // 4. DELEGATION (UI): enable the toggle, pick B, submit via the real
       // "Save changes" button. Delegation is its own settings subpage (the
-      // six-subpage split moved it off the General page), so the submit control
+      // settings-subpage split moved it off the General page), so the submit control
       // navigates + 303-redirects to /agents/:id/settings/delegation?updated=1
       // on success.
       await page.goto(`/agents/${delegatorId}/settings/delegation`);

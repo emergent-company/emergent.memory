@@ -47,7 +47,7 @@ templ agentSubNav(agentID string, active string, section string) {
 	})
 }
 
-// agentSettingsNavGroup renders the Settings rail entry together with its six
+// agentSettingsNavGroup renders the Settings rail entry together with its seven
 // subpage children, always visible in the agent details rail. A child is active
 // when its section matches; the parent is a plain link into the settings hub and
 // is never marked current (the General child shares its destination, so marking
@@ -59,6 +59,7 @@ templ agentSettingsNavGroup(agentID string, section string) {
 		@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", false, "lucide--settings", "Settings")
 		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/graph", section == "graph", "lucide--git-branch", "Graph")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
@@ -326,6 +327,8 @@ templ AgentSettingsPage(data agentSettingsData) {
 // on data.Section ("" defaults to the General landing page).
 templ agentSettingsSectionPanel(data agentSettingsData) {
 	switch data.Section {
+	case "graph":
+		@agentGraphSettingsForm(data)
 	case "model":
 		@agentModelSettingsForm(data)
 	case "tools":
@@ -424,38 +427,6 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 					// leaves the stored value unchanged.
 					<input type="hidden" name="includeProjectInfo" value="false"/>
 					<input id="agent-settings-project-context" name="includeProjectInfo" type="checkbox" value="true" checked?={ agentIncludeProjectInfoValue(data.Agent) } class="checkbox"/>
-				}
-				// Graph type scope: an allowlist of the object / relationship
-				// types this agent may see and query. Both pickers are empty by
-				// default, which means "all types". The hidden companion input
-				// guarantees the field is always submitted (present, possibly
-				// blank), so clearing every box is distinguishable from a
-				// partial body that omits the field.
-				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
-					<input type="hidden" name="objectType" value=""/>
-					@checkboxPicker(checkboxPickerProps{
-						Name:          "objectType",
-						EmptyNote:     objectTypeEmptyNote(),
-						LabelClass:    "items-start gap-2 py-1.5",
-						CheckboxClass: "checkbox checkbox-sm mt-0.5",
-						TitleClass:    "block text-sm font-medium",
-						DescClass:     "text-muted block text-xs",
-						WrapTitle:     true,
-						Items:         compiledTypePickerItems(data.ObjectTypes, func(name string) bool { return containsString(agentObjectTypesValue(data.Agent), name) }),
-					})
-				}
-				@form.FormControl("agent-settings-relationship-types", "Relationship types", form.LabelAbove, "Only the relationship types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
-					<input type="hidden" name="relationshipType" value=""/>
-					@checkboxPicker(checkboxPickerProps{
-						Name:          "relationshipType",
-						EmptyNote:     relationshipTypeEmptyNote(),
-						LabelClass:    "items-start gap-2 py-1.5",
-						CheckboxClass: "checkbox checkbox-sm mt-0.5",
-						TitleClass:    "block text-sm font-medium",
-						DescClass:     "text-muted block text-xs",
-						WrapTitle:     true,
-						Items:         compiledTypePickerItems(data.RelationshipTypes, func(name string) bool { return containsString(agentRelationshipTypesValue(data.Agent), name) }),
-					})
 				}
 			</div>
 		}
@@ -604,6 +575,54 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 			</div>
 		}
 		@agentAutosaveStatus()
+	</form>
+}
+
+// agentGraphSettingsForm is the Graph subpage (PRG → POST
+// /agents/:id/settings/graph): the graph type-scope allowlists — the object and
+// relationship types this agent may see and query. Both pickers are empty by
+// default, which means "all types", so leaving both unchecked is the permissive
+// default. The hidden companion input guarantees each field is always submitted
+// (present, possibly blank), so clearing every box is distinguishable from a
+// partial body that omits the field — the "cleared all" vs "untouched" contract
+// this control relied on when it lived on the General form.
+templ agentGraphSettingsForm(data agentSettingsData) {
+	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/graph") } hx-disable="find button.memory-save-btn">
+		@ui.Section("Graph", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4">
+				<p class="text-muted-strong text-sm">Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save.</p>
+				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="objectType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "objectType",
+						EmptyNote:     objectTypeEmptyNote(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.ObjectTypes, func(name string) bool { return containsString(agentObjectTypesValue(data.Agent), name) }),
+					})
+				}
+				@form.FormControl("agent-settings-relationship-types", "Relationship types", form.LabelAbove, "Only the relationship types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
+					<input type="hidden" name="relationshipType" value=""/>
+					@checkboxPicker(checkboxPickerProps{
+						Name:          "relationshipType",
+						EmptyNote:     relationshipTypeEmptyNote(),
+						LabelClass:    "items-start gap-2 py-1.5",
+						CheckboxClass: "checkbox checkbox-sm mt-0.5",
+						TitleClass:    "block text-sm font-medium",
+						DescClass:     "text-muted block text-xs",
+						WrapTitle:     true,
+						Items:         compiledTypePickerItems(data.RelationshipTypes, func(name string) bool { return containsString(agentRelationshipTypesValue(data.Agent), name) }),
+					})
+				}
+			</div>
+		}
+		@agentSettingsSave()
 	</form>
 }
 

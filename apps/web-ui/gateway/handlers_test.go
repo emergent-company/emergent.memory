@@ -1454,6 +1454,7 @@ func (f *fakeMemory) MergeBranch(ctx context.Context, sourceBranchID, policy str
 }
 
 func (f *fakeMemory) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error) {
+	f.recordCatalog("GetCompiledTypes")
 	if f.blueprintErr != nil {
 		return nil, f.blueprintErr
 	}

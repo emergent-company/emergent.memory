@@ -180,6 +180,7 @@ type agentSandboxData struct {
 // the rest are /agents/:id/settings/<section>.
 const (
 	sectionGeneral    = "general"
+	sectionGraph      = "graph"
 	sectionModel      = "model"
 	sectionTools      = "tools"
 	sectionSkills     = "skills"
@@ -189,7 +190,7 @@ const (
 
 // agentSettingsSections is the ordered list of settings subpages, used by the
 // nav group.
-var agentSettingsSections = []string{sectionGeneral, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
+var agentSettingsSections = []string{sectionGeneral, sectionGraph, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
 
 // agentSettingsSectionPath returns the settings subpage URL for one section.
 // "general" maps to the bare /agents/:id/settings landing route.
@@ -206,8 +207,8 @@ func (s *Server) uiAgentSettings(c echo.Context) error {
 	return s.renderAgentSettingsSection(c, sectionGeneral)
 }
 
-// uiAgentSettingsSection renders one settings subpage (Model / Tools / Skills /
-// Delegation / MCP sharing). An unknown section is a 404.
+// uiAgentSettingsSection renders one settings subpage (Graph / Model / Tools /
+// Skills / Delegation / MCP sharing). An unknown section is a 404.
 func (s *Server) uiAgentSettingsSection(c echo.Context) error {
 	section := c.Param("section")
 	if !containsString(agentSettingsSections, section) {
@@ -330,6 +331,12 @@ func (s *Server) uiAgentAutosaveGeneral(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
+// uiAgentUpdateGraph handles POST /agents/:id/settings/graph — the Graph
+// subpage's type-scope allowlists.
+func (s *Server) uiAgentUpdateGraph(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionGraph, applyAgentGraphSection)
+}
+
 // uiAgentUpdateModel handles POST /agents/:id/settings/model.
 func (s *Server) uiAgentUpdateModel(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionModel, applyAgentModelSection)
@@ -355,12 +362,12 @@ func (s *Server) uiAgentUpdateDelegation(c echo.Context) error {
 // trimmed and required; the short description is trimmed and shown under the
 // agent's name in chat (empty clears it); language persists to Config["language"]
 // (deleted when empty); includeProjectInfo persists to Config["includeProjectInfo"]
-// (deleted when false, only when the field is present); the graph type scope
-// allowlists persist to Config["objectTypes"] / Config["relationshipTypes"]
-// (deleted when the selection is empty, only when each field is present); the icon + color appearance persists to the uiConfig
-// blob (both empty clears it); visibility accepts only project/external/internal,
-// with empty/missing defaulting to project (the server default) and anything else
-// rejected.
+// (deleted when false, only when the field is present); the icon + color
+// appearance persists to the uiConfig blob (both empty clears it); visibility
+// accepts only project/external/internal, with empty/missing defaulting to
+// project (the server default) and anything else rejected. The graph type-scope
+// allowlists are owned by the Graph subpage (applyAgentGraphSection), so this
+// applier never touches Config["objectTypes"] / Config["relationshipTypes"].
 func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
@@ -411,12 +418,33 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 			delete(def.Config, "includeProjectInfo")
 		}
 	}
-	// Graph type scope: a multi-select allowlist of object / relationship type
-	// names the agent may see and query. An empty selection means "all types",
-	// so it is stored as the key being absent. Lossless partial save: only touch
-	// a key when the request carries its field. The rendered form always submits
-	// each field via a hidden companion input, so clearing every box reads as
-	// present-but-blank (a real "none") rather than absent (leave unchanged).
+	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
+	if !ok {
+		return fmt.Errorf("visibility must be one of project, external, internal")
+	}
+	def.Visibility = visibility
+	return nil
+}
+
+// applyAgentGraphSection maps the Graph form onto the definition: the graph
+// type-scope allowlists of object / relationship type names the agent may see
+// and query. They persist to Config["objectTypes"] / Config["relationshipTypes"],
+// deleted when the selection is empty (an absent key means "all types").
+//
+// Lossless partial save: only touch a key when the request carries its field, so
+// a request that omits the Graph fields leaves the stored allowlists unchanged.
+// The rendered form always submits each field via a hidden companion input, so
+// clearing every box reads as present-but-blank (a real "clear the scope") rather
+// than absent (leave unchanged) — the distinction the old General-form control
+// relied on. This is why the pickers moved here with their hidden companions.
+func applyAgentGraphSection(def *AgentDefinition, c echo.Context) error {
+	params, err := c.FormParams()
+	if err != nil {
+		return fmt.Errorf("invalid form: %w", err)
+	}
+	if def.Config == nil {
+		def.Config = map[string]any{}
+	}
 	for _, ts := range []struct{ form, config string }{
 		{"objectType", "objectTypes"},
 		{"relationshipType", "relationshipTypes"},
@@ -430,11 +458,6 @@ func applyAgentGeneralSection(def *AgentDefinition, c echo.Context) error {
 			delete(def.Config, ts.config)
 		}
 	}
-	visibility, ok := agentVisibilityNormalize(c.FormValue("visibility"))
-	if !ok {
-		return fmt.Errorf("visibility must be one of project, external, internal")
-	}
-	def.Visibility = visibility
 	return nil
 }
 
@@ -620,7 +643,8 @@ func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
 // loadAgentSettings assembles the agent settings payload for ONE subpage: the
 // agent being edited plus only the catalog data that subpage renders. Each
 // subpage's template is the source of truth for what must load here:
-//   - general:     + the project's compiled graph types (the scope allowlist)
+//   - general:     agent only (name / prompt / language / appearance / visibility)
+//   - graph:       + the project's compiled graph types (the scope allowlists)
 //   - model:       + project model config, providers, and the model catalog
 //   - tools:       + MCP servers + relay node tools (the picker)
 //   - skills:      + the skill list
@@ -639,7 +663,7 @@ func (s *Server) loadAgentSettings(ctx context.Context, id string, data *agentSe
 	data.Agent = agent
 
 	switch data.Section {
-	case sectionGeneral:
+	case sectionGraph:
 		if types, err := s.memory.GetCompiledTypes(ctx); err != nil {
 			captureError(err)
 		} else if types != nil {

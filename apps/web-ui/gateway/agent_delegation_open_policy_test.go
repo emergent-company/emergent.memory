@@ -9,7 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// openPolicySettingsServer wires the six per-section POST handlers onto a bare
+// openPolicySettingsServer wires the per-section POST handlers onto a bare
 // echo instance backed by f, mirroring the harness in agent_ui_test.go so these
 // regression tests don't depend on that file's (separately owned) helpers.
 func openPolicySettingsServer(f *fakeMemory) *echo.Echo {
