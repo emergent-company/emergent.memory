@@ -91,3 +91,136 @@ The MCP Servers page SHALL provide a navigation entry point to the MCP Sharing a
 
 - **WHEN** the user selects the MCP Sharing entry point
 - **THEN** the MCP Sharing page opens in the same project context
+
+### Requirement: Registry listing offers a device install for package-only entries
+
+For each registry entry with no remote transport the listing SHALL offer an
+"Install to device" action that opens a dialog rather than posting an install
+directly. The dialog SHALL let the user pick a connected connector device and
+submit the install to that device's instance id. When no device is connected the
+dialog SHALL instead show how to connect one — signing in with
+`memory-connector auth login` and starting the relay with
+`--accept-managed-config` — and SHALL NOT offer a target picker. When the
+connected-device list cannot be loaded the dialog SHALL report the failure and
+SHALL NOT claim that no device is connected. An entry with a remote transport
+SHALL keep its existing outbound install action and SHALL NOT offer a device
+install.
+
+#### Scenario: Package-only entry offers a device install
+
+- **WHEN** the registry listing renders an entry with no remote transport
+- **THEN** the entry shows an "Install to device" action whose dialog posts to the device install route
+
+#### Scenario: Dialog picks a connected device
+
+- **WHEN** the device install dialog renders while a connector device is connected
+- **THEN** it offers each connected device as a selectable install target
+
+#### Scenario: Dialog explains connector setup when no device is connected
+
+- **WHEN** the device install dialog renders with no connected device
+- **THEN** it shows the connector sign-in and relay commands and offers no target picker
+
+#### Scenario: Failed device list is reported, not mistaken for no devices
+
+- **WHEN** the connected-device list cannot be loaded
+- **THEN** the dialog reports the failure and does not show the connector setup steps
+
+#### Scenario: Remote entry keeps its outbound install
+
+- **WHEN** the registry listing renders an entry with a remote transport
+- **THEN** the entry shows the outbound install action and no device install action
+
+### Requirement: Device install reports its outcome in the same way as an outbound install
+
+A device install SHALL follow the same post/redirect/get pattern as the outbound
+install. An install that still requires configuration SHALL redirect to that
+server's configure form; an install with no required configuration SHALL redirect
+to the connected devices page, which reports the install; and a rejected install
+SHALL redirect back to the registry listing with an error and SHALL NOT report
+success. A submission missing the registry name or the target device SHALL be
+rejected by the gateway without calling the backend.
+
+#### Scenario: Device install needing credentials goes to the configure form
+
+- **WHEN** a device install creates a server with required configuration
+- **THEN** the response redirects to that server's configure form
+
+#### Scenario: Successful device install confirms on the devices page
+
+- **WHEN** a device install creates a server with no required configuration
+- **THEN** the response redirects to the connected devices page with an install confirmation
+
+#### Scenario: Rejected device install reports on the registry listing
+
+- **WHEN** the backend rejects a device install
+- **THEN** the response redirects to the registry listing with an error and no install is reported
+
+#### Scenario: Missing target device is rejected by the gateway
+
+- **WHEN** a device install submission carries no target instance id
+- **THEN** the gateway redirects with an error without calling the backend
+
+### Requirement: Configure banner explains each missing key and links to docs
+
+When the edit form is opened for configuration, the banner naming the missing required
+keys SHALL also show each key's registry description and SHALL link to the provider's
+credential documentation derived from the server's registry repository URL. When the
+server has no repository URL, no docs link SHALL render.
+
+#### Scenario: Missing key shows its registry description
+
+- **WHEN** the configure banner renders a missing key whose registry declaration includes a description
+- **THEN** the banner shows that description alongside the key name
+
+#### Scenario: Provider docs link is shown for a GitHub install
+
+- **WHEN** the configure banner renders a server whose registry repository is a GitHub repository
+- **THEN** it links to the GitHub token settings page
+
+#### Scenario: No provenance yields no link
+
+- **WHEN** the configure banner renders a manually-created server with no registry repository URL
+- **THEN** no credential docs link is rendered
+
+### Requirement: Authorization headers are entered as a scheme and token
+
+For a required header named `Authorization`, the create/edit form SHALL render a scheme
+picker and a token field instead of a free-form header value. The scheme SHALL default
+to `Bearer` (or the scheme named by the registry value template when present) and SHALL
+be overridable. On submit the form SHALL assemble the header value as
+`"<scheme> <token>"`, SHALL NOT double-prefix a token that already carries the scheme,
+and SHALL pass the token through unchanged when the raw scheme is selected. A blank
+token SHALL leave the stored secret unchanged on edit.
+
+#### Scenario: Token is assembled with the selected scheme
+
+- **WHEN** a user selects `Bearer` and enters `ghp_x`
+- **THEN** the stored `Authorization` header value is `Bearer ghp_x`
+
+#### Scenario: Pasting a full value does not double-prefix
+
+- **WHEN** a user pastes `Bearer ghp_x` into the token field with `Bearer` selected
+- **THEN** the stored value is `Bearer ghp_x`, not `Bearer Bearer ghp_x`
+
+#### Scenario: Blank token keeps the stored secret
+
+- **WHEN** an edit is submitted with the token field left blank
+- **THEN** the previously stored secret is kept
+
+### Requirement: Authentication rejection is reported as actionable
+
+When a remote MCP server answers a connect, inspect, or discovery request with HTTP
+401 or 403, memory SHALL report the failure as a credential rejection naming the status
+and the expected form of the credential (for an `Authorization` header, `Bearer
+<token>`), rather than a generic connection error.
+
+#### Scenario: Test connection reports a rejected credential
+
+- **WHEN** a save-less connection test reaches a server that answers 401
+- **THEN** the reported error attributes the failure to the credential and mentions the `Bearer` form
+
+#### Scenario: Discovery reports a rejected credential
+
+- **WHEN** tool discovery reaches a server that answers 403
+- **THEN** the surfaced error attributes the failure to the credential rather than reporting an opaque connection error

@@ -57,3 +57,13 @@ Relay-sourced tools SHALL be visually distinguishable from registry MCP server t
 
 - **WHEN** a page shows tools from both a registry MCP server and a connected relay node
 - **THEN** the relay node's tools are presented under a node label separate from the registry server's group
+
+### Requirement: Connected devices page confirms a pushed server install
+
+The connected devices page SHALL surface a success flash when it is reached from
+a device install, confirming that a server was installed on the device.
+
+#### Scenario: Device install lands on the devices page
+
+- **WHEN** the connected devices page is loaded with the device-install success parameter
+- **THEN** it shows a flash confirming the server was installed on the device
