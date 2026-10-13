@@ -16,6 +16,10 @@ const dsProviderTypeGoogleDrive = "google_drive"
 // dsCredentialKeys are the config keys that carry OAuth2 credential material.
 // They are write-only: the server strips them before persistence and never
 // returns them, so the UI renders them blank and only sends them when supplied.
+// Drive no longer declares these keys in its provider schema (connect is
+// OAuth-only; the client is configured at project/org level), so the Drive form
+// renders no credential inputs — this list stays as the shared, provider-neutral
+// classification for any provider that still declares such a key.
 var dsCredentialKeys = []string{"client_id", "client_secret", "refresh_token"}
 
 // dsError maps a memory backend error onto a gateway response. Validation and
@@ -35,17 +39,15 @@ func dsError(c echo.Context, err error) error {
 }
 
 // validateDSConfig enforces the google_drive config contract before a request
-// reaches memory: folder_id is required and a refresh token is required (without
-// it a connection could never be authorized).
+// reaches memory: folder_id is required. Credentials are no longer part of the
+// per-integration config — OAuth client credentials are configured at the
+// project or org level, and the access token is obtained via the OAuth flow.
 func validateDSConfig(cfg map[string]any) string {
 	if cfg == nil {
 		return "config.folder_id is required"
 	}
 	if folderID, _ := cfg["folder_id"].(string); strings.TrimSpace(folderID) == "" {
 		return "config.folder_id is required"
-	}
-	if token, _ := cfg["refresh_token"].(string); strings.TrimSpace(token) == "" {
-		return "config.refresh_token is required"
 	}
 	return ""
 }
@@ -170,11 +172,6 @@ func (s *Server) updateDSIntegration(c echo.Context) error {
 	if req.Config != nil {
 		if folderID, _ := req.Config["folder_id"].(string); strings.TrimSpace(folderID) == "" {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "config.folder_id is required"})
-		}
-		if dsHasCredentialKeys(req.Config) {
-			if token, _ := req.Config["refresh_token"].(string); strings.TrimSpace(token) == "" {
-				return c.JSON(http.StatusBadRequest, map[string]string{"error": "config.refresh_token is required"})
-			}
 		}
 	}
 	item, err := s.memory.UpdateDSIntegration(c.Request().Context(), c.Param("id"), &req)
@@ -309,6 +306,55 @@ func (s *Server) upsertDSOAuthClient(c echo.Context) error {
 // deleteDSOAuthClient implements DELETE /api/orgs/:orgId/data-source-integrations/oauth-clients/:providerType.
 func (s *Server) deleteDSOAuthClient(c echo.Context) error {
 	if err := s.memory.DeleteDSOAuthClient(c.Request().Context(), c.Param("orgId"), c.Param("providerType")); err != nil {
+		return dsError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// listProjectDSOAuthClients implements GET
+// /api/projects/:projectId/data-source-integrations/oauth-clients.
+func (s *Server) listProjectDSOAuthClients(c echo.Context) error {
+	items, err := s.memory.ListProjectDSOAuthClients(c.Request().Context(), c.Param("projectId"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	if items == nil {
+		items = []DSOAuthClientConfig{}
+	}
+	return c.JSON(http.StatusOK, items)
+}
+
+// getProjectDSOAuthClient implements GET
+// /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) getProjectDSOAuthClient(c echo.Context) error {
+	item, err := s.memory.GetProjectDSOAuthClient(c.Request().Context(), c.Param("projectId"), c.Param("providerType"))
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// upsertProjectDSOAuthClient implements PUT
+// /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) upsertProjectDSOAuthClient(c echo.Context) error {
+	var req DSSetOAuthClientRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if strings.TrimSpace(req.ClientID) == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "clientId is required"})
+	}
+	item, err := s.memory.UpsertProjectDSOAuthClient(c.Request().Context(), c.Param("projectId"), c.Param("providerType"), &req)
+	if err != nil {
+		return dsError(c, err)
+	}
+	return c.JSON(http.StatusOK, item)
+}
+
+// deleteProjectDSOAuthClient implements DELETE
+// /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType.
+func (s *Server) deleteProjectDSOAuthClient(c echo.Context) error {
+	if err := s.memory.DeleteProjectDSOAuthClient(c.Request().Context(), c.Param("projectId"), c.Param("providerType")); err != nil {
 		return dsError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)

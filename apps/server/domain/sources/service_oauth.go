@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"time"
 
@@ -148,12 +149,44 @@ func (s *Service) oauthRedirectURI(providerType string) (string, error) {
 }
 
 // OAuthLandingURL builds the browser landing URL after a callback (success or
-// error), carrying the given query string. It falls back to a relative
-// /data-sources path when no base URL is configured.
+// error), carrying the given query string. It uses the configured landing URL
+// (SOURCES_OAUTH_LANDING_URL) when set, else falls back to
+// <RedirectBaseURL>/data-sources, else a relative /data-sources path.
 func (s *Service) OAuthLandingURL(query string) string {
+	return s.oauthLandingBase() + query
+}
+
+// oauthLandingBase returns the browser landing base URL (no query) after a
+// callback: the configured landing URL, else <RedirectBaseURL>/data-sources,
+// else the relative /data-sources path.
+func (s *Service) oauthLandingBase() string {
+	if l := strings.TrimSpace(s.oauthCfg.LandingURL); l != "" {
+		return strings.TrimRight(l, "/")
+	}
 	base := strings.TrimRight(s.oauthCfg.RedirectBaseURL, "/")
 	if base == "" {
-		return "/data-sources" + query
+		return "/data-sources"
 	}
-	return base + "/data-sources" + query
+	return base + "/data-sources"
+}
+
+// oauthJavascriptOrigin returns the scheme://host[:port] origin of the browser
+// landing URL (for the Google Picker app origin allowlist). Empty when the
+// landing base is a relative path or unparseable.
+func (s *Service) oauthJavascriptOrigin() string {
+	u, err := url.Parse(s.oauthLandingBase())
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// redirectURIOrEmpty builds the provider callback redirect URI, or "" when the
+// redirect base URL is not configured.
+func (s *Service) redirectURIOrEmpty(providerType string) string {
+	uri, err := s.oauthRedirectURI(providerType)
+	if err != nil {
+		return ""
+	}
+	return uri
 }

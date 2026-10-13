@@ -160,43 +160,51 @@ type fakeMemory struct {
 	dsLastTriggerID   string                      // last id passed to TriggerDSSync
 	dsLastCancelJobID string                      // last job id passed to CancelDSSyncJob
 	// OAuth connect + org OAuth-client config (see memory_datasources.go).
-	dsOAuthAuthorizeResp *DSOAuthAuthorizeResponse  // returned by StartDSOAuth
-	dsOAuthAuthorizeErr  error                      // StartDSOAuth failure
-	dsLastOAuthProvider  string                     // last providerType passed to StartDSOAuth
-	dsLastOAuthConfig    map[string]any             // last config passed to StartDSOAuth
-	dsOrgOAuthClients    []DSOAuthClientConfig      // returned by List/GetDSOAuthClient
-	dsOrgOAuthClientErr  error                      // any org OAuth-client method failure
-	dsUpsertedOAuthReq   *DSSetOAuthClientRequest   // last request passed to UpsertDSOAuthClient
-	dsUpsertedOAuthOrg   string                     // last org id passed to UpsertDSOAuthClient
-	dsUpsertedOAuthProv  string                     // last provider passed to UpsertDSOAuthClient
-	dsDeletedOAuthOrg    string                     // last org id passed to DeleteDSOAuthClient
-	dsDeletedOAuthProv   string                     // last provider passed to DeleteDSOAuthClient
-	dsResources          []DSResource               // returned by ListDSResources
-	dsResourcesErr       error                      // ListDSResources failure
-	dsSavedResourceID    string                     // last id passed to SaveDSResource
-	dsSavedResourceCfg   map[string]any             // last cfg passed to SaveDSResource
-	mergeReadiness       *MergeReadiness            // returned by GetMergeReadiness
-	mergeResult          *BranchMergeResult         // returned by MergeBranch
-	mergeErr             error                      // GetMergeReadiness/MergeBranch failure
-	lastMergeBranchID    string                     // last sourceBranchID passed to MergeBranch
-	lastMergePolicy      string                     // last policy passed to MergeBranch
-	similar              []SimilarObject            // returned by GetSimilarObjects
-	similarErr           error                      // GetSimilarObjects failure
-	objectHistory        []GraphObject              // returned by GetObjectHistory
-	objectHistoryErr     error                      // GetObjectHistory failure
-	updateResult         *GraphObject               // returned by UpdateObject
-	updateObjectErr      error                      // UpdateObject failure
-	lastUpdateID         string                     // last id passed to UpdateObject
-	lastUpdateReq        *UpdateObjectRequest       // last request passed to UpdateObject
-	createObjectResult   *GraphObject               // returned by CreateObject
-	createObjectErr      error                      // CreateObject failure
-	lastCreateObjectReq  *CreateObjectRequest       // last request passed to CreateObject
-	createRelErr         error                      // CreateRelationship failure
-	lastCreateRelReq     *CreateRelationshipRequest // last request passed to CreateRelationship
-	ftsResults           []GraphObject              // returned by SearchObjectsFTS
-	ftsErr               error                      // SearchObjectsFTS failure
-	ftsQuery             string                     // last query passed to SearchObjectsFTS
-	ftsTypeFilter        string                     // last type filter passed to SearchObjectsFTS
+	dsOAuthAuthorizeResp *DSOAuthAuthorizeResponse // returned by StartDSOAuth
+	dsOAuthAuthorizeErr  error                     // StartDSOAuth failure
+	dsLastOAuthProvider  string                    // last providerType passed to StartDSOAuth
+	dsLastOAuthConfig    map[string]any            // last config passed to StartDSOAuth
+	dsOrgOAuthClients    []DSOAuthClientConfig     // returned by List/GetDSOAuthClient
+	dsOrgOAuthClientErr  error                     // any org OAuth-client method failure
+	dsUpsertedOAuthReq   *DSSetOAuthClientRequest  // last request passed to UpsertDSOAuthClient
+	dsUpsertedOAuthOrg   string                    // last org id passed to UpsertDSOAuthClient
+	dsUpsertedOAuthProv  string                    // last provider passed to UpsertDSOAuthClient
+	dsDeletedOAuthOrg    string                    // last org id passed to DeleteDSOAuthClient
+	dsDeletedOAuthProv   string                    // last provider passed to DeleteDSOAuthClient
+	// Project-scoped OAuth-client config (see datasources_ui.go).
+	dsProjectOAuthClients      []DSOAuthClientConfig      // returned by ListProjectDSOAuthClients
+	dsProjectOAuthClientErr    error                      // any project OAuth-client method failure
+	dsUpsertedProjectOAuthID   string                     // last project id passed to UpsertProjectDSOAuthClient
+	dsUpsertedProjectOAuthProv string                     // last provider passed to UpsertProjectDSOAuthClient
+	dsUpsertedProjectOAuthReq  *DSSetOAuthClientRequest   // last request passed to UpsertProjectDSOAuthClient
+	dsDeletedProjectOAuthID    string                     // last project id passed to DeleteProjectDSOAuthClient
+	dsDeletedProjectOAuthProv  string                     // last provider passed to DeleteProjectDSOAuthClient
+	dsResources                []DSResource               // returned by ListDSResources
+	dsResourcesErr             error                      // ListDSResources failure
+	dsSavedResourceID          string                     // last id passed to SaveDSResource
+	dsSavedResourceCfg         map[string]any             // last cfg passed to SaveDSResource
+	mergeReadiness             *MergeReadiness            // returned by GetMergeReadiness
+	mergeResult                *BranchMergeResult         // returned by MergeBranch
+	mergeErr                   error                      // GetMergeReadiness/MergeBranch failure
+	lastMergeBranchID          string                     // last sourceBranchID passed to MergeBranch
+	lastMergePolicy            string                     // last policy passed to MergeBranch
+	similar                    []SimilarObject            // returned by GetSimilarObjects
+	similarErr                 error                      // GetSimilarObjects failure
+	objectHistory              []GraphObject              // returned by GetObjectHistory
+	objectHistoryErr           error                      // GetObjectHistory failure
+	updateResult               *GraphObject               // returned by UpdateObject
+	updateObjectErr            error                      // UpdateObject failure
+	lastUpdateID               string                     // last id passed to UpdateObject
+	lastUpdateReq              *UpdateObjectRequest       // last request passed to UpdateObject
+	createObjectResult         *GraphObject               // returned by CreateObject
+	createObjectErr            error                      // CreateObject failure
+	lastCreateObjectReq        *CreateObjectRequest       // last request passed to CreateObject
+	createRelErr               error                      // CreateRelationship failure
+	lastCreateRelReq           *CreateRelationshipRequest // last request passed to CreateRelationship
+	ftsResults                 []GraphObject              // returned by SearchObjectsFTS
+	ftsErr                     error                      // SearchObjectsFTS failure
+	ftsQuery                   string                     // last query passed to SearchObjectsFTS
+	ftsTypeFilter              string                     // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
 	workItems         []WorkItem      // returned by ListWorkItems
@@ -4299,6 +4307,41 @@ func (f *fakeMemory) DeleteDSOAuthClient(ctx context.Context, orgID, providerTyp
 	f.dsDeletedOAuthOrg = orgID
 	f.dsDeletedOAuthProv = providerType
 	return f.dsOrgOAuthClientErr
+}
+
+func (f *fakeMemory) ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error) {
+	if f.dsProjectOAuthClientErr != nil {
+		return nil, f.dsProjectOAuthClientErr
+	}
+	return f.dsProjectOAuthClients, nil
+}
+
+func (f *fakeMemory) GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error) {
+	if f.dsProjectOAuthClientErr != nil {
+		return nil, f.dsProjectOAuthClientErr
+	}
+	for i := range f.dsProjectOAuthClients {
+		if f.dsProjectOAuthClients[i].ProviderType == providerType {
+			return &f.dsProjectOAuthClients[i], nil
+		}
+	}
+	return &DSOAuthClientConfig{ProviderType: providerType, Configured: false}, nil
+}
+
+func (f *fakeMemory) UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error) {
+	f.dsUpsertedProjectOAuthID = projectID
+	f.dsUpsertedProjectOAuthProv = providerType
+	f.dsUpsertedProjectOAuthReq = req
+	if f.dsProjectOAuthClientErr != nil {
+		return nil, f.dsProjectOAuthClientErr
+	}
+	return &DSOAuthClientConfig{ProviderType: providerType, ClientID: req.ClientID, Strategy: req.Strategy, Config: req.Config, Configured: true}, nil
+}
+
+func (f *fakeMemory) DeleteProjectDSOAuthClient(ctx context.Context, projectID, providerType string) error {
+	f.dsDeletedProjectOAuthID = projectID
+	f.dsDeletedProjectOAuthProv = providerType
+	return f.dsProjectOAuthClientErr
 }
 
 func (f *fakeMemory) ListDSResources(ctx context.Context, id string) ([]DSResource, error) {

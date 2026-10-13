@@ -1935,6 +1935,15 @@ definitions:
       force:
         description: Force is accepted for API compatibility; currently unused.
         type: boolean
+      modelOverrides:
+        additionalProperties:
+          type: string
+        description: |-
+          ModelOverrides maps an agent name to a `provider/model` reference (or an
+          empty string to select the project default). Applied at apply time, in
+          memory, over the stored manifest; when non-empty it is also persisted
+          per-project (keyed by blueprint name) after a successful apply.
+        type: object
     type: object
   domain_blueprints.ApplyResult:
     properties:
@@ -2099,6 +2108,13 @@ definitions:
       url:
         type: string
     type: object
+  domain_blueprints.ModelOverridesResponse:
+    properties:
+      modelOverrides:
+        additionalProperties:
+          type: string
+        type: object
+    type: object
   domain_blueprints.NewVersionRequest:
     properties:
       version:
@@ -2164,6 +2180,15 @@ definitions:
         items:
           type: integer
         type: array
+    type: object
+  domain_blueprints.UpsertModelOverridesRequest:
+    properties:
+      modelOverrides:
+        additionalProperties:
+          type: string
+        type: object
+      name:
+        type: string
     type: object
   domain_branches.BranchResponse:
     properties:
@@ -9018,7 +9043,11 @@ definitions:
         type: boolean
       createdAt:
         type: string
+      javascriptOrigin:
+        type: string
       providerType:
+        type: string
+      redirectUri:
         type: string
       scopes:
         items:
@@ -11956,6 +11985,77 @@ paths:
       security:
       - bearerAuth: []
       summary: Preview blueprint import from a GitHub URL
+      tags:
+      - blueprints
+  /api/blueprints/model-overrides:
+    get:
+      description: Returns the caller's project-scoped model overrides for a blueprint
+        name (agent-name -> provider/model map). Requires project context.
+      parameters:
+      - description: Blueprint name
+        in: query
+        name: name
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Stored model overrides
+          schema:
+            $ref: '#/definitions/domain_blueprints.ModelOverridesResponse'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get blueprint model overrides
+      tags:
+      - blueprints
+    put:
+      consumes:
+      - application/json
+      description: Upserts the caller's project-scoped model overrides for a blueprint
+        name (agent-name -> provider/model map) and returns the resulting stored map.
+        Requires project context.
+      parameters:
+      - description: Blueprint name and overrides
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_blueprints.UpsertModelOverridesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Resulting stored model overrides
+          schema:
+            $ref: '#/definitions/domain_blueprints.ModelOverridesResponse'
+        "400":
+          description: Bad request / project context required
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set blueprint model overrides
       tags:
       - blueprints
   /api/blueprints/name/{name}/versions:
@@ -18589,6 +18689,181 @@ paths:
       summary: Enable an agent
       tags:
       - agents
+  /api/projects/{projectId}/data-source-integrations/oauth-clients:
+    get:
+      description: Returns the project's configured OAuth clients (secrets redacted).
+        Project admin only.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Project OAuth client configs
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List project OAuth client configs
+      tags:
+      - data-source-integrations
+  /api/projects/{projectId}/data-source-integrations/oauth-clients/{providerType}:
+    delete:
+      description: Removes the project's OAuth client for a provider, reverting to
+        the org or deployment default
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete a project OAuth client config
+      tags:
+      - data-source-integrations
+    get:
+      description: Returns the project's client config for a provider (secret redacted);
+        configured=false when unset
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Project OAuth client config
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get a project OAuth client config
+      tags:
+      - data-source-integrations
+    put:
+      consumes:
+      - application/json
+      description: Creates or replaces the project's OAuth client for a provider;
+        the secret is encrypted and write-only
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      - description: OAuth client material
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.SetOAuthClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved project OAuth client config
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set a project OAuth client config
+      tags:
+      - data-source-integrations
   /api/projects/{projectId}/device-tokens:
     post:
       consumes:

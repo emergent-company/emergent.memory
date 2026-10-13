@@ -79,16 +79,21 @@ type OAuthAuthorizeResponse struct {
 	AuthorizeURL string `json:"authorizeUrl"`
 }
 
-// OAuthClientConfig is an org-scoped OAuth client config (secret redacted/never returned).
+// OAuthClientConfig is an org- or project-scoped OAuth client config (secret
+// redacted/never returned). RedirectURI and JavascriptOrigin are the
+// deployment's resolved callback/JS-origin values for the provider, so the UI
+// can show the Google Cloud Console setup steps without hard-coding them.
 type OAuthClientConfig struct {
-	ProviderType string                 `json:"providerType"`
-	ClientID     string                 `json:"clientId"`
-	Scopes       []string               `json:"scopes,omitempty"`
-	Strategy     string                 `json:"strategy,omitempty"`
-	Configured   bool                   `json:"configured"`
-	CreatedAt    time.Time              `json:"createdAt"`
-	UpdatedAt    time.Time              `json:"updatedAt"`
-	Config       map[string]interface{} `json:"config,omitempty"`
+	ProviderType     string                 `json:"providerType"`
+	ClientID         string                 `json:"clientId"`
+	RedirectURI      string                 `json:"redirectUri,omitempty"`
+	JavascriptOrigin string                 `json:"javascriptOrigin,omitempty"`
+	Scopes           []string               `json:"scopes,omitempty"`
+	Strategy         string                 `json:"strategy,omitempty"`
+	Configured       bool                   `json:"configured"`
+	CreatedAt        time.Time              `json:"createdAt"`
+	UpdatedAt        time.Time              `json:"updatedAt"`
+	Config           map[string]interface{} `json:"config,omitempty"`
 }
 
 // SetOAuthClientRequest is the write shape for an org OAuth client config.
@@ -925,6 +930,132 @@ func (c *Client) UpsertOrgOAuthClient(ctx context.Context, orgID, providerType s
 // Returns 204 No Content on success.
 func (c *Client) DeleteOrgOAuthClient(ctx context.Context, orgID, providerType string) error {
 	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/orgs/"+url.PathEscape(orgID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}
+
+// --- Project OAuth Client Config ---
+
+// ListProjectOAuthClients returns all OAuth client configs for a project.
+// GET /api/projects/:projectID/data-source-integrations/oauth-clients
+func (c *Client) ListProjectOAuthClients(ctx context.Context, projectID string) ([]OAuthClientConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-clients", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result []OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetProjectOAuthClient returns a specific OAuth client config for a project.
+// GET /api/projects/:projectID/data-source-integrations/oauth-clients/:providerType
+func (c *Client) GetProjectOAuthClient(ctx context.Context, projectID, providerType string) (*OAuthClientConfig, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// UpsertProjectOAuthClient creates or updates an OAuth client config for a project.
+// PUT /api/projects/:projectID/data-source-integrations/oauth-clients/:providerType
+func (c *Client) UpsertProjectOAuthClient(ctx context.Context, projectID, providerType string, req *SetOAuthClientRequest) (*OAuthClientConfig, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "PUT", c.base+"/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(httpReq); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result OAuthClientConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// DeleteProjectOAuthClient deletes an OAuth client config for a project.
+// DELETE /api/projects/:projectID/data-source-integrations/oauth-clients/:providerType
+// Returns 204 No Content on success.
+func (c *Client) DeleteProjectOAuthClient(ctx context.Context, projectID, providerType string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/projects/"+url.PathEscape(projectID)+"/data-source-integrations/oauth-clients/"+url.PathEscape(providerType), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

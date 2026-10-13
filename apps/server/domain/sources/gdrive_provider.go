@@ -56,6 +56,11 @@ func (p *googleDriveProvider) Catalog() Provider {
 	}
 }
 
+// ConfigSchema is the non-secret config contract for Drive. The OAuth2
+// credential keys (client_id/client_secret/refresh_token) are deliberately
+// absent: Drive connect is OAuth-only and its client credentials are configured
+// per project/org, never per integration. Legacy sources whose stored config
+// still carries those keys keep syncing (see CredentialKeys).
 func (p *googleDriveProvider) ConfigSchema() ProviderSchema {
 	return ProviderSchema{
 		Type: ProviderTypeGoogleDrive,
@@ -77,33 +82,22 @@ func (p *googleDriveProvider) ConfigSchema() ProviderSchema {
 				"type":        "boolean",
 				"description": "Recurse into subfolders when true.",
 			},
-			"client_id": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 client id (write-only).",
-			},
-			"client_secret": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 client secret (write-only).",
-			},
-			"refresh_token": map[string]any{
-				"type":        "string",
-				"description": "OAuth2 refresh token (write-only).",
-			},
 		},
 		Required: []string{"folder_id"},
 	}
 }
 
+// CredentialFields is intentionally empty: Drive connect is OAuth-only
+// (add-datasource-oauth-app-setup). The connect form must never render a
+// pasted-credential surface for Drive. Legacy sources that were connected by
+// pasting credentials before this change still sync: their already-encrypted
+// refresh_token blobs are read untouched by the connector/refresh path.
 func (p *googleDriveProvider) CredentialFields() []ProviderField {
-	return []ProviderField{
-		{Key: "client_id", Label: "OAuth2 client ID", Type: "string", WriteOnly: true},
-		{Key: "client_secret", Label: "OAuth2 client secret", Type: "string", WriteOnly: true, Required: true},
-		{Key: "refresh_token", Label: "OAuth2 refresh token", Type: "string", WriteOnly: true, Required: true},
-	}
+	return nil
 }
 
 func (p *googleDriveProvider) AuthMethods() []AuthMethod {
-	return []AuthMethod{AuthMethodOAuth, AuthMethodCredentials}
+	return []AuthMethod{AuthMethodOAuth}
 }
 
 func (p *googleDriveProvider) OAuth() (OAuthStrategy, bool) {

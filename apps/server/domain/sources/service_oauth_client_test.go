@@ -187,7 +187,7 @@ func TestListProviders_AdvertisesAuthMethods(t *testing.T) {
 		t.Fatalf("ListProviders() = %v, want a %q entry", providers, ProviderTypeGoogleDrive)
 	}
 	got := p.AuthMethods
-	want := []string{string(AuthMethodOAuth), string(AuthMethodCredentials)}
+	want := []string{string(AuthMethodOAuth)}
 	if len(got) != len(want) {
 		t.Fatalf("AuthMethods = %v, want %v", got, want)
 	}
@@ -422,5 +422,277 @@ func TestUpsertOrgOAuthClient_PersistsConfig(t *testing.T) {
 	}
 	if got.Config["pickerDeveloperKey"] != "dev-key" {
 		t.Fatalf("persisted config = %+v, want the picker developer key", got.Config)
+	}
+}
+
+// --- project-scoped client configs ---
+
+// fakeProjectOAuthStore is an in-memory ProjectOAuthClientStore for unit tests.
+type fakeProjectOAuthStore struct {
+	admin      bool
+	adminErr   error
+	resolveErr error
+	orgID      uuid.UUID
+	clients    map[string]*OAuthClientConfig
+}
+
+func projectClientKey(projectID uuid.UUID, provider string) string {
+	return projectID.String() + "|" + provider
+}
+
+func (f *fakeProjectOAuthStore) IsProjectAdmin(ctx context.Context, projectID, userID string) (bool, error) {
+	return f.admin, f.adminErr
+}
+
+func (f *fakeProjectOAuthStore) ResolveOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+	if f.resolveErr != nil {
+		return uuid.Nil, f.resolveErr
+	}
+	return f.orgID, nil
+}
+
+func (f *fakeProjectOAuthStore) GetProjectOAuthClientConfig(ctx context.Context, projectID uuid.UUID, provider string) (*OAuthClientConfig, error) {
+	c, ok := f.clients[projectClientKey(projectID, provider)]
+	if !ok {
+		return nil, apperror.ErrNotFound
+	}
+	return c, nil
+}
+
+func (f *fakeProjectOAuthStore) ListProjectOAuthClientConfigs(ctx context.Context, projectID uuid.UUID) ([]*OAuthClientConfig, error) {
+	out := []*OAuthClientConfig{}
+	for k, c := range f.clients {
+		if strings.HasPrefix(k, projectID.String()+"|") {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeProjectOAuthStore) UpsertProjectOAuthClientConfig(ctx context.Context, cfg *OAuthClientConfig) (*OAuthClientConfig, error) {
+	if f.clients == nil {
+		f.clients = map[string]*OAuthClientConfig{}
+	}
+	if cfg.ProjectID == nil {
+		return nil, apperror.NewInternal("missing project_id", nil)
+	}
+	now := time.Now().UTC()
+	cfg.CreatedAt, cfg.UpdatedAt = now, now
+	f.clients[projectClientKey(*cfg.ProjectID, cfg.Provider)] = cfg
+	return cfg, nil
+}
+
+func (f *fakeProjectOAuthStore) DeleteProjectOAuthClientConfig(ctx context.Context, projectID uuid.UUID, provider string) error {
+	k := projectClientKey(projectID, provider)
+	if _, ok := f.clients[k]; !ok {
+		return apperror.ErrNotFound
+	}
+	delete(f.clients, k)
+	return nil
+}
+
+func newProjectClientService(store ProjectOAuthClientStore, oauthCfg config.SourceOAuthConfig) *Service {
+	cfg := &config.Config{SourceOAuth: oauthCfg}
+	cfg.LLMProvider.EncryptionKey = hex.EncodeToString(testEncryptionKey())
+	return NewService(nil, cfg, discardLog(), NewDefaultRegistry(), WithProjectOAuthClientStore(store))
+}
+
+func newOrgAndProjectClientService(orgStore OrgOAuthClientStore, projectStore ProjectOAuthClientStore, oauthCfg config.SourceOAuthConfig) *Service {
+	cfg := &config.Config{SourceOAuth: oauthCfg}
+	cfg.LLMProvider.EncryptionKey = hex.EncodeToString(testEncryptionKey())
+	return NewService(nil, cfg, discardLog(), NewDefaultRegistry(),
+		WithOrgOAuthClientStore(orgStore),
+		WithProjectOAuthClientStore(projectStore))
+}
+
+func mustEncryptProjectClient(t *testing.T, svc *Service, projectID uuid.UUID, provider string, creds Credentials) *OAuthClientConfig {
+	t.Helper()
+	blob, err := svc.encryptCredentials(creds)
+	if err != nil {
+		t.Fatalf("encryptCredentials() error = %v", err)
+	}
+	return &OAuthClientConfig{ProjectID: &projectID, Provider: provider, EncryptedClient: blob}
+}
+
+func TestResolveOAuthClient_ProjectOverridesOrg(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{GoogleClientID: "deploy", GoogleClientSecret: "deploy-secret"})
+
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)] = mustEncryptOrgClient(t, svc, orgID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
+	})
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+	})
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if got.ClientID != "proj-id" || got.ClientSecret != "proj-secret" {
+		t.Fatalf("resolveOAuthClient() = %+v, want the project client", got)
+	}
+}
+
+func TestResolveOAuthClient_ProjectMissingFallsBackToOrg(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{GoogleClientID: "deploy", GoogleClientSecret: "deploy-secret"})
+
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)] = mustEncryptOrgClient(t, svc, orgID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
+	})
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if got.ClientID != "org-id" || got.ClientSecret != "org-secret" {
+		t.Fatalf("resolveOAuthClient() = %+v, want the org client", got)
+	}
+}
+
+func TestResolveOAuthClient_ProjectMissingAndOrgMissingFallsBackToEnv(t *testing.T) {
+	projectID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{GoogleClientID: "deploy", GoogleClientSecret: "deploy-secret"})
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if got.ClientID != "deploy" || got.ClientSecret != "deploy-secret" {
+		t.Fatalf("resolveOAuthClient() = %+v, want the deployment default", got)
+	}
+}
+
+func TestResolveOAuthClient_ProjectStoreErrorPropagates(t *testing.T) {
+	projectID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: uuid.New(), clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = &OAuthClientConfig{
+		ProjectID:       &projectID,
+		Provider:        ProviderTypeGoogleDrive,
+		EncryptedClient: []byte("not-a-valid-blob"),
+	}
+
+	_, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err == nil {
+		t.Fatal("resolveOAuthClient() with undecryptable project row = nil, want error")
+	}
+}
+
+func TestListProjectOAuthClients_RequiresProjectAdmin(t *testing.T) {
+	svc := newProjectClientService(&fakeProjectOAuthStore{admin: false}, config.SourceOAuthConfig{})
+	_, err := svc.ListProjectOAuthClients(context.Background(), uuid.New(), "user-1")
+	if !errors.Is(err, apperror.ErrForbidden) {
+		t.Fatalf("non-admin ListProjectOAuthClients() error = %v, want forbidden", err)
+	}
+}
+
+func TestListProjectOAuthClients_RequiresUser(t *testing.T) {
+	svc := newProjectClientService(&fakeProjectOAuthStore{admin: true}, config.SourceOAuthConfig{})
+	_, err := svc.ListProjectOAuthClients(context.Background(), uuid.New(), "")
+	if !errors.Is(err, apperror.ErrUnauthorized) {
+		t.Fatalf("empty-user ListProjectOAuthClients() error = %v, want unauthorized", err)
+	}
+}
+
+func TestUpsertProjectOAuthClient_EncryptsSecretAndRedacts(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	store := &fakeProjectOAuthStore{admin: true, orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newProjectClientService(store, config.SourceOAuthConfig{
+		RedirectBaseURL: "https://api.example",
+		LandingURL:      "https://ui.example/data-sources",
+	})
+
+	dto, err := svc.UpsertProjectOAuthClient(context.Background(), projectID, "user-1", ProviderTypeGoogleDrive, &SetOAuthClientRequest{
+		ClientID:     "cid",
+		ClientSecret: "top-secret",
+		Scopes:       []string{"https://www.googleapis.com/auth/drive.file"},
+		Strategy:     "drive.file",
+	})
+	if err != nil {
+		t.Fatalf("UpsertProjectOAuthClient() error = %v", err)
+	}
+	if !dto.Configured || dto.ClientID != "cid" {
+		t.Fatalf("DTO = %+v, want configured with client id cid", dto)
+	}
+	if dto.RedirectURI != "https://api.example/api/data-source-integrations/oauth/google_drive/callback" {
+		t.Errorf("DTO.RedirectURI = %q", dto.RedirectURI)
+	}
+	if dto.JavascriptOrigin != "https://ui.example" {
+		t.Errorf("DTO.JavascriptOrigin = %q, want https://ui.example", dto.JavascriptOrigin)
+	}
+
+	// The stored row carries the owning org and the project.
+	stored := store.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)]
+	if stored.ProjectID == nil || *stored.ProjectID != projectID {
+		t.Fatalf("stored ProjectID = %v, want %v", stored.ProjectID, projectID)
+	}
+	if stored.OrganizationID != orgID {
+		t.Fatalf("stored OrganizationID = %v, want %v", stored.OrganizationID, orgID)
+	}
+
+	// The stored blob must decrypt to the secret.
+	creds, err := svc.decryptCredentials(stored.EncryptedClient)
+	if err != nil {
+		t.Fatalf("decryptCredentials(stored) error = %v", err)
+	}
+	if creds[oauthClientSecretKey] != "top-secret" {
+		t.Errorf("stored secret = %v, want top-secret", creds[oauthClientSecretKey])
+	}
+
+	// The DTO must never serialize the secret.
+	b, _ := json.Marshal(dto)
+	if strings.Contains(string(b), "top-secret") || strings.Contains(string(b), "clientSecret") {
+		t.Errorf("DTO JSON leaks secret material: %s", b)
+	}
+}
+
+func TestDeleteProjectOAuthClient(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	store := &fakeProjectOAuthStore{admin: true, orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newProjectClientService(store, config.SourceOAuthConfig{})
+	store.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "cid", oauthClientSecretKey: "s",
+	})
+
+	if err := svc.DeleteProjectOAuthClient(context.Background(), projectID, "user-1", ProviderTypeGoogleDrive); err != nil {
+		t.Fatalf("DeleteProjectOAuthClient() error = %v", err)
+	}
+	if err := svc.DeleteProjectOAuthClient(context.Background(), projectID, "user-1", ProviderTypeGoogleDrive); !errors.Is(err, apperror.ErrNotFound) {
+		t.Fatalf("second DeleteProjectOAuthClient() error = %v, want not-found", err)
+	}
+}
+
+func TestGetProjectOAuthClient_UnconfiguredReturnsNotConfigured(t *testing.T) {
+	svc := newProjectClientService(&fakeProjectOAuthStore{admin: true, clients: map[string]*OAuthClientConfig{}}, config.SourceOAuthConfig{})
+	dto, err := svc.GetProjectOAuthClient(context.Background(), uuid.New(), "user-1", ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("GetProjectOAuthClient() unconfigured error = %v", err)
+	}
+	if dto.Configured {
+		t.Fatalf("unconfigured GetProjectOAuthClient() = %+v, want Configured=false", dto)
+	}
+}
+
+func TestGoogleDriveProvider_OAuthOnly(t *testing.T) {
+	p := newGoogleDriveProvider()
+	if methods := p.AuthMethods(); len(methods) != 1 || methods[0] != AuthMethodOAuth {
+		t.Fatalf("AuthMethods() = %v, want [oauth]", methods)
+	}
+	if fields := p.CredentialFields(); len(fields) != 0 {
+		t.Fatalf("CredentialFields() = %v, want empty (OAuth-only)", fields)
 	}
 }

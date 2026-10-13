@@ -164,13 +164,18 @@ type DSOAuthAuthorizeResponse struct {
 	AuthorizeURL string `json:"authorizeUrl"`
 }
 
-// DSOAuthClientConfig is an org-scoped OAuth client config. The client secret is
-// write-only: the server never returns it, so this shape carries none.
+// DSOAuthClientConfig is an org- or project-scoped OAuth client config. The
+// client secret is write-only: the server never returns it, so this shape
+// carries none. RedirectURI and JavascriptOrigin are the deployment's resolved
+// callback/JS-origin values the settings UI shows for the Google Cloud Console
+// setup steps.
 type DSOAuthClientConfig struct {
-	ProviderType string   `json:"providerType"`
-	ClientID     string   `json:"clientId"`
-	Scopes       []string `json:"scopes,omitempty"`
-	Strategy     string   `json:"strategy,omitempty"`
+	ProviderType     string   `json:"providerType"`
+	ClientID         string   `json:"clientId"`
+	RedirectURI      string   `json:"redirectUri,omitempty"`
+	JavascriptOrigin string   `json:"javascriptOrigin,omitempty"`
+	Scopes           []string `json:"scopes,omitempty"`
+	Strategy         string   `json:"strategy,omitempty"`
 	// Config carries non-secret provider settings (e.g. the Google Picker
 	// developer key and app id). Credential material never lives here.
 	Config     map[string]any `json:"config,omitempty"`
@@ -260,6 +265,47 @@ func (m *MemoryClient) UpsertDSOAuthClient(ctx context.Context, orgID, providerT
 // DeleteDSOAuthClient removes an org's OAuth client for a provider (DELETE).
 func (m *MemoryClient) DeleteDSOAuthClient(ctx context.Context, orgID, providerType string) error {
 	path := "/api/orgs/" + url.PathEscape(orgID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
+// ListProjectDSOAuthClients lists a project's configured OAuth clients (GET
+// /api/projects/:projectId/data-source-integrations/oauth-clients). Secrets are
+// redacted.
+func (m *MemoryClient) ListProjectDSOAuthClients(ctx context.Context, projectID string) ([]DSOAuthClientConfig, error) {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-clients"
+	var out []DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetProjectDSOAuthClient returns a project's OAuth client for a provider. An
+// unconfigured provider returns configured=false rather than an error.
+func (m *MemoryClient) GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error) {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	var out DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpsertProjectDSOAuthClient creates or replaces a project's OAuth client for a
+// provider (PUT; secret write-only).
+func (m *MemoryClient) UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error) {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
+	var out DSOAuthClientConfig
+	if err := m.doH(ctx, http.MethodPut, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteProjectDSOAuthClient removes a project's OAuth client for a provider
+// (DELETE).
+func (m *MemoryClient) DeleteProjectDSOAuthClient(ctx context.Context, projectID, providerType string) error {
+	path := "/api/projects/" + url.PathEscape(projectID) + "/data-source-integrations/oauth-clients/" + url.PathEscape(providerType)
 	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
 }
 

@@ -62,4 +62,16 @@ func TestOAuthLandingURL(t *testing.T) {
 	if got := svc2.OAuthLandingURL("?oauth_error=connect_failed"); got != "/data-sources?oauth_error=connect_failed" {
 		t.Fatalf("OAuthLandingURL() fallback = %q", got)
 	}
+
+	// Explicit landing URL wins over the redirect-base derivation.
+	svc3 := NewService(nil, &config.Config{SourceOAuth: config.SourceOAuthConfig{
+		RedirectBaseURL: "https://api.example",
+		LandingURL:      "https://ui.example/settings/data-sources",
+	}}, discardLog(), NewDefaultRegistry())
+	if got := svc3.OAuthLandingURL("?connected=abc"); got != "https://ui.example/settings/data-sources?connected=abc" {
+		t.Fatalf("OAuthLandingURL() with LandingURL = %q", got)
+	}
+	if got := svc3.oauthJavascriptOrigin(); got != "https://ui.example" {
+		t.Fatalf("oauthJavascriptOrigin() = %q, want https://ui.example", got)
+	}
 }

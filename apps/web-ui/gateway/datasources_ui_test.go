@@ -408,6 +408,9 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
+	e.GET("/settings/oauth-clients", s.uiProjectOAuthClients)
+	e.POST("/settings/oauth-clients/:providerType", s.uiProjectOAuthClientUpsert)
+	e.POST("/settings/oauth-clients/:providerType/delete", s.uiProjectOAuthClientDelete)
 	e.GET("/documents/:id/versions", s.uiDocumentVersions)
 	return e
 }
@@ -574,7 +577,8 @@ func TestUIDataSourceOAuthStartMissingClientRendersInline(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="ds-oauth-client-missing"`,
 		"No OAuth client is configured for GitHub",
-		"Organization settings",
+		"project or organization admin",
+		"Data source OAuth clients",
 		`data-testid="ds-oauth-client-settings-link"`,
 		"org-1/settings/oauth-clients",
 	} {
@@ -870,5 +874,174 @@ func TestUIOrgOAuthClientDelete(t *testing.T) {
 	}
 	if f.dsDeletedOAuthOrg != "o1" || f.dsDeletedOAuthProv != "google_drive" {
 		t.Errorf("delete target = %q/%q", f.dsDeletedOAuthOrg, f.dsDeletedOAuthProv)
+	}
+}
+
+// --- project OAuth clients (project-admin only) ---
+func projectOAuthAdminFake() *fakeMemory {
+	return &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
+		orgsAndProjects: []OrgWithProjectsDto{{
+			ID: "o1", Name: "Acme", Role: "org_member",
+			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}},
+		}},
+		dsProviders: []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsProjectOAuthClients: []DSOAuthClientConfig{
+			{ProviderType: "google_drive", ClientID: "pcid", RedirectURI: "https://api.example/api/data-source-integrations/oauth/google_drive/callback", JavascriptOrigin: "https://admin.example", Configured: true},
+		},
+	}
+}
+
+func TestRenderProjectOAuthClientsPage(t *testing.T) {
+	providers := []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}}
+	clients := map[string]DSOAuthClientConfig{
+		"google_drive": {
+			ProviderType:     "google_drive",
+			ClientID:         "pcid",
+			RedirectURI:      "https://api.example/api/data-source-integrations/oauth/google_drive/callback",
+			JavascriptOrigin: "https://admin.example",
+			Configured:       true,
+		},
+	}
+	html := renderHTML(t, ProjectOAuthClientsPage("Home", providers, clients, nil, "", nil))
+	for _, want := range []string{
+		"Data source OAuth clients",
+		"Google Drive",
+		"pcid",
+		`data-testid="ds-oauth-clients"`,
+		`action="/settings/oauth-clients/google_drive"`,
+		`data-testid="ds-oauth-console-guide"`,
+		`data-testid="ds-oauth-redirect-uri"`,
+		"https://api.example/api/data-source-integrations/oauth/google_drive/callback",
+		`data-testid="ds-oauth-js-origin"`,
+		"https://admin.example",
+		"Google Cloud Console",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("project page missing %q", want)
+		}
+	}
+	// Without resolved callback values the console guide is omitted entirely.
+	bare := renderHTML(t, ProjectOAuthClientsPage("Home",
+		[]DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}}, nil, nil, "", nil))
+	if strings.Contains(bare, `data-testid="ds-oauth-console-guide"`) {
+		t.Error("console guide must not render without resolved callback values")
+	}
+}
+
+func TestUIProjectOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
+	// Project admin sees the page.
+	e := newDSUIServer(projectOAuthAdminFake())
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/oauth-clients", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Google Drive") || !strings.Contains(body, "pcid") {
+		t.Errorf("admin body = %s", body)
+	}
+
+	// A non-admin of the project gets a 404 (hide, fail closed).
+	e = newDSUIServer(&fakeMemory{
+		project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
+		orgsAndProjects: []OrgWithProjectsDto{{
+			ID: "o1", Name: "Acme", Role: "org_member",
+			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_user"}},
+		}},
+	})
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/oauth-clients", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("non-admin status = %d, want 404", rec.Code)
+	}
+}
+
+func TestUIProjectOAuthClientUpsertAndDelete(t *testing.T) {
+	f := projectOAuthAdminFake()
+	e := newDSUIServer(f)
+
+	// Missing client id → 303 back with an error, memory untouched.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive", strings.NewReader("client_secret=sec"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("validation status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/settings/oauth-clients?err=") {
+		t.Errorf("validation location = %q", loc)
+	}
+	if f.dsUpsertedProjectOAuthID != "" {
+		t.Error("memory must not be called on validation failure")
+	}
+
+	// Success → 303 with the saved flash, targeting the active project.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive", strings.NewReader("client_id=pcid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("success status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/oauth-clients?saved=1" {
+		t.Errorf("success location = %q", loc)
+	}
+	if got := f.dsUpsertedProjectOAuthReq; got == nil || got.ClientID != "pcid" || got.ClientSecret != "sec" || got.Strategy != "drive.file" {
+		t.Fatalf("upsert req = %+v", got)
+	}
+	if f.dsUpsertedProjectOAuthID != "p1" || f.dsUpsertedProjectOAuthProv != "google_drive" {
+		t.Errorf("upsert target = %q/%q", f.dsUpsertedProjectOAuthID, f.dsUpsertedProjectOAuthProv)
+	}
+
+	// Delete → 303 with the deleted flash.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive/delete", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("delete status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/oauth-clients?deleted=1" {
+		t.Errorf("delete location = %q", loc)
+	}
+	if f.dsDeletedProjectOAuthID != "p1" || f.dsDeletedProjectOAuthProv != "google_drive" {
+		t.Errorf("delete target = %q/%q", f.dsDeletedProjectOAuthID, f.dsDeletedProjectOAuthProv)
+	}
+}
+
+// TestUIDataSourceOAuthStartMissingClientLinksProjectSettings asserts the
+// missing-client alert targets the PROJECT settings page when the caller
+// administers the active project, and the org page only as a fallback.
+func TestUIDataSourceOAuthStartMissingClientLinksProjectSettings(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "no OAuth client configured for provider github (configure one under Organization settings → Data source OAuth clients)",
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{
+			ID: "o1", Name: "Acme", Role: "org_member",
+			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}},
+		}},
+	}
+	e := newDSUIServer(f)
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=github", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{OrgID: "o1", ProjectID: "p1"}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-oauth-client-settings-link"`) {
+		t.Fatalf("settings link missing: %s", body)
+	}
+	if !strings.Contains(body, `href="/settings/oauth-clients"`) {
+		t.Errorf("project-scoped settings link missing: %s", body)
+	}
+	if strings.Contains(body, "/orgs/o1/settings/oauth-clients") {
+		t.Errorf("org settings link must not be used when the caller administers the project: %s", body)
 	}
 }

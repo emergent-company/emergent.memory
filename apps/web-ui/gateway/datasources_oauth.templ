@@ -82,15 +82,29 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 	}
 }
 
-// --- org OAuth-client settings (org-admin only, §5.4) ---
+// --- OAuth-client settings (org- and project-scoped, §5.4) ---
 
-// OrgOAuthClientsPage renders the org's OAuth client configuration: one card per
-// provider that advertises the oauth method, each with its own save form and a
-// delete form when already configured. The client secret is write-only — never
-// prefilled, and a blank value preserves the stored secret.
+// OrgOAuthClientsPage renders the ORG's OAuth client configuration: one card per
+// provider that advertises the oauth method. A project-level client overrides
+// this org-wide one for that project; the same card serves both scopes.
 templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@dsOAuthClientsPage("Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+}
+
+// ProjectOAuthClientsPage renders the PROJECT's OAuth client configuration. A
+// client configured here overrides the org-wide client for this project only.
+templ ProjectOAuthClientsPage(projectName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@dsOAuthClientsPage("Project", "Data source OAuth clients", dsProjectOAuthClientsSubtitle(projectName), "/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+}
+
+// dsOAuthClientsPage is the scope-agnostic OAuth-client settings page shared by
+// the org and project scopes. The two differ only in the eyebrow/title copy and
+// the actionBase the card's forms post to (an org path or the scoped project
+// path); everything else — the per-provider cards, the write-only secret, the
+// console setup guide — is identical.
+templ dsOAuthClientsPage(eyebrow, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName))
+		@pageHeader(eyebrow, title, subtitle)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("OAuth clients unavailable", loadErr)
@@ -98,7 +112,7 @@ templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients
 			<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
 				for _, p := range providers {
 					if p.DSProviderSupportsOAuth() {
-						@dsOAuthClientCard(orgID, p, clients[p.Type])
+						@dsOAuthClientCard(actionBase, p, clients[p.Type])
 					}
 				}
 			</div>
@@ -107,8 +121,13 @@ templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients
 }
 
 // dsOAuthClientCard is one provider's OAuth client config card. Saving posts the
-// client id/secret/scopes/strategy; a blank secret preserves the stored one.
-templ dsOAuthClientCard(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
+// client id/secret/scopes/strategy to <actionBase>/<provider>; a blank secret
+// preserves the stored one. When the server resolves the deployment's callback
+// values, the card also shows the Google Cloud Console setup: the redirect URI
+// and JavaScript origin to register, then the steps to obtain the client
+// id/secret. The values are provider-driven (rendered only when present), never
+// hard-coded.
+templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig) {
 	@components.PanelCard("", nil) {
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-3">
@@ -124,7 +143,34 @@ templ dsOAuthClientCard(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
 				@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 			}
 		</div>
-		<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
+		if cfg.RedirectURI != "" || cfg.JavascriptOrigin != "" {
+			<div class="mt-4 flex flex-col gap-3 rounded-box border border-base-content/10 bg-base-200/40 p-4" data-testid="ds-oauth-console-guide">
+				<h3 class="text-sm font-semibold">Set up this app in the Google Cloud Console</h3>
+				<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
+					<li>Create or select a Google Cloud project.</li>
+					<li>Enable the Google Drive API for that project.</li>
+					<li>Configure the OAuth consent screen (audience and test users).</li>
+					<li>Create an <span class="font-medium">OAuth client ID</span> of type <span class="font-medium">Web application</span>.</li>
+					<li>Add the authorized redirect URI and JavaScript origin below to that client.</li>
+					<li>Copy the generated client ID and client secret into the form below.</li>
+				</ol>
+				<div class="flex flex-col gap-2">
+					if cfg.RedirectURI != "" {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for={ "redirect_uri-" + p.Type }>Authorized redirect URI</label>
+							<input id={ "redirect_uri-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.RedirectURI } data-testid="ds-oauth-redirect-uri"/>
+						</div>
+					}
+					if cfg.JavascriptOrigin != "" {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for={ "js_origin-" + p.Type }>Authorized JavaScript origin</label>
+							<input id={ "js_origin-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.JavascriptOrigin } data-testid="ds-oauth-js-origin"/>
+						</div>
+					}
+				</div>
+			</div>
+		}
+		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for={ "client_id-" + p.Type }>Client ID <span class="text-error" aria-hidden="true">*</span></label>
 				<input id={ "client_id-" + p.Type } name="client_id" type="text" class="input input-bordered w-full" value={ cfg.ClientID } data-testid="ds-field-client_id"/>
@@ -176,7 +222,7 @@ templ dsOAuthClientCard(orgID string, p DSProvider, cfg DSOAuthClientConfig) {
 			</div>
 		</form>
 		if cfg.Configured {
-			<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients/" + url.PathEscape(p.Type) + "/delete") } data-testid="ds-oauth-client-delete" class="mt-4 border-t border-base-content/10 pt-4">
+			<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type) + "/delete") } data-testid="ds-oauth-client-delete" class="mt-4 border-t border-base-content/10 pt-4">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonError,

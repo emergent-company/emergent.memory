@@ -21,13 +21,15 @@ const (
 // config. It never carries the client secret (write-only); the client id is not
 // a secret and is returned so the UI can show which app is configured.
 type OAuthClientConfigDTO struct {
-	ProviderType string    `json:"providerType"`
-	ClientID     string    `json:"clientId"`
-	Scopes       []string  `json:"scopes,omitempty"`
-	Strategy     string    `json:"strategy,omitempty"`
-	Configured   bool      `json:"configured"`
-	CreatedAt    time.Time `json:"createdAt"`
-	UpdatedAt    time.Time `json:"updatedAt"`
+	ProviderType     string    `json:"providerType"`
+	ClientID         string    `json:"clientId"`
+	RedirectURI      string    `json:"redirectUri"`
+	JavascriptOrigin string    `json:"javascriptOrigin"`
+	Scopes           []string  `json:"scopes,omitempty"`
+	Strategy         string    `json:"strategy,omitempty"`
+	Configured       bool      `json:"configured"`
+	CreatedAt        time.Time `json:"createdAt"`
+	UpdatedAt        time.Time `json:"updatedAt"`
 	// Config carries provider-specific, non-secret extras (e.g. the Google
 	// Picker developer key/app id). It never carries secret material.
 	Config map[string]any `json:"config,omitempty"`
@@ -152,11 +154,147 @@ func (s *Service) DeleteOrgOAuthClient(ctx context.Context, orgID uuid.UUID, use
 	return s.orgStore().DeleteOAuthClientConfig(ctx, orgID, providerType)
 }
 
+// ---- project-scoped client CRUD ----
+
+// ListProjectOAuthClients returns the project's configured OAuth clients
+// (redacted). It requires project-admin authority.
+func (s *Service) ListProjectOAuthClients(ctx context.Context, projectID uuid.UUID, userID string) ([]*OAuthClientConfigDTO, error) {
+	if err := s.requireProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	rows, err := s.projectStore().ListProjectOAuthClientConfigs(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*OAuthClientConfigDTO, 0, len(rows))
+	for _, row := range rows {
+		dto, err := s.toOAuthClientDTO(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dto)
+	}
+	return out, nil
+}
+
+// GetProjectOAuthClient returns the project's client config for a provider
+// (redacted). An unconfigured provider is not an error: it returns a DTO with
+// Configured=false so the settings UI can render an empty form.
+func (s *Service) GetProjectOAuthClient(ctx context.Context, projectID uuid.UUID, userID, providerType string) (*OAuthClientConfigDTO, error) {
+	if err := s.requireProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	if _, err := s.oauthProvider(providerType); err != nil {
+		return nil, err
+	}
+	row, err := s.projectStore().GetProjectOAuthClientConfig(ctx, projectID, providerType)
+	if err != nil {
+		if errors.Is(err, apperror.ErrNotFound) {
+			return &OAuthClientConfigDTO{ProviderType: providerType, Configured: false}, nil
+		}
+		return nil, err
+	}
+	return s.toOAuthClientDTO(row)
+}
+
+// UpsertProjectOAuthClient creates or replaces the project's client config for a
+// provider. The client secret is encrypted at rest and never returned. On an
+// update, an empty secret preserves the stored one.
+func (s *Service) UpsertProjectOAuthClient(ctx context.Context, projectID uuid.UUID, userID, providerType string, req *SetOAuthClientRequest) (*OAuthClientConfigDTO, error) {
+	if err := s.requireProjectAdmin(ctx, projectID, userID); err != nil {
+		return nil, err
+	}
+	if _, err := s.oauthProvider(providerType); err != nil {
+		return nil, err
+	}
+	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		return nil, apperror.NewValidation("clientId is required")
+	}
+
+	secret := req.ClientSecret
+	existing, err := s.projectStore().GetProjectOAuthClientConfig(ctx, projectID, providerType)
+	switch {
+	case err == nil:
+		if secret == "" {
+			// Preserve the stored secret (write-only update).
+			creds, derr := s.decryptCredentials(existing.EncryptedClient)
+			if derr != nil {
+				return nil, derr
+			}
+			secret, _ = creds[oauthClientSecretKey].(string)
+		}
+	case errors.Is(err, apperror.ErrNotFound):
+		// New config: a secret is mandatory.
+	default:
+		return nil, err
+	}
+	if secret == "" {
+		return nil, apperror.NewValidation("clientSecret is required")
+	}
+
+	blob, err := s.encryptCredentials(Credentials{
+		oauthClientIDKey:     clientID,
+		oauthClientSecretKey: secret,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// A project-scoped row still carries its owning organization_id (the column
+	// is NOT NULL), so resolve it from the project.
+	orgID, err := s.projectStore().ResolveOrgID(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	saved, err := s.projectStore().UpsertProjectOAuthClientConfig(ctx, &OAuthClientConfig{
+		OrganizationID:  orgID,
+		ProjectID:       &projectID,
+		Provider:        providerType,
+		EncryptedClient: blob,
+		Scopes:          req.Scopes,
+		Strategy:        strings.TrimSpace(req.Strategy),
+		Config:          req.Config,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.toOAuthClientDTO(saved)
+}
+
+// DeleteProjectOAuthClient removes the project's client config for a provider. A
+// missing row resolves to not-found.
+func (s *Service) DeleteProjectOAuthClient(ctx context.Context, projectID uuid.UUID, userID, providerType string) error {
+	if err := s.requireProjectAdmin(ctx, projectID, userID); err != nil {
+		return err
+	}
+	return s.projectStore().DeleteProjectOAuthClientConfig(ctx, projectID, providerType)
+}
+
 // ---- resolution + helpers ----
 
 // resolveOAuthClient resolves the OAuth client for a provider for a project:
-// org config → deployment-default env → actionable error (design D3).
+// project config → org config → deployment-default env → actionable error
+// (design D3).
 func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, providerType string) (OAuthClient, error) {
+	// Project override wins; it is keyed by projectID directly (no org
+	// resolution).
+	if s.projectOAuth != nil {
+		row, perr := s.projectOAuth.GetProjectOAuthClientConfig(ctx, projectID, providerType)
+		switch {
+		case perr == nil:
+			client, derr := s.decryptOAuthClientConfig(row)
+			if derr != nil {
+				return OAuthClient{}, derr
+			}
+			return s.applyOrgStrategy(providerType, client, row.Strategy), nil
+		case !errors.Is(perr, apperror.ErrNotFound):
+			return OAuthClient{}, perr
+		}
+		// not configured for this project → fall through to the org config
+	}
+
 	if s.orgOAuth != nil {
 		orgID, err := s.orgOAuth.ResolveOrgID(ctx, projectID)
 		switch {
@@ -241,11 +379,41 @@ func (s *Service) requireOrgAdmin(ctx context.Context, orgID uuid.UUID, userID s
 	return nil
 }
 
+// requireProjectAdmin enforces project-admin authority, failing closed. An empty
+// user yields unauthorized; a non-admin yields forbidden. The decision is the
+// shared app-side project-administration check; org-admin authority does not
+// qualify.
+func (s *Service) requireProjectAdmin(ctx context.Context, projectID uuid.UUID, userID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return apperror.ErrUnauthorized
+	}
+	if s.projectOAuth == nil {
+		return apperror.ErrForbidden
+	}
+	ok, err := s.projectOAuth.IsProjectAdmin(ctx, projectID.String(), userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperror.ErrForbidden
+	}
+	return nil
+}
+
 // orgStore returns the org-client store, or the repository when none was
 // injected.
 func (s *Service) orgStore() OrgOAuthClientStore {
 	if s.orgOAuth != nil {
 		return s.orgOAuth
+	}
+	return s.repo
+}
+
+// projectStore returns the project-client store, or the repository when none
+// was injected.
+func (s *Service) projectStore() ProjectOAuthClientStore {
+	if s.projectOAuth != nil {
+		return s.projectOAuth
 	}
 	return s.repo
 }
@@ -285,13 +453,15 @@ func (s *Service) toOAuthClientDTO(row *OAuthClientConfig) (*OAuthClientConfigDT
 		return nil, err
 	}
 	return &OAuthClientConfigDTO{
-		ProviderType: row.Provider,
-		ClientID:     client.ClientID,
-		Scopes:       row.Scopes,
-		Strategy:     row.Strategy,
-		Configured:   true,
-		CreatedAt:    row.CreatedAt,
-		UpdatedAt:    row.UpdatedAt,
-		Config:       row.Config,
+		ProviderType:     row.Provider,
+		ClientID:         client.ClientID,
+		RedirectURI:      s.redirectURIOrEmpty(row.Provider),
+		JavascriptOrigin: s.oauthJavascriptOrigin(),
+		Scopes:           row.Scopes,
+		Strategy:         row.Strategy,
+		Configured:       true,
+		CreatedAt:        row.CreatedAt,
+		UpdatedAt:        row.UpdatedAt,
+		Config:           row.Config,
 	}, nil
 }

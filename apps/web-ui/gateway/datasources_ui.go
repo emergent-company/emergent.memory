@@ -366,8 +366,9 @@ func dsSelectProvider(providers []DSProvider, providerType, method string) *DSPr
 
 // dsOAuthClientError is the inline, actionable error surfaced on the
 // source-creation page when an OAuth connect fails because no OAuth client is
-// configured for the provider. SettingsURL carries the org's OAuth client
-// settings link, empty when the active org is unknown.
+// configured for the provider. SettingsURL carries the OAuth client settings
+// link for the scope the caller can administer (project or org), empty when no
+// scope is known.
 type dsOAuthClientError struct {
 	ProviderName string
 	SettingsURL  string
@@ -412,9 +413,10 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 }
 
 // renderDSOAuthClientMissing renders the source-creation page with an inline
-// error naming the provider (from the catalog) and linking to the org's OAuth
-// client settings when the active org is known. The provider list and display
-// name come from the catalog, never a hard-coded provider.
+// error naming the provider (from the catalog) and linking to the OAuth client
+// settings the caller can administer: the project-scoped page when they
+// administer the active project, else the org-wide page. The provider list and
+// display name come from the catalog, never a hard-coded provider.
 func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string) error {
 	ctx := c.Request().Context()
 	providers, err := s.memory.ListDSProviders(ctx)
@@ -424,8 +426,13 @@ func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string)
 	oauthErr := &dsOAuthClientError{
 		ProviderName: dsProviderLabel(dsProviderNameMap(providers), providerType),
 	}
-	if sc, ok := sessionContextFrom(ctx); ok && sc.OrgID != "" {
-		oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients"
+	if sc, ok := sessionContextFrom(ctx); ok {
+		switch {
+		case sc.ProjectID != "" && s.projectAdminForCaller(c, sc.ProjectID):
+			oauthErr.SettingsURL = "/settings/oauth-clients"
+		case sc.OrgID != "":
+			oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients"
+		}
 	}
 	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, err, nil, oauthErr))
 }
@@ -563,7 +570,9 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 		ClientSecret: strings.TrimSpace(c.FormValue("client_secret")),
 		Scopes:       dsScopesFromForm(c.FormValue("scopes")),
 		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
-		Config:       s.dsOAuthClientConfigFromForm(c, orgID, c.Param("providerType")),
+		Config: s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
+			return s.memory.GetDSOAuthClient(c.Request().Context(), orgID, pt)
+		}, c.Param("providerType")),
 	}
 	if _, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType"), req); err != nil {
 		return redirectWithError(c, back, err)
@@ -572,17 +581,18 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 	return nil
 }
 
-// dsOAuthClientConfigFromForm builds the non-secret config map for an org OAuth
-// client from the form, preserving any stored keys the form does not manage (the
-// form only manages the two Picker fields). The two managed keys are set when
-// the form supplies them and cleared when blank. Secret material never belongs
-// in Config.
-func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, orgID, providerType string) map[string]any {
+// dsOAuthClientConfigFromForm builds the non-secret config map for a scoped
+// OAuth client from the form, preserving any stored keys the form does not
+// manage (the form only manages the two Picker fields). stored resolves the
+// currently-saved client for the active scope (org or project) and provider.
+// The two managed keys are set when the form supplies them and cleared when
+// blank. Secret material never belongs in Config.
+func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, stored func(providerType string) (*DSOAuthClientConfig, error), providerType string) map[string]any {
 	cfg := map[string]any{}
-	if stored, err := s.memory.GetDSOAuthClient(c.Request().Context(), orgID, providerType); err != nil {
+	if got, err := stored(providerType); err != nil {
 		captureError(err)
-	} else if stored != nil {
-		for k, v := range stored.Config {
+	} else if got != nil {
+		for k, v := range got.Config {
 			cfg[k] = v
 		}
 	}
@@ -617,6 +627,104 @@ func (s *Server) uiOrgOAuthClientDelete(c echo.Context) error {
 	return nil
 }
 
+// --- project-scoped OAuth clients (project-admin only) ---
+//
+// The project settings page mirrors the org page: a project may bring its own
+// OAuth client, which overrides the org-wide one for that project only (server
+// resolution: project → org → deployment env → error). The project page is
+// context-addressed (`/settings/oauth-clients`, scoped by page()).
+
+// uiProjectOAuthClients renders the active project's OAuth client settings page
+// (project-admin only; hidden and 404 for anyone else).
+func (s *Server) uiProjectOAuthClients(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil {
+		return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage("", nil, nil, userFacingError(err), "", nil))
+	}
+	if project == nil {
+		// No active project: land on the picker rather than rendering an empty
+		// page (the same degrade as uiProjectSettings).
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	}
+	if !s.projectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providers, perr := s.memory.ListDSProviders(ctx)
+	if perr != nil {
+		perr = userFacingError(perr)
+	}
+	clients, cerr := s.memory.ListProjectDSOAuthClients(ctx, project.ID)
+	if cerr != nil {
+		cerr = userFacingError(cerr)
+	}
+	byType := make(map[string]DSOAuthClientConfig, len(clients))
+	for _, cl := range clients {
+		byType[cl.ProviderType] = cl
+	}
+	if perr == nil {
+		perr = cerr
+	}
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "saved", msg: "OAuth client saved."},
+		{key: "deleted", msg: "OAuth client removed."},
+	})
+	return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(project.Name, providers, byType, perr, flashMsg, flashError(c)))
+}
+
+// uiProjectOAuthClientUpsert saves the project's OAuth client for a provider
+// (project-admin only). A blank secret preserves the stored one; scopes accept
+// one per line or comma-separated. Non-secret Picker settings are merged into
+// Config, preserving stored keys the form does not manage.
+func (s *Server) uiProjectOAuthClientUpsert(c echo.Context) error {
+	ctx := c.Request().Context()
+	back := "/settings/oauth-clients"
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil || project == nil {
+		return redirectWithError(c, back, errors.New("no active project"))
+	}
+	if !s.projectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	clientID := strings.TrimSpace(c.FormValue("client_id"))
+	if clientID == "" {
+		return redirectWithError(c, back, errors.New("clientId is required"))
+	}
+	req := &DSSetOAuthClientRequest{
+		ClientID:     clientID,
+		ClientSecret: strings.TrimSpace(c.FormValue("client_secret")),
+		Scopes:       dsScopesFromForm(c.FormValue("scopes")),
+		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
+		Config: s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
+			return s.memory.GetProjectDSOAuthClient(ctx, project.ID, pt)
+		}, c.Param("providerType")),
+	}
+	if _, err := s.memory.UpsertProjectDSOAuthClient(ctx, project.ID, c.Param("providerType"), req); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back+"?saved=1")
+	return nil
+}
+
+// uiProjectOAuthClientDelete removes the project's OAuth client for a provider
+// (project-admin only), restoring the org-wide client as the resolved one.
+func (s *Server) uiProjectOAuthClientDelete(c echo.Context) error {
+	ctx := c.Request().Context()
+	back := "/settings/oauth-clients"
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil || project == nil {
+		return redirectWithError(c, back, errors.New("no active project"))
+	}
+	if !s.projectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	if err := s.memory.DeleteProjectDSOAuthClient(ctx, project.ID, c.Param("providerType")); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back+"?deleted=1")
+	return nil
+}
+
 // dsScopesFromForm splits a scopes textarea into a list, accepting one scope per
 // line or comma-separated on a single line.
 func dsScopesFromForm(raw string) []string {
@@ -637,9 +745,18 @@ func dsScopesText(scopes []string) string {
 // dsOAuthClientsSubtitle builds the org clients page subtitle from the org name.
 func dsOAuthClientsSubtitle(orgName string) string {
 	if orgName != "" {
-		return "OAuth client credentials for " + orgName + ", used when connecting providers with OAuth."
+		return "OAuth client credentials for " + orgName + ", used when connecting providers with OAuth. A project client overrides these for that project only."
 	}
-	return "OAuth client credentials, used when connecting providers with OAuth."
+	return "OAuth client credentials, used when connecting providers with OAuth. A project client overrides these for that project only."
+}
+
+// dsProjectOAuthClientsSubtitle builds the project clients page subtitle from
+// the project name.
+func dsProjectOAuthClientsSubtitle(projectName string) string {
+	if projectName != "" {
+		return "OAuth client credentials for " + projectName + ", used when connecting providers with OAuth. These override the organization's client for this project only."
+	}
+	return "OAuth client credentials, used when connecting providers with OAuth. These override the organization's client for this project only."
 }
 
 // dsResourceStepTitle is the provider-driven heading for the resource step.

@@ -231,16 +231,16 @@ templ dsProviderChoice(p DSProvider) {
 
 // dsOAuthClientMissingAlert is the inline, actionable error shown when an OAuth
 // connect fails because no OAuth client is configured for the provider. It names
-// the provider from the catalog and, when the active org is known, links to the
-// org's OAuth client settings so the user has a direct remediation path instead
-// of a transient toast.
+// the provider from the catalog and, when the caller administers a scope, links
+// to that scope's OAuth client settings (project or org) so the user has a
+// direct remediation path instead of a transient toast.
 templ dsOAuthClientMissingAlert(e dsOAuthClientError) {
 	<div class="flex flex-col gap-2" data-testid="ds-oauth-client-missing">
 		@ui.Alert(ui.AlertProps{
 			Type:    ui.AlertError,
 			Style:   ui.AlertStyleSoft,
 			Icon:    "lucide--alert-triangle",
-			Message: "No OAuth client is configured for " + e.ProviderName + ". An organization admin must add one under Organization settings → Data source OAuth clients before connecting with OAuth.",
+			Message: "No OAuth client is configured for " + e.ProviderName + ". A project or organization admin must add one under Data source OAuth clients settings before connecting with OAuth.",
 		})
 		if e.SettingsURL != "" {
 			<div>

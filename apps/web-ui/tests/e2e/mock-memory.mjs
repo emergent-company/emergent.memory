@@ -651,6 +651,47 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
 
+  // --- project OAuth-client config (project-admin only; write-only secret) ---
+
+  const dsProjectClientsList = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-clients$/);
+  if (dsProjectClientsList && req.method === "GET") {
+    return json(res, []);
+  }
+
+  const dsProjectClientMatch = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-clients\/([^/]+)$/);
+  if (dsProjectClientMatch && req.method === "GET") {
+    return json(res, {
+      providerType: dsProjectClientMatch[2],
+      clientId: "",
+      redirectUri: `http://localhost:8097/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
+      javascriptOrigin: "http://localhost:8097",
+      configured: false,
+    });
+  }
+  if (dsProjectClientMatch && req.method === "PUT") {
+    return readBody(req, (payload) => json(res, {
+      providerType: dsProjectClientMatch[2],
+      clientId: String(payload.clientId || ""),
+      strategy: String(payload.strategy || ""),
+      redirectUri: `http://localhost:8097/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
+      javascriptOrigin: "http://localhost:8097",
+      configured: true,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:00:00Z",
+    }));
+  }
+  if (dsProjectClientMatch && req.method === "DELETE") {
+    res.statusCode = 204;
+    return res.end();
+  }
+
+  // Active project record (GET /api/projects/:id), used by the project settings
+  // pages (e.g. the project OAuth-clients page header).
+  const projectRecordMatch = path.match(/^\/api\/projects\/([^/]+)$/);
+  if (projectRecordMatch && req.method === "GET") {
+    return json(res, { id: projectRecordMatch[1], name: "E2E Main", orgId: "org-1" });
+  }
+
   // --- legacy chat surface (kept for the existing smoke path) ----------------
 
   if (path === "/api/v1/models" && req.method === "GET") {

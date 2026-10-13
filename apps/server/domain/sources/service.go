@@ -30,6 +30,10 @@ type Service struct {
 	// orgOAuth resolves and manages org-scoped OAuth client configs. It defaults
 	// to the repository and is overridable in tests.
 	orgOAuth OrgOAuthClientStore
+
+	// projectOAuth resolves and manages project-scoped OAuth client configs. It
+	// defaults to the repository and is overridable in tests.
+	projectOAuth ProjectOAuthClientStore
 }
 
 // ServiceOption customises a Service at construction (keeps the API setter-free).
@@ -59,6 +63,16 @@ func WithOrgOAuthClientStore(store OrgOAuthClientStore) ServiceOption {
 	}
 }
 
+// WithProjectOAuthClientStore overrides the project OAuth client store
+// (defaults to the repository). Used by tests.
+func WithProjectOAuthClientStore(store ProjectOAuthClientStore) ServiceOption {
+	return func(s *Service) {
+		if store != nil {
+			s.projectOAuth = store
+		}
+	}
+}
+
 // NewService creates a new sources service. The credential-encryption key is
 // derived from config.Config.LLMProvider.EncryptionKey — the same config-sourced
 // key the provider domain uses — so provider credentials and source credentials
@@ -78,6 +92,7 @@ func NewService(repo *Repository, cfg *config.Config, log *slog.Logger, registry
 	}
 	if repo != nil {
 		s.orgOAuth = repo
+		s.projectOAuth = repo
 	}
 	if cfg != nil {
 		s.oauthCfg = cfg.SourceOAuth

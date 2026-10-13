@@ -233,6 +233,12 @@ func main() {
 	api.GET("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.getDSOAuthClient)
 	api.PUT("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.upsertDSOAuthClient)
 	api.DELETE("/orgs/:orgId/data-source-integrations/oauth-clients/:providerType", s.deleteDSOAuthClient)
+	// Project-scoped OAuth-client config (project_admin only; the handler
+	// enforces it). A project client overrides the org-wide one.
+	api.GET("/projects/:projectId/data-source-integrations/oauth-clients", s.listProjectDSOAuthClients)
+	api.GET("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.getProjectDSOAuthClient)
+	api.PUT("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.upsertProjectDSOAuthClient)
+	api.DELETE("/projects/:projectId/data-source-integrations/oauth-clients/:providerType", s.deleteProjectDSOAuthClient)
 	api.GET("/blueprints/installed", s.listInstalledBlueprints)
 	api.GET("/blueprints/available", s.listAvailableBlueprints)
 	api.GET("/blueprints/compiled-types", s.getCompiledTypes)
@@ -464,6 +470,12 @@ func main() {
 	e.GET("/settings/voice", s.uiProjectVoiceSettings)
 	e.GET("/settings/devices", s.uiConnectedDevices)
 	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+	// Project-level OAuth clients for data-source providers (project-admin only;
+	// the handler 404s for anyone else). Context-addressed like the rest of the
+	// project settings hub.
+	e.GET("/settings/oauth-clients", s.uiProjectOAuthClients)
+	e.POST("/settings/oauth-clients/:providerType", s.uiProjectOAuthClientUpsert)
+	e.POST("/settings/oauth-clients/:providerType/delete", s.uiProjectOAuthClientDelete)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)

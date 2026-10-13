@@ -862,8 +862,15 @@ type SourceOAuthConfig struct {
 	// Empty disables the connect flow with an actionable error.
 	RedirectBaseURL string `env:"SOURCES_OAUTH_REDIRECT_BASE_URL" envDefault:""`
 
+	// LandingURL is the browser URL the OAuth callback redirects to after the
+	// flow, e.g. https://admin.dev.emergent-company.ai/data-sources. Empty falls
+	// back to <RedirectBaseURL>/data-sources, which is only correct when the API
+	// and UI share an origin.
+	LandingURL string `env:"SOURCES_OAUTH_LANDING_URL" envDefault:""`
+
 	// GoogleClientID/GoogleClientSecret are the deployment-default Google OAuth
-	// client credentials. Empty means a connect requires an org-level client.
+	// client credentials. Empty means a connect requires an org-level or
+	// project-level client.
 	GoogleClientID     string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_ID" envDefault:""`
 	GoogleClientSecret string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_SECRET" envDefault:""`
 }

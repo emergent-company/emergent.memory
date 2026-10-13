@@ -66,4 +66,15 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	orgClients.GET("/:providerType", h.GetOrgOAuthClient)
 	orgClients.PUT("/:providerType", h.UpsertOrgOAuthClient)
 	orgClients.DELETE("/:providerType", h.DeleteOrgOAuthClient)
+
+	// Project-scoped OAuth client configs. Registered under /api/projects so the
+	// addressed project is explicit; only RequireAuth is applied at the route
+	// layer — project-admin authority is enforced inside the handler via the
+	// shared project-administration check (pkg/auth.CanAdministerProject).
+	projectClients := e.Group("/api/projects/:projectId/data-source-integrations/oauth-clients")
+	projectClients.Use(authMiddleware.RequireAuth())
+	projectClients.GET("", h.ListProjectOAuthClients)
+	projectClients.GET("/:providerType", h.GetProjectOAuthClient)
+	projectClients.PUT("/:providerType", h.UpsertProjectOAuthClient)
+	projectClients.DELETE("/:providerType", h.DeleteProjectOAuthClient)
 }

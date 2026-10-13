@@ -120,7 +120,7 @@ func TestCreateDSIntegrationHandlerValidation(t *testing.T) {
 		body string
 	}{
 		{"missing folder_id", `{"name":"x","providerType":"google_drive","config":{"refresh_token":"tok"}}`},
-		{"missing refresh_token", `{"name":"x","providerType":"google_drive","config":{"folder_id":"f1"}}`},
+		{"blank folder_id", `{"name":"x","providerType":"google_drive","config":{"folder_id":"   "}}`},
 		{"wrong provider", `{"name":"x","providerType":"dropbox","config":{"folder_id":"f1","refresh_token":"tok"}}`},
 	}
 	for _, tc := range cases {

@@ -11,6 +11,58 @@ Data sources let you connect external systems to Emergent Memory and automatical
 | `google_drive` | `drive` | Google Drive files and folders |
 | `clickup` | `clickup-document` | ClickUp documents and spaces |
 
+!!! note "Google Drive is OAuth-only"
+    Google Drive can only be connected via OAuth. There is no paste-a-refresh-token option. Data
+    sources that were connected before this change with a stored refresh token keep syncing and do
+    not need to be reconnected.
+
+---
+
+## Configuring a Google OAuth app
+
+Google Drive connects require an OAuth 2.0 client (an "app") that Memory uses to obtain Drive
+access. The app can be configured at three levels, resolved in this order when a connection starts:
+
+1. **Project** — a project-level client, managed by a `project_admin` on the project's
+   **Data source OAuth clients** page (reached from the "no OAuth client configured" prompt when a
+   connect fails). It overrides everything else for that project.
+2. **Organization** — an org-level client, managed by an `org_admin` under
+   **Organization Settings → Data source OAuth clients**.
+3. **Deployment default** — a centrally configured app set via `SOURCES_OAUTH_GOOGLE_CLIENT_ID` /
+   `SOURCES_OAUTH_GOOGLE_CLIENT_SECRET` (no setup needed by users).
+
+If none is configured, connecting fails with an actionable message telling you where to add one.
+
+### Create the app in Google Cloud Console
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create or select a project.
+2. Enable the **Google Drive API**.
+3. Configure the **OAuth consent screen** (External or Internal; for Workspace-internal apps use
+   Internal).
+4. Under **Credentials → Create credentials → OAuth client ID**, choose **Web application**.
+5. Under **Authorized redirect URIs**, add the **Redirect URI** shown on the OAuth client settings
+   page (it points at the Memory API callback, e.g.
+   `https://<api-host>/api/data-source-integrations/oauth/google_drive/callback`).
+6. Under **Authorized JavaScript origins**, add the **JavaScript origin** shown on the same page
+   (the Memory UI origin).
+7. Copy the **Client ID** and **Client secret**.
+
+### Enter the client
+
+=== "Project-level"
+    A `project_admin` opens the project's **Data source OAuth clients** page (from the
+    failed-connect prompt, or `/settings/oauth-clients`), chooses Google Drive,
+    and enters the Client ID, Client secret, scopes, and strategy from the console. This client is
+    used only for that project.
+
+=== "Organization-level"
+    An `org_admin` opens **Organization Settings → Data source OAuth clients**, chooses Google
+    Drive, and enters the Client ID, Client secret, scopes, and strategy. This client is used for
+    every project in the org that has not configured its own.
+
+The Client secret is stored encrypted and is never shown again after saving — leave the secret field
+blank when updating other settings to keep the stored secret.
+
 ---
 
 ## Setting Up a Data Source

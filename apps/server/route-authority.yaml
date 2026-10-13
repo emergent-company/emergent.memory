@@ -141,16 +141,16 @@ routes:
       path: /api/admin/mcp-servers/:id/oauth/authorize
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
-    - method: GET
-      path: /api/admin/mcp-servers/:id/oauth/status
+    - method: DELETE
+      path: /api/admin/mcp-servers/:id/oauth/client
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: PUT
       path: /api/admin/mcp-servers/:id/oauth/client
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
-    - method: DELETE
-      path: /api/admin/mcp-servers/:id/oauth/client
+    - method: GET
+      path: /api/admin/mcp-servers/:id/oauth/status
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
@@ -1353,6 +1353,22 @@ routes:
       path: /api/projects/:projectId/ask
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(chat:use)
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
+    - method: PUT
+      path: /api/projects/:projectId/data-source-integrations/oauth-clients/:providerType
+      level: auth
+      note: RequireAuth
     - method: POST
       path: /api/projects/:projectId/device-tokens
       level: project-member
