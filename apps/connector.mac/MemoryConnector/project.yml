@@ -16,8 +16,9 @@ settings:
     ENABLE_ENHANCED_SECURITY: "YES"
     # Zero-initialize stack variables so uninitialized stack values are unused.
     CLANG_ENABLE_STACK_ZERO_INIT: "YES"
-    # Manual signing with a stable Apple Development identity (see
-    # MemoryConnector.xcconfig): ad-hoc signing resets TCC Automation grants.
+    # Manual signing (see MemoryConnector.xcconfig). A stable Apple Development
+    # identity is the default; an ad-hoc signature was measured to re-run the UI
+    # suite after the one-time Automation (TCC) approval.
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     # Xcode 16+ Debug "debug dylib" splits the app into a thin launcher plus a

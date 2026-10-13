@@ -13,9 +13,12 @@ import XCTest
 /// (no animation-dependent waits). The menu-bar `NSStatusItem`/popover is
 /// deliberately out of scope.
 ///
-/// MUST run in a GUI/WindowServer session on the Mac, signed with a stable
-/// identity; XCUITest cannot run over the headless ssh build path, and ad-hoc
-/// signing resets Automation (TCC) grants. See
+/// MUST run in a GUI/WindowServer session on the Mac; XCUITest cannot run over
+/// the headless ssh build path (use `Scripts/mac-uitest-agent.sh`). The first
+/// run on a host needs a one-time on-screen Automation (TCC) approval; in our
+/// test a full rebuild with a fresh ad-hoc signature re-ran without
+/// re-prompting (a stable identity remains available via
+/// `mac-setup-signing.sh`). See
 /// apps/connector.mac/Scripts/mac-build.sh (`--uitest`).
 ///
 /// `@MainActor` on the class: the XCUIElement APIs are main-actor-isolated in

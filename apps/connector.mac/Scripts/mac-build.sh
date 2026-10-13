@@ -242,8 +242,8 @@ mac_ssh "$REMOTE_CMD"
 # ---- UI-test runner contract ---------------------------------------------
 # XCUITest needs a GUI/WindowServer session, so it cannot run over the headless
 # ssh path above — `--uitest` only builds the app + UI-test bundle. Print the
-# exact command to run the suite ON THE MAC in a GUI session, plus the stable
-# signing requirement (ad-hoc signing resets Automation/TCC grants).
+# exact command to run the suite ON THE MAC in a GUI session, plus the one-time
+# Automation approval the first run needs.
 if [[ "$RUN_UITESTS" == 1 ]]; then
   echo "==> UI-test bundle built (NOT run): XCUITest requires a GUI/WindowServer session."
   echo "    Run it on the Mac in a GUI session (e.g. over Screen Sharing / locally):"
@@ -255,8 +255,8 @@ if [[ "$RUN_UITESTS" == 1 ]]; then
   echo "        -scheme MemoryConnector -destination 'platform=macOS' \\"
   echo "        -derivedDataPath $MAC_CHECKOUT_PATH/build/DerivedData \\"
   echo "        -only-testing:MemoryConnectorUITests"
-  echo "    Sign with a stable identity first (apps/connector.mac/Scripts/mac-setup-signing.sh,"
-  echo "    run once); ad-hoc signing resets Automation (TCC) grants and will fail the suite."
+  echo "    The FIRST run needs a one-time on-screen Automation approval at the Mac."
+  echo "    (In our test a rebuild with a fresh ad-hoc signature re-ran without re-prompting.)"
   echo "    Unattended (from ssh): apps/connector.mac/Scripts/mac-uitest-agent.sh run"
 fi
 

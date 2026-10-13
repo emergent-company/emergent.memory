@@ -126,8 +126,9 @@ For a real Apple Development identity, use `mac-sign.sh` from a GUI
 
 ## Tests
 
-The Mac connector has three suites. **None are wired into CI yet** — run them
-manually on the Mac as below.
+The Mac connector has three suites. **None are wired into CI** — that is
+deliberate; they are invoked manually, or on demand from ssh (see the UI suite
+subsection), as below.
 
 ### Hosted unit tests (`MemoryConnectorTests`)
 
@@ -139,10 +140,10 @@ apps/connector.mac/Scripts/mac-build.sh --test
 
 ### UI smoke suite (`MemoryConnectorUITests`, XCUITest)
 
-XCUITest needs a **GUI/WindowServer session** and a **stable signing identity**
-(ad-hoc signing resets Automation/TCC grants), so it cannot run over the
-headless ssh path. `--uitest` only *builds* the app + UI-test bundle and prints
-the run command:
+XCUITest needs a **GUI/WindowServer session**, so it cannot run over the raw
+headless ssh path (a plain ssh session has no WindowServer) — the LaunchAgent in
+the next subsection bridges that. `--uitest` only *builds* the app + UI-test
+bundle and prints the run command:
 
 ```sh
 apps/connector.mac/Scripts/mac-build.sh --uitest
@@ -184,9 +185,9 @@ Caveats (same as the manual path, plus the launchd specifics):
 
 - The **first** `run` triggers an on-screen Automation / Accessibility (TCC)
   prompt for the UI-test runner — approve it once at the Mac.
-- Ad-hoc signing (what `--uitest` produces) changes the app identity on every
-  rebuild, so that grant may be re-prompted; a stable identity from
-  `mac-setup-signing.sh` avoids it.
+- In our test (one host, one rebuild), a full rebuild with a fresh ad-hoc
+  signature re-ran with no re-prompt; a stable identity remains available via
+  `mac-setup-signing.sh` if a host ever does start re-prompting.
 
 ### Darwin engine e2e (`apps/connector.linux/e2e`)
 

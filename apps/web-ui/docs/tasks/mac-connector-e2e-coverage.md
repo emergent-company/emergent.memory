@@ -24,8 +24,9 @@ relay protocol or account isolation would be caught only manually.
 - **App-level UI smoke** — new `MemoryConnectorUITests` (`bundle.ui-testing`)
   XCUITest suite driving the main window (opens; every sidebar page renders;
   toolbar + footer present), with a `-uiTestMode` launch hook for an isolated
-  profile. Runs in a GUI session on the mac runner with stable signing — NOT via
-  the ssh `mac-build.sh --test` path.
+  profile. Runs from ssh via `Scripts/mac-uitest-agent.sh` (a LaunchAgent in the
+  `gui/<uid>` domain, so it has a WindowServer); the `mac-build.sh --test` path
+  still runs hosted unit tests only.
 - **Darwin engine e2e** — a darwin runtime-gated sibling of the existing Linux
   hermetic daemon e2e (`apps/connector.linux/e2e/`): real `memory-connector`
   binary → in-process fake hub → `register` + tool list + `status --json`
@@ -38,12 +39,16 @@ relay protocol or account isolation would be caught only manually.
   `TestDarwinDaemonRegisterAndStatus` **PASS**; the Linux tests skip off-linux.
 - Connector lint clean (SwiftLint 0.65.1 + SwiftFormat 0.63.0, CI's binaries).
 
-## Not yet verified
+## Verified — UI suite (mac runner `mcj@mcj-mini`, macOS 27 / Xcode 27)
 
-- The UI suite **compiles and lints** but has never been **executed**. XCUITest
-  needs a GUI/WindowServer session with a stable signing identity; the ssh route
-  is refused, so running it stays a manual step on the Mac
-  (`Scripts/mac-build.sh --uitest`).
+- **UI smoke suite** (`MemoryConnectorUITests`): **Executed 3 tests, 0 failures**
+  (`** TEST SUCCEEDED **`, exit 0), run from ssh via
+  `Scripts/mac-uitest-agent.sh` (a LaunchAgent in the `gui/<uid>` domain, so it
+  has a WindowServer). A full rebuild (`mac-build.sh --uitest`, fresh ad-hoc
+  signature) and re-run also passed with no re-prompt. One-time on-screen
+  Automation approval is still required on a new host. These suites are
+  deliberately **not** wired into CI: they are invoked manually, on demand
+  (`Scripts/mac-uitest-agent.sh run`), against a real Mac with a GUI session.
 
 ## Still deferred (manual smoke)
 - Menu-bar `NSStatusItem`/popover (not reliably XCUITest-reachable).

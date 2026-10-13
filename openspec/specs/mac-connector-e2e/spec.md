@@ -79,7 +79,7 @@ The connector SHALL have a hermetic end-to-end test that builds the real `memory
 
 ### Requirement: UI suite runner contract
 
-The UI suite SHALL be runnable only in a GUI/WindowServer session, signed with a stable identity, and SHALL be documented as such, because macOS XCUITest cannot run on the headless ssh build path and ad-hoc signing resets Automation (TCC) grants.
+The UI suite SHALL be runnable only in a GUI/WindowServer session and SHALL be documented as such, because macOS XCUITest cannot run on the headless ssh build path. The first run on a host requires a one-time on-screen Automation (TCC) approval.
 
 #### Scenario: Documented runner
 - **WHEN** a developer or CI wants to run the UI suite

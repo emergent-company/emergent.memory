@@ -4,8 +4,10 @@
 # Why: build-machine builds over ssh cannot use the login keychain's signing
 # key (codesign fails with errSecInternalComponent), so they fall back to
 # ad-hoc signing. Ad-hoc changes the app's identity on every rebuild, which
-# makes macOS treat each build as a new app and re-prompt for Keychain tokens
-# and Automation (TCC) grants. A dedicated self-signed codeSigning identity
+# makes macOS treat each build as a new app and may re-prompt for Keychain
+# tokens and for the UI-test runner's one-time Automation (TCC) grant (measured
+# on one host/one rebuild: a fresh ad-hoc signature re-ran the suite without
+# re-prompting). A dedicated self-signed codeSigning identity
 # lives in its own keychain that codesign can use NON-INTERACTIVELY (also over
 # ssh), giving every build the same stable identity.
 #

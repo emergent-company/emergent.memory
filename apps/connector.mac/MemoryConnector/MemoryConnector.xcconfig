@@ -6,10 +6,12 @@
 // source and keeps the values in one human-readable place; it is no longer
 // load-bearing for PRODUCT_BUNDLE_IDENTIFIER.
 //
-// Signing is MANUAL with a stable Apple Development identity on purpose:
-// ad-hoc signing changes the binary's cdhash on every rebuild, which makes
-// macOS treat each build as a new app and resets the one-time
-// Notes/Reminders Automation (TCC) grants. A stable identity preserves them.
+// Signing is MANUAL with a stable Apple Development identity by default: an
+// ad-hoc signature changes the binary's cdhash on every rebuild, so macOS may
+// treat each build as a new app and re-prompt for the one-time Notes/Reminders
+// Automation (TCC) grants. Measured on one host/one rebuild, a fresh ad-hoc
+// signature re-ran the UI suite without re-prompting; a stable identity remains
+// the safe default for any host that does re-prompt.
 
 PRODUCT_BUNDLE_IDENTIFIER = com.emergent.memory.connector
 PRODUCT_NAME = Memory

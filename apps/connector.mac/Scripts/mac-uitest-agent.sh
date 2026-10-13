@@ -31,10 +31,9 @@
 #   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini
 #   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/emergent.memory-macbuild
 #
-# First-run caveat: the very first `run` triggers an on-screen Automation /
-# Accessibility (TCC) prompt for the UI-test runner on the Mac. Ad-hoc signing
-# (what `--uitest` produces) changes the app identity per rebuild, so that grant
-# may be re-prompted; a stable identity from mac-setup-signing.sh avoids it.
+# First-run caveat: the very first `run` needs a one-time on-screen Automation /
+# Accessibility (TCC) approval for the UI-test runner at the Mac. In our test a
+# subsequent rebuild (fresh ad-hoc signature) re-ran without re-prompting.
 
 set -euo pipefail
 
