@@ -247,12 +247,17 @@ mac_ssh "$REMOTE_CMD"
 if [[ "$RUN_UITESTS" == 1 ]]; then
   echo "==> UI-test bundle built (NOT run): XCUITest requires a GUI/WindowServer session."
   echo "    Run it on the Mac in a GUI session (e.g. over Screen Sharing / locally):"
-  echo "      cd $MAC_CHECKOUT_PATH/$MAC_SUBTREE/MemoryConnector"
-  echo "      xcodebuild test -project MemoryConnector.xcodeproj -scheme MemoryConnector \\"
-  echo "        -destination 'platform=macOS' -derivedDataPath build/DerivedData \\"
+  # The build ran `-derivedDataPath 'build/DerivedData'` AFTER `cd $MAC_CHECKOUT_PATH`,
+  # so the products live in $MAC_CHECKOUT_PATH/build/DerivedData (NOT under
+  # client/macos/MemoryConnector). Print the absolute (~-rooted) form with NO cd so
+  # pasting it reuses those products instead of triggering a fresh build.
+  echo "      xcodebuild test -project $MAC_CHECKOUT_PATH/$MAC_SUBTREE/MemoryConnector/MemoryConnector.xcodeproj \\"
+  echo "        -scheme MemoryConnector -destination 'platform=macOS' \\"
+  echo "        -derivedDataPath $MAC_CHECKOUT_PATH/build/DerivedData \\"
   echo "        -only-testing:MemoryConnectorUITests"
   echo "    Sign with a stable identity first (apps/connector.mac/Scripts/mac-setup-signing.sh,"
   echo "    run once); ad-hoc signing resets Automation (TCC) grants and will fail the suite."
+  echo "    Unattended (from ssh): apps/connector.mac/Scripts/mac-uitest-agent.sh run"
 fi
 
 # ---- optional: install to ~/Applications and launch ---------------------

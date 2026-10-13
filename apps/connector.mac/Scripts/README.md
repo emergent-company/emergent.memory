@@ -11,6 +11,7 @@ config: `lib/mac-remote.sh`, fed by the environment or the gitignored
 |---|---|
 | `mac-build.sh` | rsync `apps/connector.mac/` → `<MEMORY_MAC_PATH>/client/macos` plus the embedded engine's Go sources, XcodeGen + `xcodebuild`, then sign |
 | `mac-doctor.sh` | `--check`: verify the Mac is reachable and usable (read-only) |
+| `mac-uitest-agent.sh` | run the XCUITest suite on demand from ssh via a `gui/<uid>` LaunchAgent |
 | `mac-sign.sh` | sign the installed `MemoryConnector.app` with a stable Apple Development identity (GUI only) |
 | `mac-setup-signing.sh` | one-time (idempotent) setup of a dedicated self-signed codesigning identity |
 
@@ -150,13 +151,42 @@ apps/connector.mac/Scripts/mac-build.sh --uitest
 Then, **on the Mac in a GUI session** (locally or via Screen Sharing):
 
 ```sh
-cd <MEMORY_MAC_PATH>/client/macos/MemoryConnector
-xcodebuild test -project MemoryConnector.xcodeproj -scheme MemoryConnector \
-  -destination 'platform=macOS' -derivedDataPath build/DerivedData \
+xcodebuild test -project <MEMORY_MAC_PATH>/client/macos/MemoryConnector/MemoryConnector.xcodeproj \
+  -scheme MemoryConnector -destination 'platform=macOS' \
+  -derivedDataPath <MEMORY_MAC_PATH>/build/DerivedData \
   -only-testing:MemoryConnectorUITests
 ```
 
+The build wrote `DerivedData` at `<MEMORY_MAC_PATH>/build/DerivedData`, so the
+command above is absolute and needs no `cd` — pasting it reuses those products
+instead of rebuilding.
+
 Run `mac-setup-signing.sh` **once** on the Mac first for a stable identity.
+
+### Unattended UI suite (`LaunchAgent`)
+
+For running the UI suite **on demand from ssh / CI**, use
+`apps/connector.mac/Scripts/mac-uitest-agent.sh`. It bootstraps a LaunchAgent
+(`com.emergent.memory.connector.uitest`) into the `gui/<uid>` domain, so the job
+genuinely runs inside the user's Aqua (GUI) session — the only context with a
+WindowServer that XCUITest requires:
+
+```sh
+apps/connector.mac/Scripts/mac-uitest-agent.sh install          # one-time; idempotent
+apps/connector.mac/Scripts/mac-uitest-agent.sh run              # build + run + wait, exits with the suite's code
+apps/connector.mac/Scripts/mac-uitest-agent.sh run --no-build   # skip the build; run an already-built bundle
+apps/connector.mac/Scripts/mac-uitest-agent.sh status           # launchd state + status/log tail
+apps/connector.mac/Scripts/mac-uitest-agent.sh logs [-n 50]     # tail the run log
+apps/connector.mac/Scripts/mac-uitest-agent.sh uninstall        # bootout + remove the plist (keeps logs)
+```
+
+Caveats (same as the manual path, plus the launchd specifics):
+
+- The **first** `run` triggers an on-screen Automation / Accessibility (TCC)
+  prompt for the UI-test runner — approve it once at the Mac.
+- Ad-hoc signing (what `--uitest` produces) changes the app identity on every
+  rebuild, so that grant may be re-prompted; a stable identity from
+  `mac-setup-signing.sh` avoids it.
 
 ### Darwin engine e2e (`apps/connector.linux/e2e`)
 
