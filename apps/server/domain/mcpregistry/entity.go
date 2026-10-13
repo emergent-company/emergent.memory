@@ -310,10 +310,8 @@ type RegistryPackageDTO struct {
 // EnvironmentVariables are the credentials this specific remote declares, so
 // clients can preview what an install will require before installing.
 type RegistryRemoteDTO struct {
-	Type                 string              `json:"type"`
-	URL                  string              `json:"url"`
-	Headers              []RegistryHeaderDTO `json:"headers,omitempty"`
-	EnvironmentVariables []RegistryEnvVarDTO `json:"environmentVariables,omitempty"`
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 // RegistryEnvVarDTO is the response DTO for a registry environment variable.

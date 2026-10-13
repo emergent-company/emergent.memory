@@ -1600,22 +1600,19 @@ func registryServerToDTO(s RegistryServer) RegistryServerDTO {
 	// like "Bearer {api_key}".
 	headerMap := make(map[string]RegistryHeaderDTO)
 	for _, remote := range s.Remotes {
-		remoteDTO := RegistryRemoteDTO{
+		dto.Remotes = append(dto.Remotes, RegistryRemoteDTO{
 			Type: remote.Type,
 			URL:  remote.URL,
+		})
+		for _, ev := range remote.EnvironmentVariables {
+			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
 		}
 		for _, h := range remote.Headers {
-			remoteDTO.Headers = append(remoteDTO.Headers, RegistryHeaderDTO(h))
 			if _, seen := headerMap[h.Name]; seen {
 				continue
 			}
 			headerMap[h.Name] = RegistryHeaderDTO(h)
 		}
-		for _, ev := range remote.EnvironmentVariables {
-			remoteDTO.EnvironmentVariables = append(remoteDTO.EnvironmentVariables, RegistryEnvVarDTO(ev))
-			envVarMap[ev.Name] = RegistryEnvVarDTO(ev)
-		}
-		dto.Remotes = append(dto.Remotes, remoteDTO)
 	}
 
 	if len(envVarMap) > 0 {

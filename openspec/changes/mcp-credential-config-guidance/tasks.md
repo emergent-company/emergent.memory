@@ -14,11 +14,11 @@
 ## 3. Web UI — gateway
 
 - [x] 3.1 `mcp_registry_client.go`/`extras.go`: remote headers + env wire types; `MCPServer` provenance fields
-- [x] 3.2 `mcp_registry.templ`: catalog card previews the installable remote's required credentials
+- [x] 3.2 `mcp_registry.templ`: registry listing renders the call to action inline (right-hand column), no credential preview
 - [x] 3.3 `mcp_servers.templ`: configure banner lists missing keys with descriptions + provider docs link
 - [x] 3.4 `mcp_servers.templ`: required `Authorization` renders scheme + token; hidden `.auth`/`.scheme` keep arrays aligned (incl. JS-added rows)
 - [x] 3.5 `mcp_servers.go`: auth helpers (`mcpAuthHeaderValue`, `mcpAuthSchemeFromHint`), banner details, docs link
-- [x] 3.6 Gateway unit tests: assembly, alignment, preview, docs link, configure render
+- [x] 3.6 Gateway unit tests: assembly, alignment, docs link, configure render
 
 ## 4. Verify
 

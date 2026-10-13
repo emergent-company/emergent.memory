@@ -45,23 +45,10 @@ type MCPRegistryPackage struct {
 	Transport    string `json:"transport"`
 }
 
-// MCPRegistryRemote mirrors memory's RegistryRemoteDTO. Headers and EnvVars are
-// the credentials this specific remote declares — the catalog card previews them
-// so the user knows what an install will require before installing.
+// MCPRegistryRemote mirrors memory's RegistryRemoteDTO.
 type MCPRegistryRemote struct {
-	Type    string              `json:"type"`
-	URL     string              `json:"url"`
-	Headers []MCPRegistryHeader `json:"headers,omitempty"`
-	EnvVars []MCPRegistryEnvVar `json:"environmentVariables,omitempty"`
-}
-
-// MCPRegistryHeader mirrors memory's RegistryHeaderDTO.
-type MCPRegistryHeader struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	IsRequired  bool   `json:"isRequired"`
-	IsSecret    bool   `json:"isSecret"`
-	Value       string `json:"value,omitempty"`
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 // MCPRegistryEnvVar mirrors memory's RegistryEnvVarDTO.

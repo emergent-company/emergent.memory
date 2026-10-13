@@ -76,12 +76,14 @@ templ mcpRegistryEmptyState(query string) {
 	}
 }
 
-// mcpRegistryEntry renders one registry result: name/title/description, the
-// remote/package availability badges, and either an Install action (remote
-// transport) or connector guidance (stdio-only).
+// mcpRegistryEntry renders one registry result: name/title/description on the
+// left; the availability badges and the call to action (an Install form for a
+// remote transport, connector guidance otherwise) stacked in a right-hand
+// column, vertically centred against the entry content. No credential preview
+// is shown here — credential guidance lives on the configure form after install.
 templ mcpRegistryEntry(entry MCPRegistryServer) {
 	<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3" data-testid="mcp-registry-entry" data-registry-name={ entry.Name }>
-		<div class="flex flex-wrap items-start justify-between gap-3">
+		<div class="flex items-center justify-between gap-3">
 			<div class="min-w-0">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
@@ -94,40 +96,21 @@ templ mcpRegistryEntry(entry MCPRegistryServer) {
 					<p class="text-muted mt-1 text-xs leading-snug">{ entry.Description }</p>
 				}
 			</div>
-			<div class="flex shrink-0 items-center gap-1.5">
-				if entry.HasRemotes {
-					@ui.Badge(ui.BadgeProps{Label: "remote", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--radio"})
-				}
-				if entry.HasPackages {
-					@ui.Badge(ui.BadgeProps{Label: "package", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
-				}
-			</div>
-		</div>
-		{{ preview := mcpRegistryRequiredPreview(entry) }}
-		if len(preview) > 0 {
-			<div class="mt-2 rounded-field border border-warning/30 bg-warning/5 px-2.5 py-2" data-testid="mcp-registry-needed-credentials">
-				<p class="text-warning flex items-center gap-1.5 text-[11px] font-medium">
-					@ui.IconSpan("lucide--key-round", "size-3.5 shrink-0")
-					Needs configuration after install
-				</p>
-				<ul class="mt-1 flex flex-col gap-0.5">
-					for _, c := range preview {
-						<li class="text-muted text-[11px] leading-snug">
-							<span class="font-mono text-base-content/80">{ c.Name }</span>
-							if c.Description != "" {
-								<span> — { c.Description }</span>
-							}
-						</li>
+			<div class="flex shrink-0 flex-col items-end gap-2" data-testid="mcp-registry-entry-actions">
+				<div class="flex items-center gap-1.5">
+					if entry.HasRemotes {
+						@ui.Badge(ui.BadgeProps{Label: "remote", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--radio"})
 					}
-				</ul>
+					if entry.HasPackages {
+						@ui.Badge(ui.BadgeProps{Label: "package", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
+					}
+				</div>
+				if entry.HasRemotes {
+					@mcpRegistryInstallAction(entry)
+				} else {
+					@mcpRegistryConnectorGuidance()
+				}
 			</div>
-		}
-		<div class="mt-2 flex items-center justify-between gap-3 border-t border-base-content/10 pt-2">
-			if entry.HasRemotes {
-				@mcpRegistryInstallAction(entry)
-			} else {
-				@mcpRegistryConnectorGuidance()
-			}
 		</div>
 	</div>
 }
@@ -150,12 +133,12 @@ templ mcpRegistryInstallAction(entry MCPRegistryServer) {
 }
 
 // mcpRegistryConnectorGuidance explains that a stdio-only entry must be
-// installed locally through the macOS connector — no server-side install
-// action exists for it.
+// installed locally through the connector — no server-side install action
+// exists for it. Rendered in the entry's right-hand action column.
 templ mcpRegistryConnectorGuidance() {
-	<p class="text-muted flex items-center gap-1.5 text-[11px]" data-testid="mcp-registry-connector-guidance">
-		@ui.IconSpan("lucide--laptop", "size-3.5 shrink-0 text-muted-faint")
-		Install locally via the macOS connector — stdio servers can't run on the shared host.
+	<p class="text-muted flex max-w-[20rem] items-start justify-end gap-1.5 text-right text-[11px]" data-testid="mcp-registry-connector-guidance">
+		@ui.IconSpan("lucide--laptop", "size-3.5 mt-0.5 shrink-0 text-muted-faint")
+		<span>Install locally via the macOS connector — stdio servers can't run on the shared host.</span>
 	</p>
 }
 

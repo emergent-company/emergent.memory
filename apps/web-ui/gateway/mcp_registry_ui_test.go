@@ -21,16 +21,8 @@ func mcpRegistryPageFixture() []MCPRegistryServer {
 			Version:     "1.0.0",
 			HasRemotes:  true,
 			HasPackages: true,
-			Remotes: []MCPRegistryRemote{{
-				Type: "streamable-http",
-				URL:  "https://api.githubcopilot.com/mcp/",
-				Headers: []MCPRegistryHeader{{
-					Name:        "Authorization",
-					IsSecret:    true,
-					Description: "Authorization header with authentication token (PAT or App token)",
-				}},
-			}},
-			EnvVars: []MCPRegistryEnvVar{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", IsRequired: true, IsSecret: true}},
+			Remotes:     []MCPRegistryRemote{{Type: "streamable-http", URL: "https://api.githubcopilot.com/mcp/"}},
+			EnvVars:     []MCPRegistryEnvVar{{Name: "GITHUB_PERSONAL_ACCESS_TOKEN", IsRequired: true, IsSecret: true}},
 		},
 		{
 			Name:        "io.github.ChromeDevTools/chrome-devtools-mcp",
@@ -62,11 +54,8 @@ func TestRenderMCPRegistryPage(t *testing.T) {
 		`action="/settings/mcp-registry/install"`,
 		`name="registryName" value="io.github.github/github-mcp-server"`,
 		`data-testid="mcp-registry-install"`,
-		// the installable remote's required credentials are previewed before install
-		`data-testid="mcp-registry-needed-credentials"`,
-		"Needs configuration after install",
-		"Authorization",
-		"Authorization header with authentication token (PAT or App token)",
+		// install action sits in the entry's right-hand action column
+		`data-testid="mcp-registry-entry-actions"`,
 		// stdio-only entry — connector guidance, no install form for it
 		`data-registry-name="io.github.ChromeDevTools/chrome-devtools-mcp"`,
 		"Chrome DevTools",

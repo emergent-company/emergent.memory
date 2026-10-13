@@ -1,22 +1,21 @@
 ## ADDED Requirements
 
-### Requirement: Registry browse exposes each remote's declared credentials
+### Requirement: Registry listing presents the install action inline with the entry
 
-The registry browse response SHALL include, for each remote, the headers and
-environment variables that remote declares (with the registry's `name`, `isRequired`,
-`isSecret`, `description`, and header `value` template). The catalog SHALL preview the
-credentials that an install will require, using the same remote-selection order the
-install uses (streamable-http before sse), so a user can prepare them before installing.
+Each registry listing entry SHALL render its call to action in a column to the right of
+the entry content, vertically aligned with that content, rather than below it in a
+separate footer row. The entry SHALL NOT render a credential-requirement preview;
+credential guidance is shown on the configuration form after install.
 
-#### Scenario: Installable remote's required header is previewed
+#### Scenario: Remote entry shows an inline install action
 
-- **WHEN** a catalog entry whose selected remote declares an `Authorization` secret header is rendered
-- **THEN** the card names `Authorization` and shows the registry's description for it
+- **WHEN** a listing entry with a remote transport is rendered
+- **THEN** its Install action is rendered to the right of the entry content
 
-#### Scenario: A remote requiring nothing shows no preview
+#### Scenario: Listing entries show no credential preview
 
-- **WHEN** a catalog entry's selected remote declares no required-or-secret header or env var
-- **THEN** the card shows no credential preview block
+- **WHEN** any listing entry is rendered
+- **THEN** no credential-requirement preview block is shown on the entry
 
 ### Requirement: Registry install records provenance
 

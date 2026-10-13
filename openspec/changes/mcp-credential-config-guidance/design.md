@@ -7,7 +7,6 @@ whole install → configure → recover loop.
 
 ## Goals
 
-- Show required credentials before install (on the catalog card).
 - Explain each missing key on the configure form and link to provider docs.
 - Make the common `Authorization: Bearer <token>` case a scheme + token input.
 - Attribute a 401/403 to the credential with an actionable message.

@@ -110,33 +110,3 @@ func TestMCPCredentialDocs(t *testing.T) {
 		t.Errorf("empty repo url should yield no link, got (%q, %q)", label, href)
 	}
 }
-
-// TestMCPRegistryRequiredPreview asserts the card preview lists the selected
-// remote's required-or-secret credentials with their descriptions, in headers
-// then env order, and skips optional ones.
-func TestMCPRegistryRequiredPreview(t *testing.T) {
-	entry := MCPRegistryServer{
-		HasRemotes: true,
-		Remotes: []MCPRegistryRemote{{
-			Type: "streamable-http",
-			URL:  "https://api.githubcopilot.com/mcp/",
-			Headers: []MCPRegistryHeader{
-				{Name: "Authorization", IsSecret: true, Description: "Bearer token (PAT or App token)"},
-				{Name: "X-Optional", IsRequired: false, IsSecret: false},
-			},
-			EnvVars: []MCPRegistryEnvVar{
-				{Name: "GITHUB_TOKEN", IsRequired: true, Description: "A PAT"},
-			},
-		}},
-	}
-	preview := mcpRegistryRequiredPreview(entry)
-	if len(preview) != 2 {
-		t.Fatalf("preview = %+v, want 2 (Authorization, GITHUB_TOKEN)", preview)
-	}
-	if preview[0].Name != "Authorization" || preview[0].Description != "Bearer token (PAT or App token)" {
-		t.Errorf("preview[0] = %+v", preview[0])
-	}
-	if preview[1].Name != "GITHUB_TOKEN" || preview[1].Description != "A PAT" {
-		t.Errorf("preview[1] = %+v", preview[1])
-	}
-}
