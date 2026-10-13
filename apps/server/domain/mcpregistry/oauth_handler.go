@@ -2,8 +2,10 @@ package mcpregistry
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
@@ -95,6 +97,70 @@ func (h *Handler) DisconnectMCPOAuth(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// ProvisionMCPOAuthClient handles PUT /api/admin/mcp-servers/:id/oauth/client.
+// @Summary      Provision a pre-registered OAuth client for an MCP server
+// @Description  Stores a pre-registered client id (and optional secret) for a remote server, clearing any token set issued to a previous client
+// @Tags         mcp-registry
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Server ID"
+// @Param        body body mcpregistry.ProvisionMCPOAuthClientDTO true "Client identity"
+// @Success      200 {object} mcpregistry.APIResponse[mcpregistry.MCPServerOAuthStatusDTO]
+// @Failure      400 {object} apperror.Error "Server is not remote or clientId is blank"
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/admin/mcp-servers/{id}/oauth/client [put]
+// @Security     bearerAuth
+func (h *Handler) ProvisionMCPOAuthClient(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("server ID is required")
+	}
+	var body ProvisionMCPOAuthClientDTO
+	if err := c.Bind(&body); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if strings.TrimSpace(body.ClientID) == "" {
+		return apperror.NewBadRequest("clientId is required")
+	}
+
+	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, body.ClientID, body.ClientSecret)
+	if err != nil {
+		return mcpOAuthError(err)
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(status))
+}
+
+// ClearMCPOAuthClient handles DELETE /api/admin/mcp-servers/:id/oauth/client.
+// @Summary      Clear an MCP server's OAuth client identity
+// @Description  Clears the stored client id, client secret, and any token set, leaving discovered endpoints in place
+// @Tags         mcp-registry
+// @Param        id path string true "Server ID"
+// @Success      204 "Client identity cleared"
+// @Failure      401 {object} apperror.Error
+// @Failure      404 {object} apperror.Error
+// @Router       /api/admin/mcp-servers/{id}/oauth/client [delete]
+// @Security     bearerAuth
+func (h *Handler) ClearMCPOAuthClient(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	if user.ProjectID == "" {
+		return apperror.NewBadRequest("X-Project-ID header is required")
+	}
+	id := c.Param("id")
+	if id == "" {
+		return apperror.NewBadRequest("server ID is required")
+	}
+
+	if err := h.svc.ClearOAuthClient(c.Request().Context(), user.ProjectID, id); err != nil {
+		return mcpOAuthError(err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // CompleteMCPOAuth handles GET /api/mcp-servers/oauth/callback.
 //
 // It is intentionally unauthenticated: the browser arrives cross-site from the
@@ -142,6 +208,10 @@ func mcpOAuthError(err error) error {
 		errors.Is(err, ErrOAuthNotRequired),
 		errors.Is(err, ErrOutboundURLNotAllowed):
 		return apperror.NewBadRequest(err.Error())
+	case errors.Is(err, ErrOAuthClientRequired):
+		// The authorization server will not issue us a client (registration
+		// unavailable or rejected). This is actionable, not an internal fault.
+		return apperror.NewBadRequest(oauthClientRequiredMessage(err))
 	case errors.Is(err, ErrOAuthNeedsReconnect):
 		return apperror.NewConflict(err.Error())
 	case errors.Is(err, ErrOAuthDiscoveryFailed):
@@ -150,4 +220,17 @@ func mcpOAuthError(err error) error {
 	default:
 		return apperror.NewInternal("MCP OAuth connect failed", err)
 	}
+}
+
+// oauthClientRequiredMessage builds the user-facing copy for ErrOAuthClientRequired.
+// When the rejection carries an HTTP status (a dynamic client registration was
+// answered with a non-2xx), it is named; otherwise the message covers the
+// registration-unavailable case. Either way it is one actionable sentence with
+// no internal identifiers.
+func oauthClientRequiredMessage(err error) string {
+	var rej *oauthRegistrationRejected
+	if errors.As(err, &rej) && rej.Status != 0 {
+		return fmt.Sprintf("the authorization server rejected dynamic client registration (HTTP %d); this server needs a pre-registered OAuth client — configure one for this server and retry", rej.Status)
+	}
+	return "this authorization server will not issue a client — dynamic client registration is unavailable or was rejected; configure a pre-registered OAuth client for this server and retry"
 }

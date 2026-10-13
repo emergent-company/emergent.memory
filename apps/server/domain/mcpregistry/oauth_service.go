@@ -33,6 +33,12 @@ var (
 	// ErrOAuthNotRequired marks a server whose connection attempt was not
 	// rejected with an OAuth challenge. Handler maps it to 400.
 	ErrOAuthNotRequired = errors.New("this MCP server did not report an authorization requirement")
+	// ErrOAuthClientRequired marks an authorization server that will not issue
+	// us a client: dynamic client registration is unavailable or was rejected.
+	// It is the sentinel behind both a registration-endpoint-free metadata
+	// document and a non-2xx dynamic client registration response. Handler maps
+	// it to 400 with an actionable message: provision a pre-registered client.
+	ErrOAuthClientRequired = errors.New("this authorization server will not issue a client — dynamic client registration is unavailable or was rejected")
 	// ErrOAuthDiscoveryFailed marks a probe or metadata fetch that could not be
 	// completed (unreachable server, unusable metadata). Handler maps it to 502:
 	// the failure is upstream, not bad input.
@@ -223,7 +229,7 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 			}
 			row.ClientSecret = secret
 		} else {
-			return nil, fmt.Errorf("the authorization server %q requires a pre-registered OAuth client (dynamic client registration is not offered)", req.AuthorizationServer)
+			return nil, fmt.Errorf("%w: the authorization server %q requires a pre-registered OAuth client (dynamic client registration is not offered)", ErrOAuthClientRequired, req.AuthorizationServer)
 		}
 	}
 	// Refresh the discovered endpoints on every start so a moved endpoint heals.
@@ -416,6 +422,7 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID string
 	}
 	status.Configured = true
 	status.Connected = row.AccessToken != nil
+	status.ClientConfigured = strings.TrimSpace(row.ClientID) != ""
 	if row.AuthorizationServer != "" {
 		server := row.AuthorizationServer
 		status.AuthorizationServer = &server
@@ -455,6 +462,61 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID st
 		slog.String("project_id", projectID),
 		slog.String("server_id", serverID),
 	)
+	return nil
+}
+
+// ProvisionOAuthClient stores a pre-registered OAuth client identity for a
+// remote server, clearing any token set issued to a previous client (tokens are
+// bound to the client they were issued to). It returns the server's refreshed
+// authorization status, which never carries token material.
+func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, clientID, clientSecret string) (*MCPServerOAuthStatusDTO, error) {
+	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
+	if err != nil {
+		return nil, fmt.Errorf("loading MCP server: %w", err)
+	}
+	if server == nil {
+		return nil, ErrServerNotFound
+	}
+	if server.Type != ServerTypeHTTP && server.Type != ServerTypeSSE {
+		return nil, ErrOAuthNotSupported
+	}
+
+	var secret *EncryptedSecret
+	if clientSecret != "" {
+		secret, err = encryptSecretValue(s.encryptor, clientSecret)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, clientID, secret); err != nil {
+		return nil, err
+	}
+
+	// Any token issued to a previous client is now invalid: drop pooled
+	// connections that were using it and force a tool-pool rebuild.
+	s.proxy.CloseServer(serverID)
+	s.invalidateToolPool(projectID)
+
+	return s.MCPOAuthStatus(ctx, projectID, serverID)
+}
+
+// ClearOAuthClient removes a server's stored client identity and any token set,
+// leaving the discovered endpoints in place so a later authorize can re-provision
+// or re-register.
+func (s *Service) ClearOAuthClient(ctx context.Context, projectID, serverID string) error {
+	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
+	if err != nil {
+		return fmt.Errorf("loading MCP server: %w", err)
+	}
+	if server == nil {
+		return ErrServerNotFound
+	}
+	if err := s.repo.ClearOAuthClient(ctx, serverID); err != nil {
+		return err
+	}
+	s.proxy.CloseServer(serverID)
+	s.invalidateToolPool(projectID)
 	return nil
 }
 

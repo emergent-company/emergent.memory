@@ -250,6 +250,73 @@ func (s *MCPOAuthDBSuite) TestDisconnectUnknownServer() {
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
 }
 
+// --- client provisioning ---
+
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClearsTokens() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	// Seed a prior client + token set: provisioning must replace the identity and
+	// clear the tokens issued to the old client.
+	s.seedCredential(server, "access-token-value")
+
+	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "provisioned-client", "provisioned-secret")
+	s.Require().NoError(err)
+	s.True(status.ClientConfigured)
+	s.False(status.Connected, "provisioning must clear the prior connection")
+
+	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(row)
+	s.Equal("provisioned-client", row.ClientID)
+
+	// The secret is encrypted at rest: the raw stored value is ciphertext, not
+	// the plaintext.
+	s.Require().NotNil(row.ClientSecret)
+	s.NotEqual("provisioned-secret", string(row.ClientSecret.Ciphertext), "raw stored value must not be the plaintext")
+	s.Equal("provisioned-secret", s.decrypt(row.ClientSecret), "secret must decrypt to the provisioned value")
+
+	// Tokens issued to the previous client are cleared.
+	s.Nil(row.AccessToken)
+	s.Nil(row.RefreshToken)
+	s.Nil(row.ExpiresAt)
+}
+
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientUnknownServer() {
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "cid", "sec")
+	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
+}
+
+func (s *MCPOAuthDBSuite) TestProvisionOAuthClientRejectsNonRemoteTransport() {
+	server := s.createServer("local-stdio", mcpregistry.ServerTypeStdio, "")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "cid", "sec")
+	s.ErrorIs(err, mcpregistry.ErrOAuthNotSupported)
+}
+
+func (s *MCPOAuthDBSuite) TestClearOAuthClientClearsIdentity() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	s.seedCredential(server, "access-token-value")
+
+	s.Require().NoError(s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, server.ID))
+
+	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	s.Require().NoError(err)
+	s.Require().NotNil(row, "clear must keep the row so a later authorize can re-provision")
+	s.Empty(row.ClientID)
+	s.Nil(row.ClientSecret)
+	s.Nil(row.AccessToken)
+	s.Nil(row.RefreshToken)
+	s.Nil(row.ExpiresAt)
+
+	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID)
+	s.Require().NoError(err)
+	s.False(status.ClientConfigured)
+	s.False(status.Connected)
+}
+
+func (s *MCPOAuthDBSuite) TestClearOAuthClientUnknownServer() {
+	err := s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111")
+	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
+}
+
 // --- start-flow guards (no network) ---
 
 func (s *MCPOAuthDBSuite) TestStartRequiresAConfiguredDeployment() {

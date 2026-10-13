@@ -53,6 +53,13 @@
 - [x] 8.3 Server unit tests for the new domain code pass; gateway handler/templ tests pass
 - [ ] 8.4 Manual verification against the live Figma MCP server: install from the registry, see the authorization requirement, complete the browser flow, and confirm tools are discovered and a tool call succeeds
 
+## 10. Post-merge fixes (live Figma verification)
+
+- [x] 10.1 Surface a rejected dynamic client registration as an actionable 400 (`ErrOAuthClientRequired`) carrying the HTTP status and a capped, secret-free excerpt of the response body, instead of an opaque 500
+- [x] 10.2 Add `PUT /api/admin/mcp-servers/:id/oauth/client` (provision a pre-registered client id + optional encrypted secret, clearing prior tokens) and `DELETE /api/admin/mcp-servers/:id/oauth/client` (clear the identity), with route-authority and Swagger registration
+- [x] 10.3 Report `clientConfigured` on the OAuth status DTO, and make `StartMCPOAuth` reuse a provisioned client without re-registering
+- [x] 10.4 Unit + DB-backed tests: rejected registration surfaces status and maps to 400; provisioning stores an encrypted secret, clears tokens, and reports `clientConfigured`; the authorize flow skips registration and uses the provisioned client id; DELETE clears the identity
+
 ## Verification status (recorded at PR time)
 
 Ran and passed:

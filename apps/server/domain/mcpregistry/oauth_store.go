@@ -114,6 +114,55 @@ func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID string)
 	return nil
 }
 
+// UpsertOAuthClient stores a pre-registered OAuth client identity for a server
+// and clears any token set, because tokens issued to a previous client are
+// invalid. Discovered endpoints (authorization_server, token_endpoint,
+// registration_endpoint, resource, scope) are left untouched when the row
+// already exists; a new row starts with their defaults and is filled in by the
+// next authorize. clientSecret may be nil for a public client.
+func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, clientID string, clientSecret *EncryptedSecret) error {
+	if serverID == "" {
+		return fmt.Errorf("oauth row requires a server id")
+	}
+	_, err := r.db.NewInsert().
+		Model(&MCPServerOAuth{
+			ServerID:     serverID,
+			ProjectID:    projectID,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+		}).
+		On("CONFLICT (server_id) DO UPDATE").
+		Set("client_id = EXCLUDED.client_id").
+		Set("client_secret = EXCLUDED.client_secret").
+		Set("access_token = ?", nil).
+		Set("refresh_token = ?", nil).
+		Set("expires_at = ?", nil).
+		Set("updated_at = now()").
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("upserting mcp server oauth client: %w", err)
+	}
+	return nil
+}
+
+// ClearOAuthClient clears a server's stored client identity and token set,
+// leaving the discovered endpoints in place. It is a no-op when no row exists.
+func (r *Repository) ClearOAuthClient(ctx context.Context, serverID string) error {
+	if _, err := r.db.NewUpdate().
+		Model((*MCPServerOAuth)(nil)).
+		Set("client_id = ?", "").
+		Set("client_secret = ?", nil).
+		Set("access_token = ?", nil).
+		Set("refresh_token = ?", nil).
+		Set("expires_at = ?", nil).
+		Set("updated_at = now()").
+		Where("server_id = ?", serverID).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("clearing mcp server oauth client: %w", err)
+	}
+	return nil
+}
+
 // --- Pending authorize flows (kb.oauth_pending_states) ---
 //
 // The pending state table is shared with the data-source connect flow: it is a

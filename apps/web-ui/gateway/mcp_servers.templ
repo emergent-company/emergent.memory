@@ -242,7 +242,10 @@ templ mcpServerRowActions(srv MCPServer) {
 // one remote (http/sse) server that participates in OAuth connect. It renders
 // nothing for builtin, stdio, or non-OAuth servers. When the server is
 // connected it shows a "Connected" chip (with the authorization server as
-// secondary text) plus a Disconnect action; otherwise a Connect action.
+// secondary text) plus a Disconnect action; otherwise a Connect action. Below
+// the connect strip it also offers a pre-registered-client form (for providers
+// that reject dynamic registration) and, when one is stored, a "Client
+// configured" chip plus a Clear action.
 templ mcpServerOAuthControls(srv MCPServer) {
 	if mcpServerOAuthShown(srv) {
 		<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2">
@@ -281,7 +284,63 @@ templ mcpServerOAuthControls(srv MCPServer) {
 				}
 			}
 		</div>
+		if srv.OAuth.ClientConfigured {
+			<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2" data-testid="mcp-oauth-client-status">
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.Badge(ui.BadgeProps{Label: "Client configured", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Dot: true})
+				</div>
+				<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/client/clear") }>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--trash-2",
+						AriaLabel: "Clear OAuth client for " + srv.Name,
+						Attrs:     templ.Attributes{"data-testid": "mcp-oauth-client-clear"},
+					}) {
+						Clear
+					}
+				</form>
+			</div>
+		}
+		@ui.Disclosure(ui.DisclosureProps{
+			DetailsBase: "rounded-box border border-base-content/10 bg-base-200/40",
+			Attrs:       templ.Attributes{"data-testid": "mcp-oauth-client-disclosure"},
+		}, mcpOAuthClientDisclosureLeading()) {
+			<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/client") } data-testid="mcp-oauth-client-form">
+				<div class="flex flex-col gap-3">
+					@form.FormControl("mcp-oauth-client-id", "Client ID", form.LabelAbove, "The client ID your authorization provider issued.", "", nil) {
+						<input id="mcp-oauth-client-id" name="client_id" type="text" required class="input w-full font-mono" autocomplete="off"/>
+					}
+					@form.FormControl("mcp-oauth-client-secret", "Client secret", form.LabelAbove, "Optional — leave blank if your provider issued only a client ID.", "", nil) {
+						<input id="mcp-oauth-client-secret" name="client_secret" type="password" class="input w-full font-mono" autocomplete="off"/>
+					}
+				</div>
+				<div class="flex items-center justify-end gap-2">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--key-round",
+						Attrs:   templ.Attributes{"data-testid": "mcp-oauth-client-save"},
+					}) {
+						Save client
+					}
+				</div>
+			</form>
+		}
 	}
+}
+
+// mcpOAuthClientDisclosureLeading is the pre-registered-client disclosure's
+// summary: a key icon plus the short literal label.
+templ mcpOAuthClientDisclosureLeading() {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<div class="flex min-w-0 items-center gap-2.5">
+			@ui.IconSpan("lucide--key-round", "size-4 shrink-0 text-muted-faint")
+			<span class="truncate text-sm font-medium">Use a pre-registered OAuth client</span>
+		</div>
+	</div>
 }
 
 // mcpServerToolsList renders the "Cached tools" section header above the rows

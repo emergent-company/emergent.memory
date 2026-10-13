@@ -1260,6 +1260,108 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/admin/mcp-servers/{id}/oauth/client": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stores a pre-registered client id (and optional secret) for a remote server, clearing any token set issued to a previous client",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Provision a pre-registered OAuth client for an MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Client identity",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.ProvisionMCPOAuthClientDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Server is not remote or clientId is blank",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Clears the stored client id, client secret, and any token set, leaving discovered endpoints in place",
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Clear an MCP server's OAuth client identity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Client identity cleared"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/mcp-servers/{id}/oauth/status": {
             "get": {
                 "security": [
@@ -32654,6 +32756,9 @@ const docTemplate = `{
                 "authorizationServer": {
                     "type": "string"
                 },
+                "clientConfigured": {
+                    "type": "boolean"
+                },
                 "configured": {
                     "type": "boolean"
                 },
@@ -32776,6 +32881,17 @@ const docTemplate = `{
                 "ServerTypeSSE",
                 "ServerTypeHTTP"
             ]
+        },
+        "domain_mcpregistry.ProvisionMCPOAuthClientDTO": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "clientSecret": {
+                    "type": "string"
+                }
+            }
         },
         "domain_mcpregistry.RequiredConfigKey": {
             "type": "object",

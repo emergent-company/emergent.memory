@@ -303,6 +303,57 @@ func TestRegisterClient_Rejected(t *testing.T) {
 	}
 }
 
+func TestRegisterClient_RejectedSurfacesStatusAndSentinel(t *testing.T) {
+	withTestOAuthHTTP(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"access_denied","error_description":"client not in the provider catalog"}`))
+	}))
+	defer srv.Close()
+
+	_, err := registerClient(context.Background(), srv.URL, "n", "https://cb.test", nil)
+	if err == nil {
+		t.Fatal("expected an error for a rejected registration")
+	}
+
+	var rej *oauthRegistrationRejected
+	if !errors.As(err, &rej) {
+		t.Fatalf("err = %v, want *oauthRegistrationRejected", err)
+	}
+	if rej.Status != http.StatusForbidden {
+		t.Errorf("Status = %d, want 403", rej.Status)
+	}
+	if !strings.Contains(rej.Error(), "403") {
+		t.Errorf("err = %q, want it to name the HTTP status", rej.Error())
+	}
+	if !errorIs(err, ErrOAuthClientRequired) {
+		t.Errorf("err = %v, want it to wrap ErrOAuthClientRequired", err)
+	}
+}
+
+func TestRegisterClient_RejectedExcerptIsCappedAndSanitized(t *testing.T) {
+	withTestOAuthHTTP(t)
+	// A long body with embedded control characters and whitespace must collapse
+	// to a short, single-line excerpt.
+	body := strings.Repeat("x", 5000) + "\n\t\x00" + `{"error":"access_denied"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	_, err := registerClient(context.Background(), srv.URL, "n", "https://cb.test", nil)
+	if err == nil {
+		t.Fatal("expected an error for a rejected registration")
+	}
+	if len(err.Error()) > 400 {
+		t.Errorf("error message too long (%d bytes), want a capped excerpt", len(err.Error()))
+	}
+	if strings.ContainsAny(err.Error(), "\n\t\x00") {
+		t.Errorf("error message must not contain control characters: %q", err.Error())
+	}
+}
+
 // --- authorize URL ---
 
 func TestBuildAuthorizeURL_CarriesResourceAndPKCE(t *testing.T) {

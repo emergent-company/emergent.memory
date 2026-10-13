@@ -385,7 +385,7 @@ func TestGetMCPServerOAuthStatus(t *testing.T) {
 		gotPath, gotMethod = r.URL.Path, r.Method
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"success":true,"data":{
-			"serverId":"srv-1","configured":true,"connected":true,
+			"serverId":"srv-1","configured":true,"connected":true,"clientConfigured":true,
 			"authorizationServer":"https://auth.example.com","scope":"read:repo",
 			"scopes":["read:repo","write:repo"],"registrationSupported":true,
 			"expiresAt":"2026-12-31T00:00:00Z"
@@ -401,7 +401,7 @@ func TestGetMCPServerOAuthStatus(t *testing.T) {
 	if gotPath != "/api/admin/mcp-servers/srv-1/oauth/status" || gotMethod != http.MethodGet {
 		t.Errorf("request = %s %s, want GET /api/admin/mcp-servers/srv-1/oauth/status", gotMethod, gotPath)
 	}
-	if res.ServerID != "srv-1" || !res.Configured || !res.Connected {
+	if res.ServerID != "srv-1" || !res.Configured || !res.Connected || !res.ClientConfigured {
 		t.Errorf("status = %+v", res)
 	}
 	if res.AuthorizationServer == nil || *res.AuthorizationServer != "https://auth.example.com" {
@@ -498,6 +498,99 @@ func TestDisconnectMCPServerError(t *testing.T) {
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
 	if err := m.DisconnectMCPServer(context.Background(), "srv-1"); err == nil ||
+		!strings.Contains(err.Error(), "memory 500 internal") {
+		t.Fatalf("error = %v, want memory 500 internal", err)
+	}
+}
+
+func TestSetMCPServerOAuthClient(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"serverId":"srv-1","configured":true,"connected":false,"clientConfigured":true}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", "secret-xyz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/oauth/client" || gotMethod != http.MethodPut {
+		t.Errorf("request = %s %s, want PUT /api/admin/mcp-servers/srv-1/oauth/client", gotMethod, gotPath)
+	}
+	if gotBody["clientId"] != "client-abc" || gotBody["clientSecret"] != "secret-xyz" {
+		t.Errorf("body = %v, want clientId client-abc + clientSecret secret-xyz", gotBody)
+	}
+	if !res.ClientConfigured {
+		t.Errorf("status = %+v, want clientConfigured true", res)
+	}
+}
+
+func TestSetMCPServerOAuthClientOmitsBlankSecret(t *testing.T) {
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"serverId":"srv-1","clientConfigured":true}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "client-abc", ""); err != nil {
+		t.Fatal(err)
+	}
+	if gotBody["clientId"] != "client-abc" {
+		t.Errorf("body.clientId = %v, want client-abc", gotBody["clientId"])
+	}
+	if _, ok := gotBody["clientSecret"]; ok {
+		t.Errorf("body = %v, want clientSecret omitted when blank", gotBody)
+	}
+}
+
+func TestSetMCPServerOAuthClientError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"bad_request","message":"client id is required"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.SetMCPServerOAuthClient(context.Background(), "srv-1", "", ""); err == nil ||
+		!strings.Contains(err.Error(), "memory 400 bad_request") {
+		t.Fatalf("error = %v, want memory 400 bad_request", err)
+	}
+}
+
+func TestClearMCPServerOAuthClient(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.ClearMCPServerOAuthClient(context.Background(), "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/oauth/client" || gotMethod != http.MethodDelete {
+		t.Errorf("request = %s %s, want DELETE /api/admin/mcp-servers/srv-1/oauth/client", gotMethod, gotPath)
+	}
+}
+
+func TestClearMCPServerOAuthClientError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"code":"internal","message":"failed to clear client"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.ClearMCPServerOAuthClient(context.Background(), "srv-1"); err == nil ||
 		!strings.Contains(err.Error(), "memory 500 internal") {
 		t.Fatalf("error = %v, want memory 500 internal", err)
 	}

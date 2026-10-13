@@ -526,6 +526,8 @@ func main() {
 	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)
 	e.GET("/settings/mcp-servers/:id/oauth/start", s.uiMCPOAuthStart)
 	e.POST("/settings/mcp-servers/:id/oauth/disconnect", s.uiMCPOAuthDisconnect)
+	e.POST("/settings/mcp-servers/:id/oauth/client", s.uiMCPOAuthClient)
+	e.POST("/settings/mcp-servers/:id/oauth/client/clear", s.uiMCPOAuthClientClear)
 	// Org/member/invite/profile management (PRG form handlers; see org_members_ui.go).
 	e.GET("/orgs", s.uiOrgs)
 	e.GET("/orgs/new", s.uiOrgCreatePage)

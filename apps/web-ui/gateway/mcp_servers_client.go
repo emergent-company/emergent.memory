@@ -222,6 +222,7 @@ func (m *MemoryClient) CallMCPServerTool(ctx context.Context, id, toolName strin
 type MCPServerOAuth struct {
 	Configured          bool    `json:"configured"`
 	Connected           bool    `json:"connected"`
+	ClientConfigured    bool    `json:"clientConfigured"`
 	AuthorizationServer *string `json:"authorizationServer,omitempty"`
 	Scope               *string `json:"scope,omitempty"`
 	ExpiresAt           *string `json:"expiresAt,omitempty"`
@@ -234,6 +235,7 @@ type MCPOAuthStatus struct {
 	ServerID              string   `json:"serverId"`
 	Configured            bool     `json:"configured"`
 	Connected             bool     `json:"connected"`
+	ClientConfigured      bool     `json:"clientConfigured"`
 	AuthorizationServer   *string  `json:"authorizationServer,omitempty"`
 	Scope                 *string  `json:"scope,omitempty"`
 	Scopes                []string `json:"scopes"`
@@ -271,4 +273,26 @@ func (m *MemoryClient) AuthorizeMCPServer(ctx context.Context, id string) (*MCPO
 // 204 with no body; only the transport/status error matters.
 func (m *MemoryClient) DisconnectMCPServer(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/admin/mcp-servers/"+id+"/oauth", nil, nil)
+}
+
+// SetMCPServerOAuthClient stores a pre-registered OAuth client (client id +
+// optional secret) for a server whose authorization provider rejects dynamic
+// client registration. Memory answers 200 with the refreshed status DTO; only
+// the transport/status error matters otherwise.
+func (m *MemoryClient) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
+	body := map[string]string{"clientId": clientID}
+	if clientSecret != "" {
+		body["clientSecret"] = clientSecret
+	}
+	var env successEnvelope[MCPOAuthStatus]
+	if err := m.do(ctx, http.MethodPut, "/api/admin/mcp-servers/"+id+"/oauth/client", body, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// ClearMCPServerOAuthClient removes the server's pre-registered OAuth client.
+// Memory answers 204 with no body; only the transport/status error matters.
+func (m *MemoryClient) ClearMCPServerOAuthClient(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodDelete, "/api/admin/mcp-servers/"+id+"/oauth/client", nil, nil)
 }

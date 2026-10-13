@@ -356,6 +356,44 @@ type oauthClientIdentity struct {
 	ClientSecret string
 }
 
+// oauthRegistrationRejected is returned by registerClient when the authorization
+// server answers a dynamic client registration request with a non-success status
+// (e.g. Figma's 403 for catalog-only clients). It carries the HTTP status and a
+// short, sanitized excerpt of the response body for diagnosis. It unwraps to
+// ErrOAuthClientRequired so the handler can surface the single actionable
+// remedy: provision a pre-registered client.
+type oauthRegistrationRejected struct {
+	Status  int
+	Excerpt string
+}
+
+func (e *oauthRegistrationRejected) Error() string {
+	msg := fmt.Sprintf("dynamic client registration failed with HTTP %d", e.Status)
+	if e.Excerpt != "" {
+		msg += ": " + e.Excerpt
+	}
+	return msg
+}
+
+func (e *oauthRegistrationRejected) Unwrap() error {
+	return ErrOAuthClientRequired
+}
+
+// excerptResponseBody returns a short, sanitized excerpt of a response body for
+// inclusion in a diagnostic error. It caps the length, strips invalid UTF-8, and
+// collapses whitespace so no binary payload or control character can leak into a
+// message. A registration request never contains a secret (token_endpoint_auth_method
+// is "none"), so the rejection body cannot echo one.
+func excerptResponseBody(body []byte) string {
+	const maxExcerpt = 256
+	s := string(body)
+	if len(s) > maxExcerpt {
+		s = s[:maxExcerpt] + "…"
+	}
+	s = strings.ToValidUTF8(s, "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
 // registerClient performs RFC 7591 dynamic client registration, returning the
 // issued client identity. Public clients (no secret) are requested by default,
 // which is what a PKCE-driven browser flow needs.
@@ -396,7 +434,10 @@ func registerClient(ctx context.Context, registrationEndpoint, clientName, redir
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxBodyBytes))
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("dynamic client registration failed with HTTP %d", resp.StatusCode)
+		return nil, &oauthRegistrationRejected{
+			Status:  resp.StatusCode,
+			Excerpt: excerptResponseBody(respBody),
+		}
 	}
 	var out struct {
 		ClientID     string `json:"client_id"`

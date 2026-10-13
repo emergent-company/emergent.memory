@@ -27,6 +27,8 @@ func mcpServerTestServer(s *Server) *echo.Echo {
 	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)
 	e.GET("/settings/mcp-servers/:id/oauth/start", s.uiMCPOAuthStart)
 	e.POST("/settings/mcp-servers/:id/oauth/disconnect", s.uiMCPOAuthDisconnect)
+	e.POST("/settings/mcp-servers/:id/oauth/client", s.uiMCPOAuthClient)
+	e.POST("/settings/mcp-servers/:id/oauth/client/clear", s.uiMCPOAuthClientClear)
 	e.POST("/api/mcp-servers/:id/sync", s.syncMCPServer)
 	e.POST("/api/mcp-servers/:id/inspect", s.inspectMCPServer)
 	e.GET("/api/mcp-servers/:id/tools", s.listMCPServerTools)
@@ -128,6 +130,15 @@ type mcpTestBackend struct {
 	authorizeErr    error
 	disconnectErr   error
 	lastOAuthID     string
+
+	// oauthClient* / clearClient* drive the pre-registered OAuth client routes
+	// (uiMCPOAuthClient / uiMCPOAuthClientClear).
+	oauthClientResult *MCPOAuthStatus
+	oauthClientErr    error
+	clearClientErr    error
+	lastClientServer  string
+	lastClientID      string
+	lastClientSecret  string
 }
 
 func newMCPTestBackend(servers []MCPServer) *mcpTestBackend {
@@ -314,6 +325,24 @@ func (b *mcpTestBackend) AuthorizeMCPServer(ctx context.Context, id string) (*MC
 func (b *mcpTestBackend) DisconnectMCPServer(ctx context.Context, id string) error {
 	b.lastOAuthID = id
 	return b.disconnectErr
+}
+
+func (b *mcpTestBackend) SetMCPServerOAuthClient(ctx context.Context, id, clientID, clientSecret string) (*MCPOAuthStatus, error) {
+	b.lastClientServer = id
+	b.lastClientID = clientID
+	b.lastClientSecret = clientSecret
+	if b.oauthClientErr != nil {
+		return nil, b.oauthClientErr
+	}
+	if b.oauthClientResult != nil {
+		return b.oauthClientResult, nil
+	}
+	return &MCPOAuthStatus{ServerID: id, ClientConfigured: true}, nil
+}
+
+func (b *mcpTestBackend) ClearMCPServerOAuthClient(ctx context.Context, id string) error {
+	b.lastClientServer = id
+	return b.clearClientErr
 }
 
 // --- list page ---
@@ -1114,6 +1143,105 @@ func TestUIMCPOAuthDisconnectErrorRedirectsToList(t *testing.T) {
 	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/disconnect", "")
 	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
 		t.Fatalf("disconnect error = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// --- pre-registered OAuth client routes ---
+
+func TestUIMCPOAuthClientRedirectsWithFlash(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	body := "client_id=client-abc&client_secret=secret-xyz"
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", body)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClient=1" {
+		t.Fatalf("oauth/client = %d %q, want 303 /settings/mcp-servers?oauthClient=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "srv-http" || f.lastClientID != "client-abc" || f.lastClientSecret != "secret-xyz" {
+		t.Errorf("backend record = %s %q %q, want srv-http client-abc secret-xyz", f.lastClientServer, f.lastClientID, f.lastClientSecret)
+	}
+}
+
+func TestUIMCPOAuthClientBlankIDRedirectsWithError(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&client_secret=secret-xyz")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("blank-id oauth/client = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "" {
+		t.Error("blank client id must not reach the backend")
+	}
+}
+
+func TestUIMCPOAuthClientBackendErrorRedirectsToList(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.oauthClientErr = fmt.Errorf("memory 400 bad_request: server is not a remote http/sse server")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=client-abc&client_secret=secret-xyz")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("oauth/client error = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestUIMCPOAuthClientDoesNotLeakSecret(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.oauthClientErr = fmt.Errorf("memory 400 bad_request: client id is required")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	const secret = "super-secret-value-123"
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client", "client_id=&client_secret="+secret)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("failed submit = %d, want a PRG redirect", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), secret) || strings.Contains(rec.Header().Get("Location"), secret) {
+		t.Error("a failed submit must not leak the client secret into the response body or redirect URL")
+	}
+}
+
+func TestUIMCPOAuthClientClearRedirectsWithFlash(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client/clear", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?oauthClientCleared=1" {
+		t.Fatalf("oauth/client/clear = %d %q, want 303 /settings/mcp-servers?oauthClientCleared=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "srv-http" {
+		t.Errorf("clear target = %q, want srv-http", f.lastClientServer)
+	}
+}
+
+func TestUIMCPOAuthClientClearErrorRedirectsToList(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.clearClientErr = fmt.Errorf("memory 500 internal: failed to clear client")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/client/clear", "")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("oauth/client/clear error = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestUIMCPOAuthClientEmptyID(t *testing.T) {
+	f := newMCPTestBackend(nil)
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers//oauth/client", "client_id=client-abc")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("empty-id oauth/client = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastClientServer != "" {
+		t.Error("empty id must not reach the backend")
 	}
 }
 

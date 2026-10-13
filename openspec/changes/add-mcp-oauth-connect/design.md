@@ -122,3 +122,24 @@ holds the credential and already pushes decrypted headers.
   encrypted at rest, excluded from every DTO, and redacted from logs.
 - **False positives.** Only a 401/403 carrying an OAuth challenge becomes
   `auth_required` (D1).
+
+## Live provider finding (Figma, recorded post-merge)
+
+Live verification against `https://mcp.figma.com/mcp` exposed two defects in the
+merged flow, fixed in this change:
+
+- **Figma advertises a registration endpoint but rejects DCR with 403.** Figma's
+  authorization-server metadata lists a `registration_endpoint`, but a dynamic
+  client registration request is answered `403`. Figma documents that only
+  clients listed in the Figma MCP Catalog may connect, so a dynamically
+  registered client is never issued. The original flow turned this into an
+  opaque 500 `internal_error`; it now surfaces as an actionable 400
+  (`ErrOAuthClientRequired`) naming the HTTP status and the pre-registered-client
+  remedy.
+- **The supported fallback is the encrypted `X-Figma-Token` secret-header path.**
+  Because Figma only allows catalog-listed clients, the OAuth connect flow cannot
+  obtain a working client for it. Figma remains connectable via its existing
+  encrypted `X-Figma-Token` secret-header configuration. For authorization
+  servers that do issue pre-registered clients, the new
+  `PUT /api/admin/mcp-servers/:id/oauth/client` provisioning path stores the
+  client id and (encrypted) secret so the authorize flow can skip registration.

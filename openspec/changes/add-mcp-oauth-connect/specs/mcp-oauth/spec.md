@@ -169,3 +169,47 @@ headers untouched.
 
 - **WHEN** a project member disconnects a server
 - **THEN** the stored credential is deleted and the server's pooled connection is closed
+
+### Requirement: A registration failure surfaces as an actionable error
+
+When dynamic client registration is unavailable (the authorization-server
+metadata advertises no `registration_endpoint`) or is rejected by the
+authorization server with a non-success HTTP status, starting the flow SHALL
+fail with a client-facing 400 error that names the remedy (provision a
+pre-registered client) rather than an opaque internal error. The rejected case
+SHALL name the HTTP status the authorization server returned.
+
+#### Scenario: Registration rejected
+
+- **WHEN** the authorization server answers a dynamic client registration request with a non-2xx status (e.g. 403)
+- **THEN** starting the flow fails with a 400 error naming the HTTP status and the pre-registered-client remedy
+
+#### Scenario: Registration not offered
+
+- **WHEN** the authorization-server metadata advertises no registration endpoint
+- **THEN** starting the flow fails with a 400 error naming the pre-registered-client remedy
+
+### Requirement: An admin can provision a pre-registered OAuth client
+
+An admin SHALL be able to provision a pre-registered client identifier (and an
+optional client secret) for a remote MCP server. The secret SHALL be encrypted at
+rest and never echoed. Starting the flow for a server with a stored client SHALL
+skip dynamic client registration and reuse the stored identifier in the
+authorization URL. Provisioning a client SHALL clear any token set issued to a
+previous client, because those tokens are bound to the client they were issued
+to.
+
+#### Scenario: Provision then authorize
+
+- **WHEN** an admin provisions a client id (and optional secret) for a remote server and then starts the flow
+- **THEN** no dynamic client registration is performed and the authorization URL carries the provisioned client id
+
+#### Scenario: Provisioning clears prior tokens
+
+- **WHEN** an admin provisions a client for a server that already has a stored token set
+- **THEN** the stored access token, refresh token, and expiry are cleared
+
+#### Scenario: Provisioned client reported
+
+- **WHEN** a server has a stored client id
+- **THEN** its authorization status reports `clientConfigured` true, independent of any token presence

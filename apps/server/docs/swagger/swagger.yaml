@@ -5467,6 +5467,8 @@ definitions:
     properties:
       authorizationServer:
         type: string
+      clientConfigured:
+        type: boolean
       configured:
         type: boolean
       connected:
@@ -5552,6 +5554,13 @@ definitions:
     - ServerTypeStdio
     - ServerTypeSSE
     - ServerTypeHTTP
+  domain_mcpregistry.ProvisionMCPOAuthClientDTO:
+    properties:
+      clientId:
+        type: string
+      clientSecret:
+        type: string
+    type: object
   domain_mcpregistry.RequiredConfigKey:
     properties:
       description:
@@ -10833,6 +10842,73 @@ paths:
       security:
       - bearerAuth: []
       summary: Start an OAuth connect for an MCP server
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/{id}/oauth/client:
+    delete:
+      description: Clears the stored client id, client secret, and any token set,
+        leaving discovered endpoints in place
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Client identity cleared
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Clear an MCP server's OAuth client identity
+      tags:
+      - mcp-registry
+    put:
+      consumes:
+      - application/json
+      description: Stores a pre-registered client id (and optional secret) for a remote
+        server, clearing any token set issued to a previous client
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Client identity
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_mcpregistry.ProvisionMCPOAuthClientDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO'
+        "400":
+          description: Server is not remote or clientId is blank
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Provision a pre-registered OAuth client for an MCP server
       tags:
       - mcp-registry
   /api/admin/mcp-servers/{id}/oauth/status:

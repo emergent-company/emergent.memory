@@ -379,3 +379,51 @@ func TestRenderMCPServersOAuthHidden(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderMCPServersOAuthClientDisclosure asserts a remote OAuth server
+// renders the pre-registered-client disclosure with the client id/secret form
+// and no "Client configured" chip.
+func TestRenderMCPServersOAuthClientDisclosure(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{mcpOAuthServerFixture(false)}}))
+	for _, want := range []string{
+		`data-testid="mcp-oauth-client-disclosure"`,
+		`data-testid="mcp-oauth-client-form"`,
+		`action="/settings/mcp-servers/srv-oauth/oauth/client"`,
+		`name="client_id"`,
+		`name="client_secret"`,
+		"Use a pre-registered OAuth client",
+		`data-testid="mcp-oauth-client-save"`,
+		"Save client",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("oauth client disclosure missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="mcp-oauth-client-status"`) {
+		t.Error("unconfigured server must not render the Client configured chip")
+	}
+	// the secret input is a password field, never a pre-filled plaintext value
+	if !strings.Contains(html, `type="password"`) {
+		t.Error("client secret input must be a password field")
+	}
+}
+
+// TestRenderMCPServersOAuthClientConfigured asserts a server with a stored
+// pre-registered client renders the "Client configured" chip plus a Clear
+// action.
+func TestRenderMCPServersOAuthClientConfigured(t *testing.T) {
+	srv := mcpOAuthServerFixture(false)
+	srv.OAuth.ClientConfigured = true
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{srv}}))
+	for _, want := range []string{
+		`data-testid="mcp-oauth-client-status"`,
+		"Client configured",
+		`data-testid="mcp-oauth-client-clear"`,
+		`action="/settings/mcp-servers/srv-oauth/oauth/client/clear"`,
+		"Clear",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("configured chip missing %q", want)
+		}
+	}
+}

@@ -145,6 +145,14 @@ routes:
       path: /api/admin/mcp-servers/:id/oauth/status
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: PUT
+      path: /api/admin/mcp-servers/:id/oauth/client
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: DELETE
+      path: /api/admin/mcp-servers/:id/oauth/client
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/admin/mcp-servers/:id/sync
       level: project-member

@@ -52,6 +52,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	admin.GET("/:id/oauth/status", h.MCPOAuthStatus)
 	admin.POST("/:id/oauth/authorize", h.StartMCPOAuth)
 	admin.DELETE("/:id/oauth", h.DisconnectMCPOAuth)
+	admin.PUT("/:id/oauth/client", h.ProvisionMCPOAuthClient)
+	admin.DELETE("/:id/oauth/client", h.ClearMCPOAuthClient)
 
 	// Built-in tools — separate endpoint family that never exposes the internal
 	// "builtin" MCPServer record, only the flat tool list with inheritance info.

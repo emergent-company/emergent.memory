@@ -34,6 +34,8 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 			{key: "updated", msg: "MCP server updated."},
 			{key: "deleted", msg: "MCP server deleted."},
 			{key: "disconnected", msg: "MCP server disconnected."},
+			{key: "oauthClient", msg: "OAuth client configured."},
+			{key: "oauthClientCleared", msg: "OAuth client cleared."},
 		}),
 	}
 	// A registry install redirects here with ?created=1&env=<names>; surface the
@@ -291,6 +293,45 @@ func (s *Server) uiMCPOAuthDisconnect(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?disconnected=1")
 }
 
+// uiMCPOAuthClient handles POST /settings/mcp-servers/:id/oauth/client (PRG).
+// It stores a pre-registered OAuth client (id + optional secret) for a server
+// whose authorization provider rejects dynamic registration. A blank client id
+// and a backend failure both redirect back to the list with an error flash;
+// success redirects with ?oauthClient=1. The client secret never round-trips
+// into any page: failures PRG with a fixed error message that never carries it.
+func (s *Server) uiMCPOAuthClient(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
+	}
+	clientID := strings.TrimSpace(c.FormValue("client_id"))
+	if clientID == "" {
+		return redirectWithError(c, mcpServerSettingsBase, errMCPOAuthClientIDRequired())
+	}
+	clientSecret := c.FormValue("client_secret")
+	if _, err := s.memory.SetMCPServerOAuthClient(ctx, id, clientID, clientSecret); err != nil {
+		return redirectWithError(c, mcpServerSettingsBase, err)
+	}
+	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?oauthClient=1")
+}
+
+// uiMCPOAuthClientClear handles POST /settings/mcp-servers/:id/oauth/client/
+// clear (PRG). It removes the server's pre-registered OAuth client and
+// redirects back to the list with a success flash; a failure redirects with
+// the mapped error.
+func (s *Server) uiMCPOAuthClientClear(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
+	}
+	if err := s.memory.ClearMCPServerOAuthClient(ctx, id); err != nil {
+		return redirectWithError(c, mcpServerSettingsBase, err)
+	}
+	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?oauthClientCleared=1")
+}
+
 // --- JSON echo surface (page JS; routes added next to the mcp-servers block) ---
 
 // mcpSyncResult is the sync endpoint's payload: the refreshed cached-tool
@@ -462,6 +503,8 @@ func mcpToolCallJSONErr(c echo.Context, err error) error {
 }
 
 func errServerIDRequired() error { return fmt.Errorf("server id is required") }
+
+func errMCPOAuthClientIDRequired() error { return fmt.Errorf("OAuth client ID is required") }
 
 func builtinEditErr() error {
 	return fmt.Errorf("built-in servers cannot be edited — their configuration is managed by Memory")

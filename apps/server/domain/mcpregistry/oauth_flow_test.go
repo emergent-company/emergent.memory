@@ -31,8 +31,9 @@ import (
 // client registration, and the token endpoint.
 type oauthFlowServer struct {
 	*httptest.Server
-	registerCalls int
-	tokenCalls    int
+	registerCalls      int
+	tokenCalls         int
+	registrationStatus int
 }
 
 // newOAuthFlowServer builds the flow server. When noChallenge is true the MCP
@@ -40,7 +41,7 @@ type oauthFlowServer struct {
 // authorization required".
 func newOAuthFlowServer(t *testing.T, noChallenge bool) *oauthFlowServer {
 	t.Helper()
-	fs := &oauthFlowServer{}
+	fs := &oauthFlowServer{registrationStatus: http.StatusCreated}
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	fs.Server = srv
@@ -76,7 +77,12 @@ func newOAuthFlowServer(t *testing.T, noChallenge bool) *oauthFlowServer {
 	})
 	mux.HandleFunc("/register", func(w http.ResponseWriter, _ *http.Request) {
 		fs.registerCalls++
-		w.WriteHeader(http.StatusCreated)
+		if fs.registrationStatus != http.StatusCreated && fs.registrationStatus != http.StatusOK {
+			w.WriteHeader(fs.registrationStatus)
+			_, _ = w.Write([]byte(`{"error":"access_denied","error_description":"client not in the provider catalog"}`))
+			return
+		}
+		w.WriteHeader(fs.registrationStatus)
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "cid-flow", "client_secret": "sec-flow"})
 	})
 	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
@@ -161,6 +167,49 @@ func TestStartMCPOAuth_Success(t *testing.T) {
 	require.NotNil(t, row)
 	require.Equal(t, "cid-flow", row.ClientID)
 	require.Nil(t, row.AccessToken, "authorize must persist a registration but never a token")
+}
+
+func TestStartMCPOAuth_RegistrationRejected(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+	fs.registrationStatus = http.StatusForbidden
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	_, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.ErrorIs(t, err, ErrOAuthClientRequired,
+		"a rejected dynamic client registration must surface as ErrOAuthClientRequired, not an opaque failure")
+
+	var rej *oauthRegistrationRejected
+	require.ErrorAs(t, err, &rej)
+	require.Equal(t, http.StatusForbidden, rej.Status)
+}
+
+func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
+	withTestOAuthHTTP(t)
+	_, repo, _, svc := newOAuthFlowService(t)
+	fs := newOAuthFlowServer(t, false)
+	defer fs.Close()
+
+	projectID := uuid.NewString()
+	server := insertFlowServer(t, repo, projectID, fs.URL+"/mcp")
+
+	// Provision a pre-registered client first; the authorize flow must reuse it
+	// and never hit the dynamic registration endpoint.
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "provisioned-client", "provisioned-secret")
+	require.NoError(t, err)
+	require.True(t, status.ClientConfigured)
+
+	resp, err := svc.StartMCPOAuth(context.Background(), projectID, server.ID, "")
+	require.NoError(t, err)
+	require.Zero(t, fs.registerCalls, "a provisioned client must not trigger dynamic client registration")
+
+	u, err := url.Parse(resp.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, "provisioned-client", u.Query().Get("client_id"), "authorize URL must carry the provisioned client_id")
 }
 
 func TestStartMCPOAuth_NoAuthorizationRequired(t *testing.T) {

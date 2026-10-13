@@ -228,6 +228,7 @@ type MCPServerOAuthStatusDTO struct {
 	ServerID              string     `json:"serverId"`
 	Configured            bool       `json:"configured"`
 	Connected             bool       `json:"connected"`
+	ClientConfigured      bool       `json:"clientConfigured"`
 	AuthorizationServer   *string    `json:"authorizationServer,omitempty"`
 	TokenEndpoint         *string    `json:"tokenEndpoint,omitempty"`
 	RegistrationSupported bool       `json:"registrationSupported"`
@@ -235,6 +236,14 @@ type MCPServerOAuthStatusDTO struct {
 	Scope                 *string    `json:"scope,omitempty"`
 	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
 	UpdatedAt             *time.Time `json:"updatedAt,omitempty"`
+}
+
+// ProvisionMCPOAuthClientDTO is the request body for provisioning a
+// pre-registered OAuth client identity on a remote MCP server. ClientSecret is
+// optional (public clients have none); it is encrypted at rest and never echoed.
+type ProvisionMCPOAuthClientDTO struct {
+	ClientID     string `json:"clientId"`
+	ClientSecret string `json:"clientSecret"`
 }
 
 // StartMCPOAuthResponseDTO is the response to starting an authorization flow.
