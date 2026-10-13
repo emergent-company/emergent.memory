@@ -272,6 +272,13 @@ type InstallFromRegistryDTO struct {
 	Version string `json:"version,omitempty"`
 	// Name overrides the server name in kb.mcp_servers (default: derived from registry name).
 	Name string `json:"name,omitempty"`
+	// Target selects the delivery mode: 'server' (default) installs an outbound
+	// server on the shared host; 'device' installs the entry's local package on
+	// a connected connector and pushes the config over the relay.
+	Target MCPServerTarget `json:"target,omitempty"`
+	// TargetInstanceID names the relay instance_id to install to; nil with
+	// Target 'device' broadcasts to every opted-in device (project admins only).
+	TargetInstanceID *string `json:"targetInstanceId,omitempty"`
 }
 
 // RegistryServerDTO is the response DTO for a registry server (for search/browse results).

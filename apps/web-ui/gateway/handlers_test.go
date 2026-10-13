@@ -915,6 +915,10 @@ func (f *fakeMemory) InstallRegistryServer(ctx context.Context, registryName, ve
 	return &MCPRegistryInstallResult{}, nil
 }
 
+func (f *fakeMemory) InstallRegistryServerToDevice(ctx context.Context, registryName, version, name, instanceID string) (*MCPRegistryInstallResult, error) {
+	return &MCPRegistryInstallResult{}, nil
+}
+
 // MCP share instances: the base fake returns zero values so unrelated tests
 // compile; share-handler tests use mcpShareTestBackend (mcp_shares_handlers_test.go),
 // which overrides these with real semantics.

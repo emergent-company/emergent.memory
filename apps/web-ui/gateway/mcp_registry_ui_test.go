@@ -7,11 +7,11 @@ import (
 
 // Render tests for the MCP Registry page. Assert the contract — data-testid /
 // data-registry-name anchors, the install form action, badge labels, and
-// omission where it matters (no install action for stdio-only entries) — not
-// class strings.
+// omission where it matters (no server-side install action for package-only
+// entries) — not class strings.
 
 // mcpRegistryPageFixture returns two registry entries: a remote+package entry
-// (installable) and a stdio-only entry (connector guidance).
+// (server-side install) and a package-only entry (device install).
 func mcpRegistryPageFixture() []MCPRegistryServer {
 	return []MCPRegistryServer{
 		{
@@ -56,11 +56,16 @@ func TestRenderMCPRegistryPage(t *testing.T) {
 		`data-testid="mcp-registry-install"`,
 		// install action sits in the entry's right-hand action column
 		`data-testid="mcp-registry-entry-actions"`,
-		// stdio-only entry — connector guidance, no install form for it
+		// package-only entry — a device install trigger + dialog, and no
+		// server-side install form of its own
 		`data-registry-name="io.github.ChromeDevTools/chrome-devtools-mcp"`,
 		"Chrome DevTools",
-		`data-testid="mcp-registry-connector-guidance"`,
-		"macOS connector",
+		`data-testid="mcp-registry-install-to-device"`,
+		`data-testid="mcp-registry-device-dialog"`,
+		// no device connected — setup instructions with the connector commands
+		`data-testid="mcp-registry-device-setup"`,
+		"memory-connector auth login",
+		"memory-connector relay --accept-managed-config",
 		// availability badges
 		">remote<", ">package<",
 	} {
@@ -70,24 +75,92 @@ func TestRenderMCPRegistryPage(t *testing.T) {
 	}
 }
 
-// TestRenderMCPRegistryStdioOnlyNoInstall asserts the stdio-only entry renders
-// exactly one install form (the remote entry's) — the stdio-only entry offers
-// no server-side install action.
+// TestRenderMCPRegistryStdioOnlyNoInstall asserts the package-only entry
+// renders exactly one server-side install form (the remote entry's) — its own
+// call to action is a device install, never a shared-host install. The device
+// install form/dialog are asserted in
+// TestRenderMCPRegistryPackageOnlyDeviceInstall (a connected device is required
+// for the form to render).
 func TestRenderMCPRegistryStdioOnlyNoInstall(t *testing.T) {
 	html := renderHTML(t, MCPServerRegistryPage(mcpRegistryPageData{Servers: mcpRegistryPageFixture()}))
 	if got := strings.Count(html, `action="/settings/mcp-registry/install"`); got != 1 {
-		t.Errorf("install form count = %d, want 1 (remote entry only)", got)
+		t.Errorf("server-side install form count = %d, want 1 (remote entry only)", got)
 	}
 	if got := strings.Count(html, `data-testid="mcp-registry-install"`); got != 1 {
-		t.Errorf("install button count = %d, want 1 (remote entry only)", got)
+		t.Errorf("server-side install button count = %d, want 1 (remote entry only)", got)
 	}
-	// the stdio-only entry name never appears inside an install form's hidden
-	// registryName field.
-	if strings.Contains(html, `name="registryName" value="io.github.ChromeDevTools/chrome-devtools-mcp"`) {
-		t.Error("stdio-only entry must not render an install form with its name")
+	// the package-only entry never renders a server-side install form with its
+	// name — the single /settings/mcp-registry/install form belongs to the
+	// remote entry (asserted above), and the package-only entry's device form
+	// targets /settings/mcp-registry/install-to-device instead.
+}
+
+// TestRenderMCPRegistryPackageOnlyDeviceInstall asserts the package-only entry
+// offers a device install (trigger + dialog + form) and no server-side install
+// form, while the remote entry keeps its install form and no device dialog.
+func TestRenderMCPRegistryPackageOnlyDeviceInstall(t *testing.T) {
+	html := renderHTML(t, MCPServerRegistryPage(mcpRegistryPageData{
+		Servers: mcpRegistryPageFixture(),
+		Devices: []RelaySession{{InstanceID: "dev-1", Version: "1.2.3"}},
+	}))
+	if got := strings.Count(html, `action="/settings/mcp-registry/install"`); got != 1 {
+		t.Errorf("remote install form count = %d, want 1 (remote entry only)", got)
 	}
-	if got := strings.Count(html, `data-testid="mcp-registry-connector-guidance"`); got != 1 {
-		t.Errorf("connector guidance count = %d, want 1 (stdio-only entry only)", got)
+	if got := strings.Count(html, `data-testid="mcp-registry-install"`); got != 1 {
+		t.Errorf("remote install button count = %d, want 1 (remote entry only)", got)
+	}
+	if got := strings.Count(html, `action="/settings/mcp-registry/install-to-device"`); got != 1 {
+		t.Errorf("device install form count = %d, want 1 (package-only entry only)", got)
+	}
+	if got := strings.Count(html, `data-testid="mcp-registry-install-to-device"`); got != 1 {
+		t.Errorf("device install trigger count = %d, want 1 (package-only entry only)", got)
+	}
+	if got := strings.Count(html, `data-testid="mcp-registry-device-dialog"`); got != 1 {
+		t.Errorf("device dialog count = %d, want 1 (package-only entry only)", got)
+	}
+}
+
+// TestRenderMCPRegistryDeviceDialogWithDevices asserts that, with a connected
+// device, the dialog offers a connector picker instead of setup instructions.
+func TestRenderMCPRegistryDeviceDialogWithDevices(t *testing.T) {
+	html := renderHTML(t, MCPServerRegistryPage(mcpRegistryPageData{
+		Servers: mcpRegistryPageFixture(),
+		Devices: []RelaySession{{InstanceID: "dev-1", Version: "1.2.3", ToolCount: 3}},
+	}))
+	for _, want := range []string{
+		`data-testid="mcp-registry-device-select"`,
+		`name="targetInstanceId"`,
+		`<option value="dev-1">`,
+		"dev-1 (v1.2.3)",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("device dialog missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="mcp-registry-device-setup"`) {
+		t.Error("setup instructions must not render when a device is connected")
+	}
+	if strings.Contains(html, `data-testid="mcp-registry-device-error"`) {
+		t.Error("error state must not render on a successful device fetch")
+	}
+}
+
+// TestRenderMCPRegistryDeviceDialogDevicesError asserts a failed session-list
+// fetch surfaces an error in the dialog rather than falsely claiming there are
+// no devices to install to.
+func TestRenderMCPRegistryDeviceDialogDevicesError(t *testing.T) {
+	html := renderHTML(t, MCPServerRegistryPage(mcpRegistryPageData{
+		Servers:    mcpRegistryPageFixture(),
+		DevicesErr: errTest,
+	}))
+	if !strings.Contains(html, `data-testid="mcp-registry-device-error"`) {
+		t.Error("device dialog must surface a session-list failure")
+	}
+	if strings.Contains(html, `data-testid="mcp-registry-device-setup"`) {
+		t.Error("setup instructions must not render when the device list failed")
+	}
+	if strings.Contains(html, `data-testid="mcp-registry-device-select"`) {
+		t.Error("device picker must not render when the device list failed")
 	}
 }
 

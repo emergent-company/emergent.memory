@@ -227,6 +227,40 @@ func TestInstallRegistryServerOmitsOptionalFields(t *testing.T) {
 	}
 }
 
+// TestInstallRegistryServerToDevice asserts the device install posts the target
+// fields, so memory resolves the entry's local package and pushes it over the
+// relay rather than installing an outbound server.
+func TestInstallRegistryServerToDevice(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"server":{"id":"srv-2","name":"chrome-devtools-mcp","type":"stdio"}}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.InstallRegistryServerToDevice(context.Background(),
+		"io.github.ChromeDevTools/chrome-devtools-mcp", "0.11.0", "chrome-devtools-mcp", "dev-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-registry/install" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/admin/mcp-registry/install", gotMethod, gotPath)
+	}
+	if gotBody["target"] != "device" || gotBody["targetInstanceId"] != "dev-1" {
+		t.Errorf("body = %v, want target=device targetInstanceId=dev-1", gotBody)
+	}
+	if gotBody["registryName"] != "io.github.ChromeDevTools/chrome-devtools-mcp" {
+		t.Errorf("body.registryName = %v", gotBody["registryName"])
+	}
+	if res.Server == nil || res.Server.ID != "srv-2" {
+		t.Errorf("server = %+v", res.Server)
+	}
+}
+
 func TestInstallRegistryServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

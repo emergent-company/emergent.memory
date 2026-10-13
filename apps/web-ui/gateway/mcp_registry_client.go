@@ -79,11 +79,14 @@ type MCPRegistryInstallResult struct {
 
 // mcpRegistryInstallRequest is the install POST body, mirroring memory's
 // InstallFromRegistryDTO. Version and name are optional (empty = latest /
-// derived local name).
+// derived local name). Target/TargetInstanceID are set only by the device
+// install path; an empty target installs an outbound server on the shared host.
 type mcpRegistryInstallRequest struct {
-	RegistryName string `json:"registryName"`
-	Version      string `json:"version,omitempty"`
-	Name         string `json:"name,omitempty"`
+	RegistryName     string `json:"registryName"`
+	Version          string `json:"version,omitempty"`
+	Name             string `json:"name,omitempty"`
+	Target           string `json:"target,omitempty"`
+	TargetInstanceID string `json:"targetInstanceId,omitempty"`
 }
 
 // SearchRegistry searches the official MCP registry through memory. An empty
@@ -121,6 +124,26 @@ func (m *MemoryClient) SearchRegistry(ctx context.Context, query string, limit i
 // derives the local name from the registry name.
 func (m *MemoryClient) InstallRegistryServer(ctx context.Context, registryName, version, name string) (*MCPRegistryInstallResult, error) {
 	req := mcpRegistryInstallRequest{RegistryName: registryName, Version: version, Name: name}
+	var env successEnvelope[MCPRegistryInstallResult]
+	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-registry/install", req, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// InstallRegistryServerToDevice installs a registry entry's local package on a
+// connected connector device (memory's device install path translates the
+// entry's npm/pypi package into a stdio command and pushes it over the relay).
+// An empty instanceID broadcasts to every opted-in device and is accepted only
+// for project admins; the caller validates the field before calling.
+func (m *MemoryClient) InstallRegistryServerToDevice(ctx context.Context, registryName, version, name, instanceID string) (*MCPRegistryInstallResult, error) {
+	req := mcpRegistryInstallRequest{
+		RegistryName:     registryName,
+		Version:          version,
+		Name:             name,
+		Target:           "device",
+		TargetInstanceID: instanceID,
+	}
 	var env successEnvelope[MCPRegistryInstallResult]
 	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-registry/install", req, &env); err != nil {
 		return nil, err

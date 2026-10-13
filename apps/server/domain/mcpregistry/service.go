@@ -1270,10 +1270,26 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 		localName = deriveLocalName(regServer.Name)
 	}
 
-	// Select the best transport and build the CreateMCPServerDTO
-	createDTO, err := selectTransport(ctx, regServer, localName)
+	// Select the install path. A device install runs the entry's local package
+	// on a connected connector (stdio translation, pushed over the relay);
+	// anything else installs an outbound server on the shared host. Both paths
+	// resolve the full DTO before any write, so a rejected install never leaves
+	// a partially-created server behind.
+	var (
+		createDTO *CreateMCPServerDTO
+		err       error
+	)
+	if dto.Target == TargetDevice {
+		createDTO, err = buildDeviceInstallDTO(regServer, localName)
+	} else {
+		createDTO, err = selectTransport(ctx, regServer, localName)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("selecting transport: %w", err)
+	}
+	if dto.Target == TargetDevice {
+		createDTO.Target = TargetDevice
+		createDTO.TargetInstanceID = dto.TargetInstanceID
 	}
 
 	// Record where this install came from so the configure form can link to the
@@ -1400,6 +1416,141 @@ func selectTransport(ctx context.Context, regServer RegistryServer, localName st
 	}
 
 	return nil, fmt.Errorf("%w: no supported transport found for server %q (no remotes or packages available)", ErrUnsupportedRegistryTransport, regServer.Name)
+}
+
+// buildDeviceInstallDTO translates a registry entry into a stdio
+// CreateMCPServerDTO for delivery to a connected connector. It selects the first
+// locally-runnable package (npm → npx, pypi → uvx) — the same preference order
+// the connector applies when it resolves an entry itself — and never falls back
+// to a remote transport: a device install runs the server on the device, so an
+// entry with only remotes has nothing to install there. Required-or-secret env
+// keys are declared as empty placeholders (their names recorded in
+// SecretEnvKeys so a later PATCH encrypts the real value) and the server is
+// created disabled until they are filled, exactly as the remote path does.
+func buildDeviceInstallDTO(entry RegistryServer, localName string) (*CreateMCPServerDTO, error) {
+	for _, pkg := range entry.Packages {
+		runner, ok := registryPackageRunner(pkg.RegistryType)
+		if !ok {
+			continue
+		}
+
+		args := make([]string, 0, 2+len(pkg.RuntimeArguments)+len(pkg.PackageArguments))
+		if runner == "npx" {
+			// npx prompts before installing a package it has not cached; -y keeps
+			// the connector's supervised process from blocking on a prompt.
+			args = append(args, "-y")
+		}
+		args = append(args, registryPackageSpec(pkg.Identifier, registryPackageVersion(pkg.Version, entry.Version)))
+		args = append(args, renderArguments(pkg.RuntimeArguments)...)
+		args = append(args, renderArguments(pkg.PackageArguments)...)
+
+		command := runner
+		dto := &CreateMCPServerDTO{
+			Name:    localName,
+			Type:    ServerTypeStdio,
+			Command: &command,
+			Args:    args,
+		}
+
+		if len(pkg.EnvironmentVariables) > 0 {
+			env := make(map[string]any, len(pkg.EnvironmentVariables))
+			for _, ev := range pkg.EnvironmentVariables {
+				env[ev.Name] = ""
+				if ev.IsSecret {
+					dto.SecretEnvKeys = append(dto.SecretEnvKeys, ev.Name)
+				}
+			}
+			dto.Env = env
+		}
+
+		if required := collectPackageRequiredConfig(pkg); len(required) > 0 {
+			dto.RequiredConfig = required
+			enabled := false
+			dto.Enabled = &enabled
+		}
+
+		return dto, nil
+	}
+
+	if len(entry.Packages) == 0 {
+		return nil, fmt.Errorf(
+			"%w: server %q declares no local package; a device install runs an npm or pypi package on the connector",
+			ErrUnsupportedRegistryTransport, entry.Name,
+		)
+	}
+	pkgTypes := make([]string, 0, len(entry.Packages))
+	for _, pkg := range entry.Packages {
+		pkgTypes = append(pkgTypes, pkg.RegistryType)
+	}
+	return nil, fmt.Errorf(
+		"%w: server %q declares no locally-runnable package (%s); a device install needs an npm or pypi package",
+		ErrUnsupportedRegistryTransport, entry.Name, strings.Join(pkgTypes, ", "),
+	)
+}
+
+// registryPackageRunner maps a registry package type to the local runner that
+// executes it: npm packages run under npx, pypi under uvx. Mirrors the
+// connector's own registry translation so a UI-driven device install behaves
+// identically to one resolved connector-side.
+func registryPackageRunner(registryType string) (string, bool) {
+	switch registryType {
+	case "npm":
+		return "npx", true
+	case "pypi":
+		return "uvx", true
+	default:
+		return "", false
+	}
+}
+
+// registryPackageSpec pins a package identifier to a version when one is known.
+func registryPackageSpec(identifier, version string) string {
+	if version == "" {
+		return identifier
+	}
+	return identifier + "@" + version
+}
+
+// registryPackageVersion prefers the package's own version over the entry's,
+// so a package-level pin always wins over the server-level one.
+func registryPackageVersion(pkgVersion, entryVersion string) string {
+	if pkgVersion != "" {
+		return pkgVersion
+	}
+	return entryVersion
+}
+
+// collectPackageRequiredConfig lists the required-or-secret env keys a local
+// package declares, in sorted name order. The remote path's counterpart is
+// collectRegistryRequiredConfig; both feed RequiredConfig so the configure form
+// and install flash treat a device install like any other.
+func collectPackageRequiredConfig(pkg RegistryPackage) []RequiredConfigKey {
+	env := make(map[string]RequiredConfigKey)
+	for _, ev := range pkg.EnvironmentVariables {
+		if !ev.IsRequired && !ev.IsSecret {
+			continue
+		}
+		env[ev.Name] = RequiredConfigKey{
+			Name:        ev.Name,
+			Kind:        "env",
+			IsSecret:    ev.IsSecret,
+			IsRequired:  ev.IsRequired || ev.IsSecret,
+			Description: strings.TrimSpace(ev.Description),
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]RequiredConfigKey, 0, len(names))
+	for _, name := range names {
+		out = append(out, env[name])
+	}
+	return out
 }
 
 // buildRemoteDTO builds a CreateMCPServerDTO for a remote transport. Headers and

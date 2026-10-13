@@ -511,6 +511,7 @@ func main() {
 	// Official MCP registry browse/install (see mcp_registry.go).
 	e.GET("/settings/mcp-registry", s.uiMCPRegistry)
 	e.POST("/settings/mcp-registry/install", s.uiMCPRegistryInstall)
+	e.POST("/settings/mcp-registry/install-to-device", s.uiMCPRegistryInstallToDevice)
 	// MCP Sharing: nested under the MCP Servers area (see mcp_shares_handlers.go).
 	e.GET("/settings/mcp-servers/shares", s.uiMCPShares)
 	e.GET("/settings/mcp-servers/shares/new", s.uiMCPShareNewPage)

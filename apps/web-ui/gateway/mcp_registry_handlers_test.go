@@ -19,6 +19,7 @@ func mcpRegistryTestServer(s *Server) *echo.Echo {
 	e := echo.New()
 	e.GET("/settings/mcp-registry", s.uiMCPRegistry)
 	e.POST("/settings/mcp-registry/install", s.uiMCPRegistryInstall)
+	e.POST("/settings/mcp-registry/install-to-device", s.uiMCPRegistryInstallToDevice)
 	return e
 }
 
@@ -51,6 +52,12 @@ type mcpRegistryTestBackend struct {
 	lastRegName   string
 	lastVersion   string
 	lastName      string
+
+	deviceInstallResult *MCPRegistryInstallResult
+	deviceInstallErr    error
+	deviceInstallCalls  int
+	lastDeviceRegName   string
+	lastInstanceID      string
 }
 
 func newMCPRegistryTestBackend() *mcpRegistryTestBackend {
@@ -77,6 +84,20 @@ func (b *mcpRegistryTestBackend) InstallRegistryServer(ctx context.Context, regi
 	}
 	if b.installResult != nil {
 		return b.installResult, nil
+	}
+	return &MCPRegistryInstallResult{}, nil
+}
+
+// InstallRegistryServerToDevice records the device-install call. It is separate
+// from InstallRegistryServer so a test can assert which path the handler took.
+func (b *mcpRegistryTestBackend) InstallRegistryServerToDevice(ctx context.Context, registryName, version, name, instanceID string) (*MCPRegistryInstallResult, error) {
+	b.deviceInstallCalls++
+	b.lastDeviceRegName, b.lastInstanceID = registryName, instanceID
+	if b.deviceInstallErr != nil {
+		return nil, b.deviceInstallErr
+	}
+	if b.deviceInstallResult != nil {
+		return b.deviceInstallResult, nil
 	}
 	return &MCPRegistryInstallResult{}, nil
 }
@@ -110,7 +131,7 @@ func TestUIMCPRegistryListRoute(t *testing.T) {
 		`data-testid="mcp-registry-search"`,
 		"GitHub", "Chrome DevTools",
 		`action="/settings/mcp-registry/install"`,
-		`data-testid="mcp-registry-connector-guidance"`,
+		`data-testid="mcp-registry-install-to-device"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("GET /settings/mcp-registry missing %q", want)
@@ -231,5 +252,109 @@ func TestUIMCPRegistryInstallMissingName(t *testing.T) {
 	}
 	if f.installCalls != 0 {
 		t.Error("missing registryName must not reach the backend")
+	}
+}
+
+// --- device install flow ---
+
+func TestUIMCPRegistryInstallToDeviceRedirectsToDevices(t *testing.T) {
+	f := newMCPRegistryTestBackend()
+	f.deviceInstallResult = &MCPRegistryInstallResult{
+		Server: &MCPServer{ID: "srv-2", Name: "chrome-devtools-mcp", Type: "stdio", Enabled: true},
+	}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install-to-device",
+		"registryName=io.github.ChromeDevTools%2Fchrome-devtools-mcp&targetInstanceId=dev-1")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("device install = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/devices?mcp_installed=1" {
+		t.Errorf("Location = %q, want /settings/devices?mcp_installed=1", loc)
+	}
+	if f.deviceInstallCalls != 1 || f.lastInstanceID != "dev-1" {
+		t.Errorf("device install record = calls %d instance %q", f.deviceInstallCalls, f.lastInstanceID)
+	}
+	if f.lastDeviceRegName != "io.github.ChromeDevTools/chrome-devtools-mcp" {
+		t.Errorf("device install registry name = %q", f.lastDeviceRegName)
+	}
+	// The device path must not fall through to the outbound install.
+	if f.installCalls != 0 {
+		t.Error("device install must not call InstallRegistryServer")
+	}
+}
+
+// TestUIMCPRegistryInstallToDeviceRequiredConfigGoesToConfigure asserts a device
+// install that still needs credentials lands on the configure form, exactly like
+// the outbound install, instead of the success redirect.
+func TestUIMCPRegistryInstallToDeviceRequiredConfigGoesToConfigure(t *testing.T) {
+	f := newMCPRegistryTestBackend()
+	f.deviceInstallResult = &MCPRegistryInstallResult{
+		Server:         &MCPServer{ID: "srv-3", Name: "thing", Type: "stdio"},
+		RequiredConfig: []MCPRequiredConfigKey{{Name: "API_KEY", Kind: "env", IsRequired: true}},
+	}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install-to-device",
+		"registryName=io.github.x%2Fy&targetInstanceId=dev-1")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("device install = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/mcp-servers/srv-3/edit?configure=1" {
+		t.Errorf("Location = %q, want the configure form", loc)
+	}
+}
+
+func TestUIMCPRegistryInstallToDeviceRequiresDevice(t *testing.T) {
+	f := newMCPRegistryTestBackend()
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install-to-device",
+		"registryName=io.github.x%2Fy&targetInstanceId=")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-registry?err=") {
+		t.Fatalf("deviceless install = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.deviceInstallCalls != 0 {
+		t.Error("a device install without an instance id must not reach the backend")
+	}
+}
+
+func TestUIMCPRegistryInstallToDeviceRequiresRegistryName(t *testing.T) {
+	f := newMCPRegistryTestBackend()
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install-to-device", "registryName=&targetInstanceId=dev-1")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-registry?err=") {
+		t.Fatalf("nameless device install = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.deviceInstallCalls != 0 {
+		t.Error("a device install without a registry name must not reach the backend")
+	}
+}
+
+// TestUIMCPRegistryInstallToDeviceErrorRedirectsToRegistry asserts an
+// unauthorized device target surfaces as an error on the registry page, with no
+// success redirect (no partially-installed server is reported).
+func TestUIMCPRegistryInstallToDeviceErrorRedirectsToRegistry(t *testing.T) {
+	f := newMCPRegistryTestBackend()
+	f.deviceInstallErr = fmt.Errorf("memory 403 forbidden: not authorized to target this device")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install-to-device",
+		"registryName=io.github.x%2Fy&targetInstanceId=dev-1")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("device install = %d, want 303", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/settings/mcp-registry?err=") {
+		t.Fatalf("Location = %q, want error redirect to the registry page", loc)
+	}
+	if strings.Contains(loc, "mcp_installed") || strings.Contains(loc, "created=1") {
+		t.Error("a rejected device install must not surface a success redirect")
 	}
 }

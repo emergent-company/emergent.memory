@@ -402,6 +402,9 @@ func (s *Server) uiConnectedDevices(c echo.Context) error {
 	if c.QueryParam("mcp_updated") != "" {
 		data.FlashMsg = "MCP node removed."
 	}
+	if c.QueryParam("mcp_installed") != "" {
+		data.FlashMsg = "MCP server installed on the device."
+	}
 	data.FlashErr = flashError(c)
 	data.ProvidersMissing = s.projectHasNoProviders(ctx)
 	data.IOSQRImage = s.setupQRImage(c)

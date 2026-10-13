@@ -63,6 +63,9 @@ type MemoryBackend interface {
 	// Official MCP registry browse/install (see mcp_registry_client.go).
 	SearchRegistry(ctx context.Context, query string, limit int, cursor string) (*MCPRegistrySearchResult, error)
 	InstallRegistryServer(ctx context.Context, registryName, version, name string) (*MCPRegistryInstallResult, error)
+	// InstallRegistryServerToDevice installs a registry entry's local package on
+	// a connected connector device; empty instanceID broadcasts (admins only).
+	InstallRegistryServerToDevice(ctx context.Context, registryName, version, name, instanceID string) (*MCPRegistryInstallResult, error)
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares.go).
 	// The raw key is only ever present on Create/Rotate results.
 	ListMCPShareInstances(ctx context.Context) ([]MCPShareInstance, error)
