@@ -2,11 +2,11 @@ package main
 
 import (
 	"net/url"
-	"strconv"
 
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 )
 
 // ApprovalsPage renders the project-wide human-input surface: any pending agent
@@ -15,6 +15,11 @@ import (
 // redacted argument summary, decision, and optional reject message). It is the
 // notification fallback for a run with no chat conversation (issue #1375), so
 // an open-ended ask_user question is answerable on this page.
+//
+// Both card kinds render the shared components.QuestionCard /
+// components.ApprovalCard — the same markup the chat transcript renders — so the
+// surfaces cannot drift; this page supplies each card's answer controls and owns
+// the respond/cancel POST contract.
 templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem, loadErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "Approvals")), "", "Approvals", "Human-in-the-loop input — answer pending agent questions and review every tool-approval decision.", detailHeaderOpts{Margin: "mb-6", SubtitleFull: true}) {
@@ -52,110 +57,52 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 	}
 }
 
-// questionRow renders one pending agent question with an answer control shaped
-// by its interaction type: option buttons for a single-choice question, a
-// free-text input for an open-ended one, or a checkbox group for a multi-select
-// one. All post to the same respond route the approval rows use, which resolves
-// the question and resumes the paused run.
+// questionRow renders one pending agent question through the shared question
+// card. The card shows the interaction's answer control (option rows for a
+// single choice, a checkbox group for a multi-select, a text input for an
+// open-ended question); the controls post to the same respond route the approval
+// rows use, which resolves the question and resumes the paused run.
 templ questionRow(q AgentQuestionItem) {
-	{{ isText := q.InteractionType == "text" || len(q.Options) == 0 }}
-	{{ isMulti := q.InteractionType == "multi_select" }}
-	@ui.CardRaw("card-border", "gap-3 memory-density-compact", templ.Attributes{"data-testid": "pending-question", "data-question-id": q.ID}) {
-			<p class="text-sm whitespace-pre-wrap break-words">{ q.Question }</p>
-			// A pending question may carry a structured proposal (issue #1425):
-			// render it through the same sanitized card path the chat transcript
-			// uses, above the answer controls, so a schema/object change is
-			// reviewable before the user approves it. A question without a
-			// renderable proposal stays plain text, unchanged.
-			if proposalHTML := renderProposalHTML(q.Proposal); proposalHTML != "" {
-				<div data-testid="pending-question-proposal">@templ.Raw(proposalHTML)</div>
-			}
-			if isText {
-				<div class="flex flex-wrap items-center gap-2">
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex min-w-56 flex-1 items-center gap-2">
-						<input
-							type="text"
-							name="response"
-							required
-							aria-label={ q.Question }
-							placeholder={ questionPlaceholder(q) }
-							if q.MaxLength > 0 {
-								maxlength={ strconv.Itoa(q.MaxLength) }
-							}
-							class="input input-bordered w-full"
-						/>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
-					</form>
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
-					</form>
-				</div>
-			} else if isMulti {
-				<div class="flex flex-wrap items-center gap-2">
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" } class="flex flex-wrap items-center gap-2" role="group" aria-label={ q.Question }>
-						<input type="hidden" name="multi" value="1"/>
-						for _, opt := range q.Options {
-							<label class="flex items-center gap-2 text-sm">
-								<input type="checkbox" name="response" value={ opt.Value } class="checkbox checkbox-sm"/>
-								<span>{ opt.Label }</span>
-							</label>
-						}
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
-					</form>
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
-					</form>
-				</div>
-			} else {
-				<div class="flex flex-wrap items-center gap-2" role="group" aria-label={ q.Question }>
-					for _, opt := range q.Options {
-						<form method="post" action={ "/settings/approvals/" + q.ID + "/respond" }>
-							@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM, Attrs: templ.Attributes{"name": "response", "value": opt.Value}}) {
-								{ opt.Label }
-							}
-						</form>
-					}
-					<form method="post" action={ "/settings/approvals/" + q.ID + "/cancel" }>
-						@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
-					</form>
-				</div>
-			}
-	}
+	{{ isText := q.InteractionType == "text" || len(q.Options) == 0
+	isMulti := q.InteractionType == "multi_select"
+	formID := "question-respond-" + q.ID
+	respondAction := "/settings/approvals/" + q.ID + "/respond"
+	cancelAction := "/settings/approvals/" + q.ID + "/cancel" }}
+	@components.QuestionCard(components.QuestionCardProps{
+		Prompt:        templ.EscapeString(q.Question),
+		Options:       questionCardOptions(q.Options),
+		Multi:         isMulti,
+		Text:          questionCardText(q, isText),
+		Proposal:      questionProposal(q),
+		Meta:          questionMeta(q),
+		Controls:      questionControls(formID, respondAction, cancelAction, isText, isMulti),
+		FormID:        formID,
+		ResponseName:  "response",
+		SubmitOptions: !isText && !isMulti,
+		Attrs:         templ.Attributes{"data-testid": "pending-question", "data-question-id": q.ID},
+	})
 }
 
+// approvalRow renders one tool-approval audit record through the shared approval
+// card, carrying its decision badge, note, and redacted argument summary. A
+// pending record also carries the respond controls.
 templ approvalRow(a ToolApprovalItem) {
-	@ui.CardRaw("card-border", "gap-2 memory-density-compact", nil) {
-			<div class="flex items-start justify-between gap-3">
-				<div class="flex min-w-0 flex-wrap items-center gap-2">
-					<span class="font-mono text-sm font-semibold">{ a.ToolName }</span>
-					@ui.Badge(ui.BadgeProps{
-						Label:   a.Decision,
-						Variant: ui.StatusIntentFor(a.Decision),
-						Size:    ui.BadgeSizeXS,
-					})
-				</div>
-				<div class="flex shrink-0 items-center gap-3">
-					if a.ConversationID != "" {
-						<a href={ templ.URL("/chat?c=" + url.QueryEscape(a.ConversationID)) } class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-							@ui.IconSpan("lucide--messages-square", "size-3.5")
-							<span>Session</span>
-						</a>
-					}
-					<span class="text-xs text-muted">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
-				</div>
-			</div>
-			if a.Message != "" {
-				<p class="text-sm text-muted-strong">{ a.Message }</p>
-			}
-			if args := formatArgsJSON(a.ArgsSummary); args != "" {
-				<pre class="max-h-32 overflow-y-auto rounded-box bg-base-200/60 p-2 font-mono text-xs whitespace-pre-wrap break-words">{ args }</pre>
-			}
-			if a.Decision == "pending" {
-				@approvalActions(a.QuestionID)
-			}
-	}
+	@components.ApprovalCard(components.ApprovalCardProps{
+		ToolName: a.ToolName,
+		Title:    "Tool approval",
+		Decision: a.Decision,
+		Message:  a.Message,
+		ArgsJSON: formatArgsJSON(a.ArgsSummary),
+		Meta:     approvalMetaSlot(a),
+		Actions:  approvalActionsIfPending(a),
+		Mode:     approvalCardMode(a.Decision),
+	})
 }
 
+// approvalActions is the respond/cancel control row for a pending approval: a
+// reject-reason field (associated with the respond form) and the reject/approve
+// submits. It is the integration site's control slot — the card itself ships no
+// POST contract.
 templ approvalActions(questionID string) {
 	<div class="flex flex-wrap items-center gap-2 border-t border-base-content/10 pt-3">
 		<input type="text" name="message" form={ "approval-respond-" + questionID } placeholder="Reject reason (optional)" maxlength="500" class="input input-bordered flex-1 min-w-56"/>
@@ -169,4 +116,112 @@ templ approvalActions(questionID string) {
 			</form>
 		</div>
 	</div>
+}
+
+// questionControls is the answer-controls footer for a pending question. The
+// option controls are associated with this form via the HTML `form` attribute,
+// so a multi-select group and a text input post with one form rather than a
+// nested one.
+templ questionControls(formID, respondAction, cancelAction string, isText, isMulti bool) {
+	<div class="flex flex-wrap items-center gap-2">
+		<form id={ formID } method="post" action={ respondAction }>
+			if isMulti {
+				<input type="hidden" name="multi" value="1"/>
+			}
+			if isText || isMulti {
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Send }
+			}
+		</form>
+		<form method="post" action={ cancelAction }>
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Cancel }
+		</form>
+	</div>
+}
+
+// questionSessionLink links a pending question to the chat conversation its run
+// belongs to, so the operator can jump to the conversation waiting on the answer.
+templ questionSessionLink(conversationID string) {
+	<a href={ templ.URL("/chat?c=" + url.QueryEscape(conversationID)) } data-testid="question-session-link" class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+		@ui.IconSpan("lucide--messages-square", "size-3.5")
+		<span>Session</span>
+	</a>
+}
+
+// approvalMetaSlot is an audit row's header metadata: the session link (when the
+// run has a conversation) and the decision time.
+templ approvalMetaSlot(a ToolApprovalItem) {
+	if a.ConversationID != "" {
+		<a href={ templ.URL("/chat?c=" + url.QueryEscape(a.ConversationID)) } data-testid="approval-session-link" class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+			@ui.IconSpan("lucide--messages-square", "size-3.5")
+			<span>Session</span>
+		</a>
+	}
+	<span class="text-xs text-muted">{ a.CreatedAt.Format("Jan 02, 15:04") }</span>
+}
+
+// questionCardOptions maps the domain option list onto the card's option rows.
+func questionCardOptions(opts []AgentQuestionOption) []components.QuestionCardOption {
+	if len(opts) == 0 {
+		return nil
+	}
+	out := make([]components.QuestionCardOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, components.QuestionCardOption{
+			Label:       questionOptionLabel(o),
+			Value:       o.Value,
+			Description: o.Description,
+		})
+	}
+	return out
+}
+
+// questionCardText builds the card's free-text input config for a text question
+// (and nothing for a choice question).
+func questionCardText(q AgentQuestionItem, isText bool) *components.QuestionCardText {
+	if !isText {
+		return nil
+	}
+	return &components.QuestionCardText{
+		Placeholder: questionPlaceholder(q),
+		MaxLength:   q.MaxLength,
+		AriaLabel:   q.Question,
+	}
+}
+
+// questionProposal wraps a question's sanitized proposal card with the stable
+// pending-question-proposal testid, or returns nil when there is no renderable
+// proposal. renderProposalHTML sanitizes the agent's payload before it reaches
+// templ.Raw.
+func questionProposal(q AgentQuestionItem) templ.Component {
+	html := renderProposalHTML(q.Proposal)
+	if html == "" {
+		return nil
+	}
+	return templ.Raw(`<div data-testid="pending-question-proposal">` + html + `</div>`)
+}
+
+// questionMeta returns the pending question's session link, or nil when its run
+// has no chat conversation.
+func questionMeta(q AgentQuestionItem) templ.Component {
+	if q.ConversationID == "" {
+		return nil
+	}
+	return questionSessionLink(q.ConversationID)
+}
+
+// approvalActionsIfPending returns the respond controls for a pending approval,
+// and nothing for a settled record.
+func approvalActionsIfPending(a ToolApprovalItem) templ.Component {
+	if a.Decision != "pending" {
+		return nil
+	}
+	return approvalActions(a.QuestionID)
+}
+
+// approvalCardMode maps a decision onto the card's mode.
+func approvalCardMode(decision string) components.ApprovalCardMode {
+	if decision == "pending" {
+		return components.ApprovalCardPending
+	}
+	return components.ApprovalCardDecided
 }

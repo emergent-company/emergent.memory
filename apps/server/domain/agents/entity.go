@@ -860,6 +860,11 @@ type AgentQuestion struct {
 	CreatedAt       time.Time                    `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
 	UpdatedAt       time.Time                    `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
 
+	// ConversationID is the chat conversation this question's run belongs to,
+	// resolved via agent_runs.session_id → chat_conversations.id. Populated
+	// only by ListQuestionsByProject (not a stored column).
+	ConversationID *string `bun:"-" json:"conversationId,omitempty"`
+
 	// Relations
 	Run   *AgentRun `bun:"rel:belongs-to,join:run_id=id" json:"-"`
 	Agent *Agent    `bun:"rel:belongs-to,join:agent_id=id" json:"-"`

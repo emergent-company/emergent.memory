@@ -518,7 +518,7 @@ test.describe('ask_user proposal card scenario', () => {
         // interaction type → Accept/Reject radio rows), proving the question card
         // stays fully usable with a proposal attached. The card lives in the dock
         // when the dock is live, otherwise in the inline transcript question.
-        const question = page.locator('#chat-messages .memory-question, #chat-dock .dock-question').first();
+        const question = page.locator('#chat-messages .memory-question, #chat-dock .memory-question').first();
         await expect(question.getByRole('radio', { name: 'Accept' })).toBeVisible();
         await expect(question.getByRole('radio', { name: 'Reject' })).toBeVisible();
       } finally {

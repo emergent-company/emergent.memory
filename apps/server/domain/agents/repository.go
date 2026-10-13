@@ -2572,20 +2572,39 @@ func (r *Repository) ListQuestionsByRunID(ctx context.Context, runID string) ([]
 	return questions, nil
 }
 
-// ListQuestionsByProject returns questions for a project with optional status filter.
+// ListQuestionsByProject returns questions for a project, newest first,
+// optionally filtered by status. Each question's ConversationID is resolved by
+// joining agent_runs (on run_id) then chat_conversations (on session_id); it is
+// nil for runs without a chat conversation.
 func (r *Repository) ListQuestionsByProject(ctx context.Context, projectID string, status *AgentQuestionStatus) ([]*AgentQuestion, error) {
-	var questions []*AgentQuestion
-	q := r.db.NewSelect().
-		Model(&questions).
-		Where("project_id = ?", projectID)
-
-	if status != nil {
-		q = q.Where("status = ?", *status)
+	type questionRow struct {
+		AgentQuestion
+		ConversationID *string `bun:"conversation_id"`
 	}
-
-	err := q.Order("created_at DESC").Scan(ctx)
-	if err != nil {
+	query := `SELECT aq.id, aq.run_id, aq.agent_id, aq.project_id, aq.question, aq.proposal,
+	                 aq.options, aq.interaction_type, aq.placeholder, aq.max_length,
+	                 aq.response, aq.responded_by, aq.responded_at, aq.status,
+	                 aq.notification_id, aq.created_at, aq.updated_at,
+	                 cc.id AS conversation_id
+	          FROM kb.agent_questions aq
+	          LEFT JOIN kb.agent_runs ar ON ar.id = aq.run_id
+	          LEFT JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+	          WHERE aq.project_id = ?`
+	args := []any{projectID}
+	if status != nil {
+		query += " AND aq.status = ?"
+		args = append(args, *status)
+	}
+	query += " ORDER BY aq.created_at DESC"
+	var rows []questionRow
+	if err := r.db.NewRaw(query, args...).Scan(ctx, &rows); err != nil {
 		return nil, err
+	}
+	questions := make([]*AgentQuestion, len(rows))
+	for i := range rows {
+		q := rows[i].AgentQuestion
+		q.ConversationID = rows[i].ConversationID
+		questions[i] = &q
 	}
 	return questions, nil
 }

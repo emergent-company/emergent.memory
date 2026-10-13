@@ -257,6 +257,69 @@ func gallerySeed() []GalleryEntry {
 				"open": func() templ.Component { return components.AlertModal(components.DialogAutoOpen()) },
 			},
 		},
+		{
+			ID: "ApprovalCard", Slug: "approval-card", Name: "ApprovalCard", Layer: LayerComposite,
+			Category: "Feedback", Subcategory: "approval", SourceFile: "components/approval_card.templ",
+			PropsType:   "ApprovalCardProps",
+			Description: "The canonical pending-approval card: the gated tool, its redacted arguments, an optional decision badge, and the decision controls.",
+			Render: func() templ.Component {
+				return components.ApprovalCard(components.ApprovalCardProps{
+					ToolName: "web_search",
+					ArgsJSON: `{"query": "memory platform release notes"}`,
+					Attrs:    templ.Attributes{"data-testid": "gallery-approval"},
+				})
+			},
+			Stories: map[string]func() templ.Component{
+				"approved": func() templ.Component {
+					return components.ApprovalCard(components.ApprovalCardProps{
+						ToolName: "set_field",
+						Decision: "approved",
+						Message:  "Approved after review.",
+						Mode:     components.ApprovalCardDecided,
+					})
+				},
+				"rejected": func() templ.Component {
+					return components.ApprovalCard(components.ApprovalCardProps{
+						ToolName: "set_field",
+						Decision: "rejected",
+						Message:  "The proposed value is out of scope.",
+						Mode:     components.ApprovalCardDecided,
+					})
+				},
+			},
+		},
+		{
+			ID: "QuestionCard", Slug: "question-card", Name: "QuestionCard", Layer: LayerComposite,
+			Category: "Feedback", Subcategory: "question", SourceFile: "components/question_card.templ",
+			PropsType:   "QuestionCardProps",
+			Description: "The canonical pending-question card: the prompt, the answer controls (choice rows or free text), and the submit footer.",
+			Render: func() templ.Component {
+				return components.QuestionCard(components.QuestionCardProps{
+					Prompt: "Which environment should I deploy to?",
+					Options: []components.QuestionCardOption{
+						{Label: "Staging", Value: "staging", Description: "The staging cluster"},
+						{Label: "Production", Value: "production"},
+					},
+					Attrs: templ.Attributes{"data-testid": "gallery-question"},
+				})
+			},
+			Stories: map[string]func() templ.Component{
+				"free-text": func() templ.Component {
+					return components.QuestionCard(components.QuestionCardProps{
+						Prompt: "What should the new project be called?",
+						Text:   &components.QuestionCardText{Placeholder: "Project name", MaxLength: 120, AriaLabel: "Project name"},
+					})
+				},
+				"answered": func() templ.Component {
+					return components.QuestionCard(components.QuestionCardProps{
+						Prompt:   "Which environment should I deploy to?",
+						Options:  []components.QuestionCardOption{{Label: "Staging", Value: "staging"}},
+						Mode:     components.QuestionCardAnswered,
+						Selected: []string{"staging"},
+					})
+				},
+			},
+		},
 
 		// --- go-daisy primitives (L0) — curated subset ---
 		{

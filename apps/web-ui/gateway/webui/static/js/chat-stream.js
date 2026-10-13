@@ -600,17 +600,17 @@
       card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
-        '<div class="q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
-        (hint ? '<p class="mt-0.5 text-xs text-muted">' + escapeHTML(hint) + '</p>' : "") +
+        '<div class="memory-question__body q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
+        (hint ? '<p class="memory-question__hint mt-0.5 text-xs text-muted">' + escapeHTML(hint) + '</p>' : "") +
         (evt.proposalHtml || "") +
-        '<div class="q-options flex flex-col gap-2"></div>' +
+        '<div class="memory-question__options q-options flex flex-col gap-2"></div>' +
         (answered
-          ? '<div class="flex items-center justify-end gap-2 pt-1">' +
+          ? '<div class="memory-question__footer flex items-center justify-end gap-2 pt-1">' +
             '<span class="badge badge-success badge-sm gap-1">' +
             '<span class="iconify lucide--check size-3" aria-hidden="true"></span> Answered</span></div>'
-          : '<div class="flex items-center justify-between gap-3 pt-1">' +
+          : '<div class="memory-question__footer flex items-center justify-between gap-3 pt-1">' +
             '<span class="text-xs text-muted-faint">Esc to dismiss</span>' +
-            '<button type="button" data-testid="chat-question-submit" class="q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
+            '<button type="button" data-testid="chat-question-submit" class="memory-question__submit q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
             '</div>') +
         '</div>';
       wrap.appendChild(card);
@@ -627,7 +627,7 @@
 
       function rowCls(sel) {
         var c =
-          "flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-300/70 bg-base-100";
+          "memory-question__option flex w-full items-start gap-3 rounded-field border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-300/70 bg-base-100";
         return sel
           ? c + " border-primary bg-primary/5 ring-1 ring-primary/40 hover:bg-primary/10"
           : c + " hover:bg-base-200/50";
@@ -635,8 +635,8 @@
 
       function indicatorCls(sel) {
         var c =
-          "q-ind mt-0.5 flex shrink-0 items-center justify-center border-2 transition-colors duration-150 " +
-          (isMulti ? "size-4.5 rounded-md" : "size-4.5 rounded-full");
+          "memory-question__indicator q-ind mt-0.5 flex shrink-0 items-center justify-center border-2 transition-colors duration-150 " +
+          (isMulti ? "size-4.5 rounded-selector" : "size-4.5 rounded-full");
         return sel ? c + " border-primary bg-primary" : c + " border-base-content/30";
       }
 
@@ -663,12 +663,12 @@
         var textWrap = document.createElement("span");
         textWrap.className = "flex min-w-0 grow flex-col";
         var label = document.createElement("span");
-        label.className = "text-sm leading-snug font-medium";
+        label.className = "memory-question__label text-sm leading-snug font-medium";
         label.textContent = opt.label || opt.value || "Option " + (i + 1);
         textWrap.appendChild(label);
         if (opt.description) {
           var desc = document.createElement("span");
-          desc.className = "mt-0.5 text-xs leading-snug text-muted";
+          desc.className = "memory-question__description mt-0.5 text-xs leading-snug text-muted";
           desc.textContent = opt.description;
           textWrap.appendChild(desc);
         }
@@ -855,16 +855,16 @@
       card.setAttribute("data-question-id", questionId || "");
       card.innerHTML =
         '<div class="card-body gap-3 p-4">' +
-        '<h3 class="text-base leading-snug font-semibold break-words">Approve tool call</h3>' +
-        '<p class="mt-0.5 text-xs text-muted-strong">The agent wants to run <code class="font-mono text-xs">' + escapeHTML(tool) + '</code>.</p>' +
-        '<pre class="approval-args max-h-40 overflow-y-auto rounded-lg bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' + escapeHTML(JSON.stringify(input, null, 2)) + '</pre>' +
-        '<div class="approval-reject-box hidden flex-col gap-2">' +
-        '<input type="text" class="approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +
+        '<h3 class="memory-approval__title text-base leading-snug font-semibold break-words">Approve tool call</h3>' +
+        '<p class="memory-approval__sentence mt-0.5 text-xs text-muted-strong">The agent wants to run <code class="font-mono text-xs">' + escapeHTML(tool) + '</code>.</p>' +
+        '<pre class="memory-approval__args approval-args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' + escapeHTML(JSON.stringify(input, null, 2)) + '</pre>' +
+        '<div class="memory-approval__reject approval-reject-box hidden flex-col gap-2">' +
+        '<input type="text" class="memory-approval__message approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +
         '</div>' +
-        '<div class="flex items-center justify-end gap-2 pt-1">' +
-        '<button type="button" data-testid="chat-approval-cancel" class="approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
-        '<button type="button" data-testid="chat-approval-reject" class="approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
-        '<button type="button" data-testid="chat-approval-approve" class="approval-approve btn btn-primary btn-sm">Approve</button>' +
+        '<div class="memory-approval__actions flex items-center justify-end gap-2 pt-1">' +
+        '<button type="button" data-testid="chat-approval-cancel" class="memory-approval__cancel approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
+        '<button type="button" data-testid="chat-approval-reject" class="memory-approval__reject-action approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
+        '<button type="button" data-testid="chat-approval-approve" class="memory-approval__approve approval-approve btn btn-primary btn-sm">Approve</button>' +
         '</div>' +
         '</div>';
       wrap.appendChild(card);

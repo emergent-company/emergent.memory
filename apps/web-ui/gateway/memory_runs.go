@@ -220,6 +220,7 @@ type AgentQuestionOption struct {
 type AgentQuestionItem struct {
 	ID              string                `json:"id"`
 	RunID           string                `json:"runId"`
+	ConversationID  string                `json:"conversationId,omitempty"`
 	Question        string                `json:"question"`
 	Options         []AgentQuestionOption `json:"options"`
 	InteractionType string                `json:"interactionType"`

@@ -212,6 +212,13 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
       // The pending row shows the tool name and the Approve control.
       const pendingRow = approvalsPage.locator('.card').filter({ hasText: toolName }).first();
       await expect(pendingRow).toBeVisible();
+
+      // The pending row links back to the chat conversation whose run is
+      // paused on the approval, so the operator can jump to it.
+      const sessionLink = pendingRow.getByTestId('approval-session-link');
+      await expect(sessionLink).toBeVisible();
+      await expect(sessionLink).toHaveAttribute('href', /^\/chat\?c=.+/);
+
       await pendingRow.getByRole('button', { name: 'Approve' }).click();
       await approvalsPage.waitForURL(/\/settings\/approvals/);
 

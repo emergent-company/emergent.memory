@@ -726,6 +726,8 @@ definitions:
     properties:
       agentId:
         type: string
+      conversationId:
+        type: string
       createdAt:
         type: string
       id:

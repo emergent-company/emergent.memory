@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	ui "github.com/emergent-company/go-daisy/components/ui"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 )
 
 // DockPanel renders the pending-work dock for one conversation: its pending
@@ -12,6 +13,11 @@ import (
 // pending questions and approvals render inline in the transcript as agent
 // bubbles (chat.js/chat-stream.js renderQuestion/renderApproval), so this panel
 // is never part of the live DOM.
+//
+// The cards are the shared components.ApprovalCard / components.QuestionCard —
+// the same markup the transcript and /settings/approvals render — so all three
+// surfaces show one card design. The dock supplies each card's control row (its
+// data-dock-action buttons) as the integration site.
 //
 // The fragment root deliberately carries no id: it is pre-rendered inside
 // <noscript> and must not collide with any live-DOM id.
@@ -26,122 +32,85 @@ templ DockPanel(convID string, approvals []ApprovalCard, questions []QuestionCar
 				</div>
 			}
 			for _, a := range approvals {
-				<div class="dock-card dock-approval" data-testid="dock-approval" data-dock-kind="approval" data-question-id={ a.QuestionID } data-conversation-id={ a.ConversationID }>
-					<div class="dock-card-main">
-						<span class="dock-card-kind">Approval</span>
-						<span class="dock-card-tool">{ a.ToolName }</span>
-						if a.ArgsSummary != "" {
-							<span class="dock-card-args">{ a.ArgsSummary }</span>
-						}
-					</div>
-					<div class="dock-card-controls">
-						<input
-							type="text"
-							class="dock-approval-msg input input-sm"
-							placeholder="Reason (optional)"
-							maxlength="500"
-							aria-label="Rejection reason (optional)"
-						/>
-						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonGhost,
-							Size:       ui.ButtonXS,
-							ExtraClass: "dock-approval-cancel",
-							Attrs: templ.Attributes{
-								"data-dock-action": "cancel",
-								"data-question-id": a.QuestionID,
-							},
-						}) {
-							Cancel
-						}
-						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonGhost,
-							Size:       ui.ButtonXS,
-							ExtraClass: "dock-approval-reject text-error",
-							Attrs: templ.Attributes{
-								"data-dock-action": "reject",
-								"data-question-id": a.QuestionID,
-							},
-						}) {
-							Reject
-						}
-						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonPrimary,
-							Size:       ui.ButtonXS,
-							ExtraClass: "dock-approval-approve",
-							Attrs: templ.Attributes{
-								"data-dock-action": "approve",
-								"data-question-id": a.QuestionID,
-							},
-						}) {
-							Approve
-						}
-					</div>
-				</div>
+				@components.ApprovalCard(dockApprovalProps(a))
 			}
 			for _, q := range questions {
-				{{ isText := q.Kind == "text" || len(q.Options) == 0 }}
-				{{ isMulti := q.Kind == "multi_select" }}
-				{{ optRole := "radio" }}
-				if isMulti {
-					{{ optRole = "checkbox" }}
-				}
-				<div class="dock-card dock-question" data-testid="dock-question" data-dock-kind="question" data-dock-type={ q.Kind } data-question-id={ q.QuestionID }>
-					<div class="dock-card-main">
-						<span class="dock-card-kind">Question</span>
-						<span class="dock-card-prompt">{ q.Prompt }</span>
-					</div>
-					if q.ProposalHTML != "" {
-						<div class="dock-card-proposal" data-testid="dock-proposal">@templ.Raw(q.ProposalHTML)</div>
-					}
-					if !isText {
-						<div class="dock-card-options" role="group" aria-label={ q.Prompt }>
-							for _, o := range q.Options {
-								<button type="button" class="dock-question-option" role={ optRole } aria-checked="false" data-dock-option-value={ o.Value }>{ questionOptionLabel(o) }</button>
-							}
-						</div>
-					} else {
-						<input
-							type="text"
-							class="dock-question-input input input-sm w-full"
-							placeholder="Type your answer"
-							autocomplete="off"
-							aria-label={ q.Prompt }
-						/>
-					}
-					<div class="dock-card-controls">
-						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonGhost,
-							Size:       ui.ButtonXS,
-							ExtraClass: "dock-question-cancel",
-							Attrs: templ.Attributes{
-								"data-dock-action": "cancel",
-								"data-question-id": q.QuestionID,
-							},
-						}) {
-							Cancel
-						}
-						@ui.Button(ui.ButtonProps{
-							Type:       ui.ButtonTypeButton,
-							Variant:    ui.ButtonPrimary,
-							Size:       ui.ButtonXS,
-							ExtraClass: "dock-question-submit",
-							Attrs: templ.Attributes{
-								"data-dock-action": "answer",
-								"data-question-id": q.QuestionID,
-								"disabled":         true,
-							},
-						}) {
-							Submit
-						}
-					</div>
-				</div>
+				@components.QuestionCard(dockQuestionProps(q))
 			}
 		</div>
 	}
+}
+
+// dockApprovalActions is a dock approval's control row: the reject-reason field
+// and the cancel / reject / approve buttons, each carrying the dock's
+// data-dock-action marker. The dock has no client wiring (it is the no-JS
+// fallback), so the markers exist for the surface's own contract and styling.
+templ dockApprovalActions(questionID string) {
+	<div class="memory-approval__actions flex flex-wrap items-center justify-end gap-2">
+		<input
+			type="text"
+			class="input input-sm mr-auto flex-1 min-w-0"
+			placeholder="Reason (optional)"
+			maxlength="500"
+			aria-label="Rejection reason (optional)"
+		/>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-cancel",
+			Attrs:      templ.Attributes{"data-dock-action": "cancel", "data-question-id": questionID},
+		}) {
+			Cancel
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-reject text-error",
+			Attrs:      templ.Attributes{"data-dock-action": "reject", "data-question-id": questionID},
+		}) {
+			Reject
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonPrimary,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-approval-approve",
+			Attrs:      templ.Attributes{"data-dock-action": "approve", "data-question-id": questionID},
+		}) {
+			Approve
+		}
+	</div>
+}
+
+// dockQuestionControls is a dock question's footer: the cancel / submit buttons
+// carrying the dock's data-dock-action markers.
+templ dockQuestionControls(questionID string) {
+	<div class="memory-question__footer flex flex-wrap items-center justify-end gap-2">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-question-cancel",
+			Attrs:      templ.Attributes{"data-dock-action": "cancel", "data-question-id": questionID},
+		}) {
+			Cancel
+		}
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonPrimary,
+			Size:       ui.ButtonXS,
+			ExtraClass: "dock-question-submit",
+			Attrs: templ.Attributes{
+				"data-dock-action": "answer",
+				"data-question-id": questionID,
+				"disabled":         true,
+			},
+		}) {
+			Submit
+		}
+	</div>
 }
 
 // TodoCard renders one conversation's session todos as a collapsed-by-default

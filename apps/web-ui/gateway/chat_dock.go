@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/a-h/templ"
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/labstack/echo/v4"
 )
 
@@ -61,6 +63,78 @@ func questionOptionLabel(o AgentQuestionOption) string {
 		return o.Label
 	}
 	return o.Value
+}
+
+// dockApprovalProps maps a dock approval card onto the shared approval
+// component. The dock owns its identifiers and its control row (the
+// data-dock-action buttons) through the component's Attrs and Actions slots.
+func dockApprovalProps(a ApprovalCard) components.ApprovalCardProps {
+	return components.ApprovalCardProps{
+		ToolName: a.ToolName,
+		Title:    "Approval",
+		ArgsJSON: a.ArgsSummary,
+		Mode:     components.ApprovalCardPending,
+		Actions:  dockApprovalActions(a.QuestionID),
+		Class:    "mx-3 my-2",
+		Attrs: templ.Attributes{
+			"data-testid":          "dock-approval",
+			"data-dock-kind":       "approval",
+			"data-question-id":     a.QuestionID,
+			"data-conversation-id": a.ConversationID,
+		},
+	}
+}
+
+// dockQuestionProps maps a dock question card onto the shared question
+// component: option rows carrying the dock's data-dock-option-value marker, the
+// sanitized proposal slot, and the dock's footer controls.
+func dockQuestionProps(q QuestionCard) components.QuestionCardProps {
+	props := components.QuestionCardProps{
+		Prompt:   templ.EscapeString(q.Prompt),
+		Options:  dockQuestionOptions(q.Options),
+		Multi:    q.Kind == "multi_select",
+		Proposal: dockQuestionProposal(q),
+		Controls: dockQuestionControls(q.QuestionID),
+		Class:    "mx-3 my-2",
+		Attrs: templ.Attributes{
+			"data-testid":      "dock-question",
+			"data-dock-kind":   "question",
+			"data-dock-type":   q.Kind,
+			"data-question-id": q.QuestionID,
+		},
+	}
+	if q.Kind == "text" || len(q.Options) == 0 {
+		props.Options = nil
+		props.Text = &components.QuestionCardText{Placeholder: "Type your answer", AriaLabel: q.Prompt}
+	}
+	return props
+}
+
+// dockQuestionOptions maps the dock's option list onto the card's option rows,
+// exposing each option's submitted value on data-dock-option-value.
+func dockQuestionOptions(opts []AgentQuestionOption) []components.QuestionCardOption {
+	if len(opts) == 0 {
+		return nil
+	}
+	out := make([]components.QuestionCardOption, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, components.QuestionCardOption{
+			Label:       questionOptionLabel(o),
+			Value:       o.Value,
+			Description: o.Description,
+			Attrs:       templ.Attributes{"data-dock-option-value": o.Value},
+		})
+	}
+	return out
+}
+
+// dockQuestionProposal wraps the question's already-sanitized proposal card with
+// the dock's stable testid, or returns nil when there is no proposal.
+func dockQuestionProposal(q QuestionCard) templ.Component {
+	if q.ProposalHTML == "" {
+		return nil
+	}
+	return templ.Raw(`<div data-testid="dock-proposal">` + q.ProposalHTML + `</div>`)
 }
 
 // railBucketLabel maps a run bucket to its human rail-badge label. The done

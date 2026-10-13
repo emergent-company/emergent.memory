@@ -497,6 +497,13 @@ func TestDockPanelRender(t *testing.T) {
 		"Pick one",
 		"Alpha",
 		"Beta",
+		// The dock renders the shared components (components.ApprovalCard /
+		// components.QuestionCard), not bespoke markup, so the component's own
+		// markers and option-row testid are present.
+		"memory-approval",
+		"memory-question",
+		`data-testid="chat-question-option"`,
+		`role="radio"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("DockPanel missing %q:\n%s", want, html)

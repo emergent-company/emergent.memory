@@ -286,6 +286,31 @@ func TestAgentQuestionDTO_ProposalJSONFieldName(t *testing.T) {
 	assert.NotContains(t, string(b2), `"proposal"`)
 }
 
+// TestAgentQuestionDTO_ConversationIDJSONFieldName locks the conversation link
+// contract on the question DTO: ToDTO carries ConversationID through, it
+// serializes under "conversationId", and it is omitted entirely when nil so a
+// run with no chat conversation does not emit a dangling key.
+func TestAgentQuestionDTO_ConversationIDJSONFieldName(t *testing.T) {
+	convID := "conv-1"
+	q := &AgentQuestion{
+		ID:             "q-1",
+		ConversationID: &convID,
+	}
+
+	dto := q.ToDTO()
+	require.NotNil(t, dto.ConversationID)
+	assert.Equal(t, "conv-1", *dto.ConversationID)
+
+	b, err := json.Marshal(dto)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"conversationId":"conv-1"`)
+
+	noConv := &AgentQuestion{ID: "q-2"}
+	b2, err := json.Marshal(noConv.ToDTO())
+	require.NoError(t, err)
+	assert.NotContains(t, string(b2), `"conversationId"`)
+}
+
 // =============================================================================
 // emitQuestionSSEEventDirect tests (agent-proposal-cards)
 // =============================================================================

@@ -786,9 +786,10 @@ div:has(> #_layout-topbar) {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
-/* dock cards — pending tool approvals and ask_user questions. The DockPanel
-   fragment root carries the .chat-dock class (and no id), so the container
-   chrome above is drawn exactly once. */
+/* dock chrome — the no-JS <noscript> DockPanel fallback only (the live
+   #chat-dock mount was removed with the inline-card change, #1491). The dock's
+   cards are the shared components (memory-question / memory-approval), so only
+   the panel head chrome lives here. */
 .dock-head {
   display: flex;
   align-items: center;
@@ -812,6 +813,9 @@ div:has(> #_layout-topbar) {
   color: var(--color-warning-content);
   font-size: 0.5625rem;
 }
+
+/* Public share page's approval card (share-agent.js) renders this chrome
+   directly — the app's own surfaces now use the shared components below. */
 .dock-card {
   display: flex;
   flex-wrap: wrap;
@@ -823,8 +827,6 @@ div:has(> #_layout-topbar) {
   border: 1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent);
   background: var(--color-base-100);
 }
-.dock-approval { border-left: 3px solid var(--color-warning); }
-.dock-question { border-left: 3px solid var(--color-primary); }
 .dock-card-main {
   display: flex;
   flex: 1 1 auto;
@@ -839,11 +841,6 @@ div:has(> #_layout-topbar) {
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--color-muted-faint);
-}
-.dock-card-tool {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
-  font-weight: 600;
 }
 .dock-card-prompt { font-size: 0.8125rem; }
 .dock-card-args {
@@ -862,43 +859,13 @@ div:has(> #_layout-topbar) {
   justify-content: flex-end;
   gap: 0.4rem;
 }
-/* the approval reason input takes the row's free space, controls sit right */
-.dock-approval-msg {
-  flex: 1 1 12rem;
-  min-width: 0;
-  margin-right: auto;
-}
-.dock-card-options {
-  display: flex;
-  flex-basis: 100%;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.1rem 0 0;
-  padding: 0;
-}
-.dock-question-option {
-  border: 1px solid color-mix(in oklab, var(--color-base-content) 18%, transparent);
-  border-radius: var(--radius-box);
-  padding: 0.25rem 0.6rem;
-  background: var(--color-base-100);
-  color: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-.dock-question-option:hover { background: color-mix(in oklab, var(--color-base-content) 6%, transparent); }
-.dock-question-option[aria-checked="true"] {
-  border-color: var(--color-primary);
-  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
-  color: var(--color-primary);
-}
-.dock-question-input { flex-basis: 100%; }
-/* A proposal question keeps its reviewable card in the dock: full-width so the
-   card's preview table can scroll horizontally rather than squeezing. */
-.dock-card-proposal {
-  flex-basis: 100%;
-  min-width: 0;
-}
-.dock-card-proposal .proposal-card { margin-top: 0; }
+
+/* The shared pending-question / pending-approval card accents, used by every
+   surface that renders components.QuestionCard / components.ApprovalCard (the
+   chat transcript, /settings/approvals, and the no-JS dock). The dock's former
+   .dock-question / .dock-approval accents folded in here. */
+.memory-question { border-left: 3px solid var(--color-primary); }
+.memory-approval, .dock-approval { border-left: 3px solid var(--color-warning); }
 
 /* session todo card */
 #chat-todos { margin-bottom: 0.25rem; }

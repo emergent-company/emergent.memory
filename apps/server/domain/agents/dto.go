@@ -861,6 +861,7 @@ type AgentQuestionDTO struct {
 	Status          AgentQuestionStatus          `json:"status"`
 	NotificationID  *string                      `json:"notificationId,omitempty"`
 	ResumeRunID     *string                      `json:"resumeRunId,omitempty"` // new run ID created on resume
+	ConversationID  *string                      `json:"conversationId,omitempty"`
 	CreatedAt       time.Time                    `json:"createdAt"`
 	UpdatedAt       time.Time                    `json:"updatedAt"`
 }
@@ -883,6 +884,7 @@ func (q *AgentQuestion) ToDTO() *AgentQuestionDTO {
 		RespondedAt:     q.RespondedAt,
 		Status:          q.Status,
 		NotificationID:  q.NotificationID,
+		ConversationID:  q.ConversationID,
 		CreatedAt:       q.CreatedAt,
 		UpdatedAt:       q.UpdatedAt,
 	}

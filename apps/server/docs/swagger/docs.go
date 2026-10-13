@@ -25978,6 +25978,9 @@ const docTemplate = `{
                 "agentId": {
                     "type": "string"
                 },
+                "conversationId": {
+                    "type": "string"
+                },
                 "createdAt": {
                     "type": "string"
                 },
