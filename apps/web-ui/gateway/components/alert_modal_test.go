@@ -8,7 +8,7 @@ import "testing"
 // and described by its live message), and the no-auto-open contract (the modal
 // is opened by the event, never on render).
 func TestAlertModalContract(t *testing.T) {
-	html := renderHTML(t, AlertModal())
+	html := renderHTML(t, AlertModal(nil))
 	assertContains(t, html,
 		`id="memory-alert-modal"`,
 		`id="memory-alert-banner"`,
@@ -21,4 +21,9 @@ func TestAlertModalContract(t *testing.T) {
 		`aria-describedby="memory-alert-message"`,
 	)
 	assertNotContains(t, html, "data-dialog-autoopen")
+}
+
+func TestAlertModalAutoOpenAttribute(t *testing.T) {
+	html := renderHTML(t, AlertModal(DialogAutoOpen()))
+	assertContains(t, html, `data-dialog-autoopen="true"`, `aria-labelledby="memory-alert-title"`, `aria-describedby="memory-alert-message"`)
 }

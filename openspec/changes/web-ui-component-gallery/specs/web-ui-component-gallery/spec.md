@@ -6,7 +6,7 @@ A dev-gated component gallery for the gateway: it catalogs the reusable templ co
 
 ### Requirement: Gallery catalogs reusable templ components
 
-The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, reusable composites written in `package main`, and the go-daisy components those entries render. A `package main` composite SHALL be in scope only when it is reused across two or more page features or encapsulates an invariant, and the in-scope set SHALL be an explicit registry seed rather than inferred from a naming or visibility convention. "Reused across two or more page features" SHALL mean the generated used-by edges reach two or more distinct page components; page-local (L3) helpers SHALL be excluded by layer regardless of call count. Page-level templates and page-private helpers SHALL be excluded. Entries SHALL be grouped by component layer and category.
+The gallery SHALL list the gateway's reusable templ components: those in the shared `components` package, reusable composites written in `package main`, and the go-daisy components the app renders (any go-daisy component referenced by a gateway component — a catalogued entry, a page, or a page-local helper). A `package main` composite SHALL be in scope only when it is reused across two or more page features or encapsulates an invariant, and the in-scope set SHALL be an explicit registry seed rather than inferred from a naming or visibility convention. "Reused across two or more page features" SHALL mean the generated used-by edges reach two or more distinct page components; page-local (L3) helpers SHALL be excluded by layer regardless of call count. Page-level templates and page-private helpers SHALL be excluded. Entries SHALL be grouped by component layer and category.
 
 #### Scenario: Shared components are listed
 
@@ -20,8 +20,13 @@ The gallery SHALL list the gateway's reusable templ components: those in the sha
 
 #### Scenario: Used go-daisy components are listed
 
-- **WHEN** a go-daisy component is referenced by a listed component but is not itself cataloged
+- **WHEN** a go-daisy component is referenced by any gateway component — a catalogued entry, a page, or a page-local helper
 - **THEN** it appears in the listing as a go-daisy (L0) entry
+
+#### Scenario: Page-only go-daisy primitive is listed
+
+- **WHEN** a go-daisy primitive is rendered only by page-local helpers or pages (for example `SoftBox`), never by a cataloged entry
+- **THEN** it still appears in the listing as a go-daisy (L0) entry, flagged as needing a fixture when no curated fixture exists
 
 #### Scenario: Pages and private helpers are excluded
 

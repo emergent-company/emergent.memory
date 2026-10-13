@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -71,6 +72,40 @@ func TestComponentGalleryUsesResolveToCatalog(t *testing.T) {
 		for _, u := range e.Uses {
 			if !catalog[u] {
 				t.Errorf("%s: Uses target %q is not a catalog entry", e.ID, u)
+			}
+		}
+	}
+}
+
+// TestGalleryListsAllComponentsPackageExports guards the seed against drift:
+// every exported templ component in the shared components/ package must be a
+// catalog entry. This is what catches a component added after the gallery seed
+// (e.g. AlertModal) going unlisted. Page-local package-main helpers are out of
+// scope — they are not catalogued by design.
+func TestGalleryListsAllComponentsPackageExports(t *testing.T) {
+	files, err := filepath.Glob("components/*.templ")
+	if err != nil {
+		t.Fatalf("glob components: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no components/*.templ found; wrong working directory")
+	}
+	re := regexp.MustCompile(`(?m)^templ\s+([A-Z][A-Za-z0-9_]*)`)
+	have := map[string]bool{}
+	for _, e := range componentGallery() {
+		have[e.ID] = true
+	}
+	for _, f := range files {
+		if strings.Contains(filepath.Base(f), "fixtures_test") {
+			continue
+		}
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+			if !have[m[1]] {
+				t.Errorf("components-package component %q (%s) is not a catalog entry", m[1], f)
 			}
 		}
 	}

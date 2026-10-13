@@ -177,6 +177,19 @@ func gallerySeed() []GalleryEntry {
 			Render:      func() templ.Component { return components.SaveChangesButton() },
 		},
 		{
+			ID: "StickyFormActions", Slug: "sticky-form-actions", Name: "StickyFormActions", Layer: LayerComposite,
+			Category: "Forms", Subcategory: "footer", SourceFile: "components/form.templ",
+			PropsType:   "StickyFormActionsProps",
+			Description: "The pinned footer for a page-level form: sticky to the bottom of the scroll area while the form is taller than the viewport, inline once it fits.",
+			Render: func() templ.Component {
+				return withChildren(components.StickyFormActions(components.StickyFormActionsProps{}),
+					join(
+						withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM}), templ.Raw("Cancel")),
+						components.SaveChangesButton(),
+					))
+			},
+		},
+		{
 			ID: "ConfirmIcon", Slug: "confirm-icon", Name: "ConfirmIcon", Layer: LayerComposite,
 			Category: "Feedback", Subcategory: "icon", SourceFile: "components/confirm.templ",
 			PropsType:   "icon string",
@@ -227,6 +240,21 @@ func gallerySeed() []GalleryEntry {
 			Description: "The same reveal anatomy inline, for pages that show the secret in the body.",
 			Render: func() templ.Component {
 				return components.SecretRevealPanel(secretRevealFixtureProps(false, false))
+			},
+		},
+		{
+			ID: "AlertModal", Slug: "alert-modal", Name: "AlertModal", Layer: LayerComposite,
+			Category: "Feedback", Subcategory: "dialog", SourceFile: "components/alert_modal.templ",
+			PropsType:   "attrs templ.Attributes",
+			Description: "The app-wide result dialog MemoryApp.alert(kind, title, message) fills and opens in place; provider/model test outcomes stay readable instead of a transient toast.",
+			// A native <dialog> is closed on render, so the preview needs app.js
+			// to auto-open it. The default render stays closed; the "open" story
+			// passes DialogAutoOpen, mirroring SecretRevealModal.
+			Interactive:    true,
+			DefaultVariant: "open",
+			Render:         func() templ.Component { return components.AlertModal(nil) },
+			Stories: map[string]func() templ.Component{
+				"open": func() templ.Component { return components.AlertModal(components.DialogAutoOpen()) },
 			},
 		},
 

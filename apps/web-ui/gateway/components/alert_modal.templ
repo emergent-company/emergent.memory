@@ -11,8 +11,8 @@ import ui "github.com/emergent-company/go-daisy/components/ui"
 // never innerHTML) and sets the #memory-alert-banner tone class + #memory-alert-icon
 // glyph from kind before opening. Tone is dynamic, so the banner markup is
 // hand-rolled rather than ui.Alert (whose Message is baked at render time).
-templ AlertModal() {
-	@ui.Dialog(ui.DialogProps{ID: "memory-alert-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "memory-alert-title", "aria-describedby": "memory-alert-message"}}) {
+templ AlertModal(attrs templ.Attributes) {
+	@ui.Dialog(ui.DialogProps{ID: "memory-alert-modal", BoxClass: "max-w-md", Attrs: alertModalDialogAttrs(attrs)}) {
 		<div
 			id="memory-alert-banner"
 			class="alert alert-info items-start gap-3"

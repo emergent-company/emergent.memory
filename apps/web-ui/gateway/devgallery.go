@@ -67,29 +67,32 @@ type GalleryDependency struct {
 
 // componentGallery returns the full catalog: the hand-maintained seed (the
 // components/ package entries plus a curated go-daisy subset) with uses/used-by
-// resolved from the generated graph, plus on-demand L0 go-daisy entries for any
-// go-daisy component the listed entries render.
+// resolved from the generated graph, plus on-demand L0 go-daisy entries for
+// every go-daisy component the app renders — whether by a cataloged entry or by
+// a page/page-local helper.
 func componentGallery() []GalleryEntry {
 	seed := gallerySeed()
 	seen := map[string]bool{}
-	result := make([]GalleryEntry, 0, len(seed)+16)
+	result := make([]GalleryEntry, 0, len(seed)+64)
 	for _, e := range seed {
 		seen[e.ID] = true
 		result = append(result, e)
 	}
-	// Add go-daisy L0 entries on demand for every referenced go-daisy component
-	// that is not already cataloged. A single pass is sufficient: go-daisy
-	// components are only ever *referenced* by the gateway (they are not gateway
-	// definitions), so graphDaisyComponents is never keyed by a daisy id and an
-	// added daisy entry contributes no further daisy entries.
-	for i := range result {
-		for _, id := range graphDaisyComponents[result[i].ID] {
-			if seen[id] {
-				continue
-			}
-			seen[id] = true
-			result = append(result, daisyEntry(id))
+	// Add an L0 entry on demand for every go-daisy component the gateway renders
+	// — whether by a cataloged entry or by a page/page-local helper. The graph
+	// records a go-daisy reference per render call site, so the union of its
+	// values is the complete set of primitives the app renders. Sorted so the
+	// listing order is deterministic.
+	var daisyIDs []string
+	for _, ids := range graphDaisyComponents {
+		daisyIDs = append(daisyIDs, ids...)
+	}
+	for _, id := range sortedUnique(daisyIDs) {
+		if seen[id] {
+			continue
 		}
+		seen[id] = true
+		result = append(result, daisyEntry(id))
 	}
 	// The set of ids a uses edge may resolve to.
 	catalog := make(map[string]bool, len(result))
