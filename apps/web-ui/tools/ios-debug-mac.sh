@@ -22,7 +22,7 @@
 # apps/connector.mac/Scripts/lib/mac-remote.sh and apps/connector.mac/.env.example).
 # Set in the environment or in apps/connector.mac/.env:
 #   MEMORY_MAC_HOST        SSH host, e.g. mcj-mini (empty string = local dest)
-#   MEMORY_MAC_PATH        project dir on Mac, e.g. ~/code/emergent.memory (no spaces)
+#   MEMORY_MAC_PATH        project dir on Mac, e.g. ~/code/emergent.memory-macbuild (no spaces)
 #   MEMORY_MAC_IOS_SUBDIR  iOS subtree under MEMORY_MAC_PATH (default: client/ios)
 #
 # Other env overrides:

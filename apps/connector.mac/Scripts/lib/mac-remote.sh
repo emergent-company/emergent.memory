@@ -31,7 +31,7 @@
 #                          e.g. MEMORY_MAC_HOST_NAME=mini -> MEMORY_MAC_HOST_MINI.
 #   MEMORY_MAC_HOST_<NAME> Named-host SSH targets, e.g. MEMORY_MAC_HOST_TOOL=mcj@tool.
 #   MEMORY_MAC_PATH        Project dir on the Mac, absolute or ~-rooted, no
-#                          spaces. Example: ~/code/emergent.memory.
+#                          spaces. Example: ~/code/emergent.memory-macbuild.
 #   MEMORY_MAC_PATH_<NAME> Optional per-host project dir; overrides
 #                          MEMORY_MAC_PATH when the matching named host is selected.
 #   MEMORY_MAC_SUBTREE     Optional override of the per-script remote subtree
@@ -199,12 +199,12 @@ mac_resolve_target() {
     MAC_CHECKOUT_PATH="$MEMORY_MAC_PATH"
   elif [[ -n "$path_var" ]]; then
     mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
-    export MEMORY_MAC_PATH=~/code/emergent.memory
+    export MEMORY_MAC_PATH=~/code/emergent.memory-macbuild
   or set $path_var for the selected named host
   (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
   else
     mac_die "MEMORY_MAC_PATH is not set. Set the project dir on the Mac, e.g.:
-    export MEMORY_MAC_PATH=~/code/emergent.memory
+    export MEMORY_MAC_PATH=~/code/emergent.memory-macbuild
   (absolute or ~-rooted, no spaces) in the environment or in $app_dir/.env."
   fi
 

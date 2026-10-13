@@ -30,12 +30,13 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `MEMORY_MAC_HOST` | yes¹ | SSH host of the Mac (`ssh` alias, or `user@host`). An explicitly empty value = local-destination mode (tests / `--dry-run` only). |
 | `MEMORY_MAC_HOST_NAME` | no | Selector for a named host. Resolves `MEMORY_MAC_HOST_<NAME>` where `<NAME>` is the selector uppercased with non-alphanumerics → `_`. |
 | `MEMORY_MAC_HOST_<NAME>` | no | Named-host SSH target (e.g. `MEMORY_MAC_HOST_TOOL=mcj@tool`). |
-| `MEMORY_MAC_PATH` | yes² | Project directory on the Mac, absolute or `~`-rooted, no spaces. |
+| `MEMORY_MAC_PATH` | yes² | Dedicated mirror dir on the Mac (absolute or `~`-rooted, no spaces) — must **not** be a git clone. |
 | `MEMORY_MAC_PATH_<NAME>` | no | Per-host project dir (same `<NAME>` normalization); overrides `MEMORY_MAC_PATH` when that named host is selected. |
 | `MEMORY_MAC_SUBTREE` | no | Override the per-script remote subtree (mac connector default `client/macos`). |
 | `MEMORY_MAC_IOS_SUBDIR` | no | Back-compat alias for the iOS subtree (default `client/ios`). |
 | `ALLOW_SYNC_INTO_GIT` / `ALLOW_DELETE_IN_GIT` | no | Danger overrides for syncing into a real git clone. |
 | `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
+| `MEMORY_MAC_ENV_FILE` | no | Path of the env file to read (default `apps/connector.mac/.env`). Read before the file is loaded and not settable from inside it — export it in the environment. |
 
 ¹ `MEMORY_MAC_HOST` is only required when you are **not** using named hosts.
 ² `MEMORY_MAC_PATH` is only required when the selected host has no `MEMORY_MAC_PATH_<NAME>`.
@@ -48,8 +49,8 @@ host and select one with `MEMORY_MAC_HOST_NAME`:
 ```sh
 MEMORY_MAC_HOST_TOOL=mcj@tool
 MEMORY_MAC_HOST_MINI=mcj-mini
-MEMORY_MAC_PATH_TOOL=~/code/emergent.memory
-MEMORY_MAC_PATH_MINI=~/code/emergent.memory.mini
+MEMORY_MAC_PATH_TOOL=~/code/emergent.memory-macbuild
+MEMORY_MAC_PATH_MINI=~/code/emergent.memory-macbuild.mini
 MEMORY_MAC_HOST_NAME=tool      # pick "tool" (or "mini")
 ```
 
@@ -60,12 +61,35 @@ Host precedence: an explicitly-set `MEMORY_MAC_HOST` wins; else the selector
 resolves `MEMORY_MAC_HOST_<NAME>` (error if missing); else a `MEMORY_MAC_HOST`
 from `.env`; else fail fast.
 
-This repo's own values live in the gitignored `apps/connector.mac/.env`:
-`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/emergent.memory`.
+The exact target values are per-machine and per-checkout — set `MEMORY_MAC_HOST`,
+`MEMORY_MAC_PATH` (and optionally `MEMORY_MAC_HOST_NAME`) in your own
+`apps/connector.mac/.env` (or a shared file; see below), following the template
+in `apps/connector.mac/.env.example`.
+
+### Worktrees and a shared env file
+
+The default env file is `apps/connector.mac/.env` — per-checkout and gitignored,
+so a new git worktree does **not** inherit it (untracked files are not carried
+into a fresh worktree). If you build from worktrees (this repo uses
+`/root/emergent.memory-wt/<slug>`), point every checkout at one shared file
+instead of copying it into each one:
+
+```sh
+# ~/.zshrc / ~/.bashrc
+export MEMORY_MAC_ENV_FILE=~/.memory/mac.env
+```
+
+`MEMORY_MAC_ENV_FILE` is read before the file is loaded and is not settable from
+inside it (it is not one of the whitelisted `MEMORY_MAC_*` keys), so it must be
+exported in the environment. An explicitly-set `MEMORY_MAC_HOST` /
+`MEMORY_MAC_PATH` (even empty) still wins over anything in that shared file.
 
 ## Expected Mac layout
 
-`MEMORY_MAC_PATH` is the rsync'd build checkout root (it is **not** a git clone):
+`MEMORY_MAC_PATH` must point at a **dedicated** rsync'd build checkout — **not** a
+git clone. The sync guard refuses a checkout root containing `.git` unless
+`ALLOW_SYNC_INTO_GIT=1`, and `mac-build.sh` runs `rm -f go.work` in the checkout
+root, so a real clone would be damaged:
 
 ```
 <MEMORY_MAC_PATH>/

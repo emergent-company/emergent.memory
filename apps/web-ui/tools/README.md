@@ -42,8 +42,9 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `ALLOW_SYNC_INTO_GIT` / `ALLOW_DELETE_IN_GIT` | no | Danger overrides for syncing into a real git clone. |
 | `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
 
-This repo's own values live in the gitignored `apps/connector.mac/.env`:
-`MEMORY_MAC_HOST=mcj-mini`, `MEMORY_MAC_PATH=~/code/emergent.memory`.
+The exact target values are per-machine and per-checkout — set `MEMORY_MAC_HOST`
+and `MEMORY_MAC_PATH` in your own `apps/connector.mac/.env` (gitignored),
+following `apps/connector.mac/.env.example`.
 
 ## Expected Mac layout
 
