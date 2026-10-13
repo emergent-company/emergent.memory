@@ -12,7 +12,7 @@ Apps live under `apps/`:
 | Web UI | `apps/web-ui/` | Go templ + HTMX gateway · Playwright e2e | `cd apps/web-ui && task dev` / `task lint` / `task e2e:test` |
 | CLI | `apps/cli/` | Go | `task cli:install` (→ `~/.memory/bin/memory`) |
 | Linux connector | `apps/connector.linux/` | Go | `cd apps/connector.linux && go build ./...` |
-| Mac connector | `apps/connector.mac/` | Swift (`MemoryConnector/`) | build via Xcode |
+| Mac connector | `apps/connector.mac/` | Swift (`MemoryConnector/`) | `task connector-mac:test` · `task connector-mac:uitest:run` · see `apps/connector.mac/AGENTS.md` |
 | iOS app | `apps/ios/` | Swift | build via Xcode |
 
 **Go workspace:** `go.work` at the repo root. Modules and their import paths:
@@ -113,6 +113,14 @@ task hooks:install  # install git hooks via lefthook (once per checkout)
 task migrate:up     # run Goose migrations
 task migrate:status
 task cli:install    # build + install memory CLI → ~/.memory/bin/memory
+
+# Mac connector (apps/connector.mac) — remote build/test on the Mac; no repo defaults, set MEMORY_MAC_ENV_FILE or MEMORY_MAC_* first
+task connector-mac:build          # build the app on the Mac
+task connector-mac:test           # hosted unit tests (MemoryConnectorTests) over ssh
+task connector-mac:doctor         # verify the Mac is reachable + usable (read-only)
+task connector-mac:lint           # SwiftFormat + SwiftLint (ratchet)
+task connector-mac:uitest:run     # build + run the UI suite from ssh; exits with the suite's code
+task connector-mac:uitest:status  # launchd state + status/log tail
 
 # Web UI (apps/web-ui) — Go templ + HTMX gateway
 cd apps/web-ui
@@ -220,6 +228,7 @@ The skill directory names are listed in `.gitignore` under `.opencode/skills/` a
 | CLI e2e test (runlog) | `e2e/AGENTS.md` |
 | Go endpoint | `apps/server/AGENT.md` — fx modules, Echo, Bun ORM |
 | Database entity | `apps/server/AGENT.md` — Bun models, kb/core schemas |
+| Mac connector / its tests | `apps/connector.mac/AGENTS.md` — suites, target config, UI-suite mechanics |
 
 Common mistakes: hand-editing generated `*_templ.go` (run `templ generate`), skipping the gateway `go build`/`task lint`, and brittle e2e selectors (prefer `getByRole`/`name=` plus the gateway `data-testid` convention).
 
@@ -260,4 +269,5 @@ apps/server/logs/server/    # server logs
 | `apps/web-ui/gateway/AGENTS.md` | gateway Go/templ guidelines + verify commands |
 | `apps/web-ui/tests/e2e/README.md` | Playwright e2e suite: projects, auth, coverage, test-id convention |
 | `e2e/AGENTS.md` | CLI e2e suite (runlog), env vars, package layout |
+| `apps/connector.mac/AGENTS.md` | Mac connector: layout, test suites + commands, target config, UI-suite mechanics |
 | `docs/database/schema-context.md` | DB schema reference |

@@ -5,8 +5,9 @@
 #   apps/connector.mac/Scripts/mac-doctor.sh --check     # run all checks; exit non-zero if any fail
 #
 # Checks (all read-only):
-#   1. MEMORY_MAC_HOST / MEMORY_MAC_PATH configured (env or apps/connector.mac/.env)
-#   2. SSH reachability of MEMORY_MAC_HOST
+#   1. the target config resolves (MEMORY_MAC_HOST / MEMORY_MAC_PATH, or the
+#      MEMORY_MAC_HOST_NAME selector -> MEMORY_MAC_HOST_<NAME>)
+#   2. SSH reachability of the resolved host
 #   3. the remote checkout path exists
 #   4. xcodebuild present + its version
 #   5. at least one usable iOS Simulator destination (needs an installed runtime)
@@ -47,23 +48,20 @@ printf 'mac-doctor: Mac remote build target\n'
 mac_load_env
 
 # ---- 1. configuration -----------------------------------------------------
-if [[ -z "${MEMORY_MAC_HOST+x}" ]]; then
-  bad "MEMORY_MAC_HOST is not set"
-  # shellcheck disable=SC2154 # app_dir is set by lib/mac-remote.sh
-  printf '       -> set it in %s/.env or export MEMORY_MAC_HOST=<ssh-host>\n' "$app_dir"
-  printf '          (see apps/connector.mac/.env.example)\n'
-elif [[ -z "$MEMORY_MAC_HOST" ]]; then
-  warn "MEMORY_MAC_HOST is empty (local-destination mode); remote checks skipped"
-else
-  ok "MEMORY_MAC_HOST=$MEMORY_MAC_HOST"
-fi
+# Delegate to the same resolver the build scripts use. This proves the named-host
+# selector (MEMORY_MAC_HOST_NAME -> MEMORY_MAC_HOST_<NAME> / MEMORY_MAC_PATH_<NAME>)
+# actually resolves, instead of only testing that a variable happens to be set.
+# mac_resolve_target fails fast with an actionable message when nothing resolves.
+mac_resolve_target client/ios MEMORY_MAC_IOS_SUBDIR
 
-if [[ -z "${MEMORY_MAC_PATH:-}" ]]; then
-  bad "MEMORY_MAC_PATH is not set"
-  printf '       -> set the project dir on the Mac, e.g. ~/code/emergent.memory-macbuild (absolute or ~-rooted)\n'
+if [[ -z "$MAC_HOST" ]]; then
+  warn "host: MEMORY_MAC_HOST is explicitly empty (local-destination mode)"
+elif [[ -n "${MEMORY_MAC_HOST_NAME:-}" ]]; then
+  ok "host: MEMORY_MAC_HOST_NAME=$MEMORY_MAC_HOST_NAME -> $MAC_HOST"
 else
-  ok "MEMORY_MAC_PATH=$MEMORY_MAC_PATH"
+  ok "host: $MAC_HOST"
 fi
+ok "path: $MAC_CHECKOUT_PATH"
 
 # ---- 7. opencode MCP host derives from the same config --------------------
 # shellcheck disable=SC2154 # repo_root is set by lib/mac-remote.sh
@@ -76,15 +74,6 @@ if [[ -f "$opencode_json" ]] && grep -q 'xcodebuild' "$opencode_json"; then
     printf '       -> use ["ssh", "{env:MEMORY_MAC_HOST}", ...] (see tools/README.md)\n'
   fi
 fi
-
-if (( FAIL > 0 )); then
-  printf '\nmac-doctor: %d failure(s)\n' "$FAIL"
-  exit 1
-fi
-
-# Resolve/validate the target the same way the build scripts do (dies fast on
-# unsafe configuration).
-mac_resolve_target client/ios MEMORY_MAC_IOS_SUBDIR
 
 if [[ -z "$MAC_HOST" ]]; then
   printf '\nmac-doctor: local-destination mode; remote checks skipped (%d warning(s))\n' "$WARN"

@@ -9,6 +9,10 @@ includes:
     taskfile: apps/server/Taskfile.yml
     dir: apps/server
 
+  connector-mac:
+    taskfile: apps/connector.mac/Taskfile.yml
+    dir: apps/connector.mac
+
 tasks:
   build:
     desc: Build the Go server binary
