@@ -8,39 +8,46 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// BlueprintModelMapRow is one agent whose pinned model the project can't
-// resolve: the agent's name, the source manifest model, and the human-readable
-// reason it needs a mapping.
+// BlueprintModelMapRow is one agent whose manifest pins a model: the agent's
+// name, the source (blueprint) model, the human-readable reason it needs
+// attention (empty when the model resolves against the configured providers),
+// and the pre-filled selection (saved override > pinned model when servable >
+// empty = project default).
 type BlueprintModelMapRow struct {
 	AgentName   string
 	SourceModel string
 	Issue       string
+	Selected    string
 }
 
-// BlueprintModelMapData carries the state for the model-mapping page: the
-// import source plus the unresolved agents and the project's configured
-// generative models to map them onto. Token is an optional private-repo
-// credential, forwarded through a hidden input so a private-repo import that
-// hits unresolved models still authenticates on the confirm step. It is never
-// placed in a redirect target or flash.
+// BlueprintModelMapData carries the state for the model-review page. The source
+// is generic: an install resolves by BlueprintID (posted through a hidden `id`
+// input to Action), while a GitHub import resolves by URL/Ref/Token. Action is
+// the confirm route either way. Token is an optional private-repo credential,
+// forwarded through a hidden input so a private-repo import that hits the review
+// step still authenticates on confirm; it is never placed in a redirect target
+// or flash.
 type BlueprintModelMapData struct {
-	URL    string
-	Ref    string
-	Token  string
-	Rows   []BlueprintModelMapRow
-	Models []Model
+	Action      string
+	BlueprintID string
+	URL         string
+	Ref         string
+	Token       string
+	Rows        []BlueprintModelMapRow
+	Models      []Model
 }
 
-// BlueprintImportModelMapPage is the standalone step shown when a GitHub
-// blueprint import pins models the project can't resolve. It maps each
-// unresolved agent to a configured model (or the project default) before
-// committing the import. Nothing has been installed yet.
+// BlueprintImportModelMapPage is the standalone review step shown before
+// applying a blueprint whose agents pin models. It shows one row per pinned
+// agent so the user can review each model mapping before committing: keep the
+// project default, or choose a configured model. Nothing is installed until the
+// confirm step.
 templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 	<div class={ pageFormChromeClass }>
-		@pageHeader("Knowledge", "Map blueprint models", "This blueprint pins models this project can't resolve. Map each agent to one of your configured models, or keep the project default. Nothing is installed until you confirm.") {
+		@pageHeader("Knowledge", "Review blueprint models", "This blueprint pins models for its agents. Review each mapping before installing — keep the project default, or choose a configured model. Nothing is installed until you confirm.") {
 		}
 	</div>
-	<form method="post" action="/blueprints/import/confirm" data-testid="blueprint-import-map">
+	<form method="post" action={ d.Action } data-testid="blueprint-import-map">
 		<div class={ pageFormFieldsClass, "flex flex-col gap-4" }>
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertWarning,
@@ -48,7 +55,12 @@ templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 				Icon:    "lucide--list-checks",
 				Message: blueprintModelMapSummary(len(d.Rows)),
 			})
-			<input type="hidden" name="url" value={ d.URL }/>
+			if d.BlueprintID != "" {
+				<input type="hidden" name="id" value={ d.BlueprintID }/>
+			}
+			if d.URL != "" {
+				<input type="hidden" name="url" value={ d.URL }/>
+			}
 			if d.Ref != "" {
 				<input type="hidden" name="ref" value={ d.Ref }/>
 			}
@@ -87,21 +99,23 @@ templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 	</form>
 }
 
-// blueprintModelMapSummary is the one-line install-blocker summary shown above
-// the mapping form. It is a plain Go function (not a templ component) so the
-// count — and its singular/plural wording — stays in one place.
+// blueprintModelMapSummary is the one-line review summary shown above the form.
+// It is a plain Go function (not a templ component) so the count — and its
+// singular/plural wording — stays in one place.
 func blueprintModelMapSummary(n int) string {
 	if n == 1 {
-		return "1 agent model needs mapping before this blueprint can be installed."
+		return "1 agent model to review before this blueprint is installed."
 	}
-	return fmt.Sprintf("%d agent models need mapping before this blueprint can be installed.", n)
+	return fmt.Sprintf("%d agent models to review before this blueprint is installed.", n)
 }
 
-// blueprintModelMapRow renders one unresolved agent: its name and pinned source
-// model as a heading, the reason it needs a mapping (wired to the select via
-// aria-describedby), and a full-width select of the project's configured models
-// (first option is the project default, an empty value). The label is explicit
-// that the user is choosing a replacement model.
+// blueprintModelMapRow renders one pinned agent: its name and "Blueprint:"
+// source-model badge as a heading, the reason it needs attention (wired to the
+// select via aria-describedby) plus a "Configure a provider" link when the
+// pinned model isn't servable and models are configured, and a full-width
+// select of the project's configured models (first option is the project
+// default, an empty value; a selection outside the catalog renders as a
+// synthetic "(current)" option so it stays selectable).
 templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
 	{{ selectID := "model." + row.AgentName
 		issueID := "model-issue." + row.AgentName }}
@@ -109,7 +123,7 @@ templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
 		<div class="flex flex-wrap items-center gap-2">
 			<h2 class="text-sm font-semibold">{ row.AgentName }</h2>
 			if row.SourceModel != "" {
-				@ui.Badge(ui.BadgeProps{Label: row.SourceModel, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+				@ui.Badge(ui.BadgeProps{Label: "Blueprint: " + row.SourceModel, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
 			}
 		</div>
 		if row.Issue != "" {
@@ -120,6 +134,9 @@ templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
 					Icon:    "lucide--alert-triangle",
 					Message: row.Issue,
 				})
+				if len(models) > 0 {
+					<a href="/settings/providers" class="link link-primary self-start text-sm">Configure a provider</a>
+				}
 			</div>
 		}
 		@form.FormControl(selectID, "Replacement model for "+row.AgentName, form.LabelAbove, "Choose a configured model, or keep the project default.", "", nil) {
@@ -133,7 +150,10 @@ templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
 				}>
 				<option value="">Project default</option>
 				for _, m := range models {
-					<option value={ m.Provider + "/" + m.ModelName }>{ m.Provider }/{ m.ModelName }</option>
+					<option value={ m.Provider + "/" + m.ModelName } if row.Selected == m.Provider+"/"+m.ModelName { selected }>{ m.Provider }/{ m.ModelName }</option>
+				}
+				if row.Selected != "" && !prefixedModelInCatalog(models, row.Selected) {
+					<option value={ row.Selected } selected>{ row.Selected } (current)</option>
 				}
 			</select>
 		}

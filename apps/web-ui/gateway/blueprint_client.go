@@ -293,6 +293,37 @@ func (m *MemoryClient) ApplyBlueprint(ctx context.Context, id string) (*Blueprin
 	return &out, nil
 }
 
+// ApplyBlueprintWithOverrides materializes a blueprint into the project with
+// explicit model overrides (POST /api/blueprints/:id/apply). Project-scoped via
+// X-Project-ID. The overrides map an agent name to a "provider/model" reference
+// (empty value = project default); the server persists them per-project after a
+// successful apply.
+func (m *MemoryClient) ApplyBlueprintWithOverrides(ctx context.Context, id string, overrides map[string]string) (*BlueprintApplyResult, error) {
+	var out BlueprintApplyResult
+	body := map[string]any{"modelOverrides": overrides}
+	if err := m.doH(ctx, http.MethodPost, "/api/blueprints/"+url.PathEscape(id)+"/apply", body, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ModelOverridesResponse is the body for GET /api/blueprints/model-overrides:
+// the project-scoped agent-name -> "provider/model" map for one blueprint name.
+type ModelOverridesResponse struct {
+	ModelOverrides map[string]string `json:"modelOverrides"`
+}
+
+// GetModelOverrides returns the project-scoped model overrides for one
+// blueprint name (GET /api/blueprints/model-overrides?name=<name>). Project-
+// scoped via X-Project-ID.
+func (m *MemoryClient) GetModelOverrides(ctx context.Context, name string) (map[string]string, error) {
+	var out ModelOverridesResponse
+	if err := m.doH(ctx, http.MethodGet, "/api/blueprints/model-overrides?name="+url.QueryEscape(name), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.ModelOverrides, nil
+}
+
 // ListAppliedBlueprints returns the blueprints applied to the project
 // (GET /api/blueprints/applied). Project-scoped via X-Project-ID. Requires
 // memory's /applied endpoint (PR #330); returns an error until that ships.

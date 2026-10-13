@@ -565,11 +565,11 @@ func TestService_ImportFromGitHub_TokenNotPersisted(t *testing.T) {
 	assert.NotContains(t, stored.Description, token)
 }
 
-// TestService_ImportFromGitHub_ModelOverrides_RewritesManifest verifies a
-// modelOverrides entry rewrites the named agent's model in the persisted
-// manifest before the blueprint is created/published, while a non-matching key
-// leaves other agents untouched.
-func TestService_ImportFromGitHub_ModelOverrides_RewritesManifest(t *testing.T) {
+// TestService_ImportFromGitHub_ModelOverrides_ManifestNotRewritten verifies the
+// import no longer rewrites the stored manifest: a global import (no project)
+// with modelOverrides keeps the PRISTINE upstream manifest — the overrides are
+// applied at apply time and persisted per-project, never baked into the row.
+func TestService_ImportFromGitHub_ModelOverrides_ManifestNotRewritten(t *testing.T) {
 	db := connectTestDB(t)
 	svc := newServiceFromBun(t, db)
 	ctx := context.Background()
@@ -595,36 +595,45 @@ func TestService_ImportFromGitHub_ModelOverrides_RewritesManifest(t *testing.T) 
 	for _, a := range m.Agents {
 		byName[a.Name] = a
 	}
-	require.NotNil(t, byName["imp"].Model, "overridden agent must carry a model")
-	assert.Equal(t, "openai/gpt-4o", byName["imp"].Model.Name)
+	// The stored manifest is pristine: the override is NOT baked in at import.
+	require.NotNil(t, byName["imp"].Model, "original agent keeps its model struct")
+	assert.Equal(t, "gemini-2.5-flash", byName["imp"].Model.Name, "manifest must stay pristine")
 	assert.Nil(t, byName["other"].Model, "non-matching agent must be untouched")
 }
 
-// TestService_ImportFromGitHub_ModelOverrides_EmptyClearsName verifies an empty
-// string override clears the model name (project default) rather than leaving a
-// bare name that would fail apply.
-func TestService_ImportFromGitHub_ModelOverrides_EmptyClearsName(t *testing.T) {
+// TestService_ImportFromGitHub_ModelOverrides_PersistedProjectScoped verifies a
+// project-scoped import with apply:false persists the requested overrides
+// project-scoped (keyed by blueprint name) while leaving the stored manifest
+// pristine.
+func TestService_ImportFromGitHub_ModelOverrides_PersistedProjectScoped(t *testing.T) {
 	db := connectTestDB(t)
 	svc := newServiceFromBun(t, db)
 	ctx := context.Background()
+	_, proj := seedProject(t, db)
 
+	name := uniqueName("imp")
 	archive := buildTarGz(t, []tarEntry{
-		{name: "repo-HEAD/agents/imp2.yaml", body: "name: imp2\nmodel:\n  name: gemini-2.5-flash\n"},
+		{name: "repo-HEAD/agents/imp.yaml", body: "name: " + name + "\ndescription: d\nmodel:\n  name: gemini-2.5-flash\n"},
 	})
 	ts := servingTarball(t, archive)
 	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
 
-	bp, err := svc.ImportFromGitHub(ctx, "", &ImportGitHubRequest{
+	bp, err := svc.ImportFromGitHub(ctx, proj, &ImportGitHubRequest{
 		URL:            "https://github.com/org/repo",
-		ModelOverrides: map[string]string{"imp2": ""},
+		ModelOverrides: map[string]string{name: "openai/gpt-4o"},
 	})
 	require.NoError(t, err)
 
+	// Stored manifest stays pristine.
 	var m BlueprintManifest
 	require.NoError(t, json.Unmarshal(bp.Manifest, &m))
 	require.Len(t, m.Agents, 1)
-	require.NotNil(t, m.Agents[0].Model, "empty override still sets a model struct")
-	assert.Empty(t, m.Agents[0].Model.Name)
+	assert.Equal(t, "gemini-2.5-flash", m.Agents[0].Model.Name, "manifest must stay pristine")
+
+	// Overrides are persisted project-scoped under the blueprint name.
+	overrides, err := svc.GetModelOverrides(ctx, proj, bp.Name)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{name: "openai/gpt-4o"}, overrides)
 }
 
 // TestService_ImportFromGitHub_AtomicRollback verifies that when Apply=true and
@@ -756,6 +765,38 @@ func TestService_PreviewFromGitHub_CreatesNothing(t *testing.T) {
 	var m BlueprintManifest
 	require.NoError(t, json.Unmarshal(preview.Manifest, &m))
 	require.Len(t, m.Packs, 1)
+
+	// Nothing created.
+	list, err := svc.ListBlueprints(ctx, "", "")
+	require.NoError(t, err)
+	assert.Empty(t, list)
+}
+
+// TestService_PreviewFromGitHub_AppliesModelOverrides verifies the preview still
+// applies modelOverrides in memory (create-nothing) so the caller sees the
+// manifest AS IT WILL BE APPLIED.
+func TestService_PreviewFromGitHub_AppliesModelOverrides(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newServiceFromBun(t, db)
+	ctx := context.Background()
+
+	archive := buildTarGz(t, []tarEntry{
+		{name: "repo-HEAD/agents/imp.yaml", body: "name: imp\ndescription: d\nmodel:\n  name: gemini-2.5-flash\n"},
+	})
+	ts := servingTarball(t, archive)
+	svc.fetcher = testGitHubFetcher(t, ts.URL, 1<<20, 1<<20, 100)
+
+	preview, err := svc.PreviewFromGitHub(ctx, &ImportGitHubRequest{
+		URL:            "https://github.com/org/repo",
+		ModelOverrides: map[string]string{"imp": "openai/gpt-4o"},
+	})
+	require.NoError(t, err)
+
+	var m BlueprintManifest
+	require.NoError(t, json.Unmarshal(preview.Manifest, &m))
+	require.Len(t, m.Agents, 1)
+	require.NotNil(t, m.Agents[0].Model)
+	assert.Equal(t, "openai/gpt-4o", m.Agents[0].Model.Name, "preview must reflect the override")
 
 	// Nothing created.
 	list, err := svc.ListBlueprints(ctx, "", "")

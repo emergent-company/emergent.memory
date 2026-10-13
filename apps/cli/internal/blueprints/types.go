@@ -17,6 +17,16 @@ import (
 // at the blueprint root. All fields are optional — absent or empty fields are
 // skipped when applying.
 type ProjectFile struct {
+	// Name/Version/Description/Author mirror the bundled blueprint manifest
+	// header (see apps/server/domain/blueprints/builtin_packs/operator/project.yaml:
+	// name/version/description/author). Name keys the per-project model-override
+	// store, so a blueprint's identity survives install even when no name was
+	// otherwise derivable from the source path.
+	Name        string `json:"name"        yaml:"name"`
+	Version     string `json:"version"     yaml:"version"`
+	Description string `json:"description" yaml:"description"`
+	Author      string `json:"author"      yaml:"author"`
+
 	ProjectInfo string `json:"projectInfo" yaml:"projectInfo"`
 
 	// SourceFile is the path from which this file was loaded (not serialised).

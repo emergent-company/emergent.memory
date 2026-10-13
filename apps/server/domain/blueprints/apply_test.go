@@ -160,6 +160,120 @@ func derefString(s *string) string {
 	return *s
 }
 
+// TestApplyModelOverrides locks the in-memory override helper: a matching agent
+// name sets/replaces the model name (creating Model when nil) and preserves
+// temperature/maxTokens/enableThinking; an empty value clears the name (project
+// default); non-matching agents are untouched; an empty map is a no-op.
+func TestApplyModelOverrides(t *testing.T) {
+	t.Run("sets name and creates model when nil", func(t *testing.T) {
+		m := &BlueprintManifest{Agents: []AgentManifest{{Name: "a"}}}
+		applyModelOverrides(m, map[string]string{"a": "openai/gpt-4o"})
+		require.NotNil(t, m.Agents[0].Model)
+		assert.Equal(t, "openai/gpt-4o", m.Agents[0].Model.Name)
+	})
+
+	t.Run("empty override clears name", func(t *testing.T) {
+		m := &BlueprintManifest{Agents: []AgentManifest{{Name: "a", Model: &AgentModelManifest{Name: "google/gemini-2.5-flash"}}}}
+		applyModelOverrides(m, map[string]string{"a": ""})
+		require.NotNil(t, m.Agents[0].Model)
+		assert.Empty(t, m.Agents[0].Model.Name)
+	})
+
+	t.Run("preserves tuning fields", func(t *testing.T) {
+		temp := float32(0.7)
+		maxTok := 1000
+		thinking := true
+		m := &BlueprintManifest{Agents: []AgentManifest{{Name: "a", Model: &AgentModelManifest{
+			Name: "google/gemini-2.5-flash", Temperature: &temp, MaxTokens: &maxTok, EnableThinking: &thinking,
+		}}}}
+		applyModelOverrides(m, map[string]string{"a": "openai/gpt-4o"})
+		require.NotNil(t, m.Agents[0].Model)
+		assert.Equal(t, "openai/gpt-4o", m.Agents[0].Model.Name)
+		assert.Equal(t, temp, *m.Agents[0].Model.Temperature)
+		assert.Equal(t, maxTok, *m.Agents[0].Model.MaxTokens)
+		assert.Equal(t, thinking, *m.Agents[0].Model.EnableThinking)
+	})
+
+	t.Run("non-matching agent untouched", func(t *testing.T) {
+		m := &BlueprintManifest{Agents: []AgentManifest{{Name: "other", Model: &AgentModelManifest{Name: "google/gemini-2.5-flash"}}}}
+		applyModelOverrides(m, map[string]string{"a": "openai/gpt-4o"})
+		assert.Equal(t, "google/gemini-2.5-flash", m.Agents[0].Model.Name)
+	})
+
+	t.Run("empty map is a no-op", func(t *testing.T) {
+		m := &BlueprintManifest{Agents: []AgentManifest{{Name: "a"}}}
+		applyModelOverrides(m, map[string]string{})
+		assert.Nil(t, m.Agents[0].Model)
+	})
+}
+
+// TestApply_ModelOverrides_PrecedenceAndPersistence is the apply-time resolution
+// integration test: the manifest model is used with no override, a stored
+// per-project override wins on a later apply, an explicit request override wins
+// over the stored one, and the explicit override is persisted after a successful
+// apply.
+func TestApply_ModelOverrides_PrecedenceAndPersistence(t *testing.T) {
+	db := connectTestDB(t)
+	svc := newApplyService(t, db)
+	ctx := context.Background()
+	_, proj := seedProject(t, db)
+
+	agentName := uniqueName("mo-agent")
+	makeManifest := func(model string) json.RawMessage {
+		raw, err := json.Marshal(BlueprintManifest{
+			Agents: []AgentManifest{{Name: agentName, Model: &AgentModelManifest{Name: model}}},
+		})
+		require.NoError(t, err)
+		return raw
+	}
+
+	bp, err := svc.CreateBlueprint(ctx, &CreateBlueprintRequest{
+		Name: uniqueName("mo-bp"), Version: "1.0.0", Manifest: makeManifest("google/gemini-2.5-flash"), ProjectID: &proj,
+	})
+	require.NoError(t, err)
+	_, err = svc.PublishBlueprint(ctx, proj, bp.ID)
+	require.NoError(t, err)
+
+	agentRepo := agents.NewRepository(db)
+	modelOf := func() string {
+		def, err := agentRepo.FindDefinitionByName(ctx, proj, agentName)
+		require.NoError(t, err)
+		require.NotNil(t, def)
+		return def.Model.Name
+	}
+
+	// No overrides: the manifest-pinned model is used.
+	res, err := svc.Apply(ctx, bp.ID, proj, uuid.NewString(), ApplyOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Agents.Created)
+	assert.Equal(t, "google/gemini-2.5-flash", modelOf())
+
+	// Store a per-project override; re-apply a newer version with no explicit
+	// overrides: the STORED override wins over the manifest pin.
+	_, err = svc.UpsertModelOverrides(ctx, proj, bp.Name, map[string]string{agentName: "openai/gpt-4o"})
+	require.NoError(t, err)
+
+	clone, err := svc.NewVersion(ctx, proj, bp.ID, "1.1.0")
+	require.NoError(t, err)
+	_, err = svc.PublishBlueprint(ctx, proj, clone.ID)
+	require.NoError(t, err)
+
+	_, err = svc.Apply(ctx, clone.ID, proj, uuid.NewString(), ApplyOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "openai/gpt-4o", modelOf(), "stored override must win over the manifest pin")
+
+	// An explicit request override wins over the stored one, and is persisted.
+	_, err = svc.Apply(ctx, clone.ID, proj, uuid.NewString(), ApplyOptions{
+		ModelOverrides: map[string]string{agentName: "anthropic/claude-sonnet"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic/claude-sonnet", modelOf(), "explicit override must win over stored")
+
+	overrides, err := svc.GetModelOverrides(ctx, proj, bp.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "anthropic/claude-sonnet", overrides[agentName], "explicit override must be persisted")
+}
+
 // TestApplyAgentManifestToExisting_BannedTools verifies bannedTools is
 // preserve-when-omitted on the update path: a manifest that omits the field
 // keeps the user's existing value, while a manifest that provides it overwrites.

@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.." # resolve to apps/server/
 #    avatar endpoints using the codebase-standard inline auth pattern) ────────
 BASELINE_AUTH_GUARDS=13       # inline `if user == nil` guards in domain handlers
 BASELINE_SETTERS=3            # cross-domain `func (s *Service) SetXxx` wiring (remaining 3 are false positives: chat.SetAgentDefinitionID DB method + 2 agents HTTP handlers)
-BASELINE_APPERROR_STYLEA=1203 # `apperror.Err*.WithMessage/WithInternal` chaining (raised 2026-09-08 to main post-#384; raised 2026-09-11 to 1201 for #423 pack-claims + type-version-history endpoints; raised 2026-10-12 to 1203 for remove-builtin-schema-provisioning: system-pack read-time resolution + source_blueprint_id stamp on existing assignments use the schemas-domain standard repo error style)
+BASELINE_APPERROR_STYLEA=1206 # `apperror.Err*.WithMessage/WithInternal` chaining (raised 2026-09-08 to main post-#384; raised 2026-09-11 to 1201 for #423 pack-claims + type-version-history endpoints; raised 2026-10-12 to 1203 for remove-builtin-schema-provisioning: system-pack read-time resolution + source_blueprint_id stamp on existing assignments use the schemas-domain standard repo error style; raised 2026-10-13 to 1206 for blueprint-install-model-mapping: UpsertModelOverrides/ListModelOverrides/DeleteModelOverrides use the blueprints-domain standard repo error style)
 BASELINE_RESPONSE_TYPES=6     # non-httputil APIResponse/PaginatedResponse/SuccessResponse defs
 
 auth_guards=$(grep -rn "if user == nil" --include="*.go" domain/ 2>/dev/null | grep -v "_test.go" | wc -l | tr -d ' ')

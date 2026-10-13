@@ -22,6 +22,11 @@ import (
 type ApplyOptions struct {
 	// Force is accepted for API compatibility; currently unused.
 	Force bool `json:"force,omitempty"`
+	// ModelOverrides maps an agent name to a `provider/model` reference (or an
+	// empty string to select the project default). Applied at apply time, in
+	// memory, over the stored manifest; when non-empty it is also persisted
+	// per-project (keyed by blueprint name) after a successful apply.
+	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
 }
 
 // ApplyCounts reports per-entity-type materialization counts.
@@ -76,6 +81,25 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
 	}
 
+	// Resolve effective model overrides BEFORE validation/materialization:
+	// stored per-project overrides for (projectID, bp.Name) merged with the
+	// request's explicit overrides (explicit wins), then applied to the
+	// in-memory manifest. Precedence: explicit request > stored per-project >
+	// manifest pinned. An empty override value clears the model name (project
+	// default).
+	storedOverrides, err := s.repo.ListModelOverrides(ctx, projectID, bp.Name)
+	if err != nil {
+		return nil, err
+	}
+	effectiveOverrides := make(map[string]string, len(storedOverrides)+len(opts.ModelOverrides))
+	for name, model := range storedOverrides {
+		effectiveOverrides[name] = model
+	}
+	for name, model := range opts.ModelOverrides {
+		effectiveOverrides[name] = model
+	}
+	applyModelOverrides(&manifest, effectiveOverrides)
+
 	// Static validation BEFORE any materialization: a malformed agent model
 	// reference (e.g. a bare name missing the provider prefix) must fail with
 	// 400 and ZERO rows created, rather than materializing packs first and
@@ -126,7 +150,36 @@ func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID stri
 		return nil, err
 	}
 
+	// Persist explicit request overrides after a fully successful apply (the
+	// same provenance point as recordApplication). Stored overrides are already
+	// in the store; only the explicit request map is upserted.
+	if len(opts.ModelOverrides) > 0 {
+		if err := s.repo.UpsertModelOverrides(ctx, projectID, bp.Name, opts.ModelOverrides); err != nil {
+			return nil, err
+		}
+	}
+
 	return result, nil
+}
+
+// applyModelOverrides rewrites each manifest agent whose Name is a key in
+// overrides, setting/replacing Model.Name (creating Model if nil) and
+// preserving any existing temperature/maxTokens/enableThinking tuning. An empty
+// override value clears the model name (project default).
+func applyModelOverrides(m *BlueprintManifest, overrides map[string]string) {
+	if len(overrides) == 0 {
+		return
+	}
+	for i := range m.Agents {
+		override, ok := overrides[m.Agents[i].Name]
+		if !ok {
+			continue
+		}
+		if m.Agents[i].Model == nil {
+			m.Agents[i].Model = &AgentModelManifest{}
+		}
+		m.Agents[i].Model.Name = override
+	}
 }
 
 // validateManifest statically validates a manifest's agents, packs, and skills

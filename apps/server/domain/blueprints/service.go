@@ -433,6 +433,21 @@ func (s *Service) ListApplied(ctx context.Context, projectID string) ([]AppliedB
 	return s.repo.ListApplied(ctx, projectID)
 }
 
+// GetModelOverrides returns the stored model overrides for a (project,
+// blueprint name) as an agent-name -> model map.
+func (s *Service) GetModelOverrides(ctx context.Context, projectID, blueprintName string) (map[string]string, error) {
+	return s.repo.ListModelOverrides(ctx, projectID, blueprintName)
+}
+
+// UpsertModelOverrides upserts the given model overrides for a (project,
+// blueprint name) and returns the resulting stored map.
+func (s *Service) UpsertModelOverrides(ctx context.Context, projectID, blueprintName string, overrides map[string]string) (map[string]string, error) {
+	if err := s.repo.UpsertModelOverrides(ctx, projectID, blueprintName, overrides); err != nil {
+		return nil, err
+	}
+	return s.repo.ListModelOverrides(ctx, projectID, blueprintName)
+}
+
 // recordApplication upserts the project's application record for a blueprint.
 // It is the provenance write behind future drift detection and unapply; called
 // only after a fully successful apply (packs/agents/skills/seed).

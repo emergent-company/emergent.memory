@@ -456,6 +456,286 @@ func TestUIRouteInstallSchemaStaysWhenDriftUnchanged(t *testing.T) {
 	}
 }
 
+// --- install model-review step ---
+
+// newUIInstallRouteServer builds a bare server exposing the install PRG routes
+// (list install, install-by-id, and the review confirm).
+func newUIInstallRouteServer(f *fakeMemory) (*Server, *echo.Echo) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/blueprints/install", s.uiInstallBlueprint)
+	e.POST("/blueprints/:id/install", s.uiInstallBlueprintById)
+	e.POST("/blueprints/install/confirm", s.uiInstallBlueprintConfirm)
+	return s, e
+}
+
+// pinnedBlueprint returns a published blueprint record whose manifest pins the
+// given model on a single agent named "operator".
+func pinnedBlueprint(id, model string) *BlueprintRecord {
+	return &BlueprintRecord{
+		ID:       id,
+		Name:     "operator",
+		Version:  "1.0.0",
+		Status:   "published",
+		Origin:   "builtin",
+		Manifest: json.RawMessage(`{"agents":[{"name":"operator","model":{"name":"` + model + `"}}]}`),
+	}
+}
+
+// TestUIRouteInstallBlueprintReviewWhenPinned verifies an install of a
+// blueprint that pins a model renders the review page (one row per pinned
+// agent) and does NOT apply yet.
+func TestUIRouteInstallBlueprintReviewWhenPinned(t *testing.T) {
+	f := &fakeMemory{blueprint: pinnedBlueprint("bp1", "openai/deepseek-v4-pro")}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=bp1", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="blueprint-import-map"`,
+		`name="model.operator"`,
+		`action="/blueprints/install/confirm"`,
+		`name="id"`,
+		`value="bp1"`,
+		"Blueprint: openai/deepseek-v4-pro",
+		// No provider configured → the pinned model's prefix is unresolved.
+		"is not configured in this project.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("review page missing %q", want)
+		}
+	}
+	if len(f.appliedBlueprint) != 0 {
+		t.Errorf("review step must not apply, applied = %v", f.appliedBlueprint)
+	}
+}
+
+// TestUIRouteInstallBlueprintReviewPrefillServable verifies a servable pinned
+// model (provider configured) is pre-filled and carries no issue, while a
+// saved override still wins over the pinned model.
+func TestUIRouteInstallBlueprintReviewPrefill(t *testing.T) {
+	f := &fakeMemory{
+		blueprint:        pinnedBlueprint("bp1", "openai/deepseek-v4-pro"),
+		projectProviders: []ProjectProviderConfig{{Provider: "openai", Slug: "openai"}},
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{ModelName: "deepseek-v4-pro", ModelType: "generative"}},
+		},
+	}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=bp1", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// Servable → the pinned model pre-fills and no issue is raised.
+	if !strings.Contains(body, `value="openai/deepseek-v4-pro" selected`) {
+		t.Errorf("servable pinned model must be pre-filled: %s", body)
+	}
+	if strings.Contains(body, "Configure a provider") {
+		t.Errorf("servable pinned model must not show the configure-provider link: %s", body)
+	}
+}
+
+// TestUIRouteInstallBlueprintReviewPrefillSavedOverride verifies a saved
+// per-project override wins over the (servable) pinned model, rendering as a
+// "(current)" fallback when it is not in the configured catalog.
+func TestUIRouteInstallBlueprintReviewPrefillSavedOverride(t *testing.T) {
+	f := &fakeMemory{
+		blueprint:        pinnedBlueprint("bp1", "openai/deepseek-v4-pro"),
+		projectProviders: []ProjectProviderConfig{{Provider: "openai", Slug: "openai"}},
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{ModelName: "deepseek-v4-pro", ModelType: "generative"}},
+		},
+		modelOverrides: map[string]string{"operator": "openai/gpt-4o"},
+	}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=bp1", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="openai/gpt-4o" selected>openai/gpt-4o (current)`) {
+		t.Errorf("saved override must pre-fill (with a (current) fallback): %s", body)
+	}
+	if f.modelOverridesName != "operator" {
+		t.Errorf("GetModelOverrides name = %q, want operator (blueprint name)", f.modelOverridesName)
+	}
+}
+
+// TestUIRouteInstallBlueprintDirectWhenNoPinnedModel verifies a blueprint with
+// no pinned agents applies directly (no review step).
+func TestUIRouteInstallBlueprintDirectWhenNoPinnedModel(t *testing.T) {
+	f := &fakeMemory{blueprint: &BlueprintRecord{
+		ID: "bp1", Name: "agent-notes", Version: "1.0.0", Status: "published",
+		Manifest: json.RawMessage(`{"agents":[{"name":"operator"}]}`),
+	}}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install?schemaId=bp1", nil))
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
+		t.Errorf("location = %q, want /blueprints?installed=1", loc)
+	}
+	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp1" {
+		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
+	}
+}
+
+// TestUIRouteInstallBlueprintByIdReview verifies the draft/registry install-by-
+// id path shows the review step for a pinned blueprint.
+func TestUIRouteInstallBlueprintByIdReview(t *testing.T) {
+	f := &fakeMemory{blueprint: pinnedBlueprint("bp1", "openai/deepseek-v4-pro")}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/bp1/install", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `data-testid="blueprint-import-map"`) {
+		t.Errorf("install-by-id must show the review page: %s", body)
+	}
+	if len(f.appliedBlueprint) != 0 {
+		t.Errorf("review step must not apply, applied = %v", f.appliedBlueprint)
+	}
+}
+
+// TestUIRouteInstallBlueprintConfirm verifies the review confirm applies the
+// blueprint with the chosen per-agent overrides.
+func TestUIRouteInstallBlueprintConfirm(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newUIInstallRouteServer(f)
+
+	values := url.Values{"id": {"bp1"}, "model.operator": {"openai/gpt-4o"}, "model.editor": {""}}
+	req := httptest.NewRequest(http.MethodPost, "/blueprints/install/confirm", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/blueprints?installed=1" {
+		t.Errorf("location = %q, want /blueprints?installed=1", loc)
+	}
+	if len(f.appliedBlueprint) != 1 || f.appliedBlueprint[0] != "bp1" {
+		t.Fatalf("appliedBlueprint = %v", f.appliedBlueprint)
+	}
+	want := map[string]string{"operator": "openai/gpt-4o", "editor": ""}
+	if len(f.applyOverrides) != len(want) {
+		t.Fatalf("applyOverrides = %v, want %v", f.applyOverrides, want)
+	}
+	for k, v := range want {
+		if got := f.applyOverrides[k]; got != v {
+			t.Errorf("applyOverrides[%q] = %q, want %q", k, got, v)
+		}
+	}
+}
+
+// TestUIRouteInstallBlueprintConfirmMissingID verifies the confirm route
+// short-circuits without a backend call when the id is missing.
+func TestUIRouteInstallBlueprintConfirmMissingID(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newUIInstallRouteServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/blueprints/install/confirm", nil))
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/blueprints?err=1" {
+		t.Errorf("location = %q, want /blueprints?err=1", loc)
+	}
+	if len(f.appliedBlueprint) != 0 || f.applyOverrides != nil {
+		t.Errorf("missing id must not call the backend: applied=%v overrides=%v", f.appliedBlueprint, f.applyOverrides)
+	}
+}
+
+// TestBuildModelMapRows pins the review-row resolution: issue classification and
+// the saved > servable-pinned > empty pre-fill precedence.
+func TestBuildModelMapRows(t *testing.T) {
+	manifest := blueprintManifest{
+		Agents: []blueprintAgent{
+			{Name: "bare", Model: &blueprintModel{Name: "gemini-2.5-flash"}},
+			{Name: "servable", Model: &blueprintModel{Name: "openai/deepseek-v4-pro"}},
+			{Name: "unconfigured", Model: &blueprintModel{Name: "anthropic/claude-3"}},
+			{Name: "saved", Model: &blueprintModel{Name: "openai/deepseek-v4-pro"}},
+			{Name: "cleared", Model: &blueprintModel{Name: "openai/deepseek-v4-pro"}},
+			{Name: "nopin"},
+		},
+	}
+	providerNames := []string{"openai"}
+	saved := map[string]string{"saved": "openai/gpt-4o", "cleared": ""}
+
+	rows := buildModelMapRows(manifest, providerNames, saved)
+	byName := map[string]BlueprintModelMapRow{}
+	for _, r := range rows {
+		byName[r.AgentName] = r
+	}
+
+	if _, ok := byName["nopin"]; ok {
+		t.Error("agent without a pinned model must not produce a row")
+	}
+	if len(rows) != 5 {
+		t.Fatalf("row count = %d, want 5: %+v", len(rows), rows)
+	}
+
+	if r := byName["bare"]; r.Issue != "Set a provider for this model (expected provider/model)." || r.Selected != "" {
+		t.Errorf("bare = %+v, want issue + empty selected", r)
+	}
+	if r := byName["servable"]; r.Issue != "" || r.Selected != "openai/deepseek-v4-pro" {
+		t.Errorf("servable = %+v, want no issue + pinned pre-fill", r)
+	}
+	if r := byName["unconfigured"]; r.Issue != "The 'anthropic' provider is not configured in this project." || r.Selected != "" {
+		t.Errorf("unconfigured = %+v, want issue + empty selected", r)
+	}
+	if r := byName["saved"]; r.Selected != "openai/gpt-4o" {
+		t.Errorf("saved = %+v, want the saved override to win", r)
+	}
+	if r := byName["cleared"]; r.Selected != "" {
+		t.Errorf("cleared = %+v, want an empty saved override to clear to project default", r)
+	}
+}
+
+// TestModelOverridesFromForm pins the per-agent form parsing: `model.<agent>`
+// fields map to overrides (empty value = project default), everything else is
+// ignored.
+func TestModelOverridesFromForm(t *testing.T) {
+	form := url.Values{
+		"model.writer": {"openai/gpt-4o"},
+		"model.editor": {""},
+		"id":           {"bp1"},
+		"url":          {"https://github.com/org/repo"},
+	}
+	got := modelOverridesFromForm(form)
+	want := map[string]string{"writer": "openai/gpt-4o", "editor": ""}
+	if len(got) != len(want) {
+		t.Fatalf("overrides = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("overrides[%q] = %q, want %q", k, got, v)
+		}
+	}
+}
+
 // --- blueprint details ---
 
 func TestObjectTypesFromRaw(t *testing.T) {

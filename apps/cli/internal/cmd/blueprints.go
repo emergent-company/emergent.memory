@@ -35,6 +35,10 @@ var (
 
 	// update subcommand flag
 	blueprintsUpdateWaitFlag bool
+
+	// install model-mapping flags
+	blueprintsMapModelFlag []string
+	blueprintsNoMapFlag    bool
 )
 
 // ─────────────────────────────────────────────
@@ -108,6 +112,19 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintf(out, "  warning  %s\n", issue)
 	}
 
+	// ── Model mapping ──────────────────────────────────────────────
+	// After preflight passes (so a malformed model still aborts before any API
+	// call), resolve install-time model choices: compare each agent's pinned
+	// model against the project's configured providers, apply stored per-project
+	// overrides and/or --map-model flags (or prompt when interactive), and
+	// rewrite the agents' model names before the applier runs. This is advisory
+	// — availability never blocks an install. The resolved choices are persisted
+	// after a successful apply.
+	mapping, err := runModelMapping(cmd, c, projectID, projectFile, agents, dir, source, out)
+	if err != nil {
+		return err
+	}
+
 	// ── Run blueprinter ────────────────────────────────────────────
 	applier := blueprints.NewBlueprintsApplier(
 		c.SDK.Projects,
@@ -151,6 +168,15 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 	for _, r := range all {
 		if r.Action == blueprints.BlueprintsActionError {
 			return fmt.Errorf("blueprints completed with errors")
+		}
+	}
+
+	// ── Persist model overrides ────────────────────────────────────
+	// Only after a fully successful, non-dry-run apply: remember the resolved
+	// agent→model choices per project so a re-install/upgrade pre-fills them.
+	if mapping != nil && !blueprintsDryRunFlag {
+		if err := persistModelOverrides(c, mapping); err != nil {
+			_, _ = fmt.Fprintf(out, "  warning  could not persist model overrides: %v\n", err)
 		}
 	}
 
@@ -815,11 +841,15 @@ func init() {
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
 	blueprintsInstallCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
 	blueprintsInstallCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
+	blueprintsInstallCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")
+	blueprintsInstallCmd.Flags().BoolVar(&blueprintsNoMapFlag, "no-map", false, "Skip install-time model mapping and use the blueprint's pinned models as-is")
 
 	// deprecated bare form also needs these flags
 	blueprintsCmd.Flags().BoolVar(&blueprintsUpgradeFlag, "upgrade", false, "Update existing resources instead of skipping them")
 	blueprintsCmd.Flags().BoolVar(&blueprintsDryRunFlag, "dry-run", false, "Preview actions without making any API calls")
 	blueprintsCmd.Flags().StringVar(&blueprintsTokenFlag, "token", "", "GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN")
+	blueprintsCmd.Flags().StringArrayVar(&blueprintsMapModelFlag, "map-model", nil, "Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)")
+	blueprintsCmd.Flags().BoolVar(&blueprintsNoMapFlag, "no-map", false, "Skip install-time model mapping and use the blueprint's pinned models as-is")
 
 	// dump subcommand flags
 	blueprintsDumpCmd.Flags().StringVar(&blueprintsDumpTypesFlag, "types", "", "Comma-separated list of object/relationship types to export (default: all types)")

@@ -290,6 +290,14 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/blueprints/model-overrides
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: PUT
+      path: /api/blueprints/model-overrides
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireProjectID
+    - method: GET
       path: /api/blueprints/name/:name/versions
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember

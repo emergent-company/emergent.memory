@@ -267,6 +267,10 @@ type fakeMemory struct {
 	publishedBlueprint  []string                // ids passed to PublishBlueprint
 	appliedBlueprint    []string                // ids passed to ApplyBlueprint
 	applyBlueprintRes   *BlueprintApplyResult   // returned by ApplyBlueprint
+	applyOverrides      map[string]string       // last overrides passed to ApplyBlueprintWithOverrides
+	modelOverrides      map[string]string       // returned by GetModelOverrides, when set
+	modelOverridesErr   error                   // GetModelOverrides failure
+	modelOverridesName  string                  // last name passed to GetModelOverrides
 	appliedBlueprints   []AppliedBlueprint      // returned by ListAppliedBlueprints
 	unappliedBlueprint  []string                // ids passed to UnapplyBlueprint
 	unapplyBlueprintRes *BlueprintUnapplyResult // returned by UnapplyBlueprint
@@ -1592,6 +1596,29 @@ func (f *fakeMemory) ApplyBlueprint(ctx context.Context, id string) (*BlueprintA
 		return f.applyBlueprintRes, nil
 	}
 	return &BlueprintApplyResult{BlueprintID: id}, nil
+}
+
+func (f *fakeMemory) ApplyBlueprintWithOverrides(ctx context.Context, id string, overrides map[string]string) (*BlueprintApplyResult, error) {
+	if f.blueprintErr != nil {
+		return nil, f.blueprintErr
+	}
+	f.appliedBlueprint = append(f.appliedBlueprint, id)
+	f.applyOverrides = overrides
+	if f.applyBlueprintRes != nil {
+		return f.applyBlueprintRes, nil
+	}
+	return &BlueprintApplyResult{BlueprintID: id}, nil
+}
+
+func (f *fakeMemory) GetModelOverrides(ctx context.Context, name string) (map[string]string, error) {
+	if f.modelOverridesErr != nil {
+		return nil, f.modelOverridesErr
+	}
+	f.modelOverridesName = name
+	if f.modelOverrides != nil {
+		return f.modelOverrides, nil
+	}
+	return map[string]string{}, nil
 }
 
 func (f *fakeMemory) ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error) {

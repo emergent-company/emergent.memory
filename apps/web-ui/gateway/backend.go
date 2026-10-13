@@ -182,6 +182,8 @@ type MemoryBackend interface {
 	GetBlueprint(ctx context.Context, id string) (*BlueprintRecord, error)
 	PublishBlueprint(ctx context.Context, id string) error
 	ApplyBlueprint(ctx context.Context, id string) (*BlueprintApplyResult, error)
+	ApplyBlueprintWithOverrides(ctx context.Context, id string, overrides map[string]string) (*BlueprintApplyResult, error)
+	GetModelOverrides(ctx context.Context, name string) (map[string]string, error)
 	ListAppliedBlueprints(ctx context.Context) ([]AppliedBlueprint, error)
 	UnapplyBlueprint(ctx context.Context, id string) (*BlueprintUnapplyResult, error)
 	GetBlueprintUpdates(ctx context.Context, name string) (*BlueprintUpdateCheck, error)

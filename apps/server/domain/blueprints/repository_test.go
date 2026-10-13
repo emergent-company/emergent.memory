@@ -434,3 +434,46 @@ func TestRepository_Scope_PrivateHiddenFromOtherProjects(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, exists)
 }
+
+// TestRepository_ModelOverrides_UpsertListDelete verifies the model-override
+// store: upsert persists a map keyed by agent name, a second upsert overwrites
+// (upsert semantics), an empty value is a valid override, and delete clears the
+// (project, blueprint) scope.
+func TestRepository_ModelOverrides_UpsertListDelete(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, testLogger())
+	ctx := context.Background()
+
+	proj := uuid.NewString()
+	name := uniqueName("mo")
+
+	// Empty upsert is a no-op (no error, no rows).
+	require.NoError(t, repo.UpsertModelOverrides(ctx, proj, name, map[string]string{}))
+
+	require.NoError(t, repo.UpsertModelOverrides(ctx, proj, name, map[string]string{
+		"agent-a": "openai/gpt-4o",
+		"agent-b": "",
+	}))
+
+	got, err := repo.ListModelOverrides(ctx, proj, name)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"agent-a": "openai/gpt-4o", "agent-b": ""}, got)
+
+	// Overwrite one key (upsert) — the other is preserved.
+	require.NoError(t, repo.UpsertModelOverrides(ctx, proj, name, map[string]string{"agent-a": "anthropic/claude-sonnet"}))
+	got, err = repo.ListModelOverrides(ctx, proj, name)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"agent-a": "anthropic/claude-sonnet", "agent-b": ""}, got)
+
+	// A different (project, blueprint) scope is isolated.
+	got, err = repo.ListModelOverrides(ctx, uuid.NewString(), name)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+
+	// Delete clears the scope (idempotent).
+	require.NoError(t, repo.DeleteModelOverrides(ctx, proj, name))
+	require.NoError(t, repo.DeleteModelOverrides(ctx, proj, name))
+	got, err = repo.ListModelOverrides(ctx, proj, name)
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}

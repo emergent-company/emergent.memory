@@ -112,20 +112,126 @@ func blueprintMemoryError(c echo.Context, err error) error {
 
 // --- UI (PRG) handlers ---
 
-// uiInstallBlueprint handles the install form on the blueprints page: it
-// applies the blueprint identified by schemaId (the blueprint id) and redirects
-// back to the list (or to ?err=1 on failure).
-func (s *Server) uiInstallBlueprint(c echo.Context) error {
-	schemaID := c.FormValue("schemaId")
-	ctx := c.Request().Context()
-	if schemaID == "" {
-		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+// pinnedAgentsFromManifest returns the manifest agents that pin an explicit
+// model — the only agents the model-review step shows.
+func pinnedAgentsFromManifest(manifest blueprintManifest) []blueprintAgent {
+	var out []blueprintAgent
+	for _, a := range manifest.Agents {
+		if a.Model != nil && a.Model.Name != "" {
+			out = append(out, a)
+		}
 	}
-	// Blueprint apply does not surface migration status, so fall back to the
-	// drift scan around the install: redirect to migrations only when this
-	// install increased the stale-object count.
+	return out
+}
+
+// buildModelMapRows maps each pinned manifest agent to a review row. Issue is
+// empty when the pinned model resolves against the configured providers (a
+// prefixed model whose provider is configured); otherwise it carries the reason
+// the model needs attention. Selected is the pre-filled override: the saved
+// override (when present, even an empty "clear" value), else the pinned model
+// when servable, else empty (project default).
+func buildModelMapRows(manifest blueprintManifest, providerNames []string, saved map[string]string) []BlueprintModelMapRow {
+	rows := make([]BlueprintModelMapRow, 0, len(manifest.Agents))
+	for _, a := range manifest.Agents {
+		if a.Model == nil || a.Model.Name == "" {
+			continue
+		}
+		model := a.Model.Name
+		prov := modelProviderOf(model)
+		issue := ""
+		switch {
+		case prov == "":
+			issue = "Set a provider for this model (expected provider/model)."
+		case !slices.Contains(providerNames, prov):
+			issue = "The '" + prov + "' provider is not configured in this project."
+		}
+		selected := ""
+		if v, ok := saved[a.Name]; ok {
+			selected = v
+		} else if issue == "" {
+			selected = model
+		}
+		rows = append(rows, BlueprintModelMapRow{
+			AgentName:   a.Name,
+			SourceModel: model,
+			Issue:       issue,
+			Selected:    selected,
+		})
+	}
+	return rows
+}
+
+// blueprintModelMapContext resolves the review-page state for a manifest: the
+// project's configured generative models plus the per-agent rows, pre-filled
+// from the saved per-project overrides for the blueprint name (best effort). A
+// provider fetch failure leaves the catalog empty, which makes every prefixed
+// model unresolved (still safe — the user maps them); a saved-override fetch
+// failure just pre-fills nothing.
+func (s *Server) blueprintModelMapContext(ctx context.Context, manifest blueprintManifest, name string) ([]BlueprintModelMapRow, []Model) {
+	providers, _ := s.memory.ListProjectProviders(ctx)
+	models := s.configuredGenerativeModels(ctx, providers)
+	providerNames := projectProviderNames(providers)
+
+	saved := map[string]string{}
+	if name != "" {
+		if ov, err := s.memory.GetModelOverrides(ctx, name); err == nil {
+			saved = ov
+		} else {
+			captureError(err)
+		}
+	}
+	return buildModelMapRows(manifest, providerNames, saved), models
+}
+
+// loadInstallManifest resolves a blueprint id's manifest and name for the
+// review step. ok is false when the blueprint can't be resolved (e.g. a legacy
+// registry schema, where install proceeds directly) or its manifest can't be
+// parsed — either way the caller falls back to a direct apply.
+func (s *Server) loadInstallManifest(ctx context.Context, id string) (manifest blueprintManifest, name string, ok bool) {
+	rec, err := s.memory.GetBlueprint(ctx, id)
+	if err != nil {
+		return blueprintManifest{}, "", false
+	}
+	var m blueprintManifest
+	if err := json.Unmarshal(rec.Manifest, &m); err != nil {
+		return blueprintManifest{}, "", false
+	}
+	return m, rec.Name, true
+}
+
+// modelOverridesFromForm reads the per-agent `model.<agentName>` form fields
+// into the override map. It mirrors the import confirm parsing: an empty value
+// clears the model so the agent falls back to the project default.
+func modelOverridesFromForm(form url.Values) map[string]string {
+	overrides := make(map[string]string)
+	for key, values := range form {
+		agentName, ok := strings.CutPrefix(key, "model.")
+		if !ok {
+			continue
+		}
+		if len(values) > 0 {
+			overrides[agentName] = values[0]
+		} else {
+			overrides[agentName] = ""
+		}
+	}
+	return overrides
+}
+
+// applyBlueprintPRG applies a blueprint (optionally with model overrides) and
+// redirects to the appropriate flash. Apply does not surface migration status,
+// so fall back to the drift scan around the apply: redirect to migrations only
+// when this install increased the stale-object count.
+func (s *Server) applyBlueprintPRG(c echo.Context, id string, overrides map[string]string) error {
+	ctx := c.Request().Context()
 	before := s.checkMigrationAfterApply(ctx)
-	if _, err := s.memory.ApplyBlueprint(ctx, schemaID); err != nil {
+	var err error
+	if len(overrides) > 0 {
+		_, err = s.memory.ApplyBlueprintWithOverrides(ctx, id, overrides)
+	} else {
+		_, err = s.memory.ApplyBlueprint(ctx, id)
+	}
+	if err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	if after := s.checkMigrationAfterApply(ctx); after > before {
@@ -135,21 +241,67 @@ func (s *Server) uiInstallBlueprint(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 }
 
-// uiInstallBlueprintById applies an already-seeded blueprint and redirects back
-// to the list (PRG).
+// uiInstallBlueprint handles the install form on the blueprints page. When the
+// blueprint pins models it renders the review step first; otherwise it applies
+// directly. A missing schemaId short-circuits to the generic error flash.
+func (s *Server) uiInstallBlueprint(c echo.Context) error {
+	schemaID := c.FormValue("schemaId")
+	ctx := c.Request().Context()
+	if schemaID == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	manifest, name, ok := s.loadInstallManifest(ctx, schemaID)
+	if !ok || len(pinnedAgentsFromManifest(manifest)) == 0 {
+		return s.applyBlueprintPRG(c, schemaID, nil)
+	}
+	rows, models := s.blueprintModelMapContext(ctx, manifest, name)
+	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
+		Action:      "/blueprints/install/confirm",
+		BlueprintID: schemaID,
+		Rows:        rows,
+		Models:      models,
+	}))
+}
+
+// uiInstallBlueprintById applies an already-seeded blueprint, showing the
+// review step first when it pins models (PRG).
 func (s *Server) uiInstallBlueprintById(c echo.Context) error {
-	if _, err := s.memory.ApplyBlueprint(c.Request().Context(), c.Param("id")); err != nil {
+	id := c.Param("id")
+	ctx := c.Request().Context()
+	manifest, name, ok := s.loadInstallManifest(ctx, id)
+	if !ok || len(pinnedAgentsFromManifest(manifest)) == 0 {
+		return s.applyBlueprintPRG(c, id, nil)
+	}
+	rows, models := s.blueprintModelMapContext(ctx, manifest, name)
+	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
+		Action:      "/blueprints/install/confirm",
+		BlueprintID: id,
+		Rows:        rows,
+		Models:      models,
+	}))
+}
+
+// uiInstallBlueprintConfirm handles the review-step form submission for an
+// install: it reads the hidden id plus the per-agent `model.<agentName>`
+// overrides and applies them (an empty value clears the model → project
+// default). Success redirects to the installed flash; failure redirects with
+// the mapped error.
+func (s *Server) uiInstallBlueprintConfirm(c echo.Context) error {
+	id := c.FormValue("id")
+	if id == "" {
+		return c.Redirect(http.StatusSeeOther, "/blueprints?err=1")
+	}
+	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
-	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
+	return s.applyBlueprintPRG(c, id, modelOverridesFromForm(c.Request().PostForm))
 }
 
 // uiImportGitHubBlueprint previews a blueprint import from a GitHub repository
-// URL (side-effect free), then either imports+applies it directly when every
-// pinned model resolves against the project's configured providers, or renders
-// the model-mapping page so the user can map unresolved models first. The
-// optional token is a private-repo credential: it is forwarded only to memory
-// and is never placed in the redirect target or flash.
+// URL (side-effect free), then either imports+applies it directly when no agent
+// pins a model, or renders the model-review page so the user can confirm the
+// pinned models first. The optional token is a private-repo credential: it is
+// forwarded only to memory and is never placed in the redirect target or flash.
 func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	repoURL := c.FormValue("url")
 	ref := c.FormValue("ref")
@@ -164,38 +316,12 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 		return redirectWithError(c, "/blueprints", err)
 	}
 
-	// Best-effort provider fetch: a failure leaves the catalog empty, which
-	// makes every prefixed model unresolved (still safe — the user maps them).
-	providers, _ := s.memory.ListProjectProviders(ctx)
-	models := s.configuredGenerativeModels(ctx, providers)
-	providerNames := projectProviderNames(providers)
-
 	var manifest blueprintManifest
 	if err := json.Unmarshal(prev.Manifest, &manifest); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 
-	var rows []BlueprintModelMapRow
-	for _, a := range manifest.Agents {
-		if a.Model == nil || a.Model.Name == "" {
-			continue
-		}
-		prov := modelProviderOf(a.Model.Name)
-		switch {
-		case prov == "":
-			rows = append(rows, BlueprintModelMapRow{
-				AgentName:   a.Name,
-				SourceModel: a.Model.Name,
-				Issue:       "Set a provider for this model (expected provider/model).",
-			})
-		case !slices.Contains(providerNames, prov):
-			rows = append(rows, BlueprintModelMapRow{
-				AgentName:   a.Name,
-				SourceModel: a.Model.Name,
-				Issue:       "The '" + prov + "' provider is not configured in this project.",
-			})
-		}
-	}
+	rows, models := s.blueprintModelMapContext(ctx, manifest, prev.Name)
 
 	if len(rows) == 0 {
 		if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, nil); err != nil {
@@ -204,7 +330,8 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 		return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")
 	}
 
-	return s.page(c, pageTitle("Map blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
+	return s.page(c, pageTitle("Review blueprint models"), BlueprintImportModelMapPage(BlueprintModelMapData{
+		Action: "/blueprints/import/confirm",
 		URL:    repoURL,
 		Ref:    ref,
 		Token:  token,
@@ -213,7 +340,7 @@ func (s *Server) uiImportGitHubBlueprint(c echo.Context) error {
 	}))
 }
 
-// uiImportGitHubBlueprintConfirm handles the model-mapping form submission: it
+// uiImportGitHubBlueprintConfirm handles the review-step form submission: it
 // reads the per-agent `model.<agentName>` overrides and applies the import with
 // them (an empty value clears the model → project default). Success redirects
 // to the installed flash; failure redirects with the mapped error.
@@ -229,20 +356,8 @@ func (s *Server) uiImportGitHubBlueprintConfirm(c echo.Context) error {
 	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
-	overrides := make(map[string]string)
-	for key, values := range c.Request().PostForm {
-		agentName, ok := strings.CutPrefix(key, "model.")
-		if !ok {
-			continue
-		}
-		if len(values) > 0 {
-			overrides[agentName] = values[0]
-		} else {
-			overrides[agentName] = ""
-		}
-	}
 
-	if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, overrides); err != nil {
+	if _, err := s.memory.ImportAndApplyBlueprint(ctx, repoURL, ref, token, modelOverridesFromForm(c.Request().PostForm)); err != nil {
 		return redirectWithError(c, "/blueprints", err)
 	}
 	return c.Redirect(http.StatusSeeOther, "/blueprints?installed=1")

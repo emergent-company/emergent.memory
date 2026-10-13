@@ -228,6 +228,23 @@ type BlueprintUpdateJob struct {
 	FinishedAt    *time.Time      `bun:"finished_at,type:timestamptz" json:"finishedAt,omitempty"`
 }
 
+// BlueprintModelOverride records a project's per-blueprint model override for a
+// single agent, applied at install (apply) time. Keyed by (project_id,
+// blueprint_name, agent_name) — NOT by blueprint id — so the user's choice
+// survives a version upgrade (a new version is a new kb.blueprints row but the
+// same name). Table: kb.blueprint_model_overrides.
+type BlueprintModelOverride struct {
+	bun.BaseModel `bun:"table:kb.blueprint_model_overrides,alias:bmo"`
+
+	ID            string    `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID     string    `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	BlueprintName string    `bun:"blueprint_name,notnull" json:"blueprintName"`
+	AgentName     string    `bun:"agent_name,notnull" json:"agentName"`
+	Model         string    `bun:"model,notnull,default:''" json:"model"`
+	CreatedAt     time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt     time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
 // GithubCredential stores a project's encrypted GitHub personal access token.
 // The token is never serialized or logged; the plaintext is decrypted only for
 // the outbound codeload fetch. Table: kb.github_credentials.

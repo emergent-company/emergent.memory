@@ -543,6 +543,86 @@ type SetGithubCredentialRequest struct {
 	Token string `json:"token"`
 }
 
+// ModelOverridesResponse is the body for GET/PUT /api/blueprints/model-overrides:
+// the project-scoped model overrides for one blueprint name as an agent-name ->
+// model map.
+type ModelOverridesResponse struct {
+	ModelOverrides map[string]string `json:"modelOverrides"`
+}
+
+// UpsertModelOverridesRequest is the body for PUT /api/blueprints/model-overrides.
+type UpsertModelOverridesRequest struct {
+	Name           string            `json:"name"`
+	ModelOverrides map[string]string `json:"modelOverrides"`
+}
+
+// GetModelOverrides handles GET /api/blueprints/model-overrides?name=<name>.
+// @Summary      Get blueprint model overrides
+// @Description  Returns the caller's project-scoped model overrides for a blueprint name (agent-name -> provider/model map). Requires project context.
+// @Tags         blueprints
+// @Produce      json
+// @Param        name query string true "Blueprint name"
+// @Success      200 {object} ModelOverridesResponse "Stored model overrides"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/model-overrides [get]
+// @Security     bearerAuth
+func (h *Handler) GetModelOverrides(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+	name := strings.TrimSpace(c.QueryParam("name"))
+	if name == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+
+	overrides, err := h.svc.GetModelOverrides(c.Request().Context(), projectID, name)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, ModelOverridesResponse{ModelOverrides: overrides})
+}
+
+// UpsertModelOverrides handles PUT /api/blueprints/model-overrides.
+// @Summary      Set blueprint model overrides
+// @Description  Upserts the caller's project-scoped model overrides for a blueprint name (agent-name -> provider/model map) and returns the resulting stored map. Requires project context.
+// @Tags         blueprints
+// @Accept       json
+// @Produce      json
+// @Param        request body UpsertModelOverridesRequest true "Blueprint name and overrides"
+// @Success      200 {object} ModelOverridesResponse "Resulting stored model overrides"
+// @Failure      400 {object} apperror.Error "Bad request / project context required"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/blueprints/model-overrides [put]
+// @Security     bearerAuth
+func (h *Handler) UpsertModelOverrides(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := user.ProjectID
+	if projectID == "" {
+		return apperror.NewBadRequest("project context required (X-Project-ID header or API token)")
+	}
+
+	var req UpsertModelOverridesRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		return apperror.NewBadRequest("name is required")
+	}
+
+	overrides, err := h.svc.UpsertModelOverrides(c.Request().Context(), projectID, req.Name, req.ModelOverrides)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, ModelOverridesResponse{ModelOverrides: overrides})
+}
+
 // CheckBlueprintUpdates handles POST /api/blueprints/:name/updates/check.
 // @Summary      Check blueprint for updates
 // @Description  Enqueues an update-check job for the caller's applied blueprint by name. The check runs asynchronously; returns the queued job.

@@ -63,8 +63,12 @@ var refRe = regexp.MustCompile(`^[A-Za-z0-9._/+-]+$`)
 // Token is optional and is only ever used as an outbound Authorization header;
 // it is never persisted, logged, or echoed in responses or errors.
 // ModelOverrides maps an agent name to a `provider/model` reference (or an empty
-// string to select the project default); Apply atomically publishes AND applies
-// the blueprint, rolling back the published row if apply fails.
+// string to select the project default). The stored manifest is NOT rewritten at
+// import time: with apply:true the overrides are applied at apply time and
+// persisted per-project; with apply:false they are persisted per-project for a
+// later apply (skipped for a global/superadmin import, which has no project
+// override scope). Apply atomically publishes AND applies the blueprint,
+// rolling back the published row if apply fails.
 type ImportGitHubRequest struct {
 	URL            string            `json:"url"`
 	Ref            string            `json:"ref,omitempty"`
@@ -163,6 +167,9 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	}
 	sourceKind, sourceURL, sourceRef := sourceProvenance(org, repo, ref)
 
+	// fetchAndLoadManifest returns the PRISTINE manifest (model overrides are no
+	// longer baked into the stored manifest at import time; they are applied at
+	// apply time and persisted per-project).
 	desc, manifest, sourceManifest, err := s.fetchAndLoadManifest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -194,6 +201,15 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	}
 
 	if !req.Apply {
+		// No apply: persist the requested model overrides project-scoped so a
+		// later apply (via the gallery/CLI) reuses them. A global/superadmin
+		// import (projectID == "") has no project override scope — skip
+		// persistence; overrides on a global import are simply not stored.
+		if projectID != "" && len(req.ModelOverrides) > 0 {
+			if err := s.repo.UpsertModelOverrides(ctx, projectID, bp.Name, req.ModelOverrides); err != nil {
+				return nil, err
+			}
+		}
 		return bp, nil
 	}
 
@@ -208,7 +224,11 @@ func (s *Service) ImportFromGitHub(ctx context.Context, projectID string, req *I
 	// An ADOPTED row (pre-existing) is left in place on failure — a retry
 	// re-adopts and re-applies. If it was a draft that this import published,
 	// revert the published transition so the failed import is a no-op on status.
-	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), ApplyOptions{}); applyErr != nil {
+	// Model overrides route through apply-time (not import-time manifest
+	// rewriting): Apply applies them to the in-memory manifest and persists them
+	// per-project after success.
+	applyOpts := ApplyOptions{ModelOverrides: req.ModelOverrides}
+	if _, applyErr := s.Apply(ctx, bp.ID, projectID, callerUserID(ctx), applyOpts); applyErr != nil {
 		if !created {
 			if adoptedDraft {
 				if rerr := s.repo.UpdateStatus(ctx, bp.ID, StatusDraft, bp.Checksum); rerr != nil {
@@ -304,6 +324,15 @@ func (s *Service) PreviewFromGitHub(ctx context.Context, req *ImportGitHubReques
 		return nil, err
 	}
 
+	// Apply model overrides in-memory (create-nothing): the preview must show
+	// the manifest AS IT WILL BE APPLIED, so the caller can map agent models
+	// before committing. This mirrors Apply's in-memory override application
+	// without persisting anything.
+	manifest, err = applyPreviewModelOverrides(manifest, req.ModelOverrides)
+	if err != nil {
+		return nil, err
+	}
+
 	return &BlueprintPreview{
 		Name:        desc.Name,
 		Version:     desc.Version,
@@ -313,12 +342,32 @@ func (s *Service) PreviewFromGitHub(ctx context.Context, req *ImportGitHubReques
 	}, nil
 }
 
+// applyPreviewModelOverrides unmarshals a pristine manifest, applies the given
+// model overrides in memory, and re-marshals it. An empty override map returns
+// the pristine bytes unchanged.
+func applyPreviewModelOverrides(manifest json.RawMessage, overrides map[string]string) (json.RawMessage, error) {
+	if len(overrides) == 0 {
+		return manifest, nil
+	}
+	var m BlueprintManifest
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		return nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
+	}
+	applyModelOverrides(&m, overrides)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return nil, apperror.NewBadRequest("blueprint manifest is not serializable")
+	}
+	return out, nil
+}
+
 // fetchAndLoadManifest parses the GitHub URL, fetches + safely extracts the
-// archive, loads + validates the blueprint descriptor, applies any
-// ModelOverrides, and returns the descriptor, the final (override-applied)
-// manifest JSON, and the RAW upstream manifest JSON (pre-override) used as the
-// update-check content baseline. Shared by ImportFromGitHub and
-// PreviewFromGitHub.
+// archive, loads + validates the blueprint descriptor, and returns the
+// descriptor and the PRISTINE manifest JSON (twice: as the stored manifest and
+// as the raw upstream baseline used for update-check comparison). Model
+// overrides are NOT applied here — they are applied at apply time (see Apply)
+// and/or persisted per-project, so the stored manifest always reflects the raw
+// upstream content. Shared by ImportFromGitHub and PreviewFromGitHub.
 func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubRequest) (*blueprintDescriptor, json.RawMessage, json.RawMessage, error) {
 	org, repo, ref, err := parseGitHubURL(req.URL, req.Ref)
 	if err != nil {
@@ -345,40 +394,10 @@ func (s *Service) fetchAndLoadManifest(ctx context.Context, req *ImportGitHubReq
 	if err != nil {
 		return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
 	}
-	// sourceManifest is the raw upstream form, kept as the update-check baseline
-	// so a locally-overridden import still compares equal to its own upstream.
-	sourceManifest := manifest
-
-	// Model overrides: rewrite each named agent's model before persisting, so a
-	// bare-name import maps to a `provider/model` reference (or an empty string
-	// to select the project default) atomically.
-	if len(req.ModelOverrides) > 0 {
-		var m BlueprintManifest
-		if err := json.Unmarshal(manifest, &m); err != nil {
-			return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not valid JSON: " + err.Error())
-		}
-		// Model overrides: rewrite each named agent's model reference before
-		// persisting, so a bare-name import maps to a `provider/model` reference
-		// (or an empty string to select the project default) atomically. Only the
-		// reference is replaced; any tuning the manifest already pinned
-		// (temperature/maxTokens/enableThinking) is preserved.
-		for i := range m.Agents {
-			override, ok := req.ModelOverrides[m.Agents[i].Name]
-			if !ok {
-				continue
-			}
-			if m.Agents[i].Model == nil {
-				m.Agents[i].Model = &AgentModelManifest{}
-			}
-			m.Agents[i].Model.Name = override
-		}
-		manifest, err = json.Marshal(m)
-		if err != nil {
-			return nil, nil, nil, apperror.NewBadRequest("blueprint manifest is not serializable")
-		}
-	}
-
-	return desc, manifest, sourceManifest, nil
+	// sourceManifest is the raw upstream form, kept as the update-check baseline.
+	// Because overrides no longer rewrite the stored manifest, the two are
+	// identical.
+	return desc, manifest, manifest, nil
 }
 
 // callerUserID extracts the acting user id from the request context, or "" when

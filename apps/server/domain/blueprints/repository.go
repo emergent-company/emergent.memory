@@ -294,6 +294,70 @@ func (r *Repository) SupersedeApplications(ctx context.Context, projectID, bluep
 	return nil
 }
 
+// UpsertModelOverrides upserts each override in the map for a (project,
+// blueprint name), keyed by agent name via the
+// (project_id, blueprint_name, agent_name) unique constraint. An empty model
+// value is a valid override (project default) and is stored as-is.
+func (r *Repository) UpsertModelOverrides(ctx context.Context, projectID, blueprintName string, overrides map[string]string) error {
+	if len(overrides) == 0 {
+		return nil
+	}
+	for agentName, model := range overrides {
+		_, err := r.db.NewInsert().
+			Model(&BlueprintModelOverride{
+				ProjectID:     projectID,
+				BlueprintName: blueprintName,
+				AgentName:     agentName,
+				Model:         model,
+				CreatedAt:     time.Now(),
+				UpdatedAt:     time.Now(),
+			}).
+			On("CONFLICT (project_id, blueprint_name, agent_name) DO UPDATE").
+			Set("model = EXCLUDED.model").
+			Set("updated_at = EXCLUDED.updated_at").
+			Exec(ctx)
+		if err != nil {
+			r.log.Error("failed to upsert blueprint model override", logger.Error(err))
+			return apperror.ErrDatabase.WithInternal(err)
+		}
+	}
+	return nil
+}
+
+// ListModelOverrides returns the stored model overrides for a (project,
+// blueprint name) as an agent-name -> model map.
+func (r *Repository) ListModelOverrides(ctx context.Context, projectID, blueprintName string) (map[string]string, error) {
+	var rows []BlueprintModelOverride
+	err := r.db.NewSelect().
+		Model(&rows).
+		Where("project_id = ?", projectID).
+		Where("blueprint_name = ?", blueprintName).
+		Scan(ctx)
+	if err != nil {
+		r.log.Error("failed to list blueprint model overrides", logger.Error(err))
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.AgentName] = row.Model
+	}
+	return out, nil
+}
+
+// DeleteModelOverrides removes every stored model override for a (project,
+// blueprint name). Idempotent (deleting zero rows is not an error).
+func (r *Repository) DeleteModelOverrides(ctx context.Context, projectID, blueprintName string) error {
+	if _, err := r.db.NewDelete().
+		Model((*BlueprintModelOverride)(nil)).
+		Where("project_id = ?", projectID).
+		Where("blueprint_name = ?", blueprintName).
+		Exec(ctx); err != nil {
+		r.log.Error("failed to delete blueprint model overrides", logger.Error(err))
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
 // ListApplied returns the blueprints applied to a project, joined with their
 // blueprint metadata, ordered by name.
 func (r *Repository) ListApplied(ctx context.Context, projectID string) ([]AppliedBlueprint, error) {

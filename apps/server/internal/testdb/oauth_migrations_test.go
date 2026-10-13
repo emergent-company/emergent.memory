@@ -98,11 +98,13 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 	}
 
 	// Roll back migrations newest-first until the client-configs table is
-	// dropped. A later migration may sit between head and 00232 (e.g. 00233 adds
-	// a column to it), so step back one at a time rather than assuming a fixed
-	// rollback depth.
+	// dropped. Later migrations may sit between head and 00232 (e.g. 00233 adds
+	// a column to it, and 00238 adds blueprint model overrides), so step back
+	// one at a time rather than assuming a fixed rollback depth. The bound is a
+	// safety cap well above the current head→00232 distance, not the expected
+	// depth.
 	dropped := false
-	for range 6 {
+	for range 20 {
 		if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 			t.Fatalf("roll back one migration: %v", err)
 		}

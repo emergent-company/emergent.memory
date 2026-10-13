@@ -21,6 +21,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("/name/:name/versions", h.ListVersionsByName)
 	g.GET("/applied", h.ListAppliedBlueprints, authMiddleware.RequireProjectID())
 	g.PUT("/github-credentials", h.SaveGithubCredentials, authMiddleware.RequireProjectID())
+	g.GET("/model-overrides", h.GetModelOverrides, authMiddleware.RequireProjectID())
+	g.PUT("/model-overrides", h.UpsertModelOverrides, authMiddleware.RequireProjectID())
 	g.POST("/:name/updates/check", h.CheckBlueprintUpdates, authMiddleware.RequireProjectID())
 	g.POST("/:name/updates/apply", h.ApplyBlueprintUpdates, authMiddleware.RequireProjectID())
 	g.GET("/:name/updates", h.GetBlueprintUpdates, authMiddleware.RequireProjectID())

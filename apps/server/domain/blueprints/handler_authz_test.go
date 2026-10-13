@@ -185,3 +185,49 @@ func TestHandler_GlobalCatalogueWrites_RequireSuperadmin(t *testing.T) {
 		assert.Equal(t, http.StatusCreated, rec.Code)
 	})
 }
+
+// TestHandler_ModelOverrides_Endpoints verifies the GET/PUT model-overrides
+// endpoints: both require project context (400 without) and a blueprint name;
+// PUT upserts and returns the resulting map; GET returns the stored map.
+func TestHandler_ModelOverrides_Endpoints(t *testing.T) {
+	h, _ := newAuthzHandler(t)
+
+	member := uuid.NewString()
+	proj := uuid.NewString()
+
+	t.Run("GET requires project context", func(t *testing.T) {
+		c, _ := newAuthzCtx(t, http.MethodGet, "/api/blueprints/model-overrides?name=x", nil, &auth.AuthUser{ID: member})
+		assertAppErrorCode(t, h.GetModelOverrides(c), apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("GET requires name", func(t *testing.T) {
+		c, _ := newAuthzCtx(t, http.MethodGet, "/api/blueprints/model-overrides", nil, &auth.AuthUser{ID: member, ProjectID: proj})
+		assertAppErrorCode(t, h.GetModelOverrides(c), apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("PUT requires project context", func(t *testing.T) {
+		body, _ := json.Marshal(UpsertModelOverridesRequest{Name: "x", ModelOverrides: map[string]string{"a": "openai/gpt-4o"}})
+		c, _ := newAuthzCtx(t, http.MethodPut, "/api/blueprints/model-overrides", body, &auth.AuthUser{ID: member})
+		assertAppErrorCode(t, h.UpsertModelOverrides(c), apperror.ErrBadRequest.Code)
+	})
+
+	t.Run("PUT upserts then GET returns", func(t *testing.T) {
+		name := uniqueName("mo-handler")
+		body, _ := json.Marshal(UpsertModelOverridesRequest{Name: name, ModelOverrides: map[string]string{"a": "openai/gpt-4o"}})
+		c, rec := newAuthzCtx(t, http.MethodPut, "/api/blueprints/model-overrides", body, &auth.AuthUser{ID: member, ProjectID: proj})
+		require.NoError(t, h.UpsertModelOverrides(c))
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var putResp ModelOverridesResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &putResp))
+		assert.Equal(t, map[string]string{"a": "openai/gpt-4o"}, putResp.ModelOverrides)
+
+		c, rec = newAuthzCtx(t, http.MethodGet, "/api/blueprints/model-overrides?name="+name, nil, &auth.AuthUser{ID: member, ProjectID: proj})
+		require.NoError(t, h.GetModelOverrides(c))
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var getResp ModelOverridesResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &getResp))
+		assert.Equal(t, map[string]string{"a": "openai/gpt-4o"}, getResp.ModelOverrides)
+	})
+}
