@@ -1,6 +1,7 @@
 # Mac connector e2e / integration coverage
 
-**Status:** in progress (OpenSpec `add-mac-connector-e2e`, branch `feat/mac-connector-e2e`)
+**Status:** shipped (OpenSpec `add-mac-connector-e2e`, merged in
+[#1751](https://github.com/emergent-company/emergent.memory/pull/1751))
 **Created:** 2026-09-13
 **Source:** [2026-09-13-memory-mac-connector](../sessions/2026-09-13-memory-mac-connector.md)
 
@@ -29,6 +30,20 @@ relay protocol or account isolation would be caught only manually.
   hermetic daemon e2e (`apps/connector.linux/e2e/`): real `memory-connector`
   binary → in-process fake hub → `register` + tool list + `status --json`
   connected. Skips off-darwin and under `-short`.
+
+## Verified (mac runner `mcj@tool`, macOS 27 / Xcode 27)
+
+- `Scripts/mac-build.sh --test`: **424 hosted tests, 0 failures**.
+- Darwin engine e2e (`go test ./e2e/...` on macOS):
+  `TestDarwinDaemonRegisterAndStatus` **PASS**; the Linux tests skip off-linux.
+- Connector lint clean (SwiftLint 0.65.1 + SwiftFormat 0.63.0, CI's binaries).
+
+## Not yet verified
+
+- The UI suite **compiles and lints** but has never been **executed**. XCUITest
+  needs a GUI/WindowServer session with a stable signing identity; the ssh route
+  is refused, so running it stays a manual step on the Mac
+  (`Scripts/mac-build.sh --uitest`).
 
 ## Still deferred (manual smoke)
 - Menu-bar `NSStatusItem`/popover (not reliably XCUITest-reachable).

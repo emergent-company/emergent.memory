@@ -27,8 +27,8 @@
 - [x] 4.3 Darwin path type-checks: `GOOS=darwin go vet ./e2e/... && GOOS=darwin go build ./...` — PASS; `go test -count=1 ./e2e/...` — Linux tests PASS, darwin test SKIP (expected); `-short` skips all
 - [x] 4.4 **Mac runner (`mcj@tool`, macOS 27 / Xcode 27)**: `mac-build.sh --test` → `** TEST SUCCEEDED **`, 424 tests, 0 failures; the `MemoryConnectorUITests` target compiles cleanly
 - [x] 4.5 **Mac runner**: darwin engine e2e run for real — `go test -count=1 ./e2e/...` on macOS → `TestDarwinDaemonRegisterAndStatus` **PASS**; Linux tests skip on darwin (expected)
-- [ ] 4.6 **Mac runner (GUI session)**: actually RUN the UI suite — `xcodebuild test -only-testing:MemoryConnectorUITests`. It compiles (4.4) but XCUITest needs a WindowServer session + stable signing, so it was not executed over ssh
-- [ ] 4.7 **Mac runner**: `Scripts/lint-swift.sh` (SwiftLint) — not run; Go side linted (`gofmt -l`, `go vet`), `shellcheck` clean on `mac-build.sh`
+- [ ] 4.6 **Mac runner (GUI session)**: actually RUN the UI suite — `xcodebuild test -only-testing:MemoryConnectorUITests`. It compiles (4.4) and lints (4.7), but is **not executed**: XCUITest needs a WindowServer session + stable signing, and the ssh route is refused (`launchctl asuser` → Operation not permitted; no passwordless sudo). This is the one remaining MANUAL step — see `Scripts/README.md` → Tests.
+- [x] 4.7 **Mac runner**: `Scripts/lint-swift.sh` — reproduced on the authoring host with CI's exact SwiftLint 0.65.1 / SwiftFormat 0.63.0 Linux binaries: SwiftLint **0 violations**, `swiftformat --lint` **0/8** require formatting. Go side linted (`gofmt -l`, `go vet`), `shellcheck` clean on `mac-build.sh`
 - [x] 4.8 Scoped lint on the authoring host: `gofmt -l ./e2e/` clean, `go vet ./...` clean, `shellcheck mac-build.sh` clean
 
 > **UI suite not yet EXECUTED.** It compiles cleanly on the Mac (4.4), but running XCUITest needs a macOS GUI session + a stable signing identity (see `apps/connector.mac/Scripts/README.md` → Tests). The darwin engine e2e and the hosted unit tests are verified on macOS. CI wiring is **deliberately deferred** (decision: document the manual runs instead).
