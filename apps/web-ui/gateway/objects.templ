@@ -674,10 +674,12 @@ templ objectBadges(o GraphObject) {
 // array/object properties use a chip TagList; labelSuggestions feeds the
 // labels input's autocomplete from existing labels in the graph.
 templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error, statusOptions []string) {
-	@layout.Container(layout.ContainerLG, nil) {
-		if loadErr != nil {
+	if loadErr != nil {
+		<div class={ pageFormChromeClass }>
 			@pageError("Failed to load object types", loadErr)
-		} else if len(objectTypes) == 0 {
+		</div>
+	} else if len(objectTypes) == 0 {
+		<div class={ pageFormChromeClass }>
 			@ui.Section("New object", ui.SectionProps{
 				Margin:    "mt-6",
 				BodyClass: "memory-density-comfortable",
@@ -689,7 +691,9 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 					Bordered:    true,
 				})
 			}
-		} else {
+		</div>
+	} else {
+		<div class={ pageFormChromeClass }>
 			@pageHeader("Knowledge", "New object", "Manually add an entity to the knowledge graph.")
 			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
 				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
@@ -705,42 +709,47 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 			if form.Error != "" {
 				<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">{ form.Error }</p>
 			}
-			if form.Type != "" {
-				@ui.Section("Details", ui.SectionProps{
-					Margin:    "mt-6",
-					BodyClass: "memory-density-comfortable",
-				}) {
-					<form class="flex flex-col gap-4" method="post" action="/objects">
-						<input type="hidden" name="type" value={ form.Type }/>
-						@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
-							<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
-						}
-						@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
-							@objectStatusField("object-status", form.Status, statusOptions)
-						}
-					@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
-						@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
-					}
-					for _, p := range propDefs {
-						@fm.FormControl(p.Name, p.Name, fm.LabelAbove, "", "", nil) {
-							@propertyInput(p, form.Props[p.Name])
-						}
-					}
-						@components.StickyFormActions(components.StickyFormActionsProps{}) {
-							@ui.Button(ui.ButtonProps{
-								Type:    ui.ButtonTypeSubmit,
-								Variant: ui.ButtonPrimary,
-								Size:    ui.ButtonSM,
-								Icon:    "lucide--plus",
-							}) {
-								Create object
-							}
-						}
-					</form>
-				}
-			} else {
+			if form.Type == "" {
 				<p class="text-muted text-sm">Pick a type to see its fields.</p>
 			}
+		</div>
+		if form.Type != "" {
+			<form method="post" action="/objects">
+				<div class={ pageFormFieldsClass }>
+					@ui.Section("Details", ui.SectionProps{
+						Margin:    "mt-6",
+						BodyClass: "memory-density-comfortable",
+					}) {
+						<div class="flex flex-col gap-4">
+							<input type="hidden" name="type" value={ form.Type }/>
+							@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
+								<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
+							}
+							@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
+								@objectStatusField("object-status", form.Status, statusOptions)
+							}
+							@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
+								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
+							}
+							for _, p := range propDefs {
+								@fm.FormControl(p.Name, p.Name, fm.LabelAbove, "", "", nil) {
+									@propertyInput(p, form.Props[p.Name])
+								}
+							}
+						</div>
+					}
+				</div>
+				@components.StickyFormActions(components.StickyFormActionsProps{}) {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--plus",
+					}) {
+						Create object
+					}
+				}
+			</form>
 		}
 	}
 }
@@ -944,9 +953,9 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 					}
 				}
 			}
-			@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			<div class="flex flex-wrap items-center justify-end gap-2">
 				@components.SaveChangesButton()
-			}
+			</div>
 		</form>
 	}
 }

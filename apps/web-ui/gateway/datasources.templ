@@ -139,45 +139,47 @@ templ dsSourceStatusBadge(status string) {
 // surfaces an inline, actionable "no OAuth client configured" error (instead of
 // a transient toast) with a link to the org's OAuth client settings.
 templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error, oauthClientErr *dsOAuthClientError) {
-	@layout.Container(layout.ContainerLG, nil) {
-		if oauthClientErr != nil {
-			@dsOAuthClientMissingAlert(*oauthClientErr)
-		}
-		if selected == nil {
-			@pageHeader("Integrations", "Connect a data source", "Choose how to connect an external system and sync its documents into this project.")
-			@flashToasts("", flashErr)
-			if loadErr != nil {
-				@pageError("Providers unavailable", loadErr)
-			} else if len(providers) == 0 {
-				@ui.EmptyState(ui.EmptyStateProps{
-					Icon:        "lucide--cloud",
-					Title:       "No providers available",
-					Description: "No data-source providers are available to connect right now.",
-					Bordered:    true,
-					Class:       "py-12",
-				})
-			} else {
-				<div class="flex flex-col gap-4" data-testid="ds-provider-chooser">
-					for _, p := range providers {
-						@dsProviderChoice(p)
-					}
-				</div>
+	if selected != nil && selected.DSProviderSupportsCredentials() {
+		@dsCredentialsConnectPage(*selected, configFields, credentialFields, loadErr, flashErr)
+	} else {
+		@layout.Container(layout.ContainerLG, nil) {
+			if oauthClientErr != nil {
+				@dsOAuthClientMissingAlert(*oauthClientErr)
 			}
-		} else if selected.DSProviderSupportsOAuth() {
-			@pageHeader("Integrations", "Connect with "+selected.Name, "Authorize "+selected.Name+" for this project.")
-			@flashToasts("", flashErr)
-			@dsOAuthConnectPanel(*selected)
-		} else if selected.DSProviderSupportsCredentials() {
-			@dsCredentialsConnectPage(*selected, configFields, credentialFields, loadErr, flashErr)
-		} else {
-			@pageHeader("Integrations", "Connect a data source", "This provider does not advertise a supported connect method.")
-			@flashToasts("", flashErr)
-			@ui.Alert(ui.AlertProps{
-				Type:    ui.AlertWarning,
-				Style:   ui.AlertStyleSoft,
-				Icon:    "lucide--alert-triangle",
-				Message: "This provider cannot be connected yet.",
-			})
+			if selected == nil {
+				@pageHeader("Integrations", "Connect a data source", "Choose how to connect an external system and sync its documents into this project.")
+				@flashToasts("", flashErr)
+				if loadErr != nil {
+					@pageError("Providers unavailable", loadErr)
+				} else if len(providers) == 0 {
+					@ui.EmptyState(ui.EmptyStateProps{
+						Icon:        "lucide--cloud",
+						Title:       "No providers available",
+						Description: "No data-source providers are available to connect right now.",
+						Bordered:    true,
+						Class:       "py-12",
+					})
+				} else {
+					<div class="flex flex-col gap-4" data-testid="ds-provider-chooser">
+						for _, p := range providers {
+							@dsProviderChoice(p)
+						}
+					</div>
+				}
+			} else if selected.DSProviderSupportsOAuth() {
+				@pageHeader("Integrations", "Connect with "+selected.Name, "Authorize "+selected.Name+" for this project.")
+				@flashToasts("", flashErr)
+				@dsOAuthConnectPanel(*selected)
+			} else {
+				@pageHeader("Integrations", "Connect a data source", "This provider does not advertise a supported connect method.")
+				@flashToasts("", flashErr)
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "This provider cannot be connected yet.",
+				})
+			}
 		}
 	}
 }
@@ -297,40 +299,46 @@ templ dsOAuthConnectPanel(p DSProvider) {
 // path). Config and credential inputs come from the provider schema; the hidden
 // providerType carries the chosen provider through the POST.
 templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
-	@pageHeader("Integrations", "Connect a data source", "Sync documents from "+p.Name+" into this project.")
-	@flashToasts("", flashErr)
+	<div class={ pageFormChromeClass }>
+		@pageHeader("Integrations", "Connect a data source", "Sync documents from "+p.Name+" into this project.")
+		@flashToasts("", flashErr)
+	</div>
 	if loadErr != nil {
-		@pageError("Provider schema unavailable", loadErr)
+		<div class={ pageFormFieldsClass }>
+			@pageError("Provider schema unavailable", loadErr)
+		</div>
 	} else {
-		<form method="post" action="/data-sources/new" data-testid="ds-connect-form" class="flex flex-col gap-4">
-			<input type="hidden" name="providerType" value={ p.Type }/>
-			@components.PanelCard("", nil) {
-				<h2 class="text-base font-semibold">Source</h2>
-				<p class="text-muted mt-1 text-sm">Name this connection and choose how it syncs.</p>
-				<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-					<div class="flex flex-col gap-1">
-						<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
-						<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder="Team Drive"/>
+		<form method="post" action="/data-sources/new" data-testid="ds-connect-form">
+			<div class={ pageFormFieldsClass, "flex flex-col gap-4" }>
+				<input type="hidden" name="providerType" value={ p.Type }/>
+				@components.PanelCard("", nil) {
+					<h2 class="text-base font-semibold">Source</h2>
+					<p class="text-muted mt-1 text-sm">Name this connection and choose how it syncs.</p>
+					<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
+							<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder="Team Drive"/>
+						</div>
+						@dsSyncModeSelect("manual", nil)
 					</div>
-					@dsSyncModeSelect("manual", nil)
-				</div>
-			}
-			@components.PanelCard("", nil) {
-				<h2 class="text-base font-semibold">Folder scope</h2>
-				<p class="text-muted mt-1 text-sm">The folder to sync, plus optional filters.</p>
-				<div class="mt-3">
-					@dsConfigFieldInputs(configFields)
-				</div>
-			}
-			@components.PanelCard("", nil) {
-				<h2 class="text-base font-semibold">Credentials</h2>
-				<p class="text-muted mt-1 text-sm">OAuth2 credentials are stored encrypted and are never shown again.</p>
-				<div class="mt-3">
-					@dsCredentialFieldInputs(credentialFields)
-				</div>
-			}
-			<div id="ds-test-result" data-testid="ds-test-result"></div>
-			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start", Edge: "container"}) {
+				}
+				@components.PanelCard("", nil) {
+					<h2 class="text-base font-semibold">Folder scope</h2>
+					<p class="text-muted mt-1 text-sm">The folder to sync, plus optional filters.</p>
+					<div class="mt-3">
+						@dsConfigFieldInputs(configFields)
+					</div>
+				}
+				@components.PanelCard("", nil) {
+					<h2 class="text-base font-semibold">Credentials</h2>
+					<p class="text-muted mt-1 text-sm">OAuth2 credentials are stored encrypted and are never shown again.</p>
+					<div class="mt-3">
+						@dsCredentialFieldInputs(credentialFields)
+					</div>
+				}
+				<div id="ds-test-result" data-testid="ds-test-result"></div>
+			</div>
+			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start"}) {
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,
@@ -587,9 +595,9 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 					@dsCredentialFieldInputs(credentialFields)
 				</div>
 			</div>
-			@components.StickyFormActions(components.StickyFormActionsProps{Align: "start"}) {
+			<div class="flex flex-wrap items-center gap-2 justify-start">
 				@components.SaveChangesButton()
-			}
+			</div>
 		</form>
 	}
 }

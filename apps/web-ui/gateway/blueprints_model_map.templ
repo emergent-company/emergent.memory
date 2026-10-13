@@ -5,7 +5,6 @@ import (
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/form"
-	"github.com/emergent-company/go-daisy/components/layout"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -37,55 +36,55 @@ type BlueprintModelMapData struct {
 // unresolved agent to a configured model (or the project default) before
 // committing the import. Nothing has been installed yet.
 templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
-	@layout.Container(layout.ContainerLG, nil) {
+	<div class={ pageFormChromeClass }>
 		@pageHeader("Knowledge", "Map blueprint models", "This blueprint pins models this project can't resolve. Map each agent to one of your configured models, or keep the project default. Nothing is installed until you confirm.") {
 		}
-		<div data-testid="blueprint-import-map" class="flex flex-col gap-4">
+	</div>
+	<form method="post" action="/blueprints/import/confirm" data-testid="blueprint-import-map">
+		<div class={ pageFormFieldsClass, "flex flex-col gap-4" }>
 			@ui.Alert(ui.AlertProps{
 				Type:    ui.AlertWarning,
 				Style:   ui.AlertStyleSoft,
 				Icon:    "lucide--list-checks",
 				Message: blueprintModelMapSummary(len(d.Rows)),
 			})
-			<form method="post" action="/blueprints/import/confirm" class="flex flex-col gap-4">
-				<input type="hidden" name="url" value={ d.URL }/>
-				if d.Ref != "" {
-					<input type="hidden" name="ref" value={ d.Ref }/>
+			<input type="hidden" name="url" value={ d.URL }/>
+			if d.Ref != "" {
+				<input type="hidden" name="ref" value={ d.Ref }/>
+			}
+			if d.Token != "" {
+				<input type="hidden" name="token" value={ d.Token }/>
+			}
+			@ui.CardRaw("card-border overflow-hidden", "memory-density-flush", nil) {
+				for _, row := range d.Rows {
+					@blueprintModelMapRow(row, d.Models)
 				}
-				if d.Token != "" {
-					<input type="hidden" name="token" value={ d.Token }/>
-				}
-				@ui.CardRaw("card-border overflow-hidden", "memory-density-flush", nil) {
-					for _, row := range d.Rows {
-						@blueprintModelMapRow(row, d.Models)
-					}
-				}
-				if len(d.Models) == 0 {
-					@blueprintModelMapNoModels()
-				}
-				@components.StickyFormActions(components.StickyFormActionsProps{Edge: "container"}) {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/blueprints",
-						Variant: ui.ButtonGhost,
-						Size:    ui.ButtonSM,
-						Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-cancel"},
-					}) {
-						Cancel
-					}
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--download",
-						Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-submit"},
-					}) {
-						Install with these models
-					}
-				}
-			</form>
+			}
+			if len(d.Models) == 0 {
+				@blueprintModelMapNoModels()
+			}
 		</div>
-	}
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/blueprints",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-cancel"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--download",
+				Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-submit"},
+			}) {
+				Install with these models
+			}
+		}
+	</form>
 }
 
 // blueprintModelMapSummary is the one-line install-blocker summary shown above

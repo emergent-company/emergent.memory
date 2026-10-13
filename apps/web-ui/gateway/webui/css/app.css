@@ -251,6 +251,39 @@ main#main-content {
   scroll-padding-bottom: 5rem;
 }
 
+/* Sticky form action bar (components.StickyFormActions). The bar is the last
+   in-flow child of a page-terminal form, so at max scroll it sits flush with
+   the bottom of #main-content. The chrome (top border + translucent surface +
+   blur) shows ONLY while the bar is pinned: a container cannot style itself,
+   so the surface is a child and @container scroll-state(stuck: bottom) targets
+   it. Browsers without scroll-state queries keep the chrome permanently
+   (fail-open) — never a transparent bar with content scrolling through it. */
+.sticky-form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  container-type: scroll-state;
+}
+.sfa__surface {
+  border-top: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+  background-color: color-mix(in oklab, var(--color-base-100) 95%, transparent);
+  backdrop-filter: blur(8px);
+}
+@supports (container-type: scroll-state) {
+  .sfa__surface {
+    border-top-color: transparent;
+    background-color: transparent;
+    backdrop-filter: none;
+  }
+  @container scroll-state(stuck: bottom) {
+    .sfa__surface {
+      border-top-color: color-mix(in oklab, var(--color-base-content) 10%, transparent);
+      background-color: color-mix(in oklab, var(--color-base-100) 95%, transparent);
+      backdrop-filter: blur(8px);
+    }
+  }
+}
+
 /* ---------- iOS safe areas (notch + home indicator) ---------- */
 /* The shell fills the viewport (h-screen + viewport-fit=cover), so every bar
    and drawer that touches a screen edge sits underneath the notch / status

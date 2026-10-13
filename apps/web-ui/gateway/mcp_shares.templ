@@ -226,23 +226,25 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 
 // MCPShareNewPage renders the create page (GET .../shares/new).
 templ MCPShareNewPage(data mcpShareFormData) {
-	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
+	<div class={ pageFormChromeClass } data-mcp-share-form="">
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "New share")), "", "New MCP share", "Name the share and choose what an outside MCP client can reach.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
-		if data.LoadErr != nil {
+	</div>
+	if data.LoadErr != nil {
+		<div class={ pageFormFieldsClass }>
 			@pageError("Tool catalog unavailable", data.LoadErr)
-		} else {
-			@mcpShareFormBody(data, false)
-		}
-		@mcpShareScripts()
+		</div>
+	} else {
+		@mcpShareFormBody(data, false)
 	}
+	@mcpShareScripts()
 }
 
 // MCPShareEditPage renders the edit page (GET .../shares/:id/edit).
 templ MCPShareEditPage(data mcpShareFormData) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Sharing", mcpShareSettingsBase, "Edit share")) }}
-	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
-		if data.NotFound {
+	if data.NotFound {
+		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-share-form": ""}) {
 			@detailHeader(crumbs, "", "Edit share", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--share-2",
@@ -250,67 +252,79 @@ templ MCPShareEditPage(data mcpShareFormData) {
 				Description: "No share with this id.",
 				Bordered:    true,
 			})
-		} else {
+			@mcpShareScripts()
+		}
+	} else if data.LoadErr != nil {
+		<div class={ pageFormChromeClass } data-mcp-share-form="">
 			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"}) {}
 			@flashToasts("", data.FlashErr)
-			if data.LoadErr != nil {
-				@pageError("Tool catalog unavailable", data.LoadErr)
-			} else {
-				@mcpShareFormBody(data, true)
-			}
-		}
+		</div>
+		<div class={ pageFormFieldsClass }>
+			@pageError("Tool catalog unavailable", data.LoadErr)
+		</div>
+		@mcpShareScripts()
+	} else {
+		<div class={ pageFormChromeClass } data-mcp-share-form="">
+			@detailHeader(crumbs, "", "Edit share", "Changes update what the share can reach. The existing key keeps working.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@flashToasts("", data.FlashErr)
+		</div>
+		@mcpShareFormBody(data, true)
 		@mcpShareScripts()
 	}
 }
 
 // mcpShareFormBody is the shared create/edit form card.
 templ mcpShareFormBody(data mcpShareFormData, editing bool) {
-	@components.PanelCard("", nil) {
-		{{ action := mcpShareSettingsBase + "/new"
-		if editing {
-			action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
-		} }}
-		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-5" data-mcp-share-form-fields hx-disable="find button.memory-save-btn">
-			@form.FormControl("mcp-share-name", "Name", form.LabelAbove, "Unique within this project. Shown in your share list.", data.FieldErrs.Name, nil) {
-				<input id="mcp-share-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. research-assistant" class="input w-full"/>
-			}
-			@form.FormControl("mcp-share-description", "Description", form.LabelAbove, "Optional note about who or what this share is for.", "", nil) {
-				<textarea id="mcp-share-description" name="description" rows="2" placeholder="e.g. Read-only access for the analyst bot" class="textarea w-full resize-none">{ data.Description }</textarea>
-			}
-			@mcpShareToolPicker(data)
-			if data.GeneralErr != nil {
-				@ui.Alert(ui.AlertProps{
-					Type:    ui.AlertError,
-					Style:   ui.AlertStyleOutline,
-					Icon:    "lucide--alert-triangle",
-					Message: data.GeneralErr.Error(),
-				})
-			}
-			@components.StickyFormActions(components.StickyFormActionsProps{}) {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    mcpShareSettingsBase,
-					Variant: ui.ButtonGhost,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--x",
-				}) {
-					Cancel
-				}
-				if editing {
-					@components.SaveChangesButton()
-				} else {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--share-2",
-					}) {
-						Create share
+	{{ action := mcpShareSettingsBase + "/new"
+	if editing {
+		action = mcpShareSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
+	} }}
+	<form method="post" action={ templ.URL(action) } data-mcp-share-form-fields hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@components.PanelCard("", nil) {
+				<div class="flex flex-col gap-5">
+					@form.FormControl("mcp-share-name", "Name", form.LabelAbove, "Unique within this project. Shown in your share list.", data.FieldErrs.Name, nil) {
+						<input id="mcp-share-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. research-assistant" class="input w-full"/>
 					}
+					@form.FormControl("mcp-share-description", "Description", form.LabelAbove, "Optional note about who or what this share is for.", "", nil) {
+						<textarea id="mcp-share-description" name="description" rows="2" placeholder="e.g. Read-only access for the analyst bot" class="textarea w-full resize-none">{ data.Description }</textarea>
+					}
+					@mcpShareToolPicker(data)
+					if data.GeneralErr != nil {
+						@ui.Alert(ui.AlertProps{
+							Type:    ui.AlertError,
+							Style:   ui.AlertStyleOutline,
+							Icon:    "lucide--alert-triangle",
+							Message: data.GeneralErr.Error(),
+						})
+					}
+				</div>
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    mcpShareSettingsBase,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+			}) {
+				Cancel
+			}
+			if editing {
+				@components.SaveChangesButton()
+			} else {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--share-2",
+				}) {
+					Create share
 				}
 			}
-		</form>
-	}
+		}
+	</form>
 }
 
 // mcpShareToolPicker is the searchable, category-grouped multi-select of memory

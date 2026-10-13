@@ -97,7 +97,7 @@ templ backupCreateForm() {
 					<input name="includeChat" type="checkbox" class="checkbox checkbox-sm mt-0.5"/>
 				</label>
 			</div>
-			@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			<div class="flex flex-wrap items-center justify-end gap-2">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,
 					Variant: ui.ButtonPrimary,
@@ -106,7 +106,7 @@ templ backupCreateForm() {
 				}) {
 					Start backup
 				}
-			}
+			</div>
 		</form>
 	}
 }

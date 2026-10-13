@@ -310,16 +310,24 @@ templ chatLinkRow(c Conversation) {
 // renders the whole-page error state; FlashMsg/FlashErr surface PRG feedback
 // from the update flow.
 templ AgentSettingsPage(data agentSettingsData) {
-	@layout.Container(layout.ContainerLG, nil) {
-		if data.LoadErr != nil {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, nil) {
 			@pageError("Agent unavailable", data.LoadErr)
-		} else {
+		}
+	} else if data.Section == "mcp" {
+		@layout.Container(layout.ContainerLG, nil) {
 			@agentDashboardHeader(data.Agent, "Settings")
 			@flashToasts(data.FlashMsg, data.FlashErr)
 			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
-				@agentSettingsSectionPanel(data)
+				@agentMCPSection(data)
 			}
 		}
+	} else {
+		<div class={ pageFormChromeClass }>
+			@agentDashboardHeader(data.Agent, "Settings")
+			@flashToasts(data.FlashMsg, data.FlashErr)
+		</div>
+		@agentSettingsSectionPanel(data)
 	}
 }
 
@@ -347,7 +355,7 @@ templ agentSettingsSectionPanel(data agentSettingsData) {
 // agentSettingsSave is the shared PRG form footer: a primary submit button in
 // the same FormActions wrapper every settings subpage uses.
 templ agentSettingsSave() {
-	@components.StickyFormActions(components.StickyFormActionsProps{Class: "mt-6"}) {
+	@components.StickyFormActions(components.StickyFormActionsProps{Rail: true}) {
 		@components.SaveChangesButton()
 	}
 }
@@ -360,6 +368,7 @@ templ agentSettingsSave() {
 templ agentAutosaveStatus() {
 	@components.StickyFormActions(components.StickyFormActionsProps{
 		Align: "start",
+		Rail:  true,
 		Class: "min-h-6",
 		Attrs: templ.Attributes{
 			"data-autosave-status": "",
@@ -392,13 +401,14 @@ templ agentAutosaveStatus() {
 // agentAutosaveStatus indicator.
 templ agentGeneralSettingsForm(data agentSettingsData) {
 	<form
-		class="flex flex-col"
 		method="post"
 		action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general") }
 		data-agent-autosave="general"
 		data-autosave-url={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/general/autosave") }
 	>
-		@ui.Section("General", ui.SectionProps{
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("General", ui.SectionProps{
 			Margin:    "mt-6",
 			BodyClass: "memory-density-comfortable",
 		}) {
@@ -573,7 +583,9 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 					})
 				}
 			</div>
+			}
 		}
+		</div>
 		@agentAutosaveStatus()
 	</form>
 }
@@ -587,13 +599,15 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 // partial body that omits the field — the "cleared all" vs "untouched" contract
 // this control relied on when it lived on the General form.
 templ agentGraphSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/graph") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Graph", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-col gap-4">
-				<p class="text-muted-strong text-sm">Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save.</p>
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/graph") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Graph", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						<p class="text-muted-strong text-sm">Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save.</p>
 				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
 					<input type="hidden" name="objectType" value=""/>
 					@checkboxPicker(checkboxPickerProps{
@@ -621,7 +635,9 @@ templ agentGraphSettingsForm(data agentSettingsData) {
 					})
 				}
 			</div>
+			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }
@@ -630,17 +646,21 @@ templ agentGraphSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/model): the model picker, temperature, max tokens, and
 // the model-misconfiguration warning box.
 templ agentModelSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Model", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-col gap-4">
-				@agentModelSettingsWarning(data)
-				@modelSelect("agent-settings-model", data.Models, data.Agent.Model, agentAutoModelName(data.Agent, data.DefaultModel), nil)
-				@modelParamsGrid("agent-settings", data.Agent.Model)
-			</div>
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/model") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Model", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@agentModelSettingsWarning(data)
+						@modelSelect("agent-settings-model", data.Models, data.Agent.Model, agentAutoModelName(data.Agent, data.DefaultModel), nil)
+						@modelParamsGrid("agent-settings", data.Agent.Model)
+					</div>
+			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }
@@ -649,21 +669,25 @@ templ agentModelSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/tools): the default-approval select and the grouped tool
 // checkbox picker.
 templ agentToolsSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Tools", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-				<span class="text-sm font-medium">Default approval</span>
-				<select name="defaultToolPolicy" data-tool-default-policy class="select select-sm w-40">
-					<option value="allow" if data.Agent.DefaultToolPolicy == "allow" { selected }>Allow</option>
-					<option value="ask" if data.Agent.DefaultToolPolicy == "ask" { selected }>Ask</option>
-					<option value="deny" if data.Agent.DefaultToolPolicy == "deny" { selected }>Deny</option>
-				</select>
-			</div>
-			@agentToolPicker(data)
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/tools") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Tools", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+						<span class="text-sm font-medium">Default approval</span>
+						<select name="defaultToolPolicy" data-tool-default-policy class="select select-sm w-40">
+							<option value="allow" if data.Agent.DefaultToolPolicy == "allow" { selected }>Allow</option>
+							<option value="ask" if data.Agent.DefaultToolPolicy == "ask" { selected }>Ask</option>
+							<option value="deny" if data.Agent.DefaultToolPolicy == "deny" { selected }>Deny</option>
+						</select>
+					</div>
+					@agentToolPicker(data)
+			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }
@@ -671,24 +695,28 @@ templ agentToolsSettingsForm(data agentSettingsData) {
 // agentSkillsSettingsForm is the Skills subpage (PRG → POST
 // /agents/:id/settings/skills): the skill checkbox picker.
 templ agentSkillsSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Skills", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
-				@checkboxPicker(checkboxPickerProps{
-					Name:          "skill",
-					EmptyNote:     skillEmptyNote(),
-					LabelClass:    "items-start gap-2 py-1.5",
-					CheckboxClass: "checkbox checkbox-sm mt-0.5",
-					TitleClass:    "block text-sm font-medium",
-					DescClass:     "text-muted block text-xs",
-					WrapTitle:     true,
-					Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
-				})
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/skills") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Skills", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
+						@checkboxPicker(checkboxPickerProps{
+							Name:          "skill",
+							EmptyNote:     skillEmptyNote(),
+							LabelClass:    "items-start gap-2 py-1.5",
+							CheckboxClass: "checkbox checkbox-sm mt-0.5",
+							TitleClass:    "block text-sm font-medium",
+							DescClass:     "text-muted block text-xs",
+							WrapTitle:     true,
+							Items:         skillPickerItems(data.Skills, func(name string) bool { return containsString(data.Agent.Skills, name) }),
+						})
+					}
 			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }
@@ -697,35 +725,39 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 // /agents/:id/settings/delegation): the enable toggle and the delegation-target
 // agent picker.
 templ agentDelegationSettingsForm(data agentSettingsData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Delegation", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			@form.FormControl("agent-settings-delegation", "", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
-				<label class="label flex w-full justify-between gap-3">
-					<span class="text-sm font-medium">Can delegate to other agents</span>
-					<input
-						id="agent-settings-delegation-enabled"
-						name="delegationEnabled"
-						type="checkbox"
-						if data.Agent.Delegation != nil && data.Agent.Delegation.Enabled {
-							checked
-						}
-						class="checkbox"
-					/>
-				</label>
-				@checkboxPicker(checkboxPickerProps{
-					Name:          "delegation-target",
-					Wrapped:       true,
-					EmptyNote:     delegateEmptyNote(),
-					LabelClass:    "gap-2 py-1",
-					CheckboxClass: "checkbox",
-					TitleClass:    "text-muted-bright text-sm",
-					Items:         delegatePickerItems(data.Agents, data.Agent.Name, func(name string) bool { return data.Agent.Delegation != nil && containsString(data.Agent.Delegation.Targets, name) }),
-				})
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/delegation") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Delegation", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					@form.FormControl("agent-settings-delegation", "", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
+						<label class="label flex w-full justify-between gap-3">
+							<span class="text-sm font-medium">Can delegate to other agents</span>
+							<input
+								id="agent-settings-delegation-enabled"
+								name="delegationEnabled"
+								type="checkbox"
+								if data.Agent.Delegation != nil && data.Agent.Delegation.Enabled {
+									checked
+								}
+								class="checkbox"
+							/>
+						</label>
+						@checkboxPicker(checkboxPickerProps{
+							Name:          "delegation-target",
+							Wrapped:       true,
+							EmptyNote:     delegateEmptyNote(),
+							LabelClass:    "gap-2 py-1",
+							CheckboxClass: "checkbox",
+							TitleClass:    "text-muted-bright text-sm",
+							Items:         delegatePickerItems(data.Agents, data.Agent.Name, func(name string) bool { return data.Agent.Delegation != nil && containsString(data.Agent.Delegation.Targets, name) }),
+						})
+					}
 			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }
@@ -737,16 +769,16 @@ templ agentDelegationSettingsForm(data agentSettingsData) {
 // agent/config fetch (LoadErr) renders the whole-page error state;
 // FlashMsg/FlashErr surface PRG feedback from the update flow.
 templ AgentSandboxPage(data agentSandboxData) {
-	@layout.Container(layout.ContainerLG, nil) {
-		if data.LoadErr != nil {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, nil) {
 			@pageError("Agent unavailable", data.LoadErr)
-		} else {
+		}
+	} else {
+		<div class={ pageFormChromeClass }>
 			@agentDashboardHeader(data.Agent, "Sandbox")
 			@flashToasts(data.FlashMsg, data.FlashErr)
-			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox", ""), nil) {
-				@agentSandboxForm(data)
-			}
-		}
+		</div>
+		@agentSandboxForm(data)
 	}
 }
 
@@ -788,12 +820,14 @@ templ sandboxProviderAvailability(data agentSandboxData) {
 // /agents/:id/sandbox/update). Empty tools means "all allowed"; repo_source
 // url is only honored for a fixed source.
 templ agentSandboxForm(data agentSandboxData) {
-	<form class="flex flex-col" method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") } hx-disable="find button.memory-save-btn">
-		@ui.Section("Provider", ui.SectionProps{
-			Margin:    "mt-6",
-			BodyClass: "memory-density-comfortable",
-		}) {
-			<div class="flex flex-col gap-4">
+	<form method="post" action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/sandbox/update") } hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "sandbox", ""), nil) {
+				@ui.Section("Provider", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
 				@form.FormControl("agent-sandbox-enabled", "", form.LabelAbove, "Enable a sandboxed workspace for this agent.", "", nil) {
 					<label class="label flex w-full justify-between gap-3">
 						<span class="text-sm font-medium">Enable sandbox</span>
@@ -889,7 +923,9 @@ templ agentSandboxForm(data agentSandboxData) {
 					<textarea id="agent-sandbox-env" name="envVars" rows="4" placeholder="FOO=bar" class="textarea w-full resize-none">{ sandboxEnvVars(data.Config) }</textarea>
 				}
 			</div>
+			}
 		}
+		</div>
 		@agentSettingsSave()
 	</form>
 }

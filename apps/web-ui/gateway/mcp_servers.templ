@@ -494,12 +494,12 @@ templ mcpServerDeleteDialog(srv MCPServer) {
 // ?err= surfaces PRG feedback from the create flow; FieldErrs render inline
 // under the offending field groups on validation re-renders.
 templ MCPServerNewPage(data mcpServerFormData) {
-	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
+	<div class={ pageFormChromeClass } data-mcp-form="">
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "New server")), "", "New MCP server", "Name the server and pick a transport — stdio runs a command on the memory host, sse/http dial a remote endpoint.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
-		@mcpServerFormBody(data, false)
-		@mcpServersScript()
-	}
+	</div>
+	@mcpServerFormBody(data, false)
+	@mcpServersScript()
 }
 
 // MCPServerEditPage renders the edit page (GET /settings/mcp-servers/:id/edit):
@@ -507,11 +507,14 @@ templ MCPServerNewPage(data mcpServerFormData) {
 // LoadErr / NotFound render their own states; ?err= surfaces PRG feedback.
 templ MCPServerEditPage(data mcpServerFormData) {
 	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "MCP Servers", mcpServerSettingsBase, "Edit server")) }}
-	@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
-		if data.LoadErr != nil {
+	if data.LoadErr != nil {
+		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@pageError("Server unavailable", data.LoadErr)
-		} else if data.NotFound || data.ID == "" {
+			@mcpServersScript()
+		}
+	} else if data.NotFound || data.ID == "" {
+		@layout.Container(layout.ContainerLG, templ.Attributes{"data-mcp-form": ""}) {
 			@detailHeader(crumbs, "", "Edit server", "", detailHeaderOpts{Margin: "mb-6"}) {}
 			@ui.EmptyState(ui.EmptyStateProps{
 				Icon:        "lucide--server",
@@ -519,8 +522,11 @@ templ MCPServerEditPage(data mcpServerFormData) {
 				Description: "No MCP server with this id.",
 				Bordered:    true,
 			})
-		} else {
-			{{ title, subtitle := mcpFormPageHeading(true, data.Name) }}
+			@mcpServersScript()
+		}
+	} else {
+		{{ title, subtitle := mcpFormPageHeading(true, data.Name) }}
+		<div class={ pageFormChromeClass } data-mcp-form="">
 			@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"}) {}
 			@flashToasts("", data.FlashErr)
 			if data.ConfigureMode && len(data.MissingConfigKeys) > 0 {
@@ -549,8 +555,8 @@ templ MCPServerEditPage(data mcpServerFormData) {
 					}
 				</div>
 			}
-			@mcpServerFormBody(data, true)
-		}
+		</div>
+		@mcpServerFormBody(data, true)
 		@mcpServersScript()
 	}
 }
@@ -561,67 +567,71 @@ templ MCPServerEditPage(data mcpServerFormData) {
 // switch a server's transport; memory clears the previous transport's
 // connection fields).
 templ mcpServerFormBody(data mcpServerFormData, editing bool) {
-	@components.PanelCard("", nil) {
-		{{ action := mcpServerSettingsBase + "/new"
-		if editing {
-			action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
-		} }}
-		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-4" data-mcp-form-fields hx-disable="find button.memory-save-btn">
-			if editing {
-				<input type="hidden" name="serverId" value={ data.ID }/>
-			}
-			@form.FormControl("mcp-server-name", "Name", form.LabelAbove, "Unique within this project. Agents reference servers by name.", data.FieldErrs.Name, nil) {
-				<input id="mcp-server-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. github-mcp-server" class="input w-full"/>
-			}
-			@mcpServerTransportGroup(data, editing)
-			if data.GeneralErr != nil {
-				@ui.Alert(ui.AlertProps{
-					Type:    ui.AlertError,
-					Style:   ui.AlertStyleOutline,
-					Icon:    "lucide--alert-triangle",
-					Message: data.GeneralErr.Error(),
-				})
-			}
-			@mcpServerTransportFields(data)
-			<label class="label flex w-full justify-between gap-3">
-				<span class="text-sm font-medium">Enabled</span>
-				<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
-			</label>
-			@components.StickyFormActions(components.StickyFormActionsProps{}) {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeButton,
-					Variant: ui.ButtonOutline,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--plug-zap",
-					Attrs:   templ.Attributes{"data-mcp-test": ""},
-				}) {
-					Test connection
-				}
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    mcpServerSettingsBase,
-					Variant: ui.ButtonGhost,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--x",
-				}) {
-					Cancel
-				}
-				if editing {
-					@components.SaveChangesButton()
-				} else {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeSubmit,
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--server",
-					}) {
-						Create server
+	{{ action := mcpServerSettingsBase + "/new"
+	if editing {
+		action = mcpServerSettingsBase + "/" + url.PathEscape(data.ID) + "/update"
+	} }}
+	<form method="post" action={ templ.URL(action) } data-mcp-form-fields hx-disable="find button.memory-save-btn">
+		<div class={ pageFormFieldsClass }>
+			@components.PanelCard("", nil) {
+				<div class="flex flex-col gap-4">
+					if editing {
+						<input type="hidden" name="serverId" value={ data.ID }/>
 					}
+					@form.FormControl("mcp-server-name", "Name", form.LabelAbove, "Unique within this project. Agents reference servers by name.", data.FieldErrs.Name, nil) {
+						<input id="mcp-server-name" name="name" type="text" required maxlength="255" value={ data.Name } placeholder="e.g. github-mcp-server" class="input w-full"/>
+					}
+					@mcpServerTransportGroup(data, editing)
+					if data.GeneralErr != nil {
+						@ui.Alert(ui.AlertProps{
+							Type:    ui.AlertError,
+							Style:   ui.AlertStyleOutline,
+							Icon:    "lucide--alert-triangle",
+							Message: data.GeneralErr.Error(),
+						})
+					}
+					@mcpServerTransportFields(data)
+					<label class="label flex w-full justify-between gap-3">
+						<span class="text-sm font-medium">Enabled</span>
+						<input id="mcp-server-enabled" name="enabled" type="checkbox" checked?={ data.Enabled } class="checkbox"/>
+					</label>
+					<div data-mcp-test-result hidden></div>
+				</div>
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plug-zap",
+				Attrs:   templ.Attributes{"data-mcp-test": ""},
+			}) {
+				Test connection
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    mcpServerSettingsBase,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+			}) {
+				Cancel
+			}
+			if editing {
+				@components.SaveChangesButton()
+			} else {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--server",
+				}) {
+					Create server
 				}
 			}
-			<div data-mcp-test-result hidden></div>
-		</form>
-	}
+		}
+	</form>
 }
 
 // mcpServerTransportGroup renders the transport radio picker (stdio/sse/http).

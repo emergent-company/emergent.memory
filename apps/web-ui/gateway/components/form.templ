@@ -61,24 +61,30 @@ type StickyFormActionsProps struct {
 	// Align is the horizontal alignment of the action buttons: "" (zero value)
 	// right-aligns, "start" left-aligns.
 	Align string
-	// Edge bleeds the bar to the surrounding container's padding edges so it
-	// reads as pinned to the bottom of the content area. "" (zero value) keeps
-	// the bar inside the form's own box — use that for a form wrapped in a
-	// PanelCard, whose body owns its padding. "container" bleeds to
-	// layout.Container's p-6 lg:p-8 gutter for a form that is a direct child of
-	// the page container.
-	Edge string
-	// Class is appended to the bar's classes (caller-owned spacing/overrides).
+	// Rail mirrors layout.Rail's grid so the actions align to the rail's
+	// content column on lg while the strip still spans the full pane.
+	Rail bool
+	// Class is appended to the bar root (caller-owned spacing/overrides).
 	Class string
-	// Attrs is spread last on the bar's root element.
+	// Attrs is spread last on the bar root element.
 	Attrs templ.Attributes
 }
 
-// StickyFormActions renders the pinned footer for a page-level form: it sticks
-// to the bottom of the page scroll area (#main-content) while the form is
-// taller than the viewport, and sits inline in normal flow once the whole form
-// fits. Pure CSS `position: sticky`, so it survives htmx swaps of #main-content
-// with no re-init.
+// StickyFormActions renders the pinned footer for a page-terminal form: a
+// pane-wide strip that sits flush with the bottom of the page scroll area
+// (#main-content) once the whole form fits, and — while the form is taller than
+// the viewport — sticks to that bottom edge with its chrome (top border +
+// translucent surface + blur) visible only while it is actually pinned.
+//
+// The bar is the LAST in-flow child of the form, and the form is a direct child
+// of main#main-content (not wrapped in layout.Container), so the strip spans
+// the full content pane and rests on the pane's bottom edge at max scroll; the
+// buttons are inset by the same padding as the page content. Pure CSS
+// `position: sticky` plus a `@container scroll-state(stuck: bottom)` query on
+// the surface, so it survives htmx swaps of #main-content with no re-init.
+//
+// Rail: pass true when the page lays its form out with layout.Rail so the
+// actions line up with the rail's content column on lg+.
 //
 // Do NOT use inside a <dialog>: a modal has its own scroll box, so bottom-0
 // would pin to the viewport bottom rather than the dialog. Keep the go-daisy
@@ -87,13 +93,18 @@ templ StickyFormActions(props StickyFormActionsProps) {
 	{{ align := "justify-end"
 	if props.Align == "start" {
 		align = "justify-start"
-	}
-	edge := ""
-	if props.Edge == "container" {
-		edge = "-mx-6 -mb-6 px-6 lg:-mx-8 lg:-mb-8 lg:px-8"
 	} }}
-	<div class={ "sticky bottom-0 z-20 flex flex-wrap items-center gap-2 border-t border-base-content/10 bg-base-100/95 py-3 backdrop-blur", align, edge, props.Class } { props.Attrs... }>
-		{ children... }
+	<div class={ "sticky-form-actions", props.Class } { props.Attrs... }>
+		<div class="sfa__surface">
+			if props.Rail {
+				<div class="mx-auto w-full max-w-6xl px-6 py-3 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-6 lg:px-8">
+					<div class="hidden lg:block" aria-hidden="true"></div>
+					<div class={ "flex flex-wrap items-center gap-2", align }>{ children... }</div>
+				</div>
+			} else {
+				<div class={ "mx-auto w-full max-w-6xl px-6 py-3 lg:px-8", "flex flex-wrap items-center gap-2", align }>{ children... }</div>
+			}
+		</div>
 	</div>
 }
 

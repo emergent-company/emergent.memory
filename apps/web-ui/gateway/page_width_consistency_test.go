@@ -79,6 +79,60 @@ func TestPageWidthConsistency(t *testing.T) {
 	}
 }
 
+// TestPageFormLayoutWidthMatchesContainer re-enforces the page-width rule for
+// the page-terminal form pages that CANNOT use layout.Container(layout.ContainerLG,
+// nil): a pane-level <form> must be a direct child of main#main-content (see
+// components.StickyFormActions) so its sticky action bar spans the full content
+// pane and rests flush on the pane's bottom edge at max scroll — layout.Container's
+// mx-auto box would cap the bar's width and leave a gutter below it.
+//
+// The container's padding is therefore split across two Go constants in
+// page_form_layout.go — pageFormChromeClass (the page chrome before the form:
+// top padding only) and pageFormFieldsClass (the form's fields: bottom padding
+// only). Because those live in a .go file, the *.templ scanner in
+// TestPageWidthConsistency never reads them, so the rule it enforces goes blind
+// here. This test restores the guard over the exact invariants the split must
+// preserve:
+//
+//   - both carry layout.ContainerLG's width cap (max-w-6xl) and horizontal
+//     gutter (px-6 lg:px-8), and neither introduces a different width cap;
+//   - the split is complete: the chrome class carries no bottom padding
+//     (pb- / lg:pb-) and the fields class carries no top padding (pt- / lg:pt-),
+//     so the bottom gutter lives in exactly one place and the bar sits flush.
+func TestPageFormLayoutWidthMatchesContainer(t *testing.T) {
+	for _, cls := range []struct {
+		name string
+		v    string
+	}{
+		{"pageFormChromeClass", pageFormChromeClass},
+		{"pageFormFieldsClass", pageFormFieldsClass},
+	} {
+		for _, want := range []string{"max-w-6xl", "px-6", "lg:px-8"} {
+			if !strings.Contains(cls.v, want) {
+				t.Errorf("%s = %q: missing %q (must match layout.ContainerLG's width/gutter)", cls.name, cls.v, want)
+			}
+		}
+		// Same width caps TestPageWidthConsistency guards, minus max-w-6xl
+		// (which is the one cap these constants are allowed to carry).
+		for _, w := range []string{"max-w-3xl", "max-w-4xl", "max-w-5xl", "max-w-7xl"} {
+			if strings.Contains(cls.v, w) {
+				t.Errorf("%s = %q: introduces a different width cap %q (must stay max-w-6xl)", cls.name, cls.v, w)
+			}
+		}
+	}
+
+	// The padding split must be complete, not duplicated: bottom padding lives
+	// only in the fields class, top padding only in the chrome class. `pb-` is a
+	// substring of `lg:pb-` (and `pt-` of `lg:pt-`), so one Contains per side
+	// covers both the base and lg spellings.
+	if strings.Contains(pageFormChromeClass, "pb-") {
+		t.Errorf("pageFormChromeClass = %q: must carry no bottom padding (pb- / lg:pb-) — the fields class owns the bottom gutter so the sticky bar sits flush", pageFormChromeClass)
+	}
+	if strings.Contains(pageFormFieldsClass, "pt-") {
+		t.Errorf("pageFormFieldsClass = %q: must carry no top padding (pt- / lg:pt-) — the chrome class owns the top gutter", pageFormFieldsClass)
+	}
+}
+
 // firstClass returns the value of the first class attribute in html. For a page
 // component that is layout.Container's own class, since the container is the
 // outermost element the component renders.

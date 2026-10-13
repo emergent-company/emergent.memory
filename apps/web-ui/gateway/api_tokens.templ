@@ -289,50 +289,58 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 // with the one-shot plaintext panel (no redirect — the plaintext must reach the
 // browser). ?err= surfaces PRG feedback from the create flow.
 templ APITokenCreatePage(data apiTokenCreatePageData) {
-	@layout.Container(layout.ContainerLG, nil) {
+	<div class={ pageFormChromeClass }>
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens", "/settings/tokens", "New token")), "", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
-		@apiTokenCreateBody("/settings/tokens", data.Reveal, data.Picker)
-	}
+		if data.Reveal != nil {
+			<div class="mb-6">
+				@apiTokenRevealContent(*data.Reveal)
+			</div>
+		}
+	</div>
+	@apiTokenCreateFormContent("/settings/tokens", data.Picker, false)
 }
 
 // AccountTokenCreatePage renders the account create-token page
 // (GET /profile/tokens/new): the profile rail ("API tokens" active) plus the
 // shared create body posting to POST /profile/tokens/new.
 templ AccountTokenCreatePage(data apiTokenCreatePageData) {
-	@layout.Container(layout.ContainerLG, nil) {
+	<div class={ pageFormChromeClass }>
 		@pageHeader("Account", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
 		@flashToasts("", data.FlashErr)
-		@layout.Rail(profileSubNav("tokens"), nil) {
-			@apiTokenCreateBody("/profile/tokens", data.Reveal, data.Picker)
+		if data.Reveal != nil {
+			<div class="mb-6">
+				@apiTokenRevealContent(*data.Reveal)
+			</div>
 		}
-	}
-}
-
-// apiTokenCreateBody is the shared create-page card: the one-shot plaintext
-// panel (shown once after a successful create) above the create form.
-templ apiTokenCreateBody(actionBase string, reveal *apiTokenReveal, cfg apiTokenScopePickerConfig) {
-	if reveal != nil {
-		<div class="mb-6">
-			@apiTokenRevealContent(*reveal)
-		</div>
-	}
-	@components.PanelCard("", nil) {
-		@apiTokenCreateFormContent(actionBase, cfg)
-	}
+	</div>
+	@apiTokenCreateFormContent("/profile/tokens", data.Picker, true)
 }
 
 // apiTokenCreateFormContent is the create form (fields: name + scopes[]),
 // posting to the surface's create route at actionBase + "/new". A cancel link
-// returns to the list at actionBase.
-templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig) {
-	<form method="post" action={ templ.URL(actionBase + "/new") } class="flex flex-col gap-4">
-		<fieldset class="fieldset">
-			<legend class="fieldset-legend">Name</legend>
-			<input id="api-token-name" name="name" type="text" required maxlength="255" autocomplete="off" placeholder="e.g. CI deploy" class="input w-full"/>
-		</fieldset>
-		@apiTokenScopePickerContent(nil, cfg)
-		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+// returns to the list at actionBase. rail wraps the fields in the profile rail
+// (account surface) and mirrors it in the sticky action bar.
+templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig, rail bool) {
+	<form method="post" action={ templ.URL(actionBase + "/new") }>
+		<div class={ pageFormFieldsClass }>
+			if rail {
+				@layout.Rail(profileSubNav("tokens"), nil) {
+					@components.PanelCard("", nil) {
+						<div class="flex flex-col gap-4">
+							@apiTokenCreateFields(cfg)
+						</div>
+					}
+				}
+			} else {
+				@components.PanelCard("", nil) {
+					<div class="flex flex-col gap-4">
+						@apiTokenCreateFields(cfg)
+					</div>
+				}
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{Rail: rail}) {
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    actionBase,
@@ -352,6 +360,16 @@ templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig
 			}
 		}
 	</form>
+}
+
+// apiTokenCreateFields renders the create form's fieldset (name) and the
+// grouped scope picker.
+templ apiTokenCreateFields(cfg apiTokenScopePickerConfig) {
+	<fieldset class="fieldset">
+		<legend class="fieldset-legend">Name</legend>
+		<input id="api-token-name" name="name" type="text" required maxlength="255" autocomplete="off" placeholder="e.g. CI deploy" class="input w-full"/>
+	</fieldset>
+	@apiTokenScopePickerContent(nil, cfg)
 }
 
 // APITokenEditPage renders the project edit-scopes page
@@ -427,7 +445,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 				</div>
 			</div>
 			@apiTokenScopePickerContent(t.Scopes, cfg)
-			@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			<div class="flex flex-wrap items-center justify-end gap-2">
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    actionBase,
@@ -445,7 +463,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 				}) {
 					Save scopes
 				}
-			}
+			</div>
 		</form>
 	}
 }
