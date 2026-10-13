@@ -214,6 +214,84 @@ func (s *Service) GenerateMCPBundleFromToken(ctx context.Context, apiToken, mcpB
 	return buildMCPBundleZIP(projectName, slug, mcpURL, apiToken)
 }
 
+// GenerateAgentMCPBundle generates a .mcpb Claude Desktop bundle for a specific
+// agent's per-agent MCP endpoint using an existing endpoint-key credential. The
+// token is resolved by SHA-256 hash, then authorized against the named agent.
+//
+// Authorization maps to:
+//   - 401: unknown, revoked, or expired token, or a token not bound to any
+//     active agent key.
+//   - 403: the key is bound to a different agent, its endpoint is revoked, or
+//     the bound agent is unavailable or disabled.
+func (s *Service) GenerateAgentMCPBundle(ctx context.Context, apiToken, mcpBaseURL, agentID string) ([]byte, string, error) {
+	// Resolve the token id directly from the DB so unknown/revoked/expired
+	// credentials fail closed before any endpoint lookup.
+	hash := sha256.Sum256([]byte(apiToken))
+	tokenHash := hex.EncodeToString(hash[:])
+
+	var tokenID string
+	err := s.db.NewSelect().
+		TableExpr("core.api_tokens").
+		ColumnExpr("id").
+		Where("token_hash = ?", tokenHash).
+		Where("revoked_at IS NULL").
+		Where("(expires_at IS NULL OR expires_at > NOW())").
+		Scan(ctx, &tokenID)
+	if err != nil || tokenID == "" {
+		return nil, "", apperror.New(http.StatusUnauthorized, "unauthorized", "invalid or expired token")
+	}
+
+	endpoint, err := s.authorizeAgentBundle(ctx, tokenID, agentID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	// Look up the project name for the manifest and filename slug.
+	var projectName string
+	_ = s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("name").
+		Where("id = ?", endpoint.ProjectID).
+		Scan(ctx, &projectName)
+	if projectName == "" {
+		projectName = "Memory Project"
+	}
+
+	mcpURL := mcpBaseURL + "/api/mcp/agents/" + agentID
+	slug := projectSlug(projectName)
+
+	return buildMCPBundleZIP(projectName, slug, mcpURL, apiToken)
+}
+
+// authorizeAgentBundle authorizes a resolved token id for the named agent's
+// endpoint, mapping failures to HTTP semantics:
+//   - 401: the token is not bound to any active agent key (unbound/revoked key).
+//   - 403: the key is bound to a different agent, its endpoint is revoked, or
+//     the bound agent is unavailable/disabled.
+//
+// It resolves the active key before delegating to AuthorizeAgentEndpoint so that
+// the "credential not bound" returned by the latter unambiguously means the
+// endpoint is missing/revoked, keeping the unbound-key case distinct.
+func (s *Service) authorizeAgentBundle(ctx context.Context, tokenID, agentID string) (*AgentMCPEndpoint, error) {
+	keyStore := s.agentKeyStore()
+	if keyStore == nil {
+		return nil, apperror.NewInternal("agent MCP key storage unavailable", nil)
+	}
+	key, err := keyStore.GetActiveKeyByTokenID(ctx, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	if key == nil {
+		return nil, apperror.New(http.StatusUnauthorized, "unauthorized", "credential is not bound to an agent")
+	}
+
+	endpoint, _, err := s.AuthorizeAgentEndpoint(ctx, tokenID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	return endpoint, nil
+}
+
 // buildMCPBundleZIP constructs the ZIP archive bytes for a .mcpb bundle.
 func buildMCPBundleZIP(projectName, slug, mcpURL, apiToken string) ([]byte, string, error) {
 	manifest := mcpbManifest{
@@ -317,6 +395,52 @@ func (h *Handler) HandleDownloadMCPBundle(c echo.Context) error {
 	mcpBaseURL := fmt.Sprintf("%s://%s", scheme, c.Request().Host)
 
 	data, filename, err := h.svc.GenerateMCPBundleFromToken(c.Request().Context(), token, mcpBaseURL)
+	if err != nil {
+		return err
+	}
+
+	c.Response().Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	c.Response().Header().Set("Content-Type", "application/zip")
+	c.Response().Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	return c.Blob(http.StatusOK, "application/zip", data)
+}
+
+// HandleDownloadAgentMCPBundle handles GET /api/mcp/agents/:agentId/bundle?token=<emt_token>
+// Public endpoint — downloads a pre-configured .mcpb bundle for a specific
+// agent's per-agent MCP endpoint. The token is the endpoint-key credential.
+//
+// @Summary      Download agent MCP bundle (public)
+// @Description  Downloads a .mcpb Claude Desktop bundle for the given agent MCP endpoint key. No login required — the token is the credential. Double-clicking the downloaded file installs the MCP server in Claude Desktop with the agent already configured.
+// @Tags         mcp
+// @Produce      application/zip
+// @Param        agentId path string true "Agent ID (UUID)"
+// @Param        token query string true "Agent MCP endpoint key (emt_*)"
+// @Success      200 "Binary .mcpb file download"
+// @Failure      400 {object} apperror.Error "Missing token parameter"
+// @Failure      401 {object} apperror.Error "Invalid, expired, or unbound token"
+// @Failure      403 {object} apperror.Error "Forbidden — revoked endpoint, wrong agent, or unavailable agent"
+// @Router       /api/mcp/agents/{agentId}/bundle [get]
+func (h *Handler) HandleDownloadAgentMCPBundle(c echo.Context) error {
+	token := c.QueryParam("token")
+	if token == "" {
+		return apperror.New(http.StatusBadRequest, "missing_param", "token parameter is required")
+	}
+
+	agentID := c.Param("agentId")
+	if agentID == "" {
+		return apperror.New(http.StatusBadRequest, "missing_param", "agentId parameter is required")
+	}
+
+	scheme := "https"
+	if c.Request().TLS == nil && c.Request().Header.Get("X-Forwarded-Proto") == "" {
+		scheme = "http"
+	}
+	if proto := c.Request().Header.Get("X-Forwarded-Proto"); proto != "" {
+		scheme = proto
+	}
+	mcpBaseURL := fmt.Sprintf("%s://%s", scheme, c.Request().Host)
+
+	data, filename, err := h.svc.GenerateAgentMCPBundle(c.Request().Context(), token, mcpBaseURL, agentID)
 	if err != nil {
 		return err
 	}

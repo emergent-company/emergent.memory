@@ -72,6 +72,16 @@ func (b *mcpShareTestBackend) ListMCPShareInstances(ctx context.Context) ([]MCPS
 	return append([]MCPShareInstance(nil), b.shares...), nil
 }
 
+// shareURL is the MCP endpoint URL the backend reports on create/rotate. It
+// defaults to an external-looking host; tests override the embedded
+// fakeMemory.mcpURL to exercise the internal-host rewrite.
+func (b *mcpShareTestBackend) shareURL() string {
+	if b.mcpURL != "" {
+		return b.mcpURL
+	}
+	return "https://mem.example/api/mcp"
+}
+
 func (b *mcpShareTestBackend) CreateMCPShareInstance(ctx context.Context, in *MCPShareInput) (*MCPShareCreated, error) {
 	if b.createErr != nil {
 		return nil, b.createErr
@@ -88,7 +98,7 @@ func (b *mcpShareTestBackend) CreateMCPShareInstance(ctx context.Context, in *MC
 	b.shares = append(b.shares, inst)
 	return &MCPShareCreated{
 		MCPShareInstance: inst,
-		MCPShareSecret:   MCPShareSecret{Token: "emt_new_secret", MCPURL: "https://mem.example/api/mcp"},
+		MCPShareSecret:   MCPShareSecret{Token: "emt_new_secret", MCPURL: b.shareURL()},
 	}, nil
 }
 
@@ -156,7 +166,7 @@ func (b *mcpShareTestBackend) RotateMCPShareInstance(ctx context.Context, id str
 	}
 	return &MCPShareCreated{
 		MCPShareInstance: *inst,
-		MCPShareSecret:   MCPShareSecret{Token: "emt_rot_secret", MCPURL: "https://mem.example/api/mcp"},
+		MCPShareSecret:   MCPShareSecret{Token: "emt_rot_secret", MCPURL: b.shareURL()},
 	}, nil
 }
 
@@ -356,7 +366,7 @@ func TestMCPShareNewPageIgnoresAgentPreselect(t *testing.T) {
 
 func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
-	s := &Server{cfg: Config{}, memory: f}
+	s := &Server{cfg: Config{MemoryPublicURL: "https://mcp.example.com"}, memory: f}
 	e := mcpShareTestServer(s)
 
 	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new",
@@ -366,7 +376,7 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"Share created", "emt_new_secret", "https://mem.example/api/mcp",
+		"Share created", "emt_new_secret", "https://mcp.example.com/api/mcp",
 		"will not be shown again", `data-mcp-share-reveal`, `data-copy-target="#mcp-share-key"`,
 		"Claude Desktop", "Claude Code", "Cursor", "Cloud Code",
 		"Done — I've saved the key",
@@ -611,7 +621,7 @@ func TestMCPShareJSONListNeverExposesToken(t *testing.T) {
 
 func TestMCPShareJSONCreateReturnsTokenOnce(t *testing.T) {
 	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
-	s := &Server{cfg: Config{}, memory: f}
+	s := &Server{cfg: Config{MemoryPublicURL: "https://mcp.example.com"}, memory: f}
 	e := mcpShareTestServer(s)
 
 	rec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares",
@@ -620,7 +630,7 @@ func TestMCPShareJSONCreateReturnsTokenOnce(t *testing.T) {
 		t.Fatalf("POST /api/mcp-shares = %d, want 201", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{`"token":"emt_new_secret"`, `"mcpUrl":"https://mem.example/api/mcp"`, `"snippets"`, `"instance"`} {
+	for _, want := range []string{`"token":"emt_new_secret"`, `"mcpUrl":"https://mcp.example.com/api/mcp"`, `"snippets"`, `"instance"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("create response missing %q: %s", want, body)
 		}
@@ -756,5 +766,57 @@ func TestAgentDashboardShareViaMCP(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("agent dashboard missing %q", want)
 		}
+	}
+}
+
+// TestMCPShareExternalOriginAndBundle asserts that when the backend reports the
+// share MCP URL on an internal host, the create reveal and the JSON response
+// use the configured memory-server public origin (MEMORY_PUBLIC_URL) — NOT the
+// gateway's PUBLIC_BASE_URL, since MCP routes are served by the memory server —
+// and the reveal carries a one-click Claude Desktop .mcpb bundle download link
+// on that same server origin.
+func TestMCPShareExternalOriginAndBundle(t *testing.T) {
+	f := newMCPShareTestBackend(nil, mcpShareCatalogFixture())
+	f.mcpURL = "http://memory-server:3002/api/mcp"
+	s := &Server{cfg: Config{
+		PublicBaseURL:   "https://gateway.example.com",
+		MemoryPublicURL: "https://mcp.example.com",
+	}, memory: f}
+	e := mcpShareTestServer(s)
+
+	rec := mcpSharePost(e, "/settings/mcp-servers/shares/new", "name=research2&tools=search_memory")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create = %d, want 200 reveal render", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "memory-server:3002") {
+		t.Errorf("reveal leaked the internal host: %s", body)
+	}
+	for _, want := range []string{
+		"https://mcp.example.com/api/mcp",
+		`data-testid="mcp-share-bundle-link"`,
+		`href="https://mcp.example.com/api/mcp/bundle?token=emt_new_secret"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("reveal missing %q in %s", want, body)
+		}
+	}
+	// The reveal must target the memory server's origin, never the gateway's.
+	if strings.Contains(body, "https://gateway.example.com/api/mcp") {
+		t.Errorf("reveal used the gateway PUBLIC_BASE_URL instead of the memory-server origin: %s", body)
+	}
+
+	jsonRec := mcpShareJSONReq(e, http.MethodPost, "/api/mcp-shares", `{"name":"api share","tools":["search_memory"]}`)
+	if jsonRec.Code != http.StatusCreated {
+		t.Fatalf("json create = %d, want 201", jsonRec.Code)
+	}
+	if strings.Contains(jsonRec.Body.String(), "memory-server:3002") {
+		t.Errorf("json create leaked the internal host: %s", jsonRec.Body.String())
+	}
+	if !strings.Contains(jsonRec.Body.String(), `"mcpUrl":"https://mcp.example.com/api/mcp"`) {
+		t.Errorf("json create missing server-public host URL: %s", jsonRec.Body.String())
+	}
+	if strings.Contains(jsonRec.Body.String(), `"mcpUrl":"https://gateway.example.com/api/mcp"`) {
+		t.Errorf("json create used the gateway PUBLIC_BASE_URL instead of the memory-server origin: %s", jsonRec.Body.String())
 	}
 }

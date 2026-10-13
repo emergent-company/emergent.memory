@@ -1,9 +1,9 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -47,11 +47,12 @@ func (e agentMCPActionErr) Error() string { return e.message }
 // rotate. It is held only for the lifetime of that one response: the raw token
 // is never stored, and no later list or reload can show it again.
 type agentMCPReveal struct {
-	Heading  string
-	Label    string
-	Token    string
-	MCPURL   string
-	Snippets []agentMCPKeySnippet
+	Heading   string
+	Label     string
+	Token     string
+	MCPURL    string
+	BundleURL string
+	Snippets  []agentMCPKeySnippet
 }
 
 // --- endpoint flows ---
@@ -110,12 +111,14 @@ func (s *Server) uiAgentMCPKeyCreate(c echo.Context) error {
 	if err != nil {
 		return s.renderAgentSettingsWithMCPKeyErr(c, id, "Could not create the key", err, label)
 	}
+	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
 	return s.renderAgentSettingsWithMCP(c, id, agentSettingsData{MCPReveal: &agentMCPReveal{
-		Heading:  "Key created",
-		Label:    label,
-		Token:    secret.Token,
-		MCPURL:   cmpOrStr(secret.MCPURL, ep.MCPURL),
-		Snippets: agentMCPKeySnippets(*secret),
+		Heading:   "Key created",
+		Label:     label,
+		Token:     secret.Token,
+		MCPURL:    cmpOrStr(secret.MCPURL, s.externalMCPURL(ep.MCPURL)),
+		BundleURL: s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
+		Snippets:  agentMCPKeySnippets(*secret),
 	}})
 }
 
@@ -149,12 +152,14 @@ func (s *Server) uiAgentMCPKeyRotate(c echo.Context) error {
 	if err != nil {
 		return s.renderAgentSettingsWithMCPErr(c, id, "Could not rotate the key", err)
 	}
+	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
 	return s.renderAgentSettingsWithMCP(c, id, agentSettingsData{MCPReveal: &agentMCPReveal{
-		Heading:  "Key rotated",
-		Label:    secret.Label,
-		Token:    secret.Token,
-		MCPURL:   secret.MCPURL,
-		Snippets: agentMCPKeySnippets(*secret),
+		Heading:   "Key rotated",
+		Label:     secret.Label,
+		Token:     secret.Token,
+		MCPURL:    secret.MCPURL,
+		BundleURL: s.serverPublicBaseURL() + "/api/mcp/agents/" + url.PathEscape(id) + "/bundle?token=" + url.QueryEscape(secret.Token),
+		Snippets:  agentMCPKeySnippets(*secret),
 	}})
 }
 
@@ -200,6 +205,7 @@ func (s *Server) jsonAgentMCPEndpoint(c echo.Context) error {
 	if ep == nil {
 		return agentMCPJSONError(c, http.StatusNotFound, "this agent has no active MCP endpoint")
 	}
+	ep.MCPURL = s.externalMCPURL(ep.MCPURL)
 	return c.JSON(http.StatusOK, ep)
 }
 
@@ -213,6 +219,7 @@ func (s *Server) jsonCreateAgentMCPEndpoint(c echo.Context) error {
 	if err != nil {
 		return agentMCPJSONErr(c, err)
 	}
+	ep.MCPURL = s.externalMCPURL(ep.MCPURL)
 	return c.JSON(http.StatusCreated, ep)
 }
 
@@ -264,6 +271,7 @@ func (s *Server) jsonCreateAgentMCPKey(c echo.Context) error {
 	if err != nil {
 		return agentMCPJSONErr(c, err)
 	}
+	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
 	return c.JSON(http.StatusCreated, secret)
 }
 
@@ -290,6 +298,7 @@ func (s *Server) jsonRotateAgentMCPKey(c echo.Context) error {
 	if err != nil {
 		return agentMCPJSONErr(c, err)
 	}
+	secret.MCPURL = s.externalMCPURL(secret.MCPURL)
 	return c.JSON(http.StatusOK, secret)
 }
 
@@ -315,7 +324,8 @@ func (s *Server) jsonListAgentMCPSessions(c echo.Context) error {
 // endpoint, its labeled keys, and the external sessions those keys created.
 // Each fetch failure degrades only its own block (leaving the rest of the page
 // intact) rather than failing the whole page.
-func (s *Server) loadAgentMCP(ctx context.Context, agentID string, data *agentSettingsData) {
+func (s *Server) loadAgentMCP(c echo.Context, agentID string, data *agentSettingsData) {
+	ctx := c.Request().Context()
 	data.MCPAgentID = agentID
 	data.MCPEndpointErr = nil
 	data.MCPKeysErr = nil
@@ -325,6 +335,9 @@ func (s *Server) loadAgentMCP(ctx context.Context, agentID string, data *agentSe
 	if err != nil {
 		data.MCPEndpointErr = err
 		return
+	}
+	if ep != nil {
+		ep.MCPURL = s.externalMCPURL(ep.MCPURL)
 	}
 	data.MCPEndpoint = ep
 	if ep == nil {
@@ -353,7 +366,7 @@ func (s *Server) renderAgentSettingsWithMCP(c echo.Context, agentID string, extr
 		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Agent settings"), AgentSettingsPage(data))
 	}
-	s.loadAgentMCP(ctx, agentID, &data)
+	s.loadAgentMCP(c, agentID, &data)
 	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))
 }
 

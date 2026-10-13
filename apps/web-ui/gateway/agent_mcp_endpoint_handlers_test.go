@@ -82,7 +82,7 @@ func agentMCPJSONReq(e *echo.Echo, method, path, body string, hdr map[string]str
 // with its key and turn count, and the create-key form — and never a secret.
 func TestAgentSettingsRendersMCPEndpoint(t *testing.T) {
 	f := agentMCPFixture()
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	s := &Server{cfg: Config{DefaultAgent: "memory", MemoryPublicURL: "https://mcp.example.com"}, memory: f}
 	e := agentMCPTestServer(s)
 
 	rec := agentMCPGet(e, "/agents/a1/settings/mcp")
@@ -94,7 +94,7 @@ func TestAgentSettingsRendersMCPEndpoint(t *testing.T) {
 		`data-testid="agent-mcp-section"`,
 		"MCP endpoint",
 		`data-testid="agent-mcp-endpoint"`,
-		"https://mem.example/api/mcp/agents/a1",
+		"https://mcp.example.com/api/mcp/agents/a1",
 		`data-testid="agent-mcp-keys"`,
 		"laptop",
 		`data-testid="agent-mcp-key-row"`,
@@ -190,7 +190,7 @@ func TestAgentSettingsMCPLoadErrorsAreInline(t *testing.T) {
 func TestAgentMCPKeyCreateRendersSecretOnce(t *testing.T) {
 	f := agentMCPFixture()
 	f.mcpToken = "emt_secret_once"
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	s := &Server{cfg: Config{DefaultAgent: "memory", MemoryPublicURL: "https://mcp.example.com"}, memory: f}
 	e := agentMCPTestServer(s)
 
 	rec := agentMCPPost(e, "/agents/a1/mcp-endpoint/keys", "label=phone")
@@ -202,7 +202,7 @@ func TestAgentMCPKeyCreateRendersSecretOnce(t *testing.T) {
 		`data-agent-mcp-reveal`,
 		"Key created",
 		"emt_secret_once",
-		"https://mem.example/api/mcp/agents/a1",
+		"https://mcp.example.com/api/mcp/agents/a1",
 		"will not be shown again",
 		"Claude Desktop", "Claude Code", "Cursor", "Cloud Code",
 		"data-copy-target",
@@ -546,5 +546,71 @@ func TestAgentMCPKeySecretNotLogged(t *testing.T) {
 
 	if strings.Contains(buf.String(), "super-secret-key") {
 		t.Fatalf("raw secret reached the logger: %s", buf.String())
+	}
+}
+
+// --- external origin + bundle link ---
+
+// TestAgentMCPExternalOrigin asserts that when the backend reports the agent
+// endpoint URL on an internal host, both the rendered settings page and the
+// JSON endpoint responses use the configured memory-server public origin
+// (MEMORY_PUBLIC_URL) — NOT the gateway's PUBLIC_BASE_URL.
+func TestAgentMCPExternalOrigin(t *testing.T) {
+	f := agentMCPFixture()
+	f.mcpEndpoint.MCPURL = "http://memory-server:3002/api/mcp/agents/a1"
+	s := &Server{cfg: Config{
+		DefaultAgent:    "memory",
+		PublicBaseURL:   "https://gateway.example.com",
+		MemoryPublicURL: "https://mcp.example.com",
+	}, memory: f}
+	e := agentMCPTestServer(s)
+
+	body := agentMCPGet(e, "/agents/a1/settings/mcp").Body.String()
+	if !strings.Contains(body, "https://mcp.example.com/api/mcp/agents/a1") {
+		t.Errorf("settings page missing server-public host URL: %s", body)
+	}
+	if strings.Contains(body, "memory-server:3002") {
+		t.Error("settings page leaked the internal host")
+	}
+	if strings.Contains(body, "https://gateway.example.com/api/mcp/agents/a1") {
+		t.Errorf("settings page used the gateway PUBLIC_BASE_URL instead of the memory-server origin: %s", body)
+	}
+
+	rec := agentMCPJSONReq(e, http.MethodGet, "/api/agents/a1/mcp-endpoint", "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"mcpUrl":"https://mcp.example.com/api/mcp/agents/a1"`) {
+		t.Errorf("JSON endpoint missing server-public host URL: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "memory-server:3002") {
+		t.Error("JSON endpoint leaked the internal host")
+	}
+	if strings.Contains(rec.Body.String(), `"mcpUrl":"https://gateway.example.com/api/mcp/agents/a1"`) {
+		t.Errorf("JSON endpoint used the gateway PUBLIC_BASE_URL instead of the memory-server origin: %s", rec.Body.String())
+	}
+}
+
+// TestAgentMCPRevealBundleLink asserts the key reveal renders a one-click
+// Claude Desktop .mcpb bundle download link on the memory-server public origin
+// with the expected /api/mcp/agents/<id>/bundle path.
+func TestAgentMCPRevealBundleLink(t *testing.T) {
+	f := agentMCPFixture()
+	f.mcpToken = "emt_secret_once"
+	s := &Server{cfg: Config{DefaultAgent: "memory", MemoryPublicURL: "https://mcp.example.com"}, memory: f}
+	e := agentMCPTestServer(s)
+
+	rec := agentMCPPost(e, "/agents/a1/mcp-endpoint/keys", "label=phone")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="agent-mcp-bundle-link"`,
+		`href="https://mcp.example.com/api/mcp/agents/a1/bundle?token=emt_secret_once"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("bundle link missing %q in %s", want, body)
+		}
 	}
 }

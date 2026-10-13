@@ -246,7 +246,7 @@ func (s *Server) renderAgentSettingsSection(c echo.Context, section string) erro
 	// The MCP block (endpoint/keys/sessions) is only rendered on the MCP
 	// sharing subpage; other subpages skip those backend fetches.
 	if section == sectionMCP {
-		s.loadAgentMCP(ctx, id, &data)
+		s.loadAgentMCP(c, id, &data)
 	}
 
 	return s.page(c, pageTitle(data.Agent.Name, "Settings"), AgentSettingsPage(data))

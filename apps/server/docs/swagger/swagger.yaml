@@ -15520,6 +15520,43 @@ paths:
       summary: Get relay instance tools
       tags:
       - mcp-relay
+  /api/mcp/agents/{agentId}/bundle:
+    get:
+      description: Downloads a .mcpb Claude Desktop bundle for the given agent MCP
+        endpoint key. No login required — the token is the credential. Double-clicking
+        the downloaded file installs the MCP server in Claude Desktop with the agent
+        already configured.
+      parameters:
+      - description: Agent ID (UUID)
+        in: path
+        name: agentId
+        required: true
+        type: string
+      - description: Agent MCP endpoint key (emt_*)
+        in: query
+        name: token
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: Binary .mcpb file download
+        "400":
+          description: Missing token parameter
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Invalid, expired, or unbound token
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden — revoked endpoint, wrong agent, or unavailable agent
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: Download agent MCP bundle (public)
+      tags:
+      - mcp
   /api/mcp/bundle:
     get:
       description: Downloads a .mcpb Claude Desktop bundle for the given read-only

@@ -83,6 +83,22 @@ func TestLoadConfigFeedbackOverlay(t *testing.T) {
 	}
 }
 
+// TestLoadConfigMemoryPublicURL asserts the memory-server public origin defaults
+// to MEMORY_URL and is overridable via MEMORY_PUBLIC_URL (trailing slash
+// trimmed).
+func TestLoadConfigMemoryPublicURL(t *testing.T) {
+	t.Setenv("MEMORY_URL", "https://memory.example.com")
+	t.Setenv("MEMORY_PUBLIC_URL", "")
+	if got := LoadConfig().MemoryPublicURL; got != "https://memory.example.com" {
+		t.Errorf("MemoryPublicURL = %q, want default to MEMORY_URL", got)
+	}
+
+	t.Setenv("MEMORY_PUBLIC_URL", "https://mcp.example.com/")
+	if got := LoadConfig().MemoryPublicURL; got != "https://mcp.example.com" {
+		t.Errorf("MemoryPublicURL = %q, want env value with trailing slash trimmed", got)
+	}
+}
+
 // TestLoadConfigComponentGallery asserts the gallery flag defaults off in every
 // mode and is enabled by an explicit MEMORY_COMPONENT_GALLERY value.
 func TestLoadConfigComponentGallery(t *testing.T) {

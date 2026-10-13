@@ -18,6 +18,11 @@
   "raw_sql": [
     {
       "file": "apps/server/domain/mcp/bundle.go",
+      "func": "GenerateAgentMCPBundle",
+      "why": "read core.api_tokens by token hash (the bearer validation itself; revoked/expired fails closed) + kb.projects name, read-only and keyed by the authorized endpoint's project; agent authorization is authorizeAgentBundle (401 unbound/revoked key, 403 wrong agent/revoked endpoint/disabled agent)"
+    },
+    {
+      "file": "apps/server/domain/mcp/bundle.go",
       "func": "GenerateMCPBundle",
       "why": "read kb.projects name; project_admin role already enforced via apitokenSvc.GetUserProjectRole at the top of the function; read-only"
     },

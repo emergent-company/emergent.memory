@@ -303,6 +303,17 @@ func (s *Server) publicBaseURL(c echo.Context) string {
 	return "http://" + c.Request().Host
 }
 
+// serverPublicBaseURL returns the externally-reachable base URL
+// (scheme://host[:port], no trailing slash) of the memory server — the origin
+// MCP routes are actually served from. It is the configured MEMORY_PUBLIC_URL
+// (defaulting to MEMORY_URL); it MUST NOT fall back to the request Host, so the
+// origin advertised to clients can never be attacker-influenceable. Empty means
+// no server origin is configured: callers return the backend-reported URL
+// unchanged rather than fabricating one.
+func (s *Server) serverPublicBaseURL() string {
+	return strings.TrimRight(strings.TrimSpace(s.cfg.MemoryPublicURL), "/")
+}
+
 // ttsStrategy maps the TTS_PROVIDER config to the client-facing strategy the
 // iOS app should use: "client" (device does local TTS from text) for
 // none/client/empty, "server" (audio comes from the worker) otherwise.

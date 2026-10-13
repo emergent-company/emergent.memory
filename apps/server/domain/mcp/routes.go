@@ -17,6 +17,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, sseHandler *SSEHandler, streamable
 	// auth-gated group so it doesn't require authentication.
 	e.GET("/api/mcp/install", h.HandleInstallRedirect)
 	e.GET("/api/mcp/bundle", h.HandleDownloadMCPBundle)
+	e.GET("/api/mcp/agents/:agentId/bundle", h.HandleDownloadAgentMCPBundle)
 
 	g := e.Group("/api/mcp")
 	g.Use(authMiddleware.RequireAuth())

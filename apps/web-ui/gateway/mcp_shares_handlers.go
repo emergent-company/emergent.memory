@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -65,11 +66,12 @@ type mcpShareFormData struct {
 // mcpShareReveal is the one-time key panel rendered after create/rotate. It is
 // held only for the lifetime of that one response.
 type mcpShareReveal struct {
-	Heading  string
-	Name     string
-	Token    string
-	MCPURL   string
-	Snippets []mcpShareSnippet
+	Heading   string
+	Name      string
+	Token     string
+	MCPURL    string
+	BundleURL string
+	Snippets  []mcpShareSnippet
 }
 
 // --- list page ---
@@ -159,7 +161,7 @@ func (s *Server) uiMCPShareCreate(c echo.Context) error {
 		}
 		return s.renderMCPShareNewPage(c, draft)
 	}
-	return s.renderMCPShareListWithReveal(c, mcpShareRevealPtr(mcpShareRevealFromCreated("Share created", created)))
+	return s.renderMCPShareListWithReveal(c, mcpShareRevealPtr(s.mcpShareRevealFromCreated("Share created", created)))
 }
 
 // --- edit page + update flow ---
@@ -282,7 +284,7 @@ func (s *Server) uiMCPShareRotate(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, mcpShareSettingsBase, err)
 	}
-	return s.renderMCPShareListWithReveal(c, mcpShareRevealPtr(mcpShareRevealFromCreated("Share key rotated", created)))
+	return s.renderMCPShareListWithReveal(c, mcpShareRevealPtr(s.mcpShareRevealFromCreated("Share key rotated", created)))
 }
 
 // --- JSON echo surface ---
@@ -306,7 +308,7 @@ func (s *Server) createMCPShare(c echo.Context) error {
 	if err != nil {
 		return mcpShareJSONErr(c, err)
 	}
-	return c.JSON(http.StatusCreated, mcpShareCreatedJSON(created))
+	return c.JSON(http.StatusCreated, s.mcpShareCreatedJSON(created))
 }
 
 // getMCPShare handles GET /api/mcp-shares/:id (never carries the token).
@@ -362,7 +364,7 @@ func (s *Server) rotateMCPShare(c echo.Context) error {
 	if err != nil {
 		return mcpShareJSONErr(c, err)
 	}
-	return c.JSON(http.StatusOK, mcpShareCreatedJSON(created))
+	return c.JSON(http.StatusOK, s.mcpShareCreatedJSON(created))
 }
 
 // listMCPShareTools handles GET /api/mcp-shares/tools (the tool catalog).
@@ -406,11 +408,13 @@ func (s *Server) mcpShareNameTaken(ctx context.Context, name, exceptID string) b
 }
 
 // mcpShareCreatedJSON returns the create/rotate response with the one-time
-// token and a complete snippet set.
-func mcpShareCreatedJSON(created *MCPShareCreated) map[string]any {
+// token and a complete snippet set, with the endpoint URL rewritten to the
+// memory server's externally-reachable origin.
+func (s *Server) mcpShareCreatedJSON(created *MCPShareCreated) map[string]any {
 	if created == nil {
 		return map[string]any{}
 	}
+	created.MCPURL = s.externalMCPURL(created.MCPURL)
 	return map[string]any{
 		"instance": created.MCPShareInstance,
 		"token":    created.Token,
@@ -420,17 +424,20 @@ func mcpShareCreatedJSON(created *MCPShareCreated) map[string]any {
 }
 
 // mcpShareRevealFromCreated builds the reveal payload from a create/rotate
-// result.
-func mcpShareRevealFromCreated(heading string, created *MCPShareCreated) mcpShareReveal {
+// result, rewriting the endpoint URL to the memory server's externally-reachable
+// origin and exposing the one-click Claude Desktop bundle download link.
+func (s *Server) mcpShareRevealFromCreated(heading string, created *MCPShareCreated) mcpShareReveal {
 	if created == nil {
 		return mcpShareReveal{Heading: heading}
 	}
+	created.MCPURL = s.externalMCPURL(created.MCPURL)
 	return mcpShareReveal{
-		Heading:  heading,
-		Name:     created.Name,
-		Token:    created.Token,
-		MCPURL:   created.MCPURL,
-		Snippets: mcpShareSnippets(created.MCPShareSecret),
+		Heading:   heading,
+		Name:      created.Name,
+		Token:     created.Token,
+		MCPURL:    created.MCPURL,
+		BundleURL: s.serverPublicBaseURL() + "/api/mcp/bundle?token=" + url.QueryEscape(created.Token),
+		Snippets:  mcpShareSnippets(created.MCPShareSecret),
 	}
 }
 

@@ -8663,6 +8663,57 @@
                 }
             }
         },
+        "/api/mcp/agents/{agentId}/bundle": {
+            "get": {
+                "description": "Downloads a .mcpb Claude Desktop bundle for the given agent MCP endpoint key. No login required — the token is the credential. Double-clicking the downloaded file installs the MCP server in Claude Desktop with the agent already configured.",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "mcp"
+                ],
+                "summary": "Download agent MCP bundle (public)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Agent ID (UUID)",
+                        "name": "agentId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Agent MCP endpoint key (emt_*)",
+                        "name": "token",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Binary .mcpb file download"
+                    },
+                    "400": {
+                        "description": "Missing token parameter",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Invalid, expired, or unbound token",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden — revoked endpoint, wrong agent, or unavailable agent",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/mcp/bundle": {
             "get": {
                 "description": "Downloads a .mcpb Claude Desktop bundle for the given read-only API token. No login required — the token is the credential. Double-clicking the downloaded file installs the MCP server in Claude Desktop with the project already configured.",

@@ -11,8 +11,15 @@ import (
 
 // Config is loaded from environment. Memory credentials are server-side only.
 type Config struct {
-	Port            string
-	MemoryURL       string
+	Port      string
+	MemoryURL string
+	// MemoryPublicURL is the externally-reachable base URL (scheme://host[:port])
+	// of the memory server, used to build MCP endpoint and .mcpb bundle URLs the
+	// UI hands to clients. MCP routes are served by the memory server — not this
+	// gateway — so these URLs must target the server's public origin, never the
+	// gateway's PUBLIC_BASE_URL. Defaults to MemoryURL; set MEMORY_PUBLIC_URL to
+	// override when MemoryURL is an internal service address.
+	MemoryPublicURL string
 	MemoryProjectID string
 	ClientAPIKey    string // optional admin key (TOKEN_API_KEY); gates /api/* in dev mode only — session mode no longer accepts key-only callers
 	BridgeBin       string
@@ -151,9 +158,11 @@ func LoadConfig() Config {
 	if env == "development" {
 		tracesRate, replayRate = 1.0, 1.0
 	}
+	memoryURL := envOr("MEMORY_URL", "https://memory.emergent-company.ai")
 	return Config{
 		Port:               envOr("MEMORY_PORT", "8095"),
-		MemoryURL:          envOr("MEMORY_URL", "https://memory.emergent-company.ai"),
+		MemoryURL:          memoryURL,
+		MemoryPublicURL:    strings.TrimRight(envOr("MEMORY_PUBLIC_URL", memoryURL), "/"),
 		MemoryProjectID:    os.Getenv("MEMORY_PROJECT_ID"),
 		ClientAPIKey:       os.Getenv("TOKEN_API_KEY"),
 		BridgeBin:          envOr("BRIDGE_BIN", "python"),

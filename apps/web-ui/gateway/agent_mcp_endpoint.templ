@@ -565,6 +565,8 @@ templ agentMCPRevealModal(r agentMCPReveal) {
 		EndpointID:   "agent-mcp-reveal-endpoint",
 		Endpoint:     r.MCPURL,
 		Warning:      "This secret will not be shown again. If you lose it, rotate the key to issue a new one.",
+		BundleURL:    r.BundleURL,
+		BundleTestID: "agent-mcp-bundle-link",
 		DialogID:     "agent-mcp-reveal-modal",
 		Attrs:        templ.Attributes{"data-agent-mcp-reveal": "true"},
 		Snippets:     agentMCPKeySnippetBlocks(r.Snippets),

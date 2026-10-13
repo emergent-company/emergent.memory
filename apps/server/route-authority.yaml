@@ -882,6 +882,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/mcp/agents/:agentId/bundle
+      level: public
+      note: ""
+    - method: GET
       path: /api/mcp/bundle
       level: public
       note: ""
