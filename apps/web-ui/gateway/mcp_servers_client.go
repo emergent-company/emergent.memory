@@ -25,9 +25,13 @@ type MCPInspectResult struct {
 	ServerType string `json:"serverType"`
 
 	// Connection result
-	Status    string  `json:"status"` // "ok" or "error"
+	Status    string  `json:"status"` // "ok", "error", or "auth_required"
 	Error     *string `json:"error,omitempty"`
 	LatencyMs int64   `json:"latencyMs"`
+
+	// Auth describes the OAuth authorization the server demands when Status is
+	// "auth_required" (nil otherwise).
+	Auth *MCPInspectAuth `json:"auth,omitempty"`
 
 	// Server info from InitializeResult
 	ServerInfo *MCPInspectServerInfo `json:"serverInfo,omitempty"`
@@ -95,6 +99,15 @@ type MCPInspectResourceTemplate struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	MimeType    string `json:"mimeType,omitempty"`
+}
+
+// MCPInspectAuth is the OAuth requirement memory reports inside an inspect
+// result whose Status is "auth_required".
+type MCPInspectAuth struct {
+	ResourceMetadataURL   string   `json:"resourceMetadataUrl"`
+	AuthorizationServer   string   `json:"authorizationServer"`
+	Scopes                []string `json:"scopes"`
+	RegistrationSupported bool     `json:"registrationSupported"`
 }
 
 // SyncMCPServer re-discovers a server's tools (auto-discover mode: memory
@@ -191,4 +204,71 @@ func (m *MemoryClient) CallMCPServerTool(ctx context.Context, id, toolName strin
 		return nil, err
 	}
 	return &env.Data, nil
+}
+
+// --- MCP OAuth connect ---
+//
+// These methods proxy memory's per-server OAuth connect routes under the same
+// /api/admin/mcp-servers namespace. Status reports the stored
+// client-registration/token state (never token values); authorize starts the
+// browser flow and returns the provider's authorization URL; delete clears the
+// stored tokens. Project scoping rides on the static project-bound API key —
+// the same plain-context convention as the mcp-servers CRUD methods in
+// extras.go.
+
+// MCPServerOAuth mirrors the oauth object on the server list/detail DTO: the
+// connection summary without any token values. It is absent for
+// device-targeted and non-remote (stdio) servers.
+type MCPServerOAuth struct {
+	Configured          bool    `json:"configured"`
+	Connected           bool    `json:"connected"`
+	AuthorizationServer *string `json:"authorizationServer,omitempty"`
+	Scope               *string `json:"scope,omitempty"`
+	ExpiresAt           *string `json:"expiresAt,omitempty"`
+}
+
+// MCPOAuthStatus mirrors memory's oauth status DTO (GET /:id/oauth/status).
+// Configured means a client registration/credential row exists; Connected means
+// a usable token set is stored. No token values are ever returned.
+type MCPOAuthStatus struct {
+	ServerID              string   `json:"serverId"`
+	Configured            bool     `json:"configured"`
+	Connected             bool     `json:"connected"`
+	AuthorizationServer   *string  `json:"authorizationServer,omitempty"`
+	Scope                 *string  `json:"scope,omitempty"`
+	Scopes                []string `json:"scopes"`
+	RegistrationSupported bool     `json:"registrationSupported"`
+	ExpiresAt             *string  `json:"expiresAt,omitempty"`
+}
+
+// MCPOAuthAuthorize mirrors memory's authorize DTO (POST /:id/oauth/authorize):
+// the provider URL the browser must navigate to plus the opaque state.
+type MCPOAuthAuthorize struct {
+	AuthorizeURL string `json:"authorizeUrl"`
+	State        string `json:"state"`
+}
+
+// GetMCPServerOAuthStatus fetches a server's OAuth connection summary.
+func (m *MemoryClient) GetMCPServerOAuthStatus(ctx context.Context, id string) (*MCPOAuthStatus, error) {
+	var env successEnvelope[MCPOAuthStatus]
+	if err := m.do(ctx, http.MethodGet, "/api/admin/mcp-servers/"+id+"/oauth/status", nil, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// AuthorizeMCPServer starts the OAuth flow and returns the provider's
+// authorization URL for the browser to navigate to.
+func (m *MemoryClient) AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error) {
+	var env successEnvelope[MCPOAuthAuthorize]
+	if err := m.do(ctx, http.MethodPost, "/api/admin/mcp-servers/"+id+"/oauth/authorize", nil, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// DisconnectMCPServer clears the server's stored OAuth tokens. Memory answers
+// 204 with no body; only the transport/status error matters.
+func (m *MemoryClient) DisconnectMCPServer(ctx context.Context, id string) error {
+	return m.do(ctx, http.MethodDelete, "/api/admin/mcp-servers/"+id+"/oauth", nil, nil)
 }

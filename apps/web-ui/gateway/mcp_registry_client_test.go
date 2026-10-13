@@ -274,3 +274,34 @@ func TestInstallRegistryServerError(t *testing.T) {
 		t.Fatalf("error = %v, want the stdio-only rejection", err)
 	}
 }
+
+// TestInstallRegistryServerRequiresAuthorization asserts the install result
+// decodes the requiresAuthorization flag (an OAuth-required server installs
+// with no env/config, so the UI must point the admin at the Connect action).
+func TestInstallRegistryServerRequiresAuthorization(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{
+			"server":{"id":"srv-1","name":"github-mcp-server","type":"http","enabled":true},
+			"requiredEnvVars":[],
+			"requiresAuthorization":true,
+			"message":"Server installed."
+		}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.InstallRegistryServer(context.Background(), "io.github.github/github-mcp-server", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RequiresAuthorization {
+		t.Errorf("requiresAuthorization = false, want true")
+	}
+	if len(res.RequiredEnvVars) != 0 {
+		t.Errorf("requiredEnvVars = %+v, want none for an OAuth-required server", res.RequiredEnvVars)
+	}
+	if res.Server == nil || res.Server.Name != "github-mcp-server" {
+		t.Errorf("server = %+v", res.Server)
+	}
+}

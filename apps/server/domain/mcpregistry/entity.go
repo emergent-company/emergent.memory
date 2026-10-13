@@ -119,6 +119,31 @@ type MCPServer struct {
 	Tools []*MCPServerTool `bun:"rel:has-many,join:id=server_id" json:"tools,omitempty"`
 }
 
+// MCPServerOAuth is the OAuth credential row for a remote MCP server
+// (kb.mcp_server_oauth, one row per server). It holds the discovered endpoint
+// set, the registered client identity, and the token set. ClientSecret,
+// AccessToken, and RefreshToken are AES-GCM ciphertext (json:"-" keeps them out
+// of serialization); only the service layer ever decrypts them.
+type MCPServerOAuth struct {
+	bun.BaseModel `bun:"table:kb.mcp_server_oauth,alias:mso"`
+
+	ServerID             string `bun:"server_id,pk,type:uuid" json:"serverId"`
+	ProjectID            string `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AuthorizationServer  string `bun:"authorization_server,notnull,default:''" json:"authorizationServer"`
+	TokenEndpoint        string `bun:"token_endpoint,notnull,default:''" json:"-"`
+	RegistrationEndpoint string `bun:"registration_endpoint,notnull,default:''" json:"-"`
+	Resource             string `bun:"resource,notnull,default:''" json:"-"`
+	Scope                string `bun:"scope,notnull,default:''" json:"scope"`
+	ClientID             string `bun:"client_id,notnull,default:''" json:"-"`
+	// ClientSecret / AccessToken / RefreshToken are nil until issued.
+	ClientSecret *EncryptedSecret `bun:"client_secret,type:jsonb,nullzero" json:"-"`
+	AccessToken  *EncryptedSecret `bun:"access_token,type:jsonb,nullzero" json:"-"`
+	RefreshToken *EncryptedSecret `bun:"refresh_token,type:jsonb,nullzero" json:"-"`
+	ExpiresAt    *time.Time       `bun:"expires_at" json:"expiresAt,omitempty"`
+	CreatedAt    time.Time        `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`
+	UpdatedAt    time.Time        `bun:"updated_at,nullzero,notnull,default:current_timestamp" json:"updatedAt"`
+}
+
 // MCPServerTool represents a cached tool definition from an MCP server.
 // Table: kb.mcp_server_tools
 type MCPServerTool struct {
@@ -180,6 +205,42 @@ type MCPServerDTO struct {
 	// URL to link to provider docs for credential setup.
 	RegistryName          *string `json:"registryName,omitempty"`
 	RegistryRepositoryURL *string `json:"registryRepositoryUrl,omitempty"`
+	// OAuth summarizes the server's authorization state. Nil for servers that
+	// cannot use the OAuth connect flow (builtin, stdio, device-targeted) and
+	// for remote servers with no authorization row. It never carries token
+	// material.
+	OAuth *MCPServerOAuthSummaryDTO `json:"oauth,omitempty"`
+}
+
+// MCPServerOAuthSummaryDTO is the authorization-state summary attached to a
+// server DTO. Configured means an authorization row exists (a client is
+// registered); Connected means a usable token set is stored.
+type MCPServerOAuthSummaryDTO struct {
+	Configured          bool       `json:"configured"`
+	Connected           bool       `json:"connected"`
+	AuthorizationServer *string    `json:"authorizationServer,omitempty"`
+	Scope               *string    `json:"scope,omitempty"`
+	ExpiresAt           *time.Time `json:"expiresAt,omitempty"`
+}
+
+// MCPServerOAuthStatusDTO is the detailed authorization status of one server.
+type MCPServerOAuthStatusDTO struct {
+	ServerID              string     `json:"serverId"`
+	Configured            bool       `json:"configured"`
+	Connected             bool       `json:"connected"`
+	AuthorizationServer   *string    `json:"authorizationServer,omitempty"`
+	TokenEndpoint         *string    `json:"tokenEndpoint,omitempty"`
+	RegistrationSupported bool       `json:"registrationSupported"`
+	Scopes                []string   `json:"scopes"`
+	Scope                 *string    `json:"scope,omitempty"`
+	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
+	UpdatedAt             *time.Time `json:"updatedAt,omitempty"`
+}
+
+// StartMCPOAuthResponseDTO is the response to starting an authorization flow.
+type StartMCPOAuthResponseDTO struct {
+	AuthorizeURL string `json:"authorizeUrl"`
+	State        string `json:"state"`
 }
 
 // MCPServerToolDTO is the response DTO for an MCP server tool.
@@ -347,6 +408,10 @@ type InstallResultDTO struct {
 	// RequiredConfig lists the credential keys (header/env) resolved from the
 	// selected transport; the UI uses it to guide the user through configuration.
 	RequiredConfig []RequiredConfigKey `json:"requiredConfig"`
+	// RequiresAuthorization is true when the installed server's discovery was
+	// rejected with an OAuth challenge, meaning the server needs the connect
+	// flow before its tools can be discovered.
+	RequiresAuthorization bool `json:"requiresAuthorization"`
 }
 
 // RegistrySearchResultDTO wraps search results from the official MCP registry.
@@ -369,9 +434,14 @@ type MCPServerInspectDTO struct {
 	ServerType MCPServerType `json:"serverType"`
 
 	// Connection result
-	Status    string  `json:"status"` // "ok" or "error"
+	Status    string  `json:"status"` // "ok", "auth_required", or "error"
 	Error     *string `json:"error,omitempty"`
 	LatencyMs int64   `json:"latencyMs"`
+
+	// Auth describes the authorization requirement when Status is
+	// "auth_required": the authorization server to send the user to, the scopes
+	// it accepts, and whether it offers dynamic client registration.
+	Auth *InspectAuthDTO `json:"auth,omitempty"`
 
 	// Server info from InitializeResult
 	ServerInfo *InspectServerInfoDTO `json:"serverInfo,omitempty"`
@@ -384,6 +454,15 @@ type MCPServerInspectDTO struct {
 	Prompts           []InspectPromptDTO           `json:"prompts"`
 	Resources         []InspectResourceDTO         `json:"resources"`
 	ResourceTemplates []InspectResourceTemplateDTO `json:"resourceTemplates"`
+}
+
+// InspectAuthDTO describes an authorization requirement discovered from an
+// OAuth challenge. It never carries credentials.
+type InspectAuthDTO struct {
+	ResourceMetadataURL   string   `json:"resourceMetadataUrl,omitempty"`
+	AuthorizationServer   string   `json:"authorizationServer,omitempty"`
+	Scopes                []string `json:"scopes"`
+	RegistrationSupported bool     `json:"registrationSupported"`
 }
 
 // InspectServerInfoDTO carries the server's self-reported identity.

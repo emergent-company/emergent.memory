@@ -308,3 +308,74 @@ func TestRenderMCPServerEditPageStdioPrefills(t *testing.T) {
 		}
 	}
 }
+
+// --- OAuth connect controls ---
+
+// mcpOAuthServerFixture builds one remote server carrying an OAuth summary so
+// the OAuth-control render tests don't disturb the shared registry fixture.
+func mcpOAuthServerFixture(connected bool) MCPServer {
+	as := "https://auth.example.com"
+	return MCPServer{
+		ID: "srv-oauth", Name: "github-mcp", Type: "http", Enabled: true,
+		URL:   "https://github.example.com/mcp",
+		OAuth: &MCPServerOAuth{Connected: connected, AuthorizationServer: &as},
+	}
+}
+
+// TestRenderMCPServersOAuthConnect asserts a remote server with an unconnected
+// OAuth summary renders the Connect action (link to /oauth/start) and the
+// "Not connected" chip.
+func TestRenderMCPServersOAuthConnect(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{mcpOAuthServerFixture(false)}}))
+	for _, want := range []string{
+		`data-testid="mcp-oauth-connect"`,
+		`href="/settings/mcp-servers/srv-oauth/oauth/start"`,
+		"Connect",
+		"Not connected",
+		"lucide--plug-zap",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("oauth connect controls missing %q", want)
+		}
+	}
+	if strings.Contains(html, "mcp-oauth-disconnect") {
+		t.Error("unconnected server must not render a Disconnect action")
+	}
+}
+
+// TestRenderMCPServersOAuthConnected asserts a connected server renders the
+// Connected chip (with the authorization server) plus the Disconnect form.
+func TestRenderMCPServersOAuthConnected(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{mcpOAuthServerFixture(true)}}))
+	for _, want := range []string{
+		`data-testid="mcp-oauth-status"`,
+		"Connected",
+		`data-testid="mcp-oauth-disconnect"`,
+		`action="/settings/mcp-servers/srv-oauth/oauth/disconnect"`,
+		"Disconnect",
+		"lucide--unplug",
+		"https://auth.example.com",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("oauth connected controls missing %q", want)
+		}
+	}
+	if strings.Contains(html, "mcp-oauth-connect") {
+		t.Error("connected server must not render a Connect action")
+	}
+}
+
+// TestRenderMCPServersOAuthHidden asserts builtin and stdio rows (and any
+// server without an oauth object) render no OAuth controls.
+func TestRenderMCPServersOAuthHidden(t *testing.T) {
+	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
+	for _, want := range []string{
+		"mcp-oauth-connect",
+		"mcp-oauth-disconnect",
+		"mcp-oauth-status",
+	} {
+		if strings.Contains(html, want) {
+			t.Errorf("non-OAuth rows must not render %q", want)
+		}
+	}
+}

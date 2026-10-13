@@ -25,6 +25,8 @@ func mcpServerTestServer(s *Server) *echo.Echo {
 	e.POST("/settings/mcp-servers/:id/update", s.uiMCPUpdate)
 	e.POST("/settings/mcp-servers/:id/delete", s.uiMCPDelete)
 	e.POST("/settings/mcp-servers/:id/toggle", s.uiMCPToggle)
+	e.GET("/settings/mcp-servers/:id/oauth/start", s.uiMCPOAuthStart)
+	e.POST("/settings/mcp-servers/:id/oauth/disconnect", s.uiMCPOAuthDisconnect)
 	e.POST("/api/mcp-servers/:id/sync", s.syncMCPServer)
 	e.POST("/api/mcp-servers/:id/inspect", s.inspectMCPServer)
 	e.GET("/api/mcp-servers/:id/tools", s.listMCPServerTools)
@@ -119,6 +121,13 @@ type mcpTestBackend struct {
 	// test assert the page degrades to the flat builtin list on failure.
 	builtinGroups    []BuiltinToolGroup
 	builtinGroupsErr error
+
+	// authorize* / disconnect* drive the OAuth connect routes
+	// (uiMCPOAuthStart / uiMCPOAuthDisconnect).
+	authorizeResult *MCPOAuthAuthorize
+	authorizeErr    error
+	disconnectErr   error
+	lastOAuthID     string
 }
 
 func newMCPTestBackend(servers []MCPServer) *mcpTestBackend {
@@ -289,6 +298,22 @@ func (b *mcpTestBackend) ListBuiltinToolGroups(ctx context.Context) ([]BuiltinTo
 		return nil, b.builtinGroupsErr
 	}
 	return b.builtinGroups, nil
+}
+
+func (b *mcpTestBackend) AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error) {
+	b.lastOAuthID = id
+	if b.authorizeErr != nil {
+		return nil, b.authorizeErr
+	}
+	if b.authorizeResult != nil {
+		return b.authorizeResult, nil
+	}
+	return &MCPOAuthAuthorize{AuthorizeURL: "https://auth.example.com/authorize?state=fake"}, nil
+}
+
+func (b *mcpTestBackend) DisconnectMCPServer(ctx context.Context, id string) error {
+	b.lastOAuthID = id
+	return b.disconnectErr
 }
 
 // --- list page ---
@@ -1017,5 +1042,107 @@ func TestUIMCPServersListBuiltinGroupsFailureDegrades(t *testing.T) {
 	// the builtin tool rows still render flat
 	if !strings.Contains(body, `data-mcp-tools="srv-builtin"`) || !strings.Contains(body, "memory_lookup") {
 		t.Error("builtin tools must stay reachable when the groups fetch fails")
+	}
+}
+
+// --- OAuth connect / disconnect routes ---
+
+func TestUIMCPOAuthStartRedirectsToAuthorizeURL(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.authorizeResult = &MCPOAuthAuthorize{AuthorizeURL: "https://auth.example.com/authorize?client_id=abc", State: "opaque"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerGet(e, "/settings/mcp-servers/srv-http/oauth/start")
+	if rec.Code != http.StatusFound {
+		t.Fatalf("oauth/start = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://auth.example.com/authorize?client_id=abc" {
+		t.Errorf("Location = %q, want the authorize URL", loc)
+	}
+	if f.lastOAuthID != "srv-http" {
+		t.Errorf("authorize target = %q, want srv-http", f.lastOAuthID)
+	}
+}
+
+func TestUIMCPOAuthStartErrorRedirectsToList(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.authorizeErr = fmt.Errorf("memory 400 bad_request: server does not support OAuth")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerGet(e, "/settings/mcp-servers/srv-stdio/oauth/start")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("oauth/start error = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestUIMCPOAuthStartEmptyID(t *testing.T) {
+	f := newMCPTestBackend(nil)
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerGet(e, "/settings/mcp-servers//oauth/start")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("empty-id oauth/start = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastOAuthID != "" {
+		t.Error("empty id must not reach the backend")
+	}
+}
+
+func TestUIMCPOAuthDisconnectRedirectsWithFlash(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/disconnect", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/settings/mcp-servers?disconnected=1" {
+		t.Fatalf("disconnect = %d %q, want 303 /settings/mcp-servers?disconnected=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.lastOAuthID != "srv-http" {
+		t.Errorf("disconnect target = %q, want srv-http", f.lastOAuthID)
+	}
+}
+
+func TestUIMCPOAuthDisconnectErrorRedirectsToList(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.disconnectErr = fmt.Errorf("memory 500 internal: failed to clear tokens")
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerPost(e, "/settings/mcp-servers/srv-http/oauth/disconnect", "")
+	if rec.Code != http.StatusSeeOther || !strings.HasPrefix(rec.Header().Get("Location"), "/settings/mcp-servers?err=") {
+		t.Fatalf("disconnect error = %d %q, want 303 back to the list with an error", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// --- OAuth landing / flash states on the list page ---
+
+func TestUIMCPServersOAuthLandingFlash(t *testing.T) {
+	cases := []struct {
+		query string
+		want  string
+	}{
+		{"?mcp_oauth=connected", "MCP server connected via OAuth."},
+		{"?mcp_oauth=denied", "OAuth authorization was denied"},
+		{"?mcp_oauth=error", "OAuth connection failed"},
+		{"?disconnected=1", "MCP server disconnected."},
+		{"?created=1&requiresAuth=1", "This server requires authorization — connect it below to finish setup."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.query, func(t *testing.T) {
+			f := newMCPTestBackend(mcpTestRegistryFixture())
+			s := &Server{cfg: Config{}, memory: f}
+			e := mcpServerTestServer(s)
+
+			rec := mcpServerGet(e, "/settings/mcp-servers"+tc.query)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET = %d, want 200", rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), tc.want) {
+				t.Errorf("flash for %q missing %q", tc.query, tc.want)
+			}
+		})
 	}
 }

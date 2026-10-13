@@ -165,6 +165,11 @@ type MCPServer struct {
 	// configure form's "where to get a token" link.
 	RegistryName          string `json:"registryName,omitempty"`
 	RegistryRepositoryURL string `json:"registryRepositoryUrl,omitempty"`
+
+	// OAuth is the server's OAuth connection summary (present only for remote
+	// http/sse servers that participate in OAuth connect; absent for
+	// device-targeted and stdio servers). It never carries token values.
+	OAuth *MCPServerOAuth `json:"oauth,omitempty"`
 }
 
 // MCPRequiredConfigKey is one declared required configuration entry on an MCP

@@ -143,6 +143,20 @@ func mcpServerIsBuiltin(s MCPServer) bool {
 	return s.Type == "builtin"
 }
 
+// mcpServerOAuthShown reports whether a server row renders the OAuth
+// connect/disconnect controls: a remote (http/sse) server whose list DTO
+// carried an oauth object. Absent for builtin, stdio, and device-targeted
+// servers.
+func mcpServerOAuthShown(s MCPServer) bool {
+	if mcpServerIsBuiltin(s) {
+		return false
+	}
+	if s.Type != "http" && s.Type != "sse" {
+		return false
+	}
+	return s.OAuth != nil
+}
+
 // mcpServerDisplayName is the list summary's label for a server. The builtin
 // server's stored name is the literal "builtin"; the UI shows it as "Memory
 // tools" so it reads as memory's own tool source rather than a transport.

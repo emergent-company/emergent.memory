@@ -155,6 +155,7 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 			if !builtin {
 				@mcpServerRowActions(srv)
 			}
+			@mcpServerOAuthControls(srv)
 			if srv.Type == "stdio" {
 				<p class="text-muted-faint flex items-center gap-1.5 px-3 pt-2 text-[11px]">
 					@ui.IconSpan("lucide--shield-alert", "size-3.5 shrink-0 text-warning")
@@ -235,6 +236,52 @@ templ mcpServerRowActions(srv MCPServer) {
 			})
 		</div>
 	</div>
+}
+
+// mcpServerOAuthControls is the expanded-body OAuth connect/disconnect strip for
+// one remote (http/sse) server that participates in OAuth connect. It renders
+// nothing for builtin, stdio, or non-OAuth servers. When the server is
+// connected it shows a "Connected" chip (with the authorization server as
+// secondary text) plus a Disconnect action; otherwise a Connect action.
+templ mcpServerOAuthControls(srv MCPServer) {
+	if mcpServerOAuthShown(srv) {
+		<div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-content/10 px-3 py-2">
+			if srv.OAuth.Connected {
+				<div class="flex min-w-0 items-center gap-2" data-testid="mcp-oauth-status">
+					@ui.Badge(ui.BadgeProps{Label: "Connected", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+					if srv.OAuth.AuthorizationServer != nil && *srv.OAuth.AuthorizationServer != "" {
+						<span class="text-muted-faint truncate text-[11px]">{ *srv.OAuth.AuthorizationServer }</span>
+					}
+				</div>
+				<form method="post" action={ templ.URL(mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/disconnect") }>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Icon:      "lucide--unplug",
+						AriaLabel: "Disconnect " + srv.Name,
+						Attrs:     templ.Attributes{"data-testid": "mcp-oauth-disconnect"},
+					}) {
+						Disconnect
+					}
+				</form>
+			} else {
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.Badge(ui.BadgeProps{Label: "Not connected", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/start",
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+					Attrs:   templ.Attributes{"data-testid": "mcp-oauth-connect"},
+				}) {
+					Connect
+				}
+			}
+		</div>
+	}
 }
 
 // mcpServerToolsList renders the "Cached tools" section header above the rows
@@ -946,6 +993,34 @@ templ mcpServersScript() {
 				var head = document.createElement('p');
 				head.className = 'flex items-center gap-1.5 text-sm font-semibold';
 				area.appendChild(box);
+				if (r.status === 'auth_required') {
+					box.className += ' border-warning/30 bg-warning/5';
+					head.appendChild(icon('lucide--key-round'));
+					head.appendChild(textNode('Authorization required'));
+					box.appendChild(head);
+					var explain = document.createElement('p');
+					explain.className = 'text-muted-strong mt-1';
+					explain.textContent = 'This server requires OAuth authorization before it can connect.';
+					box.appendChild(explain);
+					var auth = r.auth || {};
+					var meta = [];
+					if (auth.authorizationServer) meta.push(auth.authorizationServer);
+					var scopes = auth.scopes || [];
+					if (scopes.length) meta.push('scopes: ' + scopes.join(', '));
+					if (meta.length) {
+						var mline = document.createElement('p');
+						mline.className = 'text-muted mt-0.5';
+						mline.textContent = meta.join(' · ');
+						box.appendChild(mline);
+					}
+					var link = document.createElement('a');
+					link.className = 'link link-primary mt-1.5 inline-flex items-center gap-1.5';
+					link.href = '/settings/mcp-servers/' + encodeURIComponent(r.serverId || '') + '/oauth/start';
+					link.appendChild(icon('lucide--plug-zap'));
+					link.appendChild(textNode('Connect'));
+					box.appendChild(link);
+					return;
+				}
 				if (r.status !== 'ok') {
 					box.className += ' border-error/25 bg-error/5';
 					head.appendChild(icon('lucide--circle-x'));

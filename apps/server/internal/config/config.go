@@ -835,6 +835,20 @@ type MCPRegistryConfig struct {
 	// BaseURL overrides the official MCP registry endpoint. Empty means the
 	// default DefaultRegistryBaseURL (https://registry.modelcontextprotocol.io).
 	BaseURL string `env:"MCP_REGISTRY_BASE_URL" envDefault:""`
+	// OAuthRedirectBaseURL is the externally reachable origin of this API. The
+	// OAuth redirect URI registered with an authorization server is
+	// <OAuthRedirectBaseURL>/api/mcp-servers/oauth/callback, so the value must be
+	// stable per deployment (dynamic client registration binds it). Empty
+	// disables the MCP OAuth connect flow with an actionable error.
+	OAuthRedirectBaseURL string `env:"MCP_REGISTRY_OAUTH_REDIRECT_BASE_URL" envDefault:""`
+	// OAuthLandingURL is the browser URL the OAuth callback redirects to after
+	// the flow, e.g. https://admin.dev.emergent-company.ai/settings/mcp-servers.
+	// Empty falls back to <OAuthRedirectBaseURL>/settings/mcp-servers, which is
+	// only correct when the API and UI share an origin.
+	OAuthLandingURL string `env:"MCP_REGISTRY_OAUTH_LANDING_URL" envDefault:""`
+	// OAuthClientName is the client_name presented at dynamic client
+	// registration. Empty defaults to "Emergent Memory".
+	OAuthClientName string `env:"MCP_REGISTRY_OAUTH_CLIENT_NAME" envDefault:""`
 }
 
 // SourceOAuthConfig holds the deployment-default OAuth client material and the

@@ -133,6 +133,18 @@ routes:
       path: /api/admin/mcp-servers/:id/inspect
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: DELETE
+      path: /api/admin/mcp-servers/:id/oauth
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: POST
+      path: /api/admin/mcp-servers/:id/oauth/authorize
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/admin/mcp-servers/:id/oauth/status
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: POST
       path: /api/admin/mcp-servers/:id/sync
       level: project-member
@@ -865,6 +877,10 @@ routes:
       path: /api/mcp-relay/sessions/:instanceId/tools
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
+      path: /api/mcp-servers/oauth/callback
+      level: public
+      note: ""
     - method: DELETE
       path: /api/mcp/admin
       level: superadmin-full

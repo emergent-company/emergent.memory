@@ -24,6 +24,7 @@ type Service struct {
 	proxy      *ProxyManager
 	catalog    catalog
 	encryptor  *crypto.Encryptor // nil if encryption key not configured
+	oauthCfg   OAuthConfig
 	log        *slog.Logger
 
 	// Track registered builtin servers per project to avoid re-registration
@@ -76,6 +77,18 @@ func NewService(repo *Repository, mcpService *mcp.Service, encryptor *crypto.Enc
 		log:               log.With(logger.Scope("mcpregistry.svc")),
 		builtinRegistered: make(map[string]bool),
 	}, nil
+}
+
+// NewServiceWithOAuth is NewService plus the deployment's MCP OAuth connect
+// configuration. It exists so existing callers (and tests) keep the four-argument
+// constructor while the fx module supplies the configured variant.
+func NewServiceWithOAuth(repo *Repository, mcpService *mcp.Service, encryptor *crypto.Encryptor, oauthCfg OAuthConfig, log *slog.Logger) (*Service, error) {
+	svc, err := NewService(repo, mcpService, encryptor, log)
+	if err != nil {
+		return nil, err
+	}
+	svc.oauthCfg = oauthCfg
+	return svc, nil
 }
 
 // RegisterToolPoolInvalidator wires the ToolPool invalidation callback after
@@ -634,6 +647,17 @@ func (s *Service) resolveDeviceConfig(ctx context.Context, projectID string, ins
 		headers, err := mergeDecrypted(s.encryptor, srv.Headers, srv.SecretHeaders, "header")
 		if err != nil {
 			return nil, fmt.Errorf("decrypting headers for device server %q: %w", srv.Name, err)
+		}
+		// A device cannot refresh an OAuth token it does not own: resolve a
+		// valid bearer here (refreshing if needed) and push it with the config.
+		// The value stays inside DeviceServerConfig — never logged, never DTO'd.
+		if auth, authErr := s.proxy.oauthAuthorizationHeader(ctx, srv); authErr != nil {
+			s.log.Warn("device server OAuth token unavailable",
+				slog.String("server_id", srv.ID),
+				slog.String("error", authErr.Error()),
+			)
+		} else if auth != "" {
+			headers = withDeviceAuthorization(headers, auth)
 		}
 		out = append(out, DeviceServerConfig{
 			Name:      srv.Name,
@@ -1319,6 +1343,7 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 	// (which requires env vars to be configured first). When the install
 	// resolved required configuration (unfilled credentials), skip discovery:
 	// the server is created disabled and the connection would fail.
+	requiresAuthorization := false
 	if len(createDTO.RequiredConfig) == 0 && (createDTO.Type == ServerTypeSSE || createDTO.Type == ServerTypeHTTP) {
 		discovered, err := s.DiscoverAndSyncTools(ctx, server.ID, projectID)
 		if err != nil {
@@ -1328,6 +1353,14 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 				slog.String("server_id", server.ID),
 				slog.String("error", err.Error()),
 			)
+			// An OAuth rejection is not a credential typo: the server needs the
+			// connect flow, and the install result says so rather than leaving
+			// the user with a server that silently has no tools.
+			if isAuthRejection(err) {
+				if _, authErr := discoverServerAuthRequirement(ctx, server); authErr == nil {
+					requiresAuthorization = true
+				}
+			}
 		} else {
 			s.log.Info("auto-discovered tools after install",
 				slog.String("server_id", server.ID),
@@ -1355,12 +1388,16 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 		}
 		message = fmt.Sprintf("Server installed. Configure required environment variables before use: %s. Use the update_mcp_server tool or PATCH /api/admin/mcp-servers/%s to set env values.", strings.Join(names, ", "), server.ID)
 	}
+	if requiresAuthorization {
+		message = fmt.Sprintf("Server installed, but it requires OAuth authorization before its tools are available. Connect it from the MCP servers page (POST /api/admin/mcp-servers/%s/oauth/authorize to start the flow).", server.ID)
+	}
 
 	return &InstallResultDTO{
-		Server:          result.ToDetailDTO(),
-		RequiredEnvVars: envVars,
-		Message:         message,
-		RequiredConfig:  createDTO.RequiredConfig,
+		Server:                result.ToDetailDTO(),
+		RequiredEnvVars:       envVars,
+		Message:               message,
+		RequiredConfig:        createDTO.RequiredConfig,
+		RequiresAuthorization: requiresAuthorization,
 	}, nil
 }
 

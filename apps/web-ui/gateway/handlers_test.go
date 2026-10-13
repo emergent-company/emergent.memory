@@ -919,6 +919,14 @@ func (f *fakeMemory) InstallRegistryServerToDevice(ctx context.Context, registry
 	return &MCPRegistryInstallResult{}, nil
 }
 
+// MCP OAuth connect: base fake returns zero values so unrelated tests compile;
+// mcp-server handler tests override these via mcpTestBackend.
+func (f *fakeMemory) AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error) {
+	return &MCPOAuthAuthorize{AuthorizeURL: "https://www.figma.com/oauth/mcp?state=fake"}, nil
+}
+
+func (f *fakeMemory) DisconnectMCPServer(ctx context.Context, id string) error { return nil }
+
 // MCP share instances: the base fake returns zero values so unrelated tests
 // compile; share-handler tests use mcpShareTestBackend (mcp_shares_handlers_test.go),
 // which overrides these with real semantics.

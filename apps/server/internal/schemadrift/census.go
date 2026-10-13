@@ -56,9 +56,10 @@ var censusRoots = []string{"domain", "pkg", "internal"}
 // both TestRegistryCoversEveryModel and the preflight guard (CheckRegistry), so
 // it lives in this non-test file rather than the test package.
 var censusExclusions = map[string]string{
-	modulePath + "/pkg/auth.introspectionCacheEntry":    "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
-	modulePath + "/domain/extraction.embeddingCacheRow": "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
-	modulePath + "/domain/mcp.auditLogRow":              "unexported model domain/mcp.auditLogRow (kb.audit_log); cannot be referenced cross-package",
+	modulePath + "/pkg/auth.introspectionCacheEntry":        "unexported model pkg/auth.introspectionCacheEntry; cannot be referenced cross-package",
+	modulePath + "/domain/extraction.embeddingCacheRow":     "unexported model domain/extraction.embeddingCacheRow; cannot be referenced cross-package",
+	modulePath + "/domain/mcp.auditLogRow":                  "unexported model domain/mcp.auditLogRow (kb.audit_log); cannot be referenced cross-package",
+	modulePath + "/domain/mcpregistry.mcpOAuthPendingState": "unexported model domain/mcpregistry.mcpOAuthPendingState (kb.oauth_pending_states, shared with sources.OAuthPendingState); cannot be referenced cross-package",
 }
 
 // census returns every bun model struct in the source tree as a slice (one

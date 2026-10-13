@@ -71,10 +71,11 @@ type MCPRegistrySearchResult struct {
 // RequiredEnvVars names the environment variables the admin must set before the
 // server works.
 type MCPRegistryInstallResult struct {
-	Server          *MCPServer             `json:"server"`
-	RequiredEnvVars []MCPRegistryEnvVar    `json:"requiredEnvVars"`
-	RequiredConfig  []MCPRequiredConfigKey `json:"requiredConfig"`
-	Message         string                 `json:"message,omitempty"`
+	Server                *MCPServer             `json:"server"`
+	RequiredEnvVars       []MCPRegistryEnvVar    `json:"requiredEnvVars"`
+	RequiredConfig        []MCPRequiredConfigKey `json:"requiredConfig"`
+	RequiresAuthorization bool                   `json:"requiresAuthorization"`
+	Message               string                 `json:"message,omitempty"`
 }
 
 // mcpRegistryInstallRequest is the install POST body, mirroring memory's

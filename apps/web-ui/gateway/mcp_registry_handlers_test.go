@@ -254,6 +254,30 @@ func TestUIMCPRegistryInstallMissingName(t *testing.T) {
 		t.Error("missing registryName must not reach the backend")
 	}
 }
+func TestUIMCPRegistryInstallRequiresAuthRedirectsWithFlag(t *testing.T) {
+	// An OAuth-required install has no env/config to set up, so the success
+	// redirect carries ?requiresAuth=1 (no ?env=) and the servers page points
+	// the admin at the row's Connect action.
+	f := newMCPRegistryTestBackend()
+	f.installResult = &MCPRegistryInstallResult{
+		Server:                &MCPServer{ID: "srv-1", Name: "github-mcp-server", Type: "http", Enabled: true},
+		RequiresAuthorization: true,
+	}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpRegistryTestServer(s)
+
+	rec := mcpRegistryPost(e, "/settings/mcp-registry/install", "registryName=io.github.github%2Fgithub-mcp-server")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("install = %d, want 303", rec.Code)
+	}
+	want := "/settings/mcp-servers?created=1&requiresAuth=1"
+	if loc := rec.Header().Get("Location"); loc != want {
+		t.Errorf("Location = %q, want %q", loc, want)
+	}
+	if f.installCalls != 1 {
+		t.Errorf("install calls = %d, want 1", f.installCalls)
+	}
+}
 
 // --- device install flow ---
 

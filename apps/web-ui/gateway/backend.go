@@ -66,6 +66,9 @@ type MemoryBackend interface {
 	// InstallRegistryServerToDevice installs a registry entry's local package on
 	// a connected connector device; empty instanceID broadcasts (admins only).
 	InstallRegistryServerToDevice(ctx context.Context, registryName, version, name, instanceID string) (*MCPRegistryInstallResult, error)
+	// MCP OAuth connect (see mcp_servers_client.go).
+	AuthorizeMCPServer(ctx context.Context, id string) (*MCPOAuthAuthorize, error)
+	DisconnectMCPServer(ctx context.Context, id string) error
 	// MCP share instances (project-scoped MCP exposure; see mcp_shares.go).
 	// The raw key is only ever present on Create/Rotate results.
 	ListMCPShareInstances(ctx context.Context) ([]MCPShareInstance, error)

@@ -889,6 +889,12 @@ definitions:
         $ref: '#/definitions/domain_agents.AgentRunStatus'
       stepCount:
         type: integer
+      subjectObjectId:
+        description: |-
+          SubjectObjectID links the run to the board/work object it was dispatched
+          for (the object's canonical_id). Non-null only for object-driven runs
+          (kb.agent_runs.subject_object_id).
+        type: string
       summary:
         additionalProperties: {}
         type: object
@@ -5189,6 +5195,28 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_mcpregistry.MCPServerOAuthStatusDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
+  domain_mcpregistry.APIResponse-domain_mcpregistry_StartMCPOAuthResponseDTO:
+    properties:
+      data:
+        $ref: '#/definitions/domain_mcpregistry.StartMCPOAuthResponseDTO'
+      error:
+        type: string
+      message:
+        type: string
+      success:
+        type: boolean
+    type: object
   domain_mcpregistry.APIResponse-github_com_emergent-company_emergent_memory_domain_mcp_ToolResult:
     properties:
       data:
@@ -5219,6 +5247,13 @@ definitions:
         additionalProperties: {}
         type: object
       name:
+        type: string
+      registryName:
+        description: |-
+          RegistryName/RegistryRepositoryURL record registry provenance on an
+          install; manual creates leave them nil.
+        type: string
+      registryRepositoryUrl:
         type: string
       requiredConfig:
         description: |-
@@ -5290,7 +5325,23 @@ definitions:
         type: string
       needsConfiguration:
         type: boolean
+      oauth:
+        allOf:
+        - $ref: '#/definitions/domain_mcpregistry.MCPServerOAuthSummaryDTO'
+        description: |-
+          OAuth summarizes the server's authorization state. Nil for servers that
+          cannot use the OAuth connect flow (builtin, stdio, device-targeted) and
+          for remote servers with no authorization row. It never carries token
+          material.
       projectId:
+        type: string
+      registryName:
+        description: |-
+          RegistryName/RegistryRepositoryURL identify the registry entry a server was
+          installed from (empty for manual creates); the client uses the repository
+          URL to link to provider docs for credential setup.
+        type: string
+      registryRepositoryUrl:
         type: string
       requiredConfig:
         description: |-
@@ -5358,7 +5409,23 @@ definitions:
         type: string
       needsConfiguration:
         type: boolean
+      oauth:
+        allOf:
+        - $ref: '#/definitions/domain_mcpregistry.MCPServerOAuthSummaryDTO'
+        description: |-
+          OAuth summarizes the server's authorization state. Nil for servers that
+          cannot use the OAuth connect flow (builtin, stdio, device-targeted) and
+          for remote servers with no authorization row. It never carries token
+          material.
       projectId:
+        type: string
+      registryName:
+        description: |-
+          RegistryName/RegistryRepositoryURL identify the registry entry a server was
+          installed from (empty for manual creates); the client uses the repository
+          URL to link to provider docs for credential setup.
+        type: string
+      registryRepositoryUrl:
         type: string
       requiredConfig:
         description: |-
@@ -5394,6 +5461,44 @@ definitions:
       updatedAt:
         type: string
       url:
+        type: string
+    type: object
+  domain_mcpregistry.MCPServerOAuthStatusDTO:
+    properties:
+      authorizationServer:
+        type: string
+      configured:
+        type: boolean
+      connected:
+        type: boolean
+      expiresAt:
+        type: string
+      registrationSupported:
+        type: boolean
+      scope:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      serverId:
+        type: string
+      tokenEndpoint:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  domain_mcpregistry.MCPServerOAuthSummaryDTO:
+    properties:
+      authorizationServer:
+        type: string
+      configured:
+        type: boolean
+      connected:
+        type: boolean
+      expiresAt:
+        type: string
+      scope:
         type: string
     type: object
   domain_mcpregistry.MCPServerTarget:
@@ -5465,6 +5570,13 @@ definitions:
           ValueHint is the registry-declared value template (header transports
           only), e.g. "Bearer {NETDATA_CLOUD_API_TOKEN}". It is surfaced as an
           input placeholder, never prefilled, so it never leaks a credential.
+        type: string
+    type: object
+  domain_mcpregistry.StartMCPOAuthResponseDTO:
+    properties:
+      authorizeUrl:
+        type: string
+      state:
         type: string
     type: object
   domain_mcpregistry.UpdateMCPServerDTO:
@@ -7752,6 +7864,8 @@ definitions:
         type: array
       id:
         type: string
+      isSystem:
+        type: boolean
       license:
         type: string
       migrations:
@@ -7907,6 +8021,12 @@ definitions:
         type: string
       excludeFromSearch:
         type: boolean
+      isSystem:
+        description: |-
+          IsSystem is true when the type is contributed by a system pack
+          (is_system=true, e.g. session-message-types) resolved at read time rather
+          than via a kb.project_schemas assignment.
+        type: boolean
       label:
         type: string
       name:
@@ -8004,6 +8124,11 @@ definitions:
     properties:
       description:
         type: string
+      isSystem:
+        description: |-
+          IsSystem is true when the relationship type is contributed by a system
+          pack (is_system=true) resolved at read time.
+        type: boolean
       label:
         type: string
       name:
@@ -8868,8 +8993,37 @@ definitions:
       total:
         type: integer
     type: object
+  domain_sources.OAuthClientConfigDTO:
+    properties:
+      clientId:
+        type: string
+      config:
+        additionalProperties: {}
+        description: |-
+          Config carries provider-specific, non-secret extras (e.g. the Google
+          Picker developer key/app id). It never carries secret material.
+        type: object
+      configured:
+        type: boolean
+      createdAt:
+        type: string
+      providerType:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      strategy:
+        type: string
+      updatedAt:
+        type: string
+    type: object
   domain_sources.Provider:
     properties:
+      authMethods:
+        items:
+          type: string
+        type: array
       available:
         type: boolean
       description:
@@ -8880,6 +9034,13 @@ definitions:
         type: string
       sourceType:
         type: string
+      strategies:
+        description: |-
+          Strategies advertises the org-selectable OAuth scope strategies (design
+          D6); empty when the provider's scopes are fixed.
+        items:
+          type: string
+        type: array
       type:
         type: string
     type: object
@@ -8895,11 +9056,41 @@ definitions:
       type:
         type: string
     type: object
+  domain_sources.Resource:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      type:
+        type: string
+    type: object
+  domain_sources.SetOAuthClientRequest:
+    properties:
+      clientId:
+        type: string
+      clientSecret:
+        type: string
+      config:
+        additionalProperties: {}
+        type: object
+      scopes:
+        items:
+          type: string
+        type: array
+      strategy:
+        type: string
+    type: object
   domain_sources.SourceType:
     properties:
       documentCount:
         type: integer
       sourceType:
+        type: string
+    type: object
+  domain_sources.StartOAuthResponse:
+    properties:
+      authorizeUrl:
         type: string
     type: object
   domain_sources.SyncJobDTO:
@@ -8978,6 +9169,16 @@ definitions:
         type: integer
       syncMode:
         type: string
+    type: object
+  domain_sources.startOAuthBody:
+    properties:
+      config:
+        additionalProperties: {}
+        type: object
+      scopes:
+        items:
+          type: string
+        type: array
     type: object
   domain_superadmin.AddProjectMemberRequest:
     properties:
@@ -10567,6 +10768,101 @@ paths:
       security:
       - bearerAuth: []
       summary: Update MCP server
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/{id}/oauth:
+    delete:
+      description: Deletes the stored OAuth credential and closes the pooled connection;
+        static headers are untouched
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Credential removed
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Disconnect an MCP server's OAuth credential
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/{id}/oauth/authorize:
+    post:
+      description: Discovers the server's authorization requirement, registers a client
+        when offered, and returns an authorization URL (state + PKCE)
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_StartMCPOAuthResponseDTO'
+        "400":
+          description: Not a remote server, no authorization requirement, or the deployment
+            is not configured
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "502":
+          description: Authorization server metadata could not be fetched
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Start an OAuth connect for an MCP server
+      tags:
+      - mcp-registry
+  /api/admin/mcp-servers/{id}/oauth/status:
+    get:
+      description: Reports whether the server has a stored OAuth credential, its authorization
+        server, scope, and expiry (never token values)
+      parameters:
+      - description: Server ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: MCP server authorization status
       tags:
       - mcp-registry
   /api/admin/mcp-servers/{id}/tools/{toolName}/call:
@@ -15520,6 +15816,26 @@ paths:
       summary: Get relay instance tools
       tags:
       - mcp-relay
+  /api/mcp-servers/oauth/callback:
+    get:
+      description: Consumes the pending state, exchanges the authorization code, stores
+        the token set, and redirects to the UI
+      parameters:
+      - description: Authorization code
+        in: query
+        name: code
+        type: string
+      - description: Opaque single-use state
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "303":
+          description: Redirect to the MCP servers page
+      summary: MCP OAuth connect callback
+      tags:
+      - mcp-registry
   /api/mcp/agents/{agentId}/bundle:
     get:
       description: Downloads a .mcpb Claude Desktop bundle for the given agent MCP
@@ -16704,6 +17020,181 @@ paths:
       summary: List organization members
       tags:
       - organizations
+  /api/orgs/{orgId}/data-source-integrations/oauth-clients:
+    get:
+      description: Returns the org's configured OAuth clients (secrets redacted).
+        Org admin only.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Org OAuth client configs
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List org OAuth client configs
+      tags:
+      - data-source-integrations
+  /api/orgs/{orgId}/data-source-integrations/oauth-clients/{providerType}:
+    delete:
+      description: Removes the org's OAuth client for a provider, reverting to the
+        deployment default
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete an org OAuth client config
+      tags:
+      - data-source-integrations
+    get:
+      description: Returns the org's client config for a provider (secret redacted);
+        configured=false when unset
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Org OAuth client config
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get an org OAuth client config
+      tags:
+      - data-source-integrations
+    put:
+      consumes:
+      - application/json
+      description: Creates or replaces the org's OAuth client for a provider; the
+        secret is encrypted and write-only
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: orgId
+        required: true
+        type: string
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      - description: OAuth client material
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.SetOAuthClientRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved org OAuth client config
+          schema:
+            $ref: '#/definitions/domain_sources.OAuthClientConfigDTO'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set an org OAuth client config
+      tags:
+      - data-source-integrations
   /api/orgs/{orgId}/skills:
     get:
       description: List all org-scoped skills for the given organization
@@ -18939,6 +19430,32 @@ paths:
       security:
       - bearerAuth: []
       summary: Retry a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/runs:
+    get:
+      description: Returns the project's object-driven (board/work) agent runs — kb.agent_runs
+        rows with a non-null subject_object_id — newest first
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Max runs (default 50, max 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Board runs
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-array_domain_agents_AgentRunDTO'
+      security:
+      - bearerAuth: []
+      summary: List board runs
       tags:
       - agents
   /api/projects/current:
@@ -24233,6 +24750,46 @@ paths:
       summary: Update a data-source integration
       tags:
       - data-source-integrations
+  /data-source-integrations/{id}/resources:
+    get:
+      description: Lists the sync targets (Drive folders / GitHub repositories) for
+        a source
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Selectable resources
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.Resource'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List a source's selectable resources
+      tags:
+      - data-source-integrations
   /data-source-integrations/{id}/sync:
     post:
       consumes:
@@ -24472,6 +25029,36 @@ paths:
       summary: Test a stored source connection
       tags:
       - data-source-integrations
+  /data-source-integrations/oauth/{providerType}/callback:
+    get:
+      description: Consumes the pending state, exchanges the code, creates the source,
+        and redirects to the UI
+      parameters:
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      - description: Authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      - description: Opaque state
+        in: query
+        name: state
+        required: true
+        type: string
+      responses:
+        "303":
+          description: Redirect to the UI
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      summary: OAuth connect callback
+      tags:
+      - data-source-integrations
   /data-source-integrations/providers:
     get:
       description: Returns the available data-source providers (e.g. Google Drive)
@@ -24495,6 +25082,51 @@ paths:
       security:
       - bearerAuth: []
       summary: List data-source providers
+      tags:
+      - data-source-integrations
+  /data-source-integrations/providers/{providerType}/oauth/authorize:
+    get:
+      consumes:
+      - application/json
+      description: Builds a provider authorization URL (state + PKCE) and persists
+        the pending state
+      parameters:
+      - description: Provider type (e.g. google_drive)
+        in: path
+        name: providerType
+        required: true
+        type: string
+      - description: Intended source config
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/domain_sources.startOAuthBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Authorization URL
+          schema:
+            $ref: '#/definitions/domain_sources.StartOAuthResponse'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Unknown provider
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Start an OAuth connect
       tags:
       - data-source-integrations
   /data-source-integrations/providers/{providerType}/schema:

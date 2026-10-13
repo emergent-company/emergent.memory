@@ -49,6 +49,21 @@ func outboundHTTPClient(rawURL string) *http.Client {
 	}
 }
 
+// outboundProbeClient returns the same SSRF-guarded client as
+// outboundHTTPClient but WITHOUT authStatusTransport, so the response status and
+// headers of an authentication challenge are observable.
+//
+// The OAuth discovery probe needs exactly that: a 401's WWW-Authenticate header
+// is the only place the resource metadata URL is advertised, and
+// authStatusTransport discards the response before any header can be read.
+func outboundProbeClient(rawURL string) *http.Client {
+	c := outboundHTTPClient(rawURL)
+	if t, ok := c.Transport.(authStatusTransport); ok {
+		c.Transport = t.base
+	}
+	return c
+}
+
 // authStatusTransport wraps the outbound transport so an authentication
 // rejection (HTTP 401/403) surfaces as a typed ErrMCPAuthRejected instead of a
 // generic connection failure. The status is otherwise opaque to the MCP client

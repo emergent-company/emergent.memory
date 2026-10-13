@@ -104,6 +104,11 @@ func (s *Server) uiMCPRegistryInstall(c echo.Context) error {
 	if names := mcpRegistryRequiredEnvNames(result); names != "" {
 		target += "&env=" + url.QueryEscape(names)
 	}
+	// An OAuth-required server has no env/config to set up — the admin must
+	// authorize it from the servers page instead. Surface that in the flash.
+	if result.RequiresAuthorization {
+		target += "&requiresAuth=1"
+	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), target)
 	return nil
 }

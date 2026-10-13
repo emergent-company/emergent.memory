@@ -24,6 +24,10 @@ import (
 type proxyRepo interface {
 	FindServerByName(ctx context.Context, projectID, name string) (*MCPServer, error)
 	FindAllServers(ctx context.Context, projectID string) ([]*MCPServer, error)
+	// FindOAuthByServerID / UpdateOAuthTokens back the outbound OAuth credential:
+	// reading the stored token set and persisting a refreshed one.
+	FindOAuthByServerID(ctx context.Context, serverID string) (*MCPServerOAuth, error)
+	UpdateOAuthTokens(ctx context.Context, serverID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error
 }
 
 // mcpClientConn is the client surface the proxy uses on an MCP connection.
@@ -302,6 +306,13 @@ func (pm *ProxyManager) InspectServer(ctx context.Context, server *MCPServer) (*
 		result.Status = "error"
 		errMsg := err.Error()
 		result.Error = &errMsg
+		// A rejection with an OAuth challenge is an actionable authorization
+		// requirement, not an opaque connection failure: report it so the UI can
+		// offer the connect flow.
+		if auth := classifyAuthRequired(ctx, pm, server, err); auth != nil {
+			result.Status = "auth_required"
+			result.Auth = auth
+		}
 		return result, nil // Return the DTO with error info, not a Go error
 	}
 	defer client.Close()
@@ -458,7 +469,7 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 			return nil, nil, fmt.Errorf("url is required for SSE server")
 		}
 		var opts []transport.ClientOption
-		headers, err := pm.decryptHeaders(server)
+		headers, err := pm.requestHeaders(ctx, server)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -481,7 +492,7 @@ func (pm *ProxyManager) connectAndInitialize(ctx context.Context, server *MCPSer
 			return nil, nil, fmt.Errorf("url is required for HTTP server")
 		}
 		var opts []transport.StreamableHTTPCOption
-		headers, err := pm.decryptHeaders(server)
+		headers, err := pm.requestHeaders(ctx, server)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -651,7 +662,7 @@ func (pm *ProxyManager) connectSSE(ctx context.Context, server *MCPServer) (*mcp
 	}
 
 	var opts []transport.ClientOption
-	headers, err := pm.decryptHeaders(server)
+	headers, err := pm.requestHeaders(ctx, server)
 	if err != nil {
 		return nil, err
 	}
@@ -686,7 +697,7 @@ func (pm *ProxyManager) connectHTTP(ctx context.Context, server *MCPServer) (*mc
 	}
 
 	var opts []transport.StreamableHTTPCOption
-	headers, err := pm.decryptHeaders(server)
+	headers, err := pm.requestHeaders(ctx, server)
 	if err != nil {
 		return nil, err
 	}

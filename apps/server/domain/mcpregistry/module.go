@@ -74,7 +74,15 @@ func provideService(p serviceParams) (*Service, error) {
 			enc = e
 		}
 	}
-	return NewService(p.Repo, p.MCPService, enc, p.Log)
+	oauthCfg := OAuthConfig{}
+	if p.Cfg != nil {
+		oauthCfg = OAuthConfig{
+			RedirectBaseURL: p.Cfg.MCPRegistry.OAuthRedirectBaseURL,
+			LandingURL:      p.Cfg.MCPRegistry.OAuthLandingURL,
+			ClientName:      p.Cfg.MCPRegistry.OAuthClientName,
+		}
+	}
+	return NewServiceWithOAuth(p.Repo, p.MCPService, enc, oauthCfg, p.Log)
 }
 
 // registerMCPRegistryToolHandler wires the MCP registry tool handler into

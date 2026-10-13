@@ -55,6 +55,10 @@ func (h *Handler) ListServers(c echo.Context) error {
 	for _, s := range servers {
 		dtos = append(dtos, s.ToDTO())
 	}
+	// Advisory presentation detail: a failure here must not break the list.
+	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, servers, dtos); err != nil {
+		slog.Warn("failed to load MCP server authorization summaries", "error", err, "project_id", user.ProjectID)
+	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(dtos))
 }
@@ -90,7 +94,12 @@ func (h *Handler) GetServer(c echo.Context) error {
 		return apperror.NewNotFound("mcp_server", id)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(server.ToDetailDTO()))
+	dto := server.ToDetailDTO()
+	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, []*MCPServer{server}, []*MCPServerDTO{&dto.MCPServerDTO}); err != nil {
+		slog.Warn("failed to load MCP server authorization summary", "error", err, "server_id", id)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
 }
 
 // CreateServer handles POST /api/admin/mcp-servers

@@ -45,6 +45,14 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// missing server is 404.
 	admin.POST("/:id/tools/:toolName/call", h.CallToolOnServer)
 
+	// OAuth connect flow for remotes that require authorization. Start is
+	// authenticated and project-scoped; the browser callback is registered
+	// outside this group (see below) because the authorization server redirects
+	// the browser there without a session.
+	admin.GET("/:id/oauth/status", h.MCPOAuthStatus)
+	admin.POST("/:id/oauth/authorize", h.StartMCPOAuth)
+	admin.DELETE("/:id/oauth", h.DisconnectMCPOAuth)
+
 	// Built-in tools — separate endpoint family that never exposes the internal
 	// "builtin" MCPServer record, only the flat tool list with inheritance info.
 	builtins := e.Group("/api/admin/builtin-tools")
@@ -67,4 +75,10 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 
 	// Write operations - install from registry into project
 	registry.POST("/install", h.InstallFromRegistry)
+
+	// OAuth connect callback. Deliberately outside every authenticated group:
+	// the browser is redirected here cross-site by the authorization server, so
+	// the single-use state (which also carries the PKCE verifier) is the only
+	// credential. Same shape as the data-source connect callback.
+	e.GET("/api/mcp-servers/oauth/callback", h.CompleteMCPOAuth)
 }

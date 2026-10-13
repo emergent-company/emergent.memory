@@ -33,6 +33,7 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 			{key: "created", msg: "MCP server created."},
 			{key: "updated", msg: "MCP server updated."},
 			{key: "deleted", msg: "MCP server deleted."},
+			{key: "disconnected", msg: "MCP server disconnected."},
 		}),
 	}
 	// A registry install redirects here with ?created=1&env=<names>; surface the
@@ -40,7 +41,16 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 	if env := c.QueryParam("env"); env != "" {
 		data.FlashMsg = "MCP server created. Configure required environment variables before use: " + env + "."
 	}
+	// A registry install of an OAuth-required server redirects here with
+	// ?created=1&requiresAuth=1; point the admin at the row's Connect action.
+	if c.QueryParam("requiresAuth") != "" {
+		data.FlashMsg = "MCP server created. This server requires authorization — connect it below to finish setup."
+	}
 	data.FlashErr = flashError(c)
+	// The server's OAuth callback lands here with ?mcp_oauth=<status>; fold it
+	// into the flash state (one-shot: the query param only exists on the
+	// landing navigation).
+	mcpOAuthLanding(c, &data)
 	servers, err := s.memory.ListMCPServers(ctx)
 	if err != nil {
 		data.LoadErr = userFacingError(err)
@@ -56,6 +66,21 @@ func (s *Server) uiMCPServers(c echo.Context) error {
 		}
 	}
 	return s.page(c, pageTitle("MCP Servers"), MCPServersPage(data))
+}
+
+// mcpOAuthLanding folds the OAuth callback status (?mcp_oauth=<status>) into the
+// page's flash state: "connected" renders a success toast, "error"/"denied"
+// render an error toast. The query param is consumed on this landing render, so
+// later navigations never re-show it (the existing one-shot flash convention).
+func mcpOAuthLanding(c echo.Context, data *mcpServersPageData) {
+	switch c.QueryParam("mcp_oauth") {
+	case "connected":
+		data.FlashMsg = "MCP server connected via OAuth."
+	case "denied":
+		data.FlashErr = fmt.Errorf("OAuth authorization was denied")
+	case "error":
+		data.FlashErr = fmt.Errorf("OAuth connection failed — authorization could not be completed")
+	}
 }
 
 // --- create page + create flow ---
@@ -229,6 +254,41 @@ func (s *Server) uiMCPToggle(c echo.Context) error {
 		return mcpServerJSONErr(c, err)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"enabled": srv.Enabled})
+}
+
+// --- OAuth connect / disconnect ---
+
+// uiMCPOAuthStart handles GET /settings/mcp-servers/:id/oauth/start. It asks
+// memory to start the OAuth flow and redirects the browser to the provider's
+// authorization URL; any failure (unconfigured redirect origin, non-remote or
+// no-auth server, 404, or metadata fetch failure) redirects back to the list
+// with an error flash.
+func (s *Server) uiMCPOAuthStart(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
+	}
+	res, err := s.memory.AuthorizeMCPServer(ctx, id)
+	if err != nil {
+		return redirectWithError(c, mcpServerSettingsBase, err)
+	}
+	return c.Redirect(http.StatusFound, res.AuthorizeURL)
+}
+
+// uiMCPOAuthDisconnect handles POST /settings/mcp-servers/:id/oauth/disconnect
+// (PRG). It clears the server's stored OAuth tokens and redirects back to the
+// list with a success flash; a failure redirects with the mapped error.
+func (s *Server) uiMCPOAuthDisconnect(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		return redirectWithError(c, mcpServerSettingsBase, errServerIDRequired())
+	}
+	if err := s.memory.DisconnectMCPServer(ctx, id); err != nil {
+		return redirectWithError(c, mcpServerSettingsBase, err)
+	}
+	return c.Redirect(http.StatusSeeOther, mcpServerSettingsBase+"?disconnected=1")
 }
 
 // --- JSON echo surface (page JS; routes added next to the mcp-servers block) ---

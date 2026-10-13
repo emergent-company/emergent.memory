@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,6 +19,11 @@ import (
 // fakeProxyRepo is an in-memory proxyRepo for CallTool/resolution tests.
 type fakeProxyRepo struct {
 	servers []*MCPServer
+	// oauth maps server id to its stored OAuth credential row. Tests that do not
+	// exercise OAuth leave it nil. Guarded by mu because the outbound OAuth path
+	// refreshes from several goroutines.
+	mu    sync.Mutex
+	oauth map[string]*MCPServerOAuth
 }
 
 func (f *fakeProxyRepo) FindServerByName(_ context.Context, projectID, name string) (*MCPServer, error) {
@@ -37,6 +43,38 @@ func (f *fakeProxyRepo) FindAllServers(_ context.Context, projectID string) ([]*
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeProxyRepo) FindOAuthByServerID(_ context.Context, serverID string) (*MCPServerOAuth, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row := f.oauth[serverID]
+	if row == nil {
+		return nil, nil
+	}
+	// Return a copy, matching the real store's read-modify-write behaviour: the
+	// proxy re-reads after acquiring the refresh lock and must observe the
+	// refreshed row, not a cached pointer.
+	cp := *row
+	return &cp, nil
+}
+
+func (f *fakeProxyRepo) UpdateOAuthTokens(_ context.Context, serverID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.oauth == nil {
+		f.oauth = map[string]*MCPServerOAuth{}
+	}
+	row := f.oauth[serverID]
+	if row == nil {
+		row = &MCPServerOAuth{ServerID: serverID}
+		f.oauth[serverID] = row
+	}
+	row.AccessToken = access
+	row.RefreshToken = refresh
+	row.Scope = scope
+	row.ExpiresAt = expiresAt
+	return nil
 }
 
 func server(id, projectID, name string, enabled bool) *MCPServer {

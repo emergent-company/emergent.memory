@@ -146,6 +146,7 @@ var models = []any{
 	// domain/mcpregistry
 	(*mcpregistry.MCPServer)(nil),
 	(*mcpregistry.MCPServerTool)(nil),
+	(*mcpregistry.MCPServerOAuth)(nil),
 
 	// domain/backups
 	(*backups.DatabaseBackup)(nil),

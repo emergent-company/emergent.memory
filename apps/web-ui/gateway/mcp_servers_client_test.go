@@ -371,3 +371,171 @@ func TestCallMCPServerToolNilArgsSendsEmptyObject(t *testing.T) {
 		t.Errorf("arguments = %v, want an empty object", gotBody["arguments"])
 	}
 }
+
+// --- MCP OAuth connect client methods ---
+//
+// These cover the MemoryClient proxies for memory's per-server OAuth routes
+// (GET /:id/oauth/status, POST /:id/oauth/authorize, DELETE /:id/oauth). Like
+// the CRUD methods in extras.go they hit /api/admin/mcp-servers with a plain
+// context — the static project-bound credentials apply.
+
+func TestGetMCPServerOAuthStatus(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{
+			"serverId":"srv-1","configured":true,"connected":true,
+			"authorizationServer":"https://auth.example.com","scope":"read:repo",
+			"scopes":["read:repo","write:repo"],"registrationSupported":true,
+			"expiresAt":"2026-12-31T00:00:00Z"
+		}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.GetMCPServerOAuthStatus(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/oauth/status" || gotMethod != http.MethodGet {
+		t.Errorf("request = %s %s, want GET /api/admin/mcp-servers/srv-1/oauth/status", gotMethod, gotPath)
+	}
+	if res.ServerID != "srv-1" || !res.Configured || !res.Connected {
+		t.Errorf("status = %+v", res)
+	}
+	if res.AuthorizationServer == nil || *res.AuthorizationServer != "https://auth.example.com" {
+		t.Errorf("authorizationServer = %v", res.AuthorizationServer)
+	}
+	if res.Scope == nil || *res.Scope != "read:repo" {
+		t.Errorf("scope = %v", res.Scope)
+	}
+	if len(res.Scopes) != 2 || res.Scopes[0] != "read:repo" {
+		t.Errorf("scopes = %v", res.Scopes)
+	}
+	if !res.RegistrationSupported {
+		t.Error("registrationSupported = false, want true")
+	}
+	if res.ExpiresAt == nil || *res.ExpiresAt != "2026-12-31T00:00:00Z" {
+		t.Errorf("expiresAt = %v", res.ExpiresAt)
+	}
+}
+
+func TestAuthorizeMCPServer(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"authorizeUrl":"https://auth.example.com/authorize?client_id=abc","state":"opaque-state"}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.AuthorizeMCPServer(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/oauth/authorize" || gotMethod != http.MethodPost {
+		t.Errorf("request = %s %s, want POST /api/admin/mcp-servers/srv-1/oauth/authorize", gotMethod, gotPath)
+	}
+	if res.AuthorizeURL != "https://auth.example.com/authorize?client_id=abc" || res.State != "opaque-state" {
+		t.Errorf("authorize = %+v", res)
+	}
+}
+
+func TestAuthorizeMCPServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"authorization is not available for this server"}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.AuthorizeMCPServer(context.Background(), "srv-1"); err == nil ||
+		!strings.Contains(err.Error(), "memory 400") ||
+		!strings.Contains(err.Error(), "authorization is not available") {
+		t.Fatalf("error = %v, want memory 400 with the message", err)
+	}
+}
+
+func TestAuthorizeMCPServerNotFound404(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"mcp_server not found"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.AuthorizeMCPServer(context.Background(), "missing"); err == nil ||
+		!strings.Contains(err.Error(), "memory 404 not_found") {
+		t.Fatalf("error = %v, want memory 404 not_found", err)
+	}
+}
+
+func TestDisconnectMCPServer(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.DisconnectMCPServer(context.Background(), "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/mcp-servers/srv-1/oauth" || gotMethod != http.MethodDelete {
+		t.Errorf("request = %s %s, want DELETE /api/admin/mcp-servers/srv-1/oauth", gotMethod, gotPath)
+	}
+}
+
+func TestDisconnectMCPServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"error":{"code":"internal","message":"failed to clear tokens"}}`)
+	}))
+	defer srv.Close()
+	m := NewMemoryClient(srv.URL, "proj")
+	if err := m.DisconnectMCPServer(context.Background(), "srv-1"); err == nil ||
+		!strings.Contains(err.Error(), "memory 500 internal") {
+		t.Fatalf("error = %v, want memory 500 internal", err)
+	}
+}
+
+// TestInspectMCPServerAuthRequired asserts inspect decodes the auth_required
+// state and its auth block (authorization server, scopes, registration support).
+func TestInspectMCPServerAuthRequired(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{
+			"serverId":"srv-1","serverName":"github","serverType":"http",
+			"status":"auth_required","latencyMs":0,
+			"auth":{"resourceMetadataUrl":"https://api.githubcopilot.com/mcp/.well-known/oauth-protected-resource","authorizationServer":"https://github.com/login/oauth/authorize","scopes":["read:org"],"registrationSupported":false},
+			"tools":[],"prompts":[],"resources":[],"resourceTemplates":[]
+		}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.InspectMCPServer(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "auth_required" {
+		t.Fatalf("status = %q, want auth_required", res.Status)
+	}
+	if res.Auth == nil {
+		t.Fatal("auth = nil, want the oauth requirement")
+	}
+	if res.Auth.AuthorizationServer != "https://github.com/login/oauth/authorize" ||
+		res.Auth.ResourceMetadataURL != "https://api.githubcopilot.com/mcp/.well-known/oauth-protected-resource" {
+		t.Errorf("auth = %+v", res.Auth)
+	}
+	if len(res.Auth.Scopes) != 1 || res.Auth.Scopes[0] != "read:org" {
+		t.Errorf("scopes = %v", res.Auth.Scopes)
+	}
+	if res.Auth.RegistrationSupported {
+		t.Error("registrationSupported = true, want false")
+	}
+}

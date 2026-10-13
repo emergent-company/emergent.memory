@@ -1160,6 +1160,150 @@
                 }
             }
         },
+        "/api/admin/mcp-servers/{id}/oauth": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Deletes the stored OAuth credential and closes the pooled connection; static headers are untouched",
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Disconnect an MCP server's OAuth credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Credential removed"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/mcp-servers/{id}/oauth/authorize": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Discovers the server's authorization requirement, registers a client when offered, and returns an authorization URL (state + PKCE)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "Start an OAuth connect for an MCP server",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_StartMCPOAuthResponseDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Not a remote server, no authorization requirement, or the deployment is not configured",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "502": {
+                        "description": "Authorization server metadata could not be fetched",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/mcp-servers/{id}/oauth/status": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Reports whether the server has a stored OAuth credential, its authorization server, scope, and expiry (never token values)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "MCP server authorization status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Server ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/admin/mcp-servers/{id}/tools/{toolName}/call": {
             "post": {
                 "security": [
@@ -8663,6 +8807,35 @@
                 }
             }
         },
+        "/api/mcp-servers/oauth/callback": {
+            "get": {
+                "description": "Consumes the pending state, exchanges the authorization code, stores the token set, and redirects to the UI",
+                "tags": [
+                    "mcp-registry"
+                ],
+                "summary": "MCP OAuth connect callback",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Authorization code",
+                        "name": "code",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque single-use state",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to the MCP servers page"
+                    }
+                }
+            }
+        },
         "/api/mcp/agents/{agentId}/bundle": {
             "get": {
                 "description": "Downloads a .mcpb Claude Desktop bundle for the given agent MCP endpoint key. No login required — the token is the credential. Double-clicking the downloaded file installs the MCP server in Claude Desktop with the agent already configured.",
@@ -10434,6 +10607,270 @@
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/data-source-integrations/oauth-clients": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the org's configured OAuth clients (secrets redacted). Org admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List org OAuth client configs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Org OAuth client configs",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.OAuthClientConfigDTO"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/orgs/{orgId}/data-source-integrations/oauth-clients/{providerType}": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the org's client config for a provider (secret redacted); configured=false when unset",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Get an org OAuth client config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider type (e.g. google_drive)",
+                        "name": "providerType",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Org OAuth client config",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthClientConfigDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Creates or replaces the org's OAuth client for a provider; the secret is encrypted and write-only",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Set an org OAuth client config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider type (e.g. google_drive)",
+                        "name": "providerType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "OAuth client material",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SetOAuthClientRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved org OAuth client config",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.OAuthClientConfigDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Removes the org's OAuth client for a provider, reverting to the deployment default",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete an org OAuth client config",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider type (e.g. google_drive)",
+                        "name": "providerType",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -13539,6 +13976,46 @@
                         "description": "Work items",
                         "schema": {
                             "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_WorkItemDTO"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/runs": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's object-driven (board/work) agent runs — kb.agent_runs rows with a non-null subject_object_id — newest first",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List board runs",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Max runs (default 50, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Board runs",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-array_domain_agents_AgentRunDTO"
                         }
                     }
                 }
@@ -21723,6 +22200,49 @@
                 }
             }
         },
+        "/data-source-integrations/oauth/{providerType}/callback": {
+            "get": {
+                "description": "Consumes the pending state, exchanges the code, creates the source, and redirects to the UI",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "OAuth connect callback",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider type (e.g. google_drive)",
+                        "name": "providerType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Authorization code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Opaque state",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "303": {
+                        "description": "Redirect to the UI"
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/data-source-integrations/providers": {
             "get": {
                 "security": [
@@ -21750,6 +22270,75 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/data-source-integrations/providers/{providerType}/oauth/authorize": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Builds a provider authorization URL (state + PKCE) and persists the pending state",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Start an OAuth connect",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Provider type (e.g. google_drive)",
+                        "name": "providerType",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Intended source config",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.startOAuthBody"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Authorization URL",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.StartOAuthResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Unknown provider",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -22065,6 +22654,67 @@
                         "description": "Updated integration",
                         "schema": {
                             "$ref": "#/definitions/domain_sources.Integration"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/data-source-integrations/{id}/resources": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Lists the sync targets (Drive folders / GitHub repositories) for a source",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List a source's selectable resources",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Selectable resources",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.Resource"
+                            }
                         }
                     },
                     "400": {
@@ -25446,6 +26096,10 @@
                 },
                 "stepCount": {
                     "type": "integer"
+                },
+                "subjectObjectId": {
+                    "description": "SubjectObjectID links the run to the board/work object it was dispatched\nfor (the object's canonical_id). Non-null only for object-driven runs\n(kb.agent_runs.subject_object_id).",
+                    "type": "string"
                 },
                 "summary": {
                     "type": "object",
@@ -31636,6 +32290,40 @@
                 }
             }
         },
+        "domain_mcpregistry.APIResponse-domain_mcpregistry_MCPServerOAuthStatusDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_mcpregistry.MCPServerOAuthStatusDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_mcpregistry.APIResponse-domain_mcpregistry_StartMCPOAuthResponseDTO": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/domain_mcpregistry.StartMCPOAuthResponseDTO"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "success": {
+                    "type": "boolean"
+                }
+            }
+        },
         "domain_mcpregistry.APIResponse-github_com_emergent-company_emergent_memory_domain_mcp_ToolResult": {
             "type": "object",
             "properties": {
@@ -31684,6 +32372,13 @@
                     "additionalProperties": {}
                 },
                 "name": {
+                    "type": "string"
+                },
+                "registryName": {
+                    "description": "RegistryName/RegistryRepositoryURL record registry provenance on an\ninstall; manual creates leave them nil.",
+                    "type": "string"
+                },
+                "registryRepositoryUrl": {
                     "type": "string"
                 },
                 "requiredConfig": {
@@ -31779,7 +32474,22 @@
                 "needsConfiguration": {
                     "type": "boolean"
                 },
+                "oauth": {
+                    "description": "OAuth summarizes the server's authorization state. Nil for servers that\ncannot use the OAuth connect flow (builtin, stdio, device-targeted) and\nfor remote servers with no authorization row. It never carries token\nmaterial.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_mcpregistry.MCPServerOAuthSummaryDTO"
+                        }
+                    ]
+                },
                 "projectId": {
+                    "type": "string"
+                },
+                "registryName": {
+                    "description": "RegistryName/RegistryRepositoryURL identify the registry entry a server was\ninstalled from (empty for manual creates); the client uses the repository\nURL to link to provider docs for credential setup.",
+                    "type": "string"
+                },
+                "registryRepositoryUrl": {
                     "type": "string"
                 },
                 "requiredConfig": {
@@ -31872,7 +32582,22 @@
                 "needsConfiguration": {
                     "type": "boolean"
                 },
+                "oauth": {
+                    "description": "OAuth summarizes the server's authorization state. Nil for servers that\ncannot use the OAuth connect flow (builtin, stdio, device-targeted) and\nfor remote servers with no authorization row. It never carries token\nmaterial.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_mcpregistry.MCPServerOAuthSummaryDTO"
+                        }
+                    ]
+                },
                 "projectId": {
+                    "type": "string"
+                },
+                "registryName": {
+                    "description": "RegistryName/RegistryRepositoryURL identify the registry entry a server was\ninstalled from (empty for manual creates); the client uses the repository\nURL to link to provider docs for credential setup.",
+                    "type": "string"
+                },
+                "registryRepositoryUrl": {
                     "type": "string"
                 },
                 "requiredConfig": {
@@ -31917,6 +32642,64 @@
                     "type": "string"
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.MCPServerOAuthStatusDTO": {
+            "type": "object",
+            "properties": {
+                "authorizationServer": {
+                    "type": "string"
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "registrationSupported": {
+                    "type": "boolean"
+                },
+                "scope": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "serverId": {
+                    "type": "string"
+                },
+                "tokenEndpoint": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.MCPServerOAuthSummaryDTO": {
+            "type": "object",
+            "properties": {
+                "authorizationServer": {
+                    "type": "string"
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "connected": {
+                    "type": "boolean"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "scope": {
                     "type": "string"
                 }
             }
@@ -32013,6 +32796,17 @@
                 },
                 "valueHint": {
                     "description": "ValueHint is the registry-declared value template (header transports\nonly), e.g. \"Bearer {NETDATA_CLOUD_API_TOKEN}\". It is surfaced as an\ninput placeholder, never prefilled, so it never leaks a credential.",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_mcpregistry.StartMCPOAuthResponseDTO": {
+            "type": "object",
+            "properties": {
+                "authorizeUrl": {
+                    "type": "string"
+                },
+                "state": {
                     "type": "string"
                 }
             }
@@ -35301,6 +36095,9 @@
                 "id": {
                     "type": "string"
                 },
+                "isSystem": {
+                    "type": "boolean"
+                },
                 "license": {
                     "type": "string"
                 },
@@ -35526,6 +36323,10 @@
                 "excludeFromSearch": {
                     "type": "boolean"
                 },
+                "isSystem": {
+                    "description": "IsSystem is true when the type is contributed by a system pack\n(is_system=true, e.g. session-message-types) resolved at read time rather\nthan via a kb.project_schemas assignment.",
+                    "type": "boolean"
+                },
                 "label": {
                     "type": "string"
                 },
@@ -35670,6 +36471,10 @@
             "properties": {
                 "description": {
                     "type": "string"
+                },
+                "isSystem": {
+                    "description": "IsSystem is true when the relationship type is contributed by a system\npack (is_system=true) resolved at read time.",
+                    "type": "boolean"
                 },
                 "label": {
                     "type": "string"
@@ -36933,9 +37738,49 @@
                 }
             }
         },
+        "domain_sources.OAuthClientConfigDTO": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "config": {
+                    "description": "Config carries provider-specific, non-secret extras (e.g. the Google\nPicker developer key/app id). It never carries secret material.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "providerType": {
+                    "type": "string"
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "strategy": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.Provider": {
             "type": "object",
             "properties": {
+                "authMethods": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "available": {
                     "type": "boolean"
                 },
@@ -36950,6 +37795,13 @@
                 },
                 "sourceType": {
                     "type": "string"
+                },
+                "strategies": {
+                    "description": "Strategies advertises the org-selectable OAuth scope strategies (design\nD6); empty when the provider's scopes are fixed.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "type": {
                     "type": "string"
@@ -36974,6 +37826,44 @@
                 }
             }
         },
+        "domain_sources.Resource": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.SetOAuthClientRequest": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "clientSecret": {
+                    "type": "string"
+                },
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "strategy": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.SourceType": {
             "type": "object",
             "properties": {
@@ -36981,6 +37871,14 @@
                     "type": "integer"
                 },
                 "sourceType": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.StartOAuthResponse": {
+            "type": "object",
+            "properties": {
+                "authorizeUrl": {
                     "type": "string"
                 }
             }
@@ -37099,6 +37997,21 @@
                 },
                 "syncMode": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_sources.startOAuthBody": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "scopes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
