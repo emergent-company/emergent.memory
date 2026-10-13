@@ -117,6 +117,30 @@ func (m *MemoryClient) GetObjectHistory(ctx context.Context, objectID string) ([
 	return out.Versions, nil
 }
 
+// LookupGraphObjectByKey resolves one graph object by (type, key) via
+// GET /api/graph/objects/search. Empty typeFilter omits the type filter. A
+// miss is not an error: it returns (nil, nil).
+func (m *MemoryClient) LookupGraphObjectByKey(ctx context.Context, typeFilter, key string) (*GraphObject, error) {
+	q := url.Values{}
+	q.Set("key", key)
+	q.Set("limit", "1")
+	q.Set("include_total", "false")
+	q.Set("exclude_fields", "content")
+	if typeFilter != "" {
+		q.Set("type", typeFilter)
+	}
+	var out struct {
+		Items []GraphObject `json:"items"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	if len(out.Items) == 0 {
+		return nil, nil
+	}
+	return &out.Items[0], nil
+}
+
 // ListGraphObjects lists graph objects, optionally scoped to a branch and/or
 // filtered by type or ids. Empty branchID omits the branch filter (main
 // branch); empty typeFilter omits the type filter; ids may be empty.

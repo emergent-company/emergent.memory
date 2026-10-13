@@ -14,7 +14,8 @@ concrete, working lane out of the box.
   `blocks` self-relationship (`Task → Task`).
 - **Agent `task-worker`** — a queued, reaction-triggered agent that wakes on
   `created` events for `Task` objects, claims the item, does the work, writes
-  deliverables, and ends the run with `work_complete` (or `work_block`). Its
+  deliverables (each linked back to its Task with a `delivers` edge created at
+  runtime), and ends the run with `work_complete` (or `work_block`). Its
   `workConfig` requires human review before done and requires artifacts.
 - **Seed `Task`** — one `example-task` object in `ready` state, assigned to
   `task-worker`.

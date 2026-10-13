@@ -208,9 +208,10 @@ templ boardCard(it WorkItem) {
 }
 
 // BoardDrawer renders the card detail as a native dialog: the item identity,
-// its latest run, feedback history, recent runs, and the human actions. The
-// status map resolves which of the item's statuses gate each action.
-templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
+// its declared deliverables and completion note, feedback history, recent runs,
+// and the human actions. The status map resolves which of the item's statuses
+// gate each action.
+templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables []boardDeliverable, completionNote string) {
 	{{ item := detail.Item }}
 	@ui.Dialog(ui.DialogProps{
 		ID:       "board-item-dialog",
@@ -249,6 +250,9 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
 				@ui.Badge(ui.BadgeProps{Label: "needs review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
 			}
 		</div>
+
+		@boardDeliverablesView(deliverables)
+		@boardCompletionNote(completionNote)
 
 		@boardDrawerActions(item, statusMap)
 
@@ -299,6 +303,53 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
 				</div>
 			</div>
 		}
+	}
+}
+
+// boardDeliverablesView renders the declared deliverables: a resolved object
+// links to its detail page (key as label, muted type prefix); a declared-but-
+// missing deliverable renders muted with a "not found" hint; an empty list
+// renders an explicit empty state.
+templ boardDeliverablesView(deliverables []boardDeliverable) {
+	<div class="mt-5">
+		<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Deliverables</span>
+		<div class="mt-2 space-y-1.5">
+			for _, d := range deliverables {
+				if d.Resolved {
+					<a
+						href={ templ.URL("/objects/" + url.PathEscape(d.ObjectID)) }
+						class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:border-base-content/25 hover:bg-base-200/40"
+						data-testid="board-deliverable"
+					>
+						<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+						<span class="min-w-0 truncate text-sm font-medium">{ d.Key }</span>
+						@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+					</a>
+				} else {
+					<div class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5" data-testid="board-deliverable-missing">
+						<span class="font-mono text-[10px] font-medium tracking-wide text-muted uppercase">{ d.Type }</span>
+						<span class="min-w-0 truncate text-sm text-muted">{ d.Key }</span>
+						<span class="ml-auto text-[10px] text-muted-faint">not found</span>
+					</div>
+				}
+			}
+			if len(deliverables) == 0 {
+				<p class="text-xs text-muted" data-testid="board-deliverable-empty">No deliverables declared</p>
+			}
+		</div>
+	</div>
+}
+
+// boardCompletionNote renders the newest run's completion summary as sanitized
+// markdown. Omitted entirely when empty.
+templ boardCompletionNote(note string) {
+	if note != "" {
+		<div class="mt-5">
+			<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Completion note</span>
+			<div class="mt-2 rounded-box border border-base-content/10 bg-base-200/30 p-2.5">
+				<div class="memory-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(note))</div>
+			</div>
+		</div>
 	}
 }
 

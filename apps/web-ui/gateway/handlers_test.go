@@ -123,6 +123,10 @@ type fakeMemory struct {
 	summary          *ExtractionSummary  // returned by GetExtractionSummary
 	docContent       *string             // returned by GetDocumentContent (nil → "")
 	objects          []GraphObject       // returned by ListExtractionObjects
+	lookupObjects    []GraphObject       // returned by LookupGraphObjectByKey
+	lookupErr        error               // LookupGraphObjectByKey failure
+	lastLookupType   string              // last typeFilter passed to LookupGraphObjectByKey
+	lastLookupKey    string              // last key passed to LookupGraphObjectByKey
 	relns            []GraphRelationship // returned by ListRelationships
 	branches         []Branch            // returned by ListBranches
 	extractionJobs   []ExtractionJob     // returned by ListExtractionJobs
@@ -1249,6 +1253,18 @@ func (f *fakeMemory) GetObjectHistory(ctx context.Context, objectID string) ([]G
 		return nil, f.objectHistoryErr
 	}
 	return f.objectHistory, nil
+}
+
+func (f *fakeMemory) LookupGraphObjectByKey(ctx context.Context, typeFilter, key string) (*GraphObject, error) {
+	if f.lookupErr != nil {
+		return nil, f.lookupErr
+	}
+	f.lastLookupType = typeFilter
+	f.lastLookupKey = key
+	if len(f.lookupObjects) == 0 {
+		return nil, nil
+	}
+	return &f.lookupObjects[0], nil
 }
 
 func (f *fakeMemory) ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error) {

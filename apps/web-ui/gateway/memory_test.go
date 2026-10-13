@@ -1599,6 +1599,66 @@ func TestListGraphObjectsPageOmitsNoopProvenance(t *testing.T) {
 	}
 }
 
+// TestLookupGraphObjectByKey exercises GET /api/graph/objects/search with the
+// key/type/limit/include_total/exclude_fields query params and decodes the
+// items envelope into a single object.
+func TestLookupGraphObjectByKey(t *testing.T) {
+	var gotPath string
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[{"id":"o1","canonical_id":"c1","type":"note","key":"deliverable-1"}]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	obj, err := m.LookupGraphObjectByKey(context.Background(), "note", "deliverable-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/graph/objects/search" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotQuery.Get("key") != "deliverable-1" || gotQuery.Get("type") != "note" {
+		t.Errorf("query = %v", gotQuery)
+	}
+	if gotQuery.Get("limit") != "1" || gotQuery.Get("include_total") != "false" || gotQuery.Get("exclude_fields") != "content" {
+		t.Errorf("query = %v", gotQuery)
+	}
+	if obj == nil || obj.ID != "o1" || obj.CanonicalID != "c1" {
+		t.Errorf("obj = %+v, want o1/c1", obj)
+	}
+}
+
+// TestLookupGraphObjectByKeyNoMatch pins that an empty result (and an empty
+// type filter) yields (nil, nil) — a miss is not an error.
+func TestLookupGraphObjectByKeyNoMatch(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"items":[]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	obj, err := m.LookupGraphObjectByKey(context.Background(), "", "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotQuery.Has("type") {
+		t.Errorf("type = %q, want omitted", gotQuery.Get("type"))
+	}
+	if gotQuery.Get("key") != "k" {
+		t.Errorf("key = %q, want k", gotQuery.Get("key"))
+	}
+	if obj != nil {
+		t.Errorf("obj = %+v, want nil on empty result", obj)
+	}
+}
+
 // TestCountObjects exercises GET /api/graph/objects/count with an optional
 // branch_id query param.
 func TestCountObjects(t *testing.T) {

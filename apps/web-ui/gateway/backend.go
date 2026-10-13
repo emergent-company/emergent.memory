@@ -143,6 +143,7 @@ type MemoryBackend interface {
 	SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error)
 	GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error)
 	GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error)
+	LookupGraphObjectByKey(ctx context.Context, typeFilter, key string) (*GraphObject, error)
 	ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error)
 	ListGraphRelationships(ctx context.Context, branchID string) ([]GraphRelationship, error)
 	GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error)

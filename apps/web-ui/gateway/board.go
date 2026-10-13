@@ -312,7 +312,79 @@ func (s *Server) renderBoardColumns(c echo.Context, actionErr error) error {
 	return nil
 }
 
-// uiBoardItem renders the card drawer (a native dialog) for one work item.
+// boardDeliverable is one declared deliverable on a completed run, resolved to
+// its graph object when a lookup succeeds. Type/Key come straight from the run
+// summary; ObjectID/Resolved are filled by the resolution pass.
+type boardDeliverable struct {
+	Type     string
+	Key      string
+	ObjectID string
+	Resolved bool
+}
+
+// boardDeliverables flattens a work item's runs (newest first, as the server
+// returns them) into de-duplicated deliverables, newest declaration first. Each
+// run's Summary["deliverables"] is decoded defensively from raw JSON ([]any of
+// map[string]any with string type/key); malformed entries are dropped and a
+// missing/renamed key is tolerated, so the helper never panics.
+func boardDeliverables(runs []WorkItemRun) []boardDeliverable {
+	seen := make(map[string]bool)
+	var out []boardDeliverable
+	for _, run := range runs {
+		for _, d := range decodeBoardDeliverables(run.Summary) {
+			key := d.Type + "\x00" + d.Key
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// decodeBoardDeliverables decodes one run summary's deliverables array into
+// boardDeliverable values, dropping entries that are not {type, key} string
+// pairs.
+func decodeBoardDeliverables(summary map[string]any) []boardDeliverable {
+	raw, ok := summary["deliverables"]
+	if !ok {
+		return nil
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]boardDeliverable, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		k, _ := m["key"].(string)
+		if t == "" || k == "" {
+			continue
+		}
+		out = append(out, boardDeliverable{Type: t, Key: k})
+	}
+	return out
+}
+
+// boardCompletionSummary returns the newest run's completion note (its
+// Summary["summary"] prose), or "" when absent.
+func boardCompletionSummary(runs []WorkItemRun) string {
+	if len(runs) == 0 {
+		return ""
+	}
+	s, _ := runs[0].Summary["summary"].(string)
+	return s
+}
+
+// uiBoardItem renders the card drawer (a native dialog) for one work item. It
+// resolves each declared deliverable to its object (best-effort: a miss or
+// lookup failure leaves that row as missing) and passes the result plus the
+// newest run's completion note into the drawer.
 func (s *Server) uiBoardItem(c echo.Context) error {
 	ctx := c.Request().Context()
 	canonicalID := c.Param("canonicalId")
@@ -321,7 +393,20 @@ func (s *Server) uiBoardItem(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), BoardDrawerError(err))
 		return nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx)))
+	deliverables := boardDeliverables(detail.Runs)
+	for i := range deliverables {
+		obj, lerr := s.memory.LookupGraphObjectByKey(ctx, deliverables[i].Type, deliverables[i].Key)
+		if lerr != nil {
+			captureError(lerr)
+			continue
+		}
+		if obj == nil {
+			continue
+		}
+		deliverables[i].Resolved = true
+		deliverables[i].ObjectID = firstNonEmpty(obj.CanonicalID, obj.ID)
+	}
+	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx), deliverables, boardCompletionSummary(detail.Runs)))
 	return nil
 }
 

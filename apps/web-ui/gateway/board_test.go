@@ -532,3 +532,168 @@ func TestListAgentDefinitionsWorkConfigFlowsToStatusMap(t *testing.T) {
 }
 
 var errTestBoard = &memoryHTTPError{Status: 503, Message: "down"}
+
+func TestBoardDeliverables(t *testing.T) {
+	run := func(deliverables any) WorkItemRun {
+		return WorkItemRun{Summary: map[string]any{"deliverables": deliverables}}
+	}
+
+	t.Run("newest-wins dedupe", func(t *testing.T) {
+		runs := []WorkItemRun{
+			run([]any{
+				map[string]any{"type": "Note", "key": "n1"},
+				map[string]any{"type": "Report", "key": "r1"},
+			}),
+			run([]any{
+				map[string]any{"type": "Note", "key": "n1"},
+				map[string]any{"type": "Note", "key": "n2"},
+			}),
+		}
+		got := boardDeliverables(runs)
+		want := []boardDeliverable{
+			{Type: "Note", Key: "n1"},
+			{Type: "Report", Key: "r1"},
+			{Type: "Note", Key: "n2"},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %d deliverables, want %d: %+v", len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i].Type != want[i].Type || got[i].Key != want[i].Key {
+				t.Errorf("got[%d] = %+v, want %+v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("malformed entries dropped", func(t *testing.T) {
+		runs := []WorkItemRun{run([]any{
+			"not-a-map",
+			map[string]any{"type": "Note"},            // missing key
+			map[string]any{"type": 123, "key": "x"},   // non-string type
+			map[string]any{"type": "Note", "key": ""}, // empty key
+			map[string]any{"type": "Note", "key": "n1"},
+			nil,
+		})}
+		got := boardDeliverables(runs)
+		if len(got) != 1 || got[0].Type != "Note" || got[0].Key != "n1" {
+			t.Errorf("boardDeliverables = %+v, want one valid entry", got)
+		}
+	})
+
+	t.Run("missing key tolerated", func(t *testing.T) {
+		cases := []WorkItemRun{
+			{Summary: nil},
+			{Summary: map[string]any{}},
+			{Summary: map[string]any{"deliverables": "not-an-array"}},
+		}
+		if got := boardDeliverables(cases); len(got) != 0 {
+			t.Errorf("boardDeliverables = %+v, want empty", got)
+		}
+	})
+
+	t.Run("empty input", func(t *testing.T) {
+		if got := boardDeliverables(nil); len(got) != 0 {
+			t.Errorf("boardDeliverables(nil) = %+v, want empty", got)
+		}
+		if got := boardDeliverables([]WorkItemRun{}); len(got) != 0 {
+			t.Errorf("boardDeliverables([]) = %+v, want empty", got)
+		}
+	})
+}
+
+func TestBoardCompletionSummary(t *testing.T) {
+	if got := boardCompletionSummary(nil); got != "" {
+		t.Errorf("boardCompletionSummary(nil) = %q, want empty", got)
+	}
+	runs := []WorkItemRun{
+		{Summary: map[string]any{"summary": "newest"}},
+		{Summary: map[string]any{"summary": "older"}},
+	}
+	if got := boardCompletionSummary(runs); got != "newest" {
+		t.Errorf("boardCompletionSummary = %q, want newest", got)
+	}
+	// A non-string summary value is ignored.
+	if got := boardCompletionSummary([]WorkItemRun{{Summary: map[string]any{"summary": 42}}}); got != "" {
+		t.Errorf("boardCompletionSummary(non-string) = %q, want empty", got)
+	}
+}
+
+func TestBoardDrawerDeliverables(t *testing.T) {
+	t.Run("resolved deliverable links to object", func(t *testing.T) {
+		f := &fakeMemory{
+			workItemDetail: &WorkItemDetail{
+				Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done", RunCount: 1, LatestRunStatus: "success"},
+				Runs: []WorkItemRun{{ID: "run-1", Status: "success", Summary: map[string]any{
+					"summary":      "Shipped the thing",
+					"deliverables": []any{map[string]any{"type": "Note", "key": "release-notes"}},
+				}}},
+			},
+			lookupObjects: []GraphObject{{ID: "obj-9", CanonicalID: "canon-9", Type: "Note", Key: "release-notes"}},
+		}
+		_, e := newBoardEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{
+			`data-testid="board-deliverable"`,
+			`/objects/canon-9`,
+			"Completion note",
+			"Shipped the thing",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("resolved drawer missing %q:\n%s", want, body)
+			}
+		}
+		if strings.Contains(body, "board-deliverable-missing") {
+			t.Error("resolved deliverable must not render the missing marker")
+		}
+	})
+
+	t.Run("missing deliverable renders muted, no link", func(t *testing.T) {
+		f := &fakeMemory{
+			workItemDetail: &WorkItemDetail{
+				Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done", RunCount: 1, LatestRunStatus: "success"},
+				Runs: []WorkItemRun{{ID: "run-1", Status: "success", Summary: map[string]any{
+					"deliverables": []any{map[string]any{"type": "Note", "key": "ghost"}},
+				}}},
+			},
+		}
+		_, e := newBoardEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `data-testid="board-deliverable-missing"`) {
+			t.Errorf("missing marker absent:\n%s", body)
+		}
+		if !strings.Contains(body, "not found") {
+			t.Errorf("missing hint absent:\n%s", body)
+		}
+		if strings.Contains(body, `/objects/`) {
+			t.Errorf("missing deliverable must not render a link:\n%s", body)
+		}
+	})
+
+	t.Run("no deliverables shows empty state", func(t *testing.T) {
+		f := &fakeMemory{
+			workItemDetail: &WorkItemDetail{
+				Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done", RunCount: 1, LatestRunStatus: "success"},
+				Runs: []WorkItemRun{{ID: "run-1", Status: "success", Summary: map[string]any{"summary": "done"}}},
+			},
+		}
+		_, e := newBoardEcho(f)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "No deliverables declared") {
+			t.Errorf("empty state missing:\n%s", rec.Body.String())
+		}
+	})
+}

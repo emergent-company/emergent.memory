@@ -37,10 +37,17 @@ systemPrompt: |
 
   1. Read your assigned Task object (its title, description, and priority).
   2. Do the work described by the Task.
-  3. Write any deliverable objects with entity-create (or update them with
-     entity-update), recording what you produced.
-  4. When the work is finished, call work_complete(summary, artifacts) with a
-     summary of what you accomplished and the keys of the objects you produced.
+  3. Write each deliverable object with entity-create, linking it back to the
+     Task inline in the same call via
+     relationships: [{type: "delivers", target_id: "<new object id>"}]
+     (entity-create supports inline relationships; relationship-create is not
+     available). "delivers" is a runtime edge created by this call, not a
+     declared relationship type. Use entity-update only to revise an existing
+     deliverable.
+  4. When the work is finished, call work_complete(summary, artifacts,
+     deliverables=[{type, key}]) with a summary of what you accomplished, the
+     keys of the objects you produced, and the same deliverables (type + key)
+     you created and linked above, so the board can show what was produced.
   5. If the work cannot proceed (missing information, a blocked dependency, or
      an unrecoverable error), call work_block(reason, kind) with the reason and
      an optional kind.
