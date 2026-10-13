@@ -288,9 +288,17 @@ func splitScope(scope string) []string {
 // Test seams. The outbound guard and client factories are variables so unit
 // tests can drive a local httptest authorization server; production always uses
 // validateOutboundFetchURL and the SSRF-guarded clients.
+//
+// oauthMetadataClient drives every OAuth protocol call (metadata fetch, dynamic
+// client registration, token exchange/refresh) and is therefore the unwrapped
+// outboundProbeClient: protocol code must observe 401/403 as ordinary status
+// codes so registerClient and postToken can build their typed errors (e.g.
+// oauthRegistrationRejected → ErrOAuthClientRequired). authStatusTransport
+// exists only for credential-bearing MCP-server transports (see
+// outboundHTTPClient), where a 401/403 is terminal.
 var (
 	oauthValidateURL     = validateOutboundFetchURL
-	oauthMetadataClient  = func(rawURL string) *http.Client { return outboundHTTPClient(rawURL) }
+	oauthMetadataClient  = func(rawURL string) *http.Client { return outboundProbeClient(rawURL) }
 	oauthProbeHTTPClient = func(rawURL string) *http.Client { return outboundProbeClient(rawURL) }
 )
 

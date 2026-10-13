@@ -36,6 +36,32 @@ func withTestOAuthHTTP(t *testing.T) {
 
 func strPtr(s string) *string { return &s }
 
+// --- transport seam invariant ---
+
+// TestOAuthMetadataClientIsUnwrapped is the regression guard for the
+// 403-registration defect: the OAuth protocol client must observe 401/403 as
+// ordinary status codes so registerClient and postToken reach their non-2xx
+// handling (which build the typed oauthRegistrationRejected / token errors).
+//
+// authStatusTransport turns any 401/403 into *ErrMCPAuthRejected and closes the
+// body, so a wrapped OAuth protocol client would never reach that handling — a
+// 403 from dynamic client registration would surface as a generic internal
+// error instead of ErrOAuthClientRequired. It reads the default seam directly
+// (not via withTestOAuthHTTP, which overrides it) so a revert of the factory to
+// outboundHTTPClient fails this test.
+func TestOAuthMetadataClientIsUnwrapped(t *testing.T) {
+	client := oauthMetadataClient("https://example.com")
+	if client == nil {
+		t.Fatal("oauthMetadataClient returned a nil client")
+	}
+	if _, ok := client.Transport.(authStatusTransport); ok {
+		t.Fatal("oauthMetadataClient must not wrap its transport in authStatusTransport: a 401/403 response would be turned into ErrMCPAuthRejected before the OAuth protocol's non-2xx handling runs")
+	}
+	if client.Transport == nil {
+		t.Fatal("oauthMetadataClient returned a client with no transport: the SSRF guard must still be installed")
+	}
+}
+
 // --- WWW-Authenticate parsing ---
 
 func TestParseBearerChallenge_Figma(t *testing.T) {
