@@ -32,13 +32,19 @@ Activating a validated object reference inside an assistant chat message, or a c
 
 ### Requirement: Preview presents a read-only label/value summary
 
-The drawer SHALL present the object's icon and type, its display label, and its properties as read-only label/value pairs, together with key metadata. The drawer MUST NOT render editable form controls for the object's fields and MUST NOT mutate the object.
+The drawer SHALL present the object's icon and type, its display label, and its identity metadata (type, key, status) in the header. The summary SHALL carry the object's **properties** as read-only label/value pairs. Identity metadata MUST NOT be repeated as property rows, and the mirrored `status` property (written alongside the status column by the server) MUST NOT be rendered as a property row — status is rendered once, in the header badge. The drawer MUST NOT render editable form controls for the object's fields and MUST NOT mutate the object.
 
 #### Scenario: Properties render as labels and values
 
 - **WHEN** the preview loads an object with schema-defined properties
 - **THEN** each property is rendered as a label with its value
 - **AND** no input, textarea, or select control is rendered for the object's fields
+
+#### Scenario: Identity metadata is not repeated as property rows
+
+- **WHEN** the preview loads an object whose stored properties include a mirrored `status` key
+- **THEN** the preview does not render it as a property row
+- **AND** status is shown once, in the header badge
 
 #### Scenario: Empty values are de-emphasised
 
@@ -55,6 +61,26 @@ The drawer SHALL present the object's icon and type, its display label, and its 
 
 - **WHEN** the referenced object cannot be fetched
 - **THEN** the drawer shows a non-degrading not-found state rather than an error or an empty shell
+
+### Requirement: Previewed object's canonical identifier is copyable
+
+The drawer SHALL expose a copy control that copies the object's **canonical** id — never the version row id. The control SHALL work in both the drawer and the promoted modal window, since both reuse the same preview markup.
+
+#### Scenario: Canonical id wins over the version id
+
+- **WHEN** the previewed object has a canonical id distinct from its version row id
+- **THEN** activating the copy control copies the canonical id
+- **AND** it does not copy the version row id
+
+#### Scenario: Version id is the fallback when no canonical id exists
+
+- **WHEN** the previewed object has no canonical id
+- **THEN** activating the copy control copies the version row id
+
+#### Scenario: Copy control works in drawer and modal mode
+
+- **WHEN** the preview is open in the drawer, or promoted to the modal window
+- **THEN** activating the copy control copies the canonical id
 
 ### Requirement: Drawer provides a jump-to-edit action
 

@@ -25,3 +25,11 @@
 ## 5. Spec
 
 - [x] 5.1 Add capability spec `web-object-reference-preview` and update the legacy design note `docs/spec/36-chat-object-references.md`
+
+## 6. Identity polish
+
+- [x] 6.1 Remove the Details section (type/key/status/created/id rows) from the preview body — identity metadata stays in the header and is not repeated
+- [x] 6.2 Skip the mirrored `status` property in `objectPreviewProperties` so it is not rendered as a duplicate property row
+- [x] 6.3 Add a header copy control (sr-only canonical-id span + ghost icon button) yielding the canonical id via `objectPreviewCanonicalID`
+- [x] 6.4 Wire a panel-scoped delegated copy handler in object-preview.js with clipboard + textarea fallback and transient "Copied" feedback
+- [x] 6.5 Extend unit tests (properties filter, read-only content, canonical-id copy source, client wiring) and the spec delta

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"sort"
 	"strconv"
@@ -101,12 +102,16 @@ func (s *Server) objectPreviewRelationshipLabel(ctx context.Context, objectID, r
 // objectPreviewProperties lists an object's display properties in key order.
 // Unlike graphObjectProperties (which drops empties for the compact list
 // render), every non-internal property is returned — including empty ones — so
-// the preview shows the full shape of the object. The deferred "hide empties"
-// refinement can filter rows by their data-empty marker without changing this.
+// the preview shows the full shape of the object. Internal (underscore) names
+// are dropped, and so is the mirrored "status" key: the server writes
+// properties["status"] alongside the status column, but status is already
+// rendered once in the header badge, so repeating it as a property row would
+// duplicate it. The deferred "hide empties" refinement can filter rows by their
+// data-empty marker without changing this.
 func objectPreviewProperties(o GraphObject) []propertyKV {
 	keys := make([]string, 0, len(o.Properties))
 	for k := range o.Properties {
-		if strings.HasPrefix(k, "_") {
+		if strings.HasPrefix(k, "_") || k == "status" {
 			continue
 		}
 		keys = append(keys, k)
@@ -126,8 +131,16 @@ func objectPreviewValue(v any) string {
 	return strings.Join(propValues(v), ", ")
 }
 
+// objectPreviewCanonicalID resolves the identifier the copy control yields: the
+// canonical id when present, else the version row id. The version row id is
+// NOT the canonical id — a copy must yield the stable canonical identifier, not
+// the specific version that happened to be previewed.
+func objectPreviewCanonicalID(o GraphObject) string {
+	return cmp.Or(o.CanonicalID, o.ID)
+}
+
 // objectPreviewCreated formats an object's creation timestamp for the preview's
-// Details list: relative time when parseable, otherwise the raw value, else "".
+// history timeline: relative time when parseable, otherwise the raw value, else "".
 func objectPreviewCreated(iso string) string {
 	if iso == "" {
 		return ""

@@ -11,8 +11,9 @@ import (
 )
 
 // TestObjectPreviewProperties pins the property-list contract: sorted by key,
-// internal (underscore) names dropped, and — unlike graphObjectProperties —
-// empty values retained so the preview shows the object's full shape.
+// internal (underscore) names dropped, the mirrored "status" key dropped (it is
+// already rendered once in the header badge), and — unlike graphObjectProperties
+// — empty values retained so the preview shows the object's full shape.
 func TestObjectPreviewProperties(t *testing.T) {
 	obj := GraphObject{
 		Properties: map[string]any{
@@ -21,6 +22,7 @@ func TestObjectPreviewProperties(t *testing.T) {
 			"alpha":     "first",
 			"empty":     "",
 			"count":     float64(3),
+			"status":    "in_progress",
 		},
 	}
 	got := objectPreviewProperties(obj)
@@ -79,6 +81,9 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 
 	for _, want := range []string{
 		`id="object-preview-heading"`,
+		`id="object-preview-id"`,
+		`data-copy-target="#object-preview-id"`,
+		`data-testid="object-preview-copy-id"`,
 		`data-preview-field`,
 		`data-empty`,
 		`my-note`,
@@ -86,6 +91,7 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 		`active`,
 		`alpha`,
 		`beta`,
+		`11111111-1111-1111-1111-111111111111`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("preview content missing %q\n%s", want, html)
@@ -95,6 +101,68 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 		if strings.Contains(html, bad) {
 			t.Errorf("preview content must be read-only, found %q", bad)
 		}
+	}
+	// The Details section (type/key/status/created/id) is gone — identity
+	// metadata lives in the header, not as duplicated property rows.
+	for _, gone := range []string{">Details<", ">Created<"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("preview content must not render the removed Details rows, found %q", gone)
+		}
+	}
+}
+
+// srOnlySpanText extracts the rendered text of the visually-hidden canonical-id
+// span (#object-preview-id) from a preview-content render, so tests can assert
+// exactly what the copy control yields.
+func srOnlySpanText(t *testing.T, html string) string {
+	t.Helper()
+	const marker = `id="object-preview-id"`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		t.Fatalf("object-preview-id span missing:\n%s", html)
+	}
+	tail := html[i:]
+	open := strings.Index(tail, ">")
+	if open < 0 {
+		t.Fatalf("object-preview-id span has no closing bracket:\n%s", html)
+	}
+	content := tail[open+1:]
+	close := strings.Index(content, "</span>")
+	if close < 0 {
+		t.Fatalf("object-preview-id span unterminated:\n%s", html)
+	}
+	return strings.TrimSpace(content[:close])
+}
+
+// TestObjectPreviewCanonicalIDCopySource pins the copy contract: the sr-only
+// span carries the canonical id when present (never the version row id), and
+// falls back to the version row id only when no canonical id exists.
+func TestObjectPreviewCanonicalIDCopySource(t *testing.T) {
+	withCanonical := &GraphObject{
+		ID:          "version-row-id",
+		CanonicalID: "canonical-123",
+		Type:        "note",
+		Key:         "k",
+	}
+	html := renderHTML(t, objectPreviewContent(withCanonical, nil, "", nil))
+	if got := srOnlySpanText(t, html); got != "canonical-123" {
+		t.Errorf("sr-only span = %q, want canonical id", got)
+	}
+	if strings.Contains(srOnlySpanText(t, html), "version-row-id") {
+		t.Errorf("sr-only span must not carry the version row id when a canonical id exists:\n%s", html)
+	}
+
+	withoutCanonical := &GraphObject{ID: "version-row-id", Type: "note", Key: "k"}
+	html2 := renderHTML(t, objectPreviewContent(withoutCanonical, nil, "", nil))
+	if got := srOnlySpanText(t, html2); got != "version-row-id" {
+		t.Errorf("sr-only span fallback = %q, want version row id", got)
+	}
+
+	if got := objectPreviewCanonicalID(GraphObject{ID: "a", CanonicalID: "b"}); got != "b" {
+		t.Errorf("objectPreviewCanonicalID with canonical = %q, want %q", got, "b")
+	}
+	if got := objectPreviewCanonicalID(GraphObject{ID: "a"}); got != "a" {
+		t.Errorf("objectPreviewCanonicalID without canonical = %q, want %q", got, "a")
 	}
 }
 
@@ -183,6 +251,8 @@ func TestObjectPreviewClientWiring(t *testing.T) {
 		`object-preview-in-modal`,
 		`ArrowLeft`,
 		`ArrowRight`,
+		`[data-copy-target]`,
+		`data-copy-target`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("object-preview.js missing %q", want)
@@ -198,8 +268,8 @@ func TestObjectPreviewNotFound(t *testing.T) {
 }
 
 // TestObjectPreviewStatusHumanised pins the status-label contract: the preview
-// renders the humanised status (not the raw key) in both the badge and the
-// Details row, while preserving the raw value for machine fidelity.
+// renders the humanised status (not the raw key) in the header badge, while
+// preserving the raw value for machine fidelity.
 func TestObjectPreviewStatusHumanised(t *testing.T) {
 	obj := &GraphObject{
 		ID:     "11111111-1111-1111-1111-111111111111",

@@ -123,6 +123,10 @@
 
     if (backdrop) backdrop.addEventListener("click", function () { close(); });
     if (closeBtn) closeBtn.addEventListener("click", onCloseClick);
+    // Copy control: delegated and panel-scoped because the preview body (and
+    // with it the copy button) is swapped in by htmx; a document-level handler
+    // would collide with the copy scripts other pages install.
+    if (panel) panel.addEventListener("click", onCopyClick);
     if (widthToggle) widthToggle.addEventListener("click", toggleWidth);
     if (modalOpenBtn) modalOpenBtn.addEventListener("click", openModal);
     if (resizeHandle) {
@@ -321,6 +325,72 @@
       return;
     }
     if (ev.key === "Tab") trapFocus(ev);
+  }
+
+  /* ---------- copy canonical id ---------- */
+
+  // Copy text to the clipboard using the same pattern as the chat host
+  // (chat-host.js, which mirrors api_tokens.templ): navigator.clipboard when
+  // available, otherwise a hidden textarea + execCommand fallback for
+  // older/insecure contexts. A rejected clipboard write also falls back to the
+  // textarea path rather than silently swallowing the error.
+  function copyTextFallback(value) {
+    var ta = document.createElement("textarea");
+    ta.value = value;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+
+  function copyText(text) {
+    var value = text == null ? "" : String(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        var p = navigator.clipboard.writeText(value);
+        if (p && typeof p.then === "function") {
+          p.then(
+            function () {},
+            function () { copyTextFallback(value); }
+          );
+        }
+        return;
+      } catch (e) { /* fall through to the textarea fallback */ }
+    }
+    copyTextFallback(value);
+  }
+
+  // Delegated click on the panel: any element carrying data-copy-target copies
+  // the resolved element's text (the sr-only canonical id span). Feedback is
+  // attribute-only (no innerHTML) with a guarded timer so overlapping clicks
+  // reset cleanly.
+  function onCopyClick(ev) {
+    var trigger = ev.target && ev.target.closest ? ev.target.closest("[data-copy-target]") : null;
+    if (!trigger) return;
+    var target = trigger.getAttribute("data-copy-target");
+    var el = target ? document.querySelector(target) : null;
+    if (!el) return;
+    copyText((el.textContent || "").trim());
+    flashCopied(trigger);
+  }
+
+  function flashCopied(trigger) {
+    var pending = trigger.copyResetTimer;
+    if (pending) { clearTimeout(pending); trigger.copyResetTimer = null; }
+    var originalLabel = trigger.getAttribute("aria-label") || "";
+    trigger.setAttribute("aria-label", "Copied");
+    trigger.setAttribute("title", "Copied");
+    trigger.setAttribute("data-copied", "true");
+    trigger.copyResetTimer = setTimeout(function () {
+      trigger.copyResetTimer = null;
+      trigger.removeAttribute("data-copied");
+      if (originalLabel) trigger.setAttribute("aria-label", originalLabel);
+      trigger.removeAttribute("title");
+    }, 1500);
   }
 
   /* ---------- modal window mode ---------- */

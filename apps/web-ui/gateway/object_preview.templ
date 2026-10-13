@@ -147,7 +147,19 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 						})
 					}
 				</div>
-				<h3 id="object-preview-heading" class="text-base leading-tight font-semibold break-words">{ graphObjectLabel(*obj) }</h3>
+				<div class="flex items-center gap-1.5">
+					<h3 id="object-preview-heading" class="text-base leading-tight font-semibold break-words">{ graphObjectLabel(*obj) }</h3>
+					<span id="object-preview-id" class="sr-only">{ objectPreviewCanonicalID(*obj) }</span>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--copy",
+						AriaLabel: "Copy object ID",
+						Attrs:     templ.Attributes{"id": "object-preview-copy-id", "data-testid": "object-preview-copy-id", "data-copy-target": "#object-preview-id"},
+					})
+				</div>
 				if relLabel != "" {
 					<p class="text-muted mt-1 flex items-center gap-1 text-xs">
 						@ui.IconSpan("lucide--link", "size-3")
@@ -168,16 +180,6 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 					}
 				</dl>
 			}
-		}
-
-		@objectPreviewSection("Details") {
-			<dl class="divide-base-content/10 flex flex-col divide-y">
-				@objectPreviewRow("Type", obj.Type, obj.Type == "")
-				@objectPreviewRow("Key", obj.Key, obj.Key == "")
-				@objectPreviewRow("Status", boardStatusLabel(obj.Status), obj.Status == "")
-				@objectPreviewRow("Created", objectPreviewCreated(obj.CreatedAt), obj.CreatedAt == "")
-				@objectPreviewRow("ID", obj.ID, obj.ID == "")
-			</dl>
 		}
 
 		@objectPreviewSection("Labels") {
