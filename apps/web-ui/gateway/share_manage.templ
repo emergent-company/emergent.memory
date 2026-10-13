@@ -631,10 +631,25 @@ templ shareManageScript() {
 		(function () {
 			if (window.__memoryShareManageWired) return;
 			window.__memoryShareManageWired = true;
-			function copyText(text, done) {
-				if (navigator.clipboard && navigator.clipboard.writeText) {
-					navigator.clipboard.writeText(text).then(done, function () {});
+			function copyText(text, onSuccess, onFailure) {
+				function legacyCopy() {
+					var ta = document.createElement("textarea");
+					ta.value = text;
+					ta.setAttribute("readonly", "");
+					document.body.appendChild(ta);
+					ta.select();
+					var ok = false;
+					try { ok = document.execCommand("copy"); } catch (e) {}
+					document.body.removeChild(ta);
+					return ok;
 				}
+				if (navigator.clipboard && navigator.clipboard.writeText) {
+					navigator.clipboard.writeText(text).then(onSuccess, function () {
+						if (legacyCopy()) { onSuccess(); } else { onFailure(); }
+					});
+					return;
+				}
+				if (legacyCopy()) { onSuccess(); } else { onFailure(); }
 			}
 			// Direct copy (URL already known, e.g. right after create/rotate).
 			document.addEventListener("click", function (ev) {
@@ -644,11 +659,12 @@ templ shareManageScript() {
 				var text = btn.getAttribute("data-copy-link") || "";
 				var label = btn.querySelector(".share-copy-label");
 				var restore = label ? label.textContent : "";
-				copyText(text, function () {
+				var showResult = function (msg) {
 					if (!label) return;
-					label.textContent = "Copied";
+					label.textContent = msg;
 					setTimeout(function () { label.textContent = restore; }, 1600);
-				});
+				};
+				copyText(text, function () { showResult("Copied"); }, function () { showResult("Copy failed"); });
 			});
 			// On-demand reveal: fetch the key, build/copy the full URL, and show
 			// it in the row's link field. The key is never rendered during list build.
@@ -691,8 +707,7 @@ templ shareManageScript() {
 					.then(function (r) {
 						if (r.ok && r.body && r.body.url) {
 							showURL(r.body.url);
-							copyText(r.body.url, function () {});
-							finish("Copied");
+							copyText(r.body.url, function () { finish("Copied"); }, function () { finish("Copy failed"); });
 						} else if (r.body && r.body.code === "not_recoverable") {
 							showError("Not recoverable — rotate this link to issue a new one.");
 							finish("Rotate to recover");

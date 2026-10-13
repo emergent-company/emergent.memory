@@ -317,6 +317,7 @@ func TestLinkURLPrefixesAppPathsOnly(t *testing.T) {
 func TestRewriteScopedHTML(t *testing.T) {
 	in := `<a href="/objects">o</a>` +
 		`<form action="/agents/7/settings/general" hx-post="/settings/tokens/new">x</form>` +
+		`<button data-reveal-url="/agents/7/share-links/l1/reveal">copy</button>` +
 		`<a href="/orgs/o2/members">members</a>` +
 		`<a href="/api/chat">api</a><a href="#x">f</a><a href="https://e.com">e</a>` +
 		`<a href="/o/other/p/x/objects">already</a>`
@@ -325,6 +326,7 @@ func TestRewriteScopedHTML(t *testing.T) {
 		`href="/o/o1/p/p1/objects"`,
 		`action="/o/o1/p/p1/agents/7/settings/general"`,
 		`hx-post="/o/o1/p/p1/settings/tokens/new"`,
+		`data-reveal-url="/o/o1/p/p1/agents/7/share-links/l1/reveal"`,
 		`href="/o/o2/members"`,
 		`href="/api/chat"`,
 		`href="#x"`,
@@ -336,9 +338,12 @@ func TestRewriteScopedHTML(t *testing.T) {
 		}
 	}
 	// With no scope base, app paths are untouched but org links still map.
-	global := rewriteScopedHTML(`<a href="/objects">o</a><a href="/orgs/o2">g</a>`, "")
+	global := rewriteScopedHTML(`<a href="/objects">o</a><button data-reveal-url="/agents/7/share-links/l1/reveal">c</button><a href="/orgs/o2">g</a>`, "")
 	if !strings.Contains(global, `href="/objects"`) {
 		t.Errorf("global rewrite must not touch app paths: %s", global)
+	}
+	if !strings.Contains(global, `data-reveal-url="/agents/7/share-links/l1/reveal"`) {
+		t.Errorf("global rewrite must not touch data-reveal-url: %s", global)
 	}
 	if !strings.Contains(global, `href="/o/o2"`) {
 		t.Errorf("global rewrite must map /orgs/{id} to /o/{id}: %s", global)

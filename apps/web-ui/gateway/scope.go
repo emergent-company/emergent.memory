@@ -384,7 +384,7 @@ func scopedPathFor(base, path string) string {
 // Global prefixes are filtered in scopedPathFor, so assets/API/share and the
 // dev gallery stay untouched; data:* URIs and https:// URLs never match because
 // the value must start with a leading "/".
-var scopeAttrRe = regexp.MustCompile(`(?i)\b(href|action|src|data-src|hx-get|hx-post|hx-put|hx-delete|hx-patch|data-href|data-autosave-url|data-activate-url)="(/[^"]*)"`)
+var scopeAttrRe = regexp.MustCompile(`(?i)\b(href|action|src|data-src|hx-get|hx-post|hx-put|hx-delete|hx-patch|data-href|data-autosave-url|data-activate-url|data-reveal-url)="(/[^"]*)"`)
 
 // rewriteScopedHTML rewrites the URL-bearing attributes of a rendered page or
 // fragment so links and htmx/form actions stay in the page's context. Doing it
