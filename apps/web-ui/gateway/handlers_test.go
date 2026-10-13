@@ -182,6 +182,8 @@ type fakeMemory struct {
 	lastMergePolicy      string                     // last policy passed to MergeBranch
 	similar              []SimilarObject            // returned by GetSimilarObjects
 	similarErr           error                      // GetSimilarObjects failure
+	objectHistory        []GraphObject              // returned by GetObjectHistory
+	objectHistoryErr     error                      // GetObjectHistory failure
 	updateResult         *GraphObject               // returned by UpdateObject
 	updateObjectErr      error                      // UpdateObject failure
 	lastUpdateID         string                     // last id passed to UpdateObject
@@ -199,6 +201,8 @@ type fakeMemory struct {
 	// Work items (object-driven work / Kanban board).
 	workItems         []WorkItem      // returned by ListWorkItems
 	workItemsErr      error           // ListWorkItems failure
+	boardRuns         []BoardRun      // returned by ListBoardRuns
+	boardRunsErr      error           // ListBoardRuns failure
 	workItemDetail    *WorkItemDetail // returned by GetWorkItem
 	workItemDetailErr error           // GetWorkItem failure
 	workAction        *WorkItemAction // returned by action methods
@@ -1210,6 +1214,13 @@ func (f *fakeMemory) GetGraphObject(ctx context.Context, objectID string) (*Grap
 	return nil, fmt.Errorf("not found")
 }
 
+func (f *fakeMemory) GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error) {
+	if f.objectHistoryErr != nil {
+		return nil, f.objectHistoryErr
+	}
+	return f.objectHistory, nil
+}
+
 func (f *fakeMemory) ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error) {
 	if f.docErr != nil {
 		return nil, f.docErr
@@ -1287,6 +1298,13 @@ func (f *fakeMemory) ListWorkItems(ctx context.Context, status, typeName string,
 		return nil, f.workItemsErr
 	}
 	return f.workItems, nil
+}
+
+func (f *fakeMemory) ListBoardRuns(ctx context.Context, limit int) ([]BoardRun, error) {
+	if f.boardRunsErr != nil {
+		return nil, f.boardRunsErr
+	}
+	return f.boardRuns, nil
 }
 
 func (f *fakeMemory) GetWorkItem(ctx context.Context, canonicalID string) (*WorkItemDetail, error) {

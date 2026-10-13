@@ -649,10 +649,10 @@ templ objectBadges(o GraphObject) {
 		Size:    ui.BadgeSizeXS,
 	})
 	if o.Status != "" {
-		@ui.Badge(ui.BadgeProps{
-			Label:   o.Status,
-			Variant: ui.BadgeGhost,
-			Size:    ui.BadgeSizeXS,
+		@components.StatusBadge(boardStatusLabel(o.Status), boardStatusIntent(o.Status), "", components.StatusBadgeOpts{
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
+			Attrs: templ.Attributes{"data-status": o.Status},
 		})
 	}
 	if o.EmbeddingStatus != "" {
@@ -882,10 +882,10 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 				<div class="mb-2 flex flex-wrap items-center gap-2">
 					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
 					if obj.Status != "" {
-						@ui.Badge(ui.BadgeProps{
-							Label:   obj.Status,
-							Variant: ui.BadgeGhost,
-							Size:    ui.BadgeSizeSM,
+						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeSM,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": obj.Status},
 						})
 					}
 					if obj.EmbeddingStatus != "" {

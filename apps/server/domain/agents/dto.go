@@ -86,6 +86,11 @@ type AgentRunDTO struct {
 	// Ad-hoc or scheduled runs with no thread omit it.
 	SessionID *string `json:"sessionId,omitempty"`
 
+	// SubjectObjectID links the run to the board/work object it was dispatched
+	// for (the object's canonical_id). Non-null only for object-driven runs
+	// (kb.agent_runs.subject_object_id).
+	SubjectObjectID *string `json:"subjectObjectId,omitempty"`
+
 	Tools []string `json:"tools,omitempty"`
 }
 
@@ -269,6 +274,7 @@ func (r *AgentRun) ToDTO() *AgentRunDTO {
 		RootRunID:         r.RootRunID,
 		AgentDefinitionID: r.AgentDefinitionID,
 		SessionID:         r.SessionID,
+		SubjectObjectID:   r.SubjectObjectID,
 		Tools:             r.Tools,
 	}
 	if r.Agent != nil {

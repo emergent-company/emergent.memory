@@ -3484,6 +3484,32 @@ func (r *Repository) ListSessionRunsByProjectID(ctx context.Context, projectID s
 	return grouped, nil
 }
 
+// ListBoardRunsByProjectID returns the project's object-driven (board/work)
+// runs: kb.agent_runs rows with a non-null subject_object_id, newest first,
+// capped at limit. The Agent relation is loaded (as ListSessionRunsByProjectID
+// does) so ToDTO can resolve AgentName. The project is scoped through the run's
+// owning agent (kb.agents.project_id) via a manual join under a distinct alias
+// so it never collides with the Agent relation's own join.
+func (r *Repository) ListBoardRunsByProjectID(ctx context.Context, projectID string, limit int) ([]*AgentRun, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var runs []*AgentRun
+	err := r.db.NewSelect().
+		Model(&runs).
+		Relation("Agent").
+		Join("JOIN kb.agents AS proj ON proj.id = ar.agent_id").
+		Where("proj.project_id = ?", projectID).
+		Where("ar.subject_object_id IS NOT NULL").
+		Order("ar.created_at DESC").
+		Limit(limit).
+		Scan(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ListBoardRunsByProjectID: %w", err)
+	}
+	return runs, nil
+}
+
 // SessionStats holds aggregated stats for a single session.
 type SessionStats struct {
 	SessionID    string  `bun:"session_id"`

@@ -158,7 +158,7 @@ func newChatRailEcho(f MemoryBackend) (*Server, *echo.Echo) {
 // TestChatRailIncludeArchivedControl asserts the filter-row control exists with
 // its stable contract hooks.
 func TestChatRailIncludeArchivedControl(t *testing.T) {
-	html := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
+	html := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
 	for _, want := range []string{
 		`id="chat-include-archived"`,
 		`data-testid="chat-include-archived"`,
@@ -254,7 +254,7 @@ func TestChatRailListArchivedMarkerOnlyOnArchivedRows(t *testing.T) {
 		{ID: "active1", Title: "Active one"},
 		{ID: "arch1", Title: "Archived one", IsArchived: true},
 	}}
-	html := renderHTML(t, chatRailList(convs, nil, nil, nil, ""))
+	html := renderHTML(t, chatRailList(convs, nil, nil, nil, nil, ""))
 	if n := strings.Count(html, `data-testid="session-archived-marker"`); n != 1 {
 		t.Errorf("archived marker count = %d, want 1", n)
 	}
@@ -270,7 +270,7 @@ func TestChatRailListArchivedMarkerOnlyOnArchivedRows(t *testing.T) {
 // row's server-rendered selection checkbox (keyboard-operable, labelled).
 func TestChatRailBulkSelectionContract(t *testing.T) {
 	convs := &ConversationList{Conversations: []Conversation{{ID: "c1", Title: "Alpha"}}}
-	html := renderHTML(t, chatWorkspace(nil, convs, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
+	html := renderHTML(t, chatWorkspace(nil, convs, nil, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
 	for _, want := range []string{
 		`data-action="toggle-session-select"`,
 		`data-testid="toggle-session-select"`,
@@ -351,7 +351,7 @@ func TestChatWorkspaceOpenArchivedStaysOpen(t *testing.T) {
 	convs := &ConversationList{Conversations: []Conversation{
 		{ID: "c1", Title: "Open session", AgentDefinitionID: "a1", IsArchived: true},
 	}}
-	html := renderHTML(t, chatWorkspace(agents, convs, nil, nil, nil, "", "c1", "", false, nil, chatRunControl{}))
+	html := renderHTML(t, chatWorkspace(agents, convs, nil, nil, nil, nil, "", "c1", "", false, nil, chatRunControl{}))
 	for _, want := range []string{
 		`id="chat-root"`,
 		`id="chat-form"`,
@@ -372,7 +372,7 @@ func TestChatWorkspaceOpenArchivedStaysOpen(t *testing.T) {
 // the deleted transcript or an error page.
 func TestChatWorkspaceDeletedOpenRendersReadyState(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, chatWorkspace(agents, &ConversationList{}, nil, nil, nil, "", "c1", "", false, nil, chatRunControl{}))
+	html := renderHTML(t, chatWorkspace(agents, &ConversationList{}, nil, nil, nil, nil, "", "c1", "", false, nil, chatRunControl{}))
 	for _, want := range []string{
 		`id="chat-root"`,
 		`id="chat-form"`,

@@ -866,6 +866,7 @@
     if (!card) return;
     var id = card.getAttribute("data-canonical-id");
     boardDrag = { id: id, fromStatus: card.getAttribute("data-board-status") };
+    document.body.dataset.boardDragging = "true";
     if (ev.dataTransfer) {
       ev.dataTransfer.setData("text/plain", id || "");
       ev.dataTransfer.effectAllowed = "move";
@@ -891,6 +892,7 @@
     clearBoardDropTargets();
     var id = boardDrag.id || (ev.dataTransfer ? ev.dataTransfer.getData("text/plain") : "");
     boardDrag = null;
+    delete document.body.dataset.boardDragging;
     if (!id || !window.htmx) return;
     if (action === "dialog") {
       // Open the item action dialog (review -> revision needs feedback).
@@ -910,6 +912,7 @@
     var card = ev.target.closest ? ev.target.closest("[data-board-card]") : null;
     if (card) card.classList.remove("memory-board__card--dragging");
     boardDrag = null;
+    delete document.body.dataset.boardDragging;
   });
 
   /* Board card click/keyboard opens the shared object preview drawer (the same

@@ -119,7 +119,7 @@ func TestChatScriptLoadedOnceFromShell(t *testing.T) {
 
 	// The chat page fragment must NOT emit chat.js — the shell owns it.
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	if strings.Contains(html, `src="/assets/js/chat.js`) {
 		t.Error("ChatPage fragment must not emit chat.js (the shell owns it)")
 	}

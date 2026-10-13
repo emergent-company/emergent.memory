@@ -230,6 +230,39 @@ func (h *Handler) workActionParams(c echo.Context) (projectID, canonicalID strin
 	return projectID, canonicalID, nil
 }
 
+// ListBoardRuns handles GET /api/projects/:projectId/work-items/runs
+//
+// @Summary      List board runs
+// @Description  Returns the project's object-driven (board/work) agent runs — kb.agent_runs rows with a non-null subject_object_id — newest first
+// @Tags         agents
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        limit query int false "Max runs (default 50, max 500)"
+// @Success      200 {object} APIResponse[[]AgentRunDTO] "Board runs"
+// @Router       /api/projects/{projectId}/work-items/runs [get]
+// @Security     bearerAuth
+func (h *Handler) ListBoardRuns(c echo.Context) error {
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	limit := 50
+	if v := c.QueryParam("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = min(n, 500)
+		}
+	}
+	runs, err := h.repo.ListBoardRunsByProjectID(c.Request().Context(), projectID, limit)
+	if err != nil {
+		return apperror.NewInternal("failed to list board runs", err)
+	}
+	out := make([]*AgentRunDTO, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, run.ToDTO())
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(out))
+}
+
 // ApproveWorkItem handles POST /api/projects/:projectId/work-items/:canonicalId/approve
 //
 // @Summary      Approve a work item

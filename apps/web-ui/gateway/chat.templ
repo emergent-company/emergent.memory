@@ -24,7 +24,7 @@ import (
 // run-control surfaces (pending-work dock cards, session todos) so the dock and
 // todo card exist before chat.js runs. uiChat supplies it when ?c= names a
 // conversation; other callers omit it.
-templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
+templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, boardRuns []boardRunRow, preselect string, convID string, prompt string, loadErr error, voiceEnabled bool, modelWarnings map[string]string, runControl ...chatRunControl) {
 	<div class="h-full">
 		if loadErr != nil {
 			@layout.Container(layout.ContainerLG, nil) {
@@ -45,7 +45,7 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 				})
 			}
 		} else {
-			@chatWorkspace(agents, convs, appearances, schedRuns, shared, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
+			@chatWorkspace(agents, convs, appearances, schedRuns, shared, boardRuns, preselect, convID, prompt, voiceEnabled, modelWarnings, chatRunControlOrZero(runControl))
 		}
 	</div>
 }
@@ -54,7 +54,7 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // left, and the streaming conversation (header, log, composer) on the right.
 // chat.js drives resume + streaming via the /api/* endpoints. runControl holds
 // the active conversation's server-rendered dock cards and session todos.
-templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
+templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, boardRuns []boardRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
 	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
 		<aside id="chat-rail" aria-label="Sessions" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
 			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
@@ -118,6 +118,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 					<option value="">All types</option>
 					<option value="manual">Manual</option>
 					<option value="scheduled">Scheduled</option>
+					<option value="board">Board</option>
 					<option value="shared">Shared</option>
 				</select>
 				<label class="flex cursor-pointer items-center gap-2 px-1 text-sm text-muted-strong select-none">
@@ -132,7 +133,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 				</label>
 			</div>
 			<div id="chat-rail-list" data-testid="session-list" class="min-h-0 grow overflow-y-auto p-2">
-				@chatRailList(convs, appearances, schedRuns, shared, convID)
+				@chatRailList(convs, appearances, schedRuns, shared, boardRuns, convID)
 			</div>
 			<!-- Bulk-selection footer (#1385). Hidden until chat.js turns on
 			     selection mode; "Archive" applies to every checked conversation
@@ -503,8 +504,8 @@ templ chatDeleteConfirmDescription() {
 // chatRailList renders the session rail's list portion: the two empty states
 // plus (when there are rows) a ui.List of sessionRailItem + scheduledRailItem.
 // Rendered by both the full chat page and the /partial/chat-rail refresh.
-templ chatRailList(convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, convID string) {
-	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 || len(shared) > 0 }}
+templ chatRailList(convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, boardRuns []boardRunRow, convID string) {
+	{{ hasRows := (convs != nil && len(convs.Conversations) > 0) || len(schedRuns) > 0 || len(shared) > 0 || len(boardRuns) > 0 }}
 	@chatRailEmpty(hasRows)
 	if hasRows {
 		@ui.List(ui.ListProps{}) {
@@ -515,6 +516,9 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 			}
 			for _, r := range schedRuns {
 				@scheduledRailItem(r)
+			}
+			for _, b := range boardRuns {
+				@boardRailItem(b)
 			}
 			for _, sh := range shared {
 				@sharedRailItem(sh)
@@ -682,6 +686,72 @@ templ scheduledRailItem(r scheduledRunRow) {
 	})
 }
 
+// boardRunRow is one object-driven (board/work) run rendered in the chat
+// session rail (data-origin="board"). Like a scheduled run it is not a resumable
+// conversation, but clicking it opens its run transcript (data-action="open-run").
+// Title carries the matched work item's key when one is known, else the agent
+// name; Icon/Color carry the run agent's definition appearance.
+type boardRunRow struct {
+	ID        string
+	Title     string
+	AgentName string
+	Status    string
+	StartedAt string
+	Icon      string
+	Color     string
+}
+
+// boardRailItem is one board/work run in the session rail. It mirrors
+// scheduledRailItem (data-action="open-run" → resumeRun → /api/runs/{id}/history)
+// but carries data-origin="board" so the origin filter's "Board" option isolates
+// it. The run agent's own glyph leads the row; the matched work item key is the
+// title when available, falling back to the agent name.
+templ boardRailItem(r boardRunRow) {
+	{{
+		title := r.Title
+		if title == "" {
+			title = r.AgentName
+		}
+		attrs := templ.Attributes{
+			"data-action": "open-run",
+			"data-id":     r.ID,
+			"data-run-id": r.ID,
+			"data-origin": "board",
+			"data-testid": "session-row",
+		}
+	}}
+	@ui.ListRow(ui.ListRowProps{
+		Title:    title,
+		Subtitle: boardRailSubtitle(r),
+		Leading:  agentInlineGlyph(r.Icon, r.Color),
+		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+		Attrs:    attrs,
+	})
+}
+
+// runRailSubtitle builds the meta line shared by the scheduled and board run
+// rows: the run status (when set) and the relative start time. Both rail rows
+// route through here so the board row can never drift from the scheduled row
+// beside it. The status is humanised (via boardStatusLabel, the same humaniser
+// the board uses for work statuses) because this is prose in a human-facing
+// list, not a machine key.
+func runRailSubtitle(status, startedAt string) string {
+	if status == "" {
+		return relTime(startedAt)
+	}
+	return boardStatusLabel(status) + " · " + relTime(startedAt)
+}
+
+// railRunSubtitle builds the meta line for a scheduled run rail item.
+func railRunSubtitle(r scheduledRunRow) string {
+	return runRailSubtitle(r.Status, r.StartedAt)
+}
+
+// boardRailSubtitle builds the meta line for a board run rail item.
+func boardRailSubtitle(r boardRunRow) string {
+	return runRailSubtitle(r.Status, r.StartedAt)
+}
+
 // sharedRailItem is one owner-shared session in the session rail. It opens a
 // read-only transcript on a separate page (data-action="open-share" →
 // /share-sessions/<id>), so it is not resumable in the chat workspace. The
@@ -703,14 +773,6 @@ templ sharedRailItem(s sharedSessionRow) {
 		Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
 		Attrs:    attrs,
 	})
-}
-
-// railRunSubtitle builds the meta line for a scheduled run rail item.
-func railRunSubtitle(r scheduledRunRow) string {
-	if r.Status == "" {
-		return relTime(r.StartedAt)
-	}
-	return r.Status + " · " + relTime(r.StartedAt)
 }
 
 // railSubtitle builds the meta line for a session rail item.

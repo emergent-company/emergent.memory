@@ -69,6 +69,7 @@ func (s *Server) listSessions(c echo.Context) error {
 	// Merge scheduled-agent runs (best-effort: a failure here leaves the list
 	// with just the conversations rather than failing the whole request).
 	summaries = append(summaries, s.scheduledSessionSummaries(ctx)...)
+	summaries = append(summaries, s.boardSessionSummaries(ctx)...)
 	if origin := c.QueryParam("origin"); origin != "" {
 		filtered := summaries[:0]
 		for _, sm := range summaries {
@@ -130,6 +131,69 @@ func (s *Server) scheduledSessionSummaries(ctx context.Context) []sessionSummary
 		}
 	}
 	return out
+}
+
+// boardSessionSummaries maps the project's object-driven (board/work) runs onto
+// session summaries with origin "board". Each run becomes one summary keyed by
+// its run id. The work-item board projection is fetched once and joined in Go by
+// subjectObjectID == workItem.CanonicalID so each row gets a useful title without
+// an N+1 per-run fetch. Best-effort: a fetch failure contributes no rows.
+func (s *Server) boardSessionSummaries(ctx context.Context) []sessionSummary {
+	runs, err := s.memory.ListBoardRuns(ctx, 50)
+	if err != nil {
+		return nil
+	}
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	bySubject := make(map[string]WorkItem, len(items))
+	for _, it := range items {
+		if it.CanonicalID != "" {
+			bySubject[it.CanonicalID] = it
+		}
+	}
+	out := make([]sessionSummary, 0, len(runs))
+	for _, run := range runs {
+		sm := sessionSummary{Room: run.ID, Origin: "board"}
+		if run.StartedAt != "" {
+			sm.StartedAt = &run.StartedAt
+		}
+		sm.EndedAt = run.CompletedAt
+		if p := boardRunPreview(run, bySubject); p != "" {
+			sm.Preview = &p
+		}
+		out = append(out, sm)
+	}
+	return out
+}
+
+// boardRunPreview picks the matched work item's key (when the run's subject
+// object matches a board work item), falling back to the run summary text and
+// then the agent name, truncated to 160 runes.
+func boardRunPreview(run BoardRun, items map[string]WorkItem) string {
+	if run.SubjectObjectID != nil {
+		if it, ok := items[*run.SubjectObjectID]; ok {
+			if t := strings.TrimSpace(it.Key); t != "" {
+				return truncateRunes(t, 160)
+			}
+		}
+	}
+	for _, k := range []string{"summary", "result", "output", "message", "text"} {
+		if v, ok := run.Summary[k].(string); ok {
+			if t := strings.TrimSpace(v); t != "" {
+				return truncateRunes(t, 160)
+			}
+		}
+	}
+	for _, v := range run.Summary {
+		if s, ok := v.(string); ok {
+			if t := strings.TrimSpace(s); t != "" {
+				return truncateRunes(t, 160)
+			}
+		}
+	}
+	if run.AgentName != "" {
+		return truncateRunes("Board run — "+run.AgentName, 160)
+	}
+	return ""
 }
 
 // scheduledRunPreview picks the first non-empty summary text of a scheduled

@@ -130,6 +130,7 @@ type MemoryBackend interface {
 	ListDSResources(ctx context.Context, id string) ([]DSResource, error)
 	SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error)
 	GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error)
+	GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error)
 	ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error)
 	ListGraphRelationships(ctx context.Context, branchID string) ([]GraphRelationship, error)
 	GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error)
@@ -142,6 +143,8 @@ type MemoryBackend interface {
 	RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error)
 	CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
+	// ListBoardRuns lists the project's object-driven (board/work) runs.
+	ListBoardRuns(ctx context.Context, limit int) ([]BoardRun, error)
 	UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error)
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error

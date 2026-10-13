@@ -83,7 +83,7 @@ func TestChatHeaderRender(t *testing.T) {
 		{ID: "a1", Name: "diane", Description: "Keeps the household running", UIConfig: json.RawMessage(`{"icon":"database","color":"#2563EB"}`)},
 		{ID: "a2", Name: "milo"},
 	}
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 
 	for _, want := range []string{
 		`data-testid="chat-agent-header"`,
@@ -110,7 +110,7 @@ func TestChatHeaderResolvesConversationAgent(t *testing.T) {
 		{ID: "a2", Name: "milo", Description: "Sorts the mail"},
 	}
 	convs := &ConversationList{Conversations: []Conversation{{ID: "c1", Title: "Morning", AgentDefinitionID: "a2"}}}
-	html := renderHTML(t, ChatPage(agents, convs, nil, nil, nil, "", "c1", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, convs, nil, nil, nil, nil, "", "c1", "", nil, false, nil))
 	if !strings.Contains(html, `id="chat-header-title"`) || !strings.Contains(html, ">milo</h1>") {
 		t.Errorf("header must show the conversation's agent; html=%s", html)
 	}
@@ -123,7 +123,7 @@ func TestChatHeaderResolvesConversationAgent(t *testing.T) {
 // (hidden) when the active agent has none, and rendered when it does not.
 func TestChatHeaderHidesEmptyDescription(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 
 	tag := headerTag(html, "chat-header-desc")
 	if tag == "" {
@@ -134,7 +134,7 @@ func TestChatHeaderHidesEmptyDescription(t *testing.T) {
 	}
 
 	withDesc := []AgentDefinitionSummary{{ID: "a1", Name: "diane", Description: "Hi"}}
-	html = renderHTML(t, ChatPage(withDesc, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html = renderHTML(t, ChatPage(withDesc, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	tag = headerTag(html, "chat-header-desc")
 	if strings.Contains(tag, "hidden") {
 		t.Errorf("description line must be visible when set: %q", tag)
@@ -145,7 +145,7 @@ func TestChatHeaderHidesEmptyDescription(t *testing.T) {
 // renders the neutral bot tile.
 func TestChatHeaderNeutralBotTile(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	if !strings.Contains(html, "lucide--bot") {
 		t.Error("agent without an appearance must render the neutral bot tile")
 	}
@@ -155,7 +155,7 @@ func TestChatHeaderNeutralBotTile(t *testing.T) {
 // templ's escaping (untrusted agent/user text must not become markup).
 func TestChatHeaderEscapesDescription(t *testing.T) {
 	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane", Description: "<b>bold</b>"}}
-	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, "", "", "", nil, false, nil))
+	html := renderHTML(t, ChatPage(agents, nil, nil, nil, nil, nil, "", "", "", nil, false, nil))
 	if strings.Contains(html, "<b>bold</b>") {
 		t.Error("description must be escaped, not rendered as markup")
 	}
@@ -168,7 +168,7 @@ func TestChatHeaderEscapesDescription(t *testing.T) {
 // generic "Chat with Memory" title and the voice-aware subtitle, which is the
 // only place that copy now lives.
 func TestChatHeaderFallbackCopy(t *testing.T) {
-	voiceOn := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, "", "", "", true, nil, chatRunControl{}))
+	voiceOn := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, nil, "", "", "", true, nil, chatRunControl{}))
 	if !strings.Contains(voiceOn, `id="chat-header-title"`) || !strings.Contains(voiceOn, ">Chat with Memory</h1>") {
 		t.Error("fallback header must keep the generic title")
 	}
@@ -179,7 +179,7 @@ func TestChatHeaderFallbackCopy(t *testing.T) {
 		t.Error("fallback header must keep the generic messages tile")
 	}
 
-	voiceOff := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
+	voiceOff := renderHTML(t, chatWorkspace(nil, nil, nil, nil, nil, nil, "", "", "", false, nil, chatRunControl{}))
 	if !strings.Contains(voiceOff, "Chat by text.") {
 		t.Error("voice-disabled fallback must say 'Chat by text.'")
 	}

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"net/url"
 	"strconv"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -13,7 +16,7 @@ import (
 // BoardPage renders the Kanban board: a header, the circuit-breaker health
 // readout (when any reaction agent is unhealthy), and the status columns.
 templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, statusMap boardStatusMap, loadErr error) {
-	@layout.Container(layout.ContainerLG, nil) {
+	@layout.Container(layout.ContainerFull, nil) {
 		@boardHeader(len(items), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Board unavailable", loadErr)
@@ -22,6 +25,10 @@ templ BoardPage(items []WorkItem, agents []ScheduledAgent, statuses []string, st
 			@BoardColumns(items, statuses, statusMap, "")
 		}
 		<div id="board-drawer" data-testid="board-drawer"></div>
+		<!-- Live refresh: subscribes to the project event stream and re-fetches
+		     #board when a work item or agent run changes, so agent-driven status
+		     transitions appear without a manual reload. Board page only. -->
+		<script src={ templ.SafeURL(webui.AssetPath("/js/board.js")) }></script>
 	}
 }
 
@@ -33,12 +40,32 @@ templ BoardRefresh(items []WorkItem, statuses []string, statusMap boardStatusMap
 	<div id="board-drawer" hx-swap-oob="true" data-testid="board-drawer"></div>
 }
 
+// boardHeader is the board's page heading. It renders nav.PageHeading directly
+// (rather than the shared pageHeader helper) for one reason: the board is the
+// app's only full-bleed page (layout.ContainerFull), so its subtitle has no
+// measure at all — on a wide monitor it would run the whole width of the
+// content area as a single line, leaving the title/subtitle and the right-hand
+// count badge stranded at opposite edges. SubtitleFull:false restores the
+// shared max-w-2xl reading measure the helper hard-codes off for every capped
+// page; every other prop mirrors pageHeader so the markup is otherwise
+// identical. The kicker, title, subtitle and badge are unchanged.
 templ boardHeader(count int, ok bool) {
-	@pageHeader("Control plane", "Board", "Work items across object status lanes — drag a card to the Ready lane to execute it, or open a card to review and act on it.") {
-		if ok {
-			@countBadgeLabel(countLabel(count, "item", "items"), "lucide--kanban-square")
-		}
-	}
+	{{ var actions templ.Component
+	if ok {
+		actions = countBadgeLabel(countLabel(count, "item", "items"), "lucide--kanban-square")
+	} }}
+	@nav.PageHeading(nav.PageHeadingProps{
+		Kicker:          "Control plane",
+		Title:           "Board",
+		Subtitle:        "Work items across object status lanes — drag a card to the Ready lane to execute it, or open a card to review and act on it.",
+		Actions:         actions,
+		Margin:          "mb-6",
+		Dashboard:       true,
+		SubtitleFull:    false,
+		HideBreadcrumbs: true,
+		NoTopMargin:     true,
+		Flat:            true,
+	})
 }
 
 // boardHealth renders the agent circuit-breaker readout: a warning listing
@@ -93,7 +120,17 @@ templ BoardColumns(items []WorkItem, statuses []string, statusMap boardStatusMap
 				Class:       "py-12",
 			})
 		} else {
-			<div class="flex items-stretch gap-4 overflow-x-auto pb-4">
+			{{/* Lanes form a single row that divides the available width evenly:
+			    one auto column per lane, each at least 9rem wide and grown to an
+			    equal share of the row. The 9rem floor is sized so the canonical
+			    six lanes fit without a horizontal scroll at a 1280px viewport
+			    (≈960px of content: 6×9rem + 5×1rem gaps = 53rem ≈ 795px), so a
+			    desktop board reads as one divided band rather than a first row
+			    plus a lone wrapped lane. Below the floor — narrow/tablet widths
+			    and the wider 15rem base floor on mobile — the row overflows and
+			    scrolls horizontally instead of compressing lanes below a usable
+			    width; pb-4 leaves the scrollbar its own space. */}}
+			<div class="grid grid-flow-col auto-cols-[minmax(15rem,1fr)] items-stretch gap-4 overflow-x-auto pb-4 lg:auto-cols-[minmax(9rem,1fr)]">
 				for _, col := range cols {
 					@boardLaneView(col)
 				}
@@ -106,7 +143,7 @@ templ BoardColumns(items []WorkItem, statuses []string, statusMap boardStatusMap
 // stack of cards. The Ready lane is a drop target (drag = execute).
 templ boardLaneView(col boardLane) {
 	<section
-		class="flex min-w-64 shrink-0 flex-col rounded-box border border-base-content/10 bg-base-200/30"
+		class="flex min-w-0 flex-col rounded-box border border-base-content/10 bg-base-200/30"
 		data-board-column={ col.Status }
 		aria-label={ boardStatusLabel(col.Status) }
 	>
@@ -239,13 +276,25 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap) {
 				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Runs</span>
 				<div class="mt-2 space-y-1.5">
 					for _, run := range detail.Runs {
-						<div class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5">
+						<!-- The whole row is the affordance: an operator reaches the
+						     run's agent transcript (the run page, a real navigation)
+						     straight from the board drawer. aria-label names the
+						     action because the row's own content is a status chip and
+						     an opaque short id, which would otherwise be the
+						     accessible name. -->
+						<a
+							href={ templ.URL("/runs/" + url.PathEscape(run.ID)) }
+							class="flex items-center gap-2 rounded-box border border-base-content/10 px-2.5 py-1.5 transition-colors hover:border-base-content/25 hover:bg-base-200/40"
+							aria-label="Open run session"
+							data-testid="board-run-row"
+						>
 							@components.StatusBadge(run.Status, boardRunIntent(run.Status), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 							if run.ErrorMessage != nil && *run.ErrorMessage != "" {
 								<span class="min-w-0 truncate text-xs text-error">{ *run.ErrorMessage }</span>
 							}
 							<span class="ml-auto font-mono text-[10px] text-muted-faint">#{ shortID(run.ID) }</span>
-						</div>
+							@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+						</a>
 					}
 				</div>
 			</div>

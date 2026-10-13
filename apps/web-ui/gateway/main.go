@@ -399,6 +399,7 @@ func main() {
 	e.POST("/objects/knowledge", s.uiObjectsKnowledge)
 	e.GET("/objects/:id", s.uiObject)
 	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
+	e.GET("/objects/:id/history", s.uiObjectHistoryPartial)
 	e.GET("/objects/:id/similar", s.uiObjectSimilarPartial)
 	e.GET("/objects/:id/merge", s.uiObjectMerge)
 	e.GET("/objects/:id/chat", s.uiObjectChat)

@@ -272,6 +272,79 @@ func TestListSessionsScheduledMergeFailureStillListsConversations(t *testing.T) 
 	}
 }
 
+// TestListSessionsBoardOrigin verifies that object-driven (board/work) runs are
+// surfaced as sessions with origin "board", that their preview is derived from
+// the matching work item's key (joined by subject_object_id == canonicalId),
+// and that the ?origin= filter isolates them.
+func TestListSessionsBoardOrigin(t *testing.T) {
+	subjectID := "item-1"
+	runStarted := "2026-08-27T09:00:00Z"
+	runCompleted := "2026-08-27T09:01:00Z"
+	f := &fakeMemory{
+		boardRuns: []BoardRun{{
+			ID:              "board_run_1",
+			AgentID:         "agent-1",
+			AgentName:       "Kanban agent",
+			Status:          "completed",
+			StartedAt:       runStarted,
+			CompletedAt:     &runCompleted,
+			Summary:         map[string]any{"summary": "raw summary text"},
+			SubjectObjectID: &subjectID,
+		}},
+		workItems: []WorkItem{
+			{CanonicalID: "item-1", Key: "ACME-42"},
+		},
+	}
+
+	decode := func(rec *httptest.ResponseRecorder) []struct {
+		Room    string  `json:"room"`
+		Origin  string  `json:"origin"`
+		Preview *string `json:"preview"`
+	} {
+		t.Helper()
+		var got struct {
+			Sessions []struct {
+				Room    string  `json:"room"`
+				Origin  string  `json:"origin"`
+				Preview *string `json:"preview"`
+			} `json:"sessions"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatalf("unmarshal: %v (body=%s)", err, rec.Body.String())
+		}
+		return got.Sessions
+	}
+
+	_, e := newClientEcho(f, Config{})
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	all := decode(rec)
+	if len(all) != 1 {
+		t.Fatalf("want 1 session, got %d (%+v)", len(all), all)
+	}
+	if all[0].Room != "board_run_1" || all[0].Origin != "board" {
+		t.Errorf("session = %q/%q, want board_run_1/board", all[0].Room, all[0].Origin)
+	}
+	if all[0].Preview == nil || *all[0].Preview != "ACME-42" {
+		t.Errorf("preview = %v, want ACME-42", all[0].Preview)
+	}
+
+	// ?origin=board → only the board run
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/sessions?origin=board", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("filtered status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	board := decode(rec)
+	if len(board) != 1 || board[0].Room != "board_run_1" {
+		t.Fatalf("?origin=board = %+v, want [board_run_1]", board)
+	}
+}
+
 func TestGetSessionRecords(t *testing.T) {
 	f := &fakeMemory{histories: map[string]*ConversationHistory{"conv_1": sampleHistory()}}
 	_, e := newClientEcho(f, Config{})

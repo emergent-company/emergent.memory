@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -53,6 +54,26 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 
 	renderPartial(c.Response().Writer, c.Request(),
 		objectPreviewContent(obj, typeUIByType, s.objectPreviewRelationshipLabel(ctx, id, relID), actions))
+	return nil
+}
+
+// uiObjectHistoryPartial renders the lazy-loaded version timeline for the
+// preview drawer's History section. GetObjectHistory returns versions newest
+// first (the server orders by version DESC), so the timeline is rendered in the
+// order received. A failed fetch degrades to a small "history unavailable"
+// state rather than leaving the section blank.
+func (s *Server) uiObjectHistoryPartial(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), optionalFetchTimeout)
+	defer cancel()
+
+	id := c.Param("id")
+	versions, err := s.memory.GetObjectHistory(ctx, id)
+	if err != nil {
+		captureError(err)
+		renderPartial(c.Response().Writer, c.Request(), objectPreviewHistoryError())
+		return nil
+	}
+	renderPartial(c.Response().Writer, c.Request(), objectPreviewHistory(versions))
 	return nil
 }
 
@@ -112,4 +133,9 @@ func objectPreviewCreated(iso string) string {
 		return ""
 	}
 	return relTime(iso)
+}
+
+// objectPreviewVersionLabel formats a version number for the history timeline.
+func objectPreviewVersionLabel(version int) string {
+	return "v" + strconv.Itoa(version)
 }

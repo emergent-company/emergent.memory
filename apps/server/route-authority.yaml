@@ -1498,6 +1498,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:write)
     - method: GET
+      path: /api/projects/:projectId/work-items/runs
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(agents:read)
+    - method: GET
       path: /api/projects/current
       level: auth
       note: RequireAuth

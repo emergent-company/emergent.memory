@@ -17,6 +17,7 @@ type GraphObject struct {
 	Type        string         `json:"type"`
 	Key         string         `json:"key"`
 	Status      string         `json:"status"`
+	Version     int            `json:"version"`
 	Properties  map[string]any `json:"properties"`
 	Labels      []string       `json:"labels"`
 	CreatedAt   string         `json:"created_at"`
@@ -100,6 +101,20 @@ func (m *MemoryClient) GetGraphObject(ctx context.Context, objectID string) (*Gr
 		return nil, err
 	}
 	return &out, nil
+}
+
+// GetObjectHistory returns the version history for a graph object
+// (GET /api/graph/objects/:id/history), newest version first (the server orders
+// by version DESC). The response is a `{versions: [...]}` object — not the
+// successEnvelope and not a bare array.
+func (m *MemoryClient) GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error) {
+	var out struct {
+		Versions []GraphObject `json:"versions"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/"+objectID+"/history", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Versions, nil
 }
 
 // ListGraphObjects lists graph objects, optionally scoped to a branch and/or

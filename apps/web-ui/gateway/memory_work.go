@@ -75,6 +75,21 @@ type WorkItemActionItem struct {
 	Version     int    `json:"version"`
 }
 
+// BoardRun is one object-driven (board/work) agent run, mirroring the server's
+// AgentRunDTO for kb.agent_runs rows with a non-null subject_object_id. These
+// are the runs the work reconciler created for Kanban tasks, surfaced alongside
+// work items in the board's "recent runs" list.
+type BoardRun struct {
+	ID              string         `json:"id"`
+	AgentID         string         `json:"agentId"`
+	AgentName       string         `json:"agentName,omitempty"`
+	Status          string         `json:"status"`
+	StartedAt       string         `json:"startedAt"`
+	CompletedAt     *string        `json:"completedAt"`
+	Summary         map[string]any `json:"summary"`
+	SubjectObjectID *string        `json:"subjectObjectId,omitempty"`
+}
+
 func (m *MemoryClient) workItemsPath(ctx context.Context) string {
 	return "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/work-items"
 }
@@ -99,6 +114,25 @@ func (m *MemoryClient) ListWorkItems(ctx context.Context, status, typeName strin
 	}
 	if env.Data == nil {
 		return []WorkItem{}, nil
+	}
+	return env.Data, nil
+}
+
+// ListBoardRuns lists the project's object-driven (board/work) runs, newest
+// first, capped at limit. These are kb.agent_runs rows with a non-null
+// subject_object_id (the runs the work reconciler created for Kanban tasks).
+func (m *MemoryClient) ListBoardRuns(ctx context.Context, limit int) ([]BoardRun, error) {
+	q := url.Values{}
+	if limit <= 0 {
+		limit = 50
+	}
+	q.Set("limit", strconv.Itoa(limit))
+	var env successEnvelope[[]BoardRun]
+	if err := m.do(ctx, http.MethodGet, m.workItemsPath(ctx)+"/runs?"+q.Encode(), nil, &env); err != nil {
+		return nil, err
+	}
+	if env.Data == nil {
+		return []BoardRun{}, nil
 	}
 	return env.Data, nil
 }

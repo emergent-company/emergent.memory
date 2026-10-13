@@ -91,6 +91,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	workItemsRead := workItems.Group("")
 	workItemsRead.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
 	workItemsRead.GET("", h.ListWorkItems)
+	workItemsRead.GET("/runs", h.ListBoardRuns)
 	workItemsRead.GET("/:canonicalId", h.GetWorkItem)
 
 	workItemsWrite := workItems.Group("")

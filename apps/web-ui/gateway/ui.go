@@ -563,10 +563,10 @@ func (s *Server) uiAgents(c echo.Context) error {
 // includeArchived is forwarded to the conversation list so the rail's
 // "Include archived" filter can reveal hidden sessions on refresh; the default
 // (false) matches the list surfaces' exclude-archived contract (design D6).
-func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, err error) {
+func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents []AgentDefinitionSummary, appearances map[string]agentAppearance, convs *ConversationList, schedRuns []scheduledRunRow, shared []sharedSessionRow, boardRuns []boardRunRow, err error) {
 	agents, err = s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	appearances = make(map[string]agentAppearance, len(agents))
 	for _, a := range agents {
@@ -601,7 +601,8 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 	}
 	schedRuns = s.chatScheduledRuns(ctx, appearances)
 	shared = s.chatSharedSessions(ctx)
-	return agents, appearances, convs, schedRuns, shared, nil
+	boardRuns = s.chatBoardRuns(ctx, appearances)
+	return agents, appearances, convs, schedRuns, shared, boardRuns, nil
 }
 
 // chatModelWarnings returns agentID → message for every agent whose chats
@@ -699,13 +700,13 @@ func (s *Server) chatRunControlFor(ctx context.Context, convID string) chatRunCo
 // ?prompt=<msg> pre-fills (and auto-sends) a first message.
 func (s *Server) uiChat(c echo.Context) error {
 	ctx := c.Request().Context()
-	agents, appearances, convs, schedRuns, shared, err := s.chatRailData(ctx, false)
+	agents, appearances, convs, schedRuns, shared, boardRuns, err := s.chatRailData(ctx, false)
 	if err != nil {
-		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, "", "", "", userFacingError(err), true, nil))
+		return s.page(c, pageTitle("Chat"), ChatPage(nil, nil, nil, nil, nil, nil, "", "", "", userFacingError(err), true, nil))
 	}
 	modelWarnings := s.chatModelWarnings(ctx, agents)
 	convID := c.QueryParam("c")
-	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, appearances, schedRuns, shared, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
+	return s.page(c, pageTitle("Chat"), ChatPage(agents, convs, appearances, schedRuns, shared, boardRuns, c.QueryParam("agent"), convID, c.QueryParam("prompt"), nil, s.voiceEnabled(ctx), modelWarnings, s.chatRunControlFor(ctx, convID)))
 }
 
 // uiChatRail returns the session-rail list HTML as a fragment, so chat.js can
@@ -714,14 +715,15 @@ func (s *Server) uiChat(c echo.Context) error {
 // the rail's "Include archived" filter; absent/false keeps the default exclude.
 func (s *Server) uiChatRail(c echo.Context) error {
 	includeArchived := c.QueryParam("includeArchived") == "true"
-	_, appearances, convs, schedRuns, shared, err := s.chatRailData(c.Request().Context(), includeArchived)
+	_, appearances, convs, schedRuns, shared, boardRuns, err := s.chatRailData(c.Request().Context(), includeArchived)
 	if err != nil {
 		convs = &ConversationList{}
 		appearances = map[string]agentAppearance{}
 		schedRuns = nil
 		shared = nil
+		boardRuns = nil
 	}
-	renderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, c.QueryParam("c")))
+	renderPartial(c.Response().Writer, c.Request(), chatRailList(convs, appearances, schedRuns, shared, boardRuns, c.QueryParam("c")))
 	return nil
 }
 
@@ -823,6 +825,44 @@ func (s *Server) chatScheduledRuns(ctx context.Context, appearances map[string]a
 				Color:     ap.Color,
 			})
 		}
+	}
+	return out
+}
+
+// chatBoardRuns collects the project's object-driven (board/work) runs for the
+// chat session rail. Each run row is matched (once, in Go) against the work-item
+// board projection so its title is the work item's key when known, falling back
+// to the run agent's name. Rows inherit the run agent's definition appearance.
+func (s *Server) chatBoardRuns(ctx context.Context, appearances map[string]agentAppearance) []boardRunRow {
+	runs, err := s.memory.ListBoardRuns(ctx, 50)
+	if err != nil {
+		return nil
+	}
+	items, _ := s.memory.ListWorkItems(ctx, "", "", 1000)
+	bySubject := make(map[string]WorkItem, len(items))
+	for _, it := range items {
+		if it.CanonicalID != "" {
+			bySubject[it.CanonicalID] = it
+		}
+	}
+	out := make([]boardRunRow, 0, len(runs))
+	for _, r := range runs {
+		title := r.AgentName
+		if r.SubjectObjectID != nil {
+			if it, ok := bySubject[*r.SubjectObjectID]; ok && it.Key != "" {
+				title = it.Key
+			}
+		}
+		ap := appearances[r.AgentID]
+		out = append(out, boardRunRow{
+			ID:        r.ID,
+			Title:     title,
+			AgentName: r.AgentName,
+			Status:    r.Status,
+			StartedAt: r.StartedAt,
+			Icon:      ap.Icon,
+			Color:     ap.Color,
+		})
 	}
 	return out
 }
