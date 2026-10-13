@@ -971,6 +971,12 @@ func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID
 		return nil
 	}
 
+	// Work-pickup validation: a blueprint work agent (definition carries a work
+	// config) must declare a single object type and a single pickup signal.
+	if err := agents.ValidateWorkPickup(!def.WorkConfig.IsZero(), m.ReactionConfig); err != nil {
+		return apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
+	}
+
 	triggerType := agents.AgentTriggerType(m.TriggerType)
 	if triggerType == "" {
 		if m.ReactionConfig != nil {

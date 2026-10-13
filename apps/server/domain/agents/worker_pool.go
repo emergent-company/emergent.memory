@@ -467,7 +467,53 @@ func (p *WorkerPool) claimWorkObject(ctx context.Context, run *AgentRun, agent *
 			ToStatus:   inProgressStatus,
 		})
 	}
-	return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
+
+	// Work-pickup claim source recorded at enqueue. status_changed CASes from the
+	// matched status; assigned CASes from the HEAD's current status; created and
+	// updated (and any legacy dispatch without trigger metadata) claim from ready.
+	switch claimTriggerEvent(run) {
+	case EventTypeStatusChanged:
+		claimStatus, _ := run.TriggerMetadata["work_claim_status"].(string)
+		if claimStatus == "" {
+			claimStatus = readyStatus
+		}
+		return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
+			FromStatus: claimStatus,
+			ToStatus:   inProgressStatus,
+		})
+	case EventTypeAssigned:
+		return p.claimFromCurrentStatus(ctx, agent, run, inProgressStatus)
+	default:
+		return p.workObjects.ClaimWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, readyStatus, inProgressStatus)
+	}
+}
+
+// claimTriggerEvent returns the work_trigger_event recorded at enqueue, or "" for
+// legacy dispatches that carry no trigger metadata.
+func claimTriggerEvent(run *AgentRun) ReactionEventType {
+	if run == nil || run.TriggerMetadata == nil {
+		return ""
+	}
+	ev, _ := run.TriggerMetadata["work_trigger_event"].(string)
+	return ReactionEventType(ev)
+}
+
+// claimFromCurrentStatus claims an assignee-picked object from its current HEAD
+// status to in_progress. Reading the HEAD just before the transition means the
+// transition's from-status assert re-checks it under the object's lock, so a
+// concurrent claim that already moved the object loses the race.
+func (p *WorkerPool) claimFromCurrentStatus(ctx context.Context, agent *Agent, run *AgentRun, inProgressStatus string) (bool, error) {
+	head, err := p.workObjects.GetHeadObject(ctx, agent.ProjectID, *run.SubjectObjectID)
+	if err != nil {
+		return false, err
+	}
+	if head == nil {
+		return false, nil
+	}
+	return p.workObjects.TransitionWorkObject(ctx, agent.ProjectID, *run.SubjectObjectID, graph.WorkObjectTransition{
+		FromStatus: head.Status,
+		ToStatus:   inProgressStatus,
+	})
 }
 
 // isReworkRun reports whether a subject-object run is a rework run enqueued by a

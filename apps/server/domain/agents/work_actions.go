@@ -101,9 +101,14 @@ func (s *WorkActionService) Approve(ctx context.Context, projectID, canonicalID,
 
 // RequestChanges sends a review back for rework: review→revision, records an
 // append-only feedback round (non-empty required), and enqueues a rework run
-// carrying all prior feedback. Once the revision cap is reached it escalates to
-// a human (kb.tasks) and does NOT re-enqueue. The rework run's id is persisted
-// on the feedback round it produced (rather than trusting a caller-supplied id).
+// carrying all prior feedback (the worker must see why it is re-running). The
+// review→revision transition still emits a status_changed event for other
+// consumers, but the rework run is enqueued directly here so it carries the
+// feedback history; a work agent that also declares the revision status as a
+// trigger status is protected from double-dispatch by its required
+// concurrencyStrategy: skip. Once the revision cap is reached it escalates to a
+// human (kb.tasks) and does NOT re-enqueue. The rework run's id is persisted on
+// the feedback round it produced (rather than trusting a caller-supplied id).
 func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canonicalID, author, text string) (*WorkActionResult, error) {
 	head, agent, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
 	if err != nil {

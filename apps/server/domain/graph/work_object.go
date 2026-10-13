@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/emergent-company/emergent.memory/domain/events"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -100,6 +101,10 @@ type WorkObjectTransition struct {
 	SetReviewedBy *uuid.UUID
 	// SetReviewedAt, when non-nil, sets reviewed_at on the new version (approve).
 	SetReviewedAt *time.Time
+	// EmitAssigned, when true, emits an entity.assigned event after commit
+	// instead of the status_changed event (used by the reassign path, which
+	// preserves status). The event is emitted only after a successful commit.
+	EmitAssigned bool
 }
 
 // GetHeadObject returns the HEAD version of a work object identified by its
@@ -242,8 +247,9 @@ func (s *Service) RequestChangesWorkObject(ctx context.Context, projectID, canon
 // status move (the HEAD's current status is preserved). assignee empty clears.
 func (s *Service) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {
 	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
-		KeepStatus:  true,
-		SetAssignee: assignee,
+		KeepStatus:   true,
+		SetAssignee:  assignee,
+		EmitAssigned: true,
 	})
 }
 
@@ -372,7 +378,74 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if err := tx.Commit(); err != nil {
 		return false, err
 	}
+
+	// Emit after commit (never inside the transaction): the event is advisory
+	// and must not roll back with the write. The reassign path emits `assigned`;
+	// every other status transition emits `status_changed` only when the status
+	// actually moved.
+	prevStatus := ""
+	if lockedHead.Status != nil {
+		prevStatus = *lockedHead.Status
+	}
+	if t.EmitAssigned {
+		s.emitObjectAssigned(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assignee)
+	} else if toStatus != prevStatus {
+		s.emitObjectStatusChanged(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assigneeOrEmpty(assignee))
+	}
 	return true, nil
+}
+
+// emitObjectStatusChanged emits a graph_object entity.status_changed event
+// (no-op if events not wired). The payload carries the new status, the previous
+// status, and the assignee so reaction dispatch can match the status_changed
+// signal without a second graph read.
+func (s *Service) emitObjectStatusChanged(ctx context.Context, projectID, canonicalID, objType string, version int, newStatus, previousStatus, assignee string) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitStatusChanged(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
+		Version:    &version,
+		ObjectType: objType,
+		Data:       statusChangeData(newStatus, previousStatus, assignee),
+	})
+}
+
+// emitObjectAssigned emits a graph_object entity.assigned event (no-op if events
+// not wired). The payload carries the new status, the previous status (equal
+// under a status-preserving reassign), and the new assignee.
+func (s *Service) emitObjectAssigned(ctx context.Context, projectID, canonicalID, objType string, version int, newStatus, previousStatus string, assignee *string) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitAssigned(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
+		Version:    &version,
+		ObjectType: objType,
+		Data:       statusChangeData(newStatus, previousStatus, assigneeOrEmpty(assignee)),
+	})
+}
+
+// statusChangeData builds the event payload carrying the new status, previous
+// status, and assignee for status_changed/assigned events.
+func statusChangeData(newStatus, previousStatus, assignee string) map[string]any {
+	data := make(map[string]any, 3)
+	if newStatus != "" {
+		data["status"] = newStatus
+	}
+	if previousStatus != "" {
+		data["previousStatus"] = previousStatus
+	}
+	if assignee != "" {
+		data["assignee"] = assignee
+	}
+	return data
+}
+
+// assigneeOrEmpty dereferences a nil-able assignee pointer to a string.
+func assigneeOrEmpty(a *string) string {
+	if a == nil {
+		return ""
+	}
+	return *a
 }
 
 // withStatusProperty returns a copy of props with the built-in "status" key set

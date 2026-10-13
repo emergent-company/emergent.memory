@@ -459,17 +459,32 @@ func (r *Repository) GetRecentRuns(ctx context.Context, agentID string, limit in
 }
 
 // HasActiveRunForAgentObject reports whether a non-terminal run already exists
-// for the given agent and reaction target object. The "same object" key is
-// (agent_id, trigger_metadata->>'subjectObjectId', trigger_metadata->>'subjectObjectType');
-// reaction dispatches stamp that metadata at run creation (see
-// TriggerService.executeTriggeredAgent). Used by ConcurrencyStrategy=skip.
+// for the given agent and reaction target object. The "same object" key matches
+// either the inline reaction shape (trigger_metadata->>'subjectObjectId' /
+// 'subjectObjectType', stamped by TriggerService.executeTriggeredAgent) or the
+// object-driven queued shape (subject_object_id / subject_object_type columns).
+// Used by ConcurrencyStrategy=skip.
 func (r *Repository) HasActiveRunForAgentObject(ctx context.Context, agentID, objectID, objectType string) (bool, error) {
 	return r.db.NewSelect().
 		TableExpr("kb.agent_runs AS ar").
 		Where("ar.agent_id = ?", agentID).
 		Where("ar.status IN (?)", bun.In(nonTerminalRunStatuses())).
-		Where("ar.trigger_metadata->>'subjectObjectId' = ?", objectID).
-		Where("ar.trigger_metadata->>'subjectObjectType' = ?", objectType).
+		WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+			return q.
+				WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+					// Inline reaction runs record the target object on
+					// trigger_metadata; object-driven (queued) work runs record
+					// it on the subject_object_id column.
+					return q.
+						Where("ar.trigger_metadata->>'subjectObjectId' = ?", objectID).
+						Where("ar.trigger_metadata->>'subjectObjectType' = ?", objectType)
+				}).
+				WhereGroup(" OR ", func(q *bun.SelectQuery) *bun.SelectQuery {
+					return q.
+						Where("ar.subject_object_id::text = ?", objectID).
+						Where("ar.subject_object_type = ?", objectType)
+				})
+		}).
 		Exists(ctx)
 }
 

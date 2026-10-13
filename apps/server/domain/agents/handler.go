@@ -398,6 +398,12 @@ func (h *Handler) CreateAgent(c echo.Context) error {
 		}
 	}
 
+	// Work-pickup validation: a work agent (linked definition carries a work
+	// config) must declare a single object type and a single pickup signal.
+	if err := ValidateWorkPickup(h.hasWorkConfigForDefinition(c.Request().Context(), dto.AgentDefinitionID), dto.ReactionConfig); err != nil {
+		return apperror.NewBadRequest(err.Error())
+	}
+
 	executionMode := ExecutionModeExecute
 	if dto.ExecutionMode != "" {
 		executionMode = dto.ExecutionMode
@@ -522,6 +528,12 @@ func (h *Handler) UpdateAgent(c echo.Context) error {
 		} else {
 			agent.DisabledReason = dto.DisabledReason
 		}
+	}
+
+	// Work-pickup validation: a work agent (linked definition carries a work
+	// config) must declare a single object type and a single pickup signal.
+	if err := ValidateWorkPickup(h.hasWorkConfigForDefinition(c.Request().Context(), agent.AgentDefinitionID), agent.ReactionConfig); err != nil {
+		return apperror.NewBadRequest(err.Error())
 	}
 
 	// Validate cron interval if cron schedule is being changed or trigger type is schedule.

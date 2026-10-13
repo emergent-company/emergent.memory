@@ -139,7 +139,7 @@ func (r *Repository) FindReactionAgentsForType(ctx context.Context, projectID, o
 		if !reactionMatchesType(a.ReactionConfig, objectType) {
 			continue
 		}
-		if !reactionSubscribesToCreated(a.ReactionConfig) {
+		if !reactionSubscribesToWork(a.ReactionConfig) {
 			continue
 		}
 		def, err := r.ResolveDefinitionForAgent(ctx, a)
@@ -181,7 +181,7 @@ func (r *Repository) buildWorkListenerIndex(ctx context.Context, projectID strin
 		if a == nil || a.ProjectID != projectID || a.ReactionConfig == nil {
 			continue
 		}
-		if !reactionSubscribesToCreated(a.ReactionConfig) {
+		if !reactionSubscribesToWork(a.ReactionConfig) {
 			continue
 		}
 		def, err := r.ResolveDefinitionForAgent(ctx, a)
@@ -235,11 +235,14 @@ func reactionMatchesType(rc *ReactionConfig, objectType string) bool {
 	return false
 }
 
-// reactionSubscribesToCreated reports whether a reaction config is subscribed to
-// the `created` event (the only event that wakes an object-driven work run).
-func reactionSubscribesToCreated(rc *ReactionConfig) bool {
+// reactionSubscribesToWork reports whether a reaction config subscribes to a
+// pickup signal that can wake an object-driven work run from the reconciler's
+// scan: `created` (a new object) or `status_changed` (an object moved into a
+// trigger status). `updated` and `assigned` are event-driven only and are not
+// reconciled, so the safety-net scan ignores them.
+func reactionSubscribesToWork(rc *ReactionConfig) bool {
 	for _, e := range rc.Events {
-		if e == EventTypeCreated {
+		if e == EventTypeCreated || e == EventTypeStatusChanged {
 			return true
 		}
 	}
@@ -279,6 +282,32 @@ func (r *Repository) listWorkAgentStatuses(ctx context.Context) (ready, inProgre
 			inProgressSet[r.InProgress] = true
 		}
 	}
+
+	// Trigger statuses (the status_changed signal) are reconciled as additional
+	// "ready-like" statuses: an object stranded in a trigger status with no live
+	// run is re-enqueued as a safety net.
+	var triggerRows []struct {
+		Status string `bun:"status"`
+	}
+	err = r.db.NewRaw(`
+		SELECT DISTINCT jsonb_array_elements_text(
+			COALESCE(ad.work_config->'triggerStatuses', '[]'::jsonb)
+		) AS status
+		FROM kb.agents a
+		JOIN kb.agent_definitions ad ON ad.id = a.agent_definition_id
+		WHERE a.enabled = true
+		  AND a.trigger_type = 'reaction'
+		  AND (ad.dispatch_mode = 'queued' OR (ad.work_config IS NOT NULL AND ad.work_config <> '{}'::jsonb))
+	`).Scan(ctx, &triggerRows)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, tr := range triggerRows {
+		if tr.Status != "" {
+			readySet[tr.Status] = true
+		}
+	}
+
 	for s := range readySet {
 		ready = append(ready, s)
 	}
@@ -534,6 +563,13 @@ func (rc *WorkReconciler) enqueue(ctx context.Context, h *graph.WorkObjectHead) 
 			SubjectObjectID:   &canonicalID,
 			SubjectObjectType: &objectType,
 			TrustedInternal:   true,
+			// Record the claim source as the object's current status: the
+			// reconciler scans both ready and trigger statuses, and the claim must
+			// CAS from whatever status the object is stranded in.
+			TriggerMetadata: map[string]any{
+				"work_trigger_event": string(EventTypeStatusChanged),
+				"work_claim_status":  h.Status,
+			},
 		}); err != nil {
 			rc.log.Warn("failed to enqueue reconciled work run", slog.String("canonical_id", h.CanonicalID), slog.String("agent_id", agent.ID), slog.String("error", err.Error()))
 			continue

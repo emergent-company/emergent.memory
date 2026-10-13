@@ -83,6 +83,18 @@ func countQueuedSubjectRuns(t *testing.T, ctx context.Context, repo *Repository,
 	return n
 }
 
+// requireRunCarriesFeedback asserts the given run's trigger metadata carries the
+// work_feedback key (the marker that makes it a rework run via isReworkRun).
+func requireRunCarriesFeedback(t *testing.T, ctx context.Context, repo *Repository, runID string) {
+	t.Helper()
+	var n int
+	require.NoError(t, repo.db.NewRaw(
+		`SELECT COUNT(*) FROM kb.agent_runs WHERE id = ?::uuid AND jsonb_exists(trigger_metadata, 'work_feedback')`,
+		runID,
+	).Scan(ctx, &n))
+	require.Equal(t, 1, n)
+}
+
 // TestWorkActionsApprove verifies the approve write path: review→done,
 // reviewed_by/at set, needs_review cleared.
 func TestWorkActionsApprove(t *testing.T) {
@@ -122,8 +134,12 @@ func TestWorkActionsApprove_NotReviewRejected(t *testing.T) {
 	require.Equal(t, "in_progress", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
 }
 
-// TestWorkActionsRequestChanges verifies request-changes records feedback,
-// transitions review→revision, and enqueues a rework run carrying the feedback.
+// TestWorkActionsRequestChanges verifies request-changes records feedback and
+// transitions review→revision, and enqueues exactly one rework run carrying the
+// feedback history (so the worker recognizes it as a rework run and sees why it
+// is re-running). The review→revision transition still emits a status_changed
+// event for other consumers; the explicit rework enqueue is the source of truth
+// for the rework run.
 func TestWorkActionsRequestChanges(t *testing.T) {
 	ctx, db, repo, gSvc, projectID := setupWorkActions(t)
 	defID := insertWorkDefinition(t, db, ctx, projectID, "researcher", `{"requiresReview":true}`)
@@ -138,16 +154,16 @@ func TestWorkActionsRequestChanges(t *testing.T) {
 	require.False(t, res.Escalated)
 	require.NotEmpty(t, res.RunID)
 
-	require.Equal(t, 1, countWorkFeedback(t, ctx, repo, projectID, canonicalID))
+	// Exactly one rework run is enqueued and carries the feedback history.
 	require.Equal(t, 1, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
+	requireRunCarriesFeedback(t, ctx, repo, res.RunID)
 
-	// The rework run carries the feedback history in its trigger metadata.
-	var meta string
-	require.NoError(t, repo.db.NewRaw(
-		`SELECT trigger_metadata->>'work_feedback' FROM kb.agent_runs WHERE subject_object_id = ?::uuid AND status = ? LIMIT 1`,
-		canonicalID, string(RunStatusQueued),
-	).Scan(ctx, &meta))
-	require.Contains(t, meta, "please fix the summary")
+	// The feedback round persists the id of the rework run it produced.
+	fb, err := repo.ListWorkFeedback(ctx, projectID, canonicalID)
+	require.NoError(t, err)
+	require.Len(t, fb, 1)
+	require.NotNil(t, fb[0].RunID)
+	require.Equal(t, res.RunID, *fb[0].RunID)
 }
 
 // TestWorkActionsRequestChanges_EmptyFeedbackRejected verifies empty feedback is
@@ -163,6 +179,35 @@ func TestWorkActionsRequestChanges_EmptyFeedbackRejected(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "review", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
 	require.Equal(t, 0, countWorkFeedback(t, ctx, repo, projectID, canonicalID))
+}
+
+// TestHasActiveRunForAgentObject_FindsQueuedWorkRun verifies the skip-concurrency
+// checker matches object-driven queued runs: those record the subject object on
+// the subject_object_id column (not on trigger_metadata, which only the inline
+// reaction path stamps), so ConcurrencyStrategy=skip must find them there.
+func TestHasActiveRunForAgentObject_FindsQueuedWorkRun(t *testing.T) {
+	ctx, db, repo, gSvc, projectID := setupWorkActions(t)
+	defID := insertWorkDefinition(t, db, ctx, projectID, "researcher", `{}`)
+	insertWorkAgent(t, db, ctx, projectID, "researcher", defID)
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-hasactive", "ready", "researcher")
+	svc := newWorkActions(repo, gSvc)
+	head, agent, def, err := svc.resolveWorkContext(ctx, projectID, canonicalID)
+	require.NoError(t, err)
+	require.NotNil(t, agent)
+
+	runID, err := svc.enqueueWorkRun(ctx, head, agent, def, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, runID)
+
+	active, err := repo.HasActiveRunForAgentObject(ctx, agent.ID, canonicalID, head.Type)
+	require.NoError(t, err)
+	require.True(t, active)
+
+	// A different object is not active for the same agent.
+	active, err = repo.HasActiveRunForAgentObject(ctx, agent.ID, uuid.NewString(), head.Type)
+	require.NoError(t, err)
+	require.False(t, active)
 }
 
 // TestWorkActionsRequestChanges_RevisionCapEscalates verifies the revision cap

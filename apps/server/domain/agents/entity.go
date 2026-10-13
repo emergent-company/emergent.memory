@@ -35,9 +35,11 @@ const (
 type ReactionEventType string
 
 const (
-	EventTypeCreated ReactionEventType = "created"
-	EventTypeUpdated ReactionEventType = "updated"
-	EventTypeDeleted ReactionEventType = "deleted"
+	EventTypeCreated       ReactionEventType = "created"
+	EventTypeUpdated       ReactionEventType = "updated"
+	EventTypeDeleted       ReactionEventType = "deleted"
+	EventTypeStatusChanged ReactionEventType = "status_changed"
+	EventTypeAssigned      ReactionEventType = "assigned"
 )
 
 // ConcurrencyStrategy defines how to handle concurrent events for the same object
@@ -98,6 +100,12 @@ const (
 type ReactionConfig struct {
 	ObjectTypes []string            `json:"objectTypes"`
 	Events      []ReactionEventType `json:"events"`
+	// Properties, when the agent subscribes to the `updated` event, filters
+	// updates to those whose changed property paths (RFC 6901 JSON Pointers)
+	// intersect this list. Empty means the `updated` signal matches any emitted
+	// content change (the updated emit only fires for a real change, so no
+	// filter means "wake on every change").
+	Properties []string `json:"properties,omitempty"`
 	// ConcurrencyStrategy controls how a new trigger is handled while a
 	// non-terminal run already exists for the same agent + target object.
 	// Empty ("") and "parallel" both mean no concurrency control; "skip" drops
@@ -453,6 +461,10 @@ type AgentWorkConfig struct {
 	// what the *agent* produces, whereas the per-type config describes how items
 	// of a type are processed (see design.md "Work contract").
 	WorkContract AgentWorkContract `json:"workContract"`
+	// TriggerStatuses lists the status values that, when an object transitions
+	// into one of them, wake this agent (the `status_changed` signal). Defaults
+	// to the built-in "ready" status when unset.
+	TriggerStatuses []string `json:"triggerStatuses,omitempty"`
 }
 
 // IsZero reports whether the work config carries no explicit configuration, i.e.
@@ -465,7 +477,17 @@ func (w AgentWorkConfig) IsZero() bool {
 		w.FailureLimit == 0 &&
 		w.RevisionLimit == 0 &&
 		w.RetryPolicy == (AgentRetryPolicy{}) &&
-		w.WorkContract.IsZero()
+		w.WorkContract.IsZero() &&
+		len(w.TriggerStatuses) == 0
+}
+
+// TriggerStatusValues returns the configured status values that wake this agent
+// on the `status_changed` signal, defaulting to the built-in "ready" when unset.
+func (w AgentWorkConfig) TriggerStatusValues() []string {
+	if len(w.TriggerStatuses) == 0 {
+		return []string{"ready"}
+	}
+	return w.TriggerStatuses
 }
 
 // ReadyStatus returns the configured "ready" work-status value, defaulting to

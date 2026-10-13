@@ -165,7 +165,7 @@ func (s *Service) emitObjectUpdated(ctx context.Context, obj *GraphObjectRespons
 	s.events.EmitUpdated(ctx, events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
 		Version:    &obj.Version,
 		ObjectType: obj.Type,
-		Data:       workStatusData(obj),
+		Data:       workUpdateData(obj),
 	})
 }
 
@@ -191,6 +191,42 @@ func workStatusData(obj *GraphObjectResponse) map[string]any {
 		data["assignee"] = *obj.Assignee
 	}
 	return data
+}
+
+// workUpdateData builds the `updated` event payload: the status/assignee fields
+// plus the changed property paths (RFC 6901 JSON Pointers) drawn from the
+// version's ChangeSummary, so a `properties`-filtered listener can match without
+// a second graph read.
+func workUpdateData(obj *GraphObjectResponse) map[string]any {
+	data := workStatusData(obj)
+	if obj.ChangeSummary != nil {
+		if paths, ok := changeSummaryPaths(obj.ChangeSummary["paths"]); ok && len(paths) > 0 {
+			data["properties"] = paths
+		}
+	}
+	return data
+}
+
+// changeSummaryPaths extracts the changed property paths (RFC 6901 JSON
+// Pointers) from a ChangeSummary["paths"] value. In-process that value is a
+// []string (built by computeChangeSummary); a JSONB round-trip yields []any.
+// Both shapes are accepted so a reloaded object does not silently drop the
+// property filter for the emit path.
+func changeSummaryPaths(v any) ([]string, bool) {
+	switch paths := v.(type) {
+	case []string:
+		return paths, true
+	case []any:
+		out := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if s, ok := p.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
 }
 
 // labelsEqual returns true if two label slices contain the same set of strings (order-independent).

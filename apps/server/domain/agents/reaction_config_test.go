@@ -259,7 +259,7 @@ func TestHasActiveRunForAgentObject_QueryShape(t *testing.T) {
 	t.Cleanup(func() { _ = sqldb.Close() })
 	repo := NewRepository(bun.NewDB(sqldb, pgdialect.New()))
 
-	mock.ExpectQuery(`(?s)SELECT EXISTS.*kb\.agent_runs.*subjectObjectId.*subjectObjectType`).
+	mock.ExpectQuery(`(?s)SELECT EXISTS.*kb\.agent_runs.*subjectObjectId.*subjectObjectType.*subject_object_id.*subject_object_type`).
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 
 	active, err := repo.HasActiveRunForAgentObject(context.Background(), "a1", "obj-1", "Person")

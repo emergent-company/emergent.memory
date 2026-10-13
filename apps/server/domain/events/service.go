@@ -191,6 +191,46 @@ func (s *Service) EmitDeleted(ctx context.Context, entity EntityType, id string,
 	s.Emit(event)
 }
 
+// EmitStatusChanged emits an entity.status_changed event
+func (s *Service) EmitStatusChanged(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeStatusChanged,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
+// EmitAssigned emits an entity.assigned event
+func (s *Service) EmitAssigned(ctx context.Context, entity EntityType, id string, projectID string, opts *EmitOptions) {
+	event := EntityEvent{
+		Type:      EventTypeAssigned,
+		Entity:    entity,
+		ID:        &id,
+		ProjectID: projectID,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if opts != nil {
+		event.Data = opts.Data
+		event.Version = opts.Version
+		event.ObjectType = opts.ObjectType
+	}
+	event.Actor = resolveActor(ctx, opts)
+
+	s.Emit(event)
+}
+
 // EmitBatch emits an entity.batch event for multiple entities
 func (s *Service) EmitBatch(ctx context.Context, entity EntityType, ids []string, projectID string, data map[string]any) {
 	event := EntityEvent{

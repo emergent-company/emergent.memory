@@ -445,8 +445,9 @@ func TestApplyAgents_CreatesRuntimeAgentWithWorkConfig(t *testing.T) {
 		},
 		TriggerType: "reaction",
 		ReactionConfig: &agents.ReactionConfig{
-			ObjectTypes: []string{"Task"},
-			Events:      []agents.ReactionEventType{agents.EventTypeCreated},
+			ObjectTypes:         []string{"Task"},
+			Events:              []agents.ReactionEventType{agents.EventTypeCreated},
+			ConcurrencyStrategy: agents.ConcurrencySkip,
 		},
 	}
 
@@ -497,8 +498,9 @@ func TestApplyAgents_UpdatesExistingRuntimeAgent(t *testing.T) {
 		Name:       "board-agent",
 		WorkConfig: map[string]any{"requiresReview": true},
 		ReactionConfig: &agents.ReactionConfig{
-			ObjectTypes: []string{"Task"},
-			Events:      []agents.ReactionEventType{agents.EventTypeUpdated},
+			ObjectTypes:         []string{"Task"},
+			Events:              []agents.ReactionEventType{agents.EventTypeUpdated},
+			ConcurrencyStrategy: agents.ConcurrencySkip,
 		},
 	}
 

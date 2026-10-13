@@ -110,6 +110,10 @@ func (ts *TriggerService) onEntityEvent(evt events.EntityEvent) {
 		reactionType = EventTypeUpdated
 	case events.EventTypeDeleted:
 		reactionType = EventTypeDeleted
+	case events.EventTypeStatusChanged:
+		reactionType = EventTypeStatusChanged
+	case events.EventTypeAssigned:
+		reactionType = EventTypeAssigned
 	default:
 		return // Unsupported event type
 	}
@@ -509,10 +513,16 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 
 	// Assignee routing: an assigned object wakes only the listener whose name
 	// matches the assignee (project scoping was already applied by handleEvent).
-	if data, ok := input["data"].(map[string]any); ok {
-		if assignee, ok := data["assignee"].(string); ok && assignee != "" && agent.Name != assignee {
-			return // not the assigned lane
-		}
+	data, _ := input["data"].(map[string]any)
+	if assignee, ok := data["assignee"].(string); ok && assignee != "" && agent.Name != assignee {
+		return // not the assigned lane
+	}
+
+	// 4-way signal match: only enqueue when the emitted payload satisfies the
+	// agent's declared pickup signal — created always; updated by changed
+	// property paths; status_changed by status; assigned by assignee == name.
+	if !workPickupMatch(eventType, agent, agentDef, data) {
+		return
 	}
 
 	// Resolve the object version at dispatch. The single-event path carries it in
@@ -567,6 +577,7 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		SubjectObjectType: &objectType,
 		TrustedInternal:   true,
 		MaxPendingJobs:    maxPendingJobs,
+		TriggerMetadata:   workPickupTriggerMetadata(eventType, data),
 	})
 	if err != nil {
 		ts.log.Warn("failed to enqueue work run",
@@ -605,6 +616,95 @@ func intFromInput(v any) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// workPickupMatch evaluates the 4-way pickup signal for an object-driven
+// dispatch: created always matches; updated matches when the emitted changed
+// property paths intersect the agent's declared properties (or, when the agent
+// declares no properties, any emitted change); status_changed matches when the
+// emitted status is in the agent's trigger statuses; assigned matches when the
+// emitted assignee equals the agent's name.
+func workPickupMatch(eventType ReactionEventType, agent *Agent, agentDef *AgentDefinition, data map[string]any) bool {
+	switch eventType {
+	case EventTypeCreated:
+		return true
+	case EventTypeUpdated:
+		paths := stringSliceAny(data["properties"])
+		if len(paths) == 0 {
+			return false
+		}
+		// Empty declared properties means "any emitted content change": the
+		// updated emit only fires for a real change (the no-op guard already
+		// suppressed non-changes), so a listener with no property filter wakes
+		// on every updated event rather than never.
+		if agent == nil || agent.ReactionConfig == nil || len(agent.ReactionConfig.Properties) == 0 {
+			return true
+		}
+		return slicesIntersect(paths, agent.ReactionConfig.Properties)
+	case EventTypeStatusChanged:
+		status, _ := data["status"].(string)
+		if status == "" {
+			return false
+		}
+		for _, s := range workConfigOf(agentDef).TriggerStatusValues() {
+			if s == status {
+				return true
+			}
+		}
+		return false
+	case EventTypeAssigned:
+		assignee, _ := data["assignee"].(string)
+		return assignee != "" && agent != nil && assignee == agent.Name
+	default:
+		return false
+	}
+}
+
+// workPickupTriggerMetadata records the claim-source hint for the worker so the
+// object-driven claim CASes from the right status: status_changed from the
+// matched status; assigned from the HEAD's current status; created/updated from
+// the ready status (the default claim).
+func workPickupTriggerMetadata(eventType ReactionEventType, data map[string]any) map[string]any {
+	meta := map[string]any{"work_trigger_event": string(eventType)}
+	if eventType == EventTypeStatusChanged {
+		if status, ok := data["status"].(string); ok && status != "" {
+			meta["work_claim_status"] = status
+		}
+	}
+	return meta
+}
+
+// stringSliceAny extracts a []string from a value that may be a []string
+// (in-process events) or a []any (JSON-decoded events). Returns nil otherwise.
+func stringSliceAny(v any) []string {
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, e := range s {
+			if str, ok := e.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// slicesIntersect reports whether two string slices share at least one element.
+func slicesIntersect(a, b []string) bool {
+	set := make(map[string]bool, len(a))
+	for _, s := range a {
+		set[s] = true
+	}
+	for _, s := range b {
+		if set[s] {
+			return true
+		}
+	}
+	return false
 }
 
 // shouldTriggerAgentForActor applies the per-agent agent-origin gate.

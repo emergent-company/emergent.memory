@@ -9,10 +9,12 @@ import (
 type EntityEventType string
 
 const (
-	EventTypeCreated EntityEventType = "entity.created"
-	EventTypeUpdated EntityEventType = "entity.updated"
-	EventTypeDeleted EntityEventType = "entity.deleted"
-	EventTypeBatch   EntityEventType = "entity.batch"
+	EventTypeCreated       EntityEventType = "entity.created"
+	EventTypeUpdated       EntityEventType = "entity.updated"
+	EventTypeDeleted       EntityEventType = "entity.deleted"
+	EventTypeStatusChanged EntityEventType = "entity.status_changed"
+	EventTypeAssigned      EntityEventType = "entity.assigned"
+	EventTypeBatch         EntityEventType = "entity.batch"
 )
 
 // EntityType represents supported entity types for real-time events
