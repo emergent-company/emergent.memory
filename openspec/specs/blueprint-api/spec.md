@@ -233,8 +233,11 @@ blueprint-create authorization guards.
 The endpoint is `POST /api/blueprints/import` with body
 `{url, ref?, token?, modelOverrides?, apply?}`. `modelOverrides` maps an agent
 `name` to a `provider/model` reference (or an empty string to select the project
-default); each named agent's model SHALL be rewritten in the stored manifest
-before the blueprint is created. When `apply` is true, the import SHALL require a
+default). The stored manifest SHALL NOT be rewritten by `modelOverrides`: with
+`apply: true` the overrides SHALL be applied at apply time (and persisted
+per-project after a successful apply); with `apply: false` they SHALL be
+persisted per-project for a later apply, skipped for a global import (which has
+no project override scope). When `apply` is true, the import SHALL require a
 project context, publish the blueprint, and apply it atomically — on an apply
 failure the just-created row SHALL be hard-deleted so a retry re-imports cleanly
 (no 409), and the apply error is returned.
@@ -321,12 +324,21 @@ for a fetch failure, and 401/403 for authorization failures.
 - **THEN** the API adopts the existing blueprint, publishes and applies it as
   requested, and does not return 409
 
+#### Scenario: Model override applied at apply time and persisted per-project
+
+- **WHEN** a client sends `POST /api/blueprints/import` with a `modelOverrides`
+  mapping an agent name to a `provider/model` reference
+- **THEN** the stored blueprint manifest is unchanged (the pristine upstream
+  content), and the override is applied at apply time and persisted per-project;
+  an empty-string override clears the model name (project default)
+
 #### Scenario: Model override rewrites the stored manifest
 
 - **WHEN** a client sends `POST /api/blueprints/import` with a `modelOverrides`
   mapping an agent name to a `provider/model` reference
-- **THEN** the stored blueprint manifest carries that reference for the named
-  agent, and an empty-string override clears the model name (project default)
+- **THEN** the stored manifest is **no longer** rewritten by the override; the
+  override is applied at apply time and persisted per-project (supersedes the
+  previous rewrite-at-import behavior)
 
 #### Scenario: Atomic apply rolls back on failure
 
@@ -685,10 +697,11 @@ newer, or when the version is unchanged but the manifest content differs.
 
 #### Scenario: Locally-overridden import is not a false positive
 
-- **WHEN** an applied GitHub blueprint's stored manifest was rewritten by
-  project model overrides and the upstream version is unchanged
-- **THEN** the check compares against the raw upstream manifest hash recorded at
-  import and records `updateAvailable: false`
+- **WHEN** an applied GitHub blueprint has project model overrides (applied at
+  apply time, never baked into the stored manifest) and the upstream version is
+  unchanged
+- **THEN** the check compares against the raw upstream manifest content recorded
+  at import and records `updateAvailable: false`
 
 #### Scenario: A failed check preserves the last known result
 
@@ -927,3 +940,58 @@ project-owned schema packs it orphaned.
 
 - **WHEN** a client sends `DELETE /api/blueprints/:id` for a global built-in blueprint
 - **THEN** the API returns 409 and the blueprint is unchanged
+
+### Requirement: Project-scoped model overrides
+
+The API SHALL expose a project-scoped store for a blueprint's agent model
+overrides, keyed by blueprint name (not blueprint id) so a user's mapping
+survives a version upgrade. An override maps an agent `name` to a
+`provider/model` reference, where an empty string selects the project default.
+
+#### Scenario: Read stored model overrides
+
+- **WHEN** a client sends `GET /api/blueprints/model-overrides?name=<name>` with
+  a project context
+- **THEN** the API returns HTTP 200 with `{modelOverrides: {agentName:
+  "provider/model"}}`, and an empty object when no overrides are stored
+
+#### Scenario: Write model overrides
+
+- **WHEN** a client sends `PUT /api/blueprints/model-overrides` with
+  `{name, modelOverrides}` and a project context
+- **THEN** the API upserts the overrides and returns HTTP 200 with the resulting
+  stored map
+
+#### Scenario: Model overrides require a project context
+
+- **WHEN** a client sends GET or PUT to `/api/blueprints/model-overrides`
+  without a project context
+- **THEN** the API returns HTTP 400 and stores nothing
+
+### Requirement: Apply-time model override resolution
+
+Applying a blueprint SHALL resolve the effective model for each manifest agent
+with precedence **explicit request override > stored per-project override >
+manifest pin**, apply the result to the in-memory manifest before validation and
+materialization, and persist the explicit request overrides per-project after a
+successful apply. An override value of empty SHALL clear the model name (project
+default); an agent with no override SHALL keep its manifest pin.
+
+#### Scenario: Explicit override wins over stored and manifest
+
+- **WHEN** an apply carries an explicit `modelOverrides` entry that differs from
+  both a stored per-project override and the manifest's pinned model
+- **THEN** the explicit value is applied, and after a successful apply it is
+  persisted per-project
+
+#### Scenario: Stored override wins over the manifest pin
+
+- **WHEN** an apply carries no explicit override but a stored per-project
+  override exists for an agent
+- **THEN** the stored override is applied in place of the manifest's pinned model
+
+#### Scenario: Empty override selects the project default
+
+- **WHEN** an override maps an agent to an empty string
+- **THEN** the applied agent's model name is empty (project default) rather than
+  the manifest's pinned reference
