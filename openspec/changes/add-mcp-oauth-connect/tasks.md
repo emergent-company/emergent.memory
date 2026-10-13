@@ -1,6 +1,6 @@
 # Tasks — add-mcp-oauth-connect
 
-<!-- openspec:archive-hold: merged with task 8.4 (live Figma provider verification) still pending — manual steps recorded below under "Manual verification steps (8.4)"; lifted once that run passes -->
+<!-- openspec:archive-hold: task 8.4 cannot complete as written. Figma's authorization server advertises a registration_endpoint but rejects dynamic client registration with 403 (only MCP-Catalog-listed clients may connect), so the browser consent flow is unreachable for it. Verified live against Figma: discovery + the authorization requirement; the fallback is the existing encrypted X-Figma-Token secret-header path. Held until a dynamic-client-capable provider completes a live end-to-end OAuth connect. See design.md "Live provider finding (Figma, recorded post-merge)". -->
 
 ## 1. Storage
 
@@ -51,7 +51,7 @@
 - [x] 8.1 `go build ./...` for the server and gateway, plus `templ generate` for changed templ files
 - [x] 8.2 `task lint` (server, CLI, web UI, connector) passes
 - [x] 8.3 Server unit tests for the new domain code pass; gateway handler/templ tests pass
-- [ ] 8.4 Manual verification against the live Figma MCP server: install from the registry, see the authorization requirement, complete the browser flow, and confirm tools are discovered and a tool call succeeds
+- [ ] 8.4 Manual verification against a live OAuth provider: install from the registry, see the authorization requirement, complete the browser flow, and confirm tools are discovered and a tool call succeeds — **cannot complete against Figma**: its authorization server advertises a `registration_endpoint` but answers dynamic client registration with `403` (only MCP-Catalog-listed clients may connect), so the consent flow is unreachable. Verified live against Figma: discovery and the authorization requirement. Completion still requires a dynamic-client-capable provider (or a provisioned pre-registered client).
 
 ## 10. Post-merge fixes (live Figma verification)
 
@@ -80,6 +80,12 @@ Not ran (blocking 8.4):
 - The runlog API e2e suite (`e2e/tests/api`) was not extended for the connect flow: it requires the Docker e2e stack, and the SSRF guard rejects the loopback stub authorization server the suite would need. Handler coverage (4.5) is instead asserted by `oauth_handler_test.go` (provider-error redirect) and the DB-backed flow tests in `oauth_flow_test.go` (authorize success / no-auth-required / callback success / replayed / expired state) against a real Postgres.
 
 ### Manual verification steps (8.4)
+
+> **Provider constraint (post-merge finding).** These steps cannot succeed end to end
+> against Figma: it rejects dynamic client registration (`403`), so step 3's consent
+> screen is unreachable. Steps 1–2 are verified against Figma; steps 3–5 require a
+> provider that issues dynamic clients, or a pre-registered client provisioned via
+> `PUT /api/admin/mcp-servers/:id/oauth/client`.
 
 On a deployment whose server has a public origin:
 
