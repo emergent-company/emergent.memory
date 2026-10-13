@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -114,25 +115,94 @@ func TestGalleryListsAllComponentsPackageExports(t *testing.T) {
 // --- on-demand daisy entry shape ---
 
 func TestDaisyEntry(t *testing.T) {
-	e := daisyEntry("FormControl")
-	if e.PropsType == "" {
+	// A curated id resolves to its authored fixture.
+	curated := daisyEntry("FormControl")
+	if curated.PropsType == "" {
 		t.Error("daisyEntry must set a non-empty PropsType")
 	}
-	if e.Layer != LayerDaisy || e.Category != "go-daisy" {
-		t.Errorf("daisyEntry layer/category = %q/%q, want L0/go-daisy", e.Layer, e.Category)
+	if curated.Layer != LayerDaisy || curated.Category != "go-daisy" {
+		t.Errorf("daisyEntry layer/category = %q/%q, want L0/go-daisy", curated.Layer, curated.Category)
 	}
-	if e.Slug != "form-control" {
-		t.Errorf("daisyEntry slug = %q, want %q", e.Slug, "form-control")
+	if curated.Slug != "form-control" {
+		t.Errorf("daisyEntry slug = %q, want %q", curated.Slug, "form-control")
 	}
-	if e.Render == nil {
+	if curated.Render == nil {
 		t.Error("daisyEntry must set a Render closure")
 	}
-	if !e.NeedsFixture() {
-		t.Error("daisyEntry with an empty render should be flagged needs fixture")
+	if curated.NeedsFixture() {
+		t.Error("daisyEntry for a curated id should render its authored fixture")
+	}
+
+	// An un-curated id keeps the empty-render fallback so it is flagged rather
+	// than silently showing a blank preview.
+	unknown := daisyEntry("NoSuchDaisyPrimitive")
+	if unknown.PropsType != "—" {
+		t.Errorf("un-curated daisyEntry PropsType = %q, want %q", unknown.PropsType, "—")
+	}
+	if !unknown.NeedsFixture() {
+		t.Error("daisyEntry for an un-curated id should be flagged needs fixture")
+	}
+}
+
+// --- every rendered go-daisy primitive has a fixture ---
+
+func TestEveryDaisyEntryHasFixture(t *testing.T) {
+	for _, e := range componentGallery() {
+		if e.Layer != LayerDaisy {
+			continue
+		}
+		if e.NeedsFixture() {
+			t.Errorf("%s: L0 entry is missing a fixture", e.ID)
+		}
+	}
+}
+
+// TestDaisyEntryIDSet pins the L0 id set: every go-daisy id the app renders
+// must be an L0 catalog entry — the curated seed entries plus an on-demand
+// entry for each rendered id not already cataloged under another layer. A
+// future un-fixtured primitive changes this set and fails the build, not the UI.
+func TestDaisyEntryIDSet(t *testing.T) {
+	seed := map[string]bool{}
+	seedDaisy := map[string]bool{}
+	for _, e := range gallerySeed() {
+		seed[e.ID] = true
+		if e.Layer == LayerDaisy {
+			seedDaisy[e.ID] = true
+		}
+	}
+	var union []string
+	for _, ids := range graphDaisyComponents {
+		union = append(union, ids...)
+	}
+	want := maps.Clone(seedDaisy)
+	for _, id := range sortedUnique(union) {
+		if !seed[id] {
+			want[id] = true
+		}
+	}
+	got := map[string]bool{}
+	for _, e := range componentGallery() {
+		if e.Layer == LayerDaisy {
+			got[e.ID] = true
+		}
+	}
+	for id := range want {
+		if !got[id] {
+			t.Errorf("missing L0 entry %q", id)
+		}
+	}
+	for id := range got {
+		if !want[id] {
+			t.Errorf("unexpected L0 entry %q", id)
+		}
 	}
 }
 
 // --- 1.3 fixtures are inert and referenced ---
+
+// fixtureInertMarkers are the client-wiring markers a gallery fixture must
+// never emit: no live endpoints and no mutation verbs.
+var fixtureInertMarkers = []string{`action="http`, "hx-post=", "hx-put=", "hx-patch=", "hx-delete="}
 
 func TestFixturesInert(t *testing.T) {
 	for _, e := range gallerySeed() {
@@ -141,7 +211,25 @@ func TestFixturesInert(t *testing.T) {
 			t.Errorf("%s: fixture panicked", e.ID)
 			continue
 		}
-		for _, marker := range []string{`action="http`, "hx-post=", "hx-put=", "hx-patch=", "hx-delete="} {
+		for _, marker := range fixtureInertMarkers {
+			if strings.Contains(html, marker) {
+				t.Errorf("%s: fixture is not inert (contains %q)", e.ID, marker)
+			}
+		}
+	}
+}
+
+func TestDaisyFixturesInert(t *testing.T) {
+	for _, e := range componentGallery() {
+		if e.Layer != LayerDaisy {
+			continue
+		}
+		html, panicked := renderSafe(e.Render())
+		if panicked {
+			t.Errorf("%s: fixture panicked", e.ID)
+			continue
+		}
+		for _, marker := range fixtureInertMarkers {
 			if strings.Contains(html, marker) {
 				t.Errorf("%s: fixture is not inert (contains %q)", e.ID, marker)
 			}

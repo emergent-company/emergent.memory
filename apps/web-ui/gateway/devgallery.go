@@ -123,10 +123,13 @@ func filterToCatalog(uses []string, catalog map[string]bool) []string {
 }
 
 // daisyEntry builds the on-demand L0 entry for a go-daisy component that the
-// app renders but that has no curated fixture. Its render is empty, so it is
-// flagged "needs fixture" rather than silently showing a blank preview.
+// app renders but that has no curated seed entry. When the id has an authored
+// fixture it fills in the render, props type, description, and optional
+// interactive/story fields; otherwise it keeps the empty render so an
+// un-curated primitive is flagged "needs fixture" rather than silently showing
+// a blank preview.
 func daisyEntry(id string) GalleryEntry {
-	return GalleryEntry{
+	e := GalleryEntry{
 		ID:          id,
 		Slug:        slugify(id),
 		Name:        id,
@@ -134,10 +137,19 @@ func daisyEntry(id string) GalleryEntry {
 		Category:    "go-daisy",
 		Subcategory: "primitive",
 		SourceFile:  "<go-daisy>",
-		PropsType:   "—", // no props type is known without reading go-daisy source
+		PropsType:   "—", // no props type is known without a fixture
 		Description: "go-daisy primitive rendered by the app",
 		Render:      emptyRender(),
 	}
+	if spec, ok := daisyFixture(id); ok {
+		e.Render = spec.Render
+		e.PropsType = spec.PropsType
+		e.Description = spec.Description
+		e.Interactive = spec.Interactive
+		e.DefaultVariant = spec.DefaultVariant
+		e.Stories = spec.Stories
+	}
+	return e
 }
 
 // galleryEntryBySlug finds a catalog entry by slug, for the preview route.

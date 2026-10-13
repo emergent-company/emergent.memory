@@ -149,3 +149,19 @@ test('surfaces adoption gaps with per-file counts and findings', async ({ page }
     expect(await fileBlocks.count()).toBe(0);
   }
 });
+
+test('lists every rendered go-daisy primitive without a needs-fixture flag', async ({ page }) => {
+  const response = await page.goto('/dev/components');
+  expect(response?.status(), 'gallery route should serve (MEMORY_COMPONENT_GALLERY=on)').toBe(200);
+  await expect(page.getByTestId('component-gallery')).toBeVisible();
+
+  // Three states report an un-fixtured entry: the summary badge (which the page
+  // only renders when the count is above zero), the per-entry "needs fixture"
+  // badge, and the zero-value note under the preview. Every go-daisy primitive
+  // the app renders is authored in gateway/devgallery_daisy_fixtures.go, so all
+  // three are absent — a newly rendered primitive without a fixture fails here
+  // and in the registry unit tests.
+  await expect(page.getByTestId('gallery-needs-fixture')).toHaveCount(0);
+  await expect(page.getByTestId('needs-fixture')).toHaveCount(0);
+  await expect(page.getByText('Zero-value render — add a fixture to populate this preview.')).toHaveCount(0);
+});

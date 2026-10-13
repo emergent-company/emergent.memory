@@ -5,6 +5,7 @@
 - [x] 1.3 Add curated fixtures in `devgallery_fixtures.go` for the `components` package and the frequently used go-daisy primitives; fixtures SHALL be inert (`href="#"`, `type="button"` buttons, no live endpoint ids or real mutation wiring); verify each fixture is referenced by a registry entry and no fixture contains a live form action via a unit test
 - [x] 1.4 Add authored default render closures (zero values) wrapped in `recover()`, plus a "needs fixture" flag for entries whose default render is empty or panics; verify with unit tests for both a deliberately empty component and a nil-slot-panic component (e.g. `ListRow` with a nil leading component)
 - [x] 1.5 Add a render-without-panic smoke test iterating every registry entry, rendering its fixture and default closure under `recover()`, and asserting the "needs fixture" flag matches the result; verify `go test ./...`
+- [x] 1.6 Add authored fixtures in `devgallery_daisy_fixtures.go` for every go-daisy primitive the app renders that has no curated seed entry (40 ids today), so no rendered primitive is previewed as a zero-value blank: `daisyEntry` fills render, props type, description, and the optional interactive/story fields from the fixture table and keeps the empty-render fallback only on a miss; structural primitives (the `table.*` family, dropdown, popover) render their composed context so the preview is populated; fixtures stay inert; verify with unit tests that every L0 entry renders non-empty, that the L0 id set equals the generated graph's go-daisy union, and that the fixtures carry no live endpoint or mutation wiring
 
 ## 2. Dependency graph generator
 
@@ -42,5 +43,6 @@
 - [ ] 6.3 Run `task dev` and load `/dev/components` in the browser; verify the catalog renders, previews load, and an interactive component's overlay stays inside its preview
 - [x] 6.4 Add a Playwright e2e spec asserting the page loads and each listed slug's preview renders non-empty; it runs under a dedicated flag-on harness config (`tests/e2e/dev-gallery.config.ts`, which starts `run-e2e.sh` with `MEMORY_COMPONENT_GALLERY=on`, `AUTH_MODE=dev`) and is excluded from the session-mode `chromium` project (whose external gateway leaves the flag off); verify it passes (`task e2e:gallery`)
 - [x] 6.5 Run `openspec validate web-ui-component-gallery --strict`; clean
+- [x] 6.6 Extend the gallery Playwright spec to assert the page reports no un-fixtured entry (no summary `gallery-needs-fixture` badge, no per-entry `needs-fixture` badge, no zero-value note), so a newly rendered primitive without an authored fixture fails e2e as well as the registry unit tests; verify it passes (`npx playwright test --config=dev-gallery.config.ts` from `tests/e2e`)
 
 <!-- 6.3 (manual browser check) is owner-side: the dev server runs on the dev host and the browser is on the operator's machine. Unit + httptest + Playwright coverage is in place. -->

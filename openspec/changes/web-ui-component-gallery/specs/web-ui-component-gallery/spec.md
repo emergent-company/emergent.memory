@@ -63,12 +63,18 @@ For every catalog entry the gallery SHALL show the components it uses, the call 
 
 ### Requirement: Components render in isolated previews with sample data
 
-The gallery SHALL render each catalog entry against sample data in an isolated preview that does not share the page's DOM. Render-only SHALL be the default: unless an entry is explicitly marked interactive, the preview document SHALL load no client scripts, so a preview cannot mutate the backend and no overlay can escape it; component ids SHALL NOT collide across previews. An entry that needs client scripts to be reviewable — a dialog, dropdown, or toast — MAY be marked interactive, in which case its preview document SHALL load the shell's client scripts and its iframe SHALL carry `sandbox="allow-scripts"`. No preview iframe SHALL ever grant `allow-same-origin` or `allow-forms`, so even an interactive preview cannot read the session cookie or mutate the backend.
+The gallery SHALL render each catalog entry against sample data in an isolated preview that does not share the page's DOM. Every go-daisy (L0) entry the catalog adds on demand for a primitive the app renders SHALL carry an authored, inert fixture, because a primitive the app renders is by definition reviewable and a zero-value blank preview hides it. Render-only SHALL be the default: unless an entry is explicitly marked interactive, the preview document SHALL load no client scripts, so a preview cannot mutate the backend and no overlay can escape it; component ids SHALL NOT collide across previews. An entry that needs client scripts to be reviewable — a dialog, dropdown, or toast — MAY be marked interactive, in which case its preview document SHALL load the shell's client scripts and its iframe SHALL carry `sandbox="allow-scripts"`. No preview iframe SHALL ever grant `allow-same-origin` or `allow-forms`, so even an interactive preview cannot read the session cookie or mutate the backend.
 
 #### Scenario: Preview renders with fixture data
 
 - **WHEN** a component with a curated fixture is previewed
 - **THEN** it renders its representative states with sample data rather than empty placeholders
+
+#### Scenario: Every rendered go-daisy primitive has an authored fixture
+
+- **WHEN** the catalog adds an on-demand L0 entry for a go-daisy primitive the app renders
+- **THEN** that entry carries an authored, inert fixture rendering non-empty markup in the isolated preview, so no rendered primitive is previewed as a zero-value blank or marked as needing a fixture
+- **AND** the L0 entry set equals the go-daisy primitives the generated graph records, so a newly rendered primitive without a fixture fails the build rather than surfacing as a blank preview
 
 #### Scenario: Missing fixture falls back and is flagged
 
