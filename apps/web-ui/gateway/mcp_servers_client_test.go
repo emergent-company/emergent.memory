@@ -632,3 +632,37 @@ func TestInspectMCPServerAuthRequired(t *testing.T) {
 		t.Error("registrationSupported = true, want false")
 	}
 }
+
+// TestInspectMCPServerAuthUnavailable asserts inspect decodes the auth_required
+// state whose provider publishes no discoverable OAuth metadata: the auth block
+// carries unavailable + remedy so the UI can disable Connect.
+func TestInspectMCPServerAuthUnavailable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{
+			"serverId":"srv-1","serverName":"github","serverType":"http",
+			"status":"auth_required","latencyMs":0,
+			"auth":{"unavailable":true,"remedy":"configure a token header for this server instead (e.g. Authorization: Bearer <token>)"},
+			"tools":[],"prompts":[],"resources":[],"resourceTemplates":[]
+		}}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	res, err := m.InspectMCPServer(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "auth_required" {
+		t.Fatalf("status = %q, want auth_required", res.Status)
+	}
+	if res.Auth == nil {
+		t.Fatal("auth = nil, want the oauth requirement")
+	}
+	if !res.Auth.Unavailable {
+		t.Error("unavailable = false, want true")
+	}
+	if !strings.Contains(res.Auth.Remedy, "token header") {
+		t.Errorf("remedy = %q, want it to name the token-header remedy", res.Auth.Remedy)
+	}
+}

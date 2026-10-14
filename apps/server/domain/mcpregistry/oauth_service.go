@@ -39,6 +39,12 @@ var (
 	// document and a non-2xx dynamic client registration response. Handler maps
 	// it to 400 with an actionable message: provision a pre-registered client.
 	ErrOAuthClientRequired = errors.New("this authorization server will not issue a client — dynamic client registration is unavailable or was rejected")
+	// ErrOAuthMetadataUnavailable marks a provider whose authorization server
+	// publishes no discoverable OAuth metadata at all (no RFC 8414 document and
+	// no OpenID Connect document). Handler maps it to 422 with an actionable
+	// message: configure a token header instead, because the browser connect
+	// flow cannot work without discoverable endpoints.
+	ErrOAuthMetadataUnavailable = errors.New("this MCP server's provider publishes no OAuth authorization metadata")
 	// ErrOAuthDiscoveryFailed marks a probe or metadata fetch that could not be
 	// completed (unreachable server, unusable metadata). Handler maps it to 502:
 	// the failure is upstream, not bad input.
@@ -137,6 +143,11 @@ func discoverServerAuthRequirement(ctx context.Context, server *MCPServer) (*aut
 	}
 	req, err := discoverAuthRequirement(ctx, resourceURL, ch)
 	if err != nil {
+		if errors.Is(err, ErrOAuthMetadataUnavailable) {
+			// A permanent absence of metadata is actionable (the provider simply
+			// does not publish it), not an upstream outage.
+			return nil, fmt.Errorf("%w: %v", ErrOAuthMetadataUnavailable, err)
+		}
 		return nil, fmt.Errorf("%w: %v", ErrOAuthDiscoveryFailed, err)
 	}
 	return req, nil

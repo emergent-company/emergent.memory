@@ -360,7 +360,7 @@ func TestRenderMCPServersOAuthConnected(t *testing.T) {
 			t.Errorf("oauth connected controls missing %q", want)
 		}
 	}
-	if strings.Contains(html, "mcp-oauth-connect") {
+	if strings.Contains(html, `data-testid="mcp-oauth-connect"`) {
 		t.Error("connected server must not render a Connect action")
 	}
 }
@@ -370,9 +370,9 @@ func TestRenderMCPServersOAuthConnected(t *testing.T) {
 func TestRenderMCPServersOAuthHidden(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: mcpTestRegistryFixture()}))
 	for _, want := range []string{
-		"mcp-oauth-connect",
-		"mcp-oauth-disconnect",
-		"mcp-oauth-status",
+		`data-testid="mcp-oauth-connect"`,
+		`data-testid="mcp-oauth-disconnect"`,
+		`data-testid="mcp-oauth-status"`,
 	} {
 		if strings.Contains(html, want) {
 			t.Errorf("non-OAuth rows must not render %q", want)

@@ -472,6 +472,13 @@ type InspectAuthDTO struct {
 	AuthorizationServer   string   `json:"authorizationServer,omitempty"`
 	Scopes                []string `json:"scopes"`
 	RegistrationSupported bool     `json:"registrationSupported"`
+	// Unavailable is true when the server requires authorization but its
+	// provider publishes no discoverable OAuth metadata, so the browser connect
+	// flow cannot be used (a token header is the remedy). In that state the
+	// other fields are empty.
+	Unavailable bool `json:"unavailable,omitempty"`
+	// Remedy is a short, user-facing remedy for the unavailable case.
+	Remedy string `json:"remedy,omitempty"`
 }
 
 // InspectServerInfoDTO carries the server's self-reported identity.

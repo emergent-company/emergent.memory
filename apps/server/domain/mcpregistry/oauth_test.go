@@ -133,6 +133,65 @@ func TestMetadataURLFor(t *testing.T) {
 	}
 }
 
+func TestMetadataURLFor_PathInsertion(t *testing.T) {
+	cases := map[string]string{
+		// Path-bearing issuer: the well-known segment is inserted between host
+		// and path (RFC 8414 §3.1).
+		"https://example.com/tenant1":  "https://example.com/.well-known/oauth-authorization-server/tenant1",
+		"https://example.com/tenant1/": "https://example.com/.well-known/oauth-authorization-server/tenant1",
+		"https://example.com/a/b":      "https://example.com/.well-known/oauth-authorization-server/a/b",
+		// Host-only issuers are unchanged.
+		"https://api.figma.com":          "https://api.figma.com/.well-known/oauth-authorization-server",
+		"https://api.figma.com/":         "https://api.figma.com/.well-known/oauth-authorization-server",
+		"https://github.com/login/oauth": "https://github.com/.well-known/oauth-authorization-server/login/oauth",
+	}
+	for in, want := range cases {
+		if got := metadataURLFor(in); got != want {
+			t.Errorf("metadataURLFor(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestOIDCMetadataURLs(t *testing.T) {
+	if got, want := oidcMetadataURLAppend("https://github.com/login/oauth"), "https://github.com/login/oauth/.well-known/openid-configuration"; got != want {
+		t.Errorf("oidcMetadataURLAppend = %q, want %q", got, want)
+	}
+	if got, want := oidcMetadataURLFor("https://github.com/login/oauth"), "https://github.com/.well-known/openid-configuration/login/oauth"; got != want {
+		t.Errorf("oidcMetadataURLFor = %q, want %q", got, want)
+	}
+}
+
+func TestAuthMetadataCandidates_DedupeAndOrder(t *testing.T) {
+	// Host-only issuer: append and path-insertion RFC 8414 forms collapse to one.
+	got := authMetadataCandidates("https://api.figma.com", "")
+	want := []string{
+		"https://api.figma.com/.well-known/oauth-authorization-server",
+		"https://api.figma.com/.well-known/openid-configuration",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("candidates = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("candidates[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAuthMetadataCandidates_AuthorizationURIFirst(t *testing.T) {
+	// A well-known authorization_uri is authoritative and leads the list.
+	got := authMetadataCandidates("https://example.com/tenant1", "https://example.com/.well-known/oauth-authorization-server/tenant1")
+	if got[0] != "https://example.com/.well-known/oauth-authorization-server/tenant1" {
+		t.Errorf("candidates[0] = %q, want the authorization_uri", got[0])
+	}
+	// It must not be duplicated later in the list.
+	for i := 1; i < len(got); i++ {
+		if got[i] == got[0] {
+			t.Errorf("candidate %q duplicated at index %d", got[0], i)
+		}
+	}
+}
+
 // --- discovery ---
 
 // oauthTestServer serves the full MCP OAuth surface: a protected MCP endpoint,

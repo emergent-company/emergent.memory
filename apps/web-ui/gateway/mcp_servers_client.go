@@ -108,6 +108,12 @@ type MCPInspectAuth struct {
 	AuthorizationServer   string   `json:"authorizationServer"`
 	Scopes                []string `json:"scopes"`
 	RegistrationSupported bool     `json:"registrationSupported"`
+	// Unavailable is true when the server requires authorization but its
+	// provider publishes no discoverable OAuth metadata, so the browser connect
+	// flow cannot be used (a token header is the remedy).
+	Unavailable bool `json:"unavailable"`
+	// Remedy is a short, user-facing remedy for the unavailable case.
+	Remedy string `json:"remedy"`
 }
 
 // SyncMCPServer re-discovers a server's tools (auto-discover mode: memory

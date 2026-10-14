@@ -23,6 +23,7 @@ import (
 // @Failure      400 {object} apperror.Error "Not a remote server, no authorization requirement, or the deployment is not configured"
 // @Failure      401 {object} apperror.Error
 // @Failure      404 {object} apperror.Error
+// @Failure      422 {object} apperror.Error "Provider publishes no OAuth authorization metadata — configure a token header instead"
 // @Failure      502 {object} apperror.Error "Authorization server metadata could not be fetched"
 // @Router       /api/admin/mcp-servers/{id}/oauth/authorize [post]
 // @Security     bearerAuth
@@ -212,6 +213,10 @@ func mcpOAuthError(err error) error {
 		// The authorization server will not issue us a client (registration
 		// unavailable or rejected). This is actionable, not an internal fault.
 		return apperror.NewBadRequest(oauthClientRequiredMessage(err))
+	case errors.Is(err, ErrOAuthMetadataUnavailable):
+		// The provider publishes no discoverable OAuth metadata, so the browser
+		// connect flow cannot work. Actionable, not an internal fault.
+		return apperror.NewValidation(oauthMetadataUnavailableMessage(err))
 	case errors.Is(err, ErrOAuthNeedsReconnect):
 		return apperror.NewConflict(err.Error())
 	case errors.Is(err, ErrOAuthDiscoveryFailed):
@@ -233,4 +238,15 @@ func oauthClientRequiredMessage(err error) string {
 		return fmt.Sprintf("the authorization server rejected dynamic client registration (HTTP %d); this server needs a pre-registered OAuth client — configure one for this server and retry", rej.Status)
 	}
 	return "this authorization server will not issue a client — dynamic client registration is unavailable or was rejected; configure a pre-registered OAuth client for this server and retry"
+}
+
+// oauthMetadataUnavailableRemedy is the token-header remedy shown when a
+// provider publishes no discoverable OAuth metadata.
+const oauthMetadataUnavailableRemedy = "configure a token header for this server instead (e.g. Authorization: Bearer <token>)"
+
+// oauthMetadataUnavailableMessage builds the user-facing copy for
+// ErrOAuthMetadataUnavailable: one actionable sentence naming the token-header
+// remedy, with no internal identifiers.
+func oauthMetadataUnavailableMessage(_ error) string {
+	return "this provider publishes no OAuth authorization metadata, so the browser connect flow cannot be used — " + oauthMetadataUnavailableRemedy
 }

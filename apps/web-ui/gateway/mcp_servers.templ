@@ -1062,6 +1062,25 @@ templ mcpServersScript() {
 					explain.textContent = 'This server requires OAuth authorization before it can connect.';
 					box.appendChild(explain);
 					var auth = r.auth || {};
+					if (auth.unavailable) {
+						// The provider publishes no discoverable OAuth metadata, so the
+						// browser connect flow cannot work: show the token-header remedy
+						// and render Connect disabled (no /oauth/start navigation).
+						var remedy = document.createElement('p');
+						remedy.className = 'text-warning mt-1';
+						remedy.textContent = auth.remedy || 'This provider publishes no OAuth authorization metadata, so the browser connect flow cannot be used — configure a token header for this server instead (e.g. Authorization: Bearer <token>).';
+						box.appendChild(remedy);
+						var disabledBtn = document.createElement('button');
+						disabledBtn.type = 'button';
+						disabledBtn.disabled = true;
+						disabledBtn.setAttribute('aria-disabled', 'true');
+						disabledBtn.setAttribute('data-testid', 'mcp-oauth-connect-disabled');
+						disabledBtn.className = 'link link-primary mt-1.5 inline-flex items-center gap-1.5 opacity-50 pointer-events-none';
+						disabledBtn.appendChild(icon('lucide--plug-zap'));
+						disabledBtn.appendChild(textNode('Connect'));
+						box.appendChild(disabledBtn);
+						return;
+					}
 					var meta = [];
 					if (auth.authorizationServer) meta.push(auth.authorizationServer);
 					var scopes = auth.scopes || [];
@@ -1074,6 +1093,7 @@ templ mcpServersScript() {
 					}
 					var link = document.createElement('a');
 					link.className = 'link link-primary mt-1.5 inline-flex items-center gap-1.5';
+					link.setAttribute('data-testid', 'mcp-oauth-connect');
 					link.href = '/settings/mcp-servers/' + encodeURIComponent(r.serverId || '') + '/oauth/start';
 					link.appendChild(icon('lucide--plug-zap'));
 					link.appendChild(textNode('Connect'));

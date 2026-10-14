@@ -15,6 +15,11 @@ Disconnect action.
 - **WHEN** the user inspects a server whose connection is rejected with an OAuth challenge
 - **THEN** the inspect panel states that authorization is required and shows a Connect action
 
+#### Scenario: No discoverable metadata disables Connect
+
+- **WHEN** the user inspects a server that requires authorization but whose provider publishes no discoverable OAuth metadata
+- **THEN** the inspect panel still reports an authorization requirement, but the Connect action is disabled and the token-header remedy is shown
+
 #### Scenario: Connect starts the browser flow
 
 - **WHEN** the user activates Connect for a server that requires authorization

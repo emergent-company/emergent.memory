@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -225,15 +226,12 @@ func discoverAuthRequirement(ctx context.Context, resourceURL string, ch authCha
 		return nil, fmt.Errorf("challenge did not identify an authorization server")
 	}
 
-	// Step 2: authorization server metadata (RFC 8414). The well-known path is
-	// derived from the issuer, and the challenge's authorization_uri is used
-	// directly when it points at a metadata document.
-	md := &authServerMetadata{}
-	mdURL := ch.AuthorizationURI
-	if mdURL == "" || issuerFromMetadataURL(mdURL) != "" {
-		mdURL = metadataURLFor(req.AuthorizationServer)
-	}
-	if err := getJSON(ctx, mdURL, md); err != nil {
+	// Step 2: authorization server metadata. The document may be served as RFC
+	// 8414 metadata or as an OpenID Connect discovery document, and at either a
+	// path-inserted or an appended well-known location, so walk the ordered
+	// candidate list and use the first parseable document.
+	md, err := fetchAuthMetadata(ctx, authMetadataCandidates(req.AuthorizationServer, ch.AuthorizationURI))
+	if err != nil {
 		return nil, fmt.Errorf("fetching authorization server metadata: %w", err)
 	}
 	req.AuthorizationEndpoint = strings.TrimSpace(md.AuthorizationEndpoint)
@@ -271,9 +269,105 @@ func issuerFromMetadataURL(raw string) string {
 	return strings.TrimRight(base.String(), "/")
 }
 
-// metadataURLFor builds the RFC 8414 well-known metadata URL for an issuer.
+// Well-known document paths. RFC 8414 §3.1 defines the OAuth authorization
+// server metadata path; OpenID Connect Discovery 1.0 defines the issuer
+// configuration path that some authorization servers (e.g. GitHub) serve
+// instead of RFC 8414 metadata.
+const (
+	wellKnownOAuthASPath = ".well-known/oauth-authorization-server"
+	wellKnownOIDCPath    = ".well-known/openid-configuration"
+)
+
+// wellKnownInsert builds a well-known document URL by inserting the well-known
+// segment between the host and the issuer's path (RFC 8414 §3.1). A host-only
+// issuer yields the familiar append form, while a path-bearing issuer (e.g.
+// https://github.com/login/oauth) yields
+// https://github.com/.well-known/<segment>/login/oauth.
+func wellKnownInsert(issuer, segment string) string {
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return strings.TrimRight(issuer, "/") + "/" + segment
+	}
+	p := strings.TrimSuffix(u.Path, "/")
+	u.Path = "/" + segment + p
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// wellKnownAppend builds the legacy append form: {issuer}/{segment}.
+func wellKnownAppend(issuer, segment string) string {
+	return strings.TrimRight(issuer, "/") + "/" + segment
+}
+
+// metadataURLFor builds the RFC 8414 §3.1 path-insertion metadata URL for an
+// issuer.
 func metadataURLFor(issuer string) string {
-	return strings.TrimRight(issuer, "/") + "/.well-known/oauth-authorization-server"
+	return wellKnownInsert(issuer, wellKnownOAuthASPath)
+}
+
+// metadataURLAppend builds the legacy RFC 8414 append-form metadata URL.
+func metadataURLAppend(issuer string) string {
+	return wellKnownAppend(issuer, wellKnownOAuthASPath)
+}
+
+// oidcMetadataURLFor builds the OpenID Connect path-insertion metadata URL.
+func oidcMetadataURLFor(issuer string) string {
+	return wellKnownInsert(issuer, wellKnownOIDCPath)
+}
+
+// oidcMetadataURLAppend builds the OpenID Connect append-form metadata URL.
+func oidcMetadataURLAppend(issuer string) string {
+	return wellKnownAppend(issuer, wellKnownOIDCPath)
+}
+
+// authMetadataCandidates returns the ordered, deduplicated list of URLs to try
+// when discovering authorization server metadata for an issuer. Order:
+// (i) the challenge's authorization_uri when it is itself a well-known metadata
+// document (it is authoritative, and may carry a path-inserted tenant the
+// derived forms would lose); (ii) RFC 8414 path-insertion; (iii) RFC 8414
+// append; (iv) OpenID Connect path-insertion; (v) OpenID Connect append.
+func authMetadataCandidates(issuer, authorizationURI string) []string {
+	var out []string
+	if authorizationURI != "" && issuerFromMetadataURL(authorizationURI) != "" {
+		out = appendUniqueURL(out, authorizationURI)
+	}
+	for _, candidate := range []string{
+		metadataURLFor(issuer),
+		metadataURLAppend(issuer),
+		oidcMetadataURLFor(issuer),
+		oidcMetadataURLAppend(issuer),
+	} {
+		out = appendUniqueURL(out, candidate)
+	}
+	return out
+}
+
+// appendUniqueURL appends a URL only if it is not already present, preserving
+// candidate order.
+func appendUniqueURL(list []string, candidate string) []string {
+	if candidate == "" {
+		return list
+	}
+	for _, existing := range list {
+		if existing == candidate {
+			return list
+		}
+	}
+	return append(list, candidate)
+}
+
+// metadataHTTPError is a definitive HTTP status returned by a metadata endpoint.
+// It lets discovery distinguish a document that does not exist (404/410) from a
+// transient failure (network error, timeout, 5xx, 401/403), so a provider that
+// publishes no metadata surfaces as actionable rather than as an outage.
+type metadataHTTPError struct {
+	URL    string
+	Status int
+}
+
+func (e *metadataHTTPError) Error() string {
+	return fmt.Sprintf("metadata endpoint %s returned HTTP %d", e.URL, e.Status)
 }
 
 // splitScope splits a space-delimited scope string, dropping empties.
@@ -324,12 +418,42 @@ func getJSON(ctx context.Context, rawURL string, out any) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, oauthMaxBodyBytes))
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("metadata endpoint returned HTTP %d", resp.StatusCode)
+		return &metadataHTTPError{URL: rawURL, Status: resp.StatusCode}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("decoding metadata document: %w", err)
 	}
 	return nil
+}
+
+// fetchAuthMetadata fetches the authorization server metadata from the first
+// candidate URL that returns a parseable document. It returns
+// ErrOAuthMetadataUnavailable when every candidate answers with a definitive
+// "not found" (404/410), and otherwise the first transient failure (a network
+// error, timeout, 5xx, or any other non-success status such as 401/403).
+func fetchAuthMetadata(ctx context.Context, candidates []string) (*authServerMetadata, error) {
+	var transientErr error
+	for _, candidate := range candidates {
+		md := &authServerMetadata{}
+		if err := getJSON(ctx, candidate, md); err == nil {
+			return md, nil
+		} else if !metadataAbsent(err) {
+			if transientErr == nil {
+				transientErr = err
+			}
+		}
+	}
+	if transientErr != nil {
+		return nil, fmt.Errorf("fetching authorization server metadata: %w", transientErr)
+	}
+	return nil, ErrOAuthMetadataUnavailable
+}
+
+// metadataAbsent reports whether err is a definitive "this document does not
+// exist here" answer (404/410) rather than a transient failure.
+func metadataAbsent(err error) bool {
+	var httpErr *metadataHTTPError
+	return errors.As(err, &httpErr) && (httpErr.Status == http.StatusNotFound || httpErr.Status == http.StatusGone)
 }
 
 // --- PKCE / state ---

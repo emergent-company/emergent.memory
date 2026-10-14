@@ -189,6 +189,53 @@ SHALL name the HTTP status the authorization server returned.
 - **WHEN** the authorization-server metadata advertises no registration endpoint
 - **THEN** starting the flow fails with a 400 error naming the pre-registered-client remedy
 
+### Requirement: Authorization-server metadata discovery falls back to OpenID Connect
+
+Authorization-server metadata discovery SHALL consult the RFC 8414 well-known
+document, inserting the well-known path between the host and the path of a
+path-bearing issuer (RFC 8414 §3.1), and SHALL fall back to the OpenID Connect
+discovery document when RFC 8414 metadata is absent. The candidate set SHALL be
+tried in order — the challenge's own `authorization_uri` when it is itself a
+metadata document, then RFC 8414 (path-inserted, then appended), then OpenID
+Connect (path-inserted, then appended) — and SHALL use the first candidate that
+returns a parseable document.
+
+#### Scenario: Path-bearing issuer
+
+- **WHEN** the authorization server issuer carries a path (e.g. `https://github.com/login/oauth`)
+- **THEN** the RFC 8414 well-known document is sought at `https://github.com/.well-known/oauth-authorization-server/login/oauth` (path inserted between host and path), not appended to the issuer
+
+#### Scenario: RFC 8414 absent, OpenID Connect present
+
+- **WHEN** the authorization server serves OpenID Connect discovery (`.well-known/openid-configuration`) but no RFC 8414 document
+- **THEN** discovery resolves the authorization and token endpoints from the OpenID Connect document
+
+### Requirement: A provider without discoverable metadata surfaces an actionable error
+
+When a remote MCP server requires authorization but its provider publishes no
+discoverable OAuth metadata at all (neither an RFC 8414 document nor an OpenID
+Connect document), starting the connect flow SHALL fail with an actionable 4xx
+error naming the token-header remedy, never a 503; and inspecting the server
+SHALL report an authorization requirement whose Connect action is disabled and
+whose reason (the token-header remedy) is shown. A transient metadata failure
+(unreachable server, HTTP 5xx, or an observable 401/403 from a metadata
+endpoint) SHALL remain a 503.
+
+#### Scenario: Authorize surfaces the remedy
+
+- **WHEN** a project member starts the flow for a provider with no discoverable metadata
+- **THEN** the request fails with a 422 error naming the token-header remedy, not a 503
+
+#### Scenario: Inspect disables Connect
+
+- **WHEN** the server is inspected and its provider publishes no discoverable metadata
+- **THEN** the result reports `status:"auth_required"` with Connect disabled and the token-header remedy shown
+
+#### Scenario: Transient failure stays a 503
+
+- **WHEN** a metadata endpoint fails transiently (5xx, unreachable, or 401/403)
+- **THEN** the request fails with a 503, not a 422
+
 ### Requirement: An admin can provision a pre-registered OAuth client
 
 An admin SHALL be able to provision a pre-registered client identifier (and an

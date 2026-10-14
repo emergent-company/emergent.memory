@@ -72,3 +72,33 @@ func TestMCPOAuthError_ClientRequiredRegistrationUnavailable(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(blob), "internal_error")
 }
+
+// TestMCPOAuthError_MetadataUnavailableMapsToValidation covers the provider that
+// publishes no discoverable OAuth metadata: it must surface as an actionable 422
+// naming the token-header remedy, never an opaque 500 or a 503.
+func TestMCPOAuthError_MetadataUnavailableMapsToValidation(t *testing.T) {
+	err := fmt.Errorf("%w: fetching authorization server metadata: %v", ErrOAuthMetadataUnavailable, ErrOAuthMetadataUnavailable)
+
+	mapped := mcpOAuthError(err)
+	status, body := apperror.ToHTTPError(mapped)
+	require.Equal(t, http.StatusUnprocessableEntity, status)
+
+	blob, err := json.Marshal(body)
+	require.NoError(t, err)
+	require.NotContains(t, string(blob), "internal_error")
+	require.NotContains(t, string(blob), "service_unavailable")
+
+	msg, _ := body["error"].(map[string]any)["message"].(string)
+	require.Contains(t, msg, "token header", "message must name the token-header remedy")
+	require.Contains(t, msg, "connect flow", "message must explain the connect flow cannot be used")
+}
+
+// TestMCPOAuthError_DiscoveryFailedMapsToServiceUnavailable keeps genuine
+// transient upstream failures on the 503 path.
+func TestMCPOAuthError_DiscoveryFailedMapsToServiceUnavailable(t *testing.T) {
+	err := fmt.Errorf("%w: metadata endpoint returned HTTP 500", ErrOAuthDiscoveryFailed)
+
+	mapped := mcpOAuthError(err)
+	status, _ := apperror.ToHTTPError(mapped)
+	require.Equal(t, http.StatusServiceUnavailable, status)
+}

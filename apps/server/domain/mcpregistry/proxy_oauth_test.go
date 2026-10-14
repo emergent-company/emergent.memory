@@ -337,3 +337,42 @@ func TestClassifyAuthRequired_MetadataUnreachableStaysAnError(t *testing.T) {
 		t.Errorf("auth = %+v, want nil when metadata cannot be fetched", auth)
 	}
 }
+
+func TestClassifyAuthRequired_NoMetadataReportsUnavailable(t *testing.T) {
+	withTestOAuthHTTP(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	issuer := srv.URL + "/login/oauth"
+
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+srv.URL+`/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srv.URL + "/mcp",
+			"authorization_servers": []string{issuer},
+		})
+	})
+	// No well-known metadata anywhere.
+
+	repo := &fakeProxyRepo{}
+	pm := oauthTestProxy(t, repo)
+	server := remoteServer("s1", "p1", "github", srv.URL+"/mcp")
+
+	auth := classifyAuthRequired(context.Background(), pm, server, &ErrMCPAuthRejected{Status: http.StatusUnauthorized})
+	if auth == nil {
+		t.Fatal("expected an InspectAuthDTO (the server did reject us with an auth requirement)")
+	}
+	if !auth.Unavailable {
+		t.Error("Unavailable = false, want true for a provider with no discoverable metadata")
+	}
+	if auth.Remedy == "" {
+		t.Error("Remedy is empty, want the token-header remedy")
+	}
+	if auth.AuthorizationServer != "" {
+		t.Errorf("AuthorizationServer = %q, want empty for an unavailable requirement", auth.AuthorizationServer)
+	}
+}

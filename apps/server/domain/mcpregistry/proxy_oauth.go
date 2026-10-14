@@ -195,6 +195,14 @@ func classifyAuthRequired(ctx context.Context, pm *ProxyManager, server *MCPServ
 	}
 	req, err := discoverServerAuthRequirement(ctx, server)
 	if err != nil {
+		// A provider that publishes no discoverable OAuth metadata is still an
+		// authorization requirement — the server rejected us — but the browser
+		// connect flow cannot work. Report it as unavailable (with the
+		// token-header remedy) so the UI can disable Connect instead of offering
+		// a flow that would fail.
+		if errors.Is(err, ErrOAuthMetadataUnavailable) {
+			return &InspectAuthDTO{Unavailable: true, Remedy: oauthMetadataUnavailableRemedy}
+		}
 		// The server rejected us but advertised nothing usable: keep the
 		// original credential error rather than inventing a Connect affordance.
 		if !isAuthRejection(err) {

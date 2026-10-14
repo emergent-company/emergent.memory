@@ -60,6 +60,16 @@
 - [x] 10.3 Report `clientConfigured` on the OAuth status DTO, and make `StartMCPOAuth` reuse a provisioned client without re-registering
 - [x] 10.4 Unit + DB-backed tests: rejected registration surfaces status and maps to 400; provisioning stores an encrypted secret, clears tokens, and reports `clientConfigured`; the authorize flow skips registration and uses the provisioned client id; DELETE clears the identity
 
+## 11. OIDC discovery fallback + no-metadata 4xx (#1792)
+
+- [x] 11.1 Fix `metadataURLFor` to the RFC 8414 §3.1 path-insertion form (well-known segment inserted between host and issuer path) and add the legacy append form as an additional candidate
+- [x] 11.2 Add OpenID Connect candidate builders (path-insertion and append) and walk the ordered, deduplicated candidate list in step 2 of `discoverAuthRequirement`
+- [x] 11.3 Make `getJSON` return a typed `metadataHTTPError` and classify a permanent absence (all candidates 404/410) as `ErrOAuthMetadataUnavailable`, keeping network/decode/5xx/401/403 as transient
+- [x] 11.4 Map `ErrOAuthMetadataUnavailable` to an actionable 422 (token-header remedy) in `mcpOAuthError` and wrap it in `discoverServerAuthRequirement`; keep `ErrOAuthDiscoveryFailed` on the 503 path
+- [x] 11.5 Extend `InspectAuthDTO` with `Unavailable`/`Remedy` and report an unavailable requirement (Connect disabled) from `classifyAuthRequired`
+- [x] 11.6 Unit tests: OIDC fallback, path-insertion, all-404 → unavailable, transient-500 → discovery failure, 401/403 not absence, handler 422/503 mapping, and inspect unavailable DTO
+- [x] 11.7 Add a `MCPREGISTRY_LIVE_OAUTH_PROBE=1`-gated GitHub probe exercising the real PRM + OIDC path
+
 ## Verification status (recorded at PR time)
 
 Ran and passed:
