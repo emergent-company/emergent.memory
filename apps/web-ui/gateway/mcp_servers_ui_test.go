@@ -323,13 +323,15 @@ func mcpOAuthServerFixture(connected bool) MCPServer {
 }
 
 // TestRenderMCPServersOAuthConnect asserts a remote server with an unconnected
-// OAuth summary renders the Connect action (link to /oauth/start) and the
-// "Not connected" chip.
+// OAuth summary renders the Connect action (link to /oauth/start, opted out of
+// hx-boost: the handler redirects to the provider's cross-origin authorization
+// server, which a boosted fetch cannot follow) and the "Not connected" chip.
 func TestRenderMCPServersOAuthConnect(t *testing.T) {
 	html := renderHTML(t, MCPServersPage(mcpServersPageData{Servers: []MCPServer{mcpOAuthServerFixture(false)}}))
 	for _, want := range []string{
 		`data-testid="mcp-oauth-connect"`,
 		`href="/settings/mcp-servers/srv-oauth/oauth/start"`,
+		`hx-boost="false"`,
 		"Connect",
 		"Not connected",
 		"lucide--plug-zap",

@@ -272,13 +272,16 @@ templ mcpServerOAuthControls(srv MCPServer) {
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.Badge(ui.BadgeProps{Label: "Not connected", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
 				</div>
+				// hx-boost is off: the handler redirects to the provider's
+				// authorization server (cross-origin), which a boosted fetch
+				// (mode: same-origin) cannot follow. The browser must navigate.
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeLink,
 					Href:    mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/oauth/start",
 					Variant: ui.ButtonPrimary,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--plug-zap",
-					Attrs:   templ.Attributes{"data-testid": "mcp-oauth-connect"},
+					Attrs:   templ.Attributes{"data-testid": "mcp-oauth-connect", "hx-boost": "false"},
 				}) {
 					Connect
 				}

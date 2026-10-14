@@ -100,6 +100,9 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 	credsOnly := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}
 
 	// Chooser: one card per provider, actions driven by advertised methods.
+	// The OAuth action opts out of hx-boost: /data-sources/oauth/start redirects
+	// to the provider's cross-origin authorization server, which a boosted
+	// fetch (mode: same-origin) cannot follow.
 	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
@@ -108,6 +111,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 		"Google Drive", "GitHub",
 		`data-testid="ds-oauth-connect"`,
 		"/data-sources/oauth/start?providerType=google_drive",
+		`hx-boost="false"`,
 		"Connect with",
 		`data-testid="ds-credentials-connect"`,
 		"/data-sources/new?providerType=github",
@@ -127,6 +131,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 		"Authorize with Google Drive",
 		`data-testid="ds-oauth-connect"`,
 		"/data-sources/oauth/start?providerType=google_drive",
+		`hx-boost="false"`,
 	} {
 		if !strings.Contains(confirm, want) {
 			t.Errorf("oauth confirmation missing %q", want)
@@ -538,7 +543,7 @@ func TestUIDataSourceOAuthStart(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
-	if rec.Code != http.StatusFound {
+	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	if loc := rec.Header().Get("Location"); loc != "https://accounts.example/authorize?state=s1" {
@@ -564,6 +569,31 @@ func TestUIDataSourceOAuthStart(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil))
 	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/new?err=") {
 		t.Errorf("failure location = %q", loc)
+	}
+}
+
+// TestUIDataSourceOAuthStartHTMXRedirectsViaHXRedirect covers the boosted
+// caller: the chooser's OAuth action sits inside the boosted <main>, so htmx
+// hits this route with HX-Request. htmx fetches with mode "same-origin" and
+// cannot follow the cross-origin 303 the plain path emits, so the route answers
+// HX-Redirect (a top-level navigation to the absolute authorize URL) instead.
+func TestUIDataSourceOAuthStartHTMXRedirectsViaHXRedirect(t *testing.T) {
+	f := &fakeMemory{dsOAuthAuthorizeResp: &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"}}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=google_drive", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "https://accounts.example/authorize?state=s1" {
+		t.Errorf("HX-Redirect = %q, want the authorize URL", got)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty for an htmx caller", loc)
 	}
 }
 

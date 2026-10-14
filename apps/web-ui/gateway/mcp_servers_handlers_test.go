@@ -1083,14 +1083,41 @@ func TestUIMCPOAuthStartRedirectsToAuthorizeURL(t *testing.T) {
 	e := mcpServerTestServer(s)
 
 	rec := mcpServerGet(e, "/settings/mcp-servers/srv-http/oauth/start")
-	if rec.Code != http.StatusFound {
-		t.Fatalf("oauth/start = %d, want 302", rec.Code)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("oauth/start = %d, want 303", rec.Code)
 	}
 	if loc := rec.Header().Get("Location"); loc != "https://auth.example.com/authorize?client_id=abc" {
 		t.Errorf("Location = %q, want the authorize URL", loc)
 	}
 	if f.lastOAuthID != "srv-http" {
 		t.Errorf("authorize target = %q, want srv-http", f.lastOAuthID)
+	}
+}
+
+// TestUIMCPOAuthStartHTMXRedirectsViaHXRedirect covers the boosted caller: the
+// Connect link sits inside the boosted <main>, so htmx hits this route with
+// HX-Request. htmx fetches with mode "same-origin" and cannot follow the
+// cross-origin 303 the plain path emits, so the route answers HX-Redirect (a
+// top-level navigation to the absolute authorize URL) instead.
+func TestUIMCPOAuthStartHTMXRedirectsViaHXRedirect(t *testing.T) {
+	f := newMCPTestBackend(mcpTestRegistryFixture())
+	f.authorizeResult = &MCPOAuthAuthorize{AuthorizeURL: "https://auth.example.com/authorize?client_id=abc", State: "opaque"}
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/settings/mcp-servers/srv-http/oauth/start", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx oauth/start = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "https://auth.example.com/authorize?client_id=abc" {
+		t.Errorf("HX-Redirect = %q, want the authorize URL", got)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("Location = %q, want empty for an htmx caller", loc)
 	}
 }
 

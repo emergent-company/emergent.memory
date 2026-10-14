@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -261,10 +262,18 @@ func (s *Server) uiMCPToggle(c echo.Context) error {
 // --- OAuth connect / disconnect ---
 
 // uiMCPOAuthStart handles GET /settings/mcp-servers/:id/oauth/start. It asks
-// memory to start the OAuth flow and redirects the browser to the provider's
+// memory to start the OAuth flow and sends the browser to the provider's
 // authorization URL; any failure (unconfigured redirect origin, non-remote or
 // no-auth server, 404, or metadata fetch failure) redirects back to the list
 // with an error flash.
+//
+// The authorize URL is cross-origin, and the Connect control sits inside the
+// boosted <main> (ui.templ). htmx fetches with mode "same-origin", so a
+// redirect it cannot follow is dropped as "Failed to fetch" (the browser logs
+// "Unsafe attempt to load URL … from frame with URL …") and the provider page
+// never loads. Answer a boosted caller with HX-Redirect — a top-level
+// navigation to an absolute URL — and a plain one with a 303
+// (docs/ui-patterns.md §2).
 func (s *Server) uiMCPOAuthStart(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -275,7 +284,8 @@ func (s *Server) uiMCPOAuthStart(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, mcpServerSettingsBase, err)
 	}
-	return c.Redirect(http.StatusFound, res.AuthorizeURL)
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), res.AuthorizeURL)
+	return nil
 }
 
 // uiMCPOAuthDisconnect handles POST /settings/mcp-servers/:id/oauth/disconnect

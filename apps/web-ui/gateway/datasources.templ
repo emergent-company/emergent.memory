@@ -213,13 +213,15 @@ templ dsProviderChoice(p DSProvider) {
 			</div>
 			<div class="flex flex-wrap items-center gap-2">
 				if p.DSProviderSupportsOAuth() {
+					// hx-boost is off: the handler redirects to the provider
+					// (cross-origin), which a boosted fetch cannot follow.
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeLink,
 						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
 						Variant: ui.ButtonPrimary,
 						Size:    ui.ButtonSM,
 						Icon:    "lucide--plug-zap",
-						Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect"},
+						Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
 					}) {
 						Connect with { p.Name }
 					}
@@ -284,13 +286,15 @@ templ dsOAuthConnectPanel(p DSProvider) {
 			</div>
 		</div>
 		<div class="mt-4 flex flex-wrap items-center gap-2">
+			// hx-boost is off: the handler redirects to the provider
+			// (cross-origin), which a boosted fetch cannot follow.
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
 				Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
 				Variant: ui.ButtonPrimary,
 				Size:    ui.ButtonSM,
 				Icon:    "lucide--plug-zap",
-				Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect"},
+				Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
 			}) {
 				Connect with { p.Name }
 			}

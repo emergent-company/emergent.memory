@@ -409,7 +409,12 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 		}
 		return redirectWithError(c, "/data-sources/new", errors.New(msg))
 	}
-	return c.Redirect(http.StatusFound, resp.AuthorizeURL)
+	// The authorize URL is cross-origin (the provider). A boosted/htmx caller
+	// cannot follow a cross-origin redirect (htmx fetches with mode
+	// "same-origin") — see uiMCPOAuthStart — so answer htmx with HX-Redirect
+	// (top-level navigation) and plain browsers with a 303.
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), resp.AuthorizeURL)
+	return nil
 }
 
 // renderDSOAuthClientMissing renders the source-creation page with an inline
