@@ -56,8 +56,13 @@ func (s *Service) GetByID(ctx context.Context, id string) (*ProfileDTO, error) {
 		return nil, err
 	}
 
-	// Fetch email
-	email, _ := s.repo.GetEmail(ctx, profile.ID)
+	// Fetch email. An empty email (no verified address) stays omitted from the
+	// DTO via omitempty, but a lookup failure is a real error and must not be
+	// silently degraded to a profile without an email.
+	email, err := s.repo.GetEmail(ctx, profile.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	dto := profile.ToDTO(email)
 	return &dto, nil
@@ -70,8 +75,11 @@ func (s *Service) GetByZitadelUserID(ctx context.Context, zitadelUserID string) 
 		return nil, err
 	}
 
-	// Fetch email
-	email, _ := s.repo.GetEmail(ctx, profile.ID)
+	// Fetch email (see GetByID): a lookup error must surface, not degrade.
+	email, err := s.repo.GetEmail(ctx, profile.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	dto := profile.ToDTO(email)
 	return &dto, nil
@@ -84,8 +92,11 @@ func (s *Service) Update(ctx context.Context, id string, req *UpdateProfileReque
 		return nil, err
 	}
 
-	// Fetch email
-	email, _ := s.repo.GetEmail(ctx, profile.ID)
+	// Fetch email (see GetByID): a lookup error must surface, not degrade.
+	email, err := s.repo.GetEmail(ctx, profile.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	dto := profile.ToDTO(email)
 	return &dto, nil

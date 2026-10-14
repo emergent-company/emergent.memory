@@ -143,9 +143,11 @@ func (r *Repository) GetEmail(ctx context.Context, userID string) (string, error
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			// No verified email is a legitimate state, not an error.
 			return "", nil
 		}
-		return "", err
+		r.log.Error("failed to get user email", logger.Error(err))
+		return "", apperror.ErrDatabase.WithInternal(err)
 	}
 	return email, nil
 }

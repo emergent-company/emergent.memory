@@ -23,6 +23,7 @@ import (
 type fakeProfileRepo struct {
 	profiles     map[string]Profile
 	email        string
+	emailErr     error
 	setAvatarErr error
 }
 
@@ -108,6 +109,9 @@ func (f *fakeProfileRepo) Update(_ context.Context, id string, req *UpdateProfil
 }
 
 func (f *fakeProfileRepo) GetEmail(_ context.Context, _ string) (string, error) {
+	if f.emailErr != nil {
+		return "", f.emailErr
+	}
 	return f.email, nil
 }
 
@@ -480,4 +484,78 @@ func TestService_GetAvatar_NoAvatar_ReturnsNotFound(t *testing.T) {
 
 	_, _, err := svc.GetAvatar(context.Background(), "profile-1")
 	assertAppErrorStatus(t, err, 404)
+}
+
+// ---------------------------------------------------------------------------
+// Email lookup error propagation (issue #1828)
+// ---------------------------------------------------------------------------
+
+// TestService_GetByID_EmailLookupError_Propagates ensures a failing email
+// lookup is surfaced instead of being silently discarded (which produced a
+// 200 response with the email field omitted).
+func TestService_GetByID_EmailLookupError_Propagates(t *testing.T) {
+	sentinel := errors.New("email lookup failed")
+	repo := newFakeProfileRepo()
+	repo.seed(Profile{ID: "profile-1", ZitadelUserID: "zitadel-1"})
+	repo.emailErr = sentinel
+	svc := newTestAvatarService(repo, newFakeAvatarStore(true))
+
+	dto, err := svc.GetByID(context.Background(), "profile-1")
+	if err == nil {
+		t.Fatalf("expected error from failed email lookup, got dto=%+v", dto)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want %v", err, sentinel)
+	}
+}
+
+func TestService_GetByZitadelUserID_EmailLookupError_Propagates(t *testing.T) {
+	sentinel := errors.New("email lookup failed")
+	repo := newFakeProfileRepo()
+	repo.seed(Profile{ID: "profile-1", ZitadelUserID: "zitadel-1"})
+	repo.emailErr = sentinel
+	svc := newTestAvatarService(repo, newFakeAvatarStore(true))
+
+	dto, err := svc.GetByZitadelUserID(context.Background(), "zitadel-1")
+	if err == nil {
+		t.Fatalf("expected error from failed email lookup, got dto=%+v", dto)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want %v", err, sentinel)
+	}
+}
+
+func TestService_Update_EmailLookupError_Propagates(t *testing.T) {
+	sentinel := errors.New("email lookup failed")
+	repo := newFakeProfileRepo()
+	repo.seed(Profile{ID: "profile-1", ZitadelUserID: "zitadel-1"})
+	repo.emailErr = sentinel
+	svc := newTestAvatarService(repo, newFakeAvatarStore(true))
+
+	first := "Jane"
+	dto, err := svc.Update(context.Background(), "profile-1", &UpdateProfileRequest{FirstName: &first})
+	if err == nil {
+		t.Fatalf("expected error from failed email lookup, got dto=%+v", dto)
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("err = %v, want %v", err, sentinel)
+	}
+}
+
+// TestService_GetByID_NoEmail_ReturnsProfileWithoutEmail pins the other half
+// of the distinction: a user genuinely without a verified email still gets a
+// successful response, with the email field omitted.
+func TestService_GetByID_NoEmail_ReturnsProfileWithoutEmail(t *testing.T) {
+	repo := newFakeProfileRepo()
+	repo.seed(Profile{ID: "profile-1", ZitadelUserID: "zitadel-1"})
+	// repo.email is "" and repo.emailErr is nil: no verified email exists.
+	svc := newTestAvatarService(repo, newFakeAvatarStore(true))
+
+	dto, err := svc.GetByID(context.Background(), "profile-1")
+	if err != nil {
+		t.Fatalf("GetByID returned error: %v", err)
+	}
+	if dto.Email != "" {
+		t.Errorf("Email = %q, want empty", dto.Email)
+	}
 }
