@@ -1720,15 +1720,21 @@ Validate a Blueprint directory (or GitHub repository) without making any API
 calls or modifying the project.
 
 Checks performed:
-  Packs      — required fields, object/relationship type definitions, internal
+  Packs      — required fields, object/relationship type definitions,
                cross-references (sourceType/targetType must name an objectType
-               in the same pack), duplicate names within and across files.
+               defined by some pack in the blueprint — an endpoint may be owned
+               by a different pack than the one declaring the relationship),
+               duplicate names within and across files.
   Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
   Seed data  — required fields, key presence (warning when missing), type
                cross-referenced against loaded pack definitions, srcKey/dstKey
                cross-referenced against seed object keys.
+
+This command is offline and checks relationship endpoints against the blueprint's
+own packs only; 'memory blueprints install' additionally accepts object types
+already present in the project.
 
 Exits 0 when only warnings are found, exits 1 when any error is found.
 

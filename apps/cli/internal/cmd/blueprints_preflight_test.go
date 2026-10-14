@@ -20,10 +20,11 @@ import (
 // distinguishes mutating verbs from reads, so a test can prove a failed
 // preflight mutated nothing and a valid blueprint did.
 type cmdPreflightServer struct {
-	mu         sync.Mutex
-	total      int
-	mutating   int
-	createdRaw []byte // last POST body to an agent-definitions endpoint
+	mu           sync.Mutex
+	total        int
+	mutating     int
+	compiledHits int
+	createdRaw   []byte // last POST body to an agent-definitions endpoint
 }
 
 func newCmdPreflightServer(t *testing.T) (*httptest.Server, *cmdPreflightServer) {
@@ -39,6 +40,11 @@ func newCmdPreflightServer(t *testing.T) (*httptest.Server, *cmdPreflightServer)
 
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/compiled-types"):
+			s.mu.Lock()
+			s.compiledHits++
+			s.mu.Unlock()
+			_, _ = w.Write([]byte(`{"objectTypes":[]}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/available"):
 			// schemas.GetAvailablePacks decodes a raw array.
 			_, _ = w.Write([]byte(`[]`))
@@ -76,6 +82,12 @@ func (s *cmdPreflightServer) createdBody() []byte {
 	return s.createdRaw
 }
 
+func (s *cmdPreflightServer) compiledTypesHits() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.compiledHits
+}
+
 // writeBlueprintDir writes a minimal blueprint directory whose only resource is
 // a single agent file with the supplied YAML content.
 func writeBlueprintDir(t *testing.T, agentYAML string) string {
@@ -87,6 +99,21 @@ func writeBlueprintDir(t *testing.T, agentYAML string) string {
 	}
 	if err := os.WriteFile(filepath.Join(agentsDir, "agent.yaml"), []byte(agentYAML), 0o644); err != nil {
 		t.Fatalf("write agent: %v", err)
+	}
+	return dir
+}
+
+// writePackBlueprintDir writes a blueprint directory whose only resource is a
+// single pack file under schemas/ with the supplied YAML content.
+func writePackBlueprintDir(t *testing.T, packYAML string) string {
+	t.Helper()
+	dir := t.TempDir()
+	schemasDir := filepath.Join(dir, "schemas")
+	if err := os.MkdirAll(schemasDir, 0o755); err != nil {
+		t.Fatalf("mkdir schemas: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(schemasDir, "pack.yaml"), []byte(packYAML), 0o644); err != nil {
+		t.Fatalf("write pack: %v", err)
 	}
 	return dir
 }
@@ -191,5 +218,36 @@ func TestRunBlueprintsInstall_ValidStructuredModelApplies(t *testing.T) {
 	}
 	if req.Model.Provider != "" {
 		t.Fatalf("expected provider cleared on the wire, got %q", req.Model.Provider)
+	}
+}
+
+// TestRunBlueprintsInstall_ConsultsProjectTypesForUnknownEndpoint proves the
+// install preflight widens its relationship-endpoint check to the project when a
+// blueprint endpoint is not defined by any of its packs (#1853): it issues a
+// read-only compiled-types request, and when the project does not own the type
+// it aborts before any mutation.
+func TestRunBlueprintsInstall_ConsultsProjectTypesForUnknownEndpoint(t *testing.T) {
+	srv, fake := newCmdPreflightServer(t)
+	dir := writePackBlueprintDir(t, `name: board
+version: "1.0.0"
+objectTypes:
+  - name: Task
+    label: Task
+relationshipTypes:
+  - name: mentions
+    sourceType: Task
+    targetType: Message
+`)
+
+	out, err := runRealInstall(t, srv.URL, dir)
+	if err == nil {
+		t.Fatalf("expected install to abort for an endpoint the project does not own, got nil (output: %s)", out)
+	}
+
+	if _, mutating := fake.counts(); mutating != 0 {
+		t.Fatalf("expected zero mutating requests before abort, got %d", mutating)
+	}
+	if fake.compiledTypesHits() == 0 {
+		t.Fatal("expected the preflight to consult the project's compiled types")
 	}
 }

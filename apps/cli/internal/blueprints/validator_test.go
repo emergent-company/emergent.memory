@@ -275,3 +275,168 @@ func TestNormalizeAgentModels(t *testing.T) {
 		}
 	})
 }
+
+// TestValidatePacks_CrossPackRelationshipEndpoints verifies that a relationship
+// may name a source/target object type owned by another pack in the same
+// blueprint: a blueprint is applied as a unit, so a cross-pack endpoint is
+// legitimate (#1853). A type that exists in no pack in the blueprint still
+// fails red.
+func TestValidatePacks_CrossPackRelationshipEndpoints(t *testing.T) {
+	t.Run("cross-pack target is accepted", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name:        "core",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/core.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "delivers", SourceType: "Task", TargetType: "Note"},
+				},
+			},
+			{
+				Name:        "notes",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/notes.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Note", Label: "Note"}},
+			},
+		}
+		report := blueprints.Validate(nil, packs, nil, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected a cross-pack target to validate green, got: %v", report.Errors())
+		}
+	})
+
+	t.Run("cross-pack source is accepted", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name:        "notes",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/notes.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Note", Label: "Note"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "attached_to", SourceType: "Task", TargetType: "Note"},
+				},
+			},
+			{
+				Name:        "core",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/core.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+			},
+		}
+		report := blueprints.Validate(nil, packs, nil, nil, nil, nil, nil)
+		if report.HasErrors() {
+			t.Fatalf("expected a cross-pack source to validate green, got: %v", report.Errors())
+		}
+	})
+
+	t.Run("unknown target still fails red", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name:        "core",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/core.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "delivers", SourceType: "Task", TargetType: "Note"},
+				},
+			},
+		}
+		report := blueprints.Validate(nil, packs, nil, nil, nil, nil, nil)
+		errs := report.Errors()
+		if len(errs) != 1 {
+			t.Fatalf("expected 1 error for an unknown target, got %d: %v", len(errs), errs)
+		}
+		if errs[0].Field != "relationshipTypes[0].targetType" {
+			t.Fatalf("expected field relationshipTypes[0].targetType, got %q (%v)", errs[0].Field, errs[0])
+		}
+		if !strings.Contains(errs[0].Message, "blueprint") || !strings.Contains(errs[0].Message, "Note") {
+			t.Fatalf("expected the error to name the blueprint scope and the offender, got: %q", errs[0].Message)
+		}
+	})
+
+	t.Run("plural target resolves against a sibling pack", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name:        "core",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/core.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "links", SourceTypes: []string{"Task"}, TargetTypes: []string{"Note", "Unknown"}},
+				},
+			},
+			{
+				Name:        "notes",
+				Version:     "1.0.0",
+				SourceFile:  "schemas/notes.yaml",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Note", Label: "Note"}},
+			},
+		}
+		report := blueprints.Validate(nil, packs, nil, nil, nil, nil, nil)
+		errs := report.Errors()
+		if len(errs) != 1 {
+			t.Fatalf("expected exactly 1 error (the Unknown target), got %d: %v", len(errs), errs)
+		}
+		if !strings.Contains(errs[0].Message, "Unknown") {
+			t.Fatalf("expected the error to name the unknown target, got: %q", errs[0].Message)
+		}
+	})
+}
+
+// TestHasUnknownRelationshipEndpoints pins the lazy gate the install path uses to
+// decide whether it must consult the project's object types (#1853).
+func TestHasUnknownRelationshipEndpoints(t *testing.T) {
+	t.Run("all endpoints resolve locally", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name: "core", Version: "1.0.0",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "delivers", SourceType: "Task", TargetType: "Note"},
+				},
+			},
+			{Name: "notes", Version: "1.0.0", ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Note", Label: "Note"}}},
+		}
+		if blueprints.HasUnknownRelationshipEndpoints(packs) {
+			t.Fatal("expected a cross-pack endpoint defined by a sibling pack to resolve locally")
+		}
+	})
+
+	t.Run("unknown endpoint needs the project", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name: "core", Version: "1.0.0",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "mentions", SourceType: "Task", TargetType: "Message"},
+				},
+			},
+		}
+		if !blueprints.HasUnknownRelationshipEndpoints(packs) {
+			t.Fatal("expected an endpoint defined by no pack to require the project's types")
+		}
+	})
+
+	t.Run("plural unknown target needs the project", func(t *testing.T) {
+		packs := []blueprints.PackFile{
+			{
+				Name: "core", Version: "1.0.0",
+				ObjectTypes: []blueprints.ObjectTypeDef{{Name: "Task", Label: "Task"}},
+				RelationshipTypes: []blueprints.RelationshipTypeDef{
+					{Name: "links", SourceTypes: []string{"Task"}, TargetTypes: []string{"Task", "Message"}},
+				},
+			},
+		}
+		if !blueprints.HasUnknownRelationshipEndpoints(packs) {
+			t.Fatal("expected an unknown plural target to require the project's types")
+		}
+	})
+
+	t.Run("no object types needs no project read", func(t *testing.T) {
+		packs := []blueprints.PackFile{{Name: "empty", Version: "1.0.0"}}
+		if blueprints.HasUnknownRelationshipEndpoints(packs) {
+			t.Fatal("expected no object types to skip the project read (validatePacks also skips)")
+		}
+	})
+}

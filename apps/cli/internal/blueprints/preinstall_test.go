@@ -159,6 +159,7 @@ func TestInstallPreflight_ValidStructuredModelNormalizesAndApplies(t *testing.T)
 	if len(body) == 0 {
 		t.Fatal("expected the agent to be created")
 	}
+
 	var req struct {
 		Model struct {
 			Name     string `json:"name"`
@@ -173,5 +174,71 @@ func TestInstallPreflight_ValidStructuredModelNormalizesAndApplies(t *testing.T)
 	}
 	if req.Model.Provider != "" {
 		t.Fatalf("expected provider cleared on the wire, got %q", req.Model.Provider)
+	}
+}
+
+// TestInstallPreflight_CrossPackRelationshipTarget is the regression guard for
+// #1853: a multi-pack blueprint whose relationship endpoint is owned by a
+// sibling pack must pass the install preflight (the same-pack rule previously
+// rejected it), while an endpoint that exists in no pack still aborts.
+func TestInstallPreflight_CrossPackRelationshipTarget(t *testing.T) {
+	packs := []PackFile{
+		{
+			Name:        "core",
+			Version:     "1.0.0",
+			SourceFile:  "schemas/core.yaml",
+			ObjectTypes: []ObjectTypeDef{{Name: "Task", Label: "Task"}},
+			RelationshipTypes: []RelationshipTypeDef{
+				{Name: "delivers", SourceType: "Task", TargetType: "Note"},
+			},
+		},
+		{
+			Name:        "notes",
+			Version:     "1.0.0",
+			SourceFile:  "schemas/notes.yaml",
+			ObjectTypes: []ObjectTypeDef{{Name: "Note", Label: "Note"}},
+		},
+	}
+
+	if report := Preflight(nil, packs, nil, nil, nil, nil, nil); report.HasErrors() {
+		t.Fatalf("expected a cross-pack relationship target to pass the install preflight, got: %v", report.Errors())
+	}
+
+	// Without the sibling pack the target exists in no pack and must abort.
+	report := Preflight(nil, packs[:1], nil, nil, nil, nil, nil)
+	if !report.HasErrors() {
+		t.Fatal("expected an unknown relationship target to fail the install preflight")
+	}
+}
+
+// TestInstallPreflight_ProjectOwnedEndpoint verifies the install gate accepts a
+// relationship endpoint owned by the project — an installed pack or a built-in
+// type — even when no pack in the blueprint defines it (#1853), while an endpoint
+// unknown to both the blueprint and the project still aborts.
+func TestInstallPreflight_ProjectOwnedEndpoint(t *testing.T) {
+	packs := []PackFile{
+		{
+			Name:        "board",
+			Version:     "1.0.0",
+			SourceFile:  "schemas/board.yaml",
+			ObjectTypes: []ObjectTypeDef{{Name: "Task", Label: "Task"}},
+			RelationshipTypes: []RelationshipTypeDef{
+				{Name: "mentions", SourceType: "Task", TargetType: "Message"},
+			},
+		},
+	}
+
+	if report := PreflightWithProjectTypes([]string{"Message"}, nil, packs, nil, nil, nil, nil, nil); report.HasErrors() {
+		t.Fatalf("expected a project-owned endpoint to pass the install preflight, got: %v", report.Errors())
+	}
+
+	if report := PreflightWithProjectTypes([]string{"Other"}, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
+		t.Fatal("expected an endpoint unknown to the blueprint and the project to fail the install preflight")
+	}
+
+	// With no project types (read failed / offline), the endpoint owned only by
+	// the project reverts to an error — the blueprint-only union.
+	if report := PreflightWithProjectTypes(nil, nil, packs, nil, nil, nil, nil, nil); !report.HasErrors() {
+		t.Fatal("expected the blueprint-only union to reject a project-owned endpoint")
 	}
 }

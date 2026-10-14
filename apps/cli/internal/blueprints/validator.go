@@ -86,9 +86,13 @@ func (r *ValidationReport) Warnings() []ValidationIssue {
 // blueprint directory. It expects the same values returned by LoadDir.
 //
 // It is purely offline — no API calls are made. It validates:
-//   - Pack: required fields, per-type required fields, internal cross-references
-//     (relationship sourceType/targetType must name an objectType in the same pack),
-//     duplicate names within a pack, duplicate pack names across files.
+//   - Pack: required fields, per-type required fields, cross-references
+//     (a relationship's sourceType/targetType must name an objectType defined by
+//     some pack in the blueprint; an endpoint may be owned by a different pack
+//     than the one declaring the relationship, and the install gate
+//     PreflightWithProjectTypes additionally accepts types already present in
+//     the project, #1853), duplicate names within a pack, duplicate pack names
+//     across files.
 //   - Agent: required fields, enum values (visibility, dispatchMode),
 //     model.name required when model block is present, duplicate agent names.
 //   - Skill: required fields, non-empty content body, duplicate skill names.
@@ -98,6 +102,25 @@ func (r *ValidationReport) Warnings() []ValidationIssue {
 //     pack relationship types, srcKey/dstKey reference known seed object keys.
 //   - Cross-file: warns when the blueprint is empty (nothing found).
 func Validate(
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	return validateWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+}
+
+// validateWithProjectTypes is the shared implementation behind Validate (offline
+// — nil knownProjectObjTypes, so only the blueprint's own packs are known) and
+// PreflightWithProjectTypes (the install gate, which supplies the object types
+// already present in the project). A relationship endpoint is accepted when it
+// names an object type defined by any pack in the blueprint OR one already in
+// the project (#1853).
+func validateWithProjectTypes(
+	knownProjectObjTypes map[string]bool,
 	project *ProjectFile,
 	packs []PackFile,
 	agents []AgentFile,
@@ -122,7 +145,7 @@ func Validate(
 	}
 
 	// Validate each resource type.
-	r.validatePacks(packs)
+	r.validatePacks(packs, knownProjectObjTypes)
 	r.validateAgents(agents)
 	r.validateSkills(skills)
 	r.validateSeedObjects(objects, packs)
@@ -135,8 +158,27 @@ func Validate(
 // Pack validation
 // ──────────────────────────────────────────────
 
-func (r *ValidationReport) validatePacks(packs []PackFile) {
+func (r *ValidationReport) validatePacks(packs []PackFile, knownProjectObjTypes map[string]bool) {
 	seen := make(map[string]string) // name → sourceFile
+
+	// Relationship endpoints may name an object type owned by any pack in the
+	// same blueprint, not only the pack that declares the relationship type
+	// (#1853), or a type already present in the project. The server accepts any
+	// non-empty endpoint, so validate against the union of every loaded pack's
+	// object types plus the project's known types rather than one pack in
+	// isolation. Offline Validate passes a nil project set (blueprint only).
+	knownObjTypes := buildKnownObjectTypes(packs)
+	for name := range knownProjectObjTypes {
+		if name != "" {
+			knownObjTypes[name] = true
+		}
+	}
+	// Scope phrase for the "does not match" message: the install gate knows the
+	// project's types, the offline validator only knows the blueprint.
+	scope := "the blueprint"
+	if len(knownProjectObjTypes) > 0 {
+		scope = "the blueprint or the project"
+	}
 
 	for _, p := range packs {
 		// Duplicate pack names across files.
@@ -162,9 +204,6 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 			r.add(ValidationError, "pack", p.Name, p.SourceFile, "objectTypes", "must define at least one objectType")
 		}
 
-		// Build set of object type names for cross-reference.
-		objTypeNames := make(map[string]bool, len(p.ObjectTypes))
-
 		// Validate each object type.
 		dupObjNames := make(map[string]bool)
 		for i, ot := range p.ObjectTypes {
@@ -177,7 +216,6 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 						fmt.Sprintf("duplicate objectType name %q", ot.Name))
 				}
 				dupObjNames[ot.Name] = true
-				objTypeNames[ot.Name] = true
 			}
 			if ot.Label == "" {
 				r.add(ValidationWarning, "pack", p.Name, p.SourceFile, field+".label",
@@ -209,9 +247,9 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 							fmt.Sprintf("duplicate relationshipType name %q with sourceType %q", rt.Name, src))
 					}
 					dupRelKeys[dupKey] = true
-					if len(objTypeNames) > 0 && !objTypeNames[src] {
+					if len(knownObjTypes) > 0 && !knownObjTypes[src] {
 						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".sourceType",
-							fmt.Sprintf("relationshipType %q: sourceType %q does not match any objectType in this pack", rt.Name, src))
+							fmt.Sprintf("relationshipType %q: sourceType %q does not match any objectType in %s", rt.Name, src, scope))
 					}
 				}
 			}
@@ -223,9 +261,9 @@ func (r *ValidationReport) validatePacks(packs []PackFile) {
 					fmt.Sprintf("relationshipType %q: targetType (or targetTypes) is required", rt.Name))
 			} else {
 				for _, tgt := range tgtTypes {
-					if len(objTypeNames) > 0 && !objTypeNames[tgt] {
+					if len(knownObjTypes) > 0 && !knownObjTypes[tgt] {
 						r.add(ValidationError, "pack", p.Name, p.SourceFile, field+".targetType",
-							fmt.Sprintf("relationshipType %q: targetType %q does not match any objectType in this pack", rt.Name, tgt))
+							fmt.Sprintf("relationshipType %q: targetType %q does not match any objectType in %s", rt.Name, tgt, scope))
 					}
 				}
 			}
@@ -384,7 +422,41 @@ func Preflight(
 	rels []SeedRelationshipRecord,
 	loadErrors []BlueprintsResult,
 ) *ValidationReport {
-	report := Validate(project, packs, agents, skills, objects, rels, loadErrors)
+	return PreflightWithProjectTypes(nil, project, packs, agents, skills, objects, rels, loadErrors)
+}
+
+// PreflightWithProjectTypes is Preflight with the object types already present in
+// the project supplied (installed packs plus built-ins). A relationship endpoint
+// naming one of them is accepted even when no pack in the blueprint defines it
+// (#1853), so a pack may relate to a type owned by a companion/community pack or
+// a built-in type. Install resolves the list with a best-effort read-only call;
+// when it is unavailable (nil) the check falls back to the blueprint's own packs,
+// exactly like Preflight.
+//
+// Like Preflight, this function makes no API calls itself — the caller supplies
+// the project's types — so a malformed blueprint still aborts before any
+// mutation (#1586).
+func PreflightWithProjectTypes(
+	projectObjectTypes []string,
+	project *ProjectFile,
+	packs []PackFile,
+	agents []AgentFile,
+	skills []SkillFile,
+	objects []SeedObjectRecord,
+	rels []SeedRelationshipRecord,
+	loadErrors []BlueprintsResult,
+) *ValidationReport {
+	var known map[string]bool
+	if len(projectObjectTypes) > 0 {
+		known = make(map[string]bool, len(projectObjectTypes))
+		for _, name := range projectObjectTypes {
+			if name != "" {
+				known[name] = true
+			}
+		}
+	}
+
+	report := validateWithProjectTypes(known, project, packs, agents, skills, objects, rels, loadErrors)
 	if !report.HasErrors() {
 		// Validate just proved every model reference parses, so normalization
 		// cannot add errors; it only rewrites the references the applier sends.
@@ -526,6 +598,37 @@ func buildKnownObjectTypes(packs []PackFile) map[string]bool {
 		}
 	}
 	return m
+}
+
+// HasUnknownRelationshipEndpoints reports whether any relationship in packs
+// names a source or target object type that no pack in the same set defines. The
+// install path uses it to decide whether it must consult the project's existing
+// object types: when every endpoint resolves locally, no read is needed, so a
+// blueprint that fails offline validation still aborts with zero requests. When
+// an endpoint is unresolved, a single read-only compiled-types call happens
+// before the abort — the #1586 guarantee of zero mutations holds regardless. It
+// is a cheap pre-check; the authoritative check remains validatePacks/Preflight.
+func HasUnknownRelationshipEndpoints(packs []PackFile) bool {
+	known := buildKnownObjectTypes(packs)
+	if len(known) == 0 {
+		// No object types at all — validatePacks skips endpoint cross-checks.
+		return false
+	}
+	for _, p := range packs {
+		for _, rt := range p.RelationshipTypes {
+			for _, src := range rt.GetSourceTypes() {
+				if !known[src] {
+					return true
+				}
+			}
+			for _, tgt := range rt.GetTargetTypes() {
+				if !known[tgt] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func buildKnownRelationshipTypes(packs []PackFile) map[string]bool {

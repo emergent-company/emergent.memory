@@ -96,12 +96,24 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	// ── Preflight: offline validation + model normalization ────────
-	// Runs before ANY API call so a malformed blueprint — e.g. an agent model
-	// not in "provider/model" form — aborts with zero mutations instead of
-	// partially applying packs first (#1586). Preflight also normalizes model
-	// references in place (folds a structured model.provider into the name) so
-	// the applier sends exactly the shape the server accepts.
-	report := blueprints.Preflight(projectFile, packs, agents, skills, seedObjects, seedRels, loadResults)
+	// Runs before anything is applied so a malformed blueprint — e.g. an agent
+	// model not in "provider/model" form — aborts with zero mutations instead of
+	// partially applying packs first (#1586). Only when a relationship endpoint is
+	// not defined by any pack in the blueprint does it make a single read-only
+	// call for the project's existing object types, so a relationship may target
+	// a type owned by an already-installed pack or a built-in (#1853); the fetch
+	// is best-effort — on failure the endpoint check falls back to the
+	// blueprint's own packs. Preflight also normalizes model references in place
+	// (folds a structured model.provider into the name) so the applier sends
+	// exactly the shape the server accepts.
+	var projectObjTypes []string
+	if blueprints.HasUnknownRelationshipEndpoints(packs) {
+		projectObjTypes = projectObjectTypeNames(context.Background(), c)
+	}
+	report := blueprints.PreflightWithProjectTypes(
+		projectObjTypes,
+		projectFile, packs, agents, skills, seedObjects, seedRels, loadResults,
+	)
 	if report.HasErrors() {
 		for _, issue := range report.Errors() {
 			_, _ = fmt.Fprintf(out, "  error    %s\n", issue)
@@ -181,6 +193,25 @@ func runBlueprintsInstall(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// projectObjectTypeNames returns the object type names already present in the
+// project — defined by installed packs or built-ins — used to widen the install
+// preflight's relationship-endpoint check beyond the blueprint's own packs
+// (#1853). It is best-effort: any error yields nil so preflight still runs with
+// the blueprint-only union instead of failing an install on a read failure.
+func projectObjectTypeNames(ctx context.Context, c *client.Client) []string {
+	compiled, err := c.SDK.Schemas.GetCompiledTypes(ctx)
+	if err != nil || compiled == nil {
+		return nil
+	}
+	names := make([]string, 0, len(compiled.ObjectTypes))
+	for _, ot := range compiled.ObjectTypes {
+		if ot.Name != "" {
+			names = append(names, ot.Name)
+		}
+	}
+	return names
 }
 
 // ─────────────────────────────────────────────
@@ -269,15 +300,21 @@ var blueprintsValidateCmd = &cobra.Command{
 calls or modifying the project.
 
 Checks performed:
-  Packs      — required fields, object/relationship type definitions, internal
+  Packs      — required fields, object/relationship type definitions,
                cross-references (sourceType/targetType must name an objectType
-               in the same pack), duplicate names within and across files.
+               defined by some pack in the blueprint — an endpoint may be owned
+               by a different pack than the one declaring the relationship),
+               duplicate names within and across files.
   Agents     — required fields, enum values (visibility, dispatchMode),
                model.name required when model block is present, duplicate names.
   Skills     — required fields, non-empty content body, duplicate names.
   Seed data  — required fields, key presence (warning when missing), type
                cross-referenced against loaded pack definitions, srcKey/dstKey
                cross-referenced against seed object keys.
+
+This command is offline and checks relationship endpoints against the blueprint's
+own packs only; 'memory blueprints install' additionally accepts object types
+already present in the project.
 
 Exits 0 when only warnings are found, exits 1 when any error is found.
 
