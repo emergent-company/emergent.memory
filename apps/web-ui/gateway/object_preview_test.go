@@ -320,6 +320,167 @@ func TestObjectPreviewHistoryEmptyAndError(t *testing.T) {
 	}
 }
 
+// TestObjectPreviewHistoryEntryExpandable pins the disclosure contract: every
+// entry is a native <details>/<summary> (collapsed by default, keyboard
+// operable with no JS) carrying the stable test ids, and the change list lives
+// in the details body.
+func TestObjectPreviewHistoryEntryExpandable(t *testing.T) {
+	versions := []GraphObject{
+		{ID: "2", Version: 2, Type: "note", Key: "k", Status: "ready",
+			ChangeSummary: map[string]any{"added": map[string]any{"/summary": "hello"}}},
+	}
+	html := renderHTML(t, objectPreviewHistory(versions))
+	for _, want := range []string{
+		`<details`,
+		`<summary`,
+		`data-testid="object-preview-history-entry"`,
+		`data-testid="object-preview-history-changes"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("history entry missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestObjectPreviewHistoryChangeSummary pins the recorded-summary rendering:
+// added paths lead with "+", removed with "−", and updates render
+// "<path>: <from> → <to>".
+func TestObjectPreviewHistoryChangeSummary(t *testing.T) {
+	versions := []GraphObject{
+		{
+			ID: "2", Version: 2, Type: "note", Key: "k", Status: "ready",
+			ChangeSummary: map[string]any{
+				"added":   map[string]any{"/summary": "hello", "/author": "me"},
+				"removed": []any{"/old", "/legacy"},
+				"updated": map[string]any{"/title": map[string]any{"from": "draft", "to": "final"}},
+			},
+		},
+	}
+	html := renderHTML(t, objectPreviewHistory(versions))
+	for _, want := range []string{
+		"+ /author",
+		"+ /summary",
+		"− /legacy",
+		"− /old",
+		"/title: draft → final",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("change summary missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestObjectPreviewHistoryMergeProvenance pins the merge-provenance keys: a
+// merge version's change_summary carries source/strategy/enriched_keys (no
+// added/removed/updated), which render as muted informational lines rather than
+// an empty list or a panic.
+func TestObjectPreviewHistoryMergeProvenance(t *testing.T) {
+	versions := []GraphObject{
+		{
+			ID: "2", Version: 2, Type: "note", Key: "k",
+			ChangeSummary: map[string]any{
+				"source":        "merge",
+				"strategy":      "three-way",
+				"resolution":    "src",
+				"enriched_keys": []any{"alpha", "beta"},
+			},
+		},
+	}
+	html := renderHTML(t, objectPreviewHistory(versions))
+	for _, want := range []string{
+		"source: merge",
+		"strategy: three-way",
+		"resolution: src",
+		"enriched keys: alpha, beta",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("merge provenance missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestObjectPreviewHistoryDerivedFallback pins the derivation for a version
+// with no recorded change_summary: status and assignee diff as from→to, and the
+// top-level property paths diff (scalar from→to, added/removed paths, and
+// nested/complex values as "changed").
+func TestObjectPreviewHistoryDerivedFallback(t *testing.T) {
+	versions := []GraphObject{
+		{
+			ID: "2", Version: 2, Type: "BoardTask", Key: "k", Status: "in_progress", Assignee: "bob",
+			Properties: map[string]any{
+				"count":  float64(2),
+				"title":  "new title",
+				"nested": map[string]any{"a": 2},
+			},
+		},
+		{
+			ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready", Assignee: "alice",
+			Properties: map[string]any{
+				"count":        float64(1),
+				"title":        "old title",
+				"nested":       map[string]any{"a": 1},
+				"removed_prop": "x",
+			},
+		},
+	}
+	html := renderHTML(t, objectPreviewHistory(versions))
+	for _, want := range []string{
+		"status: ready → in_progress",
+		"assignee: alice → bob",
+		"/count: 1 → 2",
+		"/title: old title → new title",
+		"/nested: changed",
+		"− /removed_prop",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("derived fallback missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestObjectPreviewHistoryNoChangesNote pins the muted note when a version has
+// neither a recorded summary nor any derivable difference from its predecessor
+// (or has no predecessor at all).
+func TestObjectPreviewHistoryNoChangesNote(t *testing.T) {
+	const note = "No recorded changes for this version."
+
+	same := []GraphObject{
+		{ID: "2", Version: 2, Type: "BoardTask", Key: "k", Status: "ready"},
+		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
+	}
+	if html := renderHTML(t, objectPreviewHistory(same)); !strings.Contains(html, note) {
+		t.Errorf("identical versions missing no-changes note:\n%s", html)
+	}
+
+	single := []GraphObject{
+		{ID: "1", Version: 1, Type: "BoardTask", Key: "k", Status: "ready"},
+	}
+	if html := renderHTML(t, objectPreviewHistory(single)); !strings.Contains(html, note) {
+		t.Errorf("single version missing no-changes note:\n%s", html)
+	}
+}
+
+// TestObjectPreviewChangesToleratesUnexpectedShape pins the defensive decode:
+// a change_summary whose keys have unexpected types must not panic or blank the
+// entry — it falls back to the derived diff from the preceding version.
+func TestObjectPreviewChangesToleratesUnexpectedShape(t *testing.T) {
+	versions := []GraphObject{
+		{
+			ID: "2", Version: 2, Type: "note", Key: "k", Status: "in_progress",
+			ChangeSummary: map[string]any{
+				"added":   "not-a-map",
+				"removed": map[string]any{"unexpected": true},
+				"updated": []any{"not-a-map"},
+			},
+		},
+		{ID: "1", Version: 1, Type: "note", Key: "k", Status: "ready"},
+	}
+	html := renderHTML(t, objectPreviewHistory(versions))
+	if !strings.Contains(html, "status: ready → in_progress") {
+		t.Errorf("unexpected change_summary shape should fall back to derivation:\n%s", html)
+	}
+}
+
 // TestObjectPreviewHistoryLazySection pins the shared lazy-load contract: the
 // History section renders an htmx load-triggered slot (spinner until swapped)
 // scoped to /objects/:id/history.
@@ -369,14 +530,16 @@ func TestObjectPreviewHistoryPartial(t *testing.T) {
 
 // TestGetObjectHistoryClient pins the client decode: GET
 // /api/graph/objects/:id/history returns a `{versions:[...]}` object (not the
-// successEnvelope), decoded into []GraphObject with per-version numbers.
+// successEnvelope), decoded into []GraphObject with per-version numbers, the
+// assignee, and the per-version change_summary (which must survive decoding so
+// the gateway can render it rather than silently dropping it).
 func TestGetObjectHistoryClient(t *testing.T) {
 	var gotMethod, gotPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"versions":[
-			{"id":"22222222-2222-2222-2222-222222222222","version":2,"type":"note","key":"k","status":"in_progress","created_at":"2026-01-02T00:00:00Z"},
+			{"id":"22222222-2222-2222-2222-222222222222","version":2,"type":"note","key":"k","status":"in_progress","assignee":"bob","created_at":"2026-01-02T00:00:00Z","change_summary":{"added":{"/summary":"hello"},"removed":["/old"],"updated":{"/title":{"from":"a","to":"b"}}}},
 			{"id":"11111111-1111-1111-1111-111111111111","version":1,"type":"note","key":"k","status":"ready","created_at":"2026-01-01T00:00:00Z"}
 		]}`))
 	}))
@@ -396,8 +559,33 @@ func TestGetObjectHistoryClient(t *testing.T) {
 	if versions[0].Version != 2 || versions[0].Status != "in_progress" {
 		t.Errorf("versions[0] = %+v, want v2 in_progress", versions[0])
 	}
+	if versions[0].Assignee != "bob" {
+		t.Errorf("versions[0].Assignee = %q, want %q", versions[0].Assignee, "bob")
+	}
 	if versions[1].Version != 1 || versions[1].Status != "ready" {
 		t.Errorf("versions[1] = %+v, want v1 ready", versions[1])
+	}
+
+	// The per-version change_summary must survive decoding (it was silently
+	// dropped client-side before GraphObject gained the field).
+	cs := versions[0].ChangeSummary
+	if cs == nil {
+		t.Fatalf("versions[0].ChangeSummary = nil, want the server's change_summary")
+	}
+	if added, ok := cs["added"].(map[string]any); !ok || added["/summary"] != "hello" {
+		t.Errorf("change_summary.added = %#v, want {/summary: hello}", cs["added"])
+	}
+	if removed, ok := cs["removed"].([]any); !ok || len(removed) != 1 || removed[0] != "/old" {
+		t.Errorf("change_summary.removed = %#v, want [/old]", cs["removed"])
+	}
+	if updated, ok := cs["updated"].(map[string]any); !ok {
+		t.Errorf("change_summary.updated = %#v, want a map", cs["updated"])
+	} else if m, ok := updated["/title"].(map[string]any); !ok || m["from"] != "a" || m["to"] != "b" {
+		t.Errorf("change_summary.updated[/title] = %#v, want {from:a to:b}", updated["/title"])
+	}
+	// The older version has no summary — the field is nil, not an empty map.
+	if versions[1].ChangeSummary != nil {
+		t.Errorf("versions[1].ChangeSummary = %#v, want nil", versions[1].ChangeSummary)
 	}
 }
 

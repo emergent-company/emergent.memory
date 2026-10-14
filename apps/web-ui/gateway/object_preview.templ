@@ -262,13 +262,14 @@ templ objectPreviewNotFound() {
 
 // objectPreviewHistory renders the version timeline for the History section,
 // newest version first (the server returns versions in version-DESC order, so
-// the slice is rendered as received). Each entry is two lines: a meta line
-// (version number + humanised status, with the creation time pushed to the
-// right) and the version's object key beneath it. The version number leads in
-// the content colour — it is the primary datum of a change history — while the
-// key and time stay muted, so a long history scans by version rather than by
-// repeating an often-unchanged key. The drawer is narrow, so everything wraps
-// rather than introducing horizontal scroll.
+// the slice is rendered as received). Each entry is a collapsed <details> whose
+// summary is the scannable meta line (version number + humanised status, with
+// the creation time pushed to the right) and the version's object key beneath
+// it; expanding it reveals that version's change list. The version number leads
+// in the content colour — it is the primary datum of a change history — while
+// the key and time stay muted, so a long history scans by version rather than
+// by repeating an often-unchanged key. The drawer is narrow, so everything
+// wraps rather than introducing horizontal scroll.
 templ objectPreviewHistory(versions []GraphObject) {
 	if len(versions) == 0 {
 		<div class="text-muted flex items-center gap-2 py-1 text-sm">
@@ -277,29 +278,75 @@ templ objectPreviewHistory(versions []GraphObject) {
 		</div>
 	} else {
 		<ol class="flex flex-col gap-3" data-testid="object-preview-history">
-			for _, v := range versions {
-				<li class="border-base-content/10 flex flex-col gap-1 border-l-2 py-0.5 pl-3">
-					<div class="flex flex-wrap items-center gap-2">
-						<span class="font-mono text-xs font-medium">{ objectPreviewVersionLabel(v.Version) }</span>
-						if v.Status != "" {
-							@components.StatusBadge(boardStatusLabel(v.Status), boardStatusIntent(v.Status), "", components.StatusBadgeOpts{
-								Size:  ui.BadgeSizeXS,
-								Dot:   true,
-								Attrs: templ.Attributes{"data-status": v.Status},
-							})
-						}
-						{{ created := objectPreviewCreated(v.CreatedAt) }}
-						if created != "" {
-							<span class="text-muted-faint ml-auto text-xs">{ created }</span>
-						}
-					</div>
-					if v.Key != "" {
-						<div class="text-muted min-w-0 text-xs break-words">{ v.Key }</div>
-					}
-				</li>
+			for i, v := range versions {
+				@objectPreviewHistoryEntry(v, objectPreviewPrevious(versions, i))
 			}
 		</ol>
 	}
+}
+
+// objectPreviewHistoryEntry renders one history entry as a collapsed, native
+// <details> disclosure. The summary is the always-visible meta line + key; the
+// body is the change list for that version. Native <details> is keyboard
+// operable (Enter/Space on the summary) with no JS, so the timeline stays
+// scannable collapsed and every entry is independently expandable.
+templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject) {
+	<li class="border-base-content/10 border-l-2">
+		<details class="group" data-testid="object-preview-history-entry">
+			<summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
+				<div class="flex flex-wrap items-center gap-2">
+					<span class="font-mono text-xs font-medium">{ objectPreviewVersionLabel(v.Version) }</span>
+					if v.Status != "" {
+						@components.StatusBadge(boardStatusLabel(v.Status), boardStatusIntent(v.Status), "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeXS,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": v.Status},
+						})
+					}
+					{{ created := objectPreviewCreated(v.CreatedAt) }}
+					if created != "" {
+						<span class="text-muted-faint ml-auto text-xs">{ created }</span>
+					}
+					@ui.IconSpan("lucide--chevron-down", "size-3.5 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
+				</div>
+				if v.Key != "" {
+					<div class="text-muted min-w-0 text-xs break-words">{ v.Key }</div>
+				}
+			</summary>
+			<div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
+				@objectPreviewChangesList(objectPreviewChanges(v, prev))
+			</div>
+		</details>
+	</li>
+}
+
+// objectPreviewChangesList renders one version's change list. Added paths lead
+// with a success "+", removed paths with an error "−", and updates as
+// "<path>: <from> → <to>"; merge provenance and the no-changes note render as
+// muted lines. Values are already compact-JSON-rendered and truncated by
+// objectPreviewChanges, so the list never overflows the narrow drawer.
+templ objectPreviewChangesList(changes []objectChange) {
+	if len(changes) == 0 {
+		return
+	}
+	<ul class="flex flex-col gap-0.5 pb-1">
+		for _, c := range changes {
+			<li>
+				switch c.Kind {
+				case "add":
+					<span class="text-success font-mono text-xs">+ { c.Label }</span>
+				case "remove":
+					<span class="text-error font-mono text-xs">− { c.Label }</span>
+				case "update":
+					<span class="font-mono text-xs break-words">{ c.Label }: { c.From } → { c.To }</span>
+				case "changed":
+					<span class="font-mono text-xs break-words">{ c.Label }: changed</span>
+				default:
+					<span class="text-muted text-xs">{ c.Label }</span>
+				}
+			</li>
+		}
+	</ul>
 }
 
 // objectPreviewHistoryError is the History section's graceful failure state: a

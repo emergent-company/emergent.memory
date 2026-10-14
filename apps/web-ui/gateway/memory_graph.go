@@ -17,10 +17,15 @@ type GraphObject struct {
 	Type        string         `json:"type"`
 	Key         string         `json:"key"`
 	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee"`
 	Version     int            `json:"version"`
 	Properties  map[string]any `json:"properties"`
 	Labels      []string       `json:"labels"`
 	CreatedAt   string         `json:"created_at"`
+	// ChangeSummary is the server's per-version change_summary (added/removed/
+	// updated property paths, plus merge provenance). Nil on versions the
+	// server did not record a summary for (most work-path transitions).
+	ChangeSummary map[string]any `json:"change_summary"`
 	// EmbeddingStatus is the per-object embedding-job state derived by the
 	// server: embedded | pending | processing | failed | dead_letter | missing.
 	EmbeddingStatus string `json:"embedding_status"`
