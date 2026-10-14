@@ -82,12 +82,12 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// cardList — titled Section variant
 	got = render(cardList("Chunks", cardListProps{Margin: "mt-6", Empty: false}), "<p>row1</p>")
-	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-base-200"><p>row1</p></div></div></div></section>`
+	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>row1</p></div></div></div></section>`
 	check("cardList titled", got, want)
 
 	// cardList — bare CardRaw variant
 	got = render(cardList("", cardListProps{}), "<p>r1</p>", "<p>r2</p>")
-	want = `<div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-base-200"><p>r1</p><p>r2</p></div></div></div>`
+	want = `<div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>r1</p><p>r2</p></div></div></div>`
 	check("cardList bare", got, want)
 
 	// cardList — empty state
@@ -158,7 +158,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, nil),
 	}))
-	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-muted-faint hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
+	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-muted-faint hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
 	check("checkboxPicker skill items", got, want)
 
 	// checkboxPicker — skill, settings style (checked + no id)
@@ -168,7 +168,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, func(n string) bool { return n == "summarize-email" }),
 	}))
-	want = `<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" checked class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> </div>`
+	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" checked class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> </div>`
 	check("checkboxPicker skill checked", got, want)
 
 	// checkboxPicker — delegate, modal style (wrap id + empty id)
@@ -178,7 +178,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "", nil),
 	}))
-	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-muted-faint hidden text-sm">No other agents to delegate to.</p></div></div>`
+	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-muted-faint hidden text-sm">No other agents to delegate to.</p></div></div>`
 	check("checkboxPicker delegate modal", got, want)
 
 	// checkboxPicker — delegate, settings style (exclude self, checked, no ids)
@@ -187,7 +187,7 @@ func TestRefactorOutputExact(t *testing.T) {
 		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "diane", func(n string) bool { return n == "milo" }),
 	}))
-	want = `<div class="mt-2"><div class="rounded-box border border-base-content/10 bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" checked class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> </div></div>`
+	want = `<div class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" checked class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> </div></div>`
 	check("checkboxPicker delegate settings", got, want)
 
 	// modelSelect — modal style (no current, data-testid)
