@@ -157,7 +157,7 @@ templ sessionAgentPrompt(text string) {
 			<span class="iconify lucide--chevron-right size-3 shrink-0 text-muted-faint" aria-hidden="true"></span>
 		</summary>
 		<div class="border-t border-base-content/10 p-3">
-			<div class="alfred-md max-h-96 overflow-auto text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(text))</div>
+			<div class="memory-md max-h-96 overflow-auto text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(text))</div>
 		</div>
 	</details>
 }
@@ -253,7 +253,7 @@ templ sessionMessageItem(aui agentUI, it TimelineItem) {
 		}
 		if answer != "" {
 			@sessionAssistantBubble(author, aui, it) {
-				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(answer))</div>
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(answer))</div>
 			}
 		}
 	}
@@ -274,7 +274,7 @@ templ sessionUserMessage(it TimelineItem) {
 		<div class="chat-header text-xs text-muted">You</div>
 		<div class="chat-bubble chat-bubble-primary">
 			if text != "" {
-				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(text))</div>
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(text))</div>
 			}
 		</div>
 		if footer != "" {
@@ -314,7 +314,7 @@ templ sessionThinkingBlock(aui agentUI, reasoning string) {
 			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-muted [&::-webkit-details-marker]:hidden">
 				<span class="iconify lucide--brain size-3" aria-hidden="true"></span>Thinking
 			</summary>
-			<div class="alfred-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(reasoning))</div>
+			<div class="memory-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(reasoning))</div>
 		</details>
 	</div>
 }

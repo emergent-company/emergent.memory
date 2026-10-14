@@ -685,9 +685,6 @@ func (s *ShareService) sessionTranscript(ctx context.Context, sessionID string) 
 		if it.Kind != "message" {
 			continue
 		}
-		if it.Role != "user" && it.Role != "assistant" {
-			continue
-		}
 		text := ""
 		if it.Content != nil {
 			if t, ok := it.Content["text"].(string); ok {
@@ -697,7 +694,21 @@ func (s *ShareService) sessionTranscript(ctx context.Context, sessionID string) 
 		if text == "" {
 			continue
 		}
-		out = append(out, ShareTranscriptMessage{Role: it.Role, Content: text})
+		// The executor persists assistant turns under the sanitized agent name
+		// (the ADK event Author, e.g. "coder"), not the literal "assistant"
+		// (see persistEventContent and isAgentReplyRole). Map any non-user/
+		// non-tool/non-tool_result/non-system author role to "assistant" so real
+		// replies are never dropped; the wire DTO stays role: "user"|"assistant".
+		role := it.Role
+		switch {
+		case role == "user":
+			// keep as user
+		case isAgentReplyRole(role):
+			role = "assistant"
+		default:
+			continue // system, tool, tool_result, ""
+		}
+		out = append(out, ShareTranscriptMessage{Role: role, Content: text})
 	}
 	return out, nil
 }

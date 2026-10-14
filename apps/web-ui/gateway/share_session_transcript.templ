@@ -52,7 +52,7 @@ templ shareSessionTranscriptMessage(m ShareMessage) {
 			</div>
 			<div class="chat-header text-xs text-muted">End user</div>
 			<div class="chat-bubble chat-bubble-primary max-w-[85%]">
-				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
 			</div>
 		</div>
 	} else {
@@ -62,7 +62,7 @@ templ shareSessionTranscriptMessage(m ShareMessage) {
 			</div>
 			<div class="chat-header text-xs text-muted">Assistant</div>
 			<div class="chat-bubble chat-bubble-neutral max-w-[85%]">
-				<div class="alfred-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(m.Content))</div>
 			</div>
 		</div>
 	}

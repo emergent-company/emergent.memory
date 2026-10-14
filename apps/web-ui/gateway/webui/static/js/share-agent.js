@@ -508,9 +508,14 @@
     wrap.appendChild(el("div", "chat-header text-xs text-muted", isUser ? "You" : (state.agentName || "Memory")));
     var shell = el("div", "chat-bubble " + (isUser ? "chat-bubble-primary" : "chat-bubble-neutral"));
     shell.setAttribute("data-role", role);
+    // The assistant content mirrors the admin chat's markdown wrapper
+    // (chat-stream.js: `memory-md break-words`). No whitespace-pre-wrap: it
+    // would leak into the server-rendered markdown HTML and turn goldmark soft
+    // line breaks into visible breaks. The end-user plain-text bubble keeps
+    // whitespace-pre-wrap so its own line breaks are preserved.
     var content = isUser
       ? el("p", "whitespace-pre-wrap break-words", text)
-      : el("div", "memory-md whitespace-pre-wrap break-words", text);
+      : el("div", "memory-md break-words", text);
     // Assistant messages render sanitized server-side markdown (`html`) for
     // history and the streaming snapshot; everything else stays plain text.
     if (!isUser && html) content.innerHTML = html;

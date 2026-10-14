@@ -804,16 +804,21 @@ func TestListSessionsByProject_NonMemberForbidden(t *testing.T) {
 }
 
 // The owner transcript must include only user/assistant plain-text messages, in
-// order, dropping non-message kinds, non-user/assistant roles, and empty text.
+// order, dropping non-message kinds, tool/tool_result/system roles, and empty
+// text. The executor persists assistant turns under the sanitized agent name
+// (e.g. "coder"), NOT the literal "assistant", so any non-user/non-tool/
+// non-tool_result/non-system author role must map to "assistant" on the wire.
 func TestGetSessionTranscriptByID_FiltersMessages(t *testing.T) {
 	repo := newFakeShareRepo()
 	repo.shareSessionRow = &shareSessionProjectRow{SessionID: "acp-1"}
 	repo.historyItems = []*ConversationHistoryItem{
 		{Kind: "message", Role: "user", Content: map[string]any{"text": "hello"}},
-		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "hi there"}},
-		{Kind: "message", Role: "system", Content: map[string]any{"text": "system prompt"}},
-		{Kind: "tool_call", Role: "assistant", Content: map[string]any{"text": "tool output"}, ToolName: "search"},
-		{Kind: "message", Role: "user", Content: map[string]any{"text": ""}},
+		{Kind: "message", Role: "coder", Content: map[string]any{"text": "hi there"}},                              // agent-name role → assistant
+		{Kind: "message", Role: "system", Content: map[string]any{"text": "system prompt"}},                        // dropped
+		{Kind: "message", Role: "tool", Content: map[string]any{"text": "tool output"}},                            // dropped
+		{Kind: "message", Role: "tool_result", Content: map[string]any{"text": "tool result"}},                     // dropped
+		{Kind: "tool_call", Role: "assistant", Content: map[string]any{"text": "tool output"}, ToolName: "search"}, // non-message kind dropped
+		{Kind: "message", Role: "user", Content: map[string]any{"text": ""}},                                       // empty text dropped
 		{Kind: "message", Role: "assistant", Content: map[string]any{"text": "final answer"}},
 	}
 	tokens := &shareFakeTokenService{} // member
