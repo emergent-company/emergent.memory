@@ -128,6 +128,13 @@ jobs:
           path: e2e/test-logs/
           retention-days: 7
 
+      # Distinct teardown step so a cancelled/killed test run cannot leak the
+      # per-run `e2e-<runid>-integration_default` network (#1876). Mirrors the
+      # `api` and `mailgun` jobs' `Stop server stack` step.
+      - name: Stop server stack
+        if: always()
+        run: docker compose down -v --remove-orphans
+
   # ───────────────────────────────────────────────────────────────────────────
   # api: run HTTP API tests (tests/api/) against a fresh Docker Compose stack.
   # ───────────────────────────────────────────────────────────────────────────

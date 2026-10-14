@@ -172,7 +172,10 @@ jobs:
         with:
           name: memory-ios-${{ github.sha }}
           path: apps/ios/build/Export/*.ipa
-          retention-days: 14
+          # The IPA is uploaded to TestFlight in this same job, so the Actions
+          # artifact is a debug convenience only — App Store Connect is the
+          # durable store. Keep retention short (#1834).
+          retention-days: 7
 
       - name: Upload to TestFlight
         run: |

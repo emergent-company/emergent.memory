@@ -1,0 +1,80 @@
+name: Web UI live-LLM scenarios
+
+# Runs the live-LLM `scenarios/chat` Playwright suite against the persistent dev
+# installation (session-mode gateway + dev Zitadel + dev memory). The specs call
+# real models through a real provider key, so they are deliberately NOT part of
+# any PR gate: they are slow, cost money, and are non-deterministic. This is a
+# non-blocking, scheduled + manually-dispatchable job that can NEVER gate a PR —
+# there is no `pull_request` trigger and this workflow is not part of the
+# branch-protection-required `ci` aggregate.
+#
+# Required repo secrets:
+#   E2E_SCENARIO_LLM_API_KEY — the live provider key the scenarios configure.
+#     Without it the specs env-gate and skip fast (a missing secret degrades to
+#     a skip, not a false failure).
+#   E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD — the Zitadel test user (no
+#     MFA) that the `setup` dependency signs in as.
+on:
+  schedule:
+    # 07:43 UTC daily — off the :00/:15 mark to avoid runner congestion
+    # (mirrors the openspec-archive.yml schedule pattern).
+    - cron: '43 7 * * *'
+  workflow_dispatch:
+
+# Serialize runs (a manual dispatch queues behind a scheduled run). The `setup`
+# project reuses the stable "E2E Main" tenant, so two concurrent live-LLM runs
+# would race each other on the same org/project. Never cancel an in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  chat:
+    name: Live-LLM chat scenarios
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/web-ui/tests/e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No `cache:` — see web-ui.yml; setup-node's cache step can red the
+          # job before any step runs (#1758), and `npm ci` installs deps
+          # regardless.
+
+      - name: Install e2e deps
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # apt-get, but the Chromium runtime libs and browser cache are already
+        # installed on the host, so `--with-deps` (which shells out to apt) must
+        # be skipped there.
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+
+      - name: Run live-LLM chat scenarios
+        env:
+          E2E_SCENARIO_LLM_API_KEY: ${{ secrets.E2E_SCENARIO_LLM_API_KEY }}
+          E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
+          E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+        run: npx playwright test --config=playwright.config.ts --project=chat

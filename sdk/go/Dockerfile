@@ -1,4 +1,4 @@
-FROM golang:1.24-bookworm
+FROM golang:1.25-bookworm
 
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \

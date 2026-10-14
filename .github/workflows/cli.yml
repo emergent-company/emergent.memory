@@ -386,7 +386,11 @@ jobs:
           path: |
             apps/cli/dist/*.tar.gz
             apps/cli/dist/*.zip
-          retention-days: 90
+          # Release artifacts are attached to the GitHub Release by the `release`
+          # job in the same run, so 90 days of artifact retention was excessive
+          # and fed the artifact-storage quota pressure (#1834). 30 days still
+          # covers post-release debugging, well above the CI debug-log floor.
+          retention-days: 30
 
   release:
     name: Create Unified GitHub Release

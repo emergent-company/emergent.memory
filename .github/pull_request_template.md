@@ -23,6 +23,7 @@ If you touched graph logic or tests:
 - [ ] Unit tests added / updated
 - [ ] All affected test suites passing locally (`vitest run -t 'GraphService'` patterns as needed)
 - [ ] (Optional) Ran relationship micro benchmark `npm run bench:graph:relationships`
+- [ ] (Optional) Ran the live-LLM e2e suite (`npx playwright test --config=playwright.config.ts --project=chat`) — not PR-gated: it runs via `web-ui-llm-scenarios.yml` on schedule / manual dispatch only
 
 ## Benchmark (Optional)
 

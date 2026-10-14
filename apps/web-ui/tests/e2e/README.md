@@ -458,6 +458,16 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 (`specs/datasources/**`), so a local full-suite run never schedules it behind
 `setup`.
 
+### Live-LLM scenarios (scheduled, not PR-gated)
+
+The `scenarios` + `chat` projects (live-LLM, env-gated on
+`E2E_SCENARIO_LLM_API_KEY`) are **not** part of any PR CI gate: they need the
+running dev installation plus a real provider key, so they run on the
+self-hosted `memory` runner via a separate scheduled + manually-dispatchable
+workflow (`.github/workflows/web-ui-llm-scenarios.yml`). That workflow has no
+`pull_request` trigger, so it can never block a PR — it fires on a daily cron
+and on manual `workflow_dispatch`.
+
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.

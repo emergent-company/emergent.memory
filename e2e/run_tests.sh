@@ -28,6 +28,20 @@ for arg in "$@"; do
   esac
 done
 
+# ─── Compose teardown on ANY exit path ────────────────────────────────────────
+# A cancelled/killed run (SIGINT/SIGTERM) used to leave the per-run
+# `e2e-<runid>-integration_default` network (and its anonymous volumes) behind
+# (#1876). Trap exit + signals so the stack is torn down no matter how the
+# script ends. `-v` drops anonymous volumes. No-op in --tests-only/--build-only
+# (those modes never start a compose stack).
+cleanup() {
+  if $TESTS_ONLY || $BUILD_ONLY; then
+    return 0
+  fi
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" down -v --remove-orphans 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 # ─── Ensure log directory exists ──────────────────────────────────────────────
 mkdir -p "$LOG_DIR"
 mkdir -p "$RUNS_DB_DIR"
@@ -93,8 +107,9 @@ else
     exit_code=1
   fi
 
-  # Bring down cleanly regardless of outcome.
-  docker compose -f "$SCRIPT_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
+  # Bring down cleanly regardless of outcome. `-v` also drops anonymous volumes;
+  # the EXIT trap above is the backstop for a cancelled/killed run (#1876).
+  docker compose -f "$SCRIPT_DIR/docker-compose.yml" down -v --remove-orphans 2>/dev/null || true
 
   exit "$exit_code"
 fi

@@ -338,8 +338,8 @@ func GetWorkspaceBaseDockerfile() string {
 #
 # Base: golang:1.25-bookworm. Go 1.25 is REQUIRED — apps/server/pkg/sdk/go.mod
 # declares "go 1.25.0", so any Go toolchain < 1.25 cannot build the SDK.
-# (The separate sdk/go/Dockerfile still pins golang:1.24-bookworm, which is a
-# latent break — do NOT copy that version here.)
+# (sdk/go/Dockerfile and apps/cli/Dockerfile now pin golang:1.25 too — keep
+# them in lockstep with this image.)
 FROM golang:1.25-bookworm
 
 # Install essential dev tools and AI agent-friendly utilities, plus Python.
@@ -735,7 +735,7 @@ CMD ["sleep", "infinity"]
 // proper pre-caching of dependencies. The stub is removed after the build
 // cache is populated.
 func GetGoSDKDockerfile() string {
-	return `FROM golang:1.24-bookworm
+	return `FROM golang:1.25-bookworm
 
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
