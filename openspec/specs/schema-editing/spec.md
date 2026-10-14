@@ -97,9 +97,8 @@ The Schema area SHALL let a user edit an object type's description, its type-lev
 
 Each object type SHALL display the schema it originates from. A type whose origin is an installed
 blueprint SHALL be marked as blueprint-derived and identify the owning blueprint by name and version.
-A type contributed by the read-time system pack (`is_system=true`, e.g. `session-message-types`)
-SHALL render a `System` badge and SHALL NOT be shown as project-authored ("Not from an installed
-blueprint").
+A type with no owning blueprint SHALL be shown as project-authored ("Not from an installed
+blueprint"). There is no read-time system pack.
 
 #### Scenario: Blueprint-derived type
 
@@ -108,14 +107,13 @@ blueprint").
 
 #### Scenario: System type
 
-- **WHEN** an object type originates from the read-time system pack (`is_system=true`)
-- **THEN** the type is shown with a `System` badge, and SHALL NOT be shown with the project-authored
-  "Not from an installed blueprint" marker
+- **WHEN** object types are loaded
+- **THEN** no type SHALL be shown with a `System` badge — the read-time system pack (`is_system=true`) is
+  removed, so every type is either blueprint-derived or project-authored
 
 #### Scenario: Project-authored type
 
 - **WHEN** an object type was authored directly in the project and does not originate from a blueprint
-  or the system pack
 - **THEN** the type is shown without a blueprint-derived marker
 
 #### Scenario: Shadowed duplicate is not listed

@@ -6,44 +6,55 @@ Schema pre-registration and embedding policies for Session and Message graph obj
 
 ## Requirements
 
-### Requirement: Session schema pre-registered at startup
-The system SHALL register a `Session` object type as a read-time-resolved **system** schema: a single
-`kb.graph_schemas` row with `source='builtin'` and `is_system=true` (name `session-message-types`,
-version `1.0.0`), upserted idempotently at server startup. The `Session` type SHALL be available in
-every project through the compiled-types and extraction-schema paths WITHOUT a `kb.project_schemas`
-row, and SHALL NOT be auto-assigned to projects. The type SHALL define: `title` (string),
-`started_at` (datetime), `ended_at` (datetime, optional), `message_count` (integer, default 0),
-`summary` (string, optional), `agent_version` (string, optional).
-
-#### Scenario: Session schema available on fresh project
-- **WHEN** a new project is created
-- **THEN** the `Session` type SHALL be available for object creation without manual schema setup and
-  without any `kb.project_schemas` row for the system pack
-
-#### Scenario: System pack is not project-assigned
-- **WHEN** the system pack is resolved for a project
-- **THEN** no `kb.project_schemas` row SHALL exist for the `session-message-types` pack, and the type
-  is still returned by the compiled-types and extraction-schema endpoints
-
-#### Scenario: Startup idempotency
-- **WHEN** the server restarts with an existing system `Session` schema
-- **THEN** the schema MUST NOT be duplicated or cause an error
-
-### Requirement: Message schema pre-registered at startup
-The system SHALL register a `Message` object type as a read-time-resolved **system** schema
-(`source='builtin'`, `is_system=true`), available in every project without a `kb.project_schemas` row.
-The type SHALL define: `role` (enum: user/assistant/system), `content` (string), `sequence_number`
-(integer), `timestamp` (datetime), `token_count` (integer, optional), `tool_calls` (JSON array,
-optional). The schema MUST mark `content` as the embedding target field.
-
-#### Scenario: Message schema available on fresh project
-- **WHEN** a new project is created
-- **THEN** the `Message` type SHALL be available without manual setup and without any
-  `kb.project_schemas` row for the system pack
-
 ### Requirement: System embedding policy for Message content
 The system SHALL auto-register a system-level embedding policy for the `Message` type targeting the `content` field. This policy MUST be applied to all projects and MUST NOT be deletable by users.
 
 #### Scenario: Message content auto-embedded
 - **WHEN** a Message object is created with a non-empty `content` property
 - **THEN** an embedding MUST be generated for the `content` field using the project's active embedding model
+
+### Requirement: Session schema provided by the built-in blueprint
+The platform SHALL ship the Session/Message conversation primitives as a built-in blueprint pack named
+`session-message-types` (version `1.0.0`), seeded as a global published blueprint (`project_id` NULL,
+`origin='builtin'`) by the blueprints builtin seeder. The `Session` object type SHALL materialize ONLY
+when the blueprint is applied to a project: applying the blueprint SHALL create (or reuse) a global
+`source='builtin'` schema pack and assign it to the project, registering the `Session` type. There is
+no global system pack, no read-time resolution, and no `is_system` concept. The type SHALL define:
+`title` (string), `started_at` (datetime), `ended_at` (datetime, optional), `message_count` (integer,
+default 0), `summary` (string, optional), `agent_version` (string, optional).
+
+#### Scenario: Session schema available after blueprint apply
+- **WHEN** the `session-message-types` blueprint is applied to a project
+- **THEN** the `Session` type SHALL be available for object creation via a `kb.project_schemas`
+  assignment to the global `source='builtin'` pack
+
+#### Scenario: No auto-provisioning at project creation or boot
+- **WHEN** a project is created (or the server boots) without the `session-message-types` blueprint
+  applied
+- **THEN** no `kb.project_schemas` row SHALL exist for the `session-message-types` pack, and the
+  `Session` type SHALL NOT appear in the project's compiled types
+
+#### Scenario: Seeding is idempotent
+- **WHEN** the server restarts with the built-in blueprint already seeded
+- **THEN** the blueprint row SHALL NOT be duplicated or cause an error
+
+### Requirement: Message schema provided by the built-in blueprint
+The built-in `session-message-types` blueprint SHALL define a `Message` object type that materializes
+only when the blueprint is applied. The type SHALL define: `role` (enum: user/assistant/system),
+`content` (string), `sequence_number` (integer), `timestamp` (datetime), `token_count` (integer,
+optional), `tool_calls` (JSON array, optional). The schema MUST mark `content` as the embedding target
+field.
+
+#### Scenario: Message schema available after blueprint apply
+- **WHEN** the `session-message-types` blueprint is applied to a project
+- **THEN** the `Message` type SHALL be available for object creation and its `content` property SHALL
+  carry `x-embedding-target: true`
+
+### Requirement: has_message relationship provided by the built-in blueprint
+The built-in `session-message-types` blueprint SHALL define a `has_message` relationship type linking
+`Session` (source) to `Message` (target), materialized only when the blueprint is applied.
+
+#### Scenario: has_message available after blueprint apply
+- **WHEN** the `session-message-types` blueprint is applied to a project
+- **THEN** the `has_message` relationship type SHALL appear in the project's compiled relationship
+  types with `sourceType=Session` and `targetType=Message`
