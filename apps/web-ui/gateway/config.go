@@ -232,14 +232,22 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// splitCSV splits a comma-separated env value, trimming whitespace and dropping
-// empty entries. Empty input yields nil.
+// splitCSV splits a comma-separated value, trimming whitespace, dropping empty
+// entries, and collapsing duplicates while preserving first-occurrence order.
+// Empty input yields nil.
 func splitCSV(raw string) []string {
 	var out []string
+	seen := make(map[string]struct{})
 	for _, part := range strings.Split(raw, ",") {
-		if p := strings.TrimSpace(part); p != "" {
-			out = append(out, p)
+		p := strings.TrimSpace(part)
+		if p == "" {
+			continue
 		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
 	}
 	return out
 }

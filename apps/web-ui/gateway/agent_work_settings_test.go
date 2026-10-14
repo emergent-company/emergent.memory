@@ -13,8 +13,9 @@ import (
 // TestApplyAgentWorkSection pins the Work subpage applier: every field group
 // maps onto def.WorkConfig (status phases, review gate, budgets, retry policy,
 // deliverable contract, trigger statuses); empty numerics read 0 (the server
-// "use default" sentinel); comma-separated lists split and trim; and a value
-// below a field's minimum is rejected without mutating the definition.
+// "use default" sentinel) and a typed 0 does too; comma-separated lists split,
+// trim, and collapse duplicates; and an out-of-range value is rejected without
+// mutating the definition.
 func TestApplyAgentWorkSection(t *testing.T) {
 	t.Run("full mapping", func(t *testing.T) {
 		form := url.Values{
@@ -99,16 +100,50 @@ func TestApplyAgentWorkSection(t *testing.T) {
 		}
 	})
 
-	t.Run("below-minimum rejected", func(t *testing.T) {
+	t.Run("zero limits read as platform default", func(t *testing.T) {
+		form := url.Values{
+			"failureLimit":  {"0"},
+			"revisionLimit": {"0"},
+		}
+		def := &AgentDefinition{ID: "a1", Name: "diane"}
+		if err := applyAgentWorkSection(def, generalSectionContext(t, form)); err != nil {
+			t.Fatalf("typed 0 must be accepted as the default sentinel: %v", err)
+		}
+		if def.WorkConfig.FailureLimit != 0 || def.WorkConfig.RevisionLimit != 0 {
+			t.Errorf("typed 0 must persist as 0 (default sentinel), got failure=%d revision=%d",
+				def.WorkConfig.FailureLimit, def.WorkConfig.RevisionLimit)
+		}
+	})
+
+	t.Run("duplicate list entries collapse", func(t *testing.T) {
+		form := url.Values{
+			"requiredDeliverableType": {"kb.documents, kb.documents, kb.chunks"},
+			"triggerStatus":           {"todo, todo, rework"},
+		}
+		def := &AgentDefinition{ID: "a1", Name: "diane"}
+		if err := applyAgentWorkSection(def, generalSectionContext(t, form)); err != nil {
+			t.Fatalf("applyAgentWorkSection: %v", err)
+		}
+		if got := strings.Join(def.WorkConfig.WorkContract.RequiredDeliverableTypes, ","); got != "kb.documents,kb.chunks" {
+			t.Errorf("required deliverable types = %q, want duplicates collapsed", got)
+		}
+		if got := strings.Join(def.WorkConfig.TriggerStatuses, ","); got != "todo,rework" {
+			t.Errorf("trigger statuses = %q, want duplicates collapsed", got)
+		}
+	})
+
+	t.Run("out-of-range rejected", func(t *testing.T) {
 		for name, form := range map[string]url.Values{
-			"failureLimit":       {"failureLimit": {"0"}},
-			"revisionLimit":      {"revisionLimit": {"0"}},
+			"failureLimit":       {"failureLimit": {"-1"}},
+			"revisionLimit":      {"revisionLimit": {"-1"}},
 			"maxAttempts":        {"maxAttempts": {"0"}},
+			"initialIntervalMs":  {"initialIntervalMs": {"-1"}},
+			"maxIntervalMs":      {"maxIntervalMs": {"-1"}},
 			"backoffCoefficient": {"backoffCoefficient": {"0.5"}},
 		} {
 			def := &AgentDefinition{ID: "a1", Name: "diane"}
 			if err := applyAgentWorkSection(def, generalSectionContext(t, form)); err == nil {
-				t.Errorf("%s below minimum must be rejected", name)
+				t.Errorf("%s out of range must be rejected", name)
 			}
 		}
 	})
@@ -191,16 +226,22 @@ func TestAgentWorkSettingsForm(t *testing.T) {
 
 	// Numeric min/step bounds.
 	for _, want := range []string{
-		`name="failureLimit" type="number" min="1" step="1"`,
-		`name="revisionLimit" type="number" min="1" step="1"`,
+		`name="failureLimit" type="number" min="0" step="1"`,
+		`name="revisionLimit" type="number" min="0" step="1"`,
 		`name="maxAttempts" type="number" min="1" step="1"`,
 		`name="initialIntervalMs" type="number" min="0" step="1"`,
-		`name="backoffCoefficient" type="number" min="1" step="0.1"`,
+		`name="backoffCoefficient" type="number" min="1" step="any"`,
 		`name="maxIntervalMs" type="number" min="0" step="1"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Work form numeric bound missing %q", want)
 		}
+	}
+
+	// The Retry policy section must disclose that only max attempts is applied
+	// today (the interval/coefficient fields are persisted but not consumed).
+	if !strings.Contains(html, `data-testid="agent-work-retry-policy-gap"`) {
+		t.Error("Retry policy section must disclose that only max attempts is applied")
 	}
 
 	// Stored values prefill; an empty status shows the default placeholder.

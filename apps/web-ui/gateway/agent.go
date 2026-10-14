@@ -649,11 +649,11 @@ func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
 
 // applyAgentWorkSection maps the Work form onto the definition's WorkConfig: the
 // six status-name phases, requiresReview, failureLimit, revisionLimit,
-// retryPolicy, workContract, and triggerStatuses. An empty status name or zero
+// retryPolicy, workContract, and triggerStatuses. An empty status name or a zero
 // limit inherits the platform default (the server resolver treats ≤ 0 / empty as
-// "use the built-in default"). Non-empty values below a field's minimum are
-// rejected so a nonsensical budget (e.g. failure limit 0 typed explicitly) never
-// reaches memory.
+// "use the built-in default"), so a typed 0 is stored as the default sentinel
+// rather than rejected. A negative value is rejected so a nonsensical budget
+// never reaches memory.
 func applyAgentWorkSection(def *AgentDefinition, c echo.Context) error {
 	wc := &AgentWorkConfig{}
 
@@ -670,10 +670,10 @@ func applyAgentWorkSection(def *AgentDefinition, c echo.Context) error {
 	wc.RequiresReview = lastFormBool(c, "workRequiresReview")
 
 	var err error
-	if wc.FailureLimit, err = workIntField(c, "failureLimit", "Failure limit", 1); err != nil {
+	if wc.FailureLimit, err = workIntField(c, "failureLimit", "Failure limit", 0); err != nil {
 		return err
 	}
-	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", "Revision limit", 1); err != nil {
+	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", "Revision limit", 0); err != nil {
 		return err
 	}
 	if wc.RetryPolicy.MaxAttempts, err = workIntField(c, "maxAttempts", "Max attempts", 1); err != nil {
@@ -712,8 +712,9 @@ func lastFormBool(c echo.Context, name string) bool {
 }
 
 // workIntField parses an optional integer form field. Empty reads 0 (the server
-// default); an unparseable value or a positive value below min is an error. The
-// error message uses the human-readable label (not the raw field identifier).
+// "use default" sentinel); an unparseable value or a value below min is an
+// error. The error message uses the human-readable label (not the raw field
+// identifier). A min of 0 means "non-negative": 0 is accepted as the default.
 func workIntField(c echo.Context, name, label string, min int) (int, error) {
 	raw := strings.TrimSpace(c.FormValue(name))
 	if raw == "" {
@@ -723,7 +724,7 @@ func workIntField(c echo.Context, name, label string, min int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%s must be a whole number", label)
 	}
-	if min > 0 && n < min {
+	if n < min {
 		return 0, fmt.Errorf("%s must be at least %d", label, min)
 	}
 	return n, nil

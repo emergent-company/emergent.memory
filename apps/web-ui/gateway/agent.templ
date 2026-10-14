@@ -697,11 +697,11 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 							<input id="agent-settings-work-requires-review" name="workRequiresReview" type="checkbox" value="true" checked?={ wc.RequiresReview } class="checkbox"/>
 						}
 						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-							@form.FormControl("agent-settings-work-failure-limit", "Failure limit", form.LabelAbove, "How many failures an item tolerates before escalation.", "", nil) {
-								<input id="agent-settings-work-failure-limit" name="failureLimit" type="number" min="1" step="1" value={ workIntStr(wc.FailureLimit) } placeholder="3" class="input w-full"/>
+							@form.FormControl("agent-settings-work-failure-limit", "Failure limit", form.LabelAbove, "How many failures an item tolerates before escalation. Zero inherits the platform default (3).", "", nil) {
+								<input id="agent-settings-work-failure-limit" name="failureLimit" type="number" min="0" step="1" value={ workIntStr(wc.FailureLimit) } placeholder="3" class="input w-full"/>
 							}
-							@form.FormControl("agent-settings-work-revision-limit", "Revision limit", form.LabelAbove, "How many rework rounds before the item is escalated to a human.", "", nil) {
-								<input id="agent-settings-work-revision-limit" name="revisionLimit" type="number" min="1" step="1" value={ workIntStr(wc.RevisionLimit) } placeholder="3" class="input w-full"/>
+							@form.FormControl("agent-settings-work-revision-limit", "Revision limit", form.LabelAbove, "How many rework rounds before the item is escalated to a human. Zero inherits the platform default (3).", "", nil) {
+								<input id="agent-settings-work-revision-limit" name="revisionLimit" type="number" min="0" step="1" value={ workIntStr(wc.RevisionLimit) } placeholder="3" class="input w-full"/>
 							}
 						</div>
 					</div>
@@ -718,12 +718,15 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 							<input id="agent-settings-work-initial-interval" name="initialIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.InitialIntervalMS) } placeholder="0" class="input w-full"/>
 						}
 						@form.FormControl("agent-settings-work-backoff-coefficient", "Backoff coefficient", form.LabelAbove, "Multiplier applied to the interval between retries.", "", nil) {
-							<input id="agent-settings-work-backoff-coefficient" name="backoffCoefficient" type="number" min="1" step="0.1" value={ workFloatStr(wc.RetryPolicy.BackoffCoefficient) } placeholder="1" class="input w-full"/>
+							<input id="agent-settings-work-backoff-coefficient" name="backoffCoefficient" type="number" min="1" step="any" value={ workFloatStr(wc.RetryPolicy.BackoffCoefficient) } placeholder="1" class="input w-full"/>
 						}
 						@form.FormControl("agent-settings-work-max-interval", "Max interval (ms)", form.LabelAbove, "Ceiling for the backoff interval.", "", nil) {
 							<input id="agent-settings-work-max-interval" name="maxIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.MaxIntervalMS) } placeholder="0" class="input w-full"/>
 						}
 					</div>
+					<p class="text-muted-strong mt-3 text-sm" data-testid="agent-work-retry-policy-gap">
+						Only <strong>Max attempts</strong> is applied today. The initial interval, backoff coefficient, and max interval fields are saved on the definition but are not yet used when scheduling retries.
+					</p>
 				}
 				@ui.Section("Work contract", ui.SectionProps{
 					Margin:    "mt-6",

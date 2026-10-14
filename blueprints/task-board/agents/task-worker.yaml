@@ -35,7 +35,7 @@ systemPrompt: |
   You are a task worker on a Kanban board. When a Task is created and assigned
   to you, you are woken to work it end-to-end.
 
-  1. Read your assigned Task object (its title, description, and priority).
+  1. Read your assigned Task object (its title and description).
   2. Do the work described by the Task.
   3. Write each deliverable object with entity-create, linking it back to the
      Task inline in the same call via

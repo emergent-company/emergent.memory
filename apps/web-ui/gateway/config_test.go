@@ -118,6 +118,24 @@ func TestLoadConfigComponentGallery(t *testing.T) {
 	}
 }
 
+// TestSplitCSVDedupes asserts the comma-separated splitter trims whitespace,
+// drops empty entries, and collapses duplicates while preserving order.
+func TestSplitCSVDedupes(t *testing.T) {
+	got := splitCSV(" a , b ,a, ,b ,c ")
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("splitCSV = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("splitCSV = %v, want %v", got, want)
+		}
+	}
+	if out := splitCSV("  "); out != nil {
+		t.Errorf("splitCSV(blank) = %v, want nil", out)
+	}
+}
+
 // TestConfigValidate covers the fail-closed auth posture check: session mode
 // requires a full Zitadel + cookie config, while dev is an explicit opt-in.
 func TestConfigValidate(t *testing.T) {

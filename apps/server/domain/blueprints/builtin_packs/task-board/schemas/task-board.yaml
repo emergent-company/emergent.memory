@@ -21,9 +21,6 @@ objectTypes:
       description:
         type: string
         description: Longer description of what needs to be done
-      priority:
-        type: integer
-        description: Lower numbers are higher priority
 
 relationshipTypes:
   - name: blocks
