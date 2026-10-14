@@ -229,7 +229,7 @@ func (s *Server) uiMembersFor(surf membersSurface, c echo.Context) error {
 	data.FlashErr = flashError(c)
 	s.loadMembersData(c, &data)
 	if surf.settings {
-		return s.page(c, pageTitle("Members"), ProjectMembersPage(data, s.projectHasNoProviders(ctx)))
+		return s.page(c, pageTitle("Members"), ProjectMembersPage(data, s.projectHasNoProviders(ctx), s.projectAdminForCaller(c, activeProjectIDFromContext(ctx, s.cfg.MemoryProjectID))))
 	}
 	return s.page(c, pageTitle("Members"), MembersPage(data))
 }

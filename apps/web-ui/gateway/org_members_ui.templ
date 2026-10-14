@@ -177,7 +177,7 @@ templ MembersPage(data membersPageData) {
 // Settings rail (/settings/members), sharing membersBody with the legacy
 // top-level MembersPage. Non-admins see a read-only list (write controls are
 // gated by data.CanManage).
-templ ProjectMembersPage(data membersPageData, providersMissing bool) {
+templ ProjectMembersPage(data membersPageData, providersMissing bool, isProjectAdmin bool) {
 	{{ base := membersBaseFor(data.Base)
 	subtitle := "People with access to the active project."
 	if data.ProjectName != "" {
@@ -190,7 +190,7 @@ templ ProjectMembersPage(data membersPageData, providersMissing bool) {
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("members", providersMissing), nil) {
+		@layout.Rail(settingsSubNav("members", providersMissing, isProjectAdmin), nil) {
 			@membersBody(data)
 		}
 	}

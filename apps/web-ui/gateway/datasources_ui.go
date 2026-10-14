@@ -305,7 +305,7 @@ func (s *Server) uiDataSources(c echo.Context) error {
 		{key: "deleted", msg: "Data source deleted."},
 	})
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("Data Sources"), DataSourcesPage(items, names, err, flashMsg, flashErr))
+	return s.page(c, pageTitle("Data Sources"), DataSourcesPage(items, names, err, flashMsg, flashErr, s.projectAdminForCaller(c, activeProjectIDFromContext(ctx, s.cfg.MemoryProjectID))))
 }
 
 // uiDataSourceNew renders the provider chooser, or the connect surface for a
@@ -640,7 +640,7 @@ func (s *Server) uiProjectOAuthClients(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage("", nil, nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(settingsNavCommon{}, "", nil, nil, userFacingError(err), "", nil))
 	}
 	if project == nil {
 		// No active project: land on the picker rather than rendering an empty
@@ -669,7 +669,7 @@ func (s *Server) uiProjectOAuthClients(c echo.Context) error {
 		{key: "saved", msg: "OAuth client saved."},
 		{key: "deleted", msg: "OAuth client removed."},
 	})
-	return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(project.Name, providers, byType, perr, flashMsg, flashError(c)))
+	return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(s.settingsNavPayload(c, ctx), project.Name, providers, byType, perr, flashMsg, flashError(c)))
 }
 
 // uiProjectOAuthClientUpsert saves the project's OAuth client for a provider

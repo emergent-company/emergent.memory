@@ -88,34 +88,37 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 // provider that advertises the oauth method. A project-level client overrides
 // this org-wide one for that project; the same card serves both scopes.
 templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
-	@dsOAuthClientsPage("Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), "Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
 }
 
 // ProjectOAuthClientsPage renders the PROJECT's OAuth client configuration. A
 // client configured here overrides the org-wide client for this project only.
-templ ProjectOAuthClientsPage(projectName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
-	@dsOAuthClientsPage("Project", "Data source OAuth clients", dsProjectOAuthClientsSubtitle(projectName), "/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+templ ProjectOAuthClientsPage(nav settingsNavCommon, projectName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@dsOAuthClientsPage(settingsSubNav("oauth-clients", nav.ProvidersMissing, nav.IsProjectAdmin), "Project", "Data source OAuth clients", dsProjectOAuthClientsSubtitle(projectName), "/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
 }
 
 // dsOAuthClientsPage is the scope-agnostic OAuth-client settings page shared by
-// the org and project scopes. The two differ only in the eyebrow/title copy and
-// the actionBase the card's forms post to (an org path or the scoped project
-// path); everything else — the per-provider cards, the write-only secret, the
-// console setup guide — is identical.
-templ dsOAuthClientsPage(eyebrow, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+// the org and project scopes. The two differ only in the settings rail rendered
+// beside the body, the eyebrow/title copy, and the actionBase the card's forms
+// post to (an org path or the scoped project path); everything else — the
+// per-provider cards, the write-only secret, the console setup guide — is
+// identical.
+templ dsOAuthClientsPage(rail templ.Component, eyebrow, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader(eyebrow, title, subtitle)
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("OAuth clients unavailable", loadErr)
 		} else {
-			<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
-				for _, p := range providers {
-					if p.DSProviderSupportsOAuth() {
-						@dsOAuthClientCard(actionBase, p, clients[p.Type])
+			@layout.Rail(rail, nil) {
+				<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
+					for _, p := range providers {
+						if p.DSProviderSupportsOAuth() {
+							@dsOAuthClientCard(actionBase, p, clients[p.Type])
+						}
 					}
-				}
-			</div>
+				</div>
+			}
 		}
 	}
 }

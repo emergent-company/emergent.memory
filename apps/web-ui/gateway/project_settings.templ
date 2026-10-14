@@ -32,8 +32,8 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 // screens and becomes a sticky left rail on desktop. Connected devices is the
 // single entry for external machines — it merges the former Devices and MCP
 // nodes sections.
-templ settingsSubNav(active string, providersMissing bool) {
-	@components.SettingsRail("Settings sections", active, []components.RailItem{
+templ settingsSubNav(active string, providersMissing bool, isProjectAdmin bool) {
+	{{ items := []components.RailItem{
 		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},
 		{Key: "assistant", Href: "/settings/assistant", Icon: "lucide--bot", Label: "Assistant"},
 		{Key: "members", Href: "/settings/members", Icon: "lucide--users", Label: "Members"},
@@ -41,8 +41,12 @@ templ settingsSubNav(active string, providersMissing bool) {
 		{Custom: providersRailItem(active, providersMissing)},
 		{Key: "voice", Href: "/settings/voice", Icon: "lucide--mic", Label: "Voice"},
 		{Key: "devices", Href: "/settings/devices", Icon: "lucide--monitor-smartphone", Label: "Connected devices"},
-		{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"},
-	})
+	}
+	if isProjectAdmin {
+		items = append(items, components.RailItem{Key: "oauth-clients", Href: "/settings/oauth-clients", Icon: "lucide--key-round", Label: "Data source OAuth clients"})
+	}
+	items = append(items, components.RailItem{Key: "budget", Href: "/settings/budget", Icon: "lucide--wallet", Label: "Budget"}) }}
+	@components.SettingsRail("Settings sections", active, items)
 }
 
 // providersRailItem renders the Providers settings entry, which carries a
@@ -80,7 +84,7 @@ templ ProjectSettingsPage(data projectSettingsData) {
 		if data.LoadErr != nil {
 			@pageError("Project settings unavailable", data.LoadErr)
 		} else {
-			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
+			@layout.Rail(settingsSubNav("general", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 				@projectInfoPanel(data.Project)
 				@editorAgentPanel(data.EditorAgent, data.Agents)
 				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
@@ -97,7 +101,7 @@ templ AssistantSettingsPage(data assistantSettingsPageData) {
 			@countBadgeLabel("assistant", "lucide--bot")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("assistant", data.ProvidersMissing), nil) {
+		@layout.Rail(settingsSubNav("assistant", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 			@assistantPanel(data.AssistantAgent, data.Agents)
 		}
 	}
@@ -111,7 +115,7 @@ templ OverridesSettingsPage(data overridesSettingsPageData) {
 			@countBadgeLabel("overrides", "lucide--wrench")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("overrides", data.ProvidersMissing), nil) {
+		@layout.Rail(settingsSubNav("overrides", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 			@agentOverridesPanel(data.Overrides)
 		}
 	}
@@ -125,7 +129,7 @@ templ ProvidersSettingsPage(data providersSettingsPageData) {
 			@countBadgeLabel("providers", "lucide--server")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing), nil) {
+		@layout.Rail(settingsSubNav("providers", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 			@providersPanel(data.Providers)
 		}
 	}
@@ -140,7 +144,7 @@ templ VoiceSettingsPage(data voiceSettingsPageData) {
 			@countBadgeLabel("voice", "lucide--mic")
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("voice", data.ProvidersMissing), nil) {
+		@layout.Rail(settingsSubNav("voice", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 			@voicePanel(data.Voice)
 		}
 	}
@@ -169,7 +173,7 @@ templ ConnectedDevicesPage(data connectedDevicesPageData) {
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("devices", data.ProvidersMissing), nil) {
+		@layout.Rail(settingsSubNav("devices", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 			@iosSetupPanel(data.IOSQRImage)
 			@devicesPanel(data.Devices)
 			if data.LoadErr != nil {
@@ -210,7 +214,7 @@ templ BudgetSettingsPage(data budgetSettingsPageData) {
 		if data.LoadErr != nil {
 			@pageError("Budget settings unavailable", data.LoadErr)
 		} else {
-			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing), nil) {
+			@layout.Rail(settingsSubNav("budget", data.ProvidersMissing, data.IsProjectAdmin), nil) {
 				@budgetPanel(data.Project)
 			}
 		}
@@ -1069,7 +1073,7 @@ templ providerSelectIcon(ic providerIcon) {
 // {placeholder} (generic, Azure OpenAI), and for canonical openai; vendors with
 // a concrete default (google, deepseek, google-vertex) show neither and the
 // backend validates credentials on save.
-templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, vendors []ProviderDefinition, genModels, embModels []Model, providersMissing bool) {
+templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, draftProvider string, vendors []ProviderDefinition, genModels, embModels []Model, providersMissing bool, isProjectAdmin bool) {
 	<form
 		id="provider-form"
 		method="post"
@@ -1083,7 +1087,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 		}
 	>
 		<div class={ pageFormFieldsClass }>
-			@layout.Rail(settingsSubNav("providers", providersMissing), nil) {
+			@layout.Rail(settingsSubNav("providers", providersMissing, isProjectAdmin), nil) {
 				@ui.Section("Provider", ui.SectionProps{
 					Margin:    "mb-6",
 					BodyClass: "memory-density-comfortable",
@@ -1671,7 +1675,7 @@ templ providerConfigPage(data providerConfigPageData) {
 			@providerConfigSaveErrorModal(data.FlashErr)
 		}
 	</div>
-	@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.Vendors, data.GenerativeModels, data.EmbeddingModels, data.ProvidersMissing)
+	@providerConfigForm(data.Provider, data.Draft, data.DraftProvider, data.Vendors, data.GenerativeModels, data.EmbeddingModels, data.ProvidersMissing, data.IsProjectAdmin)
 }
 
 // providerFallbackModelOptions is the htmx-swapped fragment returned by POST

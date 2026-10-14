@@ -59,7 +59,7 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 // TestRenderSettingsSubNav covers the Settings sub-navigation rail: all
 // section links render and exactly one (the active section) is highlighted.
 func TestRenderSettingsSubNav(t *testing.T) {
-	html := renderHTML(t, settingsSubNav("voice", false))
+	html := renderHTML(t, settingsSubNav("voice", false, false))
 	for _, want := range []string{
 		`href="/settings"`, "General",
 		`href="/settings/assistant"`, "Assistant",
@@ -89,6 +89,26 @@ func TestRenderSettingsSubNav(t *testing.T) {
 	}
 }
 
+// TestSettingsSubNavOAuthClientsAdminOnly asserts the "Data source OAuth
+// clients" rail entry renders for project admins and is hidden (not merely
+// disabled) for everyone else.
+func TestSettingsSubNavOAuthClientsAdminOnly(t *testing.T) {
+	admin := renderHTML(t, settingsSubNav("general", false, true))
+	for _, want := range []string{`href="/settings/oauth-clients"`, "Data source OAuth clients"} {
+		if !strings.Contains(admin, want) {
+			t.Errorf("admin settings sub-nav missing %q", want)
+		}
+	}
+
+	nonAdmin := renderHTML(t, settingsSubNav("general", false, false))
+	if strings.Contains(nonAdmin, `href="/settings/oauth-clients"`) {
+		t.Error("non-admin settings sub-nav must not render the oauth-clients entry")
+	}
+	if strings.Contains(nonAdmin, "Data source OAuth clients") {
+		t.Error("non-admin settings sub-nav must not render the oauth-clients label")
+	}
+}
+
 // TestSettingsNavConnectedDevicesIconIsBundled guards #1566: the Connected
 // devices rail entry used the nonexistent icon name "lucide--devices". The
 // @iconify/tailwind4 plugin (webui/css/app.css) only compiles a
@@ -98,7 +118,7 @@ func TestRenderSettingsSubNav(t *testing.T) {
 // Assert (a) the rendered entry still carries a non-empty lucide icon class and
 // (b) that name is present in the exact bundled set the CSS build consumes.
 func TestSettingsNavConnectedDevicesIconIsBundled(t *testing.T) {
-	html := renderHTML(t, settingsSubNav("devices", false))
+	html := renderHTML(t, settingsSubNav("devices", false, false))
 	icon := lucideIconInEntry(html, "/settings/devices")
 	if !strings.HasPrefix(icon, "lucide--") || icon == "lucide--" {
 		t.Fatalf("Connected devices nav entry must render a non-empty lucide icon class, got %q", icon)

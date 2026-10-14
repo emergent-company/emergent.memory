@@ -24,14 +24,17 @@ Google Drive connects require an OAuth 2.0 client (an "app") that Memory uses to
 access. The app can be configured at three levels, resolved in this order when a connection starts:
 
 1. **Project** — a project-level client, managed by a `project_admin` on the project's
-   **Data source OAuth clients** page (reached from the "no OAuth client configured" prompt when a
-   connect fails). It overrides everything else for that project.
+   **Data source OAuth clients** page. It overrides everything else for that project.
 2. **Organization** — an org-level client, managed by an `org_admin` under
    **Organization Settings → Data source OAuth clients**.
 3. **Deployment default** — a centrally configured app set via `SOURCES_OAUTH_GOOGLE_CLIENT_ID` /
    `SOURCES_OAUTH_GOOGLE_CLIENT_SECRET` (no setup needed by users).
 
 If none is configured, connecting fails with an actionable message telling you where to add one.
+
+The project page is reachable three ways: from the **Data source OAuth clients** entry in
+**Project Settings**, from the **OAuth clients** shortcut on the **Data Sources** page, or from the
+"no OAuth client configured" prompt shown when a connect fails.
 
 ### Create the app in Google Cloud Console
 
@@ -50,10 +53,11 @@ If none is configured, connecting fails with an actionable message telling you w
 ### Enter the client
 
 === "Project-level"
-    A `project_admin` opens the project's **Data source OAuth clients** page (from the
-    failed-connect prompt, or `/settings/oauth-clients`), chooses Google Drive,
-    and enters the Client ID, Client secret, scopes, and strategy from the console. This client is
-    used only for that project.
+    A `project_admin` opens the project's **Data source OAuth clients** page (from
+    **Project Settings → Data source OAuth clients**, the **OAuth clients** shortcut on the Data
+    Sources page, or the failed-connect prompt), chooses Google Drive, and enters the Client ID,
+    Client secret, scopes, and strategy from the console. This client is used only for that
+    project.
 
 === "Organization-level"
     An `org_admin` opens **Organization Settings → Data source OAuth clients**, chooses Google

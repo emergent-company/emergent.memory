@@ -773,6 +773,7 @@ templ orgSettingsSubNav(orgID string, active string, isAdmin bool) {
 	}
 	items = append(items, components.RailItem{Key: "tools", Href: base + "/settings", Icon: "lucide--sliders-horizontal", Label: "Tools"})
 	if isAdmin {
+		items = append(items, components.RailItem{Key: "oauth-clients", Href: base + "/settings/oauth-clients", Icon: "lucide--key-round", Label: "Data source OAuth clients"})
 		items = append(items, components.RailItem{Key: "danger-zone", Href: base + "/settings/danger-zone", Icon: "lucide--shield-alert", Label: "Danger zone"})
 	} }}
 	@components.SettingsRail("Organization settings sections", active, items)

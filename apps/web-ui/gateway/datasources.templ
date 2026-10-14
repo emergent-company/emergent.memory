@@ -16,9 +16,9 @@ import (
 // DataSourcesPage renders the Data Sources list: every connected source with
 // its provider, lifecycle status, and last-sync time, plus an empty state. A
 // failed list fetch renders the whole-page error state.
-templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error) {
+templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error, isProjectAdmin bool) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@dataSourcesHeader(len(integrations), loadErr == nil)
+		@dataSourcesHeader(len(integrations), loadErr == nil, isProjectAdmin)
 		if loadErr != nil {
 			@pageError("Failed to load data sources", loadErr)
 		} else {
@@ -36,11 +36,23 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 	}
 }
 
-templ dataSourcesHeader(count int, ok bool) {
+templ dataSourcesHeader(count int, ok bool, isProjectAdmin bool) {
 	@pageHeader("Integrations", "Data Sources", "Connect external systems and sync their documents into this project.") {
 		<div class="flex flex-wrap items-center gap-2">
 			if ok {
 				@countBadgeLabel(countLabel(count, "source", "sources"), "lucide--cloud")
+			}
+			if isProjectAdmin {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/settings/oauth-clients",
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--key-round",
+					Attrs:   templ.Attributes{"data-testid": "ds-oauth-clients-link"},
+				}) {
+					OAuth clients
+				}
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,

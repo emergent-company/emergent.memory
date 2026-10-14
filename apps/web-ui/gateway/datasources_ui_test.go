@@ -53,7 +53,7 @@ func TestRenderDataSourcesPage(t *testing.T) {
 		{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", LastSyncedAt: &lastSynced},
 		{ID: "s2", Name: "Archive", ProviderType: "google_drive", Status: "paused"},
 	}
-	html := renderHTML(t, DataSourcesPage(items, map[string]string{"google_drive": "Google Drive"}, nil, "", nil))
+	html := renderHTML(t, DataSourcesPage(items, map[string]string{"google_drive": "Google Drive"}, nil, "", nil, false))
 	for _, want := range []string{
 		"Data Sources", "Team Drive", "Archive", "Google Drive", "Active", "Paused",
 		`href="/data-sources/s1"`, `data-testid="ds-source-row"`, `href="/data-sources/new"`,
@@ -63,19 +63,35 @@ func TestRenderDataSourcesPage(t *testing.T) {
 		}
 	}
 
-	empty := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil))
+	empty := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, false))
 	if !strings.Contains(empty, "No data sources connected") {
 		t.Error("empty state missing")
 	}
 
-	errHTML := renderHTML(t, DataSourcesPage(nil, nil, errTest, "", nil))
+	errHTML := renderHTML(t, DataSourcesPage(nil, nil, errTest, "", nil, false))
 	if !strings.Contains(errHTML, "Failed to load data sources") {
 		t.Error("error state missing")
 	}
 
-	flash := renderHTML(t, DataSourcesPage(nil, nil, nil, "Data source connected.", nil))
+	flash := renderHTML(t, DataSourcesPage(nil, nil, nil, "Data source connected.", nil, false))
 	if !strings.Contains(flash, "Data source connected.") {
 		t.Error("flash missing")
+	}
+}
+
+// TestRenderDataSourcesOAuthClientsLink asserts the header's "OAuth clients"
+// shortcut renders for project admins only.
+func TestRenderDataSourcesOAuthClientsLink(t *testing.T) {
+	admin := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, true))
+	for _, want := range []string{`data-testid="ds-oauth-clients-link"`, `href="/settings/oauth-clients"`} {
+		if !strings.Contains(admin, want) {
+			t.Errorf("admin data sources page missing %q", want)
+		}
+	}
+
+	nonAdmin := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, false))
+	if strings.Contains(nonAdmin, `data-testid="ds-oauth-clients-link"`) {
+		t.Error("non-admin data sources page must not show the OAuth clients link")
 	}
 }
 
@@ -903,7 +919,7 @@ func TestRenderProjectOAuthClientsPage(t *testing.T) {
 			Configured:       true,
 		},
 	}
-	html := renderHTML(t, ProjectOAuthClientsPage("Home", providers, clients, nil, "", nil))
+	html := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home", providers, clients, nil, "", nil))
 	for _, want := range []string{
 		"Data source OAuth clients",
 		"Google Drive",
@@ -922,10 +938,30 @@ func TestRenderProjectOAuthClientsPage(t *testing.T) {
 		}
 	}
 	// Without resolved callback values the console guide is omitted entirely.
-	bare := renderHTML(t, ProjectOAuthClientsPage("Home",
+	bare := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home",
 		[]DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}}, nil, nil, "", nil))
 	if strings.Contains(bare, `data-testid="ds-oauth-console-guide"`) {
 		t.Error("console guide must not render without resolved callback values")
+	}
+}
+
+// TestRenderProjectOAuthClientsPageActiveRail asserts the page renders inside
+// the settings rail with the "Data source OAuth clients" entry active (and the
+// rail entry only present because the caller is a project admin).
+func TestRenderProjectOAuthClientsPageActiveRail(t *testing.T) {
+	html := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home", nil, nil, nil, "", nil))
+	if !strings.Contains(html, `href="/settings/oauth-clients"`) {
+		t.Error("settings rail missing the oauth-clients entry")
+	}
+	if !strings.Contains(html, `aria-current="page"`) {
+		t.Error("oauth-clients rail entry should be active")
+	}
+
+	// A non-admin nav payload hides the entry; the page body still renders
+	// (reachability is enforced at the handler, not the template).
+	nonAdmin := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{}, "Home", nil, nil, nil, "", nil))
+	if strings.Contains(nonAdmin, `href="/settings/oauth-clients"`) {
+		t.Error("non-admin rail must not render the oauth-clients entry")
 	}
 }
 

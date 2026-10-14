@@ -133,10 +133,25 @@ type voiceSettings struct {
 }
 
 // settingsNavCommon is embedded (anonymous) into every settings-page payload so
-// the page can render the settings sub-nav's provider warning badge: true when
-// the active project has ZERO configured LLM providers.
+// the page can render the settings sub-nav: the provider warning badge (true
+// when the active project has ZERO configured LLM providers) and whether the
+// caller can administer the active project (gates the admin-only "Data source
+// OAuth clients" rail entry).
 type settingsNavCommon struct {
 	ProvidersMissing bool
+	IsProjectAdmin   bool
+}
+
+// settingsNavPayload returns the shared nav payload for settings pages: the
+// providers-missing badge plus the caller's project-admin role. The role is
+// fail-closed — an unresolvable active project yields IsProjectAdmin=false,
+// hiding the admin-only entry rather than surfacing an error (the same degrade
+// as projectAdminForCaller).
+func (s *Server) settingsNavPayload(c echo.Context, ctx context.Context) settingsNavCommon {
+	return settingsNavCommon{
+		ProvidersMissing: s.projectHasNoProviders(ctx),
+		IsProjectAdmin:   s.projectAdminForCaller(c, activeProjectIDFromContext(ctx, s.cfg.MemoryProjectID)),
+	}
 }
 
 // projectSettingsData is the payload for ProjectSettingsPage (General): the
@@ -253,7 +268,7 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 		data.FlashMsg = "Project settings saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
@@ -299,7 +314,7 @@ func (s *Server) uiProjectAssistantSettings(c echo.Context) error {
 		data.FlashMsg = "Assistant settings saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	agents, err := s.memory.ListAgentDefinitions(ctx)
 	captureError(err)
 	data.Agents = agents
@@ -320,7 +335,7 @@ func (s *Server) uiProjectOverridesSettings(c echo.Context) error {
 		data.FlashMsg = "Agent overrides saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	overrides, err := s.memory.ListAgentOverrides(ctx)
 	captureError(err)
 	data.Overrides = overrides
@@ -336,7 +351,7 @@ func (s *Server) uiProjectProvidersSettings(c echo.Context) error {
 		data.FlashMsg = "Providers saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.Providers = s.loadProviderPanel(ctx)
 	return s.page(c, pageTitle("Providers"), ProvidersSettingsPage(data))
 }
@@ -346,7 +361,7 @@ func (s *Server) uiProjectProviderNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	data := providerConfigPageData{}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	return s.page(c, pageTitle("Add provider"), providerConfigPage(data))
@@ -368,7 +383,7 @@ func (s *Server) uiProjectProviderEdit(c echo.Context) error {
 	}
 	data := providerConfigPageData{Provider: cfg}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	return s.page(c, pageTitle("Edit provider"), providerConfigPage(data))
@@ -383,7 +398,7 @@ func (s *Server) uiProjectVoiceSettings(c echo.Context) error {
 		data.FlashMsg = "Voice settings saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.Voice = resolveVoiceSettings(ctx, s.cfg, s.memory)
 	return s.page(c, pageTitle("Voice"), VoiceSettingsPage(data))
 }
@@ -406,7 +421,7 @@ func (s *Server) uiConnectedDevices(c echo.Context) error {
 		data.FlashMsg = "MCP server installed on the device."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.IOSQRImage = s.setupQRImage(c)
 	data.Devices, _ = s.listDeviceTokens(ctx) // list errors degrade to an empty list
 	mcp := s.loadMCPNodesData(ctx, c.QueryParam("node"))
@@ -428,7 +443,7 @@ func (s *Server) uiProjectBudgetSettings(c echo.Context) error {
 		data.FlashMsg = "Budget settings saved."
 	}
 	data.FlashErr = flashError(c)
-	data.ProvidersMissing = s.projectHasNoProviders(ctx)
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
 		data.LoadErr = userFacingError(err)
