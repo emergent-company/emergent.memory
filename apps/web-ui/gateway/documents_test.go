@@ -1135,6 +1135,65 @@ func TestRenderExtractionJobDetailObjects(t *testing.T) {
 	}
 }
 
+// TestRenderExtractionJobDetailOpenBrowser asserts the "Open in object
+// browser" affordance renders only when the staging branch is resolved, and
+// links to /objects?branch=<BranchID>.
+func TestRenderExtractionJobDetailOpenBrowser(t *testing.T) {
+	withBranch := extractionJobDetail{
+		Job:      ExtractionJob{ID: "job1", Status: "completed"},
+		BranchID: "br1",
+		Branch:   &Branch{ID: "br1", Name: "extract-1"},
+		Objects:  []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"}},
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", withBranch))
+	if !strings.Contains(html, `data-testid="extraction-open-browser"`) {
+		t.Error("resolved branch must render the object-browser link")
+	}
+	if !strings.Contains(html, `href="/objects?branch=br1"`) {
+		t.Errorf("object-browser link must target /objects?branch=<BranchID>:\n%s", html)
+	}
+
+	branchless := extractionJobDetail{
+		Job:      ExtractionJob{ID: "job1", Status: "completed"},
+		NoBranch: true,
+		Objects:  []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"}},
+	}
+	if html := renderHTML(t, ExtractionJobDetail("d1", branchless)); strings.Contains(html, `data-testid="extraction-open-browser"`) {
+		t.Error("branchless job must not render the object-browser link")
+	}
+}
+
+// TestRenderExtractionJobDetailNoBranchFallback asserts a merged (branchless)
+// job still lists its objects — resolved on main — instead of collapsing to 0.
+func TestRenderExtractionJobDetailNoBranchFallback(t *testing.T) {
+	d := extractionJobDetail{
+		Job:      ExtractionJob{ID: "job1", Status: "completed"},
+		NoBranch: true,
+		Objects: []GraphObject{
+			{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam"},
+			{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"},
+		},
+		Relationships: []GraphRelationship{
+			{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"},
+		},
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
+	for _, want := range []string{
+		"2 objects", "1 relationship",
+		`data-testid="extraction-detail-nobranch"`,
+		"showing the objects on the main graph",
+		`href="/objects/o1"`, `href="/objects/o2"`,
+		"assigned to",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("branchless detail missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+		t.Error("branchless job must not render the merge form")
+	}
+}
+
 // TestDocumentRoutesRegister asserts the new document sub-routes coexist with
 // the existing document routes without a router conflict (Echo panics on a
 // conflicting registration).
@@ -1197,6 +1256,39 @@ func TestLoadExtractionJobDetail(t *testing.T) {
 		}
 		if d.Readiness == nil || !d.Readiness.Ready {
 			t.Fatalf("readiness = %+v", d.Readiness)
+		}
+	})
+
+	t.Run("merged branch falls back to main", func(t *testing.T) {
+		// The staging branch was deleted on merge: the first created object no
+		// longer carries a BranchID, so the job's objects resolve on main and
+		// the counts survive instead of collapsing to 0.
+		f := &fakeMemory{
+			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjects: []string{"o1", "o2"}}},
+			objects: []GraphObject{
+				{ID: "o1", CanonicalID: "c1", BranchID: "", Type: "person", Key: "sam"},
+				{ID: "o2", CanonicalID: "c2", BranchID: "", Type: "task", Key: "call dentist"},
+			},
+			relns: []GraphRelationship{
+				{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"},
+			},
+		}
+		s := &Server{memory: f}
+		d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+		if d.Err != nil {
+			t.Fatalf("err = %v", d.Err)
+		}
+		if !d.NoBranch {
+			t.Fatalf("want NoBranch=true, got %+v", d)
+		}
+		if d.BranchID != "" {
+			t.Fatalf("branchID = %q, want empty", d.BranchID)
+		}
+		if len(d.Objects) != 2 {
+			t.Fatalf("objects = %d, want 2 (fallen back to main)", len(d.Objects))
+		}
+		if len(d.Relationships) != 1 || d.Relationships[0].Type != "assigned_to" {
+			t.Fatalf("relationships = %+v", d.Relationships)
 		}
 	})
 

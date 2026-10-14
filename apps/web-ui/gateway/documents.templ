@@ -480,9 +480,27 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 					})
 					@extractionReadiness(d.Readiness)
 				}
+				if d.BranchID != "" {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/objects?branch=" + url.QueryEscape(d.BranchID),
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--external-link",
+						Attrs:   templ.Attributes{"data-testid": "extraction-open-browser"},
+					}) {
+						Open in object browser
+					}
+				}
 			</div>
 			if d.NoBranch {
-				@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
+				if len(d.Objects) == 0 {
+					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
+				} else {
+					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run's staging branch is no longer available — showing the objects on the main graph. }
+					@extractedObjects(d.Objects)
+					@extractedRelationships(d.Objects, d.Relationships)
+				}
 			} else {
 				@extractedObjects(d.Objects)
 				@extractedRelationships(d.Objects, d.Relationships)

@@ -1069,47 +1069,151 @@
     return shell.wrap;
   }
 
+  // a2uiApproval renders an A2UI approval component with the same card skeleton,
+  // hook classes and data-testids as the canonical chat approval card
+  // (chat-stream.js renderApproval), so the shared CSS and the card contract
+  // test apply to both renderers. Decisions still dispatch an `a2ui:action`
+  // CustomEvent — the A2UI action round-trip is a separate, unwired follow-up.
   function a2uiApproval(comp, surfaceId) {
     var shell = a2uiShell();
-    shell.body.appendChild(a2uiHeader("Approval", comp.tool || "tool"));
-    if (comp.input !== undefined && comp.input !== null) {
-      var inputPairs = a2uiPairRows(comp.input);
-      if (inputPairs && inputPairs.length) {
-        shell.body.appendChild(a2uiRows(inputPairs));
-      } else {
-        shell.body.appendChild(a2uiPre(comp.input));
-      }
+    shell.card.className =
+      "memory-approval card card-border bg-base-100 col-start-2 row-start-2 w-full max-w-[85%] shadow-sm border-warning/30";
+    shell.card.setAttribute("data-testid", "chat-approval-card");
+    shell.card.setAttribute("data-question-id", surfaceId || "");
+
+    var title = document.createElement("h3");
+    title.className = "memory-approval__title text-base leading-snug font-semibold break-words";
+    title.textContent = "Approve tool call";
+    shell.body.appendChild(title);
+
+    var sentence = document.createElement("p");
+    sentence.className = "memory-approval__sentence mt-0.5 text-xs text-muted-strong";
+    sentence.appendChild(document.createTextNode("The agent wants to run "));
+    var code = document.createElement("code");
+    code.className = "font-mono text-xs";
+    code.textContent = comp.tool || "tool";
+    sentence.appendChild(code);
+    sentence.appendChild(document.createTextNode("."));
+    shell.body.appendChild(sentence);
+
+    var inputPairs = a2uiPairRows(comp.input);
+    if (inputPairs && inputPairs.length) {
+      shell.body.appendChild(a2uiRows(inputPairs));
+    } else {
+      var args = document.createElement("pre");
+      args.className =
+        "memory-approval__args approval-args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
+      args.textContent = safeJSON(comp.input);
+      shell.body.appendChild(args);
     }
-    shell.body.appendChild(a2uiActions(surfaceId, comp, [
-      ["Deny", "deny", false],
-      ["Approve", "approve", true],
-    ]));
+
+    var actions = document.createElement("div");
+    actions.className = "memory-approval__actions flex items-center justify-end gap-2 pt-1";
+
+    var cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "memory-approval__cancel approval-cancel btn btn-ghost btn-sm";
+    cancelBtn.setAttribute("data-testid", "chat-approval-cancel");
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", function () {
+      document.dispatchEvent(new CustomEvent("a2ui:action", {
+        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "cancel" } },
+      }));
+    });
+    actions.appendChild(cancelBtn);
+
+    var rejectBtn = document.createElement("button");
+    rejectBtn.type = "button";
+    rejectBtn.className = "memory-approval__reject-action approval-reject btn btn-ghost btn-sm text-error";
+    rejectBtn.setAttribute("data-testid", "chat-approval-reject");
+    rejectBtn.textContent = "Reject";
+    rejectBtn.addEventListener("click", function () {
+      document.dispatchEvent(new CustomEvent("a2ui:action", {
+        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "reject" } },
+      }));
+    });
+    actions.appendChild(rejectBtn);
+
+    var approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "memory-approval__approve approval-approve btn btn-primary btn-sm";
+    approveBtn.setAttribute("data-testid", "chat-approval-approve");
+    approveBtn.textContent = "Approve";
+    approveBtn.addEventListener("click", function () {
+      document.dispatchEvent(new CustomEvent("a2ui:action", {
+        detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: "approve" } },
+      }));
+    });
+    actions.appendChild(approveBtn);
+
+    shell.body.appendChild(actions);
     return shell.wrap;
   }
 
+  // a2uiQuestion renders an A2UI question component with the same card skeleton,
+  // hook classes and data-testids as the canonical chat question card
+  // (chat-stream.js renderQuestion). Options answer directly on click — the A2UI
+  // surface has no two-step select/submit — so the option rows reuse the
+  // canonical option hook classes and the chat-question-option testid, while the
+  // submit button/footer are omitted. Choices dispatch an `a2ui:action`
+  // CustomEvent.
   function a2uiQuestion(comp, surfaceId) {
     var shell = a2uiShell();
-    shell.body.appendChild(a2uiHeader("Question", null));
-    if (comp.prompt != null && comp.prompt !== "") {
-      shell.body.appendChild(a2uiLabel(comp.prompt));
-    }
+    shell.card.className =
+      "memory-question card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
+    shell.card.setAttribute("data-testid", "chat-question-card");
+    shell.card.setAttribute("data-question-id", surfaceId || "");
+
+    var body = document.createElement("div");
+    body.className = "memory-question__body q-body memory-md text-base leading-snug break-words";
+    body.textContent = (comp.prompt != null && comp.prompt !== "") ? comp.prompt : "Question";
+    shell.body.appendChild(body);
+
     var options = comp.options;
     if (Array.isArray(options) && options.length) {
-      var opts = document.createElement("div");
-      opts.className = "flex flex-wrap gap-2";
+      var optsEl = document.createElement("div");
+      optsEl.className = "memory-question__options q-options flex flex-col gap-2";
       for (var i = 0; i < options.length; i++) {
-        var o = options[i];
-        var isObj = o && typeof o === "object";
-        var val = isObj ? (o.value != null ? o.value : o.label) : o;
-        var label = isObj ? (o.label != null ? o.label : o.value) : o;
-        opts.appendChild(a2uiButton(
-          surfaceId,
-          label == null ? "" : String(label),
-          { componentId: comp.id, response: val },
-          false
-        ));
+        (function (opt) {
+          var isObj = opt && typeof opt === "object";
+          var value = isObj ? (opt.value != null ? opt.value : opt.label) : opt;
+          var label = isObj ? (opt.label != null ? opt.label : opt.value) : opt;
+          var description = isObj ? opt.description : null;
+
+          var row = document.createElement("button");
+          row.type = "button";
+          row.className =
+            "memory-question__option flex w-full items-start gap-3 rounded-field border px-3 py-2.5 text-left transition-colors duration-150 cursor-pointer border-base-300/70 bg-base-100 hover:bg-base-200/50";
+          row.setAttribute("data-testid", "chat-question-option");
+          row.setAttribute("data-option-value", value == null ? "" : String(value));
+
+          var ind = document.createElement("span");
+          ind.className = "memory-question__indicator mt-0.5 flex shrink-0 items-center justify-center border-2 border-base-content/30 size-4.5 rounded-full";
+          row.appendChild(ind);
+
+          var textWrap = document.createElement("span");
+          textWrap.className = "flex min-w-0 grow flex-col";
+          var lab = document.createElement("span");
+          lab.className = "memory-question__label text-sm leading-snug font-medium";
+          lab.textContent = label == null ? "" : String(label);
+          textWrap.appendChild(lab);
+          if (description) {
+            var desc = document.createElement("span");
+            desc.className = "memory-question__description mt-0.5 text-xs leading-snug text-muted";
+            desc.textContent = String(description);
+            textWrap.appendChild(desc);
+          }
+          row.appendChild(textWrap);
+
+          row.addEventListener("click", function () {
+            document.dispatchEvent(new CustomEvent("a2ui:action", {
+              detail: { surfaceId: surfaceId, action: { componentId: comp.id, response: value } },
+            }));
+          });
+          optsEl.appendChild(row);
+        })(options[i]);
       }
-      shell.body.appendChild(opts);
+      shell.body.appendChild(optsEl);
     }
     return shell.wrap;
   }

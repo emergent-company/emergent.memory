@@ -634,6 +634,28 @@ func TestUIOrgSettings(t *testing.T) {
 	}
 }
 
+// TestOrgSettingsSubNavOAuthClientsAdminOnly mirrors
+// TestSettingsSubNavOAuthClientsAdminOnly for the org settings rail: the
+// "Data source OAuth clients" entry renders for org admins and is hidden (not
+// merely disabled) for everyone else. Rendered via renderHTML (no scope
+// rewrite), so the href is the raw /orgs/{id} form.
+func TestOrgSettingsSubNavOAuthClientsAdminOnly(t *testing.T) {
+	admin := renderHTML(t, orgSettingsSubNav("org1", "tools", true))
+	for _, want := range []string{`href="/orgs/org1/settings/oauth-clients"`, "Data source OAuth clients"} {
+		if !strings.Contains(admin, want) {
+			t.Errorf("admin org settings sub-nav missing %q", want)
+		}
+	}
+
+	nonAdmin := renderHTML(t, orgSettingsSubNav("org1", "tools", false))
+	if strings.Contains(nonAdmin, `href="/orgs/org1/settings/oauth-clients"`) {
+		t.Error("non-admin org settings sub-nav must not render the oauth-clients entry")
+	}
+	if strings.Contains(nonAdmin, "Data source OAuth clients") {
+		t.Error("non-admin org settings sub-nav must not render the oauth-clients label")
+	}
+}
+
 func TestUIOrgSettingsDangerZone(t *testing.T) {
 	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
 	s := &Server{cfg: sessionCfg(), memory: f}

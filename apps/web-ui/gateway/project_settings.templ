@@ -28,10 +28,11 @@ templ settingsField(name, label, tip, hint string, attrs templ.Attributes) {
 
 // settingsSubNav is the vertical sub-navigation rail for the Settings area
 // (General / Assistant / Members / Overrides / Providers / Voice / Connected
-// devices / Budget), mirroring agentSubNav. It stacks horizontally on small
-// screens and becomes a sticky left rail on desktop. Connected devices is the
-// single entry for external machines — it merges the former Devices and MCP
-// nodes sections.
+// devices / Data source OAuth clients / Budget), mirroring agentSubNav. It
+// stacks horizontally on small screens and becomes a sticky left rail on
+// desktop. Connected devices is the single entry for external machines — it
+// merges the former Devices and MCP nodes sections. Data source OAuth clients
+// is gated on project-admin.
 templ settingsSubNav(active string, providersMissing bool, isProjectAdmin bool) {
 	{{ items := []components.RailItem{
 		{Key: "general", Href: "/settings", Icon: "lucide--settings", Label: "General"},

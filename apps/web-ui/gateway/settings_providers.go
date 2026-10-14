@@ -687,6 +687,7 @@ func (s *Server) renderProviderConfigError(c echo.Context, provider string, in P
 		DraftProvider: provider,
 		FlashErr:      err,
 	}
+	data.settingsNavCommon = s.settingsNavPayload(c, ctx)
 	data.Vendors = s.providerVendorDefinitions(ctx)
 	data.GenerativeModels, data.EmbeddingModels = s.providerModelOptions(ctx)
 	if providers, lerr := s.memory.ListProjectProviders(ctx); lerr == nil {

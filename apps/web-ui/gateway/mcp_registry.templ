@@ -78,17 +78,25 @@ templ mcpRegistryEmptyState(query string) {
 	}
 }
 
-// mcpRegistryEntry renders one registry result: name/title/description on the
-// left; the availability badges and the call to action (an Install form for a
-// remote transport, a device-install trigger for a package-only entry) stacked
-// in a right-hand column, vertically centred against the entry content. No
-// credential preview is shown here — credential guidance lives on the configure
-// form after install. devices/devicesErr come from the page's session list and
-// feed the device dialog.
+// mcpRegistryEntry renders one registry result: the availability badges and
+// name/title/description on the left (badges above the title), and the call to
+// action — an Install form for a remote transport, a device-install trigger for
+// a package-only entry — in a right-hand column, vertically centred against the
+// entry content. No credential preview is shown here — credential guidance
+// lives on the configure form after install. devices/devicesErr come from the
+// page's session list and feed the device dialog.
 templ mcpRegistryEntry(entry MCPRegistryServer, devices []RelaySession, devicesErr error) {
 	@ui.SoftBox(ui.SoftBoxProps{Attrs: templ.Attributes{"data-testid": "mcp-registry-entry", "data-registry-name": entry.Name}}) {
 		<div class="flex items-center justify-between gap-3">
 			<div class="min-w-0">
+				<div class="mb-1.5 flex items-center gap-1.5">
+					if entry.HasRemotes {
+						@ui.Badge(ui.BadgeProps{Label: "remote", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--radio"})
+					}
+					if entry.HasPackages {
+						@ui.Badge(ui.BadgeProps{Label: "package", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
+					}
+				</div>
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--server", "size-4 shrink-0 text-muted-faint")
 					<span class="truncate text-sm font-medium">{ mcpRegistryDisplayTitle(entry) }</span>
@@ -103,14 +111,6 @@ templ mcpRegistryEntry(entry MCPRegistryServer, devices []RelaySession, devicesE
 				}
 			</div>
 			<div class="flex shrink-0 flex-col items-end gap-2" data-testid="mcp-registry-entry-actions">
-				<div class="flex items-center gap-1.5">
-					if entry.HasRemotes {
-						@ui.Badge(ui.BadgeProps{Label: "remote", Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--radio"})
-					}
-					if entry.HasPackages {
-						@ui.Badge(ui.BadgeProps{Label: "package", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--package"})
-					}
-				</div>
 				if entry.HasRemotes {
 					@mcpRegistryInstallAction(entry)
 				} else {

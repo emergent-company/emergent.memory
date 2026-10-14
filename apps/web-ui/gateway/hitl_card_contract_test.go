@@ -26,6 +26,10 @@ import (
 
 const chatStreamJS = "webui/static/js/chat-stream.js"
 
+// chatComponentsJS is the A2UI card renderer source (chat-components.js), which
+// carries the second question/approval renderer (a2uiQuestion / a2uiApproval).
+const chatComponentsJS = "webui/static/js/chat-components.js"
+
 var (
 	// A testid set through setAttribute("data-testid", "x").
 	jsSetAttrTestIDRE = regexp.MustCompile(`setAttribute\("data-testid",\s*"([^"]+)"\)`)
@@ -48,6 +52,16 @@ func chatStreamSource(t *testing.T) string {
 	return string(src)
 }
 
+// chatComponentsSource reads the A2UI card renderer's source.
+func chatComponentsSource(t *testing.T) string {
+	t.Helper()
+	src, err := os.ReadFile(chatComponentsJS)
+	if err != nil {
+		t.Fatalf("read %s: %v", chatComponentsJS, err)
+	}
+	return string(src)
+}
+
 // jsFunctionBody returns the source of a top-level function in chat-stream.js,
 // from its declaration to the next 4-space-indented declaration. The renderers
 // are top-level functions; their helpers are nested at 6 spaces, so the slice
@@ -60,6 +74,25 @@ func jsFunctionBody(t *testing.T, src, name string) string {
 	}
 	rest := src[start+1:]
 	next := regexp.MustCompile(`\n    (?:async )?function `).FindStringIndex(rest[1:])
+	if next == nil {
+		return rest
+	}
+	return rest[:next[0]+1]
+}
+
+// chatComponentsFunctionBody returns the source of a top-level function in
+// chat-components.js, which is declared at two-space indent inside the IIFE
+// (chat-stream.js renderers are at four-space indent, handled by
+// jsFunctionBody). Nested helpers sit at four+ spaces, so the slice keeps every
+// helper a renderer owns.
+func chatComponentsFunctionBody(t *testing.T, src, name string) string {
+	t.Helper()
+	start := strings.Index(src, "\n  function "+name+"(")
+	if start < 0 {
+		t.Fatalf("chat-components.js: function %s not found", name)
+	}
+	rest := src[start+1:]
+	next := regexp.MustCompile(`\n  (?:async )?function `).FindStringIndex(rest[1:])
 	if next == nil {
 		return rest
 	}
@@ -187,4 +220,70 @@ func TestApprovalCardMatchesChatRenderer(t *testing.T) {
 			t.Errorf("approval card missing %q:\n%s", want, card)
 		}
 	}
+}
+
+// The card-skeleton contract the A2UI question renderer must share with the
+// canonical chat renderer. chat-question-submit is deliberately excluded: the
+// A2UI question answers on option click and has no two-step select/submit.
+var questionCardContract = []string{
+	"chat-question-card",
+	"chat-question-option",
+	"memory-question",
+	"memory-question__body",
+	"memory-question__options",
+	"memory-question__option",
+	"memory-question__indicator",
+	"memory-question__label",
+	"memory-question__description",
+}
+
+// The card-skeleton contract the A2UI approval renderer must share with the
+// canonical chat renderer (approve/reject/cancel + the memory-approval hooks).
+var approvalCardContract = []string{
+	"chat-approval-card",
+	"chat-approval-approve",
+	"chat-approval-reject",
+	"chat-approval-cancel",
+	"memory-approval",
+	"memory-approval__title",
+	"memory-approval__sentence",
+	"memory-approval__args",
+	"memory-approval__actions",
+	"memory-approval__cancel",
+	"memory-approval__reject-action",
+	"memory-approval__approve",
+}
+
+// assertCardContract fails when a renderer's source is missing any of the
+// contract tokens (data-testids + memory-* hooks) the card must emit.
+func assertCardContract(t *testing.T, name, src string, contract []string) {
+	t.Helper()
+	have := append(testIDs(src), cardHooks(src)...)
+	for _, want := range contract {
+		if !slices.Contains(have, want) {
+			t.Errorf("%s: missing card-contract token %q", name, want)
+		}
+	}
+}
+
+// TestA2UICardsMatchCanonical pins the A2UI question/approval renderers
+// (chat-components.js a2uiQuestion / a2uiApproval) to the same card-skeleton
+// contract — data-testids + memory-* hooks — as the canonical chat renderers
+// (chat-stream.js renderQuestion / renderApproval). Both sides must emit every
+// token. The A2UI renderers answer on option click, so chat-question-submit is
+// not part of the contract; the canonical side is re-asserted here so the
+// contract is explicit on both sides.
+func TestA2UICardsMatchCanonical(t *testing.T) {
+	stream := chatStreamSource(t)
+	comps := chatComponentsSource(t)
+
+	canonicalQ := jsFunctionBody(t, stream, "renderQuestion")
+	canonicalA := jsFunctionBody(t, stream, "renderApproval")
+	a2uiQ := chatComponentsFunctionBody(t, comps, "a2uiQuestion")
+	a2uiA := chatComponentsFunctionBody(t, comps, "a2uiApproval")
+
+	assertCardContract(t, "canonical renderQuestion", canonicalQ, questionCardContract)
+	assertCardContract(t, "a2uiQuestion", a2uiQ, questionCardContract)
+	assertCardContract(t, "canonical renderApproval", canonicalA, approvalCardContract)
+	assertCardContract(t, "a2uiApproval", a2uiA, approvalCardContract)
 }

@@ -173,7 +173,21 @@ func (s *Server) loadExtractionJobDetail(ctx context.Context, documentID, jobID 
 
 	branchID, ok := s.extractionJobBranchID(ctx, job)
 	if !ok {
+		// The staging branch can no longer be resolved (it produced no objects,
+		// or was deleted on merge). Fall back to listing the job's created
+		// objects on the main branch so the object/relationship counts survive
+		// a merge instead of showing 0.
 		d.NoBranch = true
+		if len(job.CreatedObjects) == 0 {
+			return d
+		}
+		objects, err := s.memory.ListGraphObjects(ctx, "", "", job.CreatedObjects)
+		if err != nil {
+			captureError(err)
+			return d
+		}
+		d.Objects = objects
+		d.Relationships = s.collectExtractionRelationships(ctx, "", objects)
 		return d
 	}
 	d.BranchID = branchID
