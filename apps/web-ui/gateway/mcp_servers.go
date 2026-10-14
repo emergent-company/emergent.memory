@@ -143,12 +143,20 @@ func mcpServerIsBuiltin(s MCPServer) bool {
 	return s.Type == "builtin"
 }
 
+// mcpServerIsDevice reports whether a registry row targets a connected device
+// (pushed over the relay to a connector) rather than being connected outbound
+// by the shared host. Device rows drop the host-only outbound affordances
+// (sync, inspect, OAuth connect) since the host never dials them.
+func mcpServerIsDevice(s MCPServer) bool {
+	return s.Target == "device"
+}
+
 // mcpServerOAuthShown reports whether a server row renders the OAuth
 // connect/disconnect controls: a remote (http/sse) server whose list DTO
 // carried an oauth object. Absent for builtin, stdio, and device-targeted
 // servers.
 func mcpServerOAuthShown(s MCPServer) bool {
-	if mcpServerIsBuiltin(s) {
+	if mcpServerIsBuiltin(s) || mcpServerIsDevice(s) {
 		return false
 	}
 	if s.Type != "http" && s.Type != "sse" {

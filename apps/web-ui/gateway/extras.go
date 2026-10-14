@@ -166,6 +166,14 @@ type MCPServer struct {
 	RegistryName          string `json:"registryName,omitempty"`
 	RegistryRepositoryURL string `json:"registryRepositoryUrl,omitempty"`
 
+	// Target selects the delivery mode: "server" (connected outbound by the
+	// shared host) or "device" (pushed over the relay to a connector). Absent
+	// on older records; treated as outbound for rendering.
+	Target string `json:"target,omitempty"`
+	// TargetInstanceID is the relay instance_id a device row is bound to;
+	// empty means every eligible device of the project (broadcast).
+	TargetInstanceID string `json:"targetInstanceId,omitempty"`
+
 	// OAuth is the server's OAuth connection summary (present only for remote
 	// http/sse servers that participate in OAuth connect; absent for
 	// device-targeted and stdio servers). It never carries token values.

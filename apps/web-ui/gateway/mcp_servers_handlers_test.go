@@ -402,6 +402,84 @@ func TestUIMCPServersListRoute(t *testing.T) {
 	}
 }
 
+// TestUIMCPServersListDeviceRow verifies that a device-targeted server renders
+// as a device row (device badge + bound instance id + device note, no outbound
+// sync/inspect/connect affordances) while an outbound server renders the normal
+// sync/inspect actions — the two must not look alike.
+func TestUIMCPServersListDeviceRow(t *testing.T) {
+	f := newMCPTestBackend([]MCPServer{
+		{
+			ID: "srv-http", Name: "github-mcp", Type: "http", Enabled: true,
+			URL:       "https://github.example.com/mcp",
+			ToolCount: 1,
+			Tools: []MCPTool{
+				{ID: "t1", ServerID: "srv-http", ToolName: "search_issues", Enabled: true},
+			},
+		},
+		{
+			ID: "srv-device", Name: "local-files", Type: "stdio", Enabled: true,
+			Command:          "npx -y files-mcp",
+			Target:           "device",
+			TargetInstanceID: "inst-abc123",
+		},
+		{
+			ID: "srv-device-broadcast", Name: "local-notes", Type: "stdio", Enabled: false,
+			Command: "npx -y notes-mcp",
+			Target:  "device",
+		},
+	})
+	s := &Server{cfg: Config{}, memory: f}
+	e := mcpServerTestServer(s)
+
+	rec := mcpServerGet(e, "/settings/mcp-servers")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings/mcp-servers = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// device rows carry the device badge; exactly the two device rows
+	if got := strings.Count(body, `data-testid="mcp-device-badge"`); got != 2 {
+		t.Errorf("device badge occurrences = %d, want 2 (device rows only)", got)
+	}
+	// only the bound row renders its instance id; the broadcast row does not
+	if got := strings.Count(body, `data-testid="mcp-device-instance"`); got != 1 {
+		t.Errorf("device instance id occurrences = %d, want 1 (bound row only)", got)
+	}
+	if !strings.Contains(body, "inst-abc123") {
+		t.Error("device row must render its bound target instance id")
+	}
+
+	// outbound-only affordances are dropped on device rows: sync/inspect appear
+	// exactly once (the outbound row), never on the device rows.
+	if got := strings.Count(body, `data-mcp-action="sync"`); got != 1 {
+		t.Errorf("sync action occurrences = %d, want 1 (outbound row only)", got)
+	}
+	if got := strings.Count(body, `data-mcp-action="inspect"`); got != 1 {
+		t.Errorf("inspect action occurrences = %d, want 1 (outbound row only)", got)
+	}
+	for _, name := range []string{"local-files", "local-notes"} {
+		if strings.Contains(body, `aria-label="Sync `+name+`"`) || strings.Contains(body, `aria-label="Inspect `+name+`"`) {
+			t.Errorf("device row %q must not offer sync or inspect", name)
+		}
+	}
+
+	// device rows explain where they run instead of pointing at sync
+	if got := strings.Count(body, `data-testid="mcp-device-note"`); got != 2 {
+		t.Errorf("device note occurrences = %d, want 2 (device rows only)", got)
+	}
+	if !strings.Contains(body, "tools are discovered on the device") {
+		t.Error("device row with no cached tools must not suggest a host sync")
+	}
+	// the outbound row keeps its sync hint
+	if !strings.Contains(body, "sync refreshes this list") {
+		t.Error("outbound row must keep the sync hint")
+	}
+	// a device stdio row must not claim it runs on the memory host
+	if strings.Contains(body, "on the memory host") {
+		t.Error("device stdio row must not claim it runs on the memory host")
+	}
+}
+
 func TestUIMCPServersListEmpty(t *testing.T) {
 	f := newMCPTestBackend(nil)
 	s := &Server{cfg: Config{}, memory: f}

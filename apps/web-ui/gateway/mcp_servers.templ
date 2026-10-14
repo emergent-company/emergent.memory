@@ -106,6 +106,19 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 			} else {
 				@ui.Badge(ui.BadgeProps{Label: "disabled", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--pause"})
 			}
+			if mcpServerIsDevice(srv) {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "device",
+					Variant: ui.BadgeInfo,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--monitor-smartphone",
+					Attrs:   templ.Attributes{"data-testid": "mcp-device-badge", "data-mcp-target": srv.ID},
+				})
+				if srv.TargetInstanceID != "" {
+					<span class="text-muted-faint truncate font-mono text-[11px]" data-testid="mcp-device-instance">{ srv.TargetInstanceID }</span>
+				}
+			}
 			if srv.NeedsConfiguration {
 				@ui.Badge(ui.BadgeProps{
 					Label:   "Needs configuration",
@@ -155,8 +168,11 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 			if !builtin {
 				@mcpServerRowActions(srv)
 			}
+			if mcpServerIsDevice(srv) {
+				@mcpServerDeviceNote()
+			}
 			@mcpServerOAuthControls(srv)
-			if srv.Type == "stdio" {
+			if srv.Type == "stdio" && !mcpServerIsDevice(srv) {
 				<p class="text-muted-faint flex items-center gap-1.5 px-3 pt-2 text-[11px]">
 					@ui.IconSpan("lucide--shield-alert", "size-3.5 shrink-0 text-warning")
 					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
@@ -188,32 +204,34 @@ templ mcpServerRowActions(srv MCPServer) {
 			<span class="text-muted-strong text-xs">Enabled</span>
 		</label>
 		<div class="flex items-center gap-1">
-			@ui.Button(ui.ButtonProps{
-				Type:      ui.ButtonTypeButton,
-				Variant:   ui.ButtonGhost,
-				Size:      ui.ButtonSM,
-				Shape:     ui.ButtonShapeSquare,
-				Icon:      "lucide--refresh-cw",
-				AriaLabel: "Sync " + srv.Name,
-				Attrs: templ.Attributes{
-					"data-mcp-action": "sync",
-					"data-mcp-server": srv.ID,
-					"title":           "Re-discover tools from this server",
-				},
-			})
-			@ui.Button(ui.ButtonProps{
-				Type:      ui.ButtonTypeButton,
-				Variant:   ui.ButtonGhost,
-				Size:      ui.ButtonSM,
-				Shape:     ui.ButtonShapeSquare,
-				Icon:      "lucide--scan",
-				AriaLabel: "Inspect " + srv.Name,
-				Attrs: templ.Attributes{
-					"data-mcp-action": "inspect",
-					"data-mcp-server": srv.ID,
-					"title":           "Probe this server's capabilities",
-				},
-			})
+			if !mcpServerIsDevice(srv) {
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeButton,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Shape:     ui.ButtonShapeSquare,
+					Icon:      "lucide--refresh-cw",
+					AriaLabel: "Sync " + srv.Name,
+					Attrs: templ.Attributes{
+						"data-mcp-action": "sync",
+						"data-mcp-server": srv.ID,
+						"title":           "Re-discover tools from this server",
+					},
+				})
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeButton,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Shape:     ui.ButtonShapeSquare,
+					Icon:      "lucide--scan",
+					AriaLabel: "Inspect " + srv.Name,
+					Attrs: templ.Attributes{
+						"data-mcp-action": "inspect",
+						"data-mcp-server": srv.ID,
+						"title":           "Probe this server's capabilities",
+					},
+				})
+			}
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeLink,
 				Href:      mcpServerSettingsBase + "/" + url.PathEscape(srv.ID) + "/edit",
@@ -235,6 +253,17 @@ templ mcpServerRowActions(srv MCPServer) {
 				OnClick:   templ.JSFuncCall("openDialogByID", "mcp-server-delete-"+srv.ID),
 			})
 		</div>
+	</div>
+}
+
+// mcpServerDeviceNote is the expanded-body strip for a device-targeted server:
+// it tells the admin the server runs on a connector (pushed over the relay)
+// rather than being connected outbound by the shared host, and so the row
+// offers no sync/inspect/connect affordances.
+templ mcpServerDeviceNote() {
+	<div class="flex items-center gap-2 border-b border-base-content/10 px-3 py-2" data-testid="mcp-device-note">
+		@ui.IconSpan("lucide--monitor-smartphone", "size-4 shrink-0 text-muted-faint")
+		<p class="text-muted text-xs">Runs on a connector device — Memory pushes this server's configuration over the relay; it is never connected outbound by the shared host.</p>
 	</div>
 }
 
@@ -355,7 +384,7 @@ templ mcpServerToolsList(srv MCPServer, tools []MCPTool, builtinGroups []Builtin
 	<div class="flex flex-col">
 		<div class="flex items-center justify-between px-3 pt-2">
 			@ui.Eyebrow("Cached tools", ui.EyebrowProps{Size: "text-[10px]", Margin: ""})
-			if len(tools) > 0 && !mcpServerIsBuiltin(srv) {
+			if len(tools) > 0 && !mcpServerIsBuiltin(srv) && !mcpServerIsDevice(srv) {
 				<span class="text-muted-faint text-[10px]">sync refreshes this list</span>
 			}
 		</div>
@@ -375,7 +404,11 @@ templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool, builtinGroups []Bu
 			<p class="text-muted-faint px-3 py-2 text-xs">
 				No tools cached yet
 				if !mcpServerIsBuiltin(srv) {
-					— run Sync to discover what this server offers.
+					if mcpServerIsDevice(srv) {
+						— tools are discovered on the device.
+					} else {
+						— run Sync to discover what this server offers.
+					}
 				} else {
 					.
 				}
