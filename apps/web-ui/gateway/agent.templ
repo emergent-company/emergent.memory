@@ -670,7 +670,7 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 					BodyClass: "memory-density-comfortable",
 				}) {
 					<div class="flex flex-col gap-4">
-						<p class="text-muted-strong text-sm">Configure how this agent processes object-driven work items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save.</p>
+						<p class="text-muted-strong text-sm">Configure how this agent picks up and works board items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save.</p>
 						@agentWorkPickupNote()
 						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 							@form.FormControl("agent-settings-work-ready", "Ready status", form.LabelAbove, "The status value meaning an item is ready to be picked up.", "", nil) {
@@ -735,7 +735,7 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 							<input id="agent-settings-work-require-artifacts" name="workRequireArtifacts" type="checkbox" value="true" checked?={ wc.WorkContract.RequireArtifacts } class="checkbox"/>
 						}
 						@form.FormControl("agent-settings-work-required-deliverables", "Required deliverable types", form.LabelAbove, "Comma-separated object types the agent must produce before completing an item.", "", nil) {
-							<input id="agent-settings-work-required-deliverables" name="requiredDeliverableType" type="text" value={ workListValue(wc.WorkContract.RequiredDeliverableTypes) } placeholder="e.g. kb.documents, kb.chunks" class="input w-full"/>
+							<input id="agent-settings-work-required-deliverables" name="requiredDeliverableType" type="text" value={ workListValue(wc.WorkContract.RequiredDeliverableTypes) } placeholder="e.g. Document, Chunk" class="input w-full"/>
 						}
 					</div>
 				}
@@ -766,7 +766,7 @@ templ agentWorkPickupNote() {
 		Type:    ui.AlertInfo,
 		Style:   ui.AlertStyleOutline,
 		Icon:    "lucide--info",
-		Message: "This agent picks up work when an object enters one of its trigger statuses. Configure those statuses under Triggers.",
+		Message: "This agent picks up work when an item assigned to it (or unassigned) enters one of its trigger statuses. Configure those statuses under Triggers.",
 	})
 }
 
@@ -782,7 +782,7 @@ templ agentWorkBlueprintWarning(data agentSettingsData) {
 			<div>
 				<h3 id="agent-work-blueprint-warning-title" class="text-lg font-semibold">Save changes to a blueprint-derived agent?</h3>
 				<p id="agent-work-blueprint-warning-desc" class="text-muted-strong mt-1 text-sm">
-					<span class="font-mono">{ data.Agent.Name }</span> was created by a blueprint. Saving your edit diverges from that blueprint and may be overwritten when it is updated or reinstalled.
+					<span class="font-mono">{ data.Agent.Name }</span> was created by a blueprint. Saving your edit takes this agent out of sync with the blueprint, and it may be overwritten when the blueprint is updated or reinstalled.
 				</p>
 			</div>
 		</div>

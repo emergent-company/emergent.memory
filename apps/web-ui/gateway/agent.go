@@ -670,22 +670,22 @@ func applyAgentWorkSection(def *AgentDefinition, c echo.Context) error {
 	wc.RequiresReview = lastFormBool(c, "workRequiresReview")
 
 	var err error
-	if wc.FailureLimit, err = workIntField(c, "failureLimit", 1); err != nil {
+	if wc.FailureLimit, err = workIntField(c, "failureLimit", "Failure limit", 1); err != nil {
 		return err
 	}
-	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", 1); err != nil {
+	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", "Revision limit", 1); err != nil {
 		return err
 	}
-	if wc.RetryPolicy.MaxAttempts, err = workIntField(c, "maxAttempts", 1); err != nil {
+	if wc.RetryPolicy.MaxAttempts, err = workIntField(c, "maxAttempts", "Max attempts", 1); err != nil {
 		return err
 	}
-	if wc.RetryPolicy.InitialIntervalMS, err = workIntField(c, "initialIntervalMs", 0); err != nil {
+	if wc.RetryPolicy.InitialIntervalMS, err = workIntField(c, "initialIntervalMs", "Initial interval", 0); err != nil {
 		return err
 	}
-	if wc.RetryPolicy.BackoffCoefficient, err = workFloatField(c, "backoffCoefficient", 1); err != nil {
+	if wc.RetryPolicy.BackoffCoefficient, err = workFloatField(c, "backoffCoefficient", "Backoff coefficient", 1); err != nil {
 		return err
 	}
-	if wc.RetryPolicy.MaxIntervalMS, err = workIntField(c, "maxIntervalMs", 0); err != nil {
+	if wc.RetryPolicy.MaxIntervalMS, err = workIntField(c, "maxIntervalMs", "Max interval", 0); err != nil {
 		return err
 	}
 
@@ -712,35 +712,37 @@ func lastFormBool(c echo.Context, name string) bool {
 }
 
 // workIntField parses an optional integer form field. Empty reads 0 (the server
-// default); an unparseable value or a positive value below min is an error.
-func workIntField(c echo.Context, name string, min int) (int, error) {
+// default); an unparseable value or a positive value below min is an error. The
+// error message uses the human-readable label (not the raw field identifier).
+func workIntField(c echo.Context, name, label string, min int) (int, error) {
 	raw := strings.TrimSpace(c.FormValue(name))
 	if raw == "" {
 		return 0, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be a whole number", name)
+		return 0, fmt.Errorf("%s must be a whole number", label)
 	}
 	if min > 0 && n < min {
-		return 0, fmt.Errorf("%s must be at least %d", name, min)
+		return 0, fmt.Errorf("%s must be at least %d", label, min)
 	}
 	return n, nil
 }
 
 // workFloatField parses an optional float form field. Empty reads 0 (the server
-// default); an unparseable value or a value below min is an error.
-func workFloatField(c echo.Context, name string, min float64) (float64, error) {
+// default); an unparseable value or a value below min is an error. The error
+// message uses the human-readable label (not the raw field identifier).
+func workFloatField(c echo.Context, name, label string, min float64) (float64, error) {
 	raw := strings.TrimSpace(c.FormValue(name))
 	if raw == "" {
 		return 0, nil
 	}
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%s must be a number", name)
+		return 0, fmt.Errorf("%s must be a number", label)
 	}
 	if min > 0 && f < min {
-		return 0, fmt.Errorf("%s must be at least %v", name, min)
+		return 0, fmt.Errorf("%s must be at least %v", label, min)
 	}
 	return f, nil
 }
