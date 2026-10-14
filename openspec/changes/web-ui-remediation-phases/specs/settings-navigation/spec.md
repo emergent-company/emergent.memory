@@ -23,6 +23,11 @@ entry under the Project entry.
 - **WHEN** a Settings page loads
 - **THEN** the sub-navigation highlights the link for the current destination, and additionally highlights the current project-setting section when the page is one of the six project-setting sub-pages
 
+#### Scenario: No separate MCP nodes entry
+
+- **WHEN** a Settings page loads
+- **THEN** the sub-navigation does not show a separate MCP nodes link, and external machines are reached through the single Connected devices entry
+
 ### Requirement: Keep section save behavior intact
 
 Each settings sub-page SHALL preserve its existing save and error behavior; moving a section to its own page SHALL NOT change how its settings are saved or how errors are reported. Error feedback SHALL be presented in the context of what failed — at the failing control where one exists, and at page level only when the failure has no control to attach to — so a failure is never reported solely as an unlabelled page-level notice.

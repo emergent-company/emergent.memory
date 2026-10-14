@@ -21,6 +21,20 @@ now installed through this GitHub import path from the public repository
 - **THEN** the blueprint is imported, installed (applied), and the UI shows
   success
 
+#### Scenario: Model mapping step before install
+
+- **WHEN** the imported manifest's agents carry model references the server would
+  reject (for example a bare name missing the `provider/` prefix)
+- **THEN** the UI lets the user review each such agent and map it to a valid
+  reference before installing, and the submitted import applies those mappings at
+  apply time
+
+#### Scenario: No partial install on failure
+
+- **WHEN** the install fails after the import (for example the apply is rejected)
+- **THEN** the UI shows the error and leaves no partial blueprint installed, so the
+  user can retry
+
 #### Scenario: Import error shown
 
 - **WHEN** the import fails (invalid URL, oversize archive, fetch failure, or
