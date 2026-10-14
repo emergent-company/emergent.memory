@@ -464,7 +464,7 @@ templ boardAssigneePicker(canonicalID, current string, candidates []boardAssigne
 								if c.IsAgent {
 									<p class="truncate text-[10px] text-muted-faint">agent</p>
 								} else {
-									<p class="truncate text-[10px] text-muted-faint">not a work agent — won't be picked up by an agent</p>
+									<p class="truncate text-[10px] text-muted-faint">won't be picked up</p>
 								}
 							</div>
 						</button>
@@ -472,7 +472,7 @@ templ boardAssigneePicker(canonicalID, current string, candidates []boardAssigne
 				</li>
 			}
 			<li class="pointer-events-none border-t border-base-content/10 px-3 py-1.5">
-				<p class="text-[10px] text-muted-faint">Only work agents receive the item.</p>
+				<p class="text-[10px] text-muted-faint">Only agents that handle work are woken.</p>
 			</li>
 		}
 	}

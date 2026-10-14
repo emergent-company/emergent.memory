@@ -738,10 +738,10 @@ func TestBoardAssigneePicker(t *testing.T) {
 		`value="summarizer"`,
 		`value="Ada Lovelace"`,
 		`value="grace@example.com"`,
-		`value=""`,                           // Unassigned
-		`>agent</p>`,                         // agent sublabel (agents stay distinct from members)
-		"not a work agent",                   // member hint: non-routable consequence
-		"Only work agents receive the item.", // menu footer (per-agent routability not determinable)
+		`value=""`,                                // Unassigned
+		`>agent</p>`,                              // agent sublabel (agents stay distinct from members)
+		"won't be picked up",                      // member hint: non-routable consequence
+		"Only agents that handle work are woken.", // menu footer (per-agent routability not determinable)
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("assignee picker missing %q:\n%s", want, body)
