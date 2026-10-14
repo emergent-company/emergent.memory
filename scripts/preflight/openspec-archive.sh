@@ -58,7 +58,9 @@
 #   about a change whose milestones are deliberately deferred — e.g.
 #   `unify-scope-authority`, whose §1–§6 shipped but §7/§8 are deferred by
 #   decision (#1161), so archiving now would sync requirements describing
-#   unimplemented behaviour. Markers are read from the working-tree `tasks.md`.
+#   unimplemented behaviour. Markers and tick counts are read from the base
+#   ref's `tasks.md` (`git show <base>:...`), never the working tree, so a
+#   stale or dirty checkout cannot hide drift (#1858).
 #
 # Usage:
 #   scripts/preflight/openspec-archive.sh [--base <ref>] [--warn] [--json]
@@ -73,8 +75,10 @@
 #   are still listed for visibility. See ARCHIVE-READY / SAFETY VALVE above.
 #
 # Offline / tooling is tolerated the way base-check.sh tolerates it: if the base
-# ref cannot be resolved or the `openspec` CLI is missing, warn and skip (0) so
-# an environment problem never masquerades as drift.
+# ref cannot be resolved, warn and skip (0) so an environment problem never
+# masquerades as drift. The check is pure git + python3 — candidates are
+# enumerated from the BASE ref, not from `openspec list` (the working tree), so
+# a stale checkout can no longer report a false OK (#1858).
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
@@ -88,15 +92,10 @@ while [ $# -gt 0 ]; do
     --base) base="${2:-}"; shift 2 ;;
     --warn) warn=1; shift ;;
     --json) json=1; shift ;;
-    -h|--help) sed -n '2,76p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,81p' "$0"; exit 0 ;;
     *) echo "openspec-archive: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-
-if ! command -v openspec >/dev/null 2>&1; then
-  echo "openspec-archive: WARNING 'openspec' CLI not on PATH; skipping" >&2
-  exit 0
-fi
 
 # Resolve the base ref. HEAD always resolves; a remote ref may need a fetch,
 # and no-network is not fatal.
@@ -108,19 +107,12 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null 2>&1; then
   exit 0
 fi
 
-list_json="$(mktemp)"
-trap 'rm -f "$list_json"' EXIT
-if ! openspec list --json >"$list_json" 2>/dev/null; then
-  echo "openspec-archive: WARNING 'openspec list --json' failed; skipping" >&2
-  exit 0
-fi
-
-# Keep changes that are merged on the base ref, un-archived, DECLARED
-# archive-ready, and not held. Python does the JSON work; `git rev-parse`
-# proves base membership of the change directory.
+# Candidates are enumerated from the base ref's tree and their `tasks.md` is
+# read from that same ref, so the guard is independent of the working tree
+# (a stale or dirty checkout cannot produce a false OK — #1858).
 set +e
 OPENSPEC_ARCHIVE_BASE="$base" OPENSPEC_ARCHIVE_JSON="$json" \
-python3 - "$list_json" <<'PY'
+python3 - <<'PY'
 import json
 import os
 import re
@@ -130,37 +122,42 @@ import sys
 base = os.environ["OPENSPEC_ARCHIVE_BASE"]
 as_json = os.environ.get("OPENSPEC_ARCHIVE_JSON") == "1"
 
-with open(sys.argv[1], encoding="utf-8") as fh:
-    data = json.load(fh)
-
-changes = data.get("changes", []) if isinstance(data, dict) else data
-
 READY_RE = re.compile(r"<!--\s*openspec:archive-ready\s*-->")
 HOLD_RE = re.compile(r"<!--\s*openspec:archive-hold:\s*(.*?)\s*-->", re.S)
+TASK_RE = re.compile(r"^\s*-\s*\[([ xX])\]", re.M)
+TICKED_RE = re.compile(r"^\s*-\s*\[[xX]\]", re.M)
 
 
-def merged_on_base(name):
-    """True when the change dir exists on the base ref (=> merged).
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
 
-    Archived changes live under `openspec/changes/archive/`, so a top-level
-    `openspec/changes/<name>` on the base ref means merged-but-un-archived.
+
+def base_change_names():
+    """Change dirs present on the base ref, excluding the `archive/` store.
+
+    Enumerating the BASE ref's tree — not `openspec list` (working tree) — is
+    what makes the guard immune to a stale checkout: a change merged on main but
+    absent locally is still examined (#1858). Returns None when the base tree
+    cannot be read (environment problem => skip, never a false OK).
     """
-    probe = f"{base}:openspec/changes/{name}"
-    return subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", probe],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    ).returncode == 0
+    res = git("ls-tree", "-d", "--name-only", f"{base}:openspec/changes/")
+    if res.returncode != 0:
+        return None
+    return sorted(
+        name.strip()
+        for name in res.stdout.splitlines()
+        if name.strip() and name.strip() != "archive"
+    )
 
 
 def read_tasks(name):
-    """Working-tree tasks.md text, or '' when absent."""
-    path = f"openspec/changes/{name}/tasks.md"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            return fh.read()
-    except OSError:
-        return ""
+    """tasks.md text as committed on the base ref, or '' when absent.
+
+    Read from the base ref rather than the working tree so a change merged on
+    main but absent/stale locally still contributes its ticks and markers.
+    """
+    res = git("show", f"{base}:openspec/changes/{name}/tasks.md")
+    return res.stdout if res.returncode == 0 else ""
 
 
 def hold_reason(text):
@@ -171,26 +168,32 @@ def hold_reason(text):
     return match.group(1).strip() or "(no reason given)"
 
 
+def tick_counts(text):
+    """(completed, total) task counts parsed from tasks.md."""
+    total = len(TASK_RE.findall(text))
+    done = len(TICKED_RE.findall(text))
+    return done, total
+
+
 def is_ready(text, done, total):
     """A change is archivable when all tasks are ticked, or it declares ready."""
     return (total > 0 and done >= total) or bool(READY_RE.search(text))
 
 
+names = base_change_names()
+if names is None:
+    print(
+        f"openspec-archive: WARNING cannot read 'openspec/changes/' on {base}; skipping",
+        file=sys.stderr,
+    )
+    sys.exit(0)
+
 stale = []
 held = []
-for c in changes:
-    name = c.get("name", "")
-    if not name or not merged_on_base(name):
-        continue
-    done = c.get("completedTasks", 0)
-    total = c.get("totalTasks", 0)
-    entry = {
-        "name": name,
-        "completedTasks": done,
-        "totalTasks": total,
-        "lastModified": c.get("lastModified"),
-    }
+for name in names:
     text = read_tasks(name)
+    done, total = tick_counts(text)
+    entry = {"name": name, "completedTasks": done, "totalTasks": total}
     reason = hold_reason(text)
     if reason is not None:
         held.append({**entry, "reason": reason})

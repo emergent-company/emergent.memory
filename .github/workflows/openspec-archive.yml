@@ -20,6 +20,8 @@ name: OpenSpec archive guard
 # `<!-- openspec:archive-hold: <reason> -->` and is then listed as HELD. The
 # bare "dir exists on main" test is NOT readiness — many spec-only change dirs
 # are committed to main before implementation (see scripts/preflight/openspec-archive.sh).
+# The script is pure git + python3 and enumerates candidates from the BASE ref
+# (never the working tree), so a stale checkout cannot report a false OK (#1858).
 #
 # Triggers: push to `main` (feedback right after a merge), daily (catches drift
 # that predates this workflow), and manual dispatch. On drift it fails the run
@@ -29,6 +31,8 @@ on:
     branches: [main]
     paths:
       - 'openspec/**'
+      - 'scripts/preflight/openspec-archive.sh'
+      - 'scripts/preflight/openspec-archive_test.sh'
       - '.github/workflows/openspec-archive.yml'
   schedule:
     # 07:23 UTC daily — off the :00/:15 mark to avoid runner congestion.
@@ -52,10 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Pin the CLI: archive output (spec rewrite) must be reproducible, and
-      # the check depends on `openspec list --json`'s schema.
-      - name: Install OpenSpec CLI
-        run: npm install -g @fission-ai/openspec@1.13.0
+      # The guard enumerates from the base ref; the hermetic test replays the
+      # stale-checkout shape that used to produce a false OK (#1858).
+      - name: Test the archive guard
+        run: bash scripts/preflight/openspec-archive_test.sh
 
       - name: Detect merged-but-un-archived changes
         id: detect
