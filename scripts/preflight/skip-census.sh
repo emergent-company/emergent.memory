@@ -69,8 +69,15 @@ cd "$root"
 # (live tree 335/333 vs baseline 337/335), so these 3 sites overflowed it by
 # exactly 1. No issue tracks these skips (a deliberate CI-hygiene gate, not debt
 # to be paid down), so BASELINE_NO_REF moves with BASELINE_SKIPS.
-BASELINE_SKIPS=338
-BASELINE_NO_REF=336
+#
+# Lowered 2026-10-14 (338→334, 336→331): the four opt-in env gates in
+# oauth_live_test.go now route through one non-test helper
+# (skipUnlessLiveOAuthProbe), which the census excludes by rule, and the
+# remaining drift guard carries a tracking reference (#1861). Net 4 fewer
+# counted sites and 5 fewer unreferenced sites; the baseline is tightened to
+# match so the headroom cannot be spent silently.
+BASELINE_SKIPS=334
+BASELINE_NO_REF=331
 
 mapfile -t files < <(git ls-files '*_test.go')
 if [ "${#files[@]}" -eq 0 ]; then

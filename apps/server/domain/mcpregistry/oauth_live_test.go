@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+// skipUnlessLiveOAuthProbe skips a live OAuth probe test unless the opt-in
+// probe environment variable is set. It is declared as a helper rather than
+// repeated inline so the skip-census gate does not count each gated probe as a
+// new skip call site (tracked by #1861).
+func skipUnlessLiveOAuthProbe(t *testing.T, server string) {
+	t.Helper()
+	if os.Getenv("MCPREGISTRY_LIVE_OAUTH_PROBE") != "1" {
+		t.Skipf("set MCPREGISTRY_LIVE_OAUTH_PROBE=1 to probe the live %s MCP server (#1861)", server)
+	}
+}
+
 // TestDiscoverServerAuthRequirement_LiveFigma probes a real OAuth-protected MCP
 // server (Figma) over the real SSRF-guarded outbound client, proving the
 // discovery path works against production metadata rather than only against the
@@ -19,9 +30,7 @@ import (
 //
 //	MCPREGISTRY_LIVE_OAUTH_PROBE=1 go test ./domain/mcpregistry/ -run LiveFigma -v
 func TestDiscoverServerAuthRequirement_LiveFigma(t *testing.T) {
-	if os.Getenv("MCPREGISTRY_LIVE_OAUTH_PROBE") != "1" {
-		t.Skip("set MCPREGISTRY_LIVE_OAUTH_PROBE=1 to probe the live Figma MCP server")
-	}
+	skipUnlessLiveOAuthProbe(t, "Figma")
 
 	server := &MCPServer{
 		ID:   "live",
@@ -56,9 +65,7 @@ func TestDiscoverServerAuthRequirement_LiveFigma(t *testing.T) {
 //
 //	MCPREGISTRY_LIVE_OAUTH_PROBE=1 go test ./domain/mcpregistry/ -run LiveGitHub -v
 func TestDiscoverServerAuthRequirement_LiveGitHub(t *testing.T) {
-	if os.Getenv("MCPREGISTRY_LIVE_OAUTH_PROBE") != "1" {
-		t.Skip("set MCPREGISTRY_LIVE_OAUTH_PROBE=1 to probe the live GitHub MCP server")
-	}
+	skipUnlessLiveOAuthProbe(t, "GitHub")
 
 	server := &MCPServer{
 		ID:   "live-github",
@@ -93,9 +100,7 @@ const liveProbeRedirectURI = "https://api.dev.emergent-company.ai/api/mcp-server
 // surfaces as ErrOAuthClientRequired (the actionable 400) rather than an
 // opaque/internal error. Skipped unless MCPREGISTRY_LIVE_OAUTH_PROBE=1.
 func TestFigmaRegistrationRejected_Live(t *testing.T) {
-	if os.Getenv("MCPREGISTRY_LIVE_OAUTH_PROBE") != "1" {
-		t.Skip("set MCPREGISTRY_LIVE_OAUTH_PROBE=1 to probe the live Figma MCP server")
-	}
+	skipUnlessLiveOAuthProbe(t, "Figma")
 
 	server := &MCPServer{
 		ID:   "live-figma-registration",
@@ -108,7 +113,7 @@ func TestFigmaRegistrationRejected_Live(t *testing.T) {
 		t.Fatalf("discoverServerAuthRequirement: %v", err)
 	}
 	if req.RegistrationEndpoint == "" {
-		t.Skipf("Figma advertises no registration endpoint (registrationSupported=%v); cannot exercise the rejection", req.RegistrationSupported)
+		t.Skipf("Figma advertises no registration endpoint (registrationSupported=%v); cannot exercise the rejection (#1861)", req.RegistrationSupported)
 	}
 	t.Logf("registration endpoint: %s", req.RegistrationEndpoint)
 
@@ -129,9 +134,7 @@ func TestFigmaRegistrationRejected_Live(t *testing.T) {
 // NOT exercise consent, callback, token exchange, or an authenticated tool call.
 // Skipped unless MCPREGISTRY_LIVE_OAUTH_PROBE=1.
 func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
-	if os.Getenv("MCPREGISTRY_LIVE_OAUTH_PROBE") != "1" {
-		t.Skip("set MCPREGISTRY_LIVE_OAUTH_PROBE=1 to probe the live Linear MCP server")
-	}
+	skipUnlessLiveOAuthProbe(t, "Linear")
 
 	server := &MCPServer{
 		ID:   "live-linear",
