@@ -244,7 +244,7 @@ func (s *Service) executeGetSchema(ctx context.Context, projectID string, args m
 	err := s.db.NewRaw(`
 		SELECT id, name, version, description, project_id, source, created_at, updated_at
 		FROM kb.graph_schemas
-		WHERE id = ? AND (project_id = ? OR (source = 'builtin' AND NOT is_system))
+		WHERE id = ? AND (project_id = ? OR source = 'builtin')
 	`, schemaID, projectID).Scan(ctx, &schema)
 	if err != nil {
 		return nil, fmt.Errorf("schema not found: %s", schemaID)

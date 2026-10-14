@@ -1,0 +1,20 @@
+name: session-message-types
+version: 1.0.0
+description: >
+  Built-in conversation primitives: Session and Message object types for
+  storing agent interactions. A Session groups an ordered sequence of Messages
+  via the has_message relationship. Message content is the embedding target.
+author: memory
+
+projectInfo: |
+  # Session Message Types Blueprint
+
+  The platform's conversation primitives, shipped as a normal built-in blueprint
+  pack. It defines the `Session` and `Message` object types plus the
+  `has_message` relationship (Session -> Message). The pack materializes only
+  when the blueprint is applied; it is never auto-assigned to projects.
+
+  Key design decisions:
+  - Session holds a title, optional start/end timestamps, message count, summary, agent version
+  - Message holds role (user/assistant/system), content, sequence number, timestamp, token count, tool calls
+  - Message.content is the embedding target field (x-embedding-target: true)

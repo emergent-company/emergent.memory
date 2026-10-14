@@ -79,7 +79,6 @@ type GraphMemorySchema struct {
 	RepositoryURL           *string                  `bun:"repository_url"`
 	DocumentationURL        *string                  `bun:"documentation_url"`
 	Source                  *string                  `bun:"source"` // manual, discovered, imported, system
-	IsSystem                bool                     `bun:"is_system,default:false"`
 	DiscoveryJobID          *string                  `bun:"discovery_job_id,type:uuid"`
 	PendingReview           bool                     `bun:"pending_review,default:false"`
 	ObjectTypeSchemas       json.RawMessage          `bun:"object_type_schemas,type:jsonb,notnull"`
@@ -166,9 +165,7 @@ func (p *MemorySchemaProvider) WithEmbeddingService(svc EmbeddingService) *Memor
 }
 
 // GetProjectSchemas loads and merges schemas from all active memory schemas for a project.
-// Later schemas override earlier ones for the same type. System packs (is_system=true) are
-// resolved at read time and available in every project; they are merged first so any
-// project-assigned pack of the same type name wins.
+// Later schemas override earlier ones for the same type.
 func (p *MemorySchemaProvider) GetProjectSchemas(
 	ctx context.Context,
 	projectID string,
@@ -176,22 +173,9 @@ func (p *MemorySchemaProvider) GetProjectSchemas(
 	objectSchemas := make(map[string]agents.ObjectSchema)
 	relationshipSchemas := make(map[string]agents.RelationshipSchema)
 
-	// System packs have no kb.project_schemas row; load them directly.
-	var systemPacks []GraphMemorySchema
-	err := p.db.NewSelect().
-		Model(&systemPacks).
-		Where("gtp.is_system = true").
-		Scan(ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("query system memory schemas: %w", err)
-	}
-	for i := range systemPacks {
-		mergeMemorySchemaInto(objectSchemas, relationshipSchemas, &systemPacks[i])
-	}
-
 	// Get all active memory schema assignments for this project
 	var assignments []ProjectMemorySchema
-	err = p.db.NewSelect().
+	err := p.db.NewSelect().
 		Model(&assignments).
 		Relation("MemorySchema").
 		Where("ptp.project_id = ?", projectID).
@@ -508,22 +492,6 @@ func splitCamelCase(s string) []string {
 		result = append(result, strings.ToLower(cur.String()))
 	}
 	return result
-}
-
-// mergeMemorySchemaInto merges a single memory schema's object and relationship
-// types into the provided maps. Later merges overwrite earlier entries, so callers
-// merge system packs before project-assigned packs to give project packs priority.
-func mergeMemorySchemaInto(
-	objectSchemas map[string]agents.ObjectSchema,
-	relationshipSchemas map[string]agents.RelationshipSchema,
-	schema *GraphMemorySchema,
-) {
-	for typeName, objSchema := range parseObjectTypeSchemas(schema.ObjectTypeSchemas) {
-		objectSchemas[typeName] = objSchema
-	}
-	for typeName, relSchema := range parseRelationshipTypeSchemas(schema.RelationshipTypeSchemas) {
-		relationshipSchemas[typeName] = relSchema
-	}
 }
 
 // parseObjectTypeSchemas converts object_type_schemas JSONB to a map of ObjectSchema.

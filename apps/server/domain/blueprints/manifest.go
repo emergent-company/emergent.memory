@@ -67,6 +67,10 @@ type ObjectTypeDef struct {
 	Label       string         `json:"label"`
 	Description string         `json:"description"`
 	Properties  map[string]any `json:"properties"`
+	// Required lists the property names the type marks required. Carried through
+	// the manifest round-trip so a pack authored with a `required:` list (as the
+	// schemas builtin seeder used to emit) reaches the schema registry unchanged.
+	Required []string `json:"required,omitempty"`
 	// ScopeKey is the effective scope-key declaration (issue #1148). Carried as
 	// a raw map so it passes through to the schema registry untouched. It is the
 	// canonical (camelCase) spelling; the snake_case alias below is promoted

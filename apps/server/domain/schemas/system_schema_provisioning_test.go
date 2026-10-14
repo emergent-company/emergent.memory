@@ -14,13 +14,15 @@ import (
 	"github.com/emergent-company/emergent.memory/migrations"
 )
 
-// TestMigration00235_00236_SystemSchemaFlag verifies the two provisioning-removal
-// migrations are embedded and carry the key DDL: 00235 drops the auto-install
-// trigger and adds/marks the is_system column; 00236 deletes leftover
-// auto-provisioned assignments and orphaned blueprint-pack rows. This guards
-// against a silent deletion of the migrations (they must be embedded) and
-// against drift in the cleanup predicate.
-func TestMigration00235_00236_SystemSchemaFlag(t *testing.T) {
+// TestMigration00235_00236_00242_SystemSchemaFlag verifies the three
+// provisioning-removal migrations are embedded and carry the key DDL: 00235
+// drops the auto-install trigger and adds/marks the is_system column; 00236
+// deletes leftover auto-provisioned assignments and orphaned blueprint-pack
+// rows; 00242 converts the system pack into a normal built-in blueprint pack and
+// drops the is_system column. This guards against a silent deletion of the
+// migrations (they must be embedded) and against drift in the cleanup/backfill
+// predicates.
+func TestMigration00235_00236_00242_SystemSchemaFlag(t *testing.T) {
 	b235, err := migrations.FS.ReadFile("00235_drop_builtin_schema_provisioning.sql")
 	if err != nil {
 		t.Fatalf("00235 must be embedded: %v", err)
@@ -29,9 +31,14 @@ func TestMigration00235_00236_SystemSchemaFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("00236 must be embedded: %v", err)
 	}
+	b237, err := migrations.FS.ReadFile("00242_session_message_types_blueprint.sql")
+	if err != nil {
+		t.Fatalf("00242 must be embedded: %v", err)
+	}
 
 	s235 := string(b235)
 	s236 := string(b236)
+	s237 := string(b237)
 
 	for _, want := range []string{
 		"DROP TRIGGER IF EXISTS trg_projects_install_builtins ON kb.projects",
@@ -70,6 +77,40 @@ func TestMigration00235_00236_SystemSchemaFlag(t *testing.T) {
 	// must select the single claiming blueprint id with array_agg instead.
 	if strings.Contains(s236, "MIN(bpc.blueprint_id)") || strings.Contains(s236, "MAX(bpc.blueprint_id)") {
 		t.Errorf("00236 must not aggregate uuid with MIN/MAX (use array_agg)")
+	}
+
+	for _, want := range []string{
+		// Backfill: assignments + registry rows for projects owning Session/Message.
+		"INSERT INTO kb.project_schemas",
+		"INSERT INTO kb.project_object_schema_registry",
+		"INSERT INTO kb.project_edge_schema_registry",
+		"jsonb_array_elements(gs.object_type_schemas)",
+		"jsonb_array_elements(gs.relationship_type_schemas)",
+		"type IN ('Session','Message') AND deleted_at IS NULL",
+		"ON CONFLICT (project_id, schema_id) DO NOTHING",
+		"source_blueprint_id",
+		// Cleanup + column/index removal.
+		"DELETE FROM kb.graph_schemas gs",
+		"DROP INDEX IF EXISTS kb.graph_schemas_is_system_idx",
+		"DROP COLUMN IF EXISTS is_system",
+		// Down restores the column + index.
+		"ADD COLUMN IF NOT EXISTS is_system boolean NOT NULL DEFAULT false",
+		"CREATE INDEX IF NOT EXISTS graph_schemas_is_system_idx",
+	} {
+		if !strings.Contains(s237, want) {
+			t.Errorf("00242 missing %q", want)
+		}
+	}
+	// The Up body must remain splitter-safe: no procedural bodies (StatementBegin),
+	// since the tests and the migration runner split the Up body on ';'.
+	if strings.Contains(s237, "StatementBegin") || strings.Contains(s237, "StatementEnd") {
+		t.Errorf("00242 Up must not contain procedural bodies (StatementBegin/End)")
+	}
+	// The Up body must split into the six expected standalone statements
+	// (assignment insert, object-registry insert, edge-registry insert, pack
+	// delete, index drop, column drop).
+	if got := len(migrationUpStatements(t, "00242_session_message_types_blueprint.sql")); got != 6 {
+		t.Errorf("00242 Up split into %d statements, want 6", got)
 	}
 }
 
@@ -117,70 +158,150 @@ func migrationUpStatements(t *testing.T, name string) []string {
 	return out
 }
 
-// TestSystemSchemasResolvedWithoutAssignment verifies the read-time resolution
-// behaviour: after the schemas builtin seeder runs, the Session/Message system
-// types are returned by GetCompiledTypesByProject with IsSystem=true, and no
-// kb.project_schemas row exists for the system pack.
-func TestSystemSchemasResolvedWithoutAssignment(t *testing.T) {
+// TestMigration00242BackfillsOwningProjects verifies 00242's Up backfill: a
+// project that owns Session/Message graph objects gains an active
+// kb.project_schemas assignment plus Session/Message object-registry rows and a
+// has_message edge-registry row (materialized from the global pack's JSON),
+// while a project with no such objects gains nothing. The test DB is already at
+// HEAD (00242 applied, is_system dropped), so the Up statements are re-run
+// idempotently against a freshly prepared dataset.
+func TestMigration00242BackfillsOwningProjects(t *testing.T) {
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
 	}
 	ctx := context.Background()
-	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysschemas")
+	testDB := testutil.SetupTestDBOrFail(t, ctx, "mig237backfill")
 	defer testDB.Close()
 
 	db := testDB.GetDB()
-	log := slog.Default()
-	repo := schemas.NewRepository(db, log)
-
-	// Seed the single is_system=true registry row.
-	if err := schemas.NewBuiltinSeeder(repo, log).Seed(ctx); err != nil {
-		t.Fatalf("seed system schemas: %v", err)
-	}
 
 	orgID := uuid.NewString()
-	if err := testutil.CreateTestOrganization(ctx, db, orgID, "System Schema Org"); err != nil {
+	if err := testutil.CreateTestOrganization(ctx, db, orgID, "Backfill Org"); err != nil {
 		t.Fatalf("create org: %v", err)
 	}
-	projectID := uuid.NewString()
+	owningID := uuid.NewString()
 	if err := testutil.CreateTestProject(ctx, db, testutil.TestProject{
-		ID:    projectID,
+		ID:    owningID,
 		OrgID: orgID,
-		Name:  "System Schema Project",
+		Name:  "Owning Project",
 	}, testutil.AdminUser.ID); err != nil {
-		t.Fatalf("create project: %v", err)
+		t.Fatalf("create owning project: %v", err)
+	}
+	emptyID := uuid.NewString()
+	if err := testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID:    emptyID,
+		OrgID: orgID,
+		Name:  "Empty Project",
+	}, testutil.AdminUser.ID); err != nil {
+		t.Fatalf("create empty project: %v", err)
 	}
 
-	// The system pack must not be auto-assigned to the fresh project.
-	var assigned int
-	if err := db.NewRaw(`
-		SELECT COUNT(*) FROM kb.project_schemas ps
-		JOIN kb.graph_schemas gs ON gs.id = ps.schema_id
-		WHERE ps.project_id = ? AND gs.name = 'session-message-types'
-	`, projectID).Scan(ctx, &assigned); err != nil {
-		t.Fatalf("count project_schemas: %v", err)
-	}
-	if assigned != 0 {
-		t.Fatalf("expected no project_schemas row for session-message-types, got %d", assigned)
-	}
-
-	resp, err := repo.GetCompiledTypesByProject(ctx, projectID)
-	if err != nil {
-		t.Fatalf("GetCompiledTypesByProject: %v", err)
+	// Insert the global session-message-types pack row exactly as the schemas
+	// builtin seeder used to store it (array-shaped object_type_schemas /
+	// relationship_type_schemas), with Session/Message and has_message.
+	packID := uuid.NewString()
+	if _, err := db.NewRaw(`
+		INSERT INTO kb.graph_schemas (id, name, version, source, object_type_schemas, relationship_type_schemas)
+		VALUES (?, 'session-message-types', '1.0.0', 'builtin',
+			'[{"name":"Session","label":"Session","description":"A conversation session","properties":{"title":{"type":"string"}},"required":["title"]},{"name":"Message","label":"Message","description":"A message","properties":{"role":{"type":"string"},"content":{"type":"string","x-embedding-target":true}},"required":["role","content"]}]'::jsonb,
+			'[{"name":"has_message","description":"Links a Session to its Messages","sourceType":"Session","targetType":"Message"}]'::jsonb)
+	`, packID).Exec(ctx); err != nil {
+		t.Fatalf("insert system pack: %v", err)
 	}
 
-	names := map[string]bool{}
-	for _, ot := range resp.ObjectTypes {
-		names[ot.Name] = true
-		if (ot.Name == "Session" || ot.Name == "Message") && !ot.IsSystem {
-			t.Errorf("type %s must carry IsSystem=true", ot.Name)
+	// The owning project has a Session and a Message object; the empty project
+	// has none.
+	insertObject := func(projectID, typ string) {
+		t.Helper()
+		if _, err := db.NewRaw(`
+			INSERT INTO kb.graph_objects (id, project_id, type, canonical_id)
+			VALUES (?, ?, ?, ?)
+		`, uuid.NewString(), projectID, typ, uuid.NewString()).Exec(ctx); err != nil {
+			t.Fatalf("insert graph object %s: %v", typ, err)
 		}
 	}
-	if !names["Session"] {
-		t.Errorf("expected Session type in compiled types, got %+v", names)
+	insertObject(owningID, "Session")
+	insertObject(owningID, "Message")
+
+	// Re-run 00242's Up statements (idempotent at HEAD: the DROP INDEX/COLUMN
+	// steps are IF EXISTS/IF NOT EXISTS no-ops; the backfill INSERTs run fresh).
+	for _, stmt := range migrationUpStatements(t, "00242_session_message_types_blueprint.sql") {
+		if _, err := db.NewRaw(stmt).Exec(ctx); err != nil {
+			t.Fatalf("execute 00242 statement %q: %v", stmt, err)
+		}
 	}
-	if !names["Message"] {
-		t.Errorf("expected Message type in compiled types, got %+v", names)
+
+	// Owning project: one active assignment with no owning blueprint yet.
+	var owningAssignments int
+	if err := db.NewRaw(`
+		SELECT COUNT(*) FROM kb.project_schemas ps
+		WHERE ps.project_id = ? AND ps.schema_id = ? AND ps.removed_at IS NULL AND ps.active
+	`, owningID, packID).Scan(ctx, &owningAssignments); err != nil {
+		t.Fatalf("count owning assignments: %v", err)
+	}
+	if owningAssignments != 1 {
+		t.Errorf("owning project: want 1 active assignment, got %d", owningAssignments)
+	}
+
+	var sourceBlueprintID *string
+	if err := db.NewRaw(`
+		SELECT source_blueprint_id FROM kb.project_schemas
+		WHERE project_id = ? AND schema_id = ? AND removed_at IS NULL
+	`, owningID, packID).Scan(ctx, &sourceBlueprintID); err != nil {
+		t.Fatalf("read assignment source_blueprint_id: %v", err)
+	}
+	if sourceBlueprintID != nil {
+		t.Errorf("backfilled assignment must have NULL source_blueprint_id, got %v", *sourceBlueprintID)
+	}
+
+	// Owning project: Session + Message object-registry rows (source='template').
+	for _, typ := range []string{"Session", "Message"} {
+		var n int
+		if err := db.NewRaw(`
+			SELECT COUNT(*) FROM kb.project_object_schema_registry
+			WHERE project_id = ? AND type_name = ? AND schema_id = ? AND source = 'template'
+		`, owningID, typ, packID).Scan(ctx, &n); err != nil {
+			t.Fatalf("count object registry %s: %v", typ, err)
+		}
+		if n != 1 {
+			t.Errorf("owning project: want 1 %s object-registry row, got %d", typ, n)
+		}
+	}
+
+	// Owning project: has_message edge-registry row.
+	var edgeCount int
+	if err := db.NewRaw(`
+		SELECT COUNT(*) FROM kb.project_edge_schema_registry
+		WHERE project_id = ? AND schema_id = ? AND type_name = 'has_message'
+	`, owningID, packID).Scan(ctx, &edgeCount); err != nil {
+		t.Fatalf("count edge registry: %v", err)
+	}
+	if edgeCount != 1 {
+		t.Errorf("owning project: want 1 has_message edge-registry row, got %d", edgeCount)
+	}
+
+	// Empty project: no assignment, no registry rows.
+	for _, q := range []struct{ table, idCol string }{
+		{"kb.project_schemas", "schema_id"},
+		{"kb.project_object_schema_registry", "schema_id"},
+		{"kb.project_edge_schema_registry", "schema_id"},
+	} {
+		var n int
+		if err := db.NewRaw(`SELECT COUNT(*) FROM `+q.table+` WHERE project_id = ? AND `+q.idCol+` = ?`, emptyID, packID).Scan(ctx, &n); err != nil {
+			t.Fatalf("count empty-project %s: %v", q.table, err)
+		}
+		if n != 0 {
+			t.Errorf("empty project: want no %s rows, got %d", q.table, n)
+		}
+	}
+
+	// The global pack row survives (referenced by the owning assignment).
+	var packCount int
+	if err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE id = ?`, packID).Scan(ctx, &packCount); err != nil {
+		t.Fatalf("count system pack: %v", err)
+	}
+	if packCount != 1 {
+		t.Errorf("expected system pack graph_schemas row to survive, got %d", packCount)
 	}
 }
 
@@ -363,229 +484,5 @@ func TestAssignPackWithTypesOwnershipStampFamily(t *testing.T) {
 	}
 	if got := readOwner(pack2); got != newID {
 		t.Errorf("same-family owner must adopt newer version, got %q want %q", got, newID)
-	}
-}
-
-// TestSystemSchemaIndexExists verifies 00235 created the partial is_system
-// index that backs the read-time system lookup.
-func TestSystemSchemaIndexExists(t *testing.T) {
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
-	}
-	ctx := context.Background()
-	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysidx")
-	defer testDB.Close()
-
-	db := testDB.GetDB()
-	var count int
-	if err := db.NewRaw(`
-		SELECT COUNT(*) FROM pg_indexes WHERE indexname = 'graph_schemas_is_system_idx'
-	`).Scan(ctx, &count); err != nil {
-		t.Fatalf("query pg_indexes: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected graph_schemas_is_system_idx to exist, found %d", count)
-	}
-}
-
-// TestMigration00236SystemPackCleanup verifies 00236 removes the leftover
-// auto-provisioned assignment and registry rows for the read-time system pack
-// while keeping its graph_schemas row.
-func TestMigration00236SystemPackCleanup(t *testing.T) {
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
-	}
-	ctx := context.Background()
-	testDB := testutil.SetupTestDBOrFail(t, ctx, "syscleanup")
-	defer testDB.Close()
-
-	db := testDB.GetDB()
-
-	orgID := uuid.NewString()
-	if err := testutil.CreateTestOrganization(ctx, db, orgID, "Cleanup Org"); err != nil {
-		t.Fatalf("create org: %v", err)
-	}
-	projectID := uuid.NewString()
-	if err := testutil.CreateTestProject(ctx, db, testutil.TestProject{
-		ID:    projectID,
-		OrgID: orgID,
-		Name:  "Cleanup Project",
-	}, testutil.AdminUser.ID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-
-	// Seed the read-time system pack plus the leftover assignment/registry rows
-	// that the old 00146 trigger + ProvisionBuiltinSchemasToAllProjects would
-	// have left behind.
-	systemPackID := uuid.NewString()
-	if _, err := db.NewRaw(`
-		INSERT INTO kb.graph_schemas (id, name, version, source, is_system, object_type_schemas, relationship_type_schemas)
-		VALUES (?, 'session-message-types', '1.0.0', 'builtin', true, '{}'::jsonb, '{}'::jsonb)
-	`, systemPackID).Exec(ctx); err != nil {
-		t.Fatalf("insert system pack: %v", err)
-	}
-	if _, err := db.NewRaw(`
-		INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at)
-		VALUES (?, ?, true, now())
-	`, projectID, systemPackID).Exec(ctx); err != nil {
-		t.Fatalf("insert assignment: %v", err)
-	}
-	if _, err := db.NewRaw(`
-		INSERT INTO kb.project_object_schema_registry (project_id, schema_id, type_name, source, json_schema)
-		VALUES (?, ?, 'Session', 'builtin', '{}'::jsonb)
-	`, projectID, systemPackID).Exec(ctx); err != nil {
-		t.Fatalf("insert object registry: %v", err)
-	}
-	if _, err := db.NewRaw(`
-		INSERT INTO kb.project_edge_schema_registry (project_id, schema_id, type_name, json_schema)
-		VALUES (?, ?, 'SessionEdge', '{}'::jsonb)
-	`, projectID, systemPackID).Exec(ctx); err != nil {
-		t.Fatalf("insert edge registry: %v", err)
-	}
-
-	// Re-run 00236's Up statements (idempotent DELETEs).
-	for _, stmt := range migrationUpStatements(t, "00236_cleanup_builtin_schema_provisioning.sql") {
-		if _, err := db.NewRaw(stmt).Exec(ctx); err != nil {
-			t.Fatalf("execute 00236 statement %q: %v", stmt, err)
-		}
-	}
-
-	var sysPackCount int
-	if err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE id = ?`, systemPackID).Scan(ctx, &sysPackCount); err != nil {
-		t.Fatalf("count system pack: %v", err)
-	}
-	if sysPackCount != 1 {
-		t.Errorf("expected system pack graph_schemas row to survive, got %d", sysPackCount)
-	}
-
-	for _, q := range []struct{ table, idCol string }{
-		{"kb.project_schemas", "schema_id"},
-		{"kb.project_object_schema_registry", "schema_id"},
-		{"kb.project_edge_schema_registry", "schema_id"},
-	} {
-		var n int
-		if err := db.NewRaw(`SELECT COUNT(*) FROM `+q.table+` WHERE `+q.idCol+` = ?`, systemPackID).Scan(ctx, &n); err != nil {
-			t.Fatalf("count %s: %v", q.table, err)
-		}
-		if n != 0 {
-			t.Errorf("expected no %s rows for system pack, got %d", q.table, n)
-		}
-	}
-}
-
-// TestMigration00236BackfillsSourceBlueprintID verifies 00236 backfills
-// source_blueprint_id on kept assignments claimed by exactly one applied
-// blueprint, and skips rows claimed by more than one.
-func TestMigration00236BackfillsSourceBlueprintID(t *testing.T) {
-	if testing.Short() {
-		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
-	}
-	ctx := context.Background()
-	testDB := testutil.SetupTestDBOrFail(t, ctx, "sysbackfill")
-	defer testDB.Close()
-
-	db := testDB.GetDB()
-
-	orgID := uuid.NewString()
-	if err := testutil.CreateTestOrganization(ctx, db, orgID, "Backfill Org"); err != nil {
-		t.Fatalf("create org: %v", err)
-	}
-	projectID := uuid.NewString()
-	if err := testutil.CreateTestProject(ctx, db, testutil.TestProject{
-		ID:    projectID,
-		OrgID: orgID,
-		Name:  "Backfill Project",
-	}, testutil.AdminUser.ID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-
-	insertBlueprint := func(id, name, version string) {
-		t.Helper()
-		if _, err := db.NewRaw(`
-			INSERT INTO kb.blueprints (id, name, version) VALUES (?, ?, ?)
-		`, id, name, version).Exec(ctx); err != nil {
-			t.Fatalf("insert blueprint %s: %v", name, err)
-		}
-	}
-	apply := func(blueprintID, version string) {
-		t.Helper()
-		if _, err := db.NewRaw(`
-			INSERT INTO kb.blueprint_applications (blueprint_id, project_id, version)
-			VALUES (?, ?, ?)
-		`, blueprintID, projectID, version).Exec(ctx); err != nil {
-			t.Fatalf("insert application %s: %v", blueprintID, err)
-		}
-	}
-	claim := func(blueprintID, schemaID string) {
-		t.Helper()
-		if _, err := db.NewRaw(`
-			INSERT INTO kb.blueprint_pack_claims (blueprint_id, project_id, schema_id)
-			VALUES (?, ?, ?)
-		`, blueprintID, projectID, schemaID).Exec(ctx); err != nil {
-			t.Fatalf("insert claim %s: %v", blueprintID, err)
-		}
-	}
-	insertPackAndAssignment := func(packID, name string) {
-		t.Helper()
-		if _, err := db.NewRaw(`
-			INSERT INTO kb.graph_schemas (id, name, version, source, object_type_schemas, relationship_type_schemas)
-			VALUES (?, ?, '1.0.0', 'builtin', '{}'::jsonb, '{}'::jsonb)
-		`, packID, name).Exec(ctx); err != nil {
-			t.Fatalf("insert pack %s: %v", name, err)
-		}
-		if _, err := db.NewRaw(`
-			INSERT INTO kb.project_schemas (project_id, schema_id, active, installed_at, source_blueprint_id)
-			VALUES (?, ?, true, now(), NULL)
-		`, projectID, packID).Exec(ctx); err != nil {
-			t.Fatalf("insert assignment %s: %v", name, err)
-		}
-	}
-
-	// Single applied claim → backfill.
-	singleBP := uuid.NewString()
-	insertBlueprint(singleBP, "single-blueprint", "1.0.0")
-	apply(singleBP, "1.0.0")
-	singlePack := uuid.NewString()
-	insertPackAndAssignment(singlePack, "single-pack")
-	claim(singleBP, singlePack)
-
-	// Two applied blueprints claim the same pack → skip (ambiguous ownership).
-	multiBP1 := uuid.NewString()
-	multiBP2 := uuid.NewString()
-	insertBlueprint(multiBP1, "multi-blueprint-1", "1.0.0")
-	insertBlueprint(multiBP2, "multi-blueprint-2", "1.0.0")
-	apply(multiBP1, "1.0.0")
-	apply(multiBP2, "1.0.0")
-	multiPack := uuid.NewString()
-	insertPackAndAssignment(multiPack, "multi-pack")
-	claim(multiBP1, multiPack)
-	claim(multiBP2, multiPack)
-
-	for _, stmt := range migrationUpStatements(t, "00236_cleanup_builtin_schema_provisioning.sql") {
-		if _, err := db.NewRaw(stmt).Exec(ctx); err != nil {
-			t.Fatalf("execute 00236 statement %q: %v", stmt, err)
-		}
-	}
-
-	readOwner := func(packID string) string {
-		t.Helper()
-		var owner *string
-		if err := db.NewRaw(`
-			SELECT source_blueprint_id FROM kb.project_schemas
-			WHERE project_id = ? AND schema_id = ? AND removed_at IS NULL
-		`, projectID, packID).Scan(ctx, &owner); err != nil {
-			t.Fatalf("read assignment %s: %v", packID, err)
-		}
-		if owner == nil {
-			return ""
-		}
-		return *owner
-	}
-
-	if got := readOwner(singlePack); got != singleBP {
-		t.Errorf("single-claim assignment should be backfilled, got %q want %q", got, singleBP)
-	}
-	if got := readOwner(multiPack); got != "" {
-		t.Errorf("multi-claim assignment should be skipped, got %q want empty", got)
 	}
 }

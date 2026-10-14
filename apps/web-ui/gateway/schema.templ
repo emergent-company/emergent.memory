@@ -231,18 +231,14 @@ templ schemaObjectTypeHeader(detail *ObjectTypeDetail, icon string, color string
 	}
 }
 
-// schemaObjectTypeOrigin renders the type's origin: for a system type, a
-// "System" badge; for a blueprint-derived type, a "Blueprint-derived" badge plus
-// a link (name/version) to the owning blueprint; otherwise a project-authored
-// marker plus the source schema name/version. The blueprint link already carries
-// the pack name/version, so no separate origin text is repeated for derived
-// types.
+// schemaObjectTypeOrigin renders the type's origin: for a blueprint-derived
+// type, a "Blueprint-derived" badge plus a link (name/version) to the owning
+// blueprint; otherwise a project-authored marker plus the source schema
+// name/version. The blueprint link already carries the pack name/version, so no
+// separate origin text is repeated for derived types.
 templ schemaObjectTypeOrigin(view *SchemaObjectTypeView) {
 	<div class="mb-6 flex flex-wrap items-center gap-x-3 gap-y-2">
-		if view.IsSystem {
-			@components.StatusBadge("System", ui.BadgeInfo, "lucide--cpu", components.StatusBadgeOpts{Size: ui.BadgeSizeSM, Dot: true})
-			<span class="text-muted text-sm">Built-in type available in every project.</span>
-		} else if view.Provenance != nil {
+		if view.Provenance != nil {
 			@provenanceBadge(ui.BadgeSizeSM)
 			<a class="text-primary text-sm font-medium hover:underline" href={ templ.URL("/blueprints/" + url.PathEscape(view.Provenance.BlueprintID)) }>{ typeProvenanceLabel(view.Provenance) }</a>
 			if view.Provenance.Ambiguous {

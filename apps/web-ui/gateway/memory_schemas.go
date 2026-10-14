@@ -37,7 +37,6 @@ type CompiledType struct {
 	SchemaName      string          `json:"schemaName,omitempty"`
 	SchemaVersion   string          `json:"schemaVersion,omitempty"`
 	Shadowed        bool            `json:"shadowed,omitempty"`
-	IsSystem        bool            `json:"isSystem,omitempty"`
 	BoardEnabled    bool            `json:"boardEnabled,omitempty"`
 	AllowedStatuses []string        `json:"allowedStatuses,omitempty"`
 }
@@ -61,7 +60,6 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 			SchemaName      string          `json:"schemaName"`
 			SchemaVersion   string          `json:"schemaVersion"`
 			Shadowed        bool            `json:"shadowed"`
-			IsSystem        bool            `json:"isSystem"`
 			BoardEnabled    bool            `json:"boardEnabled"`
 			AllowedStatuses []string        `json:"allowedStatuses"`
 		} `json:"objectTypes"`
@@ -75,7 +73,6 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 			SchemaName    string `json:"schemaName"`
 			SchemaVersion string `json:"schemaVersion"`
 			Shadowed      bool   `json:"shadowed"`
-			IsSystem      bool   `json:"isSystem"`
 		} `json:"relationshipTypes"`
 	}
 	if err := m.do(ctx, http.MethodGet, "/api/schemas/projects/"+m.projectIDFor(ctx)+"/compiled-types", nil, &wire); err != nil {
@@ -96,7 +93,6 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 			SchemaName:      w.SchemaName,
 			SchemaVersion:   w.SchemaVersion,
 			Shadowed:        w.Shadowed,
-			IsSystem:        w.IsSystem,
 			BoardEnabled:    w.BoardEnabled,
 			AllowedStatuses: w.AllowedStatuses,
 		})
@@ -112,7 +108,6 @@ func (m *MemoryClient) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTyp
 			SchemaName:    w.SchemaName,
 			SchemaVersion: w.SchemaVersion,
 			Shadowed:      w.Shadowed,
-			IsSystem:      w.IsSystem,
 		})
 	}
 	return out, nil

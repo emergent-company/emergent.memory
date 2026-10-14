@@ -2,6 +2,7 @@ package blueprints
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/google/uuid"
@@ -85,8 +86,8 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 
 	require.NoError(t, seeder.Seed(ctx))
 
-	// 4 bundled packs; no schema packs are seeded (they materialize on apply).
-	assertBlueprintCount(t, db, 4)
+	// 5 bundled packs; no schema packs are seeded (they materialize on apply).
+	assertBlueprintCount(t, db, 5)
 	assertSchemaPackCount(t, db, 0)
 
 	// Every seeded blueprint is a global published builtin with a checksum.
@@ -105,7 +106,7 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 		ORDER BY name
 	`).Scan(ctx, &rows)
 	require.NoError(t, err)
-	assert.Len(t, rows, 4)
+	assert.Len(t, rows, 5)
 	for _, r := range rows {
 		assert.Equal(t, StatusPublished, r.Status, "builtin blueprint %s must be published", r.Name)
 		assert.Equal(t, OriginBuiltin, r.Origin)
@@ -117,10 +118,11 @@ func TestBuiltinSeeder_CreatesGlobals_Idempotent(t *testing.T) {
 	// layout default of 1.0.0.
 	assertBlueprintVersion(t, db, "operator", "1.0.1")
 	assertBlueprintVersion(t, db, "agent-notes", "2.0.0")
+	assertBlueprintVersion(t, db, "session-message-types", "1.0.0")
 
 	// Re-run: idempotent.
 	require.NoError(t, seeder.Seed(ctx))
-	assertBlueprintCount(t, db, 4)
+	assertBlueprintCount(t, db, 5)
 	assertSchemaPackCount(t, db, 0)
 }
 
@@ -135,7 +137,7 @@ func assertBlueprintCount(t *testing.T, db bun.IDB, want int) {
 func assertSchemaPackCount(t *testing.T, db bun.IDB, want int) {
 	t.Helper()
 	var n int
-	err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE source = 'builtin' AND project_id IS NULL AND NOT is_system`).Scan(context.Background(), &n)
+	err := db.NewRaw(`SELECT COUNT(*) FROM kb.graph_schemas WHERE source = 'builtin' AND project_id IS NULL`).Scan(context.Background(), &n)
 	require.NoError(t, err)
 	assert.Equal(t, want, n)
 }
@@ -147,4 +149,62 @@ func assertBlueprintVersion(t *testing.T, db bun.IDB, name, want string) {
 		Scan(context.Background(), &got)
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
+}
+
+// TestBuiltinSeeder_SessionMessageTypesCarriesPrimitives verifies the bundled
+// session-message-types blueprint manifest carries the Session/Message object
+// types (with their required lists and the Message.content embedding target)
+// and the has_message relationship — i.e. the conversation primitives now ship
+// as a normal built-in blueprint, not a read-time system pack.
+func TestBuiltinSeeder_SessionMessageTypesCarriesPrimitives(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, testLogger())
+	seeder := NewBuiltinSeeder(repo, testLogger())
+	ctx := context.Background()
+
+	require.NoError(t, seeder.Seed(ctx))
+
+	var raw string
+	err := db.NewRaw(`
+		SELECT manifest::text FROM kb.blueprints
+		WHERE name = 'session-message-types' AND origin = 'builtin'
+		LIMIT 1
+	`).Scan(ctx, &raw)
+	require.NoError(t, err)
+	require.NotEmpty(t, raw, "session-message-types blueprint must be seeded")
+
+	var m BlueprintManifest
+	require.NoError(t, json.Unmarshal([]byte(raw), &m))
+	require.Len(t, m.Packs, 1, "expected a single pack in the session-message-types blueprint")
+	p := m.Packs[0]
+	assert.Equal(t, "session-message-types", p.Name)
+	assert.Equal(t, "1.0.0", p.Version)
+
+	objByName := map[string]ObjectTypeDef{}
+	for _, o := range p.ObjectTypes {
+		objByName[o.Name] = o
+	}
+	require.Contains(t, objByName, "Session")
+	require.Contains(t, objByName, "Message")
+
+	sess := objByName["Session"]
+	assert.Contains(t, sess.Required, "title", "Session must require title")
+
+	msg := objByName["Message"]
+	assert.Contains(t, msg.Required, "role", "Message must require role")
+	assert.Contains(t, msg.Required, "content", "Message must require content")
+	assert.Contains(t, msg.Required, "sequence_number", "Message must require sequence_number")
+	content, ok := msg.Properties["content"].(map[string]any)
+	require.True(t, ok, "Message.content must be an object property")
+	assert.Equal(t, true, content["x-embedding-target"], "Message.content must be the embedding target")
+
+	var hasMessage *RelationshipTypeDef
+	for i := range p.RelationshipTypes {
+		if p.RelationshipTypes[i].Name == "has_message" {
+			hasMessage = &p.RelationshipTypes[i]
+		}
+	}
+	require.NotNil(t, hasMessage, "pack must declare has_message")
+	assert.Equal(t, "Session", hasMessage.SourceType)
+	assert.Equal(t, "Message", hasMessage.TargetType)
 }

@@ -34,10 +34,8 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 }
 
 // GetCompiledTypesByProject returns compiled object and relationship types for a project.
-// System packs (is_system=true) are compiled first so they are always present, then
-// project-assigned packs are compiled on top (ordered by install date ascending) so a
-// project pack of the same type name shadows the system type — system types are the
-// softest priority.
+// Project-assigned packs are compiled ordered by install date ascending, so a later
+// install of the same type name shadows an earlier one.
 func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
 	response := &CompiledTypesResponse{
 		ObjectTypes:       []ObjectTypeSchema{},
@@ -51,26 +49,10 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 	// Cross-pack shadowing only applies to the exact same (name, source, target) triple.
 	seenRelIdx := map[string]int{} // "name|sourceType|targetType" → index in response.RelationshipTypes
 
-	// System packs are resolved at read time and available in every project,
-	// without a kb.project_schemas row.
-	var systemPacks []GraphMemorySchema
-	err := r.db.NewSelect().
-		Model(&systemPacks).
-		Where("gtp.is_system = true").
-		Order("gtp.name ASC").
-		Scan(ctx)
-	if err != nil {
-		r.log.Error("failed to get system schemas", logger.Error(err))
-		return nil, apperror.ErrDatabase.WithInternal(err)
-	}
-	for i := range systemPacks {
-		r.compilePack(&systemPacks[i], response, seenObjIdx, seenRelIdx)
-	}
-
 	// Get all active schemas for the project, ordered by install date ascending
 	// (so later installs have higher priority; shadowing detected by seeing a name twice)
 	var projectPacks []ProjectMemorySchema
-	err = r.db.NewSelect().
+	err := r.db.NewSelect().
 		Model(&projectPacks).
 		Relation("MemorySchema").
 		Where("ptp.project_id = ?", projectID).
@@ -95,8 +77,7 @@ func (r *Repository) GetCompiledTypesByProject(ctx context.Context, projectID st
 }
 
 // compilePack compiles one graph schema pack's object and relationship types into
-// the response, applying cross-pack shadowing and propagating the pack's is_system
-// flag onto each compiled type.
+// the response, applying cross-pack shadowing.
 func (r *Repository) compilePack(tp *GraphMemorySchema, response *CompiledTypesResponse, seenObjIdx, seenRelIdx map[string]int) {
 	// Type-level UI config may be declared either inline per type (a "ui"
 	// key inside the object type schema, as blueprint manifests write it)
@@ -120,7 +101,6 @@ func (r *Repository) compilePack(tp *GraphMemorySchema, response *CompiledTypesR
 		} else {
 			applyUIConfigFallback(objectTypes, uiConfigs)
 			for i := range objectTypes {
-				objectTypes[i].IsSystem = tp.IsSystem
 				if prevIdx, seen := seenObjIdx[objectTypes[i].Name]; seen {
 					// Mark the earlier one as shadowed
 					response.ObjectTypes[prevIdx].Shadowed = true
@@ -139,7 +119,6 @@ func (r *Repository) compilePack(tp *GraphMemorySchema, response *CompiledTypesR
 				slog.String("packId", tp.ID))
 		} else {
 			for i := range relTypes {
-				relTypes[i].IsSystem = tp.IsSystem
 				relKey := relTypes[i].Name + "|" + relTypes[i].SourceType + "|" + relTypes[i].TargetType
 				if prevIdx, seen := seenRelIdx[relKey]; seen {
 					response.RelationshipTypes[prevIdx].Shadowed = true
@@ -843,7 +822,7 @@ func (r *Repository) GetAssignablePack(ctx context.Context, packID, projectID st
 	err := r.db.NewSelect().
 		Model(&pack).
 		Where("id = ?", packID).
-		Where("(project_id = ? OR (source = 'builtin' AND NOT is_system))", projectID).
+		Where("(project_id = ? OR source = 'builtin')", projectID).
 		Scan(ctx)
 	if err != nil {
 		r.log.Error("failed to get assignable schema", logger.Error(err))
