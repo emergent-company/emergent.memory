@@ -18,9 +18,10 @@ import (
 // forked markup. object-preview.js owns the width state (persisted) and the
 // modal move.
 //
-// The empty <div id="object-preview-actions-slot"> at the foot of the partial
-// is the extension point for future surfaces (comments, actions) — it renders
-// nothing today.
+// The <div id="object-preview-actions-slot"> at the foot of the partial is the
+// extension point for surface-specific content: the board fills it with the
+// work item's status-gated actions and its merged comments thread (?actions=board);
+// chat previews pass nothing and it stays empty.
 templ objectPreviewDrawer() {
 	<div id="object-preview-root">
 		<!-- Backdrop: click closes the preview (object-preview.js). -->
@@ -125,8 +126,8 @@ templ objectPreviewDrawer() {
 //
 // actions, when non-nil, is rendered into #object-preview-actions-slot at the
 // foot of the summary. This is the documented extension point for surface-
-// specific actions (the board passes its status-gated work-item actions); chat
-// previews pass nil and stay read-only.
+// specific content (the board passes its status-gated work-item actions plus the
+// merged "Activity" thread); chat previews pass nil and stay read-only.
 //
 // Empty values still render (de-emphasised with a muted em dash) so the shape of
 // every property is visible; each row carries data-empty="true" so a future

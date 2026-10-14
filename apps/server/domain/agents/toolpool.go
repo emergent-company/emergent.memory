@@ -33,6 +33,9 @@ const (
 const (
 	ToolNameWorkComplete = "work_complete"
 	ToolNameWorkBlock    = "work_block"
+	// ToolNameWorkComment is the per-run comment tool: it appends a durable note
+	// to the subject work object but does NOT end the run.
+	ToolNameWorkComment = "comment"
 )
 
 // ACP tool names that require explicit opt-in at all agent depths.

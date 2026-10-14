@@ -102,6 +102,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	workItemsWrite.POST("/:canonicalId/reassign", h.ReassignWorkItem)
 	workItemsWrite.POST("/:canonicalId/status", h.UpdateWorkItemStatus)
 	workItemsWrite.POST("/:canonicalId/cancel", h.CancelWorkItem)
+	workItemsWrite.POST("/:canonicalId/comments", h.AddWorkItemComment)
 
 	// --- Agent Definition Overrides (per-project config overrides) ---
 	defsRead.GET("/overrides", h.ListAgentOverrides)

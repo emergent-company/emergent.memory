@@ -4073,6 +4073,8 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 		Logger:      ae.log,
 		ProjectID:   req.ProjectID,
 		CanonicalID: *run.SubjectObjectID,
+		ActorName:   ae.resolveAgentName(req),
+		RunID:       run.ID,
 		WorkConfig:  req.AgentDefinition.WorkConfig,
 		Terminator:  terminator,
 	}
@@ -4088,6 +4090,13 @@ func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, termi
 	if hasTool(ToolNameWorkBlock) {
 		if t, err := BuildWorkBlockTool(deps); err != nil {
 			return nil, fmt.Errorf("failed to build work_block: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkComment) {
+		if t, err := BuildWorkCommentTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build comment: %w", err)
 		} else {
 			tools = append(tools, t)
 		}

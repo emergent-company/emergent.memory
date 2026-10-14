@@ -223,6 +223,7 @@ type fakeMemory struct {
 	lastReassignTo    string          // last assignee passed to ReassignWorkItem
 	lastStatusTo      string          // last status passed to SetWorkItemStatus
 	lastFeedback      string          // last feedback passed to RequestChangesWorkItem
+	lastCommentBody   string          // last body passed to AddWorkComment
 
 	// objects browser: cursor pagination + count + search.
 	pageObjects        []GraphObject        // returned by ListGraphObjectsPage
@@ -1372,6 +1373,12 @@ func (f *fakeMemory) ApproveWorkItem(ctx context.Context, canonicalID string) (*
 func (f *fakeMemory) RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error) {
 	f.lastWorkItemID = canonicalID
 	f.lastFeedback = feedback
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) AddWorkComment(ctx context.Context, canonicalID, body string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	f.lastCommentBody = body
 	return f.workAction, f.workActionErr
 }
 

@@ -42,6 +42,7 @@ func newBoardEcho(f MemoryBackend) (*Server, *echo.Echo) {
 	e.GET("/board/items/:canonicalId", s.uiBoardItem)
 	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
 	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
+	e.POST("/board/items/:canonicalId/comments", s.uiBoardComment)
 	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
 	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
 	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
@@ -279,8 +280,8 @@ func TestBoardApprovePostsAndRefreshes(t *testing.T) {
 }
 
 // TestObjectPreviewBoardActionsSlot pins the ?actions=board extension: the
-// object summary carries the work item's status-gated action routes in the
-// shared #object-preview-actions-slot.
+// object summary carries the work item's status-gated action routes AND the
+// merged comments thread in the shared #object-preview-actions-slot.
 func TestObjectPreviewBoardActionsSlot(t *testing.T) {
 	f := &fakeMemory{
 		objects: []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
@@ -299,10 +300,21 @@ func TestObjectPreviewBoardActionsSlot(t *testing.T) {
 		`id="object-preview-actions-slot"`,
 		`/board/items/w1/approve`,
 		`/board/items/w1/request-changes`,
+		// The merged thread + inline form are reachable from the card-click
+		// preview path (no comments seeded, so the muted empty state renders).
+		`data-testid="board-preview-comment-empty"`,
+		`data-testid="board-preview-comment-form"`,
+		`data-testid="board-preview-comment-input"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("board preview missing %q", want)
 		}
+	}
+	// The preview emits only its own comment test ids; the drawer's ids stay in
+	// the drawer so a Playwright locator is unambiguous when both surfaces are in
+	// the DOM (the dialog's content persists in #board-drawer after it closes).
+	if strings.Contains(body, `data-testid="board-drawer-comment-`) {
+		t.Errorf("preview must not emit the drawer's comment test ids:\n%s", body)
 	}
 }
 
@@ -697,6 +709,176 @@ func TestBoardDrawerDeliverables(t *testing.T) {
 			t.Errorf("empty state missing:\n%s", rec.Body.String())
 		}
 	})
+}
+
+// TestBoardCommentsMerge verifies the merged-thread helper combines durable
+// comments and feedback rounds into one ascending createdAt order, carrying each
+// entry's kind/round/actorType fields.
+func TestBoardCommentsMerge(t *testing.T) {
+	comments := []WorkItemComment{
+		{ID: "c1", Author: "alice", Body: "note a", ActorType: "user", CreatedAt: "2026-10-14T10:00:00Z"},
+		{ID: "c2", Author: "researcher", Body: "agent note", ActorType: "agent", CreatedAt: "2026-10-14T12:00:00Z"},
+	}
+	feedback := []WorkItemFeedback{
+		{Round: 1, Author: "bob", Text: "round one", CreatedAt: "2026-10-14T11:00:00Z"},
+	}
+
+	got := boardComments(comments, feedback)
+	require := func(cond bool, msg string) {
+		if !cond {
+			t.Errorf("%s: got %+v", msg, got)
+		}
+	}
+	require(len(got) == 3, "want 3 merged entries")
+	// Ascending by createdAt: note a (10:00), round one (11:00), agent note (12:00).
+	require(got[0].Kind == "comment" && got[0].Body == "note a", "first entry wrong")
+	require(got[1].Kind == "feedback" && got[1].Round == 1 && got[1].Body == "round one", "second entry wrong")
+	require(got[2].Kind == "comment" && got[2].ActorType == "agent" && got[2].Body == "agent note", "third entry wrong")
+}
+
+// TestBoardCommentsMergeTieBreak pins the deterministic same-second order: with
+// createdAt equal, entries resolve by (kind, round, author, body) — not by the
+// order they were appended to the merge (comments first, then feedback). A
+// same-second comment sorts before a same-second feedback round
+// ("comment" < "feedback"), and feedback rounds order by round number.
+func TestBoardCommentsMergeTieBreak(t *testing.T) {
+	const at = "2026-10-14T10:00:00Z"
+	comments := []WorkItemComment{
+		{ID: "c1", Author: "zoe", Body: "zzz comment", ActorType: "user", CreatedAt: at},
+		{ID: "c2", Author: "amy", Body: "aaa comment", ActorType: "user", CreatedAt: at},
+	}
+	feedback := []WorkItemFeedback{
+		{Round: 2, Author: "bob", Text: "round two", CreatedAt: at},
+		{Round: 1, Author: "bob", Text: "round one", CreatedAt: at},
+	}
+
+	got := boardComments(comments, feedback)
+	if len(got) != 4 {
+		t.Fatalf("want 4 merged entries, got %+v", got)
+	}
+	// Comments (kind "comment") precede feedback rounds regardless of the merge
+	// append order; within a kind, author then body (comments) / round (feedback).
+	want := []string{"aaa comment", "zzz comment", "round one", "round two"}
+	for i, w := range want {
+		if got[i].Body != w {
+			t.Errorf("entry %d = %q, want %q (got %+v)", i, got[i].Body, w, got)
+		}
+	}
+
+	// The order is independent of the input slices' own ordering.
+	comments[0], comments[1] = comments[1], comments[0]
+	feedback[0], feedback[1] = feedback[1], feedback[0]
+	again := boardComments(comments, feedback)
+	for i, w := range want {
+		if again[i].Body != w {
+			t.Errorf("reordered input: entry %d = %q, want %q", i, again[i].Body, w)
+		}
+	}
+}
+
+// TestBoardDrawerComments verifies the merged thread renders comments and
+// feedback rounds in ascending order, marking feedback rounds and agent-authored
+// comments with their badges.
+func TestBoardDrawerComments(t *testing.T) {
+	f := &fakeMemory{
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done", RunCount: 1, LatestRunStatus: "success"},
+			Comments: []WorkItemComment{
+				{ID: "c1", Author: "alice", Body: "human note", ActorType: "user", CreatedAt: "2026-10-14T10:00:00Z"},
+				{ID: "c2", Author: "researcher", Body: "agent note", ActorType: "agent", CreatedAt: "2026-10-14T12:00:00Z"},
+			},
+			Feedback: []WorkItemFeedback{
+				{Round: 1, Author: "bob", Text: "round one", CreatedAt: "2026-10-14T11:00:00Z"},
+			},
+			Runs: []WorkItemRun{{ID: "run-1", Status: "success"}},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="board-drawer-comment-row"`,
+		">Activity<",
+		"human note",
+		"agent note",
+		"round one",
+		"rework round 1",
+		"agent",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comments thread missing %q:\n%s", want, body)
+		}
+	}
+	// The drawer surface uses the drawer-scoped test ids only: the preview's ids
+	// must not leak here, or a Playwright locator would match both surfaces.
+	if strings.Contains(body, `data-testid="board-preview-comment-`) {
+		t.Errorf("drawer must not emit the preview's comment test ids:\n%s", body)
+	}
+	// Ascending order: human note before round one before agent note.
+	hi := strings.Index(body, "human note")
+	ri := strings.Index(body, "round one")
+	ai := strings.Index(body, "agent note")
+	if hi >= ri || ri >= ai {
+		t.Errorf("comments not in ascending order: human=%d round=%d agent=%d", hi, ri, ai)
+	}
+	// The inline form posts to the comment route.
+	if !strings.Contains(body, `/board/items/w1/comments`) || !strings.Contains(body, `name="body"`) {
+		t.Errorf("comment form missing route/field:\n%s", body)
+	}
+}
+
+// TestBoardDrawerCommentsEmpty verifies an empty thread renders the muted empty
+// state (no comment rows).
+func TestBoardDrawerCommentsEmpty(t *testing.T) {
+	f := &fakeMemory{
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "Task", Key: "ship-1", Status: "done", RunCount: 1, LatestRunStatus: "success"},
+			Runs: []WorkItemRun{{ID: "run-1", Status: "success"}},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="board-drawer-comment-empty"`) || !strings.Contains(body, "No activity yet") {
+		t.Errorf("empty comments state missing:\n%s", body)
+	}
+	if strings.Contains(body, `data-testid="board-drawer-comment-row"`) {
+		t.Errorf("empty thread must not render comment rows:\n%s", body)
+	}
+}
+
+// TestBoardCommentPosts verifies the comment form POST calls AddWorkComment with
+// the submitted body and re-renders the board columns.
+func TestBoardCommentPosts(t *testing.T) {
+	f := &fakeMemory{
+		workAction: &WorkItemAction{Item: &WorkItemActionItem{CanonicalID: "w1", Status: "done"}},
+		workItems:  []WorkItem{},
+	}
+	_, e := newBoardEcho(f)
+	req := httptest.NewRequest(http.MethodPost, "/board/items/w1/comments", strings.NewReader("body=a%20note"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.lastWorkItemID != "w1" {
+		t.Errorf("comment called with %q, want w1", f.lastWorkItemID)
+	}
+	if f.lastCommentBody != "a note" {
+		t.Errorf("comment body = %q, want %q", f.lastCommentBody, "a note")
+	}
+	if !strings.Contains(rec.Body.String(), `id="board"`) {
+		t.Errorf("comment must re-render the board:\n%s", rec.Body.String())
+	}
 }
 
 // TestBoardAssigneePicker pins the ticket-style assignee dropdown: the drawer

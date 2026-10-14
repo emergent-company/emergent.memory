@@ -43,6 +43,12 @@ type ReassignWorkItemDTO struct {
 	Assignee string `json:"assignee"`
 }
 
+// AddWorkItemCommentDTO is the request body for adding a durable comment.
+type AddWorkItemCommentDTO struct {
+	// Body is required (non-empty) comment text recorded as a durable note.
+	Body string `json:"body"`
+}
+
 // UpdateWorkItemStatusDTO is the request body for the set-status action.
 type UpdateWorkItemStatusDTO struct {
 	// Status is the exact work status to set (must be non-empty).
@@ -111,11 +117,22 @@ type WorkItemFeedbackDTO struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// WorkItemCommentDTO is a durable comment in the work-item detail response.
+type WorkItemCommentDTO struct {
+	ID        string `json:"id"`
+	Author    string `json:"author,omitempty"`
+	Body      string `json:"body"`
+	ActorType string `json:"actorType,omitempty"`
+	RunID     string `json:"runId,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // WorkItemDetailDTO is the card-drawer projection: the work item joined to its
-// feedback history and recent runs.
+// feedback history, durable comments, and recent runs.
 type WorkItemDetailDTO struct {
 	Item     *WorkItemDTO          `json:"item"`
 	Feedback []WorkItemFeedbackDTO `json:"feedback"`
+	Comments []WorkItemCommentDTO  `json:"comments"`
 	Runs     []WorkItemRunDTO      `json:"runs"`
 }
 
@@ -143,6 +160,7 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 	dto := &WorkItemDetailDTO{
 		Item:     toWorkItemDTO(detail.Item),
 		Feedback: make([]WorkItemFeedbackDTO, 0, len(detail.Feedback)),
+		Comments: make([]WorkItemCommentDTO, 0, len(detail.Comments)),
 		Runs:     make([]WorkItemRunDTO, 0, len(detail.Runs)),
 	}
 	for _, fb := range detail.Feedback {
@@ -157,6 +175,22 @@ func (h *Handler) GetWorkItem(c echo.Context) error {
 			fdto.RunID = *fb.RunID
 		}
 		dto.Feedback = append(dto.Feedback, fdto)
+	}
+	for _, cm := range detail.Comments {
+		if cm == nil {
+			continue
+		}
+		cdto := WorkItemCommentDTO{ID: cm.ID, Body: cm.Body, CreatedAt: cm.CreatedAt.Format(time.RFC3339)}
+		if cm.Author != nil {
+			cdto.Author = *cm.Author
+		}
+		if cm.ActorType != nil {
+			cdto.ActorType = *cm.ActorType
+		}
+		if cm.RunID != nil {
+			cdto.RunID = *cm.RunID
+		}
+		dto.Comments = append(dto.Comments, cdto)
 	}
 	for _, run := range detail.Runs {
 		if run == nil {
@@ -331,6 +365,38 @@ func (h *Handler) RequestChangesWorkItem(c echo.Context) error {
 		Escalated: res.Escalated,
 		RunID:     res.RunID,
 	}))
+}
+
+// AddWorkItemComment handles POST /api/projects/:projectId/work-items/:canonicalId/comments
+//
+// @Summary      Comment on a work item
+// @Description  Records a durable human comment on a work item (append-only; never transitions the item)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Param        body body AddWorkItemCommentDTO true "Comment"
+// @Success      200 {object} APIResponse[WorkItemActionDTO] "Comment added"
+// @Failure      400 {object} apperror.Error "Empty comment"
+// @Failure      404 {object} apperror.Error "Not found"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId}/comments [post]
+// @Security     bearerAuth
+func (h *Handler) AddWorkItemComment(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	var dto AddWorkItemCommentDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	res, err := h.workActions.AddComment(c.Request().Context(), projectID, canonicalID, user.ID, dto.Body)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{Item: toWorkItemHeadDTO(res.Head)}))
 }
 
 // RetryWorkItem handles POST /api/projects/:projectId/work-items/:canonicalId/retry

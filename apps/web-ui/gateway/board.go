@@ -381,6 +381,58 @@ func boardCompletionSummary(runs []WorkItemRun) string {
 	return s
 }
 
+// boardComment is one entry in the merged "Activity" thread: a durable comment
+// (Kind == "comment") or a review feedback round (Kind == "feedback").
+type boardComment struct {
+	Kind      string
+	Author    string
+	Body      string
+	Round     int    // feedback rounds only
+	ActorType string // comments only
+	CreatedAt string
+}
+
+// boardComments merges a work item's durable comments and review feedback
+// rounds into one thread sorted by createdAt ascending. Both createdAt values
+// are RFC3339 strings, whose lexicographic order equals chronological order.
+//
+// createdAt is second-precision, so a comment and a feedback round recorded in
+// the same second tie. The sort is fully ordered — not merely stable — by falling
+// back to (kind, round, author, body), so a tie resolves by the entry's own
+// content rather than by which slice it came from; two entries with identical
+// content are indistinguishable anyway. "comment" < "feedback" lexicographically,
+// so a same-second comment precedes a feedback round.
+func boardComments(comments []WorkItemComment, feedback []WorkItemFeedback) []boardComment {
+	out := make([]boardComment, 0, len(comments)+len(feedback))
+	for _, c := range comments {
+		out = append(out, boardComment{Kind: "comment", Author: c.Author, Body: c.Body, ActorType: c.ActorType, CreatedAt: c.CreatedAt})
+	}
+	for _, f := range feedback {
+		out = append(out, boardComment{Kind: "feedback", Author: f.Author, Body: f.Text, Round: f.Round, CreatedAt: f.CreatedAt})
+	}
+	sort.Slice(out, func(i, j int) bool { return boardCommentLess(out[i], out[j]) })
+	return out
+}
+
+// boardCommentLess is the merged thread's total order: createdAt first, then
+// (kind, round, author, body) so equal-second entries still have one
+// deterministic position.
+func boardCommentLess(a, b boardComment) bool {
+	if a.CreatedAt != b.CreatedAt {
+		return a.CreatedAt < b.CreatedAt
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Round != b.Round {
+		return a.Round < b.Round
+	}
+	if a.Author != b.Author {
+		return a.Author < b.Author
+	}
+	return a.Body < b.Body
+}
+
 // uiBoardItem renders the card drawer (a native dialog) for one work item. It
 // resolves each declared deliverable to its object (best-effort: a miss or
 // lookup failure leaves that row as missing) and passes the result plus the
@@ -417,6 +469,11 @@ func (s *Server) uiBoardApprove(c echo.Context) error {
 
 func (s *Server) uiBoardRequestChanges(c echo.Context) error {
 	_, err := s.memory.RequestChangesWorkItem(c.Request().Context(), c.Param("canonicalId"), c.FormValue("feedback"))
+	return s.renderBoardColumns(c, err)
+}
+
+func (s *Server) uiBoardComment(c echo.Context) error {
+	_, err := s.memory.AddWorkComment(c.Request().Context(), c.Param("canonicalId"), c.FormValue("body"))
 	return s.renderBoardColumns(c, err)
 }
 

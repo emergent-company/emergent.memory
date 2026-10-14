@@ -48,11 +48,22 @@ type WorkItemFeedback struct {
 	CreatedAt string `json:"createdAt"`
 }
 
+// WorkItemComment is one append-only durable comment.
+type WorkItemComment struct {
+	ID        string `json:"id"`
+	Author    string `json:"author"`
+	Body      string `json:"body"`
+	ActorType string `json:"actorType"`
+	RunID     string `json:"runId"`
+	CreatedAt string `json:"createdAt"`
+}
+
 // WorkItemDetail is the card-drawer payload: the item joined to its feedback
-// history and recent runs.
+// history, durable comments, and recent runs.
 type WorkItemDetail struct {
 	Item     *WorkItem          `json:"item"`
 	Feedback []WorkItemFeedback `json:"feedback"`
+	Comments []WorkItemComment  `json:"comments"`
 	Runs     []WorkItemRun      `json:"runs"`
 }
 
@@ -159,6 +170,15 @@ func (m *MemoryClient) ApproveWorkItem(ctx context.Context, canonicalID string) 
 func (m *MemoryClient) RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error) {
 	var env successEnvelope[WorkItemAction]
 	if err := m.do(ctx, http.MethodPost, m.workItemsPath(ctx)+"/"+url.PathEscape(canonicalID)+"/request-changes", map[string]string{"feedback": feedback}, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
+// AddWorkComment posts a durable comment on a work item.
+func (m *MemoryClient) AddWorkComment(ctx context.Context, canonicalID, body string) (*WorkItemAction, error) {
+	var env successEnvelope[WorkItemAction]
+	if err := m.do(ctx, http.MethodPost, m.workItemsPath(ctx)+"/"+url.PathEscape(canonicalID)+"/comments", map[string]string{"body": body}, &env); err != nil {
 		return nil, err
 	}
 	return &env.Data, nil

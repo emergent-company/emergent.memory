@@ -257,24 +257,8 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables
 
 		@boardDrawerActions(item, statusMap, candidates)
 
-		if len(detail.Feedback) > 0 {
-			<div class="mt-5">
-				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Feedback</span>
-				<div class="mt-2 space-y-2">
-					for _, fb := range detail.Feedback {
-						<div class="rounded-box border border-base-content/10 bg-base-200/30 p-2.5">
-							<div class="flex items-center gap-1.5 text-[10px] font-medium text-muted">
-								<span>round { strconv.Itoa(fb.Round) }</span>
-								if fb.Author != "" {
-									<span>· { fb.Author }</span>
-								}
-							</div>
-							<p class="mt-1 text-sm break-words">{ fb.Text }</p>
-						</div>
-					}
-				</div>
-			</div>
-		}
+		{{ comments := boardComments(detail.Comments, detail.Feedback) }}
+		@boardCommentsView(comments, item.CanonicalID, "board-drawer-comment")
 
 		if len(detail.Runs) > 0 {
 			<div class="mt-5">
@@ -338,6 +322,97 @@ templ boardDeliverablesView(deliverables []boardDeliverable) {
 				<p class="text-xs text-muted" data-testid="board-deliverable-empty">No deliverables declared</p>
 			}
 		</div>
+	</div>
+}
+
+// boardCommentsView renders the drawer's "Activity" section: the merged thread
+// (durable comments + rework feedback rounds, ascending) under an eyebrow
+// heading, followed by the inline comment form. testIDPrefix scopes the thread's
+// test ids to this surface — see boardCommentsThread.
+templ boardCommentsView(entries []boardComment, canonicalID, testIDPrefix string) {
+	<div class="mt-5">
+		<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Activity</span>
+		<div class="mt-2">
+			@boardCommentsThread(entries, testIDPrefix)
+		</div>
+		@boardCommentForm(canonicalID, testIDPrefix)
+	</div>
+}
+
+// boardCommentsThread renders the merged thread's rows — durable comments and
+// rework feedback rounds, ascending — plus its muted empty state, with no heading
+// and no outer margin so each surface supplies its own heading chrome (the native
+// dialog's eyebrow, the preview's section heading).
+//
+// testIDPrefix scopes the test ids to one surface ("board-drawer-comment" /
+// "board-preview-comment"). Both surfaces can coexist in the DOM — after the
+// native dialog closes its content stays in #board-drawer — so identical ids
+// would make a Playwright locator resolve to two nodes (strict-mode violation).
+//
+// Feedback rounds are marked with their rework round; agent-authored comments
+// carry an "agent" badge. Two badges are never shown for one entry: a feedback
+// round is never agent-authored. At the preview pane's narrow default width the
+// meta row wraps rather than pushing the author out of the pane.
+templ boardCommentsThread(entries []boardComment, testIDPrefix string) {
+	<div class="space-y-2">
+		for _, e := range entries {
+			<div class="rounded-box border border-base-content/10 bg-base-200/30 p-2.5" data-testid={ testIDPrefix + "-row" }>
+				<div class="flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-muted">
+					if e.Kind == "feedback" {
+						@ui.Badge(ui.BadgeProps{Label: "rework round " + strconv.Itoa(e.Round), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					} else if e.ActorType == "agent" {
+						@ui.Badge(ui.BadgeProps{Label: "agent", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+					}
+					if e.Author != "" {
+						<span class="min-w-0 break-words">{ e.Author }</span>
+					}
+				</div>
+				<p class="mt-1 text-sm break-words">{ e.Body }</p>
+			</div>
+		}
+		if len(entries) == 0 {
+			<p class="text-xs text-muted" data-testid={ testIDPrefix + "-empty" }>No activity yet</p>
+		}
+	</div>
+}
+
+// boardCommentForm posts a durable comment and re-renders the board columns
+// (mirroring the request-changes form's htmx swap). testIDPrefix scopes its test
+// ids to the calling surface (see boardCommentsThread).
+templ boardCommentForm(canonicalID, testIDPrefix string) {
+	<form
+		hx-post={ boardActionPath(canonicalID, "comments") }
+		hx-target="#board"
+		hx-swap="outerHTML"
+		class="mt-2 flex w-full flex-col gap-2"
+		data-testid={ testIDPrefix + "-form" }
+	>
+		<textarea name="body" required placeholder="Add a comment…" class="textarea w-full" rows="2" data-testid={ testIDPrefix + "-input" }></textarea>
+		<div class="flex justify-end">
+			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM}) {
+				Comment
+			}
+		</div>
+	</form>
+}
+
+// boardPreviewBoardSlot renders the board's work-item surface inside the shared
+// object preview drawer — the card-click path, and the primary way a human opens
+// a board item: the status-gated actions, then the merged "Activity" thread and
+// its inline form as a preview section, so the thread is discoverable from the
+// common path rather than only from the rarer drag→review dialog. The pane is
+// narrow (32rem by default, resizable, promotable to a modal), so the thread
+// reuses the drawer's wrapping rows and the preview's own section heading. The
+// form posts to #board exactly like the native dialog's form; object-preview.js
+// closes the drawer on a successful POST, so the same htmx swap works from both
+// surfaces.
+templ boardPreviewBoardSlot(item *WorkItem, statusMap boardStatusMap, candidates []boardAssigneeCandidate, comments []WorkItemComment, feedback []WorkItemFeedback) {
+	@boardDrawerActions(item, statusMap, candidates)
+	<div class="mt-5">
+		@objectPreviewSection("Activity") {
+			@boardCommentsThread(boardComments(comments, feedback), "board-preview-comment")
+			@boardCommentForm(item.CanonicalID, "board-preview-comment")
+		}
 	</div>
 }
 

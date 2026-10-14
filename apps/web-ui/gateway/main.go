@@ -613,6 +613,7 @@ func main() {
 	e.GET("/board/items/:canonicalId", s.uiBoardItem)
 	e.POST("/board/items/:canonicalId/approve", s.uiBoardApprove)
 	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
+	e.POST("/board/items/:canonicalId/comments", s.uiBoardComment)
 	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
 	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
 	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)

@@ -13,16 +13,20 @@ import (
 	"google.golang.org/adk/v2/tool/functiontool"
 )
 
-// WorkToolDeps holds the dependencies needed by the work_complete and
-// work_block run-finalizing terminators.
+// WorkToolDeps holds the dependencies needed by the work_complete, work_block,
+// and comment run tools.
 type WorkToolDeps struct {
 	Store       WorkObjectStore
 	Repo        *Repository
 	Logger      *slog.Logger
 	ProjectID   string
 	CanonicalID string // the subject work object's canonical_id
-	WorkConfig  AgentWorkConfig
-	Terminator  *WorkTerminatorState
+	// ActorName is the display name attributed to an agent-authored comment.
+	ActorName string
+	// RunID is the current run's id, stamped on an agent-authored comment.
+	RunID      string
+	WorkConfig AgentWorkConfig
+	Terminator *WorkTerminatorState
 }
 
 // BuildWorkCompleteTool creates the work_complete terminator. It transitions
@@ -314,6 +318,49 @@ func BuildWorkBlockTool(deps WorkToolDeps) (tool.Tool, error) {
 			return result, nil
 		},
 	)
+}
+
+// BuildWorkCommentTool creates the per-run comment tool. It appends a durable
+// comment to the subject work object with actor_type='agent' and the run id. It
+// does NOT end the run and is not a substitute for work_complete's summary.
+func BuildWorkCommentTool(deps WorkToolDeps) (tool.Tool, error) {
+	return functiontool.New(
+		functiontool.Config{
+			Name:        ToolNameWorkComment,
+			Description: "Post a durable note on the work item you are working on, for a human reviewer to read. Use this to record context, findings, or decisions a reviewer should see alongside the work. Provide the note as the 'body' argument. This does not change the work item's status and does not end the run; it is not a substitute for work_complete, which is still how you finish the work.",
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			return commentWork(ctx, deps, args)
+		},
+	)
+}
+
+// commentWork is the comment tool handler body, extracted for testability. It
+// appends a durable comment with actor_type='agent' attributed to the run's
+// agent name and stamped with the run id. It never ends the run.
+func commentWork(ctx context.Context, deps WorkToolDeps, args map[string]any) (map[string]any, error) {
+	body, _ := args["body"].(string)
+	if body == "" {
+		return map[string]any{"error": "body is required"}, nil
+	}
+	if deps.CanonicalID == "" {
+		return map[string]any{"error": "comment: no subject work object to comment on"}, nil
+	}
+	if deps.Repo == nil {
+		return map[string]any{"error": "comment: repository unavailable"}, nil
+	}
+	var runID *string
+	if deps.RunID != "" {
+		runID = &deps.RunID
+	}
+	if _, err := deps.Repo.AppendWorkComment(ctx, deps.ProjectID, deps.CanonicalID, deps.ActorName, body, "agent", runID); err != nil {
+		deps.Logger.Error("comment: append failed",
+			slog.String("canonical_id", deps.CanonicalID),
+			slog.String("error", err.Error()),
+		)
+		return map[string]any{"error": "comment: " + err.Error()}, nil
+	}
+	return map[string]any{"status": "recorded"}, nil
 }
 
 // CreateWorkTask inserts a human-facing task into kb.tasks directly. It is the

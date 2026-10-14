@@ -312,6 +312,30 @@ func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID s
 	return res, nil
 }
 
+// AddComment records a durable human comment on a work item. It resolves the
+// work object's HEAD to 404 on a missing item, then appends an append-only
+// comment with actor_type='user' attributed to the authoring user. A comment
+// never transitions the item.
+func (s *WorkActionService) AddComment(ctx context.Context, projectID, canonicalID, author, body string) (*WorkActionResult, error) {
+	if body == "" {
+		return nil, apperror.New(http.StatusBadRequest, "bad_request", "comment is required")
+	}
+	if s.workObjects == nil {
+		return nil, fmt.Errorf("work object store not wired")
+	}
+	head, err := s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	if head == nil {
+		return nil, apperror.NewNotFound("WorkItem", canonicalID)
+	}
+	if _, err := s.repo.AppendWorkComment(ctx, projectID, canonicalID, author, body, "user", nil); err != nil {
+		return nil, apperror.NewInternal("failed to record work comment", err)
+	}
+	return &WorkActionResult{Head: head}, nil
+}
+
 // ListWorkItems returns the board projection of work items (objects joined to
 // their latest run), with the derived unroutable flag overlaid from the
 // project's listener footprint. status empty = all statuses; typeName empty =
@@ -335,10 +359,12 @@ func (s *WorkActionService) ListWorkItems(ctx context.Context, projectID, status
 }
 
 // WorkItemDetail is the board card drawer projection: the work item joined to
-// its latest run, its full feedback history, and its recent runs.
+// its latest run, its full feedback history, its durable comments, and its
+// recent runs.
 type WorkItemDetail struct {
 	Item     *graph.WorkItem
 	Feedback []*WorkItemFeedback
+	Comments []*WorkItemComment
 	Runs     []*AgentRun
 }
 
@@ -373,6 +399,11 @@ func (s *WorkActionService) GetWorkItemDetail(ctx context.Context, projectID, ca
 		return nil, err
 	} else {
 		detail.Feedback = feedback
+	}
+	if comments, err := s.repo.ListWorkComments(ctx, projectID, canonicalID); err != nil {
+		return nil, err
+	} else {
+		detail.Comments = comments
 	}
 	if runs, err := s.repo.ListRunsForSubject(ctx, canonicalID, 20); err != nil {
 		return nil, err
