@@ -48,9 +48,9 @@ templ mcpNodeRow(node mcpNodeView, selected bool) {
 			@mcpNodeStateBadge(node.Live)
 			<div class="min-w-0 grow">
 				<p class="truncate font-mono text-sm font-medium">{ node.InstanceID }</p>
-				<p class="text-muted mt-0.5 text-xs">
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 					{ mcpNodeMetaLine(node) }
-				</p>
+				}
 			</div>
 			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
 		</a>
@@ -98,12 +98,12 @@ templ mcpNodeRemoveDialog(node mcpNodeView) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
-				<h3 class="text-lg font-semibold">
+				@ui.DialogTitle() {
 					Remove node <span class="font-mono">{ node.InstanceID }</span>?
-				</h3>
-				<p class="text-muted mt-1 text-sm">
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					This removes it from the list; a still-connected host will reappear on refresh.
-				</p>
+				}
 			</div>
 		</div>
 		<form method="post" action="/settings/mcp-nodes/remove">
@@ -192,13 +192,13 @@ templ mcpNodeToolsPanel(data connectedDevicesPageData) {
 				<span class="truncate font-mono text-sm font-medium">{ sel.Session.InstanceID }</span>
 			</div>
 			if !data.SelectedLive {
-				<p class="text-muted-faint mb-3 text-xs">
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
 					if node, ok := mcpNodeByID(data.Nodes, sel.Session.InstanceID); ok && !node.LastSeen.IsZero() {
 						Snapshot recorded when this node was last seen { relTime(node.LastSeen.UTC().Format(time.RFC3339)) }.
 					} else {
 						Snapshot from this node's last connection.
 					}
-				</p>
+				}
 			}
 			if data.ToolsErr != nil {
 				@ui.Alert(ui.AlertProps{
@@ -209,12 +209,18 @@ templ mcpNodeToolsPanel(data connectedDevicesPageData) {
 				})
 			} else if len(sel.Tools) == 0 {
 				if data.SelectedLive {
-					<p class="text-muted-faint text-sm">This node is connected but serves no tools.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+						This node is connected but serves no tools.
+					}
 				} else {
-					<p class="text-muted-faint text-sm">No tools recorded for this node.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+						No tools recorded for this node.
+					}
 				}
 			} else {
-				<p class="text-muted mb-3 text-xs">Agent-facing names — whitelist these exact names on an agent (or check them in the agent Settings → Tools picker).</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
+					Agent-facing names — whitelist these exact names on an agent (or check them in the agent Settings → Tools picker).
+				}
 				<div class="flex flex-col divide-y divide-base-content/10 rounded-box border border-base-content/10">
 					for _, t := range sel.Tools {
 						<div class="flex items-center gap-2.5 px-3 py-2.5">
@@ -236,7 +242,9 @@ templ mcpNodeToolsPanel(data connectedDevicesPageData) {
 				Message: "That node is neither connected nor in the registry — it may have been removed. Refresh to see the current state.",
 			})
 		} else {
-			<p class="text-muted-faint text-sm">Select a node above to inspect the tools it serves.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				Select a node above to inspect the tools it serves.
+			}
 		}
 	}
 }

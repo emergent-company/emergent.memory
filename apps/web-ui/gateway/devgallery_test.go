@@ -373,7 +373,7 @@ func TestAdoptionStaleCheck(t *testing.T) {
 
 func TestClientWiringMarkers(t *testing.T) {
 	got := scanClientWiring("components/secret.templ")
-	for _, want := range []string{"htmx (hx-*)", "data-dialog-autoopen", "data-copy-target"} {
+	for _, want := range []string{"htmx (hx-*)", "data-dialog-autoopen"} {
 		if !containsStr(got, want) {
 			t.Errorf("scanClientWiring(secret.templ) = %v, missing %q", got, want)
 		}

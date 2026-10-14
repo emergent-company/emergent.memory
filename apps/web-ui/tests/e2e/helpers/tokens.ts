@@ -106,7 +106,10 @@ export async function readOneTimeSecret(page: Page): Promise<string> {
   const byTestId = page.getByTestId('token-secret-panel');
   const panel = (await byTestId.count()) > 0 ? byTestId : page.locator('#api-token-secret');
   await expect(panel).toBeVisible();
-  const secret = ((await page.locator('#api-token-secret').textContent()) ?? '').trim();
+  // The reveal panel renders the one-time secret through form.ClipboardCopy's
+  // input variant, so the plaintext lives in the readonly input's value — not
+  // textContent.
+  const secret = ((await page.locator('#api-token-secret').inputValue()) ?? '').trim();
   if (!TOKEN_VALUE.test(secret)) {
     throw new Error(`readOneTimeSecret: reveal panel value is not an emt_ token (got ${JSON.stringify(secret)})`);
   }

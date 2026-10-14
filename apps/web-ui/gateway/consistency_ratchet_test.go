@@ -24,9 +24,10 @@ import (
 //     budget entry carrying a justification note.
 //
 //  2. Pattern budgets (TestTemplPatternConsistencyRatchet): authored top-level *.templ files
-//     must not grow new instances of legacy/drifting class tokens beyond the
-//     declared budget. Commented-out markup is stripped before matching so a
-//     disabled snippet does not count.
+//     must not grow new instances of legacy/drifting class tokens, nor new raw
+//     component-consolidation surfaces (empty-note, dialog-title, soft-box,
+//     clipboard), beyond the declared budget. Commented-out markup is stripped
+//     before matching so a disabled snippet does not count.
 
 // --- adoption ratchet ---
 
@@ -103,11 +104,19 @@ func sortedAdoptionKeys(actual map[adoptionKey]int, budget map[adoptionKey]adopt
 
 // --- pattern budgets ---
 
-// patternID names the three drift patterns the ratchet tracks.
+// patternID names the drift/consolidation patterns the ratchet tracks. The
+// first three are design-token drift; the last four are the component-
+// consolidation surfaces (each seeded at its pre-adoption count and lowered as
+// the matching adoption lands — see consistency_ratchet_budget_test.go).
 const (
-	patternLegacyBordered   = "legacy-bordered"
-	patternSurfaceOpacity   = "surface-opacity-drift"
-	patternBorderTokenDrift = "border-token-drift"
+	patternLegacyBordered     = "legacy-bordered"
+	patternSurfaceOpacity     = "surface-opacity-drift"
+	patternBorderTokenDrift   = "border-token-drift"
+	patternEmptyNote          = "empty-note"
+	patternDialogTitle        = "dialog-title"
+	patternDialogTitleSection = "dialog-title-section"
+	patternSoftBoxSurface     = "soft-box-surface"
+	patternClipboard          = "clipboard"
 )
 
 type patternKey struct {
@@ -136,6 +145,33 @@ var (
 	// borderBaseContentRE matches border-base-content/<N>. Canonical is
 	// border-base-content/10; any other N is a drift.
 	borderBaseContentRE = regexp.MustCompile(`border-base-content/(\d+)`)
+
+	// --- component-consolidation surface patterns (seeded at pre-adoption) ---
+
+	// noteMutedTokens / noteSizeTokens are the note predicate's token sets:
+	// a note site is a <p> whose class contains one of each (token-exact, order-
+	// independent). text-muted-bright is deliberately absent — it is the
+	// brighter step, not the muted note tier ui.EmptyNote replaces.
+	noteMutedTokens = []string{"text-muted", "text-muted-faint", "text-muted-strong", "text-base-content/40", "text-base-content/50", "text-base-content/60"}
+	noteSizeTokens  = []string{"text-sm", "text-xs", "text-[11px]"}
+	// noteClassAttrRE extracts a static class="…" attribute from a <p> tag.
+	noteClassAttrRE = regexp.MustCompile(`<p\b[^>]*class="([^"]*)"`)
+	// dialogTitleH3TagRE matches an <h3> opening tag — the DialogTitle dialog
+	// heading. dialogTitleH2TagRE matches an <h2>: the same class shape, but a
+	// section/card heading rather than a dialog title, so it is budgeted as a
+	// separate residual (ui.DialogTitle has no bare-section-heading primitive).
+	dialogTitleH3TagRE = regexp.MustCompile(`<h3\b`)
+	dialogTitleH2TagRE = regexp.MustCompile(`<h2\b`)
+	// softBoxSurfaceFillRE matches a static canonical bg-base-200/40 fill. The
+	// [^\w:-] prefix excludes the hover:/conditional variants (hover:bg-base-200/40
+	// and bg-primary/… style prefixes), so a hover-only or conditional fill is not
+	// mistaken for a soft-box surface.
+	softBoxSurfaceFillRE = regexp.MustCompile(`(?:^|[^\w:-])bg-base-200/40`)
+	// clipboardTokenRE matches the hand-rolled copy affordance: the data-copy-*
+	// wiring attributes, the page-local copy-script identifiers, and the copy JS
+	// body (navigator.clipboard). Any of them re-introduces the surface
+	// form.ClipboardCopy retires.
+	clipboardTokenRE = regexp.MustCompile(`data-copy-target|data-copy-link|data-reveal-url|apiTokenCopyScript|shareManageScriptOnce|navigator\.clipboard`)
 )
 
 func TestTemplPatternConsistencyRatchet(t *testing.T) {
@@ -262,8 +298,55 @@ func scanPatternFile(path string, out map[string]map[string][]int) error {
 				addPatternHit(out, patternBorderTokenDrift, base, lineNo)
 			}
 		}
+
+		// empty-note: a <p> note site (token-exact, order-independent muted+size
+		// predicate, minus the non-note markers).
+		for _, m := range noteClassAttrRE.FindAllStringSubmatch(stripped, -1) {
+			if isNoteSite(m[1]) {
+				addPatternHit(out, patternEmptyNote, base, lineNo)
+				break
+			}
+		}
+		// dialog-title: an h3 in the text-lg font-semibold dialog-heading shape.
+		if dialogTitleH3TagRE.MatchString(stripped) && strings.Contains(stripped, "text-lg") && strings.Contains(stripped, "font-semibold") {
+			addPatternHit(out, patternDialogTitle, base, lineNo)
+		}
+		// dialog-title-section: an h2 in the text-lg font-semibold shape — a
+		// section/card heading, not a dialog title, so it is a recorded residual.
+		if dialogTitleH2TagRE.MatchString(stripped) && strings.Contains(stripped, "text-lg") && strings.Contains(stripped, "font-semibold") {
+			addPatternHit(out, patternDialogTitleSection, base, lineNo)
+		}
+		// soft-box-surface: rounded-box plus a static canonical /40 fill — the
+		// canonical surface the drift tokens alone never flag.
+		if strings.Contains(stripped, "rounded-box") && softBoxSurfaceFillRE.MatchString(stripped) {
+			addPatternHit(out, patternSoftBoxSurface, base, lineNo)
+		}
+		// clipboard: hand-rolled copy markup/wiring/script.
+		if clipboardTokenRE.MatchString(stripped) {
+			addPatternHit(out, patternClipboard, base, lineNo)
+		}
 	}
 	return nil
+}
+
+// isNoteSite reports whether a <p> class attribute is a note site: it carries
+// both a muted-foreground token and a size token (token-exact, order-
+// independent) and none of the non-note markers (font-mono code, uppercase/
+// tracking eyebrow-or-label copy, or hidden).
+func isNoteSite(class string) bool {
+	var muted, size bool
+	for _, t := range strings.Fields(class) {
+		if !muted && slices.Contains(noteMutedTokens, t) {
+			muted = true
+		}
+		if !size && slices.Contains(noteSizeTokens, t) {
+			size = true
+		}
+		if t == "font-mono" || t == "uppercase" || t == "hidden" || strings.HasPrefix(t, "tracking") {
+			return false
+		}
+	}
+	return muted && size
 }
 
 func addPatternHit(out map[string]map[string][]int, pattern, file string, line int) {

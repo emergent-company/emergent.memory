@@ -377,7 +377,7 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Share created", "emt_new_secret", "https://mcp.example.com/api/mcp",
-		"will not be shown again", `data-mcp-share-reveal`, `data-copy-target="#mcp-share-key"`,
+		"will not be shown again", `data-mcp-share-reveal`, `clipboardCopyInput`,
 		"Claude Desktop", "Claude Code", "Cursor", "Cloud Code",
 		"Done — I've saved the key",
 		// the list re-render behind the modal shows the new share
@@ -397,15 +397,14 @@ func TestMCPShareCreateRendersOneTimeReveal(t *testing.T) {
 	if !strings.Contains(body, `modal-box max-w-[63rem]`) {
 		t.Error("reveal modal width not widened to 63rem")
 	}
-	// JSON client configs render as syntax-highlighted chroma spans (inline
-	// styles); the shell snippet stays plain, escaped text.
-	if !strings.Contains(body, `style="color:`) {
-		t.Error("JSON snippet not syntax-highlighted")
+	// Client configs render as plain text in a mono code badge via
+	// form.ClipboardCopy (SnippetCard); chroma syntax highlighting was removed
+	// with the SnippetCard rewrite.
+	if !strings.Contains(body, `clipboardCopyText`) {
+		t.Error("snippet copy control (form.ClipboardCopy) missing")
 	}
-	if i := strings.Index(body, `<pre id="mcp-share-snippet-claudeCode"`); i < 0 {
-		t.Error("claudeCode snippet block missing")
-	} else if seg, _, ok := strings.Cut(body[i:], "</pre>"); ok && strings.Contains(seg, `style="color:`) {
-		t.Error("shell snippet must not be syntax-highlighted")
+	if strings.Contains(body, `<pre id="mcp-share-snippet-`) {
+		t.Error("snippet <pre> block still present — SnippetCard now renders a mono badge")
 	}
 	// the reveal is a native <dialog> the client auto-opens (data-dialog-autoopen,
 	// scanned by app.js on load and after swaps): the modal-open class alone

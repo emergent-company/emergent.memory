@@ -385,7 +385,9 @@ test.describe('owner share-link management', () => {
 
     const revealed = page.getByTestId('share-link-reveal-url');
     await expect(revealed).toBeVisible();
-    await expect(revealed).toContainText(key);
+    // The reveal URL renders as form.ClipboardCopy's readonly input; the full
+    // URL (including the `#sh_key_…` fragment) is the input's value.
+    await expect(revealed.locator('input')).toHaveValue(new RegExp(`#${key}$`));
 
     // Reload: the key is not recoverable at list time, so the copy action now
     // reveals it on demand — and returns the same key.

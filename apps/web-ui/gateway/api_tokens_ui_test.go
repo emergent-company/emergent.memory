@@ -549,7 +549,7 @@ func TestRenderAPITokenRevealPanel(t *testing.T) {
 	html := renderHTML(t, apiTokenRevealContent(r))
 	for _, want := range []string{
 		"API token created", "CI deploy", "emt_secret_plaintext_1",
-		`id="api-token-secret"`, `data-copy-target="#api-token-secret"`, "Copy",
+		`id="api-token-secret"`, `clipboardCopyInput`, "Copy",
 		"shown only once", `href="/settings/tokens"`, "Done",
 	} {
 		if !strings.Contains(html, want) {

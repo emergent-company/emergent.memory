@@ -42,9 +42,9 @@ templ ApprovalsPage(approvals []ToolApprovalItem, questions []AgentQuestionItem,
 				</section>
 			}
 			if len(approvals) == 0 {
-				@ui.CardRaw("card-border", "items-center gap-2 memory-density-stack text-center", nil) {
+				@components.PanelCard("", nil, "items-center gap-2 memory-density-stack text-center") {
 					<p class="text-sm font-medium">No approval decisions yet.</p>
-					<p class="text-xs text-muted">When an agent asks to run a gated tool, its decision appears here.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { When an agent asks to run a gated tool, its decision appears here. }
 				}
 			} else {
 				<div class="flex flex-col gap-2">

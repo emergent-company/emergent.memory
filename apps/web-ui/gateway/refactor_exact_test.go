@@ -143,27 +143,27 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// checkboxPicker — skill, empty with id
 	got = render(checkboxPicker(checkboxPickerProps{
-		Name: "skill", EmptyID: "agent-skills-empty", EmptyNote: skillEmptyNote(),
+		Name: "skill", EmptyID: "agent-skills-empty", EmptyContent: skillEmptyContent(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 	}))
-	want = `<p id="agent-skills-empty" class="text-muted-faint text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
+	want = `<p id="agent-skills-empty" class="text-base-content/40 text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p>`
 	check("checkboxPicker skill empty", got, want)
 
 	// checkboxPicker — skill, with items + hidden duplicate note
 	sk := []Skill{{Name: "summarize-email", Description: "Condenses threads"}, {Name: "recall-memory"}}
 	got = render(checkboxPicker(checkboxPickerProps{
-		Name: "skill", EmptyID: "agent-skills-empty", EmptyNote: skillEmptyNote(),
+		Name: "skill", EmptyID: "agent-skills-empty", EmptyContent: skillEmptyContent(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, nil),
 	}))
-	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-muted-faint hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
+	want = `<div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="summarize-email" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">summarize-email</span> <span class="text-muted block text-xs">Condenses threads</span></span></label><label class="label flex items-start gap-2 py-1.5"><input name="skill" type="checkbox" value="recall-memory" class="checkbox checkbox-sm mt-0.5"> <span class="min-w-0 whitespace-normal"><span class="block text-sm font-medium">recall-memory</span> </span></label> <p id="agent-skills-empty" class="text-base-content/40 hidden text-sm">No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.</p></div>`
 	check("checkboxPicker skill items", got, want)
 
 	// checkboxPicker — skill, settings style (checked + no id)
 	got = render(checkboxPicker(checkboxPickerProps{
-		Name: "skill", EmptyNote: skillEmptyNote(),
+		Name: "skill", EmptyContent: skillEmptyContent(),
 		LabelClass: "items-start gap-2 py-1.5", CheckboxClass: "checkbox checkbox-sm mt-0.5",
 		TitleClass: "block text-sm font-medium", DescClass: "text-muted block text-xs", WrapTitle: true,
 		Items: skillPickerItems(sk, func(n string) bool { return n == "summarize-email" }),
@@ -174,16 +174,16 @@ func TestRefactorOutputExact(t *testing.T) {
 	// checkboxPicker — delegate, modal style (wrap id + empty id)
 	ag := []AgentDefinitionSummary{{Name: "diane"}, {Name: "milo"}}
 	got = render(checkboxPicker(checkboxPickerProps{
-		Name: "delegation-target", Wrapped: true, WrapID: "agent-delegation-targets", EmptyID: "agent-delegation-empty", EmptyNote: delegateEmptyNote(),
+		Name: "delegation-target", Wrapped: true, WrapID: "agent-delegation-targets", EmptyID: "agent-delegation-empty", EmptyContent: delegateEmptyContent(),
 		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "", nil),
 	}))
-	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-muted-faint hidden text-sm">No other agents to delegate to.</p></div></div>`
+	want = `<div id="agent-delegation-targets" class="mt-2"><div class="rounded-box border border-line-translucent bg-base-200/40 p-3 flex flex-col"><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="diane" class="checkbox"> <span class="text-muted-bright text-sm">diane</span></label><label class="label flex gap-2 py-1"><input name="delegation-target" type="checkbox" value="milo" class="checkbox"> <span class="text-muted-bright text-sm">milo</span></label> <p id="agent-delegation-empty" class="text-base-content/40 hidden text-sm">No other agents to delegate to.</p></div></div>`
 	check("checkboxPicker delegate modal", got, want)
 
 	// checkboxPicker — delegate, settings style (exclude self, checked, no ids)
 	got = render(checkboxPicker(checkboxPickerProps{
-		Name: "delegation-target", Wrapped: true, EmptyNote: delegateEmptyNote(),
+		Name: "delegation-target", Wrapped: true, EmptyContent: delegateEmptyContent(),
 		LabelClass: "gap-2 py-1", CheckboxClass: "checkbox", TitleClass: "text-muted-bright text-sm",
 		Items: delegatePickerItems(ag, "diane", func(n string) bool { return n == "milo" }),
 	}))

@@ -39,7 +39,9 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 					@ui.IconSpan("lucide--bot", "size-4 text-primary")
 					<div class="min-w-0 leading-tight">
 						<h2 class="truncate text-sm font-semibold">Assistant</h2>
-						<p class="text-muted-faint truncate text-[11px]">{ agentNameByID(agents, assistantAgent) }</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "truncate"}) {
+							{ agentNameByID(agents, assistantAgent) }
+						}
 					</div>
 				</div>
 				<div class="flex shrink-0 items-center gap-1">
@@ -139,7 +141,9 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 						})
 					</span>
 				</div>
-				<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · Escape to close</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1.5 text-center"}) {
+					Enter to send · Shift+Enter for a new line · Escape to close
+				}
 			</form>
 		</aside>
 		<!-- Modal window mode: sidepanel.js moves #sidepanel-panel into

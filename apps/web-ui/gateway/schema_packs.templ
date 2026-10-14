@@ -71,9 +71,13 @@ templ schemaPackRow(p schemaPackSummary) {
 				@ui.Badge(ui.BadgeProps{Label: typeProvenanceLabel(p.Provenance), Variant: ui.BadgeSecondary, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--library"})
 			}
 		</div>
-		<p class="text-muted mt-1 text-xs">{ p.typeCountLabel() }</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+			{ p.typeCountLabel() }
+		}
 		if p.Description != "" {
-			<p class="text-muted mt-0.5 text-xs">{ p.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+				{ p.Description }
+			}
 		}
 	</a>
 }

@@ -10,8 +10,16 @@ import (
 // extraClass is appended to the panel classes for an intentional accent (for
 // example "border-primary/20" on a one-time secret panel); the standard
 // treatment is always applied.
-templ PanelCard(extraClass string, attrs templ.Attributes) {
-	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), "memory-density-comfortable", attrs) {
+//
+// bodyClass optionally overrides the body's density class (default
+// "memory-density-comfortable"). Callers whose panel needs a different density
+// (e.g. "memory-density-compact", or a layout class like "p-4" / "gap-4") pass
+// it through instead of opening the raw ui.CardRaw shell, so the card-border
+// treatment still lives in one place.
+templ PanelCard(extraClass string, attrs templ.Attributes, bodyClass ...string) {
+	{{ bc := "memory-density-comfortable"
+	if len(bodyClass) > 0 { bc = bodyClass[0] } }}
+	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), bc, attrs) {
 		{ children... }
 	}
 }

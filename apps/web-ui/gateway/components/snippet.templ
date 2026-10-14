@@ -1,27 +1,21 @@
 package components
 
 import (
-	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/go-daisy/components/form"
 )
 
 // SnippetCard renders one client-configuration snippet with a copy control.
-// code is a slot so the caller keeps ownership of syntax highlighting, which is
-// page-level domain logic; pass escaped text when no highlighting is wanted.
-templ SnippetCard(label, copyTargetID string, code templ.Component) {
+// value is the plain string to copy (the caller owns syntax highlighting when
+// it wants it; form.ClipboardCopy renders the value as a mono code badge).
+templ SnippetCard(label string, value string) {
 	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
-		<div class="mb-2 flex items-center justify-between gap-2">
-			<span class="text-xs font-semibold">{ label }</span>
-			@ui.Button(ui.ButtonProps{
-				Type:      ui.ButtonTypeButton,
-				Variant:   ui.ButtonGhost,
-				Size:      ui.ButtonXS,
-				Icon:      "lucide--copy",
-				AriaLabel: "Copy " + label + " config",
-				Attrs:     templ.Attributes{"data-copy-target": "#" + copyTargetID},
-			}) {
-				Copy
-			}
-		</div>
-		<pre id={ copyTargetID } class="rounded-box bg-base-100 overflow-x-auto whitespace-pre-wrap p-2.5 font-mono text-[11px] leading-relaxed">@code</pre>
+		@form.ClipboardCopy([]form.ClipboardCopyItem{
+			{
+				Label:       label,
+				Value:       value,
+				ButtonLabel: "Copy",
+				Mono:        true,
+			},
+		})
 	</div>
 }

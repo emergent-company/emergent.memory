@@ -73,7 +73,6 @@ templ MCPSharesPage(data mcpSharesPageData) {
 		}
 		if data.Reveal != nil {
 			@mcpShareRevealModal(*data.Reveal)
-			@apiTokenCopyScript()
 		}
 		@mcpShareScripts()
 	}
@@ -94,7 +93,9 @@ templ mcpShareRow(inst MCPShareInstance) {
 					}
 				</div>
 				if inst.Description != "" {
-					<p class="text-muted mt-1 text-xs">{ inst.Description }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						{ inst.Description }
+					}
 				}
 			</div>
 			if !inst.IsLegacy {
@@ -158,10 +159,10 @@ templ mcpShareRevokeDialog(inst MCPShareInstance) {
 		<div class="mb-4 flex items-start gap-3">
 			@components.ConfirmIcon("")
 			<div>
-				<h3 class="text-lg font-semibold">Revoke share?</h3>
-				<p class="text-muted mt-1 text-sm">
+				@ui.DialogTitle() { Revoke share? }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					This immediately invalidates <span class="font-medium text-base-content">{ inst.Name }</span>'s key. Any MCP client using it stops working. This cannot be undone.
-				</p>
+				}
 			</div>
 		</div>
 		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/revoke") }>
@@ -195,10 +196,10 @@ templ mcpShareRotateDialog(inst MCPShareInstance) {
 				@ui.IconSpan("lucide--refresh-cw", "size-5")
 			</div>
 			<div>
-				<h3 class="text-lg font-semibold">Rotate key?</h3>
-				<p class="text-muted mt-1 text-sm">
+				@ui.DialogTitle() { Rotate key? }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					A new key is issued for <span class="font-medium text-base-content">{ inst.Name }</span> and the current key stops working immediately. The new key is shown once.
-				</p>
+				}
 			</div>
 		</div>
 		<form method="post" action={ templ.URL(mcpShareSettingsBase + "/" + url.PathEscape(inst.ID) + "/rotate") }>
@@ -343,13 +344,17 @@ templ mcpShareToolPicker(data mcpShareFormData) {
 				}
 			</div>
 		</div>
-		<p class="text-muted -mt-1 text-xs">Only the checked tools are exposed to this share. Pick at least one.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-1"}) {
+			Only the checked tools are exposed to this share. Pick at least one.
+		}
 		<input type="search" data-mcp-tool-search placeholder="Search tools…" aria-label="Search tools" class="input input-sm w-full"/>
 		if data.FieldErrs.Tools != "" {
 			<p class="text-error text-xs">{ data.FieldErrs.Tools }</p>
 		}
 		if len(data.Catalog) == 0 {
-			<p class="text-muted-faint text-xs">No memory tools are available in the catalog.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				No memory tools are available in the catalog.
+			}
 		} else {
 			<div class="flex max-h-96 flex-col gap-3 overflow-y-auto rounded-box border border-base-content/10 bg-base-200/30 p-3">
 				for _, g := range mcpShareToolGroups(data.Catalog) {
@@ -404,7 +409,7 @@ templ mcpShareRevealModal(r mcpShareReveal) {
 // mcpShareSnippetBlocks renders the reveal's client snippet list.
 templ mcpShareSnippetBlocks(snippets []mcpShareSnippet) {
 	for _, s := range snippets {
-		@components.SnippetCard(s.Label, "mcp-share-snippet-"+s.Key, snippetCode(s.Code))
+		@components.SnippetCard(s.Label, s.Code)
 	}
 }
 

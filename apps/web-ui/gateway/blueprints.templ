@@ -116,8 +116,8 @@ templ importDialog() {
 	@ui.Dialog(ui.DialogProps{ID: "blueprint-import-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-import-title"}}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
-				<h3 id="blueprint-import-title" class="text-lg font-semibold">Import from GitHub</h3>
-				<p class="text-muted mt-0.5 text-sm">Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository.</p>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "blueprint-import-title"}) { Import from GitHub }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Paste a GitHub repository URL to install the blueprint it contains. Add a ref for a branch or tag, and a token for a private repository. }
 			</div>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeButton,
@@ -164,8 +164,8 @@ templ githubTokenDialog() {
 	@ui.Dialog(ui.DialogProps{ID: "blueprint-github-token-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "blueprint-github-token-title"}}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
-				<h3 id="blueprint-github-token-title" class="text-lg font-semibold">GitHub access token</h3>
-				<p class="text-muted mt-0.5 text-sm">Store a personal access token so updates can be checked for blueprints imported from private repositories. It is stored encrypted and never shown again.</p>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "blueprint-github-token-title"}) { GitHub access token }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Store a personal access token so updates can be checked for blueprints imported from private repositories. It is stored encrypted and never shown again. }
 			</div>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeButton,
@@ -224,10 +224,9 @@ templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 		@ui.IconTile("lucide--library", ui.IconTileProps{Tone: "primary"})
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.BlueprintID)) }>{ b.Name }</a>
-			<p class="text-muted text-xs">v{ b.Version } · { relTime(b.AppliedAt) }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · { relTime(b.AppliedAt) } }
 			if b.SourceURL != "" {
-				<p class="text-muted mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
-					@ui.IconSpan("lucide--github", "size-3.5 shrink-0")
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 flex-wrap", Icon: "lucide--github"}) {
 					<a class="truncate hover:text-primary" href={ templ.URL(b.SourceURL) } target="_blank" rel="noopener noreferrer" data-testid="blueprint-source-link">{ blueprintSourceLabel(b.SourceURL) }</a>
 					if b.SourceRef != "" {
 						<span class="text-muted-faint">{ "@" }</span>
@@ -237,7 +236,7 @@ templ appliedRow(b AppliedBlueprint, upgrade AvailableSchemaItem) {
 						<span class="text-muted-faint">·</span>
 						<span>checked { relTime(b.LastCheckedAt) }</span>
 					}
-				</p>
+				}
 			}
 		</div>
 		if b.SourceURL != "" {
@@ -382,7 +381,7 @@ templ draftsSection(drafts []BlueprintRecord) {
 					@ui.IconTile("lucide--file-pen", ui.IconTileProps{Tone: "neutral"})
 					<div class="min-w-0 grow">
 						<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
-						<p class="text-muted text-xs">v{ b.Version } · draft</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · draft }
 					</div>
 					<form method="post" action={ templ.URL("/blueprints/" + url.PathEscape(b.ID) + "/install") }>
 						@ui.Button(ui.ButtonProps{
@@ -432,7 +431,7 @@ templ availableRow(b AvailableSchemaItem) {
 		@ui.IconSpan("lucide--package", "size-4 shrink-0 text-muted-faint")
 		<div class="min-w-0 grow">
 			<a class="truncate text-sm font-medium hover:text-primary" href={ templ.URL("/blueprints/" + url.PathEscape(b.ID)) }>{ b.Name }</a>
-			<p class="text-muted text-xs">v{ b.Version } · { b.Source }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { v{ b.Version } · { b.Source } }
 		</div>
 		if b.Source == "builtin" {
 			@ui.Badge(ui.BadgeProps{Label: "Built-in", Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "blueprint-builtin-" + b.Name}})
@@ -475,9 +474,9 @@ templ availableRow(b AvailableSchemaItem) {
 // blueprintRemoveDescription is the remove-confirm detail paragraph for a
 // blueprint (the name span is filled server-side).
 templ blueprintRemoveDescription(b AvailableSchemaItem) {
-	<p class="text-muted mt-1 text-sm">
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 		This removes the <span class="font-medium text-base-content">{ b.Name }</span> blueprint from the registry. Projects that already installed it are unaffected.
-	</p>
+	}
 }
 
 // blueprintRemoveDialog confirms removal before the POST to
@@ -613,7 +612,7 @@ templ releaseBadge(status string) {
 // comparison option. The selector is a plain GET form so it works without JS;
 // onchange submits it immediately for one-click switching.
 templ blueprintDiffCard(d *BlueprintDetail) {
-	@ui.CardRaw("card-border mb-6 overflow-hidden", "memory-density-flush", nil) {
+	@components.TableCard(nil, components.TableCardOpt{CardClass: "mb-6 overflow-hidden"}) {
 		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-200 px-4 py-3">
 			<h2 class="text-lg font-semibold tracking-tight">
 				Changes
@@ -635,7 +634,7 @@ templ blueprintDiffCard(d *BlueprintDetail) {
 		</div>
 		<div class="p-4">
 			if d.Diff == nil {
-				<p class="text-muted text-sm">Select a version to compare.</p>
+				@ui.EmptyNote() { Select a version to compare. }
 			} else {
 				@blueprintDiffBody(d.Diff)
 			}
@@ -656,11 +655,11 @@ func versionOptionLabel(v BlueprintVersionView) string {
 // state when every section is empty.
 templ blueprintDiffBody(diff *BlueprintDiff) {
 	if len(diff.ObjectTypes) == 0 && len(diff.RelationshipTypes) == 0 && len(diff.Agents) == 0 {
-		<div class="rounded-box border border-base-content/10 bg-base-200/40 px-4 py-8 text-center">
-			<p class="text-muted text-sm">
+		@ui.SoftBox(ui.SoftBoxProps{Padding: "px-4 py-8", Class: "text-center"}) {
+			@ui.EmptyNote() {
 				No changes between <span class="font-mono">v{ diff.BaseVersion }</span> and <span class="font-mono">v{ diff.TargetVersion }</span>.
-			</p>
-		</div>
+			}
+		}
 	} else {
 		<div class="flex flex-col gap-6">
 			if len(diff.ObjectTypes) > 0 {
@@ -823,7 +822,7 @@ templ propertyDiffRow(p PropertyDiff) {
 		if p.Description.Change != DiffChangeNone {
 			<div class="mt-1 text-xs">@diffValue(p.Description)</div>
 		} else if p.Description.After != "" {
-			<p class="text-muted mt-1 text-xs">{ p.Description.After }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { p.Description.After } }
 		}
 	</div>
 }
@@ -934,8 +933,8 @@ templ deriveVersionDialog(d *BlueprintDetail) {
 				@ui.IconSpan("lucide--git-branch", "size-5")
 			</div>
 			<div>
-				<h3 id="derive-version-title" class="text-lg font-semibold">Save as new version</h3>
-				<p class="text-muted mt-0.5 text-sm">Create a new draft version of { d.Name } from the object types currently in this project.</p>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-version-title"}) { Save as new version }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) { Create a new draft version of { d.Name } from the object types currently in this project. }
 			</div>
 		</div>
 		<form method="post" action={ templ.URL("/schema/blueprints/" + url.PathEscape(d.ID) + "/versions/derive") } hx-boost="false" class="mt-4 flex flex-col gap-4">
@@ -1041,7 +1040,7 @@ templ objectTypeRow(name string, label string, description string, properties []
 			}
 		</div>
 		if description != "" {
-			<p class="text-muted mt-1 text-xs">{ description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { description } }
 		}
 		@objectTypeWorkStatuses(boardEnabled, allowedStatuses)
 		if len(properties) > 0 {
@@ -1238,7 +1237,7 @@ templ agentDetailRow(a BundledAgent, providerNames []string) {
 			</div>
 		}
 		if a.Description != "" {
-			<p class="text-muted mt-1 text-xs">{ a.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { a.Description } }
 		}
 		if len(a.Tools) > 0 {
 			@chipRow("Tools", "mt-4 mb-2", false) {

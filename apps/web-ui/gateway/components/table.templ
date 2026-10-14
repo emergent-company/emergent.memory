@@ -1,14 +1,35 @@
 package components
 
 import (
+	"strings"
+
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
+
+// TableCardOpt overrides the standard table-card shell's card and body classes.
+// Both default to the standard treatment ("overflow-hidden shadow-sm" card,
+// "memory-density-flush" body), so existing callers that omit the option render
+// identically. Callers whose flush list uses the shadow-less "overflow-hidden"
+// border or a raw padding class (e.g. "p-0") pass their exact classes here
+// instead of opening the raw ui.CardRaw shell.
+type TableCardOpt struct {
+	// CardClass overrides the default "overflow-hidden shadow-sm" card classes.
+	CardClass string
+	// BodyClass overrides the default "memory-density-flush" body class.
+	BodyClass string
+}
 
 // TableCard renders the standard bordered card that wraps a list table. The
 // card body carries no padding so the table can meet the card edges. Callers
 // supply the table itself, preferring the go-daisy table primitives.
-templ TableCard(attrs templ.Attributes) {
-	@ui.CardRaw("card-border overflow-hidden shadow-sm", "memory-density-flush", attrs) {
+templ TableCard(attrs templ.Attributes, opts ...TableCardOpt) {
+	{{ cardClass := "overflow-hidden shadow-sm"
+	bodyClass := "memory-density-flush"
+	if len(opts) > 0 {
+		if opts[0].CardClass != "" { cardClass = opts[0].CardClass }
+		if opts[0].BodyClass != "" { bodyClass = opts[0].BodyClass }
+	} }}
+	@ui.CardRaw(strings.TrimSpace("card-border "+cardClass), bodyClass, attrs) {
 		{ children... }
 	}
 }

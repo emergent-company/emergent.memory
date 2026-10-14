@@ -103,14 +103,13 @@ func TestTableCardWrapsChildren(t *testing.T) {
 
 // --- snippet ---
 
-func TestSnippetCardRendersLabelCodeAndCopyTarget(t *testing.T) {
-	html := renderHTML(t, SnippetCard("Claude Desktop", "snippet-1", templ.Raw("{\"mcpServers\":{}}")))
+func TestSnippetCardRendersLabelValueAndCopy(t *testing.T) {
+	html := renderHTML(t, SnippetCard("Claude Desktop", "mcp-config-value"))
 	assertContains(t, html,
 		"Claude Desktop",
-		`id="snippet-1"`,
-		`data-copy-target="#snippet-1"`,
-		`class="rounded-box bg-base-100 overflow-x-auto whitespace-pre-wrap p-2.5 font-mono text-[11px] leading-relaxed"`,
-		"Copy Claude Desktop config",
+		"mcp-config-value",
+		`clipboardCopyText`,
+		"Copy",
 	)
 }
 
@@ -139,10 +138,10 @@ func TestSecretRevealModalRendersRevealAnatomy(t *testing.T) {
 		"MCP share created",
 		"share-a — this key is shown only once. Store it somewhere safe.",
 		`id="mcp-share-key"`,
+		`value="secret-value"`,
 		"secret-value",
-		`data-copy-target="#mcp-share-key"`,
+		`clipboardCopyInput`,
 		"Copy key",
-		`id="mcp-share-endpoint"`,
 		"https://example.test/mcp",
 		"This key will not be shown again.",
 		"Client setup",
@@ -185,6 +184,7 @@ func TestSecretRevealPanelRendersInline(t *testing.T) {
 		`<h3 class="text-sm font-semibold">Token created</h3>`,
 		"my-token — this key is shown only once. Store it somewhere safe.",
 		`id="api-token-secret"`,
+		`value="tok"`,
 		"tok",
 		"dismiss-note",
 	)

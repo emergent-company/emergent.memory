@@ -39,7 +39,7 @@ var adoptionFindings = []AdoptionFinding{
 	{File: "notifications_bell.templ", Line: 39, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 94, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 100, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
-	{File: "share_manage.templ", Line: 412, Marker: "class:card", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
-	{File: "share_manage.templ", Line: 412, Marker: "class:card-border", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
-	{File: "share_page.templ", Line: 676, Marker: "class:alert", Owners: []string{"Alert"}},
+	{File: "share_manage.templ", Line: 415, Marker: "class:card", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
+	{File: "share_manage.templ", Line: 415, Marker: "class:card-border", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
+	{File: "share_page.templ", Line: 690, Marker: "class:alert", Owners: []string{"Alert"}},
 }

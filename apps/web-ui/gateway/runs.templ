@@ -114,6 +114,8 @@ templ runMetaHeader(full *AgentRunFull, trace runTraceMeta) {
 		})
 	}
 	if s := scheduledRunPreview(*run, run.AgentName); s != "" {
-		<p class="text-muted-faint mb-4 text-sm">{ s }</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Class: "mb-4"}) {
+			{ s }
+		}
 	}
 }

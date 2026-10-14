@@ -173,7 +173,9 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 		@objectPreviewSection("Properties") {
 			{{ props := objectPreviewProperties(*obj) }}
 			if len(props) == 0 {
-				<p class="text-muted text-sm">No properties recorded.</p>
+				@ui.EmptyNote() {
+					No properties recorded.
+				}
 			} else {
 				<dl class="divide-base-content/10 flex flex-col divide-y">
 					for _, p := range props {
@@ -257,7 +259,9 @@ templ objectPreviewNotFound() {
 	<div class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
 		@ui.IconSpan("lucide--circle-alert", "size-8 text-warning")
 		<p class="text-sm font-medium">Object unavailable</p>
-		<p class="text-muted text-xs">This reference could not be loaded. It may have been removed or renamed.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+			This reference could not be loaded. It may have been removed or renamed.
+		}
 	</div>
 }
 

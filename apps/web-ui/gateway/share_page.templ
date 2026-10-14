@@ -421,13 +421,17 @@ templ shareFirstLoad(props ShareAgentPageProps) {
 		     share-agent.js swaps in the config welcomeMessage once the exchange
 		     resolves — and only when one is configured, leaving this default as
 		     the single fallback. -->
-		<p id="share-first-load-desc" class="text-muted mt-1.5 max-w-md text-sm">Chat by text.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{ID: "share-first-load-desc", Class: "mt-1.5 max-w-md"}) {
+			Chat by text.
+		}
 		<div class="mt-5 flex flex-wrap justify-center gap-2">
 			@shareSuggestion("What can you help me with?")
 			@shareSuggestion("Give me a quick summary")
 			@shareSuggestion("How do I get started?")
 		</div>
-		<p class="text-muted-faint mt-6 text-[11px]">Enter to send · Shift+Enter for a new line</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-6"}) {
+			Enter to send · Shift+Enter for a new line
+		}
 	</div>
 }
 
@@ -550,8 +554,12 @@ templ shareEmptySessions() {
 		<div class="bg-base-content/5 mx-auto grid size-10 place-items-center rounded-full">
 			@ui.IconSpan("lucide--messages-square", "size-5", "text-muted-subtle")
 		</div>
-		<p class="text-muted mt-3 text-sm font-medium">No chats yet</p>
-		<p class="text-muted-faint mt-1 text-xs">Start a new chat and it will show up here.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3 font-medium"}) {
+			No chats yet
+		}
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+			Start a new chat and it will show up here.
+		}
 	</div>
 }
 
@@ -597,7 +605,9 @@ templ shareComposer(props ShareAgentPageProps) {
 						</span>
 					</div>
 				</div>
-				<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1.5 text-center"}) {
+					Enter to send · Shift+Enter for a new line · responses stream in live
+				}
 			}
 		</form>
 	</div>
@@ -643,9 +653,9 @@ templ shareEmailGate(props ShareAgentPageProps) {
 						Continue
 					}
 				</div>
-				<p id="share-email-help" class="text-muted-faint text-xs">
+				@ui.EmptyNote(ui.EmptyNoteProps{ID: "share-email-help", Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 					The link's owner asks for an email before you can chat. It is only shared with them.
-				</p>
+				}
 				<p id="share-email-error" data-testid="share-email-error" class="text-error hidden text-xs" role="alert"></p>
 			</form>
 		}
@@ -662,8 +672,12 @@ templ shareTerminalScreen(state ShareTerminalState, agentName string) {
 				@ui.IconSpan(shareStateIcon(state), "size-7")
 			</div>
 			<h1 class="text-lg font-semibold tracking-tight">{ shareStateTitle(state) }</h1>
-			<p class="text-muted mt-2 text-sm leading-relaxed">{ shareStateBody(state, agentName) }</p>
-			<p class="text-muted-faint mt-5 text-xs">If you think this is a mistake, ask the person who shared the link for a new one.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-2 leading-relaxed"}) {
+				{ shareStateBody(state, agentName) }
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-5"}) {
+				If you think this is a mistake, ask the person who shared the link for a new one.
+			}
 		</main>
 	</div>
 }

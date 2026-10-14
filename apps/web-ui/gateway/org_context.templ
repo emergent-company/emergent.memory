@@ -443,13 +443,13 @@ templ orgProjectsTable(projects []ProjectRef, isAdmin, canTransfer bool) {
 							</div>
 							if p.PendingDeletion() {
 								{{ when := projectDeletionScheduledLabel(p) }}
-								<p class="text-muted mt-0.5 text-xs" title="This project will be permanently removed after the scheduled time. You can cancel the deletion until then.">
+								@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5", Attrs: templ.Attributes{"title": "This project will be permanently removed after the scheduled time. You can cancel the deletion until then."}}) {
 									if when != "" {
 										Permanently removed after { when } — you can still cancel.
 									} else {
 										Permanently removed soon — you can still cancel.
 									}
-								</p>
+								}
 							}
 						</div>
 					}
@@ -579,7 +579,8 @@ templ projectDeleteDialog(orgID string) {
 // projectDeleteDialogDescription is the empty detail paragraph the page script
 // writes the grounded explanation into (textContent only — never innerHTML).
 templ projectDeleteDialogDescription() {
-	<p id="project-delete-detail" class="text-muted mt-1 text-sm"></p>
+	@ui.EmptyNote(ui.EmptyNoteProps{ID: "project-delete-detail", Class: "mt-1"}) {
+	}
 }
 
 // projectDeleteButtonContent renders the idle/busy label pair shared by every
@@ -625,9 +626,9 @@ templ projectsPendingRefreshNote(orgID string, n int) {
 	>
 		@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
 			@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-muted-faint")
-			<p class="text-muted text-xs">
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
 				{ strconv.Itoa(n) + " project" + plural(n) } scheduled for deletion — this list updates automatically until each purge completes.
-			</p>
+			}
 		}
 	</div>
 }
@@ -689,7 +690,9 @@ templ orgMemberRow(m OrgMemberDto) {
 				</div>
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ orgMemberDisplayName(m) }</p>
-					<p class="text-muted truncate text-xs">{ m.Email }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate"}) {
+						{ m.Email }
+					}
 				</div>
 			</div>
 		}
@@ -846,7 +849,9 @@ templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
 							}
 						</form>
 					} else {
-						<p class="text-muted text-sm">Only organization admins can rename this organization.</p>
+						@ui.EmptyNote() {
+							Only organization admins can rename this organization.
+						}
 					}
 				}
 			}
@@ -918,7 +923,9 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 								</div>
 								<div>
 									<p class="text-sm font-medium">Delete organization</p>
-									<p class="text-muted text-xs">Permanently delete { data.Org.Name } and its projects. This cannot be undone.</p>
+									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+										Permanently delete { data.Org.Name } and its projects. This cannot be undone.
+									}
 								</div>
 							</div>
 							// Deleting the current org changes the session context
@@ -943,7 +950,9 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 							</form>
 						</div>
 					} else {
-						<p class="text-muted text-sm">Only organization admins can delete this organization.</p>
+						@ui.EmptyNote() {
+							Only organization admins can delete this organization.
+						}
 					}
 				}
 			}
@@ -965,8 +974,10 @@ templ transferProjectModal(sourceOrgID string, orgs []Org) {
 	@ui.Dialog(ui.DialogProps{ID: "transfer-project-modal", BoxClass: "w-full max-w-sm"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
-				<h3 class="text-lg font-semibold">Transfer <span id="transfer-project-name" class="text-base-content"></span></h3>
-				<p class="text-muted mt-0.5 text-sm">Move this project to another organization you belong to. Its history and settings move with it.</p>
+				@ui.DialogTitle() { Transfer <span id="transfer-project-name" class="text-base-content"></span> }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
+					Move this project to another organization you belong to. Its history and settings move with it.
+				}
 			</div>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeButton,

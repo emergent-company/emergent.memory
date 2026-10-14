@@ -234,7 +234,7 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables
 			})
 		</div>
 
-		<h3 class="mt-3 text-lg font-semibold tracking-tight">{ item.Key }</h3>
+		@ui.DialogTitle(ui.DialogTitleProps{Tracking: true, Class: "mt-3"}) { item.Key }
 		<div class="mt-2 flex flex-wrap items-center gap-1.5">
 			@ui.Badge(ui.BadgeProps{Label: "v" + strconv.Itoa(item.Version), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			if item.Assignee != "" {
@@ -319,7 +319,7 @@ templ boardDeliverablesView(deliverables []boardDeliverable) {
 				}
 			}
 			if len(deliverables) == 0 {
-				<p class="text-xs text-muted" data-testid="board-deliverable-empty">No deliverables declared</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-testid": "board-deliverable-empty"}}) { No deliverables declared }
 			}
 		</div>
 	</div>
@@ -371,7 +371,7 @@ templ boardCommentsThread(entries []boardComment, testIDPrefix string) {
 			</div>
 		}
 		if len(entries) == 0 {
-			<p class="text-xs text-muted" data-testid={ testIDPrefix + "-empty" }>No activity yet</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-testid": testIDPrefix + "-empty"}}) { No activity yet }
 		}
 	</div>
 }

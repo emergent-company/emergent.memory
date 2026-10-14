@@ -234,7 +234,7 @@ templ agentToolsSection(data agentDashboardData) {
 			<div>
 				@ui.Eyebrow("Allowed tools", ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-2"})
 				if len(data.Agent.Tools) == 0 {
-					<p class="text-muted-faint text-sm italic">None</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Class: "italic"}) { None }
 				} else {
 					<div class="flex flex-wrap gap-1.5">
 						for _, t := range data.Agent.Tools {
@@ -483,7 +483,7 @@ templ agentGeneralSettingsForm(data agentSettingsData) {
 			BodyClass: "memory-density-comfortable",
 		}) {
 			<div class="flex flex-col gap-4">
-				<p class="text-muted-strong text-sm">Controls who can discover this agent. Changes take effect after you save.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Controls who can discover this agent. Changes take effect after you save. }
 				@form.FormControl("agent-settings-visibility", "Visibility", form.LabelAbove, agentVisibilityDescription(agentVisibilityValue(data.Agent)), "", nil) {
 					// Native <select>/<option> cannot render a second, dimmed
 					// description line per option, so this is a custom listbox:
@@ -610,12 +610,12 @@ templ agentGraphSettingsForm(data agentSettingsData) {
 					BodyClass: "memory-density-comfortable",
 				}) {
 					<div class="flex flex-col gap-4">
-						<p class="text-muted-strong text-sm">Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save.</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Limit which graph types this agent may see and query. Leave everything unchecked to allow every type. Changes take effect after you save. }
 				@form.FormControl("agent-settings-object-types", "Object types", form.LabelAbove, "Only the object types this agent may see and query. Leave all unchecked to allow every type.", "", nil) {
 					<input type="hidden" name="objectType" value=""/>
 					@checkboxPicker(checkboxPickerProps{
 						Name:          "objectType",
-						EmptyNote:     objectTypeEmptyNote(),
+						EmptyContent:  objectTypeEmptyContent(),
 						LabelClass:    "items-start gap-2 py-1.5",
 						CheckboxClass: "checkbox checkbox-sm mt-0.5",
 						TitleClass:    "block text-sm font-medium",
@@ -628,7 +628,7 @@ templ agentGraphSettingsForm(data agentSettingsData) {
 					<input type="hidden" name="relationshipType" value=""/>
 					@checkboxPicker(checkboxPickerProps{
 						Name:          "relationshipType",
-						EmptyNote:     relationshipTypeEmptyNote(),
+						EmptyContent:  relationshipTypeEmptyContent(),
 						LabelClass:    "items-start gap-2 py-1.5",
 						CheckboxClass: "checkbox checkbox-sm mt-0.5",
 						TitleClass:    "block text-sm font-medium",
@@ -670,7 +670,7 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 					BodyClass: "memory-density-comfortable",
 				}) {
 					<div class="flex flex-col gap-4">
-						<p class="text-muted-strong text-sm">Configure how this agent picks up and works board items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save.</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) { Configure how this agent picks up and works board items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save. }
 						@agentWorkPickupNote()
 						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 							@form.FormControl("agent-settings-work-ready", "Ready status", form.LabelAbove, "The status value meaning an item is ready to be picked up.", "", nil) {
@@ -724,9 +724,9 @@ templ agentWorkSettingsForm(data agentSettingsData) {
 							<input id="agent-settings-work-max-interval" name="maxIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.MaxIntervalMS) } placeholder="0" class="input w-full"/>
 						}
 					</div>
-					<p class="text-muted-strong mt-3 text-sm" data-testid="agent-work-retry-policy-gap">
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "mt-3", Attrs: templ.Attributes{"data-testid": "agent-work-retry-policy-gap"}}) {
 						Only <strong>Max attempts</strong> is applied today. The initial interval, backoff coefficient, and max interval fields are saved on the definition but are not yet used when scheduling retries.
-					</p>
+					}
 				}
 				@ui.Section("Work contract", ui.SectionProps{
 					Margin:    "mt-6",
@@ -783,10 +783,10 @@ templ agentWorkBlueprintWarning(data agentSettingsData) {
 				@ui.IconSpan("lucide--alert-triangle", "size-5")
 			</div>
 			<div>
-				<h3 id="agent-work-blueprint-warning-title" class="text-lg font-semibold">Save changes to a blueprint-derived agent?</h3>
-				<p id="agent-work-blueprint-warning-desc" class="text-muted-strong mt-1 text-sm">
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "agent-work-blueprint-warning-title"}) { Save changes to a blueprint-derived agent? }
+				@ui.EmptyNote(ui.EmptyNoteProps{ID: "agent-work-blueprint-warning-desc", Tone: ui.EmptyNoteToneStrong, Class: "mt-1"}) {
 					<span class="font-mono">{ data.Agent.Name }</span> was created by a blueprint. Saving your edit takes this agent out of sync with the blueprint, and it may be overwritten when the blueprint is updated or reinstalled.
-				</p>
+				}
 			</div>
 		</div>
 		<div class="modal-action">
@@ -876,7 +876,7 @@ templ agentSkillsSettingsForm(data agentSettingsData) {
 					@form.FormControl("agent-settings-skills", "", form.LabelAbove, "Reusable capabilities this agent can call.", "", nil) {
 						@checkboxPicker(checkboxPickerProps{
 							Name:          "skill",
-							EmptyNote:     skillEmptyNote(),
+							EmptyContent:  skillEmptyContent(),
 							LabelClass:    "items-start gap-2 py-1.5",
 							CheckboxClass: "checkbox checkbox-sm mt-0.5",
 							TitleClass:    "block text-sm font-medium",
@@ -919,7 +919,7 @@ templ agentDelegationSettingsForm(data agentSettingsData) {
 						@checkboxPicker(checkboxPickerProps{
 							Name:          "delegation-target",
 							Wrapped:       true,
-							EmptyNote:     delegateEmptyNote(),
+							EmptyContent:  delegateEmptyContent(),
 							LabelClass:    "gap-2 py-1",
 							CheckboxClass: "checkbox",
 							TitleClass:    "text-muted-bright text-sm",
@@ -1063,7 +1063,7 @@ templ agentSandboxForm(data agentSandboxData) {
 						<span class="font-mono text-[13px]">{ tool }</span>
 					</label>
 				}
-				<p class="text-muted mt-2 text-xs">If none selected, all tools are allowed.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { If none selected, all tools are allowed. }
 			</div>
 		}
 		@ui.Section("Resources", ui.SectionProps{
@@ -1191,7 +1191,7 @@ templ agentToolBuiltinLeading() {
 			@ui.IconSpan("lucide--package", "size-4 shrink-0 text-primary/70")
 			<span class="truncate text-sm font-semibold">Built-in</span>
 		</div>
-		<p class="text-muted truncate pl-[26px] text-xs">Tools that ship with Memory.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate pl-[26px]"}) { Tools that ship with Memory. }
 	</div>
 }
 
@@ -1234,7 +1234,7 @@ templ agentToolCapabilityLeading(gv toolGroupView) {
 			@agentToolCountBadge(gv.Count)
 		</div>
 		if gv.Group.Description != "" {
-			<p class="text-muted truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate pl-[26px]"}) { { gv.Group.Description } }
 		}
 	</div>
 }
@@ -1300,7 +1300,7 @@ templ agentToolOtherContainer(desc string, withTestID bool) {
 		}
 	>
 		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
-		<p class="text-muted mt-0.5 mb-2 text-xs">{ desc }</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 mb-2"}) { { desc } }
 		<div class="flex flex-col divide-y divide-base-content/10">
 			{ children... }
 		</div>

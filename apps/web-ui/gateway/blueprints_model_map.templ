@@ -67,7 +67,7 @@ templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
 			if d.Token != "" {
 				<input type="hidden" name="token" value={ d.Token }/>
 			}
-			@ui.CardRaw("card-border overflow-hidden", "memory-density-flush", nil) {
+			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden"}) {
 				for _, row := range d.Rows {
 					@blueprintModelMapRow(row, d.Models)
 				}

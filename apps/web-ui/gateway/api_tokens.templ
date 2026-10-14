@@ -433,17 +433,17 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerConfig) {
 	@components.PanelCard("", nil) {
 		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
-			<div class="flex items-center gap-2.5 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2.5">
+			@ui.SoftBox(ui.SoftBoxProps{Padding: "px-3 py-2.5", Class: "flex items-center gap-2.5"}) {
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary", Size: "size-9"})
 				<div class="min-w-0 leading-tight">
 					<p class="truncate text-sm font-semibold">{ t.Name }</p>
-					<p class="text-muted mt-0.5 text-xs">
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 						<span class="font-mono">{ t.TokenPrefix }…</span>
 						<span class="mx-1.5 text-muted-subtle">·</span>
 						created { relTime(t.CreatedAt) }
-					</p>
+					}
 				</div>
-			</div>
+			}
 			@apiTokenScopePickerContent(t.Scopes, cfg)
 			<div class="flex flex-wrap items-center justify-end gap-2">
 				@ui.Button(ui.ButtonProps{
@@ -483,7 +483,7 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfig) {
 	<div class="flex flex-col gap-4">
 		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
-		<p class="text-muted -mt-2 text-xs">Pick at least one scope. Write scopes include their read counterpart.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) { Pick at least one scope. Write scopes include their read counterpart. }
 		for _, g := range scopePickerGroupsFor(cfg) {
 			{{ total := len(g.Options)
 			checkedCount := 0
@@ -507,7 +507,7 @@ templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfi
 					/>
 					<div class="min-w-0">
 						<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>
-						<p class="text-muted-faint text-[11px]">{ g.Hint }</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS}) { { g.Hint } }
 					</div>
 				</div>
 				<table class="table table-sm">
@@ -562,12 +562,11 @@ templ apiTokenRevealContent(r apiTokenReveal) {
 		CardClass: "border-primary/20",
 		Footer:    apiTokenRevealFooter(r.DismissHref),
 	})
-	@apiTokenCopyScript()
 }
 
 // apiTokenRevealFooter is the reveal panel's dismissive note and Done action.
 templ apiTokenRevealFooter(dismissHref string) {
-	<p class="text-muted-faint mt-2 text-xs">This token will not appear on any list or detail view again.</p>
+	@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { This token will not appear on any list or detail view again. }
 	<div class="mt-4 flex flex-wrap items-center gap-2">
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
@@ -579,32 +578,4 @@ templ apiTokenRevealFooter(dismissHref string) {
 			Done
 		}
 	</div>
-}
-
-// apiTokenCopyScript wires every [data-copy-target] button on the page to copy
-// the referenced element's text (navigator.clipboard with a textarea fallback).
-templ apiTokenCopyScript() {
-	<script type="text/javascript">
-		(function () {
-			function copyText(text) {
-				if (navigator.clipboard && navigator.clipboard.writeText) {
-					navigator.clipboard.writeText(text);
-					return;
-				}
-				var ta = document.createElement('textarea');
-				ta.value = text;
-				document.body.appendChild(ta);
-				ta.select();
-				try { document.execCommand('copy'); } catch (e) {}
-				document.body.removeChild(ta);
-			}
-			document.addEventListener('click', function (e) {
-				var btn = e.target.closest('[data-copy-target]');
-				if (!btn) return;
-				var el = document.querySelector(btn.getAttribute('data-copy-target'));
-				if (!el) return;
-				copyText(el.textContent);
-			});
-		})();
-	</script>
 }

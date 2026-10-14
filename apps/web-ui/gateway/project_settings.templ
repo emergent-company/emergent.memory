@@ -230,7 +230,9 @@ templ budgetPanel(p *Project) {
 				<input id="budget-usd" name="budget_usd" type="number" step="0.01" min="0" value={ budgetInputValue(p.BudgetUSD) } placeholder="e.g. 25.00" class="input w-full" hx-post="/settings/project/budget_usd" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
 			}
 			if p.BudgetUSD == nil {
-				<p class="text-muted-faint -mt-2 text-xs">Budget not set.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+					Budget not set.
+				}
 			}
 			@settingsField("budget-alert-threshold", "Alert threshold (%)", "Send a budget alert once this share of the monthly budget has been spent. Enter a whole percentage greater than 0 and at most 100. Alerts are sent at most once per project per month.", "Percentage of the monthly budget at which to alert.", nil) {
 				<input id="budget-alert-threshold" name="budget_alert_threshold" type="number" step="1" min="1" max="100" value={ thresholdPercentInputValue(p.BudgetAlertThreshold) } placeholder="80" class="input w-full" hx-post="/settings/project/budget_alert_threshold" hx-trigger="change delay:400ms" hx-include="this" hx-swap="none"/>
@@ -295,7 +297,9 @@ templ assistantPanel(assistantAgent string, agents []AgentDefinitionSummary) {
 				</select>
 			}
 			if assistantAgent == "" {
-				<p class="text-muted-faint -mt-2 text-xs">Assistant is hidden until you pick an agent.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+					Assistant is hidden until you pick an agent.
+				}
 			}
 		</div>
 	}
@@ -333,13 +337,13 @@ templ overrideRow(e AgentOverrideEntry) {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
 		<div class="min-w-0">
 			<p class="text-sm font-medium">{ e.AgentName }</p>
-			<p class="text-muted mt-0.5 text-xs">
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
 				if e.Override != nil {
 					{ overrideSummary(*e.Override) }
 				} else {
 					no overridden fields
 				}
-			</p>
+			}
 		</div>
 		<form method="post" action={ templ.URL("/settings/overrides/" + url.PathEscape(e.AgentName) + "/delete") }>
 			@ui.Button(ui.ButtonProps{
@@ -410,7 +414,9 @@ templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 				</select>
 			}
 			if editorAgent == "" {
-				<p class="text-muted-faint -mt-2 text-xs">Object edits run on the default agent until you pick one.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+					Object edits run on the default agent until you pick one.
+				}
 			}
 		</div>
 	}
@@ -467,13 +473,19 @@ templ iosSetupPanel(qrImage string) {
 				<img src={ qrImage } alt="QR code that connects the Memory iOS app to this project" width="200" height="200" class="rounded-box border border-base-content/10 bg-white p-3"/>
 				<div class="min-w-0 pt-1">
 					<p class="text-sm font-medium">Scan with the Memory iOS app to connect.</p>
-					<p class="text-muted mt-1 text-xs">One-time code — gives this device its own access key. Reload the page for a new code.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						One-time code — gives this device its own access key. Reload the page for a new code.
+					}
 				</div>
 			</div>
 		} else {
-			<p class="text-muted-faint text-xs">QR code unavailable.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				QR code unavailable.
+			}
 		}
-		<p class="text-muted mt-4 text-xs">Mac and Linux connectors enroll with <code class="rounded bg-base-200 px-1 py-0.5 font-mono">memory-connector auth login</code> (OAuth) — no QR code needed.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-4"}) {
+			Mac and Linux connectors enroll with <code class="rounded bg-base-200 px-1 py-0.5 font-mono">memory-connector auth login</code> (OAuth) — no QR code needed.
+		}
 	}
 }
 
@@ -486,7 +498,9 @@ templ devicesPanel(devices []device) {
 		BodyClass: "memory-density-comfortable",
 	}) {
 		if len(devices) == 0 {
-			<p class="text-muted-faint text-xs">No devices registered yet.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				No devices registered yet.
+			}
 		} else {
 			<div class="flex flex-col gap-2">
 				for _, d := range devices {
@@ -504,7 +518,9 @@ templ deviceRow(d device) {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-start justify-between gap-3"}) {
 		<div class="min-w-0">
 			<p class="text-sm font-medium">{ deviceDisplayName(d) }</p>
-			<p class="text-muted mt-0.5 text-xs">Registered { relTime(d.CreatedAt) }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+				Registered { relTime(d.CreatedAt) }
+			}
 		</div>
 		<form method="post" action={ templ.URL("/settings/devices/" + d.ID + "/revoke") }>
 			@ui.Button(ui.ButtonProps{
@@ -652,7 +668,9 @@ templ voicePanel(v voiceSettings) {
 				/>
 			}
 			if v.LiveKitPublicURL == "" {
-				<p class="text-muted-faint -mt-2 text-xs">Not set.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+					Not set.
+				}
 			}
 			@settingsField("exit-keywords", "Exit keywords", "Comma-separated words that end a voice call, e.g. stop, goodbye, end.", "Comma-separated words.", nil) {
 				<input
@@ -802,7 +820,9 @@ templ providersPanel(d providerPanelData) {
 					Bordered:    true,
 				})
 			} else {
-				<p class="text-muted mb-4 text-xs">Rates are USD per 1M tokens. Automatic rates track retail pricing; overriding a model sets a custom rate for this project.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-4"}) {
+					Rates are USD per 1M tokens. Automatic rates track retail pricing; overriding a model sets a custom rate for this project.
+				}
 				for _, g := range d.Groups {
 					@providerGroup(g)
 				}
@@ -867,7 +887,9 @@ templ defaultModelsPanel(d providerPanelData) {
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<p class="text-muted mb-4 text-xs">Used when an agent has no explicit model ("Auto — default model"). Each option names the provider instance and the model.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-4"}) {
+			Used when an agent has no explicit model ("Auto — default model"). Each option names the provider instance and the model.
+		}
 		<form class="flex flex-col gap-4" hx-post="/settings/providers/model-config" hx-trigger="change delay:400ms" hx-swap="none">
 			@defaultModelSelect("generative_model", "Default generative model", modelConfigGen(d), defaultModelCatalog(d, "generative"))
 			@defaultModelSelect("embedding_model", "Embedding model", modelConfigEmb(d), defaultModelCatalog(d, "embedding"))
@@ -953,7 +975,9 @@ templ providerManagementPanel(d providerPanelData) {
 		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="mb-4 flex items-center justify-between gap-2">
-			<p class="text-muted text-xs">Credentials for the LLM providers this project can use. Test runs a live generate call.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				Credentials for the LLM providers this project can use. Test runs a live generate call.
+			}
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers/new", Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) { Add provider }
 		</div>
 		if len(d.Providers) > 0 {
@@ -963,7 +987,9 @@ templ providerManagementPanel(d providerPanelData) {
 				}
 			</div>
 		} else {
-			<p class="text-muted-faint text-sm">No providers configured yet.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				No providers configured yet.
+			}
 		}
 	}
 }
@@ -1108,7 +1134,9 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					</select>
 				</div>
 				if len(vendors) > 0 {
-					<p id="provider-description" class="text-muted-faint mt-1 text-xs">{ providerDescription(vendors, sel) }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{ID: "provider-description", Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						{ providerDescription(vendors, sel) }
+					}
 				}
 			</label>
 			// Optional instance name. Leaving it blank saves the provider's
@@ -1126,17 +1154,21 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						value={ draft.Slug }
 					}
 				/>
-				<p class="text-muted-faint mt-1 text-xs">Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					Leave blank to use the provider name. Give it a name to keep a second endpoint of the same provider.
+				}
 			</label>
 		} else {
 			{{ iconURI := vendorIconURI(vendors, p.Provider) }}
 			<input type="hidden" name="provider" value={ p.Provider }/>
 			<input type="hidden" name="slug" value={ providerInstanceSlug(*p) }/>
-			<p class="text-sm text-muted-strong">Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span></p>
-			<p class="flex items-center gap-2 text-sm text-muted-strong">
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
+				Name: <span class="font-mono font-semibold">{ providerInstanceSlug(*p) }</span>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "flex items-center gap-2"}) {
 				@providerIconMark(resolveProviderIcon(iconURI), "size-6")
 				<span>Provider: <span class="font-mono font-semibold">{ p.Provider }</span></span>
-			</p>
+			}
 		}
 		@form.PasswordField(form.PasswordFieldProps{
 			Name:        "api_key",
@@ -1154,9 +1186,9 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			}(),
 		})
 		if p != nil {
-			<p class="text-muted-faint mt-1 text-xs" data-testid="api-key-stored-hint">
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1", Attrs: templ.Attributes{"data-testid": "api-key-stored-hint"}}) {
 				A key is already stored and is never displayed. Leave the field blank to keep it, or enter a new value to replace it — the eye reveals what you type.
-			</p>
+			}
 		}
 		<label id="base-url-field" class="form-control w-full" style="display:none">
 			<div class="label"><span class="label-text">Base URL (OpenAI-compatible)</span></div>
@@ -1174,7 +1206,9 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			<div id="base-url-status" class="mt-1 items-center gap-1.5 text-xs" style="display:none"></div>
 		</label>
 		if p != nil {
-			<p class="text-muted text-xs">Fallback models used when the project has no default set.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				Fallback models used when the project has no default set.
+			}
 			<div id="provider-fallback-models" class="flex flex-col gap-4">
 				@providerModelSelect("generative_model", "Generative model", providerFallbackCurrent(draft, p, false), genModels)
 				@providerModelSelect("embedding_model", "Embedding model", providerFallbackCurrent(draft, p, true), embModels)
@@ -1225,7 +1259,9 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 		for _, v := range vendors {
 			if len(v.ExtraFields) > 0 {
 				<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-provider-extra={ v.Type } style="display:none">
-					<p class="text-muted mb-3 text-xs">Additional settings for { v.DisplayName }.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
+						Additional settings for { v.DisplayName }.
+					}
 					<div class="flex flex-col gap-4">
 						for _, f := range v.ExtraFields {
 							@providerExtraField(f, providerExtraFieldValue(draft, p, f))
@@ -1643,9 +1679,11 @@ templ providerConfigSaveErrorModal(err error) {
 	@ui.Dialog(ui.DialogProps{ID: "provider-save-error-modal", BoxClass: "max-w-md", Attrs: components.DialogAutoOpen()}) {
 		<div class="mb-3 flex items-start gap-3">
 			@components.ConfirmIcon("lucide--alert-triangle")
-			<h3 class="text-lg font-semibold">Couldn't save provider</h3>
+			@ui.DialogTitle() { Couldn't save provider }
 		</div>
-		<p class="text-muted text-sm">Your entries are still in the form below — nothing was lost.</p>
+		@ui.EmptyNote() {
+			Your entries are still in the form below — nothing was lost.
+		}
 		<p class="text-muted-bright mt-2 text-sm">{ err.Error() }</p>
 		<div class="mt-6 flex flex-wrap items-center justify-end gap-2">
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeLink, Href: "/settings/providers", Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Back to providers }

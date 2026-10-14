@@ -22,7 +22,9 @@ const SHARES_EDIT = (id: string) => `${SHARES}/${encodeURIComponent(id)}/edit`;
 async function revealToken(page: Page): Promise<string> {
   const secret = page.locator('#mcp-share-key');
   await expect(secret).toBeVisible();
-  const token = ((await secret.textContent()) ?? '').trim();
+  // form.ClipboardCopy renders the key in a readonly input, so the plaintext is
+  // the input's value, not its textContent.
+  const token = ((await secret.inputValue()) ?? '').trim();
   expect(token, 'the reveal must carry a non-empty raw key').not.toBe('');
   return token;
 }

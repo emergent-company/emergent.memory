@@ -59,14 +59,14 @@ func deprecatedPrimitives() []deprecatedPrimitive {
 		{importPath: "github.com/emergent-company/go-daisy/components/layout", symbol: "Page", canonical: "layout.PageFull"},
 		{importPath: "github.com/emergent-company/go-daisy/components/ui", symbol: "PaginationCircle", canonical: "ui.PaginationWithProps{Style: ui.PaginationStyleCircle}"},
 		{importPath: "github.com/emergent-company/go-daisy/components/form", symbol: "FormToggle", canonical: "form.ToggleInput"},
+		{importPath: "github.com/emergent-company/go-daisy/components/form", symbol: "FormField", canonical: "form.FormControl"},
 	}
 }
 
 // deprecatedBudgetEntry declares the tolerated count of direct references to one
-// deprecated primitive, plus the justification. Seeded empty: both deprecated
-// primitives currently have zero call sites, so any hit is a regression. A
-// future, justified exception is admitted only by adding an entry here with a
-// count and note (same tight-ratchet shape as the other gates).
+// deprecated primitive, plus the justification. Every entry is seeded at the
+// exact current count (tight in both directions); an adoption lowers the count
+// in the same change.
 type deprecatedBudgetEntry struct {
 	importPath string
 	symbol     string
@@ -74,8 +74,21 @@ type deprecatedBudgetEntry struct {
 	note       string
 }
 
+// deprecatedBudget is seeded with the single tolerated deprecated reference:
+// the exempt gallery-fixture demonstration in devgallery_daisy_fixtures.go:174.
+// The fixture is a root *.go file, so it IS scanned by deprecatedSources()
+// (which excludes only components/*.go, not root *.go) — its exemption here is
+// deliberate, not an accident of the glob. The 6 share_manage.templ call sites
+// were migrated to form.FormControl (task 2.1).
 func deprecatedBudget() []deprecatedBudgetEntry {
-	return []deprecatedBudgetEntry{}
+	return []deprecatedBudgetEntry{
+		{
+			importPath: "github.com/emergent-company/go-daisy/components/form",
+			symbol:     "FormField",
+			count:      1,
+			note:       "1 exempt gallery-fixture demonstration in devgallery_daisy_fixtures.go:174, which stays after the form.FormControl migration (task 2.1)",
+		},
+	}
 }
 
 // checkDeprecatedPrimitives asserts that no authored source calls a deprecated

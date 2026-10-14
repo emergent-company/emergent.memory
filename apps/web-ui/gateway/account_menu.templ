@@ -88,7 +88,9 @@ templ accountMenuActiveRow(u *currentUser) {
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-semibold">{ u.Name }</p>
 				if u.Email != "" {
-					<p class="truncate text-xs text-muted-faint">{ u.Email }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "truncate"}) {
+						{ u.Email }
+					}
 				}
 			</div>
 			@ui.IconSpan("lucide--check", "size-4 text-success")
@@ -107,7 +109,9 @@ templ accountMenuSwitchRow(a currentUser) {
 				<div class="min-w-0 grow">
 					<p class="truncate text-sm">{ a.Name }</p>
 					if a.Email != "" {
-						<p class="truncate text-xs text-muted-faint">{ a.Email }</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "truncate"}) {
+							{ a.Email }
+						}
 					}
 				</div>
 			</button>

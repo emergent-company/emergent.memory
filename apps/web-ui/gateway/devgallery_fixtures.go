@@ -208,10 +208,10 @@ func gallerySeed() []GalleryEntry {
 		{
 			ID: "SnippetCard", Slug: "snippet-card", Name: "SnippetCard", Layer: LayerComposite,
 			Category: "Feedback", Subcategory: "code", SourceFile: "components/snippet.templ",
-			PropsType:   "label, copyTargetID string, code templ.Component",
+			PropsType:   "label, value string",
 			Description: "A client-configuration snippet with a copy control.",
 			Render: func() templ.Component {
-				return components.SnippetCard("Claude Desktop", "gallery-snippet", templ.Raw(`{"mcpServers":{"memory":{"url":"https://example.invalid"}}}`))
+				return components.SnippetCard("Claude Desktop", `{"mcpServers":{"memory":{"url":"https://example.invalid"}}}`)
 			},
 		},
 		{

@@ -59,7 +59,6 @@ func patternBudget() []patternBudgetEntry {
 
 		// surface-opacity-drift — canonical is bg-base-200/40.
 		{pattern: patternSurfaceOpacity, file: "agent.templ", count: 1, note: "normalise to bg-base-200/40"},
-		{pattern: patternSurfaceOpacity, file: "agent_mcp_endpoint.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "backups.templ", count: 5, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "blueprints.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "board.templ", count: 3, note: "normalise to bg-base-200/40"},
@@ -81,7 +80,7 @@ func patternBudget() []patternBudgetEntry {
 
 		// border-token-drift — canonical is border-base-content/10.
 		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 3, note: "normalise to border-base-content/10"},
-		{pattern: patternBorderTokenDrift, file: "agent_mcp_endpoint.templ", count: 3, note: "normalise to border-base-content/10"},
+		{pattern: patternBorderTokenDrift, file: "agent_mcp_endpoint.templ", count: 2, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "api_tokens.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "blueprints.templ", count: 1, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "blueprints_model_map.templ", count: 1, note: "normalise to border-base-content/10"},
@@ -97,5 +96,37 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternBorderTokenDrift, file: "share_manage.templ", count: 2, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "share_page.templ", count: 5, note: "normalise to border-base-content/10"},
 		{pattern: patternBorderTokenDrift, file: "ui.templ", count: 2, note: "normalise to border-base-content/10"},
+
+		// empty-note — the muted-paragraph note surface; canonical is ui.EmptyNote.
+		{pattern: patternEmptyNote, file: "object_preview.templ", count: 1, note: "normalise to ui.EmptyNote; 1 residual: icon-led note with gap-1 + size-3 — EmptyNote's icon gap is fixed at 1.5"},
+		{pattern: patternEmptyNote, file: "schema.templ", count: 1, note: "normalise to ui.EmptyNote; 1 residual: bordered centred empty-properties box (rounded-box border-dashed text-center) — not a note"},
+
+		// dialog-title — the h3 text-lg font-semibold dialog heading shape;
+		// canonical is ui.DialogTitle. Fully adopted: no residual, so no entry.
+		//
+		// dialog-title-section — the h2 text-lg font-semibold section/card
+		// heading shape. These are section headings, not dialog titles; there is
+		// no canonical primitive for a bare section heading, so they are a
+		// recorded residual rather than an adoptable surface.
+		{pattern: patternDialogTitleSection, file: "agent.templ", count: 1, note: "h2 agent-name card heading — a section heading, not a dialog title; no canonical primitive"},
+		{pattern: patternDialogTitleSection, file: "blueprints.templ", count: 1, note: "h2 \"Changes\" panel heading — a section heading, not a dialog title; no canonical primitive"},
+		{pattern: patternDialogTitleSection, file: "schema.templ", count: 2, note: "h2 \"Appearance\"/\"Properties\" section headings — not dialog titles; no canonical primitive"},
+		{pattern: patternDialogTitleSection, file: "share_manage.templ", count: 2, note: "h2 \"Share links\"/\"New share link\" section headings — not dialog titles; no canonical primitive"},
+		{pattern: patternDialogTitleSection, file: "share_page.templ", count: 1, note: "h2 \"Chat with Memory\" section heading — not a dialog title; no canonical primitive"},
+
+		// soft-box-surface — rounded-box + canonical static bg-base-200/40 fill;
+		// canonical is ui.SoftBox. Every remaining entry is a recorded residual
+		// with its reason: a non-div element, an off-axis border/fill, a dynamic
+		// conditional fill, or a Go-string class list.
+		{pattern: patternSoftBoxSurface, file: "agent.templ", count: 1, note: "border-dashed (agent tool-group empty state) — ui.SoftBox is a solid hairline only"},
+		{pattern: patternSoftBoxSurface, file: "backups.templ", count: 2, note: "non-div <label> backup-include rows — ui.SoftBox renders a <div>"},
+		{pattern: patternSoftBoxSurface, file: "mcp_nodes.templ", count: 1, note: "selected/unselected conditional fill (templ.KV bg-primary vs bg-base-200/40) — no data-driven surface"},
+		{pattern: patternSoftBoxSurface, file: "mcp_servers.templ", count: 3, note: "non-div <details> row + DetailsBase Go-string literal + border-dashed group"},
+		{pattern: patternSoftBoxSurface, file: "ui.templ", count: 1, note: "non-div <pre> code block — ui.SoftBox renders a <div>"},
+
+		// clipboard — the hand-rolled copy affordance (data-copy-* wiring, page
+		// copy-script ids, navigator.clipboard body); canonical is form.ClipboardCopy.
+		{pattern: patternClipboard, file: "object_preview.templ", count: 1, note: "icon-only copy with its own data-testid/sr-only target wired by object-preview.js — not a form.ClipboardCopy field"},
+		{pattern: patternClipboard, file: "share_manage.templ", count: 10, note: "reveal-once flow inlines the key via Mono, which form.ClipboardCopy documents as unsuitable for on-demand secrets — stays a bespoke data-reveal-url fetch"},
 	}
 }

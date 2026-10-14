@@ -382,7 +382,9 @@ templ objectsKnowledge(data objectsPageData) {
 				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 				<div class="min-w-0">
 					<h2 class="text-base font-semibold">Ask the graph</h2>
-					<p class="text-muted text-sm">Ask a question in plain language. The answer is grounded in the objects memory has stored.</p>
+					@ui.EmptyNote() {
+						Ask a question in plain language. The answer is grounded in the objects memory has stored.
+					}
 				</div>
 			</div>
 			<form class="mt-4 flex flex-col gap-3" hx-post="/objects/knowledge" hx-target="#objects-knowledge-answer" hx-swap="innerHTML">
@@ -412,7 +414,7 @@ templ objectsKnowledge(data objectsPageData) {
 // the shared .memory-md prose styles, with the conversation id as a muted
 // caption when the stream reported one.
 templ objectsKnowledgeAnswer(answer, sessionID string) {
-	@ui.CardRaw("card-border memory-rise", "p-4", nil) {
+	@components.PanelCard("memory-rise", nil, "p-4") {
 		<div class="mb-2 flex items-center gap-2">
 			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
 			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
@@ -452,10 +454,12 @@ templ objectsSearchResults(data objectsPageData) {
 		@objectsSearchEmpty()
 	} else {
 		<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-			<p class="text-muted min-w-0 truncate text-sm">{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "min-w-0 truncate"}) {
+				{ countLabel(len(data.Results), "result", "results") } matching "{ data.Query }"
+			}
 			<span class="text-muted-faint shrink-0 text-xs">Ranked by relevance</span>
 		</div>
-		@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
+		@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
 			<div class="divide-y divide-base-200">
 				for _, r := range data.Results {
 					if data.Mode == "unified" {
@@ -577,7 +581,7 @@ templ objectsBrowseEmpty() {
 }
 
 templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
-	@ui.CardRaw("card-border overflow-hidden", "p-0", nil) {
+	@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
 		<div id="objects-list" class="divide-y divide-base-200">
 			for _, o := range objects {
 				@objectRow(o, typeUIOf(typeUIByType, o.Type))
@@ -710,7 +714,9 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 				<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">{ form.Error }</p>
 			}
 			if form.Type == "" {
-				<p class="text-muted text-sm">Pick a type to see its fields.</p>
+				@ui.EmptyNote() {
+					Pick a type to see its fields.
+				}
 			}
 		</div>
 		if form.Type != "" {
@@ -1002,8 +1008,10 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 // the target via search. Posts to /objects/{id}/relationships.
 templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
 	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm"}) {
-		<h3 class="text-lg font-semibold">Connect object</h3>
-		<p class="text-muted mb-4 text-sm">Link this object to another one in the knowledge graph.</p>
+		@ui.DialogTitle() { Connect object }
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Link this object to another one in the knowledge graph.
+		}
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID) + "/relationships") }>
 			@fm.FormControl("connect-type", "Relationship type", fm.LabelAbove, "", "", nil) {
 				<select id="connect-type" name="type" required class="select w-full">
@@ -1139,7 +1147,9 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 		@ui.IconTile("lucide--box", ui.IconTileProps{Tone: "neutral"})
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ similarObjectLabel(so) }</p>
-			<p class="text-muted text-xs">{ so.Type }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				{ so.Type }
+			}
 		</div>
 		@ui.Badge(ui.BadgeProps{
 			Label:   similarityLabel(so.Distance),

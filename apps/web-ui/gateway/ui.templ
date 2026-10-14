@@ -241,7 +241,9 @@ templ pageError(heading string, err error) {
 templ RootUnavailablePage(err error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader("Home", "Memory", "") {}
-		<p class="text-muted mb-4 text-sm">Your data is safe — Memory is temporarily unavailable and will retry automatically.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Your data is safe — Memory is temporarily unavailable and will retry automatically.
+		}
 		@pageError("Service temporarily unavailable", err)
 	}
 }
@@ -370,10 +372,10 @@ templ agentCardGrid(agents []AgentDefinitionSummary) {
 // /chat?agent=<id>, and the delegate ignores clicks inside anchors so the
 // native link wins.
 templ agentCard(a AgentDefinitionSummary) {
-	@ui.CardRaw(
-		"card-border memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
-		"memory-density-compact",
+	@components.PanelCard(
+		"memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
 		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
+		"memory-density-compact",
 	) {
 		<div class="flex items-center gap-3">
 			@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
@@ -503,8 +505,10 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, defaultMo
 	@ui.Dialog(ui.DialogProps{ID: "agent-form-modal", BoxClass: "w-full max-w-2xl"}) {
 		<div class="mb-5 flex items-start justify-between gap-4">
 			<div>
-				<h3 id="agent-form-title" class="text-lg font-semibold">New agent</h3>
-				<p id="agent-form-subtitle" class="text-muted mt-0.5 text-sm">Define a persona and a brain.</p>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "agent-form-title"}) { New agent }
+				@ui.EmptyNote(ui.EmptyNoteProps{ID: "agent-form-subtitle", Class: "mt-0.5"}) {
+					Define a persona and a brain.
+				}
 			</div>
 			@ui.Button(ui.ButtonProps{
 				Type:      ui.ButtonTypeButton,
@@ -561,7 +565,7 @@ templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, defaultMo
 					Wrapped:       true,
 					WrapID:        "agent-delegation-targets",
 					EmptyID:       "agent-delegation-empty",
-					EmptyNote:     delegateEmptyNote(),
+					EmptyContent:  delegateEmptyContent(),
 					LabelClass:    "gap-2 py-1",
 					CheckboxClass: "checkbox",
 					TitleClass:    "text-muted-bright text-sm",
@@ -883,7 +887,7 @@ type checkboxPickerProps struct {
 	Wrapped       bool            // wrap the list in an outer <div class="mt-2">
 	WrapID        string          // outer wrapper div id (modal dialog)
 	EmptyID       string          // empty-note id ("" = plain visible note only)
-	EmptyNote     templ.Component // empty-note content (visible + hidden)
+	EmptyContent  templ.Component // empty-note content (visible + hidden)
 	LabelClass    string          // label classes after "label flex"
 	CheckboxClass string          // checkbox class
 	TitleClass    string          // title span class
@@ -912,7 +916,7 @@ templ checkboxPicker(p checkboxPickerProps) {
 // (issue #1741).
 templ checkboxPickerBody(p checkboxPickerProps) {
 	if len(p.Items) == 0 {
-		@pickerEmptyNote(p.EmptyID, p.EmptyNote)
+		@pickerEmptyContent(p.EmptyID, p.EmptyContent)
 	} else {
 		@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col"}) {
 			for _, it := range p.Items {
@@ -938,18 +942,16 @@ templ checkboxPickerBody(p checkboxPickerProps) {
 					}
 				</label>
 			}
-			@pickerHiddenNote(p.EmptyID, p.EmptyNote)
+			@pickerHiddenNote(p.EmptyID, p.EmptyContent)
 		}
 	}
 }
 
-// pickerEmptyNote is the visible "no items yet" note (carries emptyID when set,
+// pickerEmptyContent is the visible "no items yet" note (carries emptyID when set,
 // as in the agent form dialog).
-templ pickerEmptyNote(emptyID string, content templ.Component) {
-	if emptyID != "" {
-		<p id={ emptyID } class="text-muted-faint text-sm">@content</p>
-	} else {
-		<p class="text-muted-faint text-sm">@content</p>
+templ pickerEmptyContent(emptyID string, content templ.Component) {
+	@ui.EmptyNote(ui.EmptyNoteProps{ID: emptyID, Tone: ui.EmptyNoteToneQuiet}) {
+		@content
 	}
 }
 
@@ -957,28 +959,30 @@ templ pickerEmptyNote(emptyID string, content templ.Component) {
 // in the modal dialog (toggled by app.js).
 templ pickerHiddenNote(emptyID string, content templ.Component) {
 	if emptyID != "" {
-		<p id={ emptyID } class="text-muted-faint hidden text-sm">@content</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{ID: emptyID, Tone: ui.EmptyNoteToneQuiet, Hidden: true}) {
+			@content
+		}
 	}
 }
 
-// skillEmptyNote is the skill picker's empty-note content (links to /skills).
-templ skillEmptyNote() {
+// skillEmptyContent is the skill picker's empty-note content (links to /skills).
+templ skillEmptyContent() {
 	No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.
 }
 
-// delegateEmptyNote is the delegation picker's empty-note content.
-templ delegateEmptyNote() {
+// delegateEmptyContent is the delegation picker's empty-note content.
+templ delegateEmptyContent() {
 	No other agents to delegate to.
 }
 
-// objectTypeEmptyNote is the graph object-type picker's empty-note content.
-templ objectTypeEmptyNote() {
+// objectTypeEmptyContent is the graph object-type picker's empty-note content.
+templ objectTypeEmptyContent() {
 	No object types in this project yet.
 }
 
-// relationshipTypeEmptyNote is the graph relationship-type picker's empty-note
+// relationshipTypeEmptyContent is the graph relationship-type picker's empty-note
 // content.
-templ relationshipTypeEmptyNote() {
+templ relationshipTypeEmptyContent() {
 	No relationship types in this project yet.
 }
 

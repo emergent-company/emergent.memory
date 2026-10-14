@@ -182,7 +182,9 @@ async function createKeyViaUi(page: Page, label: string): Promise<string> {
 
   const secret = page.getByTestId('agent-mcp-key-secret');
   await expect(secret).toBeVisible();
-  const token = ((await secret.textContent()) ?? '').trim();
+  // The secret renders as form.ClipboardCopy's readonly input; the testid is on
+  // the wrapper, the plaintext is the input's value.
+  const token = ((await secret.locator('input').inputValue()) ?? '').trim();
   expect(token, 'the reveal must carry a non-empty raw secret').not.toBe('');
   return token;
 }
@@ -286,12 +288,13 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
 
     const url = page.locator('#agent-mcp-endpoint-url');
     await expect(url).toBeVisible();
-    await expect(url).toHaveText(endpoint.mcpUrl);
+    // The endpoint URL renders as form.ClipboardCopy's mono <code> badge inside
+    // the anchored wrapper (the input variant is reserved for secrets).
+    await expect(url.locator('code')).toHaveText(endpoint.mcpUrl);
 
-    // Copy affordance: the button targets the URL element and really copies it.
-    const copyBtn = page.getByRole('button', { name: 'Copy endpoint URL' });
+    // Copy affordance: the button copies the URL payload and really copies it.
+    const copyBtn = url.getByRole('button', { name: 'Copy' });
     await expect(copyBtn).toBeVisible();
-    await expect(copyBtn).toHaveAttribute('data-copy-target', '#agent-mcp-endpoint-url');
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await copyBtn.click();
     await expect
@@ -391,7 +394,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     const secret = page.getByTestId('agent-mcp-key-secret');
     await expect(secret).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Key rotated' })).toBeVisible();
-    const rotatedToken = ((await secret.textContent()) ?? '').trim();
+    const rotatedToken = ((await secret.locator('input').inputValue()) ?? '').trim();
     expect(rotatedToken, 'rotation must issue a new secret').not.toBe('');
     expect(rotatedToken).not.toBe(firstToken);
 

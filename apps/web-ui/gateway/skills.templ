@@ -157,7 +157,9 @@ templ skillRow(rowID string, s Skill, usedBy int) {
 				@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "primary"})
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{ s.Name }</p>
-					<p class="text-muted line-clamp-1 text-xs">{ s.Description }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "line-clamp-1"}) {
+						{ s.Description }
+					}
 				</div>
 			</a>
 		}
@@ -269,7 +271,9 @@ templ skillEditForm(s *Skill) {
 		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/skills/" + url.PathEscape(s.ID) + "/update") } hx-disable="find button.memory-save-btn">
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-wrap items-center gap-2"}) {
 				@ui.IconSpan("lucide--info", "size-4 shrink-0 text-muted-faint")
-				<p class="text-muted text-xs">The name <span class="font-mono">{ s.Name }</span> can't be changed — skills are referenced by it across agents.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+					The name <span class="font-mono">{ s.Name }</span> can't be changed — skills are referenced by it across agents.
+				}
 			}
 			@form.FormControl("edit-description", "Description", form.LabelAbove, "", "", nil) {
 				<textarea id="edit-description" name="description" rows="2" required class="textarea w-full resize-none">{ s.Description }</textarea>
@@ -297,7 +301,9 @@ templ skillDeleteSection(s *Skill) {
 				</div>
 				<div>
 					<p class="text-sm font-medium">Delete this skill</p>
-					<p class="text-muted text-xs">Removes it for every agent that references it. Irreversible.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+						Removes it for every agent that references it. Irreversible.
+					}
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{

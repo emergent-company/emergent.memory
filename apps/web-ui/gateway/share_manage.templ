@@ -163,9 +163,9 @@ templ ShareLinksHeader(props ShareLinksPageProps) {
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h2 id="share-links-heading" class="text-lg font-semibold tracking-tight">Share links</h2>
-			<p class="text-muted mt-1 max-w-xl text-sm">
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1 max-w-xl"}) {
 				Let people outside your workspace chat with this agent. Each link has its own settings, and you can turn one off at any time.
-			</p>
+			}
 		</div>
 		@ui.Button(ui.ButtonProps{
 			Type:    ui.ButtonTypeLink,
@@ -221,7 +221,7 @@ templ shareLinksEmpty(newLinkURL string) {
 // labelled "Access & limits" section grouping the behaviour toggles and numeric
 // caps.
 templ shareLinkRowItem(link ShareLinkRow) {
-	@ui.CardRaw("card-border", "gap-4 memory-density-compact", templ.Attributes{"data-testid": "share-link-row", "data-link-id": link.ID}) {
+	@components.PanelCard("", templ.Attributes{"data-testid": "share-link-row", "data-link-id": link.ID}, "gap-4 memory-density-compact") {
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex min-w-0 items-center gap-2">
 					@ui.IconSpan("lucide--link", "size-4 shrink-0 text-primary/70")
@@ -281,13 +281,12 @@ templ shareLinkRowItem(link ShareLinkRow) {
 templ shareLinkURLBlock(link ShareLinkRow) {
 	if link.Status == ShareLinkRevoked {
 		<div class="rounded-box border border-base-content/10 bg-base-200/30 px-3 py-2.5" data-testid="share-link-revoked">
-			<p class="text-muted flex items-center gap-1.5 text-xs">
-				@ui.IconSpan("lucide--ban", "size-3.5")
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Icon: "lucide--ban", IconClass: "size-3.5"}) {
 				This link was revoked and no longer works.
-			</p>
+			}
 		</div>
 	} else {
-		<div class="rounded-box border border-base-content/10 bg-base-200/40 p-3">
+		@ui.SoftBox() {
 			<div class="flex flex-wrap items-center justify-between gap-2">
 				<p class="text-muted text-[11px] font-semibold tracking-wide uppercase">Share link</p>
 				if link.URL != "" {
@@ -298,9 +297,11 @@ templ shareLinkURLBlock(link ShareLinkRow) {
 			</div>
 			<p class="text-muted-bright mt-2 font-mono text-xs break-all" data-share-link-url>{ link.URL }</p>
 			if link.URL == "" && link.RevealURL != "" {
-				<p class="text-muted-faint mt-1 text-xs">Copy link fetches the full URL. It isn't stored here until you do.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					Copy link fetches the full URL. It isn't stored here until you do.
+				}
 			}
-		</div>
+		}
 	}
 }
 
@@ -328,7 +329,9 @@ templ shareLinkAccessSection(link ShareLinkRow) {
 				}
 			</div>
 		} else {
-			<p class="text-muted-faint mt-2 text-xs">No session or usage limits.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+				No session or usage limits.
+			}
 		}
 	</div>
 }
@@ -384,9 +387,9 @@ templ ShareLinkCreatePanel(props ShareLinkCreatePageProps) {
 				Share links
 			</a>
 			<h2 id="share-create-heading" class="mt-2 text-lg font-semibold tracking-tight">New share link</h2>
-			<p class="text-muted mt-1 max-w-xl text-sm">
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1 max-w-xl"}) {
 				Choose how this link works. New links start active, and you can turn one off at any time.
-			</p>
+			}
 		</div>
 		if props.Error != "" {
 			@ui.Alert(ui.AlertProps{
@@ -414,36 +417,25 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 		<div class="card-body gap-4 memory-density-compact">
 			<div>
 				<h3 class="text-sm font-semibold">Link settings</h3>
-				<p class="text-muted mt-0.5 text-xs">Every field below applies to this one link.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+					Every field below applies to this one link.
+				}
 			</div>
 			<div class="grid gap-4 sm:grid-cols-2">
-				@form.FormField(form.FormFieldProps{
-					Type:        form.FieldText,
-					Name:        "label",
-					Label:       "Label",
-					Value:       props.Values.Label,
-					Placeholder: "e.g. Product demo",
-					Required:    true,
-					Attrs:       templ.Attributes{"data-testid": "share-create-label"},
-				})
-				@form.FormField(form.FormFieldProps{
-					Type:    form.FieldSelect,
-					Name:    "expiryDays",
-					Label:   "Expires",
-					Value:   shareExpiryValue(props.Values),
-					Options: shareExpiryOptions(),
-					Attrs:   templ.Attributes{"data-testid": "share-create-expiry"},
-				})
+				@form.FormControl("label", "Label", form.LabelAbove, "", "", nil) {
+					<input id="label" name="label" type="text" required value={ props.Values.Label } placeholder="e.g. Product demo" class="input w-full" data-testid="share-create-label"/>
+				}
+				@form.FormControl("expiryDays", "Expires", form.LabelAbove, "", "", nil) {
+					<select id="expiryDays" name="expiryDays" class="select w-full" data-testid="share-create-expiry">
+						for _, opt := range shareExpiryOptions() {
+							<option value={ opt.Value } selected?={ opt.Value == shareExpiryValue(props.Values) }>{ opt.Label }</option>
+						}
+					</select>
+				}
 			</div>
-			@form.FormField(form.FormFieldProps{
-				Type:        form.FieldTextarea,
-				Name:        "welcomeMessage",
-				Label:       "Welcome message",
-				Value:       props.Values.WelcomeMessage,
-				Placeholder: "Shown at the top of the chat before the first message.",
-				Rows:        2,
-				Attrs:       templ.Attributes{"data-testid": "share-create-welcome"},
-			})
+			@form.FormControl("welcomeMessage", "Welcome message", form.LabelAbove, "", "", nil) {
+				<textarea id="welcomeMessage" name="welcomeMessage" placeholder="Shown at the top of the chat before the first message." rows="2" class="textarea w-full" data-testid="share-create-welcome">{ props.Values.WelcomeMessage }</textarea>
+			}
 			@shareToolPicker(props.Tools, props.Values.ToolIDs)
 			<div class="space-y-3">
 				@shareToggleRow("requireEmail", "Require email", "Ask visitors to enter an email before they can chat.", "lucide--mail", props.Values.RequireEmail, "share-create-require-email")
@@ -451,33 +443,15 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 				@shareSandboxToggle(props.Values.Sandbox)
 			</div>
 			<div class="grid gap-4 sm:grid-cols-3">
-				@form.FormField(form.FormFieldProps{
-					Type:        form.FieldNumber,
-					Name:        "maxSessionsPerUser",
-					Label:       "Max sessions per person",
-					Value:       props.Values.MaxSessionsPerUser,
-					Placeholder: "Unlimited",
-					Class:       "input-sm",
-					Attrs:       templ.Attributes{"data-testid": "share-create-max-sessions", "min": "0"},
-				})
-				@form.FormField(form.FormFieldProps{
-					Type:        form.FieldNumber,
-					Name:        "budgetMessages",
-					Label:       "Message budget",
-					Value:       props.Values.BudgetMessages,
-					Placeholder: "Unlimited",
-					Class:       "input-sm",
-					Attrs:       templ.Attributes{"data-testid": "share-create-budget-messages", "min": "0"},
-				})
-				@form.FormField(form.FormFieldProps{
-					Type:        form.FieldNumber,
-					Name:        "budgetTokens",
-					Label:       "Token budget",
-					Value:       props.Values.BudgetTokens,
-					Placeholder: "Unlimited",
-					Class:       "input-sm",
-					Attrs:       templ.Attributes{"data-testid": "share-create-budget-tokens", "min": "0"},
-				})
+				@form.FormControl("maxSessionsPerUser", "Max sessions per person", form.LabelAbove, "", "", nil) {
+					<input id="maxSessionsPerUser" name="maxSessionsPerUser" type="number" value={ props.Values.MaxSessionsPerUser } placeholder="Unlimited" min="0" class="input w-full input-sm" data-testid="share-create-max-sessions"/>
+				}
+				@form.FormControl("budgetMessages", "Message budget", form.LabelAbove, "", "", nil) {
+					<input id="budgetMessages" name="budgetMessages" type="number" value={ props.Values.BudgetMessages } placeholder="Unlimited" min="0" class="input w-full input-sm" data-testid="share-create-budget-messages"/>
+				}
+				@form.FormControl("budgetTokens", "Token budget", form.LabelAbove, "", "", nil) {
+					<input id="budgetTokens" name="budgetTokens" type="number" value={ props.Values.BudgetTokens } placeholder="Unlimited" min="0" class="input w-full input-sm" data-testid="share-create-budget-tokens"/>
+				}
 			</div>
 			<div class="flex justify-end gap-2 pt-1">
 				@ui.Button(ui.ButtonProps{
@@ -509,9 +483,13 @@ templ ShareLinkCreateForm(props ShareLinkCreatePageProps) {
 templ shareToolPicker(tools []ShareToolOption, selected []string) {
 	<fieldset class="rounded-box border border-base-300 p-3" data-testid="share-create-tools">
 		<legend class="px-1 text-xs font-semibold tracking-wider uppercase text-muted">Allowed tools</legend>
-		<p class="text-muted-faint mb-2 text-xs">Only ticked tools can run. Leave empty to allow none.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mb-2"}) {
+			Only ticked tools can run. Leave empty to allow none.
+		}
 		if len(tools) == 0 {
-			<p class="text-muted-faint text-sm">This agent has no tools.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				This agent has no tools.
+			}
 		}
 		if len(tools) > 0 {
 			<div class="max-h-56 space-y-1 overflow-y-auto pr-1">
@@ -533,7 +511,9 @@ templ shareToolPicker(tools []ShareToolOption, selected []string) {
 								}
 							</span>
 							if t.Description != "" {
-								<p class="text-muted-faint text-xs">{ t.Description }</p>
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+									{ t.Description }
+								}
 							}
 						</span>
 					</label>

@@ -283,7 +283,9 @@ templ scheduleEditForm(a *ScheduledAgent, defs []AgentDefinitionSummary) {
 templ scheduleRunsSection(runs []ScheduledAgentRun) {
 	@ui.Section("Latest runs", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 		if len(runs) == 0 {
-			<p class="text-muted text-sm">No runs yet. Runs appear here after the schedule fires — or after you hit Run now.</p>
+			@ui.EmptyNote() {
+				No runs yet. Runs appear here after the schedule fires — or after you hit Run now.
+			}
 		} else {
 			<ul class="list bg-base-100 rounded-box border border-base-200">
 				for _, r := range runs {
@@ -315,7 +317,9 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 				</div>
 				<div>
 					<p class="text-sm font-medium">Delete this schedule</p>
-					<p class="text-muted text-xs">Removes it and stops future runs. Irreversible.</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+						Removes it and stops future runs. Irreversible.
+					}
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{
@@ -335,9 +339,9 @@ templ scheduleDangerZone(a *ScheduledAgent) {
 
 // scheduleDeleteDescription is the delete-confirm detail paragraph.
 templ scheduleDeleteDescription(a *ScheduledAgent) {
-	<p class="text-muted mt-1 text-sm">
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 		This removes <span class="font-medium text-base-content">{ a.Name }</span> and its schedule. It will no longer run. Irreversible.
-	</p>
+	}
 }
 
 // scheduleDeleteDialog confirms deletion before the POST to /schedules/:id/delete.

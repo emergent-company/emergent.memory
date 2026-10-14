@@ -173,10 +173,9 @@ templ mcpServerRow(srv MCPServer, builtinGroups []BuiltinToolGroup) {
 			}
 			@mcpServerOAuthControls(srv)
 			if srv.Type == "stdio" && !mcpServerIsDevice(srv) {
-				<p class="text-muted-faint flex items-center gap-1.5 px-3 pt-2 text-[11px]">
-					@ui.IconSpan("lucide--shield-alert", "size-3.5 shrink-0 text-warning")
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Icon: "lucide--shield-alert", IconClass: "size-3.5 shrink-0 text-warning", Class: "px-3 pt-2"}) {
 					Runs <span class="font-mono">{ srv.Command }</span> on the memory host.
-				</p>
+				}
 			}
 			@mcpServerToolsList(srv, srv.Tools, builtinGroups)
 			@mcpServerInspectArea(srv.ID)
@@ -263,7 +262,9 @@ templ mcpServerRowActions(srv MCPServer) {
 templ mcpServerDeviceNote() {
 	<div class="flex items-center gap-2 border-b border-base-content/10 px-3 py-2" data-testid="mcp-device-note">
 		@ui.IconSpan("lucide--monitor-smartphone", "size-4 shrink-0 text-muted-faint")
-		<p class="text-muted text-xs">Runs on a connector device — Memory pushes this server's configuration over the relay; it is never connected outbound by the shared host.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+			Runs on a connector device — Memory pushes this server's configuration over the relay; it is never connected outbound by the shared host.
+		}
 	</div>
 }
 
@@ -401,7 +402,7 @@ templ mcpServerToolsList(srv MCPServer, tools []MCPTool, builtinGroups []Builtin
 templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool, builtinGroups []BuiltinToolGroup) {
 	<div class="flex flex-col" data-mcp-tools={ srv.ID }>
 		if len(tools) == 0 {
-			<p class="text-muted-faint px-3 py-2 text-xs">
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "px-3 py-2"}) {
 				No tools cached yet
 				if !mcpServerIsBuiltin(srv) {
 					if mcpServerIsDevice(srv) {
@@ -412,7 +413,7 @@ templ mcpServerToolsContainer(srv MCPServer, tools []MCPTool, builtinGroups []Bu
 				} else {
 					.
 				}
-			</p>
+			}
 		} else if mcpServerIsBuiltin(srv) && len(builtinGroups) > 0 {
 			@mcpServerBuiltinTools(srv, tools, builtinGroups)
 		} else {
@@ -474,7 +475,9 @@ templ mcpBuiltinGroupLeading(gv mcpBuiltinToolGroupView) {
 			<span class="truncate text-sm font-medium">{ gv.Group.Label }</span>
 		</div>
 		if gv.Group.Description != "" {
-			<p class="text-muted truncate pl-[26px] text-xs">{ gv.Group.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "truncate pl-[26px]"}) {
+				{ gv.Group.Description }
+			}
 		}
 	</div>
 }
@@ -485,7 +488,9 @@ templ mcpBuiltinGroupLeading(gv mcpBuiltinToolGroupView) {
 templ mcpBuiltinOtherGroup(srv MCPServer, tools []MCPTool) {
 	<div class="rounded-box border border-dashed border-base-content/20 bg-base-200/40 p-3" data-testid="mcp-builtin-group-other">
 		@ui.Eyebrow("Other", ui.EyebrowProps{Size: "text-[11px]"})
-		<p class="text-muted mt-0.5 mb-2 text-xs">Not part of a capability group.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5 mb-2"}) {
+			Not part of a capability group.
+		}
 		<div class="flex flex-col divide-y divide-base-content/10">
 			for _, t := range tools {
 				@mcpServerToolRow(srv, t)
@@ -681,7 +686,7 @@ templ MCPServerEditPage(data mcpServerFormData) {
 				})
 				{{ details := mcpMissingConfigDetails(data.MissingConfigKeys, data.RequiredConfig) }}
 				{{ docsLabel, docsHref := mcpCredentialDocs(data.RegistryRepositoryURL) }}
-				<div class="-mt-3 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2.5" data-mcp-configure-help={ data.ID }>
+				@ui.SoftBox(ui.SoftBoxProps{Padding: "px-3 py-2.5", Class: "-mt-3", Attrs: templ.Attributes{"data-mcp-configure-help": data.ID}}) {
 					<ul class="flex flex-col gap-1.5">
 						for _, det := range details {
 							<li class="text-xs leading-snug">
@@ -695,7 +700,7 @@ templ MCPServerEditPage(data mcpServerFormData) {
 					if docsHref != "" {
 						<a class="link link-primary mt-1.5 inline-block text-xs" href={ templ.URL(docsHref) } target="_blank" rel="noopener noreferrer" data-mcp-credential-docs={ data.ID }>{ docsLabel }</a>
 					}
-				</div>
+				}
 			}
 		</div>
 		@mcpServerFormBody(data, true)
@@ -795,7 +800,9 @@ templ mcpServerTransportGroup(data mcpServerFormData, editing bool) {
 			}
 		</div>
 		if editing {
-			<p class="text-muted text-[11px]">Changing transport replaces the previous transport's connection settings.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSize2XS}) {
+				Changing transport replaces the previous transport's connection settings.
+			}
 		}
 		if data.FieldErrs.Type != "" {
 			<p class="text-error text-xs">{ data.FieldErrs.Type }</p>
@@ -857,7 +864,9 @@ templ mcpServerKVEditor(id, prefix, label, hint string, rows []mcpKVField, field
 			@mcpServerKVRow(prefix, mcpKVField{})
 			@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM, Icon: "lucide--plus", ExtraClass: "mt-1 self-start", Attrs: templ.Attributes{"data-mcp-kv-add": ""}}) { Add row }
 		</div>
-		<p class="text-muted-faint mt-2 text-xs">Values are stored in plaintext and shown only in this form. Mark a value Secret to store it write-only — after saving it is never shown again, and leaving it blank keeps the stored value.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			Values are stored in plaintext and shown only in this form. Mark a value Secret to store it write-only — after saving it is never shown again, and leaving it blank keeps the stored value.
+		}
 	}
 }
 
@@ -933,12 +942,16 @@ templ mcpServerKVRow(prefix string, r mcpKVField) {
 			}
 		</div>
 		if r.Hint != "" {
-			<p class="text-muted-faint pl-1 text-xs" data-mcp-kv-hint>{ r.Hint }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "pl-1", Attrs: templ.Attributes{"data-mcp-kv-hint": ""}}) {
+				{ r.Hint }
+			}
 		}
 		if r.Missing {
 			<p class="text-warning pl-1 text-xs" data-mcp-kv-missing>Required — enter a value.</p>
 		} else if r.Secret {
-			<p class="text-muted-faint pl-1 text-xs">Leave blank to keep the stored value.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "pl-1"}) {
+				Leave blank to keep the stored value.
+			}
 		}
 	</div>
 }

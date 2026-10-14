@@ -30,7 +30,6 @@ templ AgentSharePage(data shareLinksPageData) {
 				@ShareLinksListPanel(data.Panel)
 				if data.Reveal != nil {
 					@ShareLinkRevealModal(*data.Reveal)
-					@apiTokenCopyScript()
 				}
 			}
 		}

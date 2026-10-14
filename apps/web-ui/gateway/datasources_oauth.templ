@@ -38,7 +38,7 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 						@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "neutral"})
 						<div>
 							<h2 class="text-base font-semibold">{ dsResourceStepTitle(*src) }</h2>
-							<p class="text-muted mt-1 text-sm">{ dsResourceStepDescription(*src) }</p>
+							@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { { dsResourceStepDescription(*src) } }
 						</div>
 					</div>
 					if loadErr != nil || len(resources) == 0 {
@@ -59,7 +59,7 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 									<div class="min-w-0 grow">
 										<p class="truncate text-sm font-medium">{ r.Name }</p>
 										if r.Type != "" {
-											<p class="text-muted-faint text-xs">{ r.Type }</p>
+											@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { r.Type } }
 										}
 									</div>
 									@ui.Button(ui.ButtonProps{
@@ -137,7 +137,7 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
 				<div>
 					<h2 class="text-base font-semibold">{ p.Name }</h2>
-					<p class="text-muted text-sm">OAuth client used when connecting { p.Name }.</p>
+					@ui.EmptyNote() { OAuth client used when connecting { p.Name }. }
 				</div>
 			</div>
 			if cfg.Configured {
@@ -147,7 +147,7 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 			}
 		</div>
 		if cfg.RedirectURI != "" || cfg.JavascriptOrigin != "" {
-			<div class="mt-4 flex flex-col gap-3 rounded-box border border-base-content/10 bg-base-200/40 p-4" data-testid="ds-oauth-console-guide">
+			@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mt-4 flex flex-col gap-3", Attrs: templ.Attributes{"data-testid": "ds-oauth-console-guide"}}) {
 				<h3 class="text-sm font-semibold">Set up this app in the Google Cloud Console</h3>
 				<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
 					<li>Create or select a Google Cloud project.</li>
@@ -171,7 +171,7 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 						</div>
 					}
 				</div>
-			</div>
+			}
 		}
 		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
 			<div class="flex flex-col gap-1">
@@ -180,17 +180,17 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 			</div>
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for={ "client_secret-" + p.Type }>Client secret</label>
-				<p class="text-muted-faint text-xs">Stored encrypted and never shown again. Leave blank to keep the stored secret.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Stored encrypted and never shown again. Leave blank to keep the stored secret. }
 				<input id={ "client_secret-" + p.Type } name="client_secret" type="password" autocomplete="new-password" class="input input-bordered w-full" data-testid="ds-field-client_secret"/>
 			</div>
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for={ "scopes-" + p.Type }>Scopes</label>
-				<p class="text-muted-faint text-xs">One scope per line; commas are also accepted. Optional — the provider default is used when empty.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { One scope per line; commas are also accepted. Optional — the provider default is used when empty. }
 				<textarea id={ "scopes-" + p.Type } name="scopes" rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid="ds-field-scopes">{ dsScopesText(cfg.Scopes) }</textarea>
 			</div>
 			<div class="flex flex-col gap-1">
 				<label class="text-sm font-medium" for={ "strategy-" + p.Type }>Strategy</label>
-				<p class="text-muted-faint text-xs">Optional provider strategy override.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional provider strategy override. }
 				if len(p.Strategies) > 0 {
 					<select id={ "strategy-" + p.Type } name="strategy" class="select select-bordered w-full" data-testid="ds-field-strategy">
 						<option value="" selected?={ cfg.Strategy == "" }>Provider default</option>
@@ -211,7 +211,7 @@ templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig
 					<label class="text-sm font-medium" for={ "picker_app_id-" + p.Type }>Picker app ID</label>
 					<input id={ "picker_app_id-" + p.Type } name="picker_app_id" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerAppId") } data-testid="ds-field-picker_app_id"/>
 				</div>
-				<p class="text-muted-faint text-xs">Optional, non-secret. Used to mount the Google Picker for the drive.file strategy; the Picker itself lands in a follow-up.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional, non-secret. Used to mount the Google Picker for the drive.file strategy; the Picker itself lands in a follow-up. }
 			}
 			<div class="flex flex-wrap items-center gap-2">
 				@ui.Button(ui.ButtonProps{

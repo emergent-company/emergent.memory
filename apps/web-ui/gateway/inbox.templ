@@ -186,7 +186,9 @@ templ inboxRow(d inboxView, n Notification) {
 			} else {
 				@inboxRowBody(d, n)
 			}
-			<p class="text-muted-faint mt-1 text-xs">{ notificationMeta(n) }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				{ notificationMeta(n) }
+			}
 		</div>
 		@inboxRowControls(n)
 	</div>
@@ -211,7 +213,9 @@ templ inboxRowBody(d inboxView, n Notification) {
 		}
 	</div>
 	if n.Message != "" {
-		<p class="text-muted mt-0.5 line-clamp-2 text-sm">{ n.Message }</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5 line-clamp-2"}) {
+			{ n.Message }
+		}
 	}
 }
 

@@ -27,7 +27,9 @@ templ UsagePage(summary *UsageSummaryResponse, series *UsageTimeSeriesResponse, 
 				@usageCharts(payload)
 				@usageModelSection(summary)
 				if note := usageNote(summary, series); note != "" {
-					<p class="text-muted-faint mt-6 text-xs">{ note }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Tone: ui.EmptyNoteToneQuiet, Class: "mt-6"}) {
+						{ note }
+					}
 				}
 			} else {
 				@usageEmpty()

@@ -67,10 +67,9 @@ templ backupsHeader(total int, ok bool) {
 // neither offers nor issues a restore request.
 templ restoreUnavailableNote() {
 	<div class="mt-6">
-		<p class="text-muted-faint flex items-center gap-1.5 text-xs">
-			@ui.IconSpan("lucide--info", "size-3.5 shrink-0")
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Icon: "lucide--info"}) {
 			Restore is not available yet — the Memory service returns "not implemented". It ships in a later Memory release.
-		</p>
+		}
 	</div>
 }
 
@@ -116,7 +115,7 @@ templ backupCreateForm() {
 templ backupsProgressNote() {
 	@ui.SoftBox(ui.SoftBoxProps{Class: "mb-4 flex items-center gap-2"}) {
 		@ui.IconSpan("lucide--refresh-cw", "size-4 shrink-0 animate-spin text-muted-faint")
-		<p class="text-muted text-xs">Backup in progress — this page refreshes automatically until it finishes.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Backup in progress — this page refreshes automatically until it finishes. }
 	}
 }
 
@@ -196,9 +195,9 @@ templ backupRow(b Backup) {
 					</div>
 					@monoMeta(shortID(b.ID), "text-muted-faint")
 					if meta != "" {
-						<p class="text-muted line-clamp-1 mt-0.5 max-w-xs text-xs" title={ meta }>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "line-clamp-1 mt-0.5 max-w-xs", Attrs: templ.Attributes{"title": meta}}) {
 							{ meta }
-						</p>
+						}
 					}
 				</div>
 			</div>
@@ -214,7 +213,7 @@ templ backupRow(b Backup) {
 			if b.Status == backupStatusCreating {
 				<div class="mt-2 w-28">
 					<progress class="progress progress-info h-1 w-full" value={ b.Progress } max="100"></progress>
-					<p class="text-muted mt-1 text-[11px]">{ b.Progress }%</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSize2XS, Class: "mt-1"}) { { b.Progress }% }
 				</div>
 			}
 			if b.ErrorMessage != nil && *b.ErrorMessage != "" && b.Status == backupStatusFailed {
@@ -227,7 +226,7 @@ templ backupRow(b Backup) {
 		@table.TableCell("", nil) {
 			<span class="text-muted-strong text-xs whitespace-nowrap">{ backupCreatedLabel(b.CreatedAt) }</span>
 			if b.Status == backupStatusReady && b.ExpiresAt != nil {
-				<p class="text-muted-faint text-[11px]">expires { backupDate(b.ExpiresAt) }</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS}) { expires { backupDate(b.ExpiresAt) } }
 			}
 		}
 		@table.TableCell("text-right", nil) {
@@ -270,9 +269,9 @@ templ backupRow(b Backup) {
 
 // backupDeleteDescription is the delete-confirm detail paragraph.
 templ backupDeleteDescription(b Backup) {
-	<p class="text-muted mt-1 text-sm">
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 		This permanently removes the <span class="font-medium text-base-content">{ backupTypeLabel(b.BackupType) }</span> backup of { backupTitle(b) } created { backupCreatedLabel(b.CreatedAt) }. Its stored archive is deleted and cannot be restored.
-	</p>
+	}
 }
 
 // backupDeleteDialog confirms deletion before the POST to /backups/:id/delete.
@@ -455,7 +454,7 @@ templ backupDetailStats(b *Backup) {
 		if len(rows) == 0 {
 			@ui.SoftBox(ui.SoftBoxProps{Class: "flex items-center gap-2"}) {
 				@ui.IconSpan("lucide--clock", "size-4 shrink-0 text-muted-faint")
-				<p class="text-muted text-xs">Content counts are not available yet — they appear once the backup finishes.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Content counts are not available yet — they appear once the backup finishes. }
 			}
 		} else {
 			<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -474,18 +473,18 @@ templ backupDetailStats(b *Backup) {
 // the backup type and its expiry.
 templ backupDetailSettings(b *Backup) {
 	@ui.Section("Settings", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<p class="text-muted-strong mb-3 text-sm">What the archive includes:</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "mb-3"}) { What the archive includes: }
 		{{ rows := backupIncludeRows(b.Includes) }}
 		<div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
 			for _, row := range rows {
-				<div class="flex items-center justify-between gap-3 rounded-box border border-base-content/10 bg-base-200/40 px-3 py-2">
+				@ui.SoftBox(ui.SoftBoxProps{Padding: "px-3 py-2", Class: "flex items-center justify-between gap-3"}) {
 					<span class="text-sm">{ row.Label }</span>
 					if row.On {
 						@ui.Badge(ui.BadgeProps{Label: "Included", Variant: ui.BadgeSuccess, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--check"})
 					} else {
 						@ui.Badge(ui.BadgeProps{Label: "Excluded", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--minus"})
 					}
-				</div>
+				}
 			}
 		</div>
 		<dl class="mt-4 grid grid-cols-1 gap-x-6 gap-y-4 border-t border-base-content/10 pt-4 sm:grid-cols-2">
@@ -501,9 +500,9 @@ templ backupDetailSettings(b *Backup) {
 // archive entries.
 templ backupDetailArchiveFormat(b *Backup) {
 	@ui.Section("Archive format", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
-		<p class="text-muted-strong text-sm">
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}) {
 			The archive is a ZIP stored at <code class="rounded-field bg-base-200/60 px-1 py-0.5 font-mono text-xs break-all">{ b.StorageKey }</code>. It contains:
-		</p>
+		}
 		<ul class="text-muted-strong mt-3 flex flex-col gap-2 text-sm">
 			<li class="flex gap-2">
 				@ui.IconSpan("lucide--file-json", "mt-0.5 size-4 shrink-0 text-muted-faint")
@@ -520,7 +519,7 @@ templ backupDetailArchiveFormat(b *Backup) {
 		</ul>
 		@ui.SoftBox(ui.SoftBoxProps{Class: "mt-4 flex items-start gap-2"}) {
 			@ui.IconSpan("lucide--info", "mt-0.5 size-4 shrink-0 text-muted-faint")
-			<p class="text-muted text-xs">The Memory API exposes the backup entity (the settings and counts above) but not the manifest contents, so this panel documents the archive layout rather than listing its live entries.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { The Memory API exposes the backup entity (the settings and counts above) but not the manifest contents, so this panel documents the archive layout rather than listing its live entries. }
 		}
 	}
 }
@@ -537,7 +536,7 @@ templ backupDetailIntegrity(b *Backup) {
 				Icon:    "lucide--alert-triangle",
 				Message: backupErrorMessage(b),
 			})
-			<p class="text-muted mt-3 text-xs">Checksums are not available for a failed backup.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) { Checksums are not available for a failed backup. }
 		} else if b.Status == backupStatusReady && (backupHasChecksum(b.ManifestChecksum) || backupHasChecksum(b.ContentChecksum)) {
 			<div class="flex flex-col gap-4">
 				if backupHasChecksum(b.ManifestChecksum) {
@@ -548,7 +547,7 @@ templ backupDetailIntegrity(b *Backup) {
 				}
 			</div>
 		} else {
-			<p class="text-muted text-sm">Checksums are recorded once the backup finishes — there is nothing to verify while it is { backupStatusLabel(b.Status) }.</p>
+			@ui.EmptyNote() { Checksums are recorded once the backup finishes — there is nothing to verify while it is { backupStatusLabel(b.Status) }. }
 		}
 	}
 }

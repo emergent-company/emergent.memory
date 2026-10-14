@@ -94,6 +94,7 @@ func TestAgentSettingsRendersMCPEndpoint(t *testing.T) {
 		`data-testid="agent-mcp-section"`,
 		"MCP endpoint",
 		`data-testid="agent-mcp-endpoint"`,
+		`id="agent-mcp-endpoint-url"`,
 		"https://mcp.example.com/api/mcp/agents/a1",
 		`data-testid="agent-mcp-keys"`,
 		"laptop",
@@ -202,10 +203,13 @@ func TestAgentMCPKeyCreateRendersSecretOnce(t *testing.T) {
 		`data-agent-mcp-reveal`,
 		"Key created",
 		"emt_secret_once",
+		`id="agent-mcp-key-secret"`,
+		`data-testid="agent-mcp-key-secret"`,
+		`value="emt_secret_once"`,
 		"https://mcp.example.com/api/mcp/agents/a1",
 		"will not be shown again",
 		"Claude Desktop", "Claude Code", "Cursor", "Cloud Code",
-		"data-copy-target",
+		"clipboardCopyInput",
 		"phone",
 	} {
 		if !strings.Contains(body, want) {

@@ -54,7 +54,7 @@ templ uploadForm(flashMsg string, flashErr error) {
 					Upload
 				}
 			</form>
-			<p class="text-muted-faint mt-3 text-xs">Single file up to 10 MB. Text-based files chunk and extract best.</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) { Single file up to 10 MB. Text-based files chunk and extract best. }
 		}
 		<script>
 		// Clicking Upload with no file chosen opens the file picker instead of
@@ -107,7 +107,7 @@ templ documentRow(d Document) {
 			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
 			<div class="min-w-0 grow">
 				<p class="truncate text-sm font-medium">{ documentName(d) }</p>
-				<p class="text-muted text-xs">{ relTime(d.CreatedAt) }</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { { relTime(d.CreatedAt) } }
 			</div>
 			@ui.Badge(ui.BadgeProps{
 				Label:   strconv.Itoa(d.Chunks) + " chunk" + plural(d.Chunks),
@@ -193,7 +193,7 @@ templ documentPreviewCard(doc *Document, preview documentPreview) {
 					@ui.IconTile("lucide--eye", ui.IconTileProps{Tone: "info"})
 					<div>
 						<h2 class="text-base font-semibold">Preview</h2>
-						<p class="text-muted text-sm">The original file as stored in memory.</p>
+						@ui.EmptyNote() { The original file as stored in memory. }
 					</div>
 				</div>
 				@ui.Button(ui.ButtonProps{
@@ -229,9 +229,9 @@ templ documentPreviewCard(doc *Document, preview documentPreview) {
 					} else {
 						<pre data-testid="document-preview-text" class="max-h-[36rem] overflow-auto rounded-box bg-base-200/50 p-4 text-xs whitespace-pre-wrap">{ preview.Text }</pre>
 						if preview.Truncated {
-							<p class="text-muted-faint mt-2 text-xs" data-testid="document-preview-truncated">
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "document-preview-truncated"}}) {
 								Preview truncated to { strconv.Itoa(maxTextPreviewChars) } characters — open the Chunks view for the full text.
-							</p>
+							}
 						}
 					}
 				default:
@@ -298,7 +298,7 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked boo
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 			<div>
 				<h2 class="text-base font-semibold">Extraction</h2>
-					<p class="text-muted text-sm">
+					@ui.EmptyNote() {
 						if blocked {
 							Extraction needs a generative model.
 						} else if doc.ObjectsCreated > 0 {
@@ -306,7 +306,7 @@ templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked boo
 						} else {
 							Run extraction to pull structured entities out of this document.
 						}
-					</p>
+					}
 				</div>
 			</div>
 			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/extract") }>
@@ -482,7 +482,7 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 				}
 			</div>
 			if d.NoBranch {
-				<p class="text-muted text-sm" data-testid="extraction-detail-nobranch">This run has no staging branch — it produced no objects, or they are no longer available.</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
 			} else {
 				@extractedObjects(d.Objects)
 				@extractedRelationships(d.Objects, d.Relationships)
@@ -525,7 +525,7 @@ templ extractionReadiness(r *MergeReadiness) {
 // not already merged (hide, don't disable).
 templ extractionMergeAction(documentID, jobID string) {
 	<div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3" data-testid="extraction-merge">
-		<p class="text-muted text-xs">Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
 		<form method="post" action={ templ.URL("/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/merge") } data-testid="extraction-merge-form">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeSubmit,

@@ -208,13 +208,13 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 						if hasActiveAgent {
 							<p id="chat-header-desc" class={ "text-muted-faint truncate text-xs", templ.KV("hidden", headerDesc == "") }>{ headerDesc }</p>
 						} else {
-							<p id="chat-header-desc" class="text-muted-faint text-xs">
+							@ui.EmptyNote(ui.EmptyNoteProps{ID: "chat-header-desc", Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
 								if voiceEnabled {
 									Chat by text or voice.
 								} else {
 									Chat by text.
 								}
-							</p>
+							}
 						}
 					</div>
 				</div>
@@ -353,7 +353,7 @@ templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, ap
 								</span>
 							</div>
 						</div>
-						<p class="text-muted-faint mt-1.5 text-center text-[11px]">Enter to send · Shift+Enter for a new line · responses stream in live</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1.5 text-center"}) { Enter to send · Shift+Enter for a new line · responses stream in live }
 					}
 				</form>
 			</div>
@@ -496,9 +496,9 @@ templ chatDeleteConfirmDialog() {
 // chatDeleteConfirmDescription is the delete-confirm detail paragraph. The
 // session name span is filled by chat.js (textContent — never innerHTML).
 templ chatDeleteConfirmDescription() {
-	<p class="text-muted mt-1 text-sm">
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 		This permanently deletes <span id="chat-delete-confirm-name" class="font-medium text-base-content">this session</span> and its messages. It cannot be undone.
-	</p>
+	}
 }
 
 // chatRailList renders the session rail's list portion: the two empty states
@@ -800,11 +800,11 @@ func railEmptyClass(hasConvs bool) string {
 templ chatRailEmpty(hasRows bool) {
 	<div id="chat-rail-empty" class={ railEmptyClass(hasRows) }>
 		@ui.IconSpan("lucide--messages-square", "size-6 text-muted-subtle")
-		<p class="text-muted-faint mt-2 text-xs">No sessions yet. Chat once or create a schedule and runs land here.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { No sessions yet. Chat once or create a schedule and runs land here. }
 	</div>
 	<div id="chat-rail-empty-filtered" class="hidden px-3 py-6 text-center">
 		@ui.IconSpan("lucide--filter", "size-6 text-muted-subtle")
-		<p class="text-muted-faint mt-2 text-xs">No sessions match the current filter.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { No sessions match the current filter. }
 	</div>
 }
 

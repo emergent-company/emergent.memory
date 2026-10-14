@@ -44,6 +44,16 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 			}, nav.BreadcrumbsDividerSlash)
 		},
 	},
+	"ClipboardCopy": {
+		PropsType:   "items []ClipboardCopyItem",
+		Description: "A click-to-copy field — a readonly input or a mono code badge — with a success flash.",
+		Render: func() templ.Component {
+			return form.ClipboardCopy([]form.ClipboardCopyItem{
+				{ID: "gallery-copy-secret", Label: "Secret", Value: "emt_inert_sample", ButtonLabel: "Copy"},
+				{Label: "Endpoint", Value: "https://example.invalid/mcp", ButtonLabel: "Copy", Mono: true},
+			})
+		},
+	},
 	"ColorPicker": {
 		PropsType:   "ColorPickerProps",
 		Description: "A colour field pairing a text input with a native swatch and presets.",
@@ -103,6 +113,13 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 				templ.Raw(`<h3 class="text-lg font-semibold">Session ended</h3><p class="py-2 text-sm text-base-content/60">Your session timed out. Sign in again to continue.</p>`))
 		},
 	},
+	"DialogTitle": {
+		PropsType:   "props ...DialogTitleProps",
+		Description: "A dialog, panel or card heading with level, size, and tracking controls.",
+		Render: func() templ.Component {
+			return withChildren(ui.DialogTitle(ui.DialogTitleProps{ID: "gallery-dialog-title"}), templ.Raw("Edit agent"))
+		},
+	},
 	"Disclosure": {
 		PropsType:   "props DisclosureProps, header templ.Component, trailing ...templ.Component",
 		Description: "A native details/summary collapsible section with a rotating chevron.",
@@ -134,6 +151,17 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 					withChildren(ui.Button(ui.ButtonProps{Type: ui.ButtonTypeButton, Variant: ui.ButtonGhost, Size: ui.ButtonSM}), templ.Raw("More")),
 					withChildren(ui.DropdownMenu(nil), templ.Raw(`<li><a>Export</a></li><li><a>Archive</a></li>`)),
 				),
+			)
+		},
+	},
+	"EmptyNote": {
+		PropsType:   "props ...EmptyNoteProps",
+		Description: "A muted one-line note for empty-state or helper copy.",
+		Render: func() templ.Component {
+			return join(
+				withChildren(ui.EmptyNote(ui.EmptyNoteProps{}), templ.Raw("No other agents to delegate to.")),
+				withChildren(ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong}), templ.Raw("Controls who can discover this agent.")),
+				withChildren(ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}), templ.Raw("Updated 2h ago.")),
 			)
 		},
 	},

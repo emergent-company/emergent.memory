@@ -179,7 +179,7 @@ templ chunkRow(c Chunk) {
 					Close
 				}
 			</div>
-			<p data-chunk-revisions-status role="status" aria-live="polite" class="text-muted text-xs"></p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-chunk-revisions-status": "", "role": "status", "aria-live": "polite"}})
 			<ol data-chunk-revisions class="mt-1"></ol>
 			<div data-chunk-diff-region hidden class="mt-3">
 				<h4 data-chunk-diff-heading class="mb-1 text-xs font-medium">Differences</h4>
@@ -200,8 +200,8 @@ templ chunkRollbackDialog() {
 		BoxClass: "max-w-md",
 		Attrs:   templ.Attributes{"data-chunk-rollback-confirm": "true", "data-testid": "chunk-rollback-confirm"},
 	}) {
-		<h3 class="text-lg font-semibold">Roll back chunk</h3>
-		<p data-chunk-rollback-message class="text-muted py-3 text-sm"></p>
+		@ui.DialogTitle() { Roll back chunk }
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "py-3", Attrs: templ.Attributes{"data-chunk-rollback-message": ""}})
 		<div class="modal-action">
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeButton,

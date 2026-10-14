@@ -19,7 +19,9 @@ templ proposalCard(c *ProposalCard) {
 			}
 		</div>
 		if c.Summary != "" {
-			<p class="text-muted-strong px-4 py-2.5 text-xs">{ c.Summary }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Size: ui.EmptyNoteSizeXS, Class: "px-4 py-2.5"}) {
+				{ c.Summary }
+			}
 		}
 		// The kind section carries data-proposal-kind so tests can assert the
 		// structured preview rendered for a kind — a summary-only degradation
@@ -86,7 +88,9 @@ templ proposalSkillSection(s *SkillProposal) {
 			<p class="text-sm font-medium">{ s.Name }</p>
 		</div>
 		if s.Description != "" {
-			<p class="text-muted mt-1 text-xs">{ s.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				{ s.Description }
+			}
 		}
 		if s.Prompt != "" {
 			@proposalMonoBlock("Prompt", s.Prompt)
@@ -110,7 +114,9 @@ templ proposalAgentSection(a *AgentProposal) {
 			}
 		</div>
 		if a.Description != "" {
-			<p class="text-muted mt-1 text-xs">{ a.Description }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				{ a.Description }
+			}
 		}
 		if a.SystemPrompt != "" {
 			@proposalMonoBlock("System prompt", a.SystemPrompt)
