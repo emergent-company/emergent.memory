@@ -1,7 +1,7 @@
 # object-provenance Specification
 
 ## Purpose
-TBD - created by archiving change agent-object-provenance. Update Purpose after archive.
+The cross-cutting actor-provenance model for the knowledge graph: the writing actor (`actor_type`/`actor_id`) is recorded on every object version write and, for the first time, on relationship writes; agent identity is propagated from the run boundary (`auth.WithActor`) so nested and delegated runs attribute to the actual writer and per-agent MCP endpoints attribute to their `endpoint.AgentID`; responses and SDK list options expose actor fields; object listing gains a `created`/`updated`/`any` provenance filter keyed on the `(actor_type, actor_id)` pair; branch-merge clones preserve the source row's actor; and the known limitations (sandbox writes, delete/restore, hard-delete drift) are documented.
 
 ## Requirements
 

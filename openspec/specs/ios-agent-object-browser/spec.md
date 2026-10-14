@@ -1,7 +1,7 @@
 # ios-agent-object-browser Specification
 
 ## Purpose
-TBD - created by archiving change agent-object-provenance. Update Purpose after archive.
+A net-new native SwiftUI object browser scoped to an agent's provenance — it lists the objects created or updated by that agent, supports search, opens object detail, gates on agent availability, and loads fresh data — replacing the former agent "Memories" browser so an agent's footprint is browsed as ordinary project objects.
 
 ## Requirements
 

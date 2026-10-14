@@ -1,7 +1,7 @@
 # web-chat-header Specification
 
 ## Purpose
-TBD - created by archiving change web-agent-chat-header. Update Purpose after archive.
+The chat workspace pane header renders the active agent's identity — its icon tile (`ui_config` icon/color, neutral `lucide--bot` when unset), its name as the title, and its stored `description` as a second line — instead of the hardcoded generic "Chat with Memory" copy, and it tracks the active agent live as the agent picker changes or a session is resumed. With no agents and no conversation it falls back to the generic copy, so the header is never empty.
 
 ## Requirements
 

@@ -1,7 +1,7 @@
 # web-ui-e2e-datasources Specification
 
 ## Purpose
-TBD - created by archiving change add-data-sources-e2e. Update Purpose after archive.
+Hermetic Playwright browser coverage of the Data Sources (Google Drive) UI — the list/empty state, the schema-driven connect form and connection test, sync trigger/progress/cancel, and document version history — closing the gap left when the Google Drive data-source feature shipped with server and render tests but no browser-level end-to-end coverage of the connect → sync → version-history flow.
 
 ## Requirements
 

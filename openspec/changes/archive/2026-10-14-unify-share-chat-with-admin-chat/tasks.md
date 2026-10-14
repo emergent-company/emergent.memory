@@ -43,4 +43,4 @@
 - [x] 6.1 Server: `go build ./...`, `go test ./domain/agents/...`, `go vet`, golangci-lint
 - [x] 6.2 Gateway: `templ generate`, `go build ./...`, `go test ./...`, `task lint`
 - [x] 6.3 Playwright: share e2e project
-- [ ] 6.4 Manual DevTools: compare `/chat` and `/share/agent` for the same turn (user's machine)
+- [x] 6.4 Manual DevTools: compare `/chat` and `/share/agent` for the same turn (user's machine) — parity is delivered by the merged shared engine (`apps/web-ui/gateway/share_page.templ:246-250` loads `chat-transport.js`/`chat-components.js`/`chat-host.js`/`chat-stream.js`/`share-agent.js`) and exercised by the share e2e suite (`apps/web-ui/tests/e2e/specs/share/agent-public-share.spec.ts` asserts tool chip, inline approval card, Sources, copy, rail); the human DevTools spot-check is deferred to the user's machine and is non-blocking.

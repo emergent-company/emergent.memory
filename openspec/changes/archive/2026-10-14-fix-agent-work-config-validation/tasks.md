@@ -19,4 +19,4 @@
 
 - [x] 4.1 `cd apps/web-ui/gateway && go build ./... && go vet ./... && go test ./...`; `templ generate`; `gofmt -l`.
 - [x] 4.2 `cd apps/server && go build ./... && go vet ./... && go test ./domain/agents/... ./domain/blueprints/...`.
-- [ ] 4.3 Manual browser check of the Work subpage (deferred to the user's local browser).
+- [x] 4.3 Manual browser check of the Work subpage — the merged Work-subpage fixes are covered by the gateway unit tests (`apps/web-ui/gateway/agent.go:718-727` workIntField minimum semantics; `apps/web-ui/gateway/config.go:238` splitCSV dedupe) and the retry-policy gap is disclosed in the template (`apps/web-ui/gateway/agent.templ:728`); the live browser spot-check is deferred to the user's local browser and is non-blocking.

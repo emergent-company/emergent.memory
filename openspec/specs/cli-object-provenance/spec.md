@@ -1,7 +1,7 @@
 # cli-object-provenance Specification
 
 ## Purpose
-TBD - created by archiving change agent-object-provenance. Update Purpose after archive.
+`memory graph objects list` gains actor-provenance filters — `--actor-type`, `--actor-id`, and `--provenance created|updated|any` — so the CLI can answer "what did this agent touch" by keying the filter on the `(actor_type, actor_id)` pair rather than on object type or memory-specific naming.
 
 ## Requirements
 
