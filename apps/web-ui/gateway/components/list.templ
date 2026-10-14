@@ -12,7 +12,9 @@ templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string) {
 		@leading
 		<div class="min-w-0 grow">
 			<p class="truncate text-sm font-medium">{ title }</p>
-			<p class="text-muted text-xs">{ meta }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+				{ meta }
+			}
 		</div>
 		{ children... }
 		@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")

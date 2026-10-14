@@ -34,7 +34,7 @@ templ DeleteWarning(subject, detail string, opts ...DeleteWarningProps) {
 	if len(opts) > 0 {
 		o = opts[0]
 	} }}
-	<p class="text-muted mt-1 text-sm">
+	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 		This permanently removes <span if o.SubjectID != "" { id={ o.SubjectID } } class="font-medium text-base-content">{ subject }</span> { detail }
-	</p>
+	}
 }

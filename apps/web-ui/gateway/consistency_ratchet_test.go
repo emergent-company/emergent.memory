@@ -23,11 +23,15 @@ import (
 //     until an author either renders the shared component instead, or adds a
 //     budget entry carrying a justification note.
 //
-//  2. Pattern budgets (TestTemplPatternConsistencyRatchet): authored top-level *.templ files
-//     must not grow new instances of legacy/drifting class tokens, nor new raw
-//     component-consolidation surfaces (empty-note, dialog-title, soft-box,
-//     clipboard), beyond the declared budget. Commented-out markup is stripped
-//     before matching so a disabled snippet does not count.
+//  2. Pattern budgets (TestTemplPatternConsistencyRatchet): authored top-level
+//     *.templ files must not grow new instances of legacy/drifting class tokens,
+//     nor new raw component-consolidation surfaces (empty-note, dialog-title,
+//     soft-box, clipboard), beyond the declared budget. The components/ package
+//     is scanned for the consolidation surfaces too (the shared components must
+//     adopt the canonical primitives), but not for the design-token drift
+//     patterns — those tokens are owned by the shared components themselves.
+//     Commented-out markup is stripped before matching so a disabled snippet does
+//     not count.
 
 // --- adoption ratchet ---
 
@@ -235,22 +239,37 @@ func sortedPatternKeys(actual map[patternKey]int, budget map[patternKey]patternB
 	return keys
 }
 
-// scanPatternHits scans the authored top-level .templ sources (non-recursive,
-// mirroring the componentgraph generator, so the components/ package is
-// naturally excluded) and records, per pattern, the file and every line that
-// carries a drift token. Commented-out markup is stripped first so a disabled
-// snippet does not count.
+// scanPatternHits scans the authored templates and records, per pattern, the
+// file and every line that carries a drift token. Root top-level *.templ files
+// are scanned for every pattern; the components/ package is scanned for the
+// component-consolidation surfaces only (design-token drift is owned by the
+// shared components, not authored per-page). Commented-out markup is stripped
+// first so a disabled snippet does not count.
 func scanPatternHits() (map[string]map[string][]int, error) {
-	matches, err := filepath.Glob(filepath.Join(".", "*.templ"))
+	out := map[string]map[string][]int{}
+
+	rootMatches, err := filepath.Glob(filepath.Join(".", "*.templ"))
 	if err != nil {
 		return nil, err
 	}
-	out := map[string]map[string][]int{}
-	for _, m := range matches {
+	for _, m := range rootMatches {
 		if skipPatternFile(filepath.Base(m)) {
 			continue
 		}
-		if err := scanPatternFile(m, out); err != nil {
+		if err := scanPatternFile(m, out, true); err != nil {
+			return nil, err
+		}
+	}
+
+	compMatches, err := filepath.Glob(filepath.Join("components", "*.templ"))
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range compMatches {
+		if skipPatternFile(filepath.Base(m)) {
+			continue
+		}
+		if err := scanPatternFile(m, out, false); err != nil {
 			return nil, err
 		}
 	}
@@ -266,7 +285,7 @@ func skipPatternFile(base string) bool {
 		base == "fixtures_test.templ"
 }
 
-func scanPatternFile(path string, out map[string]map[string][]int) error {
+func scanPatternFile(path string, out map[string]map[string][]int, scanDrift bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -282,20 +301,22 @@ func scanPatternFile(path string, out map[string]map[string][]int) error {
 		}
 		lineNo := i + 1
 
-		for range legacyBorderedRE.FindAllStringIndex(stripped, -1) {
-			addPatternHit(out, patternLegacyBordered, base, lineNo)
-		}
-		for _, m := range surfaceOpacityRE.FindAllStringSubmatchIndex(stripped, -1) {
-			if n := stripped[m[2]:m[3]]; n != "40" {
-				addPatternHit(out, patternSurfaceOpacity, base, lineNo)
+		if scanDrift {
+			for range legacyBorderedRE.FindAllStringIndex(stripped, -1) {
+				addPatternHit(out, patternLegacyBordered, base, lineNo)
 			}
-		}
-		for range borderBaseColorRE.FindAllStringIndex(stripped, -1) {
-			addPatternHit(out, patternBorderTokenDrift, base, lineNo)
-		}
-		for _, m := range borderBaseContentRE.FindAllStringSubmatchIndex(stripped, -1) {
-			if n := stripped[m[2]:m[3]]; n != "10" {
+			for _, m := range surfaceOpacityRE.FindAllStringSubmatchIndex(stripped, -1) {
+				if n := stripped[m[2]:m[3]]; n != "40" {
+					addPatternHit(out, patternSurfaceOpacity, base, lineNo)
+				}
+			}
+			for range borderBaseColorRE.FindAllStringIndex(stripped, -1) {
 				addPatternHit(out, patternBorderTokenDrift, base, lineNo)
+			}
+			for _, m := range borderBaseContentRE.FindAllStringSubmatchIndex(stripped, -1) {
+				if n := stripped[m[2]:m[3]]; n != "10" {
+					addPatternHit(out, patternBorderTokenDrift, base, lineNo)
+				}
 			}
 		}
 

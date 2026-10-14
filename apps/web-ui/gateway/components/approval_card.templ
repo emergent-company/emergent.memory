@@ -60,7 +60,9 @@ templ ApprovalCard(props ApprovalCardProps) {
 	@ui.CardRaw(strings.TrimSpace("memory-approval card-border "+props.Class), "gap-3 p-4", props.Attrs) {
 		<div class="flex items-start justify-between gap-3">
 			<div class="flex min-w-0 flex-wrap items-center gap-2">
-				<h3 class="memory-approval__title text-base leading-snug font-semibold break-words">{ title }</h3>
+				@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD, Class: "memory-approval__title leading-snug break-words"}) {
+					{ title }
+				}
 				if props.Decision != "" {
 					@ui.Badge(ui.BadgeProps{
 						Label:   props.Decision,
@@ -73,9 +75,11 @@ templ ApprovalCard(props ApprovalCardProps) {
 				<div class="flex shrink-0 items-center gap-3">@props.Meta</div>
 			}
 		</div>
-		<p class="memory-approval__sentence mt-0.5 text-xs text-muted-strong">The agent wants to run <code class="font-mono text-xs">{ props.ToolName }</code>.</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Size: ui.EmptyNoteSizeXS, Class: "memory-approval__sentence mt-0.5"}) { The agent wants to run <code class="font-mono text-xs">{ props.ToolName }</code>. }
 		if props.Message != "" {
-			<p class="memory-approval__message text-sm text-muted-strong">{ props.Message }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneStrong, Class: "memory-approval__message"}) {
+				{ props.Message }
+			}
 		}
 		if props.ArgsJSON != "" {
 			<pre class="memory-approval__args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">{ props.ArgsJSON }</pre>

@@ -140,7 +140,9 @@ templ QuestionCard(props QuestionCardProps) {
 	@ui.CardRaw(strings.TrimSpace("memory-question card-border "+props.Class), "gap-3 p-4", props.Attrs) {
 		<div class="memory-question__body memory-md text-base leading-snug break-words">@templ.Raw(props.Prompt)</div>
 		if hint != "" {
-			<p class="memory-question__hint mt-0.5 text-xs text-muted">{ hint }</p>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "memory-question__hint mt-0.5"}) {
+				{ hint }
+			}
 		}
 		if props.Proposal != nil {
 			@props.Proposal

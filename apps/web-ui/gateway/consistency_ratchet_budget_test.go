@@ -102,7 +102,8 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternEmptyNote, file: "schema.templ", count: 1, note: "normalise to ui.EmptyNote; 1 residual: bordered centred empty-properties box (rounded-box border-dashed text-center) — not a note"},
 
 		// dialog-title — the h3 text-lg font-semibold dialog heading shape;
-		// canonical is ui.DialogTitle. Fully adopted: no residual, so no entry.
+		// canonical is ui.DialogTitle. Fully adopted across root and components/:
+		// no residual, so no entry.
 		//
 		// dialog-title-section — the h2 text-lg font-semibold section/card
 		// heading shape. These are section headings, not dialog titles; there is

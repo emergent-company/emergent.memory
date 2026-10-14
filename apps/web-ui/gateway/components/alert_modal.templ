@@ -21,7 +21,7 @@ templ AlertModal(attrs templ.Attributes) {
 		>
 			<span id="memory-alert-icon" class="iconify lucide--info size-5 shrink-0" aria-hidden="true"></span>
 			<div class="min-w-0">
-				<h3 id="memory-alert-title" class="text-base font-semibold">Test result</h3>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "memory-alert-title", Size: ui.DialogTitleSizeMD}) { Test result }
 				<p id="memory-alert-message" class="mt-1 text-sm break-words whitespace-pre-wrap"></p>
 			</div>
 		</div>
