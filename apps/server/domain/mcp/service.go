@@ -974,7 +974,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "search-hybrid",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns graph objects only by default; pass include_chunks=true to also return document text chunks. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1017,6 +1017,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 						Type:        "number",
 						Description: "Optional minimum score for returned results (0.0–1.0). Items whose reported score falls below this threshold are dropped. Default: 0 (no cutoff) — weak matches are still returned, ranked by score, so callers can judge relevance themselves. Note: reported scores are fused and weight-scaled (graph-object scores are multiplied by the graph fusion weight, default 0.25), so pick a value relative to the scores you observe in results.",
 					},
+					"include_chunks": {
+						Type:        "boolean",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only.",
+						Default:     false,
+					},
 					"fields": {
 						Type:        "array",
 						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
@@ -1038,7 +1043,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 		{
 			Name:         "search-semantic",
 			OutputSchema: envelopeOutputSchema(),
-			Description:  "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			Description:  "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns graph objects only by default; pass include_chunks=true to also return document text chunks. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
@@ -1064,6 +1069,11 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					"min_score": {
 						Type:        "number",
 						Description: "Optional minimum score for returned results (0.0–1.0). Items whose reported score falls below this threshold are dropped. Default: 0 (no cutoff). Note: reported scores are fused and weight-scaled (graph-object scores are multiplied by the graph fusion weight, default 0.25), so pick a value relative to the scores you observe in results.",
+					},
+					"include_chunks": {
+						Type:        "boolean",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only.",
+						Default:     false,
 					},
 					"fields": {
 						Type:        "array",

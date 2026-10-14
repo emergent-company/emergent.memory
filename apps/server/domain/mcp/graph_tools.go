@@ -114,14 +114,25 @@ func parseMinScoreArg(args map[string]any) (*float32, error) {
 // buildHybridUnifiedRequest assembles the unified-search request from the
 // search-hybrid args. Isolated as a pure function so the arg→request mapping
 // can be unit-tested without a database.
-func buildHybridUnifiedRequest(args map[string]any, query string, limit int, types, labels []string, minScore *float32, namespaceFilter string) *search.UnifiedSearchRequest {
+func buildHybridUnifiedRequest(args map[string]any, query string, limit int, types, labels []string, minScore *float32, namespaceFilter string, includeChunks bool) *search.UnifiedSearchRequest {
 	// Relationship (triple) candidates are never surfaced to MCP consumers:
 	// mapUnifiedToSearchResponse only maps graph/text items, so running the
 	// relationship-vector leg is pure waste. Force-skip it unconditionally.
 	includeRelationships := false
+
+	// Chunks are opt-in for MCP search tools: by default the request is
+	// graph-only so the text leg (document chunks) never runs. include_chunks
+	// re-enables both legs; chunk items are then still subject to the
+	// types/allow/block/scope filters applied in mapUnifiedToSearchResponse.
+	resultTypes := search.ResultTypeGraph
+	if includeChunks {
+		resultTypes = search.ResultTypeBoth
+	}
+
 	req := &search.UnifiedSearchRequest{
 		Query:                query,
 		Limit:                limit,
+		ResultTypes:          resultTypes,
 		Types:                types,
 		Labels:               labels,
 		MinScore:             minScore,
@@ -232,7 +243,8 @@ func (s *Service) executeHybridSearch(ctx context.Context, projectID string, arg
 	}
 
 	if s.searchSvc != nil {
-		unifiedReq := buildHybridUnifiedRequest(args, query, limit, types, labels, minScore, namespaceFilter)
+		includeChunks, _ := args["include_chunks"].(bool)
+		unifiedReq := buildHybridUnifiedRequest(args, query, limit, types, labels, minScore, namespaceFilter, includeChunks)
 
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {
@@ -346,8 +358,18 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 			})
 
 		case search.ItemTypeText:
-			textID, _ := uuid.Parse(r.ID)
 			textType := "text_chunk"
+
+			// Chunks carry no entity type and no namespace — they are not schema
+			// types, so the namespace allowlist (allowedTypes) and system
+			// blocklist (blockedTypes) must not gate them. Inclusion is governed
+			// by include_chunks alone; callers that want to suppress chunks do so
+			// with an explicit `types` list that omits "text_chunk".
+			if len(types) > 0 && !containsStr(types, textType) {
+				continue
+			}
+
+			textID, _ := uuid.Parse(r.ID)
 
 			props := map[string]any{
 				"snippet": r.Snippet,
@@ -373,6 +395,8 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 	if len(labels) > 0 {
 		filtered := make([]*graph.SearchResultItem, 0, len(items))
 		for _, item := range items {
+			// text_chunk items carry no labels; they are governed by
+			// include_chunks, not by the entity label filter, so let them pass.
 			if item.Object.Type == "text_chunk" {
 				filtered = append(filtered, item)
 				continue
@@ -407,8 +431,9 @@ func containsStr(slice []string, s string) bool {
 // permitted by the scope. A nil/unrestricted scope returns items unchanged (no
 // allocation). It guards nil items and nil objects so the search paths can call
 // it unconditionally on the final result list. The `text_chunk` pseudo-type
-// (document snippet, not a graph object type) is always allowed so a scoped
-// agent still sees document snippets.
+// (document snippet, not a graph object type) is let through: chunks are only
+// present when the caller explicitly set include_chunks=true, so the agent
+// type-scope must not gate them — inclusion is governed by include_chunks alone.
 func filterSearchItemsByScope(scope *TypeScope, items []*graph.SearchResultItem) []*graph.SearchResultItem {
 	if !scope.HasObjectRestriction() {
 		return items
@@ -492,11 +517,18 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 	// Prefer search.Service which auto-embeds the query text, giving the vector
 	// leg full signal even for multi-word queries that FTS can't match well.
 	if s.searchSvc != nil {
+		// Chunks are opt-in: default to graph-only so the text leg (document
+		// chunks) never runs; include_chunks re-enables both legs.
+		resultTypes := search.ResultTypeGraph
+		if includeChunks, _ := args["include_chunks"].(bool); includeChunks {
+			resultTypes = search.ResultTypeBoth
+		}
 		unifiedReq := &search.UnifiedSearchRequest{
-			Query:    query,
-			Limit:    limit,
-			Types:    types,
-			MinScore: minScore,
+			Query:       query,
+			Limit:       limit,
+			Types:       types,
+			MinScore:    minScore,
+			ResultTypes: resultTypes,
 		}
 		// Pass namespace for DB-level filtering.
 		if namespaceFilter != "" && namespaceFilter != "all" {

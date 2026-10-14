@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/search"
 )
 
 func toolDefByName(t *testing.T, tools []ToolDefinition, name string) ToolDefinition {
@@ -135,9 +136,39 @@ func TestToolDefinitions_IncludeRelationshipsSchema(t *testing.T) {
 }
 
 func TestBuildHybridUnifiedRequest_IncludeRelationships(t *testing.T) {
-	req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "")
+	req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", false)
 	require.NotNil(t, req.IncludeRelationships)
 	assert.False(t, *req.IncludeRelationships, "MCP search-hybrid must always skip the relationship leg")
+}
+
+func TestBuildHybridUnifiedRequest_ResultTypes(t *testing.T) {
+	t.Run("default is graph-only", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", false)
+		assert.Equal(t, search.ResultTypeGraph, req.ResultTypes,
+			"without include_chunks the request must be graph-only so the chunk leg never runs")
+	})
+
+	t.Run("include_chunks enables both", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", true)
+		assert.Equal(t, search.ResultTypeBoth, req.ResultTypes,
+			"include_chunks=true must run both graph and text legs")
+	})
+}
+
+func TestToolDefinitions_IncludeChunksSchema(t *testing.T) {
+	svc := &Service{}
+	tools := svc.GetToolDefinitions()
+
+	for _, name := range []string{"search-hybrid", "search-semantic"} {
+		t.Run(name, func(t *testing.T) {
+			tool := toolDefByName(t, tools, name)
+			prop, ok := tool.InputSchema.Properties["include_chunks"]
+			require.True(t, ok, "tool %q must expose include_chunks", name)
+			assert.Equal(t, "boolean", prop.Type)
+			assert.NotEmpty(t, prop.Description)
+			assert.Equal(t, false, prop.Default, "include_chunks must default to false")
+		})
+	}
 }
 
 // =============================================================================
@@ -160,7 +191,8 @@ func TestFilterSearchItemsByScope(t *testing.T) {
 
 	restricted := NewTypeScope([]string{"Person", "Org"}, nil)
 	got := filterSearchItemsByScope(restricted, items)
-	// Person + Org allowed, text_chunk always allowed, Dog/nil/nil-object dropped.
+	// Person + Org allowed, text_chunk let through (chunks are governed by
+	// include_chunks, not the agent type-scope), Dog/nil/nil-object dropped.
 	require.Len(t, got, 3)
 	assert.Equal(t, "Person", got[0].Object.Type)
 	assert.Equal(t, "Org", got[1].Object.Type)

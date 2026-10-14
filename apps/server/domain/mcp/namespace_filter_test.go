@@ -125,6 +125,101 @@ func TestMapUnifiedToSearchResponse_EmptyResults(t *testing.T) {
 }
 
 // =============================================================================
+// mapUnifiedToSearchResponse — ItemTypeText (chunk) filtering
+// =============================================================================
+
+// makeTextResult is a helper that builds a text-chunk UnifiedSearchResultItem
+// mirroring the shape produced by the chunk leg (no ObjectType, snippet/source/
+// document_id carried).
+func makeTextResult(id string) search.UnifiedSearchResultItem {
+	docID := "fed94373-0000-0000-0000-000000000000"
+	src := "fed94373-0000-0000-0000-000000000000"
+	return search.UnifiedSearchResultItem{
+		Type:       search.ItemTypeText,
+		ID:         id,
+		Snippet:    "a snippet",
+		Source:     &src,
+		DocumentID: &docID,
+		Score:      0.9,
+	}
+}
+
+func TestMapUnifiedToSearchResponse_TypesDropChunks(t *testing.T) {
+	svc := &Service{}
+	res := &search.UnifiedSearchResponse{
+		Results: []search.UnifiedSearchResultItem{
+			makeGraphResult("LegalParagraph"),
+			makeTextResult("00000000-0000-0000-0000-000000000000"),
+		},
+	}
+	// An explicit types list that omits the text_chunk pseudo-type suppresses
+	// chunks; the graph entity that IS in the list is kept.
+	out := svc.mapUnifiedToSearchResponse(res, []string{"LegalParagraph"}, nil, nil, nil)
+	require.Len(t, out.Data, 1)
+	assert.Equal(t, "LegalParagraph", out.Data[0].Object.Type)
+}
+
+func TestMapUnifiedToSearchResponse_AllowedTypesKeepChunks(t *testing.T) {
+	svc := &Service{}
+	res := &search.UnifiedSearchResponse{
+		Results: []search.UnifiedSearchResultItem{
+			makeGraphResult("Note"),
+			makeTextResult("00000000-0000-0000-0000-000000000000"),
+		},
+	}
+	// The default-namespace allowlist is non-nil but never contains "text_chunk";
+	// chunks carry no namespace and are not schema types, so the allowlist must
+	// not gate them. include_chunks=true must still return the chunk.
+	allowed := map[string]bool{"Note": true}
+	out := svc.mapUnifiedToSearchResponse(res, nil, nil, allowed, nil)
+	require.Len(t, out.Data, 2)
+}
+
+func TestMapUnifiedToSearchResponse_BlockedTypesKeepChunks(t *testing.T) {
+	svc := &Service{}
+	res := &search.UnifiedSearchResponse{
+		Results: []search.UnifiedSearchResultItem{
+			makeGraphResult("Note"),
+			makeTextResult("00000000-0000-0000-0000-000000000000"),
+		},
+	}
+	// Even a blocklist containing "text_chunk" must not gate chunks: the
+	// blocklist only applies to schema types, and chunks are governed solely by
+	// include_chunks.
+	blocked := map[string]bool{"text_chunk": true}
+	out := svc.mapUnifiedToSearchResponse(res, nil, nil, nil, blocked)
+	require.Len(t, out.Data, 2)
+}
+
+func TestMapUnifiedToSearchResponse_NoFilterKeepsChunks(t *testing.T) {
+	svc := &Service{}
+	res := &search.UnifiedSearchResponse{
+		Results: []search.UnifiedSearchResultItem{
+			makeGraphResult("Note"),
+			makeTextResult("00000000-0000-0000-0000-000000000000"),
+		},
+	}
+	// No filters: chunks are kept, subject to the caller having opted in via
+	// include_chunks at the request level.
+	out := svc.mapUnifiedToSearchResponse(res, nil, nil, nil, nil)
+	require.Len(t, out.Data, 2)
+}
+
+func TestMapUnifiedToSearchResponse_LabelsFilterKeepsChunks(t *testing.T) {
+	svc := &Service{}
+	res := &search.UnifiedSearchResponse{
+		Results: []search.UnifiedSearchResultItem{
+			{Type: search.ItemTypeGraph, ObjectType: "Note", Score: 1.0, Labels: []string{"keep"}},
+			makeTextResult("00000000-0000-0000-0000-000000000000"),
+		},
+	}
+	// Chunks carry no labels, so the entity label filter must not drop them;
+	// inclusion is governed by include_chunks alone.
+	out := svc.mapUnifiedToSearchResponse(res, nil, []string{"keep"}, nil, nil)
+	require.Len(t, out.Data, 2)
+}
+
+// =============================================================================
 // mapUnifiedToSearchResponse — labels threading + labels filter
 // =============================================================================
 

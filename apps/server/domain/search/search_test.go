@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1273,5 +1274,44 @@ func TestShouldSkipRelationshipLeg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, shouldSkipRelationshipLeg(tt.resultTypes, tt.req))
 		})
+	}
+}
+
+// graphResultStub implements graphSearcher with a single graph object, so a
+// graph-only unified search has a non-empty result set to assert against.
+type graphResultStub struct{}
+
+func (graphResultStub) HybridSearch(_ context.Context, _ uuid.UUID, _ *graph.HybridSearchRequest, _ *graph.HybridSearchOptions) (*graph.SearchResponse, error) {
+	return &graph.SearchResponse{
+		Data: []*graph.SearchResultItem{
+			{Object: &graph.GraphObjectResponse{ID: uuid.New(), CanonicalID: uuid.New(), Type: "LegalParagraph", Properties: map[string]any{}}, Score: 0.9},
+		},
+	}, nil
+}
+func (graphResultStub) GetEdgesBatch(context.Context, uuid.UUID, []uuid.UUID, graph.GetEdgesParams) (map[uuid.UUID]*graph.GetObjectEdgesResponse, error) {
+	return nil, nil
+}
+func (graphResultStub) UpdateAccessTimestamps(context.Context, []uuid.UUID) error { return nil }
+
+// TestSearch_ResultTypeGraph_YieldsNoTextItems pins the chunk leg off-switch:
+// with ResultTypes=graph, the text leg short-circuits (repo is never touched)
+// and the fused output contains no ItemTypeText entries.
+func TestSearch_ResultTypeGraph_YieldsNoTextItems(t *testing.T) {
+	svc := &Service{
+		graphService: graphResultStub{},
+		log:          slog.New(slog.NewTextHandler(os.Stdout, nil)),
+		defaultLimit: 32,
+		maxLimit:     100,
+	}
+
+	resp, err := svc.Search(context.Background(), uuid.New(), &UnifiedSearchRequest{
+		Query:       "oppsigelsesfrist",
+		ResultTypes: ResultTypeGraph,
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotEmpty(t, resp.Results, "graph leg should return at least one graph object")
+	for _, item := range resp.Results {
+		assert.NotEqual(t, ItemTypeText, item.Type, "ResultTypeGraph must not yield text chunks")
 	}
 }
