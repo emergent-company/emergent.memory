@@ -95,6 +95,9 @@ WORKSPACE_WARM_POOL_SIZE=3
 WORKSPACE_DEFAULT_CPU=2
 WORKSPACE_DEFAULT_MEMORY=4G
 WORKSPACE_NETWORK_NAME=workspace_net
+# Must be reachable from workspace_net; the server should also join that network.
+# host.docker.internal only works if the server port is reachable from the bridge.
+WORKSPACE_MEMORY_API_URL=http://memory-server:3002
 ```
 
 ### Production (self-hosted with Firecracker)

@@ -652,6 +652,7 @@ type AgentExecutor struct {
 	sessionService   session.Service
 	modelLimits      ModelLimitsLookup // nil if provider module is not registered
 	apiTokenSvc      ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
+	memoryAPIURL     string            // API endpoint injected into sandbox sessions
 	usageService     *provider.UsageService
 	eventsSvc        *events.Service        // nil if events module not registered; used by ask_user SSE notification
 	notificationsSvc *notifications.Service // nil-safe; central notification producer for ask_user
@@ -831,6 +832,10 @@ func NewAgentExecutor(
 	if wsEnabled {
 		log.Info("agent executor: workspace provisioning enabled")
 	}
+	memoryAPIURL := cfg.Sandbox.MemoryAPIURL
+	if memoryAPIURL == "" {
+		memoryAPIURL = sandbox.DefaultMemoryAPIURL
+	}
 	return &AgentExecutor{
 		modelFactory:     modelFactory,
 		toolPool:         toolPool,
@@ -842,6 +847,7 @@ func NewAgentExecutor(
 		sessionService:   sessionService,
 		modelLimits:      modelLimits,
 		apiTokenSvc:      apiTokenSvc,
+		memoryAPIURL:     memoryAPIURL,
 		usageService:     usageService,
 		eventsSvc:        eventsSvc,
 		notificationsSvc: notificationsSvc,
@@ -3960,7 +3966,9 @@ func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningRes
 		sessionEnv["MEMORY_ACCOUNT_API_KEY"] = req.AuthToken
 		sessionEnv["MEMORY_API_KEY"] = req.AuthToken // deprecated alias — remove in a future release
 		sessionEnv["MEMORY_PROJECT_ID"] = req.ProjectID
-		sessionEnv["MEMORY_SERVER_URL"] = "http://host.docker.internal:3002"
+		// Respect WORKSPACE_MEMORY_API_URL so the endpoint matches the sandbox
+		// network (host gateway vs. service DNS name).
+		sessionEnv["MEMORY_SERVER_URL"] = ae.memoryAPIURL
 	}
 
 	return BuildWorkspaceTools(WorkspaceToolDeps{

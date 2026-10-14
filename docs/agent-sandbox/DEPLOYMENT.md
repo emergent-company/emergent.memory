@@ -87,9 +87,10 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
 
 ### Network Isolation
 
-| Variable                 | Default   | Description                            |
-| ------------------------ | --------- | -------------------------------------- |
-| `WORKSPACE_NETWORK_NAME` | _(empty)_ | Docker network for sandbox containers  |
+| Variable                   | Default                             | Description                                     |
+| -------------------------- | ----------------------------------- | ----------------------------------------------- |
+| `WORKSPACE_NETWORK_NAME`   | _(empty)_                           | Docker network for sandbox containers           |
+| `WORKSPACE_MEMORY_API_URL` | `http://host.docker.internal:3002`  | API endpoint injected into sandbox containers   |
 
 ### Provider-Specific
 
@@ -124,8 +125,16 @@ E2B provides managed sandboxes via their cloud API. No local infrastructure requ
                         └─────────────────────────────────────┘
 ```
 
-- **workspace_net** has `enable_icc=false`: sandbox containers cannot communicate with each other
-- The Emergent server bridges requests between the default network and sandbox network
+- **workspace_net** isolates sandboxes from infrastructure services (db, Zitadel): Docker
+  blocks traffic between distinct user-defined bridge networks
+- The Emergent server must also join `workspace_net` (or otherwise be reachable from it) so
+  sandboxes can call back into the API. Sandboxes reach it at `WORKSPACE_MEMORY_API_URL`,
+  which defaults to `http://host.docker.internal:3002`
+- Do **not** point sandboxes at `host.docker.internal` when the server port is published on
+  loopback only (`127.0.0.1:3002`); that path times out. Use the server's service name
+  (e.g. `http://memory-server:3002`) when both share a network
+- Avoid `enable_icc=false` if the server is a member of the sandbox network — it blocks the
+  server↔sandbox call the fix depends on
 - Sandboxes have outbound internet access (for `git clone`, package installation)
 
 ## Resource Planning

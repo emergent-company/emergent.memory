@@ -341,6 +341,7 @@ On platform shutdown, all MCP servers receive SIGTERM with a 30-second grace per
 | `ENABLE_AGENT_SANDBOXES`     | `false`  | Master switch — must be `true` to enable MCP hosting |
 | `WORKSPACE_DEFAULT_PROVIDER` | `gvisor` | Default provider (MCP servers always use gVisor)     |
 | `WORKSPACE_NETWORK_NAME`     | (none)   | Docker network for container isolation               |
+| `WORKSPACE_MEMORY_API_URL`   | `http://host.docker.internal:3002` | API endpoint injected into containers   |
 
 ### Resource Defaults for MCP Servers
 

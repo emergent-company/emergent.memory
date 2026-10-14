@@ -1,6 +1,8 @@
 package sandbox
 
 import (
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -133,5 +135,33 @@ func TestApplyResourceLimits(t *testing.T) {
 		caps := p.Capabilities()
 		assert.NotNil(t, caps)
 		assert.False(t, caps.RequiresKVM)
+	})
+}
+
+func TestGVisorProviderMemoryAPIURL(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		p := &GVisorProvider{}
+		assert.Equal(t, DefaultMemoryAPIURL, p.apiURL())
+	})
+
+	t.Run("override from config", func(t *testing.T) {
+		p := &GVisorProvider{memoryAPIURL: "http://memory-server:3002"}
+		assert.Equal(t, "http://memory-server:3002", p.apiURL())
+	})
+}
+
+func TestGVisorProviderNetworkConfig(t *testing.T) {
+	t.Run("nil when no isolation network", func(t *testing.T) {
+		p := &GVisorProvider{}
+		assert.Nil(t, p.networkConfig())
+	})
+
+	t.Run("attached when network configured", func(t *testing.T) {
+		p := &GVisorProvider{networkName: "workspace_net", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		cfg := p.networkConfig()
+		if assert.NotNil(t, cfg) {
+			_, ok := cfg.EndpointsConfig["workspace_net"]
+			assert.True(t, ok, "expected endpoint config for workspace_net")
+		}
 	})
 }

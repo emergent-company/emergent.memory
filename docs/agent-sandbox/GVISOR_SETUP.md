@@ -107,12 +107,17 @@ When `ENABLE_AGENT_SANDBOXES=true`:
 | `WORKSPACE_WARM_POOL_SIZE`   | `0`       | Pre-booted container pool size (0 = disabled)     |
 | `WORKSPACE_DEFAULT_TTL_DAYS` | `30`      | Default TTL for ephemeral sandboxes               |
 | `WORKSPACE_NETWORK_NAME`     | _(empty)_ | Docker network for container isolation            |
+| `WORKSPACE_MEMORY_API_URL`   | `http://host.docker.internal:3002` | API endpoint injected into sandboxes   |
 | `E2B_API_KEY`                | _(empty)_ | API key for E2B managed sandbox provider          |
 | `GITHUB_APP_ENCRYPTION_KEY`  | _(empty)_ | AES-256 encryption key for GitHub App credentials |
 
 ### Network Isolation
 
-When `WORKSPACE_NETWORK_NAME` is set (e.g., `workspace_net`), sandbox containers are attached to a dedicated Docker network. The `docker-compose.dev.yml` defines a `workspace_net` bridge network with inter-container communication disabled (`enable_icc=false`), preventing sandbox containers from reaching infrastructure services directly.
+When `WORKSPACE_NETWORK_NAME` is set (e.g., `workspace_net`), sandbox containers are attached to a dedicated Docker network, preventing them from reaching infrastructure services directly (Docker blocks traffic between distinct user-defined bridges).
+
+The sandbox still needs to reach the API server, which is injected as `MEMORY_API_URL` from `WORKSPACE_MEMORY_API_URL` (default `http://host.docker.internal:3002`). `host.docker.internal` resolves to the sandbox network's gateway, so it only works if the server port is reachable from that bridge. A server published on loopback only (`127.0.0.1:3002`) is **not** reachable this way and calls time out; in that case, join the server to the sandbox network and set `WORKSPACE_MEMORY_API_URL` to its service address (e.g. `http://memory-server:3002`).
+
+If the server is a member of the sandbox network, leave inter-container communication enabled (`enable_icc` unset/`true`) — setting it to `false` blocks the server↔sandbox call.
 
 ## Troubleshooting
 

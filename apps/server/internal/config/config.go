@@ -576,6 +576,14 @@ type SandboxConfig struct {
 	GitHubAppEncryptionKey string `env:"GITHUB_APP_ENCRYPTION_KEY" envDefault:""`
 	// NetworkName is the Docker network to attach workspace containers to for isolation
 	NetworkName string `env:"WORKSPACE_NETWORK_NAME" envDefault:""`
+	// MemoryAPIURL is the API endpoint injected into sandbox containers as
+	// MEMORY_API_URL / MEMORY_SERVER_URL so that agent tools can call back into
+	// this server. Defaults to the host gateway for single-host Docker
+	// deployments. When sandboxes run on a dedicated Docker network, set this to
+	// a URL the sandbox can actually reach (e.g. http://memory-server:3002 or the
+	// bridge gateway) — otherwise host.docker.internal:3002 times out because the
+	// server port is usually published on loopback only.
+	MemoryAPIURL string `env:"WORKSPACE_MEMORY_API_URL" envDefault:"http://host.docker.internal:3002"`
 	// DefaultImage is the Docker image for workspace containers (e.g. ghcr.io/emergent-company/memory-workspace:latest)
 	DefaultImage string `env:"WORKSPACE_DEFAULT_IMAGE" envDefault:""`
 	// FirecrackerDataDir is the directory containing Firecracker rootfs and kernel files

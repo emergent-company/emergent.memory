@@ -27,6 +27,11 @@ const (
 	defaultRuntimeLabel   = "memory.workspace"
 	workspaceDir          = "/workspace"
 	maxOutputBytes        = 50 * 1024 // 50KB output limit
+	// DefaultMemoryAPIURL is how sandbox containers reach this API server by
+	// default. host.docker.internal maps to the host gateway, which only works
+	// when the server port is reachable from the container's Docker network
+	// (i.e. not published on loopback only). Override via WORKSPACE_MEMORY_API_URL.
+	DefaultMemoryAPIURL = "http://host.docker.internal:3002"
 )
 
 // GVisorProvider implements the Provider interface using Docker with gVisor (runsc) runtime.
@@ -38,6 +43,7 @@ type GVisorProvider struct {
 	runtimeName  string // "runsc" or "" (default)
 	networkName  string // Docker network for container isolation
 	defaultImage string // Override for default workspace image
+	memoryAPIURL string // API endpoint injected into containers as MEMORY_API_URL
 
 	// beatMu serializes heartbeat lease mutations (create + prune) process-locally.
 	// Without it, two concurrent beats for the same container could each create a
@@ -58,6 +64,10 @@ type GVisorProviderConfig struct {
 	// DefaultImage overrides the default workspace base image.
 	// When empty, falls back to the package constant (ghcr.io/emergent-company/memory-workspace:latest).
 	DefaultImage string
+	// MemoryAPIURL is the API endpoint injected into containers as
+	// MEMORY_API_URL (and MEMORY_SERVER_URL). When empty, falls back to
+	// DefaultMemoryAPIURL (http://host.docker.internal:3002).
+	MemoryAPIURL string
 }
 
 // NewGVisorProvider creates a new gVisor-based workspace provider.
@@ -75,6 +85,7 @@ func NewGVisorProvider(log *slog.Logger, cfg *GVisorProviderConfig) (*GVisorProv
 	if cfg != nil {
 		p.networkName = cfg.NetworkName
 		p.defaultImage = cfg.DefaultImage
+		p.memoryAPIURL = cfg.MemoryAPIURL
 	}
 
 	if cfg != nil && cfg.ForceStandardRuntime {
@@ -123,6 +134,29 @@ func (p *GVisorProvider) Capabilities() *ProviderCapabilities {
 		RequiresKVM:         false,
 		EstimatedStartupMs:  50,
 		ProviderType:        ProviderGVisor,
+	}
+}
+
+// apiURL returns the API endpoint injected into sandbox containers, falling
+// back to the host gateway default when no override was configured.
+func (p *GVisorProvider) apiURL() string {
+	if p.memoryAPIURL != "" {
+		return p.memoryAPIURL
+	}
+	return DefaultMemoryAPIURL
+}
+
+// networkConfig returns the Docker networking config for workspace containers,
+// or nil to use the default bridge when no isolation network is configured.
+func (p *GVisorProvider) networkConfig() *network.NetworkingConfig {
+	if p.networkName == "" {
+		return nil
+	}
+	p.log.Info("attaching container to network", "network", p.networkName)
+	return &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			p.networkName: {},
+		},
 	}
 }
 
@@ -200,7 +234,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 	}
 
 	// Inject default environment variables for API discoverability
-	containerConfig.Env = append(containerConfig.Env, "MEMORY_API_URL=http://host.docker.internal:3002")
+	containerConfig.Env = append(containerConfig.Env, "MEMORY_API_URL="+p.apiURL())
 
 	// Set caller-provided environment variables (may override defaults)
 	if len(req.Env) > 0 {
@@ -265,16 +299,8 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		p.applyResourceLimits(hostConfig, req.ResourceLimits)
 	}
 
-	// Create container
-	var networkConfig *network.NetworkingConfig
-	if p.networkName != "" {
-		p.log.Info("attaching container to network", "network", p.networkName)
-		networkConfig = &network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				p.networkName: {},
-			},
-		}
-	}
+	// Create container, attached to the isolation network when configured.
+	networkConfig := p.networkConfig()
 
 	p.log.Info("creating Docker container",
 		"image", image,
@@ -555,6 +581,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 			sandboxOwnerLabel:         sandboxOwnerIdentity(),
 		},
 		WorkingDir: workspaceDir,
+		Env:        []string{"MEMORY_API_URL=" + p.apiURL()},
 	}
 
 	for k, v := range req.Labels {
@@ -578,7 +605,7 @@ func (p *GVisorProvider) CreateFromSnapshot(ctx context.Context, snapshotID stri
 	}
 
 	containerName := fmt.Sprintf("memory-ws-%d", time.Now().UnixNano())
-	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, containerName)
+	resp, err := p.client.ContainerCreate(ctx, containerConfig, hostConfig, p.networkConfig(), nil, containerName)
 	if err != nil {
 		_ = p.client.VolumeRemove(ctx, volumeName, true)
 		return nil, fmt.Errorf("failed to create container from snapshot: %w", err)

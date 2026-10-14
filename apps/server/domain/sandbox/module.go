@@ -152,6 +152,7 @@ func registerProviders(lc fx.Lifecycle, orchestrator *Orchestrator, rec *Reconci
 			gvisorCfg := &GVisorProviderConfig{
 				NetworkName:  cfg.Sandbox.NetworkName,
 				DefaultImage: cfg.Sandbox.DefaultImage,
+				MemoryAPIURL: cfg.Sandbox.MemoryAPIURL,
 			}
 			gvisorProvider, err := NewGVisorProvider(log, gvisorCfg)
 			if err != nil {
