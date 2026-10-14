@@ -1,6 +1,13 @@
 # Tasks — add-mcp-oauth-connect
 
-<!-- openspec:archive-hold: task 8.4 cannot complete as written. Figma's authorization server advertises a registration_endpoint but rejects dynamic client registration with 403 (only MCP-Catalog-listed clients may connect), so the browser consent flow is unreachable for it. Verified live against Figma: discovery + the authorization requirement; the fallback is the existing encrypted X-Figma-Token secret-header path. Held until a dynamic-client-capable provider completes a live end-to-end OAuth connect. See design.md "Live provider finding (Figma, recorded post-merge)". -->
+> **Why this change was held (now archived).** Task 8.4 — manual verification of a
+> complete browser consent flow against a live OAuth provider — could not be completed
+> as written: Figma's authorization server advertises a `registration_endpoint` but
+> rejects dynamic client registration with HTTP 403 (only clients listed in Figma's MCP
+> Catalog may connect), so its browser consent flow is unreachable. This change is
+> archived with 8.4 **not completed**: the implementation and its automated coverage
+> shipped, but a full end-to-end connect through a live provider was never verified.
+> See "Verification record (8.4)" below.
 
 ## 1. Storage
 
@@ -51,7 +58,7 @@
 - [x] 8.1 `go build ./...` for the server and gateway, plus `templ generate` for changed templ files
 - [x] 8.2 `task lint` (server, CLI, web UI, connector) passes
 - [x] 8.3 Server unit tests for the new domain code pass; gateway handler/templ tests pass
-- [ ] 8.4 Manual verification against a live OAuth provider: install from the registry, see the authorization requirement, complete the browser flow, and confirm tools are discovered and a tool call succeeds — **cannot complete against Figma**: its authorization server advertises a `registration_endpoint` but answers dynamic client registration with `403` (only MCP-Catalog-listed clients may connect), so the consent flow is unreachable. Verified live against Figma: discovery and the authorization requirement. Completion still requires a dynamic-client-capable provider (or a provisioned pre-registered client).
+- [ ] 8.4 Manual verification against a live OAuth provider: complete the browser consent flow and confirm tools are discovered and a tool call succeeds — **not completed**: no live end-to-end connect (DCR → consent → callback → token exchange → authenticated tool call → durability across restart) was ever exercised against a real provider, and no captured live artifact exists for it. Figma's authorization server advertises a `registration_endpoint` but rejects dynamic client registration with 403, so its consent flow is unreachable (see "Verification record (8.4)" below).
 
 ## 10. Post-merge fixes (live Figma verification)
 
@@ -119,8 +126,69 @@ On a deployment whose server has a public origin:
 6. Optional: leave the server idle past the access-token expiry and confirm the
    next tool call refreshes rather than failing with a 401.
 
+## Verification record (8.4) — what was and was not verified
+
+Task 8.4 asked for a manual, live end-to-end verification: install a provider, see the
+authorization requirement, complete the browser consent flow, and confirm tools are
+discovered and a tool call succeeds. **That was not completed.** No captured live artifact
+(transcript, screen recording, or committed output) exists for it.
+
+**Verified (automated, committed in `apps/server/domain/mcpregistry`):**
+
+- Authorization-requirement discovery and classification — `oauth_test.go`
+  (`TestDiscoverServerAuthRequirement_EndToEnd`, `TestParseBearerChallenge_Figma`) and
+  `oauth_discovery_test.go` (`TestDiscoverAuthRequirement_OIDCFallback`,
+  `TestDiscoverServerAuthRequirement_NoMetadataAnywhere`,
+  `TestDiscoverServerAuthRequirement_TransientFailureWinsOverAbsence`,
+  `TestDiscoverServerAuthRequirement_401MetadataIsNotAbsence`).
+- Dynamic-client-registration rejection maps to an actionable 400 — `oauth_test.go`
+  (`TestRegisterClient_RejectedSurfacesStatusAndSentinel`) and `oauth_handler_test.go`
+  (`TestMCPOAuthError_ClientRequiredMapsToBadRequest`): a rejected registration wraps
+  `ErrOAuthClientRequired`, which `mcpOAuthError` (`oauth_handler.go`) maps to
+  `apperror.NewBadRequest`, not a 500.
+- The authorize/callback flow's success and failure paths — `oauth_flow_test.go`
+  (`TestStartMCPOAuth_Success`, `TestStartMCPOAuth_RegistrationRejected`,
+  `TestCompleteMCPOAuth_Success`, `TestCompleteMCPOAuth_ReplayedState`,
+  `TestCompleteMCPOAuth_ExpiredState`) and `oauth_handler_test.go`
+  (`TestCompleteMCPOAuth_ProviderError`) against a real Postgres.
+- Live discovery/DCR probes are reproducible from a checkout but gated behind
+  `MCPREGISTRY_LIVE_OAUTH_PROBE=1` and **skipped by default** (never run in CI):
+  `oauth_live_test.go` (`TestDiscoverServerAuthRequirement_LiveFigma`,
+  `TestDiscoverServerAuthRequirement_LiveGitHub`, `TestFigmaRegistrationRejected_Live`,
+  `TestLinearDiscoveryDCRAuthorize_Live`).
+
+**Not verified (the reason 8.4 is unticked):**
+
+A full end-to-end connect through a live provider — dynamic client registration → browser
+consent → callback → token exchange → an authenticated tool call, and token durability
+across a server restart — was **never** exercised against a real provider, and no live
+artifact exists for any of those steps.
+
+Why it could not be completed with the providers available: Figma's authorization server
+advertises a `registration_endpoint` but rejects dynamic client registration with HTTP 403
+(only clients listed in Figma's MCP Catalog may connect), so its consent flow is
+unreachable. GitHub Copilot's MCP publishes no RFC 8414/OIDC metadata and supports no DCR
+(§11's OIDC-discovery fallback resolves its endpoints, but it still offers no browser
+consent flow to complete). No dynamic-client-capable provider with a usable account was
+available to drive the consent step.
+
+### Known limitations
+
+- **Figma**: discovery succeeds, but DCR is refused with 403. The rejected registration now
+  surfaces as an actionable 400 with the pre-registered-client remedy (§10.1, #1795); the
+  workaround is provisioning a client via `PUT /api/admin/mcp-servers/:id/oauth/client`.
+- **GitHub Copilot MCP**: publishes no RFC 8414/OIDC metadata and no DCR; §11 (#1792) added
+  the OIDC-discovery fallback, but without a metadata document the browser connect flow
+  still cannot complete and the token-header path remains the fallback.
+- **Landing URL must be scope-qualified**: the callback redirect is issued by the API
+  server, which never sees the gateway's org/project scope, so a bare
+  `/settings/mcp-servers` fails the gateway's `applyScope` middleware with `404` after a
+  successful connect. Dev sets the project-scoped path
+  (`/o/<org>/p/<project>/settings/mcp-servers`); making the landing scope-aware is a
+  tracked follow-up, not yet filed as an issue.
+
 ## Follow-ups (not in this change)
 
 - [x] 9.1 Per-user (rather than project-wide) OAuth credentials — filed as #1783
 - [x] 9.2 CLI `memory mcp oauth connect` parity — filed as #1784
-- [ ] 9.3 Non-MCP data-source OAuth gaps tracked by `add-data-sources`
+- [x] 9.3 Non-MCP data-source OAuth gaps tracked by `openspec/changes/add-data-sources` (its `design.md` §D6 and the open question at `design.md:95`: provider OAuth is a pass-through config, no gateway authorize/callback)
