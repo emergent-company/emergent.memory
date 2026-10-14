@@ -107,13 +107,13 @@ func gallerySeed() []GalleryEntry {
 			Render:      func() templ.Component { return components.MetaChip("lucide--wrench", "3 tools") },
 		},
 		{
-			ID: "ListRow", Slug: "list-row", Name: "ListRow", Layer: LayerComposite,
+			ID: "LinkRow", Slug: "link-row", Name: "LinkRow", Layer: LayerComposite,
 			Category: "Lists", Subcategory: "row", SourceFile: "components/list.templ",
 			PropsType:   "href templ.SafeURL, leading templ.Component, title, meta string",
 			Description: "A clickable list-page row: leading tile, title/meta column, trailing content, and an automatic chevron.",
 			Render: func() templ.Component {
 				leading := templ.Raw(`<span class="grid size-9 shrink-0 place-items-center rounded-box bg-primary/10 text-primary"><span class="iconify lucide--box size-4" aria-hidden="true"></span></span>`)
-				return components.ListRow(templ.SafeURL("#"), leading, "Object one", "person · 2h ago")
+				return components.LinkRow(templ.SafeURL("#"), leading, "Object one", "person · 2h ago")
 			},
 		},
 		{

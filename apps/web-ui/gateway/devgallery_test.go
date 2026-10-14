@@ -51,7 +51,7 @@ func TestComponentGalleryRegistry(t *testing.T) {
 	}
 
 	// Known components present, single-page helper absent.
-	for _, id := range []string{"PanelCard", "StatusBadge", "MetaGrid", "ListRow", "TableCard", "SecretRevealModal"} {
+	for _, id := range []string{"PanelCard", "StatusBadge", "MetaGrid", "LinkRow", "TableCard", "SecretRevealModal"} {
 		if _, ok := byID[id]; !ok {
 			t.Errorf("missing known component %q", id)
 		}
@@ -245,9 +245,9 @@ func TestNeedsFixtureFlag(t *testing.T) {
 		t.Error("empty render should be flagged needs fixture")
 	}
 
-	// ListRow dereferences its leading component; a nil slot panics.
+	// LinkRow dereferences its leading component; a nil slot panics.
 	panicR := GalleryEntry{ID: "panic", Render: func() templ.Component {
-		return components.ListRow(templ.SafeURL("#"), nil, "", "")
+		return components.LinkRow(templ.SafeURL("#"), nil, "", "")
 	}}
 	if !panicR.NeedsFixture() {
 		t.Error("nil-slot panic render should be flagged needs fixture")

@@ -4,10 +4,10 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// ListRow renders a clickable list-page row: a leading icon or tile, a grow
+// LinkRow renders a clickable list-page row: a leading icon or tile, a grow
 // column holding the title and metadata, caller-supplied trailing content
 // (badges and menus), and an automatic chevron.
-templ ListRow(href templ.SafeURL, leading templ.Component, title, meta string) {
+templ LinkRow(href templ.SafeURL, leading templ.Component, title, meta string) {
 	<a class="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-base-200/50" href={ href }>
 		@leading
 		<div class="min-w-0 grow">

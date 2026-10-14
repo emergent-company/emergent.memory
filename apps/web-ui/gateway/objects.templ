@@ -589,7 +589,7 @@ templ objectsList(objects []GraphObject, typeUIByType map[string]typeUI) {
 // objectRow is one browse-mode object row.
 templ objectRow(o GraphObject, tui typeUI) {
 	<div class="memory-rise">
-		@components.ListRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
+		@components.LinkRow(templ.URL("/objects/"+url.PathEscape(o.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(o), relTime(o.CreatedAt)) {
 			@objectBadges(o)
 		}
 	</div>
@@ -601,7 +601,7 @@ templ objectRow(o GraphObject, tui typeUI) {
 // signal and ranked search results don't read as noisy.
 templ objectSearchRow(r ObjectSearchResult, tui typeUI) {
 	<div class="memory-rise">
-		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(r.Object.CreatedAt)) {
+		@components.LinkRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), relTime(r.Object.CreatedAt)) {
 			@objectBadges(r.Object)
 			@objectScoreBadge(r.Score)
 		}
@@ -627,7 +627,7 @@ templ objectScoreBadge(score float32) {
 // looking like missing data.
 templ objectUnifiedRow(r ObjectSearchResult, tui typeUI) {
 	<div class="memory-rise">
-		@components.ListRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), r.Object.Type) {
+		@components.LinkRow(templ.URL("/objects/"+url.PathEscape(r.Object.ID)), typeIconTile(tui.Icon, tui.Color), graphObjectLabel(r.Object), r.Object.Type) {
 			for _, l := range r.Object.Labels {
 				@ui.Badge(ui.BadgeProps{
 					Label:   l,

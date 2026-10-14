@@ -213,6 +213,18 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 				templ.Raw(`<li class="list-row"><div class="list-col-grow"><div class="font-medium text-sm">Memory</div><div class="text-xs text-base-content/50">project</div></div></li><li class="list-row"><div class="list-col-grow"><div class="font-medium text-sm">Voice key</div><div class="text-xs text-base-content/50">credential</div></div></li>`))
 		},
 	},
+	"ListRow": {
+		PropsType:   "ListRowProps",
+		Description: "A single row inside a go-daisy List: leading slot, title/subtitle block, and trailing components.",
+		Render: func() templ.Component {
+			return ui.ListRow(ui.ListRowProps{
+				Title:    "Scheduled run",
+				Subtitle: "Agent name · 2h ago",
+				Leading:  ui.IconSpan("lucide--messages-square", "size-4 text-muted-subtle"),
+				Trailing: []templ.Component{ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")},
+			})
+		},
+	},
 	"Navbar": {
 		PropsType:   "appName string, logo ...templ.Component",
 		Description: "The top navigation bar with an app name and a right-side content slot.",

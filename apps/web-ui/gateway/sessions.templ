@@ -54,7 +54,7 @@ templ sessionsList(agents []AgentDefinitionSummary, convs []Conversation) {
 }
 
 templ sessionRow(agents []AgentDefinitionSummary, c Conversation) {
-	@components.ListRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
+	@components.LinkRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
 		if c.AgentDefinitionID != "" {
 			{{ aui := agentUIForList(agents, c.AgentDefinitionID) }}
 			@agentNameChip(shortID(c.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)

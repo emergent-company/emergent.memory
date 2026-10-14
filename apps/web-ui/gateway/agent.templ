@@ -300,7 +300,7 @@ templ agentChatsSection(data agentDashboardData) {
 }
 
 templ chatLinkRow(c Conversation) {
-	@components.ListRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt))
+	@components.LinkRow(templ.URL("/chat?c="+url.QueryEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), relTime(c.UpdatedAt))
 }
 
 // --- Agent settings ---

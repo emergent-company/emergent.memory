@@ -312,8 +312,8 @@ func TestPanelCardAppendsAccentClass(t *testing.T) {
 
 // --- list ---
 
-func TestListRowRendersLinkAndMeta(t *testing.T) {
-	html := renderHTML(t, ListRow(templ.SafeURL("/objects/o1"), templ.Raw(`<span class="leading-slot"></span>`), "Object one", "person"))
+func TestLinkRowRendersLinkAndMeta(t *testing.T) {
+	html := renderHTML(t, LinkRow(templ.SafeURL("/objects/o1"), templ.Raw(`<span class="leading-slot"></span>`), "Object one", "person"))
 	assertContains(t, html,
 		`href="/objects/o1"`,
 		"leading-slot",
