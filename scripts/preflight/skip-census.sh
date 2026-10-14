@@ -53,8 +53,24 @@ cd "$root"
 # Skip call sites recorded 2026-09-26 (see #1088). Lower either number as debt
 # is paid down — never raise one to make CI green. Raising requires an explicit
 # justification in the PR body.
-BASELINE_SKIPS=337
-BASELINE_NO_REF=335
+#
+# Raised 2026-10-14 (337→338, 335→336): commit bdcbb7693 (#1793) added three
+# live-probe skips to apps/server/domain/mcpregistry/oauth_live_test.go:
+#   - :97  TestFigmaRegistrationRejected_Live — gate on MCPREGISTRY_LIVE_OAUTH_PROBE=1
+#   - :111 TestFigmaRegistrationRejected_Live — defensive guard on metadata drift
+#   - :133 TestLinearDiscoveryDCRAuthorize_Live — gate on MCPREGISTRY_LIVE_OAUTH_PROBE=1
+# The :111 guard fires only when Figma stops advertising a registration endpoint
+# (req.RegistrationEndpoint == ""); the live rejection assertion that follows it
+# (:116-121) is real, executing coverage — Figma advertises a registration
+# endpoint but rejects dynamic client registration with 403 (archived change
+# 2026-10-13-add-mcp-oauth-connect, design.md:131). Each skip gates a live OAuth
+# probe against a third-party endpoint (Figma/Linear) behind an opt-in env var so
+# CI never depends on remote metadata. The baseline carried 2 skips of headroom
+# (live tree 335/333 vs baseline 337/335), so these 3 sites overflowed it by
+# exactly 1. No issue tracks these skips (a deliberate CI-hygiene gate, not debt
+# to be paid down), so BASELINE_NO_REF moves with BASELINE_SKIPS.
+BASELINE_SKIPS=338
+BASELINE_NO_REF=336
 
 mapfile -t files < <(git ls-files '*_test.go')
 if [ "${#files[@]}" -eq 0 ]; then
