@@ -61,7 +61,7 @@ Never make code or doc changes directly in the shared checkout (`/root/emergent.
   gh pr create --base main --fill
   ```
 
-  Authors do **not** merge their own PRs — a review is required. The merge is performed by a maintainer, the review bot (apparatus in `emergent-company/emergent.memory.infra`), or a **reviewer agent** (the general/orchestrator agent acting as *independent reviewer*, not as the PR author). A reviewer agent may merge only after its own review passes, CI is green, and no `CHANGES_REQUESTED` review is outstanding.
+  Authors do **not** merge their own PRs — a review is required. The **operator/orchestrator agent** spins off an independent review as a separate agent/session (never the PR author, never the session that wrote the change); a PR merges only after that review passes, CI is green, and no `CHANGES_REQUESTED` review is outstanding. There is **no review bot** — the `emergent-code-reviewer` App is only the credential the infra repo's preview workflows mint to check out this private repo, never a reviewer.
 - **Cleanup** (after merge): `git worktree remove /root/emergent.memory-wt/<slug>` and delete the branch.
 - **Exceptions:** read-only lanes (`@explorer`, `@oracle`, `@librarian`) and a single writer when no other session is active in the checkout.
 - Full protocol, safety guards, and state tracking: load the `worktrees` skill.

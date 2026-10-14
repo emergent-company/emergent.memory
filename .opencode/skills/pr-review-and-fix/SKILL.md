@@ -373,9 +373,11 @@ in the same pass — do not leave it as a "follow-up note".
 **Merge gate (guardrails):**
 - Never merge with CI red, `CHANGES_REQUESTED`, or an unresolved security blocker.
 - Never squash/amend already-pushed commits to sidestep a problem.
-- Do **not** merge your own authored PR unless explicitly asked — repo policy says the
-  review bot or a maintainer merges. When you are acting as **reviewer** (not author),
-  merging is expected.
+- Authors never merge their own PRs — the **operator/orchestrator agent** spins off an
+  independent review as a separate agent/session (never the PR author, never the session
+  that wrote the change), and the PR merges only after that review passes and CI is green.
+  There is **no review bot**. When you are acting as **reviewer** (not author), merging is
+  expected.
 
 ---
 
@@ -499,6 +501,6 @@ without further code changes:
 - Independent review first: verify every bot claim against the live code before fixing
 - Check spec drift — behavior/interface changes must ship with their OpenSpec delta specs
 - Never merge with CI red, `CHANGES_REQUESTED`, or an unresolved security blocker
-- Do not merge your own authored PR unless explicitly asked (reviewer role may merge)
+- Do not merge your own authored PR — authors never merge their own PRs (reviewer role may merge)
 - File follow-ups (`docs/improvements` / `docs/bugs`) only for real, deferred items —
   never trivia or things you fixed in the same PR

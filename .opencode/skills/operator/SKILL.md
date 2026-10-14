@@ -245,7 +245,7 @@ against a peer **session**, not against a peer **manager**. To fix the collision
   build/vet/test/lint from the changed module (`apps/server`, `apps/web-ui/gateway`,
   `apps/cli`), `gofmt -l` on changed `.go` files, `openspec validate` when a change
   exists. Docs-only / Swift lanes gate on their own toolchain, not `go test`.
-- **Never self-merge.** The review bot or a reviewer agent merges.
+- **Never self-merge.** Authors never merge their own PRs — the operator/orchestrator agent spins off an independent review as a separate agent/session (never the PR author, never the session that wrote the change), and a PR merges only after that review passes and CI is green. There is **no review bot**.
 - **Never touch the shared checkout.** Commit each finished unit immediately;
   stage exact paths; never sweep a parallel session's WIP.
 - **Never print secrets.** Read from a file.

@@ -110,8 +110,10 @@ gh pr edit <number> --body-file <correct-file>
 
 ## Guardrails
 
-- **Authors do not merge their own PRs.** A review is required; a maintainer or the
-  review bot merges once checks pass. Never run `gh pr merge` yourself.
+- **Authors do not merge their own PRs.** A review is required; the operator/orchestrator
+  agent spins off an independent review as a separate agent/session (never the PR author,
+  never the session that wrote the change), and the PR merges only after that review passes
+  and CI is green. Never run `gh pr merge` yourself.
 - **Never force-push** to `main`/`master`. If the branch conflicts, merge `main`
   into it (or rebase) instead.
 - **Verify the body landed correctly** before reporting done — don't trust that
@@ -120,4 +122,4 @@ gh pr edit <number> --body-file <correct-file>
   in the same PR (see repo `AGENTS.md`).
 - **Work in a worktree**, not the shared checkout, when other sessions may be
   active (see repo `AGENTS.md` / the `worktrees` skill).
-- Report the PR URL when done; leave merging to the maintainer or the review bot.
+- Report the PR URL when done; leave merging to the independent reviewer.
