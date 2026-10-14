@@ -36,7 +36,7 @@ explicitly-set environment variable always wins over `.env`. The full template i
 | `MEMORY_MAC_SUBTREE` | no | Override the per-script remote subtree (mac connector default `client/macos`). |
 | `MEMORY_MAC_IOS_SUBDIR` | no | Back-compat alias for the iOS subtree (default `client/ios`). |
 | `ALLOW_SYNC_INTO_GIT` / `ALLOW_DELETE_IN_GIT` | no | Danger overrides for syncing into a real git clone. |
-| `MAC_SSH_OPTS` | no | Extra `ssh` options (used by `mac-doctor.sh` to fail fast). |
+| `MAC_SSH_OPTS` | no | Extra `ssh` options, appended after the safe defaults (`BatchMode=yes`, `ConnectTimeout=10`, `ServerAliveInterval=15`, `ServerAliveCountMax=3`) that `mac_ssh`/`rsync` apply automatically. |
 | `MEMORY_MAC_ENV_FILE` | no | Path of the env file to read (default `apps/connector.mac/.env`). Read before the file is loaded and not settable from inside it — export it in the environment. |
 
 ¹ `MEMORY_MAC_HOST` is only required when you are **not** using named hosts.

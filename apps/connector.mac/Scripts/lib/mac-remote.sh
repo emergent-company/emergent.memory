@@ -237,19 +237,27 @@ mac_resolve_target() {
   export MAC_RSYNC_DEST
 }
 
+# Safe defaults for every ssh connection to the Mac (and rsync's ssh transport,
+# below). These are ALWAYS applied so an unreachable / asleep / mistyped host
+# fails fast with ssh's own error instead of hanging forever:
+#   BatchMode=yes          never prompt for a credential or host-key (no TTY in
+#                          CI / non-interactive runs)
+#   ConnectTimeout=10      bound the TCP connect (the old silent hang had none)
+#   ServerAlive*           detect a dead peer mid-transfer
+MAC_SSH_SAFE_OPTS="-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3"
+
 # mac_ssh <remote-command> — the single SSH invocation point. The host comes
 # from MAC_HOST (set by mac_resolve_target). Local-destination mode has no
 # remote to talk to, so fail clearly rather than invoking ssh with no host.
 #
-# Callers may set MAC_SSH_OPTS to a space-separated list of extra options
-# (e.g. "-o BatchMode=yes -o ConnectTimeout=8") to fail fast instead of
-# hanging on an unreachable host; mac-doctor.sh uses this. Unset = no change.
+# Callers may append extra options via MAC_SSH_OPTS (a space-separated list,
+# e.g. "-o LogLevel=VERBOSE"); they are added AFTER the safe defaults above.
 mac_ssh() {
   [[ -n "${MAC_HOST:-}" ]] \
     || mac_die "mac_ssh: MAC_HOST is empty (local-destination mode has no remote host)"
-  # MAC_SSH_OPTS is a deliberate, word-split option list.
+  # MAC_SSH_SAFE_OPTS / MAC_SSH_OPTS are deliberate, word-split option lists.
   # shellcheck disable=SC2086,SC2029 # SC2029: callers pass pre-escaped commands meant to expand remotely
-  ssh ${MAC_SSH_OPTS:-} "$MAC_HOST" "$@"
+  ssh $MAC_SSH_SAFE_OPTS ${MAC_SSH_OPTS:-} "$MAC_HOST" "$@"
 }
 
 # mac_path_exists <path> — read-only `test -e` probe, local or over ssh.
@@ -326,5 +334,8 @@ mac_rsync_guarded() {
     --exclude '.env'
   )
   [[ "${MAC_DRY_RUN:-0}" == 1 ]] && args+=(--dry-run -i)
-  rsync "${args[@]}" "$src/" "$dest/"
+  # rsync to a remote MAC_HOST must fail fast too, not hang on connect: route it
+  # over the same safe ssh options mac_ssh uses. The -e transport is ignored for
+  # a local destination (MAC_HOST empty), so local-destination mode is unchanged.
+  rsync "${args[@]}" -e "ssh $MAC_SSH_SAFE_OPTS ${MAC_SSH_OPTS:-}" "$src/" "$dest/"
 }
