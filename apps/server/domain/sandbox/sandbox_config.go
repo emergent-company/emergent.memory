@@ -24,15 +24,14 @@ var ValidToolNames = []string{"bash", "read", "write", "edit", "glob", "grep", "
 // AgentSandboxConfig defines the declarative workspace configuration for an agent definition.
 // Stored as JSONB in kb.agent_definitions.workspace_config.
 type AgentSandboxConfig struct {
-	Enabled         bool              `json:"enabled"`
-	Provider        string            `json:"provider,omitempty"` // Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)
-	RepoSource      *RepoSourceConfig `json:"repo_source,omitempty"`
-	Tools           []string          `json:"tools,omitempty"`
-	ResourceLimits  *ResourceLimits   `json:"resource_limits,omitempty"`
-	CheckoutOnStart bool              `json:"checkout_on_start,omitempty"`
-	BaseImage       string            `json:"base_image,omitempty"`
-	SetupCommands   []string          `json:"setup_commands,omitempty"`
-	EnvVars         map[string]string `json:"env_vars,omitempty"`
+	Enabled        bool              `json:"enabled"`
+	Provider       string            `json:"provider,omitempty"` // Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)
+	RepoSource     *RepoSourceConfig `json:"repo_source,omitempty"`
+	Tools          []string          `json:"tools,omitempty"`
+	ResourceLimits *ResourceLimits   `json:"resource_limits,omitempty"`
+	BaseImage      string            `json:"base_image,omitempty"`
+	SetupCommands  []string          `json:"setup_commands,omitempty"`
+	EnvVars        map[string]string `json:"env_vars,omitempty"`
 }
 
 // RepoSourceConfig defines the repository source for a workspace.

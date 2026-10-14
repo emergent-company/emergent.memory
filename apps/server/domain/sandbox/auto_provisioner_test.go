@@ -522,11 +522,10 @@ func TestIntegration_WorkspaceConfig_RoundTrip(t *testing.T) {
 			URL:    "https://github.com/org/repo",
 			Branch: "main",
 		},
-		Tools:           []string{"bash", "read", "write", "edit"},
-		ResourceLimits:  &ResourceLimits{CPU: "4", Memory: "8G", Disk: "20G"},
-		CheckoutOnStart: true,
-		BaseImage:       "emergent/workspace:v2",
-		SetupCommands:   []string{"npm install", "npm run build"},
+		Tools:          []string{"bash", "read", "write", "edit"},
+		ResourceLimits: &ResourceLimits{CPU: "4", Memory: "8G", Disk: "20G"},
+		BaseImage:      "emergent/workspace:v2",
+		SetupCommands:  []string{"npm install", "npm run build"},
 	}
 
 	m, err := original.ToMap()
@@ -544,7 +543,6 @@ func TestIntegration_WorkspaceConfig_RoundTrip(t *testing.T) {
 	assert.Equal(t, "4", parsed.ResourceLimits.CPU)
 	assert.Equal(t, "8G", parsed.ResourceLimits.Memory)
 	assert.Equal(t, "20G", parsed.ResourceLimits.Disk)
-	assert.True(t, parsed.CheckoutOnStart)
 	assert.Equal(t, "emergent/workspace:v2", parsed.BaseImage)
 	assert.Equal(t, []string{"npm install", "npm run build"}, parsed.SetupCommands)
 

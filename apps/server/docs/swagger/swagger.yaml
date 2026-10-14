@@ -489,6 +489,13 @@ definitions:
       success:
         type: boolean
     type: object
+  domain_agents.AddWorkItemCommentDTO:
+    properties:
+      body:
+        description: Body is required (non-empty) comment text recorded as a durable
+          note.
+        type: string
+    type: object
   domain_agents.AgentCapabilities:
     properties:
       allowedObjectTypes:
@@ -623,6 +630,12 @@ definitions:
         items:
           type: string
         type: array
+      sourceBlueprintId:
+        description: |-
+          SourceBlueprintID is the ID of the blueprint that created this definition
+          (NULL for manual/pre-existing definitions). Exposed so the gateway can warn
+          when editing a blueprint-derived agent.
+        type: string
       systemPrompt:
         type: string
       toolGroups:
@@ -1020,6 +1033,14 @@ definitions:
         type: integer
       status:
         $ref: '#/definitions/domain_agents.AgentWorkStatusConfig'
+      triggerStatuses:
+        description: |-
+          TriggerStatuses lists the status values that, when an object transitions
+          into one of them, wake this agent (the `status_changed` signal). Defaults
+          to the built-in "ready" status when unset.
+        items:
+          type: string
+        type: array
       workContract:
         allOf:
         - $ref: '#/definitions/domain_agents.AgentWorkContract'
@@ -1269,17 +1290,31 @@ definitions:
         items:
           type: string
         type: array
+      properties:
+        description: |-
+          Properties, when the agent subscribes to the `updated` event, filters
+          updates to those whose changed property paths (RFC 6901 JSON Pointers)
+          intersect this list. Empty means the `updated` signal matches any emitted
+          content change (the updated emit only fires for a real change, so no
+          filter means "wake on every change").
+        items:
+          type: string
+        type: array
     type: object
   domain_agents.ReactionEventType:
     enum:
     - created
     - updated
     - deleted
+    - status_changed
+    - assigned
     type: string
     x-enum-varnames:
     - EventTypeCreated
     - EventTypeUpdated
     - EventTypeDeleted
+    - EventTypeStatusChanged
+    - EventTypeAssigned
   domain_agents.ReassignWorkItemDTO:
     properties:
       assignee:
@@ -1456,6 +1491,12 @@ definitions:
       priority:
         type: integer
     type: object
+  domain_agents.UpdateWorkItemStatusDTO:
+    properties:
+      status:
+        description: Status is the exact work status to set (must be non-empty).
+        type: string
+    type: object
   domain_agents.WorkItemActionDTO:
     properties:
       escalated:
@@ -1464,6 +1505,21 @@ definitions:
         $ref: '#/definitions/domain_agents.WorkItemHeadDTO'
       round:
         type: integer
+      runId:
+        type: string
+    type: object
+  domain_agents.WorkItemCommentDTO:
+    properties:
+      actorType:
+        type: string
+      author:
+        type: string
+      body:
+        type: string
+      createdAt:
+        type: string
+      id:
+        type: string
       runId:
         type: string
     type: object
@@ -1500,6 +1556,10 @@ definitions:
     type: object
   domain_agents.WorkItemDetailDTO:
     properties:
+      comments:
+        items:
+          $ref: '#/definitions/domain_agents.WorkItemCommentDTO'
+        type: array
       feedback:
         items:
           $ref: '#/definitions/domain_agents.WorkItemFeedbackDTO'
@@ -7900,8 +7960,6 @@ definitions:
         type: array
       id:
         type: string
-      isSystem:
-        type: boolean
       license:
         type: string
       migrations:
@@ -8057,12 +8115,6 @@ definitions:
         type: string
       excludeFromSearch:
         type: boolean
-      isSystem:
-        description: |-
-          IsSystem is true when the type is contributed by a system pack
-          (is_system=true, e.g. session-message-types) resolved at read time rather
-          than via a kb.project_schemas assignment.
-        type: boolean
       label:
         type: string
       name:
@@ -8160,11 +8212,6 @@ definitions:
     properties:
       description:
         type: string
-      isSystem:
-        description: |-
-          IsSystem is true when the relationship type is contributed by a system
-          pack (is_system=true) resolved at read time.
-        type: boolean
       label:
         type: string
       name:
@@ -9975,8 +10022,6 @@ definitions:
     properties:
       base_image:
         type: string
-      checkout_on_start:
-        type: boolean
       enabled:
         type: boolean
       env_vars:
@@ -10864,6 +10909,11 @@ paths:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Provider publishes no OAuth authorization metadata — configure
+            a token header instead
           schema:
             $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
         "502":
@@ -19671,6 +19721,49 @@ paths:
       summary: Cancel a work item
       tags:
       - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/comments:
+    post:
+      consumes:
+      - application/json
+      description: Records a durable human comment on a work item (append-only; never
+        transitions the item)
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      - description: Comment
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.AddWorkItemCommentDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Comment added
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "400":
+          description: Empty comment
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Comment on a work item
+      tags:
+      - agents
   /api/projects/{projectId}/work-items/{canonicalId}/reassign:
     post:
       consumes:
@@ -19783,6 +19876,57 @@ paths:
       security:
       - bearerAuth: []
       summary: Retry a work item
+      tags:
+      - agents
+  /api/projects/{projectId}/work-items/{canonicalId}/status:
+    post:
+      consumes:
+      - application/json
+      description: Sets a work item to an exact status (needs_review is set when the
+        target is the review status)
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      - description: Work item canonical ID
+        in: path
+        name: canonicalId
+        required: true
+        type: string
+      - description: Status
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_agents.UpdateWorkItemStatusDTO'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Status set
+          schema:
+            $ref: '#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO'
+        "400":
+          description: Empty or disallowed status
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Non-project member or missing agents:write scope
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Set a work item status
       tags:
       - agents
   /api/projects/{projectId}/work-items/runs:

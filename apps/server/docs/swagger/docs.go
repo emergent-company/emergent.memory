@@ -1251,6 +1251,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
                     },
+                    "422": {
+                        "description": "Provider publishes no OAuth authorization metadata — configure a token header instead",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
                     "502": {
                         "description": "Authorization server metadata could not be fetched",
                         "schema": {
@@ -14649,6 +14655,71 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/projects/{projectId}/work-items/{canonicalId}/comments": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Records a durable human comment on a work item (append-only; never transitions the item)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Comment on a work item",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Comment",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.AddWorkItemCommentDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Comment added",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty comment",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/work-items/{canonicalId}/reassign": {
             "post": {
                 "security": [
@@ -14816,6 +14887,83 @@ const docTemplate = `{
                     },
                     "409": {
                         "description": "Not blocked",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{projectId}/work-items/{canonicalId}/status": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Sets a work item to an exact status (needs_review is set when the target is the review status)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Set a work item status",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Work item canonical ID",
+                        "name": "canonicalId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Status",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.UpdateWorkItemStatusDTO"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Status set",
+                        "schema": {
+                            "$ref": "#/definitions/domain_agents.APIResponse-domain_agents_WorkItemActionDTO"
+                        }
+                    },
+                    "400": {
+                        "description": "Empty or disallowed status",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Non-project member or missing agents:write scope",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -26031,6 +26179,15 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.AddWorkItemCommentDTO": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "description": "Body is required (non-empty) comment text recorded as a durable note.",
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.AgentCapabilities": {
             "type": "object",
             "properties": {
@@ -26213,6 +26370,10 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "sourceBlueprintId": {
+                    "description": "SourceBlueprintID is the ID of the blueprint that created this definition\n(NULL for manual/pre-existing definitions). Exposed so the gateway can warn\nwhen editing a blueprint-derived agent.",
+                    "type": "string"
                 },
                 "systemPrompt": {
                     "type": "string"
@@ -26746,6 +26907,13 @@ const docTemplate = `{
                 "status": {
                     "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
                 },
+                "triggerStatuses": {
+                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the ` + "`" + `status_changed` + "`" + ` signal). Defaults\nto the built-in \"ready\" status when unset.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "workContract": {
                     "description": "WorkContract declares the deliverables the agent must produce before it\nmay complete a work item (P6). Zero value = no validation. It is\nagent-only (no per-type override): the required deliverable types describe\nwhat the *agent* produces, whereas the per-type config describes how items\nof a type are processed (see design.md \"Work contract\").",
                     "allOf": [
@@ -27075,6 +27243,13 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                },
+                "properties": {
+                    "description": "Properties, when the agent subscribes to the ` + "`" + `updated` + "`" + ` event, filters\nupdates to those whose changed property paths (RFC 6901 JSON Pointers)\nintersect this list. Empty means the ` + "`" + `updated` + "`" + ` signal matches any emitted\ncontent change (the updated emit only fires for a real change, so no\nfilter means \"wake on every change\").",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -27083,12 +27258,16 @@ const docTemplate = `{
             "enum": [
                 "created",
                 "updated",
-                "deleted"
+                "deleted",
+                "status_changed",
+                "assigned"
             ],
             "x-enum-varnames": [
                 "EventTypeCreated",
                 "EventTypeUpdated",
-                "EventTypeDeleted"
+                "EventTypeDeleted",
+                "EventTypeStatusChanged",
+                "EventTypeAssigned"
             ]
         },
         "domain_agents.ReassignWorkItemDTO": {
@@ -27330,6 +27509,15 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.UpdateWorkItemStatusDTO": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "description": "Status is the exact work status to set (must be non-empty).",
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.WorkItemActionDTO": {
             "type": "object",
             "properties": {
@@ -27341,6 +27529,29 @@ const docTemplate = `{
                 },
                 "round": {
                     "type": "integer"
+                },
+                "runId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.WorkItemCommentDTO": {
+            "type": "object",
+            "properties": {
+                "actorType": {
+                    "type": "string"
+                },
+                "author": {
+                    "type": "string"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
                 },
                 "runId": {
                     "type": "string"
@@ -27397,6 +27608,12 @@ const docTemplate = `{
         "domain_agents.WorkItemDetailDTO": {
             "type": "object",
             "properties": {
+                "comments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.WorkItemCommentDTO"
+                    }
+                },
                 "feedback": {
                     "type": "array",
                     "items": {
@@ -36619,9 +36836,6 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
-                "isSystem": {
-                    "type": "boolean"
-                },
                 "license": {
                     "type": "string"
                 },
@@ -36847,10 +37061,6 @@ const docTemplate = `{
                 "excludeFromSearch": {
                     "type": "boolean"
                 },
-                "isSystem": {
-                    "description": "IsSystem is true when the type is contributed by a system pack\n(is_system=true, e.g. session-message-types) resolved at read time rather\nthan via a kb.project_schemas assignment.",
-                    "type": "boolean"
-                },
                 "label": {
                     "type": "string"
                 },
@@ -36995,10 +37205,6 @@ const docTemplate = `{
             "properties": {
                 "description": {
                     "type": "string"
-                },
-                "isSystem": {
-                    "description": "IsSystem is true when the relationship type is contributed by a system\npack (is_system=true) resolved at read time.",
-                    "type": "boolean"
                 },
                 "label": {
                     "type": "string"
@@ -39691,9 +39897,6 @@ const docTemplate = `{
             "properties": {
                 "base_image": {
                     "type": "string"
-                },
-                "checkout_on_start": {
-                    "type": "boolean"
                 },
                 "enabled": {
                     "type": "boolean"

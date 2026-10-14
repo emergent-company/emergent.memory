@@ -20,8 +20,7 @@ func TestValidate_ValidConfig(t *testing.T) {
 			URL:    "https://github.com/org/repo",
 			Branch: "main",
 		},
-		Tools:           []string{"bash", "read", "write"},
-		CheckoutOnStart: true,
+		Tools: []string{"bash", "read", "write"},
 	}
 	errs := cfg.Validate()
 	assert.Empty(t, errs)
@@ -238,11 +237,10 @@ func TestParseAndToMap_Roundtrip(t *testing.T) {
 			URL:    "https://github.com/org/repo",
 			Branch: "main",
 		},
-		Tools:           []string{"bash", "read", "write"},
-		CheckoutOnStart: true,
-		BaseImage:       "ubuntu:22.04",
-		SetupCommands:   []string{"apt-get update", "apt-get install -y curl"},
-		ResourceLimits:  &ResourceLimits{CPU: "2", Memory: "4G", Disk: "20G"},
+		Tools:          []string{"bash", "read", "write"},
+		BaseImage:      "ubuntu:22.04",
+		SetupCommands:  []string{"apt-get update", "apt-get install -y curl"},
+		ResourceLimits: &ResourceLimits{CPU: "2", Memory: "4G", Disk: "20G"},
 	}
 
 	m, err := original.ToMap()
@@ -258,7 +256,6 @@ func TestParseAndToMap_Roundtrip(t *testing.T) {
 	assert.Equal(t, original.RepoSource.URL, parsed.RepoSource.URL)
 	assert.Equal(t, original.RepoSource.Branch, parsed.RepoSource.Branch)
 	assert.Equal(t, original.Tools, parsed.Tools)
-	assert.Equal(t, original.CheckoutOnStart, parsed.CheckoutOnStart)
 	assert.Equal(t, original.BaseImage, parsed.BaseImage)
 	assert.Equal(t, original.SetupCommands, parsed.SetupCommands)
 	assert.Equal(t, original.ResourceLimits.CPU, parsed.ResourceLimits.CPU)
@@ -286,7 +283,6 @@ func TestDefaultAgentSandboxConfig(t *testing.T) {
 	assert.Nil(t, cfg.RepoSource)
 	assert.Nil(t, cfg.Tools)
 	assert.Nil(t, cfg.ResourceLimits)
-	assert.False(t, cfg.CheckoutOnStart)
 	assert.Empty(t, cfg.BaseImage)
 	assert.Nil(t, cfg.SetupCommands)
 }
