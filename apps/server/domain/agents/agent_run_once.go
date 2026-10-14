@@ -291,19 +291,25 @@ func runFailureMessage(ctx context.Context, repo agentOnceRepository, runID stri
 	return "agent run failed"
 }
 
-// isAgentReplyRole reports whether a persisted run-message role can carry the
+// IsAgentReplyRole reports whether a persisted run-message role can carry the
 // bound agent's reply text.
 //
-// The executor persists assistant turns under the ADK event Author, which is the
-// sanitized agent name (e.g. "research_agent"), NOT the literal "assistant"
-// (see persistEventContent and sanitizeAgentName). Filtering on role ==
-// "assistant" therefore never matched a real run and made call_agent always
-// return "agent run produced no assistant reply". We instead accept any role
-// that is not an explicit user/tool/system side, mirroring the chat fallback in
-// domain/chat/handler.go. Both "tool" (executor tool responses) and
-// "tool_result" (ACP/historical tool output) are excluded, as is "system", so
-// prompts and raw tool output never leak to the caller.
-func isAgentReplyRole(role string) bool {
+// It is the single shared predicate for the persisted-author contract: the
+// executor persists assistant turns under the ADK event Author — the sanitized
+// agent name (e.g. "research_agent", "coder", "Norwegian_Law_Assistant"), NOT
+// the literal "assistant" (see persistEventContent and sanitizeAgentName).
+// CONSUMERS MUST NOT COMPARE AgentRunMessage.Role / ConversationHistoryItem.Role
+// AGAINST "assistant": that literal never matches a real agent turn, so an
+// equality check silently drops every reply. Route role classification through
+// this predicate instead (the runrole-guard preflight gate fails a new
+// `role == "assistant"` / `role != "assistant"` check on run-message data).
+//
+// A role is an agent reply when it is not an explicit user/tool/system side: the
+// empty role, "user", "tool" (executor tool responses), "tool_result"
+// (ACP/historical tool output), and "system" are excluded, so prompts and raw
+// tool output never leak to a caller; every other author — including the literal
+// "assistant" from hand-written or migrated rows — is accepted.
+func IsAgentReplyRole(role string) bool {
 	switch role {
 	case "", "user", "tool", "tool_result", "system":
 		return false
@@ -335,7 +341,7 @@ func assistantReply(ctx context.Context, repo agentOnceRepository, runID string)
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
 		m := msgs[i]
-		if m == nil || !isAgentReplyRole(m.Role) {
+		if m == nil || !IsAgentReplyRole(m.Role) {
 			continue
 		}
 		var b strings.Builder

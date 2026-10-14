@@ -794,14 +794,14 @@ func (s *ShareService) sessionTranscript(ctx context.Context, sessionID string) 
 		}
 		// The executor persists assistant turns under the sanitized agent name
 		// (the ADK event Author, e.g. "coder"), not the literal "assistant"
-		// (see persistEventContent and isAgentReplyRole). Map any non-user/
+		// (see persistEventContent and IsAgentReplyRole). Map any non-user/
 		// non-tool/non-tool_result/non-system author role to "assistant" so real
 		// replies are never dropped; the wire DTO stays role: "user"|"assistant".
 		role := it.Role
 		switch {
 		case role == "user":
 			// keep as user
-		case isAgentReplyRole(role):
+		case IsAgentReplyRole(role):
 			role = "assistant"
 		default:
 			continue // system, tool, tool_result, ""

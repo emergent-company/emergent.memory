@@ -42,7 +42,7 @@ func MapRunStatusToTaskState(status AgentRunStatus) TaskState {
 // MapRoleToA2A maps an internal message role to an A2A Role. Genuine user
 // messages map to ROLE_USER; every other author maps to ROLE_AGENT. The
 // executor persists assistant turns under the sanitized agent name (ADK event
-// Author), NOT the literal "assistant" (see isAgentReplyRole), so a default of
+// Author), NOT the literal "assistant" (see IsAgentReplyRole), so a default of
 // ROLE_USER would misclassify real agent output. Non-conversational kinds
 // (system, tool, tool_result) are filtered before this is called — see
 // isA2AHistoryRole.
@@ -178,11 +178,11 @@ func MessagesToA2A(messages []AgentRunMessage) []Message {
 // finalAssistantText returns the text of the last agent-authored message, if
 // any. Agent turns are persisted under the sanitized agent name (not the
 // literal "assistant"), so this accepts any non-user/tool/system role via
-// isAgentReplyRole.
+// IsAgentReplyRole.
 func finalAssistantText(messages []AgentRunMessage) string {
 	var last string
 	for i := range messages {
-		if !isAgentReplyRole(messages[i].Role) || isInternalOnlyRole(messages[i].Role) {
+		if !IsAgentReplyRole(messages[i].Role) || isInternalOnlyRole(messages[i].Role) {
 			continue
 		}
 		if text, ok := messages[i].Content["text"]; ok {

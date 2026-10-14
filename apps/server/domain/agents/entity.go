@@ -792,9 +792,16 @@ func toolPolicyBlocks(policy ToolPolicy, hasPolicy bool) bool {
 type AgentRunMessage struct {
 	bun.BaseModel `bun:"table:kb.agent_run_messages,alias:arm"`
 
-	ID         string         `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
-	RunID      string         `bun:"run_id,type:uuid,notnull" json:"runId"`
-	Role       string         `bun:"role,notnull" json:"role"` // system, user, assistant, tool_result
+	ID    string `bun:"id,pk,type:uuid,default:gen_random_uuid()" json:"id"`
+	RunID string `bun:"run_id,type:uuid,notnull" json:"runId"`
+	// Role holds the message author. It is NOT a fixed enum: the executor
+	// persists an assistant turn under the ADK event Author — the sanitized
+	// agent name (e.g. "coder", "Norwegian_Law_Assistant") — not the literal
+	// "assistant" (an empty Author falls back to "assistant"); non-conversational
+	// rows use "system", "user", "tool", or "tool_result". DO NOT compare Role to
+	// "assistant": classify it with IsAgentReplyRole instead (the runrole-guard
+	// gate enforces this).
+	Role       string         `bun:"role,notnull" json:"role"`
 	Content    map[string]any `bun:"content,type:jsonb,notnull,default:'{}'" json:"content"`
 	StepNumber int            `bun:"step_number,notnull,default:0" json:"stepNumber"`
 	CreatedAt  time.Time      `bun:"created_at,nullzero,notnull,default:current_timestamp" json:"createdAt"`

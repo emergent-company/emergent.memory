@@ -3801,6 +3801,12 @@ type ConversationHistoryItem struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Fields populated for user_message / assistant_message
+	//
+	// Role holds the message author (the ADK event Author for an assistant
+	// turn) — the sanitized agent name such as "coder", not the literal
+	// "assistant" (an empty Author falls back to "assistant"). DO NOT compare
+	// Role to "assistant"; classify it with IsAgentReplyRole (the runrole-guard
+	// gate enforces this).
 	Role    string         `json:"role,omitempty"`
 	Content map[string]any `json:"content,omitempty"`
 
@@ -3918,7 +3924,7 @@ func (r *Repository) GetConversationFullHistory(ctx context.Context, sessionID s
 				Role:       m.Role,
 				Content:    m.Content,
 			}
-			if isAgentReplyRole(m.Role) {
+			if IsAgentReplyRole(m.Role) {
 				item.Citations = deriveMessageCitations(m.Content, candsByRun[run.ID])
 			}
 			entries = append(entries, timelineEntry{

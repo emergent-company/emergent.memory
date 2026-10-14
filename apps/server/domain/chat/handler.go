@@ -1427,17 +1427,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	if responseText == "" && result != nil && result.Status == agents.RunStatusSuccess {
 		fallback := ""
 		if runMsgs, err := h.agentRepo.FindMessagesByRunID(ctx, result.RunID); err == nil {
-			// Last text-bearing row that is not the user/tool side of the run is
-			// the assistant answer (Role may be "assistant" or the agent author).
-			for i := len(runMsgs) - 1; i >= 0; i-- {
-				if runMsgs[i].Role == RoleUser || runMsgs[i].Role == "tool" || runMsgs[i].Role == "system" {
-					continue
-				}
-				if t := agentRunMessageText(runMsgs[i].Content); t != "" {
-					fallback = t
-					break
-				}
-			}
+			fallback = lastAgentReplyText(runMsgs)
 		}
 		if fallback == "" {
 			if t, ok := result.Summary["final_response"].(string); ok && t != "" {
@@ -1503,6 +1493,27 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 	}
 
 	return result
+}
+
+// lastAgentReplyText returns the text of the last agent-authored message in a
+// run's persisted messages, or "" when none carries text.
+//
+// The executor persists an assistant turn under the ADK event Author — the
+// sanitized agent name (e.g. "coder"), never the literal "assistant" — so this
+// classifies each row with agents.IsAgentReplyRole rather than comparing Role to
+// "assistant" (which would match no real run and silently drop the answer). The
+// predicate also excludes the user/tool/tool_result/system sides, so a raw tool
+// result can never be surfaced as the assistant's answer.
+func lastAgentReplyText(msgs []*agents.AgentRunMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i] == nil || !agents.IsAgentReplyRole(msgs[i].Role) {
+			continue
+		}
+		if t := agentRunMessageText(msgs[i].Content); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // agentRunMessageText extracts the plain-text payload of an agent run message's

@@ -2229,7 +2229,7 @@ func annotateRunMessageCitations(msgDTOs []*AgentRunMessageDTO, messages []*Agen
 		if m == nil || i >= len(msgDTOs) || msgDTOs[i] == nil {
 			continue
 		}
-		if isAgentReplyRole(m.Role) {
+		if IsAgentReplyRole(m.Role) {
 			msgDTOs[i].Citations = deriveMessageCitations(m.Content, candidates)
 		}
 	}

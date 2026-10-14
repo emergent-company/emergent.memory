@@ -464,3 +464,29 @@ func TestRunAgentInSessionMapsBudgetError(t *testing.T) {
 	assert.Equal(t, mcp.AgentRunErrorBudget, runErr.Kind)
 	assert.Equal(t, "r1", runID)
 }
+
+// TestIsAgentReplyRole pins the shared persisted-author contract (#1832): an
+// assistant turn is stored under the ADK event Author (a sanitized agent name),
+// never the literal "assistant", so classification must accept any author that
+// is not an explicit user/tool/tool_result/system side. A consumer that
+// equality-checks `role == "assistant"` would accept only the hand-written rows
+// below and drop every real agent reply.
+func TestIsAgentReplyRole(t *testing.T) {
+	cases := map[string]bool{
+		// Real persisted authors — must be accepted.
+		"coder":                   true,
+		"Research_Agent":          true,
+		"Norwegian_Law_Assistant": true,
+		"assistant":               true, // hand-written / migrated rows
+		// Non-conversational sides — must be rejected so prompt/tool output
+		// never leaks to a caller.
+		"":            false,
+		"user":        false,
+		"tool":        false,
+		"tool_result": false,
+		"system":      false,
+	}
+	for role, want := range cases {
+		assert.Equal(t, want, IsAgentReplyRole(role), "IsAgentReplyRole(%q)", role)
+	}
+}

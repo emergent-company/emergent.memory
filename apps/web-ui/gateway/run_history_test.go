@@ -26,8 +26,8 @@ func sampleRunHistoryFull() *AgentRunFull {
 		},
 		Messages: []*AgentRunMessage{
 			{Role: "user", Content: map[string]any{"text": "Summarize yesterday"}, CreatedAt: "2026-08-26T08:00:01Z", StepNumber: 0},
-			{Role: "assistant", Content: map[string]any{"text": "Let me check the logs"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
-			{Role: "assistant", Content: map[string]any{"text": "Here is the digest"}, CreatedAt: "2026-08-26T08:00:05Z", StepNumber: 4},
+			{Role: "coder", Content: map[string]any{"text": "Let me check the logs"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
+			{Role: "coder", Content: map[string]any{"text": "Here is the digest"}, CreatedAt: "2026-08-26T08:00:05Z", StepNumber: 4},
 			{Role: "tool", Content: map[string]any{"function_responses": []any{map[string]any{"name": "web_search"}}}, CreatedAt: "2026-08-26T08:00:03Z", StepNumber: 2},
 		},
 		ToolCalls: []*AgentRunToolCall{
@@ -69,7 +69,7 @@ func TestRunTimelineItems(t *testing.T) {
 	}
 
 	if len(msgs) != 3 {
-		t.Fatalf("got %d message items, want 3 (user + 2 assistant; tool-role message dropped): %v", len(msgs), msgs)
+		t.Fatalf("got %d message items, want 3 (user + 2 agent-authored; tool-role message dropped): %v", len(msgs), msgs)
 	}
 	// user message shape
 	u := msgs[0]
@@ -80,13 +80,16 @@ func TestRunTimelineItems(t *testing.T) {
 	if uc["text"] != "Summarize yesterday" {
 		t.Errorf("user message text = %v", uc["text"])
 	}
-	// chronological: assistant tool-work before the reply
-	if msgs[1]["role"] != "assistant" || msgs[2]["role"] != "assistant" {
-		t.Errorf("messages 2+3 roles = %v, want assistant/assistant", []any{msgs[1]["role"], msgs[2]["role"]})
+	// chronological: agent tool-work before the reply. The gateway relays the
+	// persisted author role verbatim (the sanitized agent name, not "assistant",
+	// see #1832) — it must not drop or normalize it, so a non-"assistant" author
+	// must survive here.
+	if msgs[1]["role"] != "coder" || msgs[2]["role"] != "coder" {
+		t.Errorf("messages 2+3 roles = %v, want coder/coder", []any{msgs[1]["role"], msgs[2]["role"]})
 	}
-	// no function_calls leaked into the assistant message content
+	// no function_calls leaked into the agent message content
 	if a2, _ := msgs[1]["content"].(map[string]any); a2["function_calls"] != nil {
-		t.Errorf("assistant content must not carry function_calls: %v", a2)
+		t.Errorf("agent content must not carry function_calls: %v", a2)
 	}
 
 	if len(tools) != 1 {

@@ -220,6 +220,10 @@ templ sessionMessageItem(aui agentUI, it TimelineItem) {
 		author = "Tool"
 	} else if role == "system" {
 		author = "System"
+		// runrole:allow — this only labels an author for display and defaults every
+		// non-"user"/"tool"/"system" role (including a real agent name and the
+		// literal "assistant") to the assistant bubble below; it is not a reply
+		// filter, so no agent turn is dropped here.
 	} else if role != "assistant" && role != "model" {
 		author = role
 	} }}
