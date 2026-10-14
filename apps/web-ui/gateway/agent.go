@@ -181,6 +181,7 @@ type agentSandboxData struct {
 const (
 	sectionGeneral    = "general"
 	sectionGraph      = "graph"
+	sectionWork       = "work"
 	sectionModel      = "model"
 	sectionTools      = "tools"
 	sectionSkills     = "skills"
@@ -190,7 +191,7 @@ const (
 
 // agentSettingsSections is the ordered list of settings subpages, used by the
 // nav group.
-var agentSettingsSections = []string{sectionGeneral, sectionGraph, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
+var agentSettingsSections = []string{sectionGeneral, sectionGraph, sectionWork, sectionModel, sectionTools, sectionSkills, sectionDelegation, sectionMCP}
 
 // agentSettingsSectionPath returns the settings subpage URL for one section.
 // "general" maps to the bare /agents/:id/settings landing route.
@@ -335,6 +336,12 @@ func (s *Server) uiAgentAutosaveGeneral(c echo.Context) error {
 // subpage's type-scope allowlists.
 func (s *Server) uiAgentUpdateGraph(c echo.Context) error {
 	return s.applyAgentSettingsSection(c, sectionGraph, applyAgentGraphSection)
+}
+
+// uiAgentUpdateWork handles POST /agents/:id/settings/work — the Work subpage's
+// object-driven work configuration.
+func (s *Server) uiAgentUpdateWork(c echo.Context) error {
+	return s.applyAgentSettingsSection(c, sectionWork, applyAgentWorkSection)
 }
 
 // uiAgentUpdateModel handles POST /agents/:id/settings/model.
@@ -638,6 +645,138 @@ func applyAgentDelegationSection(def *AgentDefinition, c echo.Context) error {
 		def.Delegation = &Delegation{Enabled: false}
 	}
 	return nil
+}
+
+// applyAgentWorkSection maps the Work form onto the definition's WorkConfig: the
+// six status-name phases, requiresReview, failureLimit, revisionLimit,
+// retryPolicy, workContract, and triggerStatuses. An empty status name or zero
+// limit inherits the platform default (the server resolver treats ≤ 0 / empty as
+// "use the built-in default"). Non-empty values below a field's minimum are
+// rejected so a nonsensical budget (e.g. failure limit 0 typed explicitly) never
+// reaches memory.
+func applyAgentWorkSection(def *AgentDefinition, c echo.Context) error {
+	wc := &AgentWorkConfig{}
+
+	wc.Status.Ready = strings.TrimSpace(c.FormValue("workStatus.ready"))
+	wc.Status.InProgress = strings.TrimSpace(c.FormValue("workStatus.inProgress"))
+	wc.Status.Review = strings.TrimSpace(c.FormValue("workStatus.review"))
+	wc.Status.Revision = strings.TrimSpace(c.FormValue("workStatus.revision"))
+	wc.Status.Blocked = strings.TrimSpace(c.FormValue("workStatus.blocked"))
+	wc.Status.Done = strings.TrimSpace(c.FormValue("workStatus.done"))
+
+	// requiresReview is a checkbox: a hidden companion guarantees the field is
+	// present; the LAST submitted value wins (the toggle's "true" follows the
+	// hidden "false" when checked).
+	wc.RequiresReview = lastFormBool(c, "workRequiresReview")
+
+	var err error
+	if wc.FailureLimit, err = workIntField(c, "failureLimit", 1); err != nil {
+		return err
+	}
+	if wc.RevisionLimit, err = workIntField(c, "revisionLimit", 1); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.MaxAttempts, err = workIntField(c, "maxAttempts", 1); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.InitialIntervalMS, err = workIntField(c, "initialIntervalMs", 0); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.BackoffCoefficient, err = workFloatField(c, "backoffCoefficient", 1); err != nil {
+		return err
+	}
+	if wc.RetryPolicy.MaxIntervalMS, err = workIntField(c, "maxIntervalMs", 0); err != nil {
+		return err
+	}
+
+	wc.WorkContract.RequireArtifacts = lastFormBool(c, "workRequireArtifacts")
+	wc.WorkContract.RequiredDeliverableTypes = splitCSV(c.FormValue("requiredDeliverableType"))
+	wc.TriggerStatuses = splitCSV(c.FormValue("triggerStatus"))
+
+	def.WorkConfig = wc
+	return nil
+}
+
+// lastFormBool reads a boolean form field where a hidden companion ("false")
+// precedes a checkbox's "true" when checked; the LAST non-empty value wins.
+func lastFormBool(c echo.Context, name string) bool {
+	vals, _ := c.FormParams()
+	last := false
+	for _, v := range vals[name] {
+		if v == "" {
+			continue
+		}
+		last = v == "true" || v == "on"
+	}
+	return last
+}
+
+// workIntField parses an optional integer form field. Empty reads 0 (the server
+// default); an unparseable value or a positive value below min is an error.
+func workIntField(c echo.Context, name string, min int) (int, error) {
+	raw := strings.TrimSpace(c.FormValue(name))
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number", name)
+	}
+	if min > 0 && n < min {
+		return 0, fmt.Errorf("%s must be at least %d", name, min)
+	}
+	return n, nil
+}
+
+// workFloatField parses an optional float form field. Empty reads 0 (the server
+// default); an unparseable value or a value below min is an error.
+func workFloatField(c echo.Context, name string, min float64) (float64, error) {
+	raw := strings.TrimSpace(c.FormValue(name))
+	if raw == "" {
+		return 0, nil
+	}
+	f, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a number", name)
+	}
+	if min > 0 && f < min {
+		return 0, fmt.Errorf("%s must be at least %v", name, min)
+	}
+	return f, nil
+}
+
+// agentWorkConfig returns the agent's work config for form rendering, nil-safe:
+// a nil agent or nil WorkConfig reads as the zero value (every field empty, so
+// the form shows the platform-default placeholders).
+func agentWorkConfig(a *AgentDefinition) *AgentWorkConfig {
+	if a == nil || a.WorkConfig == nil {
+		return &AgentWorkConfig{}
+	}
+	return a.WorkConfig
+}
+
+// workIntStr renders an optional integer field's input value: a zero value (the
+// server "use default" sentinel) renders empty so the placeholder (the platform
+// default) shows instead.
+func workIntStr(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+// workFloatStr renders an optional float field's input value; a zero value
+// renders empty so the placeholder shows.
+func workFloatStr(f float64) string {
+	if f <= 0 {
+		return ""
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
+
+// workListValue joins a string list into the comma-separated form-input value.
+func workListValue(vals []string) string {
+	return strings.Join(vals, ", ")
 }
 
 // loadAgentSettings assembles the agent settings payload for ONE subpage: the

@@ -105,6 +105,30 @@ func TestAgentToDTOIncludesAgentDefinitionID(t *testing.T) {
 	require.Equal(t, "ad-123", *dto.AgentDefinitionID)
 }
 
+// TestAgentDefinitionDTOIncludesSourceBlueprintID locks the blueprint-provenance
+// contract: the full definition DTO must surface SourceBlueprintID (with the
+// wire name "sourceBlueprintId") so the gateway can warn when a user edits a
+// blueprint-derived agent. A nil value is omitted (omitempty).
+func TestAgentDefinitionDTOIncludesSourceBlueprintID(t *testing.T) {
+	bp := "bp-123"
+	d := &AgentDefinition{ID: "ad-1", SourceBlueprintID: &bp}
+
+	full := d.ToDTO()
+	require.NotNil(t, full.SourceBlueprintID)
+	require.Equal(t, "bp-123", *full.SourceBlueprintID)
+
+	encoded, err := json.Marshal(full)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &payload))
+	require.Equal(t, "bp-123", payload["sourceBlueprintId"],
+		"wire name must be sourceBlueprintId, got %s", encoded)
+
+	bare, err := json.Marshal((&AgentDefinition{ID: "ad-2"}).ToDTO())
+	require.NoError(t, err)
+	require.NotContains(t, string(bare), "sourceBlueprintId")
+}
+
 // TestAgentRunDTOJSONCarriesSpans locks the run DTO contract: when spans are
 // attached (e.g. by Handler.enrichRunTrace) they serialize under "spans", and
 // when absent the field is omitted entirely.

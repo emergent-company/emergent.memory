@@ -346,6 +346,7 @@ func main() {
 	e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
 	e.POST("/agents/:id/settings/general/autosave", s.uiAgentAutosaveGeneral)
 	e.POST("/agents/:id/settings/graph", s.uiAgentUpdateGraph)
+	e.POST("/agents/:id/settings/work", s.uiAgentUpdateWork)
 	e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
 	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
 	e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)

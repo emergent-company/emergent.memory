@@ -522,13 +522,36 @@ type AgentWorkStatusConfig struct {
 	Done       string `json:"done"`
 }
 
-// AgentWorkConfig is the subset of an agent definition's object-driven work
-// configuration the board consumes: the status phase map. It is read-only and
-// never written by the gateway; the board uses it to translate its fixed
-// transitions (retry/approve/request-changes/cancel) into the project's
-// configured status names instead of the built-in literals.
+// AgentRetryPolicy mirrors the server's agent workConfig.retryPolicy: the
+// backoff schedule for queued work runs.
+type AgentRetryPolicy struct {
+	MaxAttempts        int     `json:"maxAttempts"`
+	InitialIntervalMS  int     `json:"initialIntervalMs"`
+	BackoffCoefficient float64 `json:"backoffCoefficient"`
+	MaxIntervalMS      int     `json:"maxIntervalMs"`
+}
+
+// AgentWorkContract mirrors the server's agent workConfig.workContract: the
+// deliverables an agent must produce before it may complete a work item. A zero
+// value means "no validation".
+type AgentWorkContract struct {
+	RequireArtifacts         bool     `json:"requireArtifacts"`
+	RequiredDeliverableTypes []string `json:"requiredDeliverableTypes,omitempty"`
+}
+
+// AgentWorkConfig mirrors the server's full agent workConfig. The board consumes
+// only the status phase map (boardStatusMapFromDefinitions); the Work settings
+// form reads and writes the whole shape.
 type AgentWorkConfig struct {
-	Status AgentWorkStatusConfig `json:"status"`
+	Status         AgentWorkStatusConfig `json:"status"`
+	RequiresReview bool                  `json:"requiresReview"`
+	FailureLimit   int                   `json:"failureLimit"`
+	RevisionLimit  int                   `json:"revisionLimit"`
+	RetryPolicy    AgentRetryPolicy      `json:"retryPolicy"`
+	WorkContract   AgentWorkContract     `json:"workContract"`
+	// TriggerStatuses lists the status values that, when an object transitions
+	// into one of them, wake this agent. Defaults to "ready" when unset.
+	TriggerStatuses []string `json:"triggerStatuses,omitempty"`
 }
 
 type AgentDefinitionSummary struct {
@@ -653,13 +676,24 @@ type AgentDefinition struct {
 	// ({"icon":"<kebab-lucide-name>","color":"<CSS color>"}); absent/{} means no
 	// appearance. Parsed by agentUIOf; see agent_ui.go.
 	UIConfig json.RawMessage `json:"uiConfig,omitempty"`
+	// WorkConfig is the object-driven work configuration. The Work settings
+	// form reads and writes it; every other section save round-trips the stored
+	// value unchanged (the server PATCH re-applies it losslessly). nil means
+	// the agent does not opt into object-driven work.
+	WorkConfig *AgentWorkConfig `json:"workConfig,omitempty"`
+	// SourceBlueprintID is the ID of the blueprint that created this definition
+	// (read-only). Non-nil marks a blueprint-derived agent, which the Work form
+	// warns about before saving a divergent edit.
+	SourceBlueprintID *string `json:"sourceBlueprintId,omitempty"`
 }
 
 // sanitizeAgentWrite clears server-computed, read-only fields from an agent
 // definition before it is sent to memory. ToolGroups is computed on read from
 // the stored policies + catalog; the gateway must never depend on it
 // round-tripping, so the write path drops it rather than relying on the server
-// to ignore an unknown field.
+// to ignore an unknown field. WorkConfig is intentionally preserved: it is a
+// first-class persisted field the Work settings form writes, and every other
+// section save round-trips the stored value unchanged.
 func sanitizeAgentWrite(def *AgentDefinition) {
 	if def != nil {
 		def.ToolGroups = nil

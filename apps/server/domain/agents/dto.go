@@ -351,6 +351,10 @@ type AgentDefinitionDTO struct {
 	WorkConfig     AgentWorkConfig   `json:"workConfig"`
 	ACPConfig      *ACPConfig        `json:"acpConfig,omitempty"`
 	Config         map[string]any    `json:"config,omitempty"`
+	// SourceBlueprintID is the ID of the blueprint that created this definition
+	// (NULL for manual/pre-existing definitions). Exposed so the gateway can warn
+	// when editing a blueprint-derived agent.
+	SourceBlueprintID *string `json:"sourceBlueprintId,omitempty"`
 	// IncludeProjectInfo opts the definition into injecting the project's
 	// project_info as a "## Knowledge base context" block on every surface.
 	// Default false; stored in Config under key "includeProjectInfo" (#1694).
@@ -540,6 +544,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		WorkConfig:         d.WorkConfig,
 		ACPConfig:          d.ACPConfig,
 		Config:             d.Config,
+		SourceBlueprintID:  d.SourceBlueprintID,
 		IncludeProjectInfo: d.IncludeProjectInfo(),
 		ObjectTypes:        d.ObjectTypes(),
 		RelationshipTypes:  d.RelationshipTypes(),

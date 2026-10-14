@@ -47,7 +47,7 @@ templ agentSubNav(agentID string, active string, section string) {
 	})
 }
 
-// agentSettingsNavGroup renders the Settings rail entry together with its seven
+// agentSettingsNavGroup renders the Settings rail entry together with its eight
 // subpage children, always visible in the agent details rail. A child is active
 // when its section matches; the parent is a plain link into the settings hub and
 // is never marked current (the General child shares its destination, so marking
@@ -60,6 +60,7 @@ templ agentSettingsNavGroup(agentID string, section string) {
 		<div class="flex shrink-0 flex-row gap-1 rounded-box border border-base-content/10 p-0.5 lg:flex-col lg:gap-1 lg:rounded-none lg:border-0 lg:p-0 lg:pl-4">
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings", section == "general", "lucide--settings", "General")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/graph", section == "graph", "lucide--git-branch", "Graph")
+			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/work", section == "work", "lucide--list-checks", "Work")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/model", section == "model", "lucide--cpu", "Model")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/tools", section == "tools", "lucide--wrench", "Tools")
 			@components.SubNavItem("/agents/"+url.PathEscape(agentID)+"/settings/skills", section == "skills", "lucide--sparkles", "Skills")
@@ -337,6 +338,8 @@ templ agentSettingsSectionPanel(data agentSettingsData) {
 	switch data.Section {
 	case "graph":
 		@agentGraphSettingsForm(data)
+	case "work":
+		@agentWorkSettingsForm(data)
 	case "model":
 		@agentModelSettingsForm(data)
 	case "tools":
@@ -640,6 +643,171 @@ templ agentGraphSettingsForm(data agentSettingsData) {
 		</div>
 		@agentSettingsSave()
 	</form>
+}
+
+// agentWorkSettingsForm is the Work subpage (PRG → POST
+// /agents/:id/settings/work): the agent's object-driven work configuration —
+// status phases, review gate, failure/revision budgets, retry backoff, the
+// deliverable contract, and the trigger statuses that wake the agent. Empty
+// status names and zero limits inherit the platform defaults, shown as
+// placeholders. A blueprint-derived agent (SourceBlueprintID set) gates the
+// save behind a "Save anyway" confirmation dialog.
+templ agentWorkSettingsForm(data agentSettingsData) {
+	{{ wc := agentWorkConfig(data.Agent) }}
+	<form
+		method="post"
+		action={ templ.URL("/agents/" + url.PathEscape(data.Agent.ID) + "/settings/work") }
+		hx-disable="find button.memory-save-btn"
+		data-testid="agent-work-settings-form"
+		if data.Agent.SourceBlueprintID != nil {
+			data-requires-confirm="agent-work-blueprint-warning"
+		}
+	>
+		<div class={ pageFormFieldsClass }>
+			@layout.Rail(agentSubNav(data.Agent.ID, "settings", data.Section), nil) {
+				@ui.Section("Work", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						<p class="text-muted-strong text-sm">Configure how this agent processes object-driven work items. Empty status names and zero limits inherit the platform defaults. Changes take effect after you save.</p>
+						@agentWorkPickupNote()
+						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+							@form.FormControl("agent-settings-work-ready", "Ready status", form.LabelAbove, "The status value meaning an item is ready to be picked up.", "", nil) {
+								<input id="agent-settings-work-ready" name="workStatus.ready" type="text" value={ wc.Status.Ready } placeholder="ready" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-in-progress", "In progress status", form.LabelAbove, "The status value meaning an item is being worked.", "", nil) {
+								<input id="agent-settings-work-in-progress" name="workStatus.inProgress" type="text" value={ wc.Status.InProgress } placeholder="in_progress" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-review", "Review status", form.LabelAbove, "The status value meaning an item awaits review.", "", nil) {
+								<input id="agent-settings-work-review" name="workStatus.review" type="text" value={ wc.Status.Review } placeholder="review" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-revision", "Revision status", form.LabelAbove, "The status value meaning an item needs rework.", "", nil) {
+								<input id="agent-settings-work-revision" name="workStatus.revision" type="text" value={ wc.Status.Revision } placeholder="revision" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-blocked", "Blocked status", form.LabelAbove, "The status value meaning an item is blocked.", "", nil) {
+								<input id="agent-settings-work-blocked" name="workStatus.blocked" type="text" value={ wc.Status.Blocked } placeholder="blocked" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-done", "Done status", form.LabelAbove, "The status value meaning an item is complete.", "", nil) {
+								<input id="agent-settings-work-done" name="workStatus.done" type="text" value={ wc.Status.Done } placeholder="done" class="input w-full"/>
+							}
+						</div>
+						@form.FormControl("agent-settings-work-requires-review", "Require review", form.LabelAbove, "Route completed items through a human review step before they are done.", "", nil) {
+							<input type="hidden" name="workRequiresReview" value="false"/>
+							<input id="agent-settings-work-requires-review" name="workRequiresReview" type="checkbox" value="true" checked?={ wc.RequiresReview } class="checkbox"/>
+						}
+						<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+							@form.FormControl("agent-settings-work-failure-limit", "Failure limit", form.LabelAbove, "How many failures an item tolerates before escalation.", "", nil) {
+								<input id="agent-settings-work-failure-limit" name="failureLimit" type="number" min="1" step="1" value={ workIntStr(wc.FailureLimit) } placeholder="3" class="input w-full"/>
+							}
+							@form.FormControl("agent-settings-work-revision-limit", "Revision limit", form.LabelAbove, "How many rework rounds before the item is escalated to a human.", "", nil) {
+								<input id="agent-settings-work-revision-limit" name="revisionLimit" type="number" min="1" step="1" value={ workIntStr(wc.RevisionLimit) } placeholder="3" class="input w-full"/>
+							}
+						</div>
+					</div>
+				}
+				@ui.Section("Retry policy", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+						@form.FormControl("agent-settings-work-max-attempts", "Max attempts", form.LabelAbove, "Maximum run attempts per queued work item.", "", nil) {
+							<input id="agent-settings-work-max-attempts" name="maxAttempts" type="number" min="1" step="1" value={ workIntStr(wc.RetryPolicy.MaxAttempts) } placeholder="1" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-initial-interval", "Initial interval (ms)", form.LabelAbove, "Delay before the first retry.", "", nil) {
+							<input id="agent-settings-work-initial-interval" name="initialIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.InitialIntervalMS) } placeholder="0" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-backoff-coefficient", "Backoff coefficient", form.LabelAbove, "Multiplier applied to the interval between retries.", "", nil) {
+							<input id="agent-settings-work-backoff-coefficient" name="backoffCoefficient" type="number" min="1" step="0.1" value={ workFloatStr(wc.RetryPolicy.BackoffCoefficient) } placeholder="1" class="input w-full"/>
+						}
+						@form.FormControl("agent-settings-work-max-interval", "Max interval (ms)", form.LabelAbove, "Ceiling for the backoff interval.", "", nil) {
+							<input id="agent-settings-work-max-interval" name="maxIntervalMs" type="number" min="0" step="1" value={ workIntStr(wc.RetryPolicy.MaxIntervalMS) } placeholder="0" class="input w-full"/>
+						}
+					</div>
+				}
+				@ui.Section("Work contract", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@form.FormControl("agent-settings-work-require-artifacts", "Require artifacts", form.LabelAbove, "Require a summary or artifacts before the item may complete.", "", nil) {
+							<input type="hidden" name="workRequireArtifacts" value="false"/>
+							<input id="agent-settings-work-require-artifacts" name="workRequireArtifacts" type="checkbox" value="true" checked?={ wc.WorkContract.RequireArtifacts } class="checkbox"/>
+						}
+						@form.FormControl("agent-settings-work-required-deliverables", "Required deliverable types", form.LabelAbove, "Comma-separated object types the agent must produce before completing an item.", "", nil) {
+							<input id="agent-settings-work-required-deliverables" name="requiredDeliverableType" type="text" value={ workListValue(wc.WorkContract.RequiredDeliverableTypes) } placeholder="e.g. kb.documents, kb.chunks" class="input w-full"/>
+						}
+					</div>
+				}
+				@ui.Section("Triggers", ui.SectionProps{
+					Margin:    "mt-6",
+					BodyClass: "memory-density-comfortable",
+				}) {
+					<div class="flex flex-col gap-4">
+						@form.FormControl("agent-settings-work-trigger-statuses", "Trigger statuses", form.LabelAbove, "Comma-separated status values that wake this agent when an object enters one of them.", "", nil) {
+							<input id="agent-settings-work-trigger-statuses" name="triggerStatus" type="text" value={ workListValue(wc.TriggerStatuses) } placeholder="ready" class="input w-full"/>
+						}
+					</div>
+				}
+			}
+		</div>
+		@agentSettingsSave()
+	</form>
+	if data.Agent.SourceBlueprintID != nil {
+		@agentWorkBlueprintWarning(data)
+	}
+}
+
+// agentWorkPickupNote is the read-only work-pickup precondition: the trigger
+// statuses are the only thing that wakes this agent, so operators understand
+// the "Triggers" group below.
+templ agentWorkPickupNote() {
+	@ui.Alert(ui.AlertProps{
+		Type:    ui.AlertInfo,
+		Style:   ui.AlertStyleOutline,
+		Icon:    "lucide--info",
+		Message: "This agent picks up work when an object enters one of its trigger statuses. Configure those statuses under Triggers.",
+	})
+}
+
+// agentWorkBlueprintWarning is the blueprint-derived edit gate for the Work
+// subpage: a native <dialog> opened by app.js when the form is submitted.
+// Confirming submits once; dismissing keeps the entered values and posts nothing.
+templ agentWorkBlueprintWarning(data agentSettingsData) {
+	@ui.Dialog(ui.DialogProps{ID: "agent-work-blueprint-warning", BoxClass: "max-w-md", Attrs: templ.Attributes{"aria-labelledby": "agent-work-blueprint-warning-title", "aria-describedby": "agent-work-blueprint-warning-desc"}}) {
+		<div class="flex items-start gap-3">
+			<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+				@ui.IconSpan("lucide--alert-triangle", "size-5")
+			</div>
+			<div>
+				<h3 id="agent-work-blueprint-warning-title" class="text-lg font-semibold">Save changes to a blueprint-derived agent?</h3>
+				<p id="agent-work-blueprint-warning-desc" class="text-muted-strong mt-1 text-sm">
+					<span class="font-mono">{ data.Agent.Name }</span> was created by a blueprint. Saving your edit diverges from that blueprint and may be overwritten when it is updated or reinstalled.
+				</p>
+			</div>
+		</div>
+		<div class="modal-action">
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:  ui.ButtonTypeSubmit,
+					Size:  ui.ButtonSM,
+					Attrs: templ.Attributes{"value": "cancel", "autofocus": true},
+				}) {
+					Keep editing
+				}
+			</form>
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"value": "confirm"},
+				}) {
+					Save anyway
+				}
+			</form>
+		</div>
+	}
 }
 
 // agentModelSettingsForm is the Model subpage (PRG → POST

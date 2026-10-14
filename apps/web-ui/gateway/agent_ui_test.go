@@ -565,7 +565,7 @@ func TestUIAgentsRouteRendersWithoutSkills(t *testing.T) {
 
 // TestRenderAgentSettingsPage covers the split in-page edit subpages: each
 // section renders its own panel with the current values, the settings nav
-// renders as a group with all seven children (active child highlighted), and the
+// renders as a group with all eight children (active child highlighted), and the
 // per-section regression guards hold (bare boolean attrs, unlisted tools,
 // delegation-managed tool exclusion, synthetic current model).
 func TestRenderAgentSettingsPage(t *testing.T) {
@@ -603,12 +603,13 @@ func TestRenderAgentSettingsPage(t *testing.T) {
 	settingsNavHrefs := []string{
 		`href="/agents/a1"`, `href="/agents/a1/settings"`,
 		`href="/agents/a1/settings/graph"`,
+		`href="/agents/a1/settings/work"`,
 		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
 		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
 		`href="/agents/a1/settings/mcp"`,
 		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
 	}
-	for _, section := range []string{"", "general", "graph", "model", "tools", "skills", "delegation", "mcp"} {
+	for _, section := range []string{"", "general", "graph", "work", "model", "tools", "skills", "delegation", "mcp"} {
 		h := render(section)
 		for _, want := range settingsNavHrefs {
 			if !strings.Contains(h, want) {
@@ -849,13 +850,14 @@ func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
 	}{
 		{"general", settingsParent},
 		{"graph", settingsParent + "/graph"},
+		{"work", settingsParent + "/work"},
 		{"model", settingsParent + "/model"},
 		{"tools", settingsParent + "/tools"},
 		{"skills", settingsParent + "/skills"},
 		{"delegation", settingsParent + "/delegation"},
 		{"mcp", settingsParent + "/mcp"},
 	}
-	// Every agent section must expose the Settings parent plus all seven children.
+	// Every agent section must expose the Settings parent plus all eight children.
 	allSettingsHrefs := []string{settingsParent}
 	for _, c := range children {
 		allSettingsHrefs = append(allSettingsHrefs, c.href)
