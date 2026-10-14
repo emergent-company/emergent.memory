@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,4 +198,49 @@ func TestFilterSearchItemsByScope(t *testing.T) {
 	assert.Equal(t, "Person", got[0].Object.Type)
 	assert.Equal(t, "Org", got[1].Object.Type)
 	assert.Equal(t, "text_chunk", got[2].Object.Type)
+}
+
+// =============================================================================
+// executeHybridSearch / executeSemanticSearch — type-scope denied short-circuit
+// =============================================================================
+
+// The non-denied executor paths (scope expansion that rewrites `types` to the
+// scope allowlist, then maps results) are gated behind s.searchSvc — a concrete
+// *search.Service whose only constructor (search.NewService) requires a concrete
+// *graph.Service plus a live DB and embedding service. There is no interface
+// seam to inject a fake unified search from this package, so those paths are
+// covered at the composing-unit level: FilterRequestedObjectTypes
+// (type_scope_test.go), buildHybridUnifiedRequest ResultTypes (above), and
+// mapUnifiedToSearchResponse's types check (namespace_filter_test.go).
+//
+// The denied short-circuit is the one executor path reachable without those
+// dependencies (the rejection happens before any DB/search work), so it is
+// pinned directly here.
+
+func TestExecuteHybridSearch_ScopedForbiddenTypesDenied(t *testing.T) {
+	svc := &Service{} // nil db/searchSvc/graphService: rejected before they are reached
+	ctx := ContextWithTypeScope(context.Background(), NewTypeScope([]string{"LegalParagraph"}, nil))
+	res, err := svc.executeHybridSearch(ctx, "00000000-0000-0000-0000-000000000000", map[string]any{
+		"query":          "any",
+		"types":          []any{"ForbiddenType"},
+		"include_chunks": true,
+	})
+	env := decodeEnvelope(t, res, err)
+	data, ok := env["data"].(map[string]any)
+	require.True(t, ok, "envelope must carry a data payload")
+	assert.Empty(t, data["data"], "denied scope must short-circuit with zero items (no chunks)")
+}
+
+func TestExecuteSemanticSearch_ScopedForbiddenTypesDenied(t *testing.T) {
+	svc := &Service{}
+	ctx := ContextWithTypeScope(context.Background(), NewTypeScope([]string{"LegalParagraph"}, nil))
+	res, err := svc.executeSemanticSearch(ctx, "00000000-0000-0000-0000-000000000000", map[string]any{
+		"query":          "any",
+		"types":          []any{"ForbiddenType"},
+		"include_chunks": true,
+	})
+	env := decodeEnvelope(t, res, err)
+	data, ok := env["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, data["data"], "denied scope must short-circuit with zero items (no chunks)")
 }

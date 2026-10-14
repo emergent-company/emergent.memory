@@ -1019,7 +1019,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"include_chunks": {
 						Type:        "boolean",
-						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only.",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only. Document chunks are not returned to callers restricted by an agent object-type scope.",
 						Default:     false,
 					},
 					"fields": {
@@ -1072,7 +1072,7 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"include_chunks": {
 						Type:        "boolean",
-						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only.",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only. Document chunks are not returned to callers restricted by an agent object-type scope.",
 						Default:     false,
 					},
 					"fields": {
