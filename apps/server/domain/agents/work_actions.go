@@ -242,6 +242,41 @@ func (s *WorkActionService) Reassign(ctx context.Context, projectID, canonicalID
 	return &WorkActionResult{Head: head}, nil
 }
 
+// SetStatus sets a work item to an exact status (the human set-status action):
+// an any→status transition via the graph single-work-status writer. The status
+// is validated against the type's allowed set (when declared) before the write;
+// needs_review is set by the graph layer when the target is the review status.
+// No run is enqueued.
+func (s *WorkActionService) SetStatus(ctx context.Context, projectID, canonicalID, status string) (*WorkActionResult, error) {
+	if status == "" {
+		return nil, apperror.NewBadRequest("status is required")
+	}
+	head, _, def, err := s.resolveWorkContext(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := s.workObjects.GetObjectTypeWorkConfig(ctx, projectID, head.Type)
+	if err != nil {
+		return nil, err
+	}
+	if err := graph.ValidateWorkObjectStatus(cfg, status); err != nil {
+		return nil, err
+	}
+	wc := workConfigOf(def)
+	ok, err := s.workObjects.UpdateWorkObjectStatus(ctx, projectID, canonicalID, status, wc.ReviewStatus())
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, apperror.New(http.StatusConflict, "conflict", "work item not found or missing key")
+	}
+	head, err = s.workObjects.GetHeadObject(ctx, projectID, canonicalID)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkActionResult{Head: head}, nil
+}
+
 // Cancel closes a work item: it transitions the item to blocked and cancels any
 // in-flight (live) run. Done items are not cancellable.
 func (s *WorkActionService) Cancel(ctx context.Context, projectID, canonicalID string) (*WorkActionResult, error) {

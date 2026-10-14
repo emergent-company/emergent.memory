@@ -614,6 +614,7 @@ func main() {
 	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
 	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
 	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
+	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
 	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
 
 	// Inbox page + project-event notification preferences (inbox subsystem).

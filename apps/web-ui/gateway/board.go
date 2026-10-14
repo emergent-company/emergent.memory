@@ -406,7 +406,7 @@ func (s *Server) uiBoardItem(c echo.Context) error {
 		deliverables[i].Resolved = true
 		deliverables[i].ObjectID = firstNonEmpty(obj.CanonicalID, obj.ID)
 	}
-	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx), deliverables, boardCompletionSummary(detail.Runs)))
+	renderPartial(c.Response().Writer, c.Request(), BoardDrawer(detail, s.boardStatusMap(ctx), deliverables, boardCompletionSummary(detail.Runs), s.boardAssigneeCandidates(ctx)))
 	return nil
 }
 
@@ -430,6 +430,11 @@ func (s *Server) uiBoardReassign(c echo.Context) error {
 	return s.renderBoardColumns(c, err)
 }
 
+func (s *Server) uiBoardSetStatus(c echo.Context) error {
+	_, err := s.memory.SetWorkItemStatus(c.Request().Context(), c.Param("canonicalId"), c.FormValue("status"))
+	return s.renderBoardColumns(c, err)
+}
+
 func (s *Server) uiBoardCancel(c echo.Context) error {
 	_, err := s.memory.CancelWorkItem(c.Request().Context(), c.Param("canonicalId"))
 	return s.renderBoardColumns(c, err)
@@ -443,4 +448,75 @@ func boardItemPath(canonicalID string) string {
 // boardActionPath builds an action route for a work item.
 func boardActionPath(canonicalID, action string) string {
 	return "/board/items/" + url.PathEscape(canonicalID) + "/" + action
+}
+
+// boardAssigneeCandidate is one option in the ticket-style assignee picker.
+type boardAssigneeCandidate struct {
+	Value     string // the exact assignee value posted to the reassign endpoint
+	Label     string // display name
+	AvatarURL string // member avatar URL; empty for agents (initials fallback)
+	IsAgent   bool   // agents tint secondary; members use their avatar
+}
+
+// buildBoardAssigneeCandidates builds the assignee picker options: runtime
+// agents by exact Name, then project members by DisplayName (falling back to
+// Email). The "Unassigned" (empty) entry is rendered by the picker itself, not
+// here.
+func buildBoardAssigneeCandidates(agents []ScheduledAgent, members []ProjectMemberDto) []boardAssigneeCandidate {
+	out := make([]boardAssigneeCandidate, 0, len(agents)+len(members))
+	for _, a := range agents {
+		if a.Name == "" {
+			continue
+		}
+		out = append(out, boardAssigneeCandidate{Value: a.Name, Label: a.Name, IsAgent: true})
+	}
+	for _, m := range members {
+		label := m.DisplayName
+		if label == "" {
+			label = m.Email
+		}
+		if label == "" {
+			continue
+		}
+		out = append(out, boardAssigneeCandidate{Value: label, Label: label, AvatarURL: m.AvatarURL})
+	}
+	return out
+}
+
+// boardAssigneeCandidates fetches the assignee picker candidates: runtime agents
+// and project members. Failures degrade to empty lists so the picker never
+// breaks the board.
+func (s *Server) boardAssigneeCandidates(ctx context.Context) []boardAssigneeCandidate {
+	agents, aerr := s.memory.ListScheduledAgents(ctx)
+	if aerr != nil {
+		captureError(aerr)
+		agents = nil
+	}
+	members, merr := s.memory.ListMembers(ctx)
+	if merr != nil {
+		captureError(merr)
+		members = nil
+	}
+	return buildBoardAssigneeCandidates(agents, members)
+}
+
+// boardStatusOptions returns the work-path status values (the statusMap
+// vocabulary) a user may set an item to, in canonical phase order, excluding the
+// item's current status.
+func boardStatusOptions(statusMap boardStatusMap, current string) []string {
+	values := []string{
+		statusMap.Ready,
+		statusMap.InProgress,
+		statusMap.Review,
+		statusMap.Revision,
+		statusMap.Blocked,
+		statusMap.Done,
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v != "" && v != current {
+			out = append(out, v)
+		}
+	}
+	return out
 }

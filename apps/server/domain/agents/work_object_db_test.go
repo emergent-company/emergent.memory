@@ -290,6 +290,10 @@ func (f *fakeWorkObjectStore) ReassignWorkObject(ctx context.Context, projectID,
 	return true, nil
 }
 
+func (f *fakeWorkObjectStore) UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeWorkObjectStore) CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error) {
 	return true, nil
 }

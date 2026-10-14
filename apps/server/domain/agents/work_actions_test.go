@@ -10,14 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // setupWorkActions returns a real agents Repository and graph Service wired to
 // the same throwaway DB, plus the project ID, for the human-action tests.
 func setupWorkActions(t *testing.T) (context.Context, *bun.DB, *Repository, *graph.Service, string) {
+	return setupWorkActionsWithSchemas(t, nil)
+}
+
+// setupWorkActionsWithSchemas is setupWorkActions with an optional static schema
+// provider, so set-status tests can exercise board-enabled types with a declared
+// allowed-status set (otherwise the graph service's schema provider is nil and
+// every type is unconfigured/unconstrained).
+func setupWorkActionsWithSchemas(t *testing.T, objectSchemas map[string]agents.ObjectSchema) (context.Context, *bun.DB, *Repository, *graph.Service, string) {
 	t.Helper()
 	if testing.Short() {
 		testdb.SkipOrFatal(t, "integration test requires database")
@@ -31,10 +41,27 @@ func setupWorkActions(t *testing.T) (context.Context, *bun.DB, *Repository, *gra
 	cfg := &config.Config{}
 	cfg.Graph.MaxListLimit = 100_000
 	gRepo := graph.NewRepository(tdb.DB, log, cfg)
-	gSvc := graph.NewService(gRepo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, nil, nil)
+	var sp graph.SchemaProvider
+	if objectSchemas != nil {
+		sp = &staticSchemaProvider{schemas: objectSchemas}
+	}
+	gSvc := graph.NewService(gRepo, log, sp, nil, nil, nil, nil, graph.NoopEventSink{}, nil, nil)
 
 	return ctx, tdb.DB, NewRepository(tdb.DB), gSvc, projectID
 }
+
+// staticSchemaProvider is a minimal SchemaProvider returning a fixed set of
+// object schemas, so the set-status tests can exercise per-type board-enabled
+// config without a real schema pack.
+type staticSchemaProvider struct {
+	schemas map[string]agents.ObjectSchema
+}
+
+func (p *staticSchemaProvider) GetProjectSchemas(ctx context.Context, projectID string) (*graph.ExtractionSchemas, error) {
+	return &graph.ExtractionSchemas{ObjectSchemas: p.schemas, RelationshipSchemas: map[string]agents.RelationshipSchema{}}, nil
+}
+
+func (p *staticSchemaProvider) InvalidateProjectCache(projectID string) {}
 
 // newWorkActions builds the human-action service with a real graph store.
 func newWorkActions(repo *Repository, gSvc *graph.Service) *WorkActionService {
@@ -311,4 +338,101 @@ func TestWorkActionsCancel(t *testing.T) {
 	var runStatus string
 	require.NoError(t, repo.db.NewRaw(`SELECT status FROM kb.agent_runs WHERE id = ?`, run.ID).Scan(ctx, &runStatus))
 	require.Equal(t, string(RunStatusCancelling), runStatus)
+}
+
+// boardAllowedStatuses is the allowed-status set used by the board-enabled
+// set-status tests (matches the flagship task-board blueprint).
+func boardAllowedStatuses() []string {
+	return []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
+}
+
+// boardSchemas returns a static schema provider map marking ResearchRequest as
+// board-enabled with a declared allowed-status set.
+func boardSchemas() map[string]agents.ObjectSchema {
+	return map[string]agents.ObjectSchema{
+		"ResearchRequest": {ObjectTypeWorkConfig: agents.ObjectTypeWorkConfig{
+			BoardEnabled:    true,
+			AllowedStatuses: boardAllowedStatuses(),
+		}},
+	}
+}
+
+// TestWorkActionsSetStatus verifies the set-status action moves an item to an
+// exact status without enqueuing a run.
+func TestWorkActionsSetStatus(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActions(t)
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-setstatus", "in_progress", "researcher")
+
+	res, err := newWorkActions(repo, gSvc).SetStatus(ctx, projectID, canonicalID, "review")
+	require.NoError(t, err)
+	require.Equal(t, "review", res.Head.Status)
+
+	// No run is enqueued by a plain status move.
+	require.Equal(t, 0, countQueuedSubjectRuns(t, ctx, repo, canonicalID))
+}
+
+// TestWorkActionsSetStatus_EmptyRejected verifies an empty status is rejected.
+func TestWorkActionsSetStatus_EmptyRejected(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActions(t)
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-setstatus-empty", "in_progress", "researcher")
+
+	_, err := newWorkActions(repo, gSvc).SetStatus(ctx, projectID, canonicalID, "")
+	require.Error(t, err)
+	require.Equal(t, "in_progress", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
+}
+
+// TestWorkActionsSetStatus_DisallowedRejected verifies a status outside a
+// board-enabled type's allowed set is rejected and leaves the item unchanged.
+func TestWorkActionsSetStatus_DisallowedRejected(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActionsWithSchemas(t, boardSchemas())
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-setstatus-disallowed", "in_progress", "researcher")
+
+	_, err := newWorkActions(repo, gSvc).SetStatus(ctx, projectID, canonicalID, "shipped")
+	require.Error(t, err)
+	require.Equal(t, "in_progress", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
+}
+
+// TestWorkActionsSetStatus_AgentActorRejected verifies an agent-originated
+// status write on a board-enabled item is rejected by the graph guard.
+func TestWorkActionsSetStatus_AgentActorRejected(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActionsWithSchemas(t, boardSchemas())
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-setstatus-agent", "in_progress", "researcher")
+
+	agentID := uuid.New()
+	agentCtx := auth.WithActor(ctx, graph.ActorAgent, &agentID)
+
+	_, err := newWorkActions(repo, gSvc).SetStatus(agentCtx, projectID, canonicalID, "review")
+	require.Error(t, err)
+	require.Equal(t, "in_progress", workHeadStatus(t, ctx, gSvc, projectID, canonicalID))
+}
+
+// TestWorkActionsSetStatus_NeedsReviewOnReview verifies setting the review
+// status sets needs_review, and a non-review status clears it.
+func TestWorkActionsSetStatus_NeedsReviewOnReview(t *testing.T) {
+	ctx, _, repo, gSvc, projectID := setupWorkActions(t)
+
+	canonicalID := createWorkObject(t, ctx, gSvc, projectID, "k-setstatus-review", "in_progress", "researcher")
+
+	_, err := newWorkActions(repo, gSvc).SetStatus(ctx, projectID, canonicalID, "review")
+	require.NoError(t, err)
+
+	var needsReview bool
+	require.NoError(t, repo.db.NewRaw(
+		`SELECT needs_review FROM kb.graph_objects WHERE canonical_id = ?::uuid AND supersedes_id IS NULL`,
+		canonicalID,
+	).Scan(ctx, &needsReview))
+	require.True(t, needsReview)
+
+	// Moving it off review clears needs_review.
+	_, err = newWorkActions(repo, gSvc).SetStatus(ctx, projectID, canonicalID, "done")
+	require.NoError(t, err)
+	require.NoError(t, repo.db.NewRaw(
+		`SELECT needs_review FROM kb.graph_objects WHERE canonical_id = ?::uuid AND supersedes_id IS NULL`,
+		canonicalID,
+	).Scan(ctx, &needsReview))
+	require.False(t, needsReview)
 }

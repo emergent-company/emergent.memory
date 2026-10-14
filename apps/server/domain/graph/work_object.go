@@ -253,6 +253,47 @@ func (s *Service) RequestChangesWorkObject(ctx context.Context, projectID, canon
 	})
 }
 
+// UpdateWorkObjectStatus sets a work object to an exact status (the human
+// set-status action): an any→status transition via the single-work-status
+// writer. needs_review is set true when the target equals reviewStatus, else
+// cleared; reviewed_by/reviewed_at are left untouched. An agent-originated
+// status write on a board-enabled type is rejected.
+func (s *Service) UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return false, err
+	}
+	cid, err := uuid.Parse(canonicalID)
+	if err != nil {
+		return false, err
+	}
+	// Resolve the object's type so the agent-actor guard can apply the real
+	// per-type board-enabled flag (rather than the removed assignee heuristic).
+	head, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), pid, cid, nil)
+	if err != nil {
+		if errors.Is(err, apperror.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if head == nil {
+		return false, nil
+	}
+	cfg, err := s.objectTypeWorkConfig(ctx, pid, head.Type)
+	if err != nil {
+		return false, err
+	}
+	actorType, _ := actorFromContext(ctx, nil)
+	if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(cfg), status != ""); err != nil {
+		return false, err
+	}
+	nr := status == reviewStatus
+	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
+		ToStatus:       status,
+		SetNeedsReview: &nr,
+	})
+}
+
 // ReassignWorkObject sets or clears the assignee on a work object without a
 // status move (the HEAD's current status is preserved). assignee empty clears.
 func (s *Service) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {

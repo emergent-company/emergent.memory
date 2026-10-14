@@ -41,6 +41,22 @@ func validateTypeStatus(cfg *agents.ObjectTypeWorkConfig, status *string, props 
 	return workStatusNotAllowed(effective)
 }
 
+// ValidateWorkObjectStatus enforces the per-type allowed work-status values on
+// an exact-status write (the human set-status action). For a board-enabled type
+// with a declared allowed set, a status outside that set is rejected.
+// Unconfigured or unconstrained types accept any status. It is the exported
+// sibling of validateTypeStatus, used by the agents domain to reject a
+// disallowed status before dispatching to UpdateWorkObjectStatus.
+func ValidateWorkObjectStatus(cfg *agents.ObjectTypeWorkConfig, status string) error {
+	if !isBoardEnabledConfig(cfg) || len(cfg.AllowedStatuses) == 0 {
+		return nil
+	}
+	if slices.Contains(cfg.AllowedStatuses, status) {
+		return nil
+	}
+	return workStatusNotAllowed(status)
+}
+
 // writesStatus reports whether a write entry point attempts to set work status,
 // either through the built-in status field or by smuggling it through
 // properties["status"]. Both must be rejected so the two copies can never

@@ -44,7 +44,7 @@ func patternBudget() []patternBudgetEntry {
 		// legacy-bordered — daisyUI legacy border classes; canonical is the
 		// shared form-control component (components/form).
 		{pattern: patternLegacyBordered, file: "approvals.templ", count: 1, note: "normalise to the shared form-control component"},
-		{pattern: patternLegacyBordered, file: "board.templ", count: 2, note: "normalise to the shared form-control component"},
+		{pattern: patternLegacyBordered, file: "board.templ", count: 1, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "chat.templ", count: 4, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources.templ", count: 7, note: "normalise to the shared form-control component"},
 		{pattern: patternLegacyBordered, file: "datasources_oauth.templ", count: 9, note: "normalise to the shared form-control component"},

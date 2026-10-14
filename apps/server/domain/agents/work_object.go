@@ -50,6 +50,10 @@ type WorkObjectStore interface {
 	RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string, reworkAgentID *uuid.UUID) (bool, error)
 	// ReassignWorkObject sets/clears the assignee without a status move.
 	ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error)
+	// UpdateWorkObjectStatus sets a work object to an exact status (the human
+	// set-status action). needs_review is set when the target is the review
+	// status; reviewed_by/reviewed_at are untouched.
+	UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error)
 	// CancelWorkObject closes a work item: any→blocked.
 	CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error)
 	// ListWorkObjectsByStatus returns the HEAD projections of board-enabled work

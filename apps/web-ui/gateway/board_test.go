@@ -44,6 +44,7 @@ func newBoardEcho(f MemoryBackend) (*Server, *echo.Echo) {
 	e.POST("/board/items/:canonicalId/request-changes", s.uiBoardRequestChanges)
 	e.POST("/board/items/:canonicalId/retry", s.uiBoardRetry)
 	e.POST("/board/items/:canonicalId/reassign", s.uiBoardReassign)
+	e.POST("/board/items/:canonicalId/status", s.uiBoardSetStatus)
 	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
 	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
 	return s, e
@@ -696,4 +697,156 @@ func TestBoardDrawerDeliverables(t *testing.T) {
 			t.Errorf("empty state missing:\n%s", rec.Body.String())
 		}
 	})
+}
+
+// TestBoardAssigneePicker pins the ticket-style assignee dropdown: the drawer
+// renders a picker seeded with the project's runtime agents (by exact Name) and
+// members (by DisplayName, falling back to Email), each option posting the
+// chosen assignee to the existing reassign route. The "Unassigned" entry is
+// always present and posts an empty assignee.
+func TestBoardAssigneePicker(t *testing.T) {
+	f := &fakeMemory{
+		scheduledAgents: []ScheduledAgent{
+			{ID: "a1", Name: "researcher"},
+			{ID: "a2", Name: "summarizer"},
+			{ID: "a3", Name: ""}, // unnamed agent dropped
+		},
+		members: []ProjectMemberDto{
+			{ID: "u1", DisplayName: "Ada Lovelace", Email: "ada@example.com", AvatarURL: "/avatars/ada.png"},
+			{ID: "u2", Email: "grace@example.com"}, // no display name -> email fallback
+		},
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "ready"},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `data-testid="board-assignee-picker"`) {
+		t.Errorf("assignee picker missing:\n%s", body)
+	}
+	// Candidates render with the reassign route and their exact assignee value.
+	for _, want := range []string{
+		`/board/items/w1/reassign`,
+		`name="assignee"`,
+		`value="researcher"`,
+		`value="summarizer"`,
+		`value="Ada Lovelace"`,
+		`value="grace@example.com"`,
+		`value=""`,                           // Unassigned
+		`>agent</p>`,                         // agent sublabel (agents stay distinct from members)
+		"not a work agent",                   // member hint: non-routable consequence
+		"Only work agents receive the item.", // menu footer (per-agent routability not determinable)
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("assignee picker missing %q:\n%s", want, body)
+		}
+	}
+	// The unnamed agent must be dropped (its empty value would collide with
+	// Unassigned). Assert directly against the builder, since the rendered
+	// "Unassigned" option also carries an empty value.
+	cands := buildBoardAssigneeCandidates(f.scheduledAgents, f.members)
+	for _, c := range cands {
+		if c.Value == "" {
+			t.Errorf("candidate with empty value leaked through: %+v", c)
+		}
+	}
+	if len(cands) != 4 { // researcher, summarizer, Ada, grace
+		t.Errorf("buildBoardAssigneeCandidates = %d candidates, want 4: %+v", len(cands), cands)
+	}
+}
+
+// TestBoardStatusControl pins the "Set status" dropdown in the drawer metadata
+// row: it offers the work-path vocabulary minus the item's current status, each
+// option posting to the set-status route.
+func TestBoardStatusControl(t *testing.T) {
+	f := &fakeMemory{
+		workItemDetail: &WorkItemDetail{
+			Item: &WorkItem{CanonicalID: "w1", Type: "BoardTask", Key: "k", Status: "ready"},
+		},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/board/items/w1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `data-testid="board-status-control"`) {
+		t.Errorf("status control missing:\n%s", body)
+	}
+	for _, want := range []string{
+		`/board/items/w1/status`,
+		`name="status"`,
+		`value="in_progress"`,
+		`value="review"`,
+		`value="revision"`,
+		`value="blocked"`,
+		`value="done"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("status control missing %q:\n%s", want, body)
+		}
+	}
+	// The current status is excluded.
+	if strings.Contains(body, `value="ready"`) {
+		t.Errorf("status control must exclude the current status:\n%s", body)
+	}
+}
+
+// TestBoardSetStatusHandler pins the set-status route: it forwards the posted
+// status to the backend and re-renders the board columns.
+func TestBoardSetStatusHandler(t *testing.T) {
+	f := &fakeMemory{
+		workAction: &WorkItemAction{Item: &WorkItemActionItem{CanonicalID: "w1", Status: "done"}},
+		workItems:  []WorkItem{},
+	}
+	_, e := newBoardEcho(f)
+	req := httptest.NewRequest(http.MethodPost, "/board/items/w1/status", strings.NewReader("status=done"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.lastWorkItemID != "w1" {
+		t.Errorf("set status called with %q, want w1", f.lastWorkItemID)
+	}
+	if f.lastStatusTo != "done" {
+		t.Errorf("set status called with %q, want done", f.lastStatusTo)
+	}
+	if !strings.Contains(rec.Body.String(), `id="board"`) {
+		t.Errorf("set status must re-render the board:\n%s", rec.Body.String())
+	}
+}
+
+// TestBoardReadOnlyPreviewSkipsCandidateFetch pins that a chat preview (no
+// ?actions=board) never fetches the assignee picker candidates: neither
+// ListScheduledAgents nor ListMembers may be called.
+func TestBoardReadOnlyPreviewSkipsCandidateFetch(t *testing.T) {
+	f := &fakeMemory{
+		objects:        []GraphObject{{ID: "w1", Type: "BoardTask", Key: "k", Status: "review"}},
+		workItemDetail: &WorkItemDetail{Item: &WorkItem{CanonicalID: "w1", Status: "review"}},
+	}
+	_, e := newBoardEcho(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/w1/preview", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.listScheduledAgentsCalls != 0 {
+		t.Errorf("read-only preview called ListScheduledAgents %d times, want 0", f.listScheduledAgentsCalls)
+	}
+	if f.listMembersCalls != 0 {
+		t.Errorf("read-only preview called ListMembers %d times, want 0", f.listMembersCalls)
+	}
+	if strings.Contains(rec.Body.String(), "board-assignee-picker") {
+		t.Errorf("read-only preview must not render the assignee picker")
+	}
 }

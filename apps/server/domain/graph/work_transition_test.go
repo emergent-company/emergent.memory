@@ -213,3 +213,50 @@ func TestNonBoardAgentStatusWriteAllowed(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, obj)
 }
+
+// TestUpdateWorkObjectStatus verifies the exact-status write: an any→status
+// transition that sets needs_review on the review status and clears it off
+// review, keeping status and properties["status"] consistent.
+func TestUpdateWorkObjectStatus(t *testing.T) {
+	ctx, svc, projectID, db := setupWorkTransitionTest(t)
+	obj := createAssignedWorkObject(t, ctx, svc, projectID, "k-set", "in_progress")
+
+	ok, err := svc.UpdateWorkObjectStatus(ctx, projectID.String(), obj.CanonicalID.String(), "review", "review")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	head, err := svc.GetHeadObject(ctx, projectID.String(), obj.CanonicalID.String())
+	require.NoError(t, err)
+	require.Equal(t, "review", head.Status)
+	require.Equal(t, "review", statusProperty(t, ctx, db, obj.CanonicalID.String()))
+
+	var needsReview bool
+	require.NoError(t, db.NewRaw(
+		`SELECT needs_review FROM kb.graph_objects WHERE canonical_id = ?::uuid AND supersedes_id IS NULL`,
+		obj.CanonicalID.String(),
+	).Scan(ctx, &needsReview))
+	require.True(t, needsReview)
+
+	// Off review clears needs_review.
+	ok, err = svc.UpdateWorkObjectStatus(ctx, projectID.String(), obj.CanonicalID.String(), "done", "review")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, db.NewRaw(
+		`SELECT needs_review FROM kb.graph_objects WHERE canonical_id = ?::uuid AND supersedes_id IS NULL`,
+		obj.CanonicalID.String(),
+	).Scan(ctx, &needsReview))
+	require.False(t, needsReview)
+}
+
+// TestUpdateWorkObjectStatus_AgentRejected verifies an agent-originated exact
+// status write on a board-enabled object is rejected.
+func TestUpdateWorkObjectStatus_AgentRejected(t *testing.T) {
+	ctx, svc, projectID, _ := setupWorkTransitionTest(t)
+	obj := createAssignedWorkObject(t, ctx, svc, projectID, "k-set-agent", "in_progress")
+
+	agentID := uuid.New()
+	agentCtx := auth.WithActor(ctx, graph.ActorAgent, &agentID)
+
+	_, err := svc.UpdateWorkObjectStatus(agentCtx, projectID.String(), obj.CanonicalID.String(), "done", "review")
+	require.Error(t, err)
+}

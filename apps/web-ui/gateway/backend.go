@@ -155,6 +155,7 @@ type MemoryBackend interface {
 	RequestChangesWorkItem(ctx context.Context, canonicalID, feedback string) (*WorkItemAction, error)
 	RetryWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error)
+	SetWorkItemStatus(ctx context.Context, canonicalID, status string) (*WorkItemAction, error)
 	CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error)
 	// ListBoardRuns lists the project's object-driven (board/work) runs.
 	ListBoardRuns(ctx context.Context, limit int) ([]BoardRun, error)

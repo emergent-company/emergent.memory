@@ -211,7 +211,7 @@ templ boardCard(it WorkItem) {
 // its declared deliverables and completion note, feedback history, recent runs,
 // and the human actions. The status map resolves which of the item's statuses
 // gate each action.
-templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables []boardDeliverable, completionNote string) {
+templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables []boardDeliverable, completionNote string, candidates []boardAssigneeCandidate) {
 	{{ item := detail.Item }}
 	@ui.Dialog(ui.DialogProps{
 		ID:       "board-item-dialog",
@@ -249,12 +249,13 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables
 			if item.NeedsReview {
 				@ui.Badge(ui.BadgeProps{Label: "needs review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
 			}
+			@boardStatusControl(item.CanonicalID, item.Status, statusMap)
 		</div>
 
 		@boardDeliverablesView(deliverables)
 		@boardCompletionNote(completionNote)
 
-		@boardDrawerActions(item, statusMap)
+		@boardDrawerActions(item, statusMap, candidates)
 
 		if len(detail.Feedback) > 0 {
 			<div class="mt-5">
@@ -358,7 +359,7 @@ templ boardCompletionNote(note string) {
 // work-path map, so a custom-mapped board exposes the same actions as the
 // default one. Every action posts to the gateway action route and swaps the
 // board columns; the drawer is cleared out-of-band.
-templ boardDrawerActions(item *WorkItem, statusMap boardStatusMap) {
+templ boardDrawerActions(item *WorkItem, statusMap boardStatusMap, candidates []boardAssigneeCandidate) {
 	<div class="mt-4 flex flex-wrap gap-2">
 		if item.Status == statusMap.Review {
 			@boardActionButton("Approve", "lucide--check", ui.ButtonSuccess, boardActionPath(item.CanonicalID, "approve"))
@@ -368,7 +369,7 @@ templ boardDrawerActions(item *WorkItem, statusMap boardStatusMap) {
 			@boardActionButton("Retry", "lucide--rotate-cw", ui.ButtonPrimary, boardActionPath(item.CanonicalID, "retry"))
 		}
 		if item.Status != statusMap.Done {
-			@boardReassignForm(item.CanonicalID, item.Assignee)
+			@boardAssigneePicker(item.CanonicalID, item.Assignee, candidates)
 			@boardActionButton("Cancel", "lucide--ban", ui.ButtonGhost, boardActionPath(item.CanonicalID, "cancel"))
 		}
 	</div>
@@ -408,19 +409,105 @@ templ boardRequestChangesForm(canonicalID string) {
 	</form>
 }
 
-// boardReassignForm posts reassign with an optional assignee.
-templ boardReassignForm(canonicalID, current string) {
-	<form
-		hx-post={ boardActionPath(canonicalID, "reassign") }
-		hx-target="#board"
-		hx-swap="outerHTML"
-		class="flex items-center gap-2"
-	>
-		<input type="text" name="assignee" value={ current } placeholder="Assignee (empty clears)" class="input input-bordered input-sm w-40" />
-		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonOutline, Size: ui.ButtonSM}) {
-			Reassign
+// boardAssigneePicker renders a ticket-style assignee dropdown: an avatar+name
+// trigger (or a muted "Unassigned" placeholder) that lists Unassigned, runtime
+// agents, and project members. Each option posts the chosen assignee to the
+// existing reassign route and swaps the board columns (closing the drawer
+// out-of-band).
+templ boardAssigneePicker(canonicalID, current string, candidates []boardAssigneeCandidate) {
+	@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "board-assignee-picker"}) {
+		<div
+			tabindex="0"
+			role="button"
+			class="flex cursor-pointer items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 outline-none transition hover:ring-1 hover:ring-base-content/25 focus-visible:ring-1 focus-visible:ring-base-content/45"
+			aria-label="Assignee"
+			aria-haspopup="menu"
+		>
+			if current == "" {
+				<div class="shrink-0">
+					@ui.AvatarFull(ui.AvatarProps{Name: "Unassigned", Icon: "lucide--user", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+				</div>
+				<span class="text-xs text-muted-faint">Unassigned</span>
+			} else {
+				<div class="shrink-0">
+					@ui.AvatarFull(ui.AvatarProps{Name: current, Icon: "lucide--user", Size: ui.AvatarSize6, Fallback: ui.AvatarFallbackInitials, TextClass: "text-[10px]"})
+				</div>
+				<span class="max-w-32 truncate text-xs font-medium">{ current }</span>
+			}
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Assignee", "class": "min-w-52 border-base-content/10 z-50"}) {
+			<li>
+				<form hx-post={ boardActionPath(canonicalID, "reassign") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+					<input type="hidden" name="assignee" value=""/>
+					<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+						<div class="shrink-0">
+							@ui.AvatarFull(ui.AvatarProps{Name: "Unassigned", Icon: "lucide--user", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+						</div>
+						<span class="text-sm text-muted">Unassigned</span>
+					</button>
+				</form>
+			</li>
+			for _, c := range candidates {
+				<li>
+					<form hx-post={ boardActionPath(canonicalID, "reassign") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+						<input type="hidden" name="assignee" value={ c.Value }/>
+						<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+							<div class="shrink-0">
+								if c.IsAgent {
+									@ui.AvatarFull(ui.AvatarProps{Name: c.Label, Icon: "lucide--bot", Size: ui.AvatarSize6, Tone: ui.AvatarToneMuted})
+								} else {
+									@ui.AvatarFull(ui.AvatarProps{Name: c.Label, Src: c.AvatarURL, Icon: "lucide--user", Size: ui.AvatarSize6, Fallback: ui.AvatarFallbackInitials, TextClass: "text-[10px]"})
+								}
+							</div>
+							<div class="min-w-0 grow">
+								<p class="truncate text-sm">{ c.Label }</p>
+								if c.IsAgent {
+									<p class="truncate text-[10px] text-muted-faint">agent</p>
+								} else {
+									<p class="truncate text-[10px] text-muted-faint">not a work agent — won't be picked up by an agent</p>
+								}
+							</div>
+						</button>
+					</form>
+				</li>
+			}
+			<li class="pointer-events-none border-t border-base-content/10 px-3 py-1.5">
+				<p class="text-[10px] text-muted-faint">Only work agents receive the item.</p>
+			</li>
 		}
-	</form>
+	}
+}
+
+// boardStatusControl renders a compact "Set status" dropdown listing the
+// statusMap vocabulary (minus the current status). Each option posts the chosen
+// status to the set-status route and swaps the board columns.
+templ boardStatusControl(canonicalID, current string, statusMap boardStatusMap) {
+	{{ options := boardStatusOptions(statusMap, current) }}
+	if len(options) > 0 {
+		@ui.Dropdown(ui.DropdownEnd, templ.Attributes{"data-testid": "board-status-control"}) {
+			<div
+				tabindex="0"
+				role="button"
+				class="cursor-pointer rounded-field border border-base-content/10 px-2 py-0.5 text-xs text-muted transition hover:ring-1 hover:ring-base-content/25"
+				aria-label="Set status"
+				aria-haspopup="menu"
+			>
+				Set status
+			</div>
+			@ui.DropdownMenu(templ.Attributes{"aria-label": "Set status", "class": "min-w-44 border-base-content/10 z-50"}) {
+				for _, s := range options {
+					<li>
+						<form hx-post={ boardActionPath(canonicalID, "status") } hx-target="#board" hx-swap="outerHTML" class="flex w-full">
+							<input type="hidden" name="status" value={ s }/>
+							<button type="submit" role="menuitem" class="flex w-full cursor-pointer items-center gap-2 text-left">
+								@components.StatusBadge(boardStatusLabel(s), boardStatusIntent(s), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+							</button>
+						</form>
+					</li>
+				}
+			}
+		}
+	}
 }
 
 // BoardDrawerError renders a drawer that failed to load (e.g. a deleted item).

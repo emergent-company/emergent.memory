@@ -50,11 +50,12 @@ func (s *Server) uiObjectPreviewPartial(c echo.Context) error {
 	// preview's action slot so the drawer is a usable surface, not just a
 	// summary. Chat previews carry no actions param and stay read-only. A failed
 	// work-item fetch leaves the slot empty — intentionally not captured, so a
-	// missing work item never degrades the object summary.
+	// missing work item never degrades the object summary. The assignee picker's
+	// candidate list is fetched only here (never on the read-only path).
 	var actions templ.Component
 	if c.QueryParam("actions") == "board" {
 		if detail, werr := s.memory.GetWorkItem(ctx, id); werr == nil && detail != nil && detail.Item != nil {
-			actions = boardDrawerActions(detail.Item, s.boardStatusMap(ctx))
+			actions = boardDrawerActions(detail.Item, s.boardStatusMap(ctx), s.boardAssigneeCandidates(ctx))
 		}
 	}
 

@@ -157,6 +157,9 @@ func (r *recordingWorkObjectStore) RequestChangesWorkObject(ctx context.Context,
 func (r *recordingWorkObjectStore) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {
 	return true, nil
 }
+func (r *recordingWorkObjectStore) UpdateWorkObjectStatus(ctx context.Context, projectID, canonicalID, status, reviewStatus string) (bool, error) {
+	return true, nil
+}
 func (r *recordingWorkObjectStore) CancelWorkObject(ctx context.Context, projectID, canonicalID, blockedStatus string) (bool, error) {
 	return true, nil
 }

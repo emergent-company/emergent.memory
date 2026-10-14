@@ -182,6 +182,15 @@ func (m *MemoryClient) ReassignWorkItem(ctx context.Context, canonicalID, assign
 	return &env.Data, nil
 }
 
+// SetWorkItemStatus sets a work item to an exact status.
+func (m *MemoryClient) SetWorkItemStatus(ctx context.Context, canonicalID, status string) (*WorkItemAction, error) {
+	var env successEnvelope[WorkItemAction]
+	if err := m.do(ctx, http.MethodPost, m.workItemsPath(ctx)+"/"+url.PathEscape(canonicalID)+"/status", map[string]string{"status": status}, &env); err != nil {
+		return nil, err
+	}
+	return &env.Data, nil
+}
+
 // CancelWorkItem closes a work item and cancels any in-flight run.
 func (m *MemoryClient) CancelWorkItem(ctx context.Context, canonicalID string) (*WorkItemAction, error) {
 	var env successEnvelope[WorkItemAction]

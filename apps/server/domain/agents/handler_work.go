@@ -43,6 +43,12 @@ type ReassignWorkItemDTO struct {
 	Assignee string `json:"assignee"`
 }
 
+// UpdateWorkItemStatusDTO is the request body for the set-status action.
+type UpdateWorkItemStatusDTO struct {
+	// Status is the exact work status to set (must be non-empty).
+	Status string `json:"status"`
+}
+
 // WorkItemDTO is the board-card projection returned by the list endpoint: the
 // work object's HEAD joined to its latest run's execution status, plus the
 // derived unroutable flag.
@@ -380,6 +386,39 @@ func (h *Handler) ReassignWorkItem(c echo.Context) error {
 	}
 	assignee := &dto.Assignee
 	res, err := h.workActions.Reassign(c.Request().Context(), projectID, canonicalID, assignee)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, SuccessResponse(&WorkItemActionDTO{Item: toWorkItemHeadDTO(res.Head)}))
+}
+
+// UpdateWorkItemStatus handles POST /api/projects/:projectId/work-items/:canonicalId/status
+//
+// @Summary      Set a work item status
+// @Description  Sets a work item to an exact status (needs_review is set when the target is the review status)
+// @Tags         agents
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID"
+// @Param        canonicalId path string true "Work item canonical ID"
+// @Param        body body UpdateWorkItemStatusDTO true "Status"
+// @Success      200 {object} APIResponse[WorkItemActionDTO] "Status set"
+// @Failure      400 {object} apperror.Error "Empty or disallowed status"
+// @Failure      403 {object} apperror.Error "Non-project member or missing agents:write scope"
+// @Failure      404 {object} apperror.Error "Not found"
+// @Failure      409 {object} apperror.Error "Conflict"
+// @Router       /api/projects/{projectId}/work-items/{canonicalId}/status [post]
+// @Security     bearerAuth
+func (h *Handler) UpdateWorkItemStatus(c echo.Context) error {
+	projectID, canonicalID, err := h.workActionParams(c)
+	if err != nil {
+		return err
+	}
+	var dto UpdateWorkItemStatusDTO
+	if err := c.Bind(&dto); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	res, err := h.workActions.SetStatus(c.Request().Context(), projectID, canonicalID, dto.Status)
 	if err != nil {
 		return err
 	}

@@ -221,6 +221,7 @@ type fakeMemory struct {
 	workActionErr     error           // action failure
 	lastWorkItemID    string          // last canonicalId passed to an action
 	lastReassignTo    string          // last assignee passed to ReassignWorkItem
+	lastStatusTo      string          // last status passed to SetWorkItemStatus
 	lastFeedback      string          // last feedback passed to RequestChangesWorkItem
 
 	// objects browser: cursor pagination + count + search.
@@ -374,32 +375,33 @@ type fakeMemory struct {
 	providersErr  error               // failure for ListSandboxProviders
 	images        []SandboxImage      // returned by ListSandboxImages
 
-	scheduledAgents    []ScheduledAgent               // returned by ListScheduledAgents
-	scheduledRuns      map[string][]ScheduledAgentRun // runs per agent id, returned by ListScheduledAgentRuns
-	schedErr           error                          // failure for any scheduled-agent method
-	createdScheduled   []ScheduledAgent               // agents passed to CreateScheduledAgent
-	updatedScheduled   *ScheduledAgent                // last agent passed to UpdateScheduledAgent
-	updatedSchedID     string                         // last id passed to UpdateScheduledAgent
-	enabledSchedID     string                         // last id passed to EnableScheduledAgent
-	setEnabledSchedID  string                         // last id passed to SetScheduledAgentEnabled
-	setEnabledSchedVal *bool                          // last enabled passed to SetScheduledAgentEnabled
-	deletedSchedID     string                         // last id passed to DeleteScheduledAgent
-	triggeredSchedID   string                         // last id passed to TriggerScheduledAgent
-	triggerResult      *TriggerResult                 // returned by TriggerScheduledAgent
-	triggerAgentCalls  chan triggerAgentCall          // receives each TriggerAgent call (webhook tests; nil = drop)
-	triggerAgentErr    error                          // failure for TriggerAgent
-	runFull            *AgentRunFull                  // returned by GetRunFull
-	runFullErr         error                          // failure for GetRunFull
-	runQuestions       []AgentQuestionItem            // returned by GetRunQuestions
-	runQuestionsErr    error                          // failure for GetRunQuestions
-	agentRuns          map[string]*AgentRun           // returned by GetAgentRun per run id
-	agentRunErr        error                          // failure for GetAgentRun
-	sessionTodos       []SessionTodo                  // returned by ListSessionTodos
-	sessionTodosErr    error                          // failure for ListSessionTodos
-	lastTodosSessionID string                         // last session id passed to ListSessionTodos
-	cancelAgentID      string                         // last agent id passed to CancelAgentRun
-	cancelRunID        string                         // last run id passed to CancelAgentRun
-	cancelAgentRunErr  error                          // failure for CancelAgentRun
+	scheduledAgents          []ScheduledAgent               // returned by ListScheduledAgents
+	listScheduledAgentsCalls int                            // number of ListScheduledAgents invocations
+	scheduledRuns            map[string][]ScheduledAgentRun // runs per agent id, returned by ListScheduledAgentRuns
+	schedErr                 error                          // failure for any scheduled-agent method
+	createdScheduled         []ScheduledAgent               // agents passed to CreateScheduledAgent
+	updatedScheduled         *ScheduledAgent                // last agent passed to UpdateScheduledAgent
+	updatedSchedID           string                         // last id passed to UpdateScheduledAgent
+	enabledSchedID           string                         // last id passed to EnableScheduledAgent
+	setEnabledSchedID        string                         // last id passed to SetScheduledAgentEnabled
+	setEnabledSchedVal       *bool                          // last enabled passed to SetScheduledAgentEnabled
+	deletedSchedID           string                         // last id passed to DeleteScheduledAgent
+	triggeredSchedID         string                         // last id passed to TriggerScheduledAgent
+	triggerResult            *TriggerResult                 // returned by TriggerScheduledAgent
+	triggerAgentCalls        chan triggerAgentCall          // receives each TriggerAgent call (webhook tests; nil = drop)
+	triggerAgentErr          error                          // failure for TriggerAgent
+	runFull                  *AgentRunFull                  // returned by GetRunFull
+	runFullErr               error                          // failure for GetRunFull
+	runQuestions             []AgentQuestionItem            // returned by GetRunQuestions
+	runQuestionsErr          error                          // failure for GetRunQuestions
+	agentRuns                map[string]*AgentRun           // returned by GetAgentRun per run id
+	agentRunErr              error                          // failure for GetAgentRun
+	sessionTodos             []SessionTodo                  // returned by ListSessionTodos
+	sessionTodosErr          error                          // failure for ListSessionTodos
+	lastTodosSessionID       string                         // last session id passed to ListSessionTodos
+	cancelAgentID            string                         // last agent id passed to CancelAgentRun
+	cancelRunID              string                         // last run id passed to CancelAgentRun
+	cancelAgentRunErr        error                          // failure for CancelAgentRun
 	// cancelAgentRunCancelled overrides the "row actually cancelled" result of
 	// CancelAgentRun (nil → true, the common case).
 	cancelAgentRunCancelled *bool
@@ -462,6 +464,7 @@ type fakeMemory struct {
 	createProjectID      int                       // id counter for created projects
 
 	members           []ProjectMemberDto    // returned by ListMembers
+	listMembersCalls  int                   // number of ListMembers invocations
 	removedMember     string                // last user id passed to RemoveMember
 	removeMemberErr   error                 // failure for RemoveMember
 	updatedMemberRole string                // last user id passed to UpdateMemberRole
@@ -596,6 +599,7 @@ func (f *fakeMemory) UpdateAgentDefinition(ctx context.Context, id string, in *A
 func (f *fakeMemory) DeleteAgentDefinition(ctx context.Context, id string) error { return nil }
 
 func (f *fakeMemory) ListScheduledAgents(ctx context.Context) ([]ScheduledAgent, error) {
+	f.listScheduledAgentsCalls++
 	if f.schedErr != nil {
 		return nil, f.schedErr
 	}
@@ -1379,6 +1383,12 @@ func (f *fakeMemory) RetryWorkItem(ctx context.Context, canonicalID string) (*Wo
 func (f *fakeMemory) ReassignWorkItem(ctx context.Context, canonicalID, assignee string) (*WorkItemAction, error) {
 	f.lastWorkItemID = canonicalID
 	f.lastReassignTo = assignee
+	return f.workAction, f.workActionErr
+}
+
+func (f *fakeMemory) SetWorkItemStatus(ctx context.Context, canonicalID, status string) (*WorkItemAction, error) {
+	f.lastWorkItemID = canonicalID
+	f.lastStatusTo = status
 	return f.workAction, f.workActionErr
 }
 
@@ -3520,6 +3530,7 @@ func (f *fakeMemory) DeleteOrgToolSetting(ctx context.Context, orgID, toolName s
 }
 
 func (f *fakeMemory) ListMembers(ctx context.Context) ([]ProjectMemberDto, error) {
+	f.listMembersCalls++
 	return f.members, nil
 }
 

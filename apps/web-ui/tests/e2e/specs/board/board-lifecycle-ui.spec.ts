@@ -26,7 +26,18 @@ import {
 let handle: BoardSchemaHandle | null = null;
 let canonicalId = ''; // graph object canonical id (== id on first create)
 let key = '';
-let assignee = '';
+
+/** A project member as returned by the gateway GET /api/members. */
+interface MemberDto {
+  displayName?: string;
+  email?: string;
+}
+
+/** The label the assignee picker renders for a member (gateway/board.go buildBoardAssigneeCandidates). */
+function memberLabel(m: MemberDto): string {
+  const name = (m.displayName ?? '').trim();
+  return name !== '' ? name : (m.email ?? '').trim();
+}
 
 /** The board card, scoped to one status column. */
 function cardIn(page: Page, status: string) {
@@ -88,7 +99,6 @@ test.describe.serial('board work-item lifecycle', () => {
       const stamp = Date.now();
       const type = `E2EBoardTask${stamp}`;
       key = `e2e-board-${stamp}`;
-      assignee = `e2e-assignee-${stamp}`;
       handle = await createBoardEnabledSchema(page, type);
 
       const headers = await memoryAuthHeaders(page);
@@ -175,17 +185,35 @@ test.describe.serial('board work-item lifecycle', () => {
   });
 
   test('reassign sets the assignee on the item', async ({ page }) => {
+    // The ticket-style picker offers the project's real members; pick the first.
+    const membersResp = await page.request.get('/api/members');
+    if (!membersResp.ok()) {
+      throw new Error(`GET /api/members failed (HTTP ${membersResp.status()})`);
+    }
+    const members = (await membersResp.json()) as MemberDto[];
+    const target = memberLabel(members[0] ?? {});
+    expect(target, 'a project member must exist to reassign').toBeTruthy();
+
     await page.goto('/board');
     await openPreview(page);
 
-    await previewActions(page).locator('input[name="assignee"]').fill(assignee);
-    await previewActions(page).getByRole('button', { name: 'Reassign' }).click();
+    // Open the assignee dropdown (trigger is the avatar+name pill). The menu is
+    // CSS-only (revealed via :focus-within), so fall back to explicit focus if
+    // the click lands without moving focus (headless quirk).
+    const trigger = previewActions(page).getByRole('button', { name: 'Assignee' });
+    const menu = previewActions(page).getByRole('menu', { name: 'Assignee' });
+    await trigger.click();
+    if (!(await menu.isVisible())) {
+      await trigger.focus();
+    }
+    await expect(menu).toBeVisible();
+    await menu.getByRole('menuitem', { name: target }).click();
     await expect(page.locator('#object-preview-panel')).toHaveAttribute('aria-hidden', 'true');
 
     // The card re-renders with the assignee badge; cross-check via the API.
     await expect(cardIn(page, 'ready')).toBeVisible();
-    await expect(cardIn(page, 'ready').getByText(assignee)).toBeVisible();
-    expect((await workItem(page)).assignee).toBe(assignee);
+    await expect(cardIn(page, 'ready').getByText(target)).toBeVisible();
+    expect((await workItem(page)).assignee).toBe(target);
   });
 
   test('cancel moves the item to blocked', async ({ page }) => {
