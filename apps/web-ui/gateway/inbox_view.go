@@ -48,6 +48,18 @@ func notificationIcon(n Notification) string {
 	return "lucide--bell"
 }
 
+// notificationProjectLabel returns the originating project's display name for
+// an account-scope inbox row, or "" when there is nothing to attribute: the
+// row carries no project id, the scope is not account (the project inbox
+// already labels its project in the scope switch), or the id is not in the
+// fetched project list (best-effort attribution degrades to no chip).
+func notificationProjectLabel(d inboxView, n Notification) string {
+	if d.Scope != "account" || n.ProjectID == "" {
+		return ""
+	}
+	return d.ProjectNames[n.ProjectID]
+}
+
 // notificationMeta builds the muted metadata line: when + category + optional
 // source. Empty segments are dropped.
 func notificationMeta(n Notification) string {

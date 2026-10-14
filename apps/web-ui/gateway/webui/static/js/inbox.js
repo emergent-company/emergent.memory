@@ -116,9 +116,11 @@
     if (!page) return;
     var scope = page.getAttribute("data-scope") || "account";
     var tab = page.getAttribute("data-tab") || "all";
+    var project = page.getAttribute("data-project-filter") || "";
     var path = window.MemoryScope ? MemoryScope.path("/inbox") : "/inbox";
     var url =
       path + "?scope=" + encodeURIComponent(scope) + "&tab=" + encodeURIComponent(tab);
+    if (project) url += "&project=" + encodeURIComponent(project);
     if (window.htmx && window.htmx.ajax) {
       window.htmx.ajax("GET", url, { target: "#main-content", swap: "innerHTML" });
     } else {

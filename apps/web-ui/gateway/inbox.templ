@@ -24,6 +24,7 @@ templ InboxPage(d inboxView) {
 			data-scope={ d.Scope }
 			data-tab={ d.Tab }
 			data-project-id={ inboxProjectID(d) }
+			data-project-filter={ d.ProjectFilter }
 		>
 			@inboxScopeSwitch(d)
 			if d.Scope == "project" && !d.ProjectSelected {
@@ -31,6 +32,7 @@ templ InboxPage(d inboxView) {
 			} else if d.LoadErr != nil {
 				@pageError("Inbox unavailable", d.LoadErr)
 			} else {
+				@inboxProjectFilterControl(d)
 				@inboxTabs(d)
 				if len(d.Notifications) == 0 {
 					@inboxEmpty(d)
@@ -66,6 +68,28 @@ templ inboxScopeSwitch(d inboxView) {
 		@inboxScopeLink(d, "account", "Account", "lucide--user-round")
 		@inboxScopeLink(d, "project", "Project", "lucide--folder")
 	</div>
+}
+
+// inboxProjectFilterControl is the account-scope project filter dropdown. It is
+// only rendered for the account inbox — the project inbox already narrows to
+// one project via the scope switch and must not repeat the label.
+templ inboxProjectFilterControl(d inboxView) {
+	if d.Scope == "account" {
+		<form class="mb-4 flex flex-wrap items-center gap-2" method="get" action={ templ.URL("/inbox") } data-inbox-project-filter>
+			<input type="hidden" name="scope" value={ d.Scope }/>
+			<input type="hidden" name="tab" value={ d.Tab }/>
+			<span class="text-muted-faint flex items-center gap-1.5">
+				@ui.IconSpan("lucide--folder", "size-3.5 shrink-0")
+				<span class="text-xs font-medium">Project</span>
+			</span>
+			<select name="project" class="select select-bordered select-sm" aria-label="Filter by project" onchange="this.form.submit()">
+				<option value="" selected?={ d.ProjectFilter == "" }>All projects</option>
+				for _, p := range d.ProjectOptions {
+					<option value={ p.ID } selected?={ p.ID == d.ProjectFilter }>{ p.Name }</option>
+				}
+			</select>
+		</form>
+	}
 }
 
 templ inboxScopeLink(d inboxView, scope, label, icon string) {
@@ -106,7 +130,7 @@ templ inboxTab(d inboxView, t inboxTabDef) {
 	{{ active := d.Tab == t.Key }}
 	{{ count, show := inboxTabCount(d.Counts, t.Key) }}
 	<a
-		href={ templ.SafeURL(inboxTabHref(d.Scope, t.Key)) }
+		href={ templ.SafeURL(inboxFilterHref(d.Scope, t.Key, d.ProjectFilter)) }
 		role="tab"
 		aria-selected={ strconv.FormatBool(active) }
 		data-inbox-tab={ t.Key }
@@ -124,7 +148,7 @@ templ inboxTab(d inboxView, t inboxTabDef) {
 templ inboxList(d inboxView) {
 	<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y" data-inbox-list>
 		for _, n := range d.Notifications {
-			@inboxRow(n)
+			@inboxRow(d, n)
 		}
 	</div>
 }
@@ -135,7 +159,7 @@ templ inboxList(d inboxView) {
 // notification carries a navigation target its title/message block is an
 // anchor (`data-notification-open`) so clicking the item deep-links to the
 // pending question/approval and marks it read (issue #1362).
-templ inboxRow(n Notification) {
+templ inboxRow(d inboxView, n Notification) {
 	<div
 		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
 		data-notification-id={ n.ID }
@@ -157,10 +181,10 @@ templ inboxRow(n Notification) {
 					data-notification-open
 					data-notif-id={ n.ID }
 				>
-					@inboxRowBody(n)
+					@inboxRowBody(d, n)
 				</a>
 			} else {
-				@inboxRowBody(n)
+				@inboxRowBody(d, n)
 			}
 			<p class="text-muted-faint mt-1 text-xs">{ notificationMeta(n) }</p>
 		</div>
@@ -168,12 +192,17 @@ templ inboxRow(n Notification) {
 	</div>
 }
 
-// inboxRowBody is the navigable part of a notification row: title, state
-// badges, and message. Extracted so the same markup renders as plain content
-// or inside the open anchor.
-templ inboxRowBody(n Notification) {
+// inboxRowBody is the navigable part of a notification row: title, the
+// originating-project chip (account scope only), state badges, and message.
+// Extracted so the same markup renders as plain content or inside the open
+// anchor.
+templ inboxRowBody(d inboxView, n Notification) {
+	{{ label := notificationProjectLabel(d, n) }}
 	<div class="flex flex-wrap items-center gap-2">
 		<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
+		if label != "" {
+			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--folder"})
+		}
 		if !n.Read {
 			@ui.Badge(ui.BadgeProps{Label: "New", Variant: ui.BadgePrimary, Size: ui.BadgeSizeXS})
 		}

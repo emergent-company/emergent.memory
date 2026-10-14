@@ -79,6 +79,15 @@ type inboxView struct {
 	Project *Project
 	// ProjectSelected is true when project scope has a resolvable project.
 	ProjectSelected bool
+	// ProjectNames maps a project id to its display name, for account-scope row
+	// attribution (best-effort: an unresolved id renders no chip).
+	ProjectNames map[string]string
+	// ProjectFilter is the account-scope project filter (?project=), validated
+	// against the fetched project list; "" means "all projects".
+	ProjectFilter string
+	// ProjectOptions is the ordered project list the account filter offers
+	// ("All projects" + the caller's projects).
+	ProjectOptions []ProjectRef
 	// LoadErr is a real list-load failure (Memory unreachable); empty states are
 	// not errors.
 	LoadErr  error
@@ -86,19 +95,22 @@ type inboxView struct {
 	FlashErr error
 }
 
-// inboxProjectFilter returns the project filter for an inbox scope. Only the
-// Project scope narrows to a project; the Account scope is global (its events
-// may individually link to a project, but the account inbox is not scoped to
-// the active one). Narrowing account scope to the active project was the #1342
-// defect: a user with 11 account-scope unread spread across 7 projects saw only
-// the 2 belonging to the active project in the inbox, while the bell (which
-// counted all account unread) read 11. The account filter also keeps
-// ListNotifications and NotificationCounts on the same population.
-func inboxProjectFilter(scope string, project *Project) string {
-	if scope != "project" || project == nil {
-		return ""
+// inboxProjectFilter returns the effective project filter for an inbox scope.
+// The Project scope narrows to the active project. The Account scope passes
+// through the user's explicit project filter (?project=): "" lists every
+// account event, a non-empty id narrows to that project. The account filter is
+// an explicit user choice, not the #1342 auto-narrow — that defect passed the
+// ACTIVE project id for every scope, so a user with 11 account unread spread
+// across 7 projects saw only the 2 belonging to the active project while the
+// bell (all account unread) read 11.
+func inboxProjectFilter(scope string, project *Project, filter string) string {
+	if scope == "project" {
+		if project == nil {
+			return ""
+		}
+		return project.ID
 	}
-	return project.ID
+	return filter
 }
 
 // inboxListParams maps the inbox tab onto memory's list filters.
@@ -146,7 +158,31 @@ func (s *Server) uiInbox(c echo.Context) error {
 		view.ProjectSelected = true
 	}
 
-	projectID := inboxProjectFilter(scope, view.Project)
+	// Projects for account-scope row attribution and the account project
+	// filter. Best-effort: a failure leaves an empty name map and option list,
+	// so rows render without a chip and the filter offers only "All projects".
+	// The list itself must still render.
+	if scope == "account" {
+		if projects, err := s.memory.ListProjects(ctx); err == nil {
+			view.ProjectOptions = projects
+			view.ProjectNames = make(map[string]string, len(projects))
+			for _, p := range projects {
+				view.ProjectNames[p.ID] = p.Name
+			}
+			// Validate ?project= against the fetched list (fail closed: an
+			// unknown id is ignored, leaving the account inbox unfiltered).
+			if raw := strings.TrimSpace(c.QueryParam("project")); raw != "" {
+				for _, p := range projects {
+					if p.ID == raw {
+						view.ProjectFilter = raw
+						break
+					}
+				}
+			}
+		}
+	}
+
+	projectID := inboxProjectFilter(scope, view.Project, view.ProjectFilter)
 	items, err := s.memory.ListNotifications(ctx, inboxListParams(scope, projectID, tab))
 	if err != nil {
 		view.LoadErr = userFacingError(err)
@@ -201,12 +237,19 @@ func (s *Server) notificationUnread(ctx context.Context, scope, projectID string
 	return c.Unread
 }
 
-// inboxTabHref builds a tab link preserving the active scope.
-func inboxTabHref(scope, tab string) string {
-	return "/inbox?" + url.Values{"scope": {scope}, "tab": {tab}}.Encode()
+// inboxFilterHref builds an inbox link preserving the scope, tab, and account
+// project filter. The project param is dropped when empty, so project-scope
+// tabs and an unfiltered account inbox keep a clean URL.
+func inboxFilterHref(scope, tab, project string) string {
+	q := url.Values{"scope": {scope}, "tab": {tab}}
+	if project != "" {
+		q.Set("project", project)
+	}
+	return "/inbox?" + q.Encode()
 }
 
-// inboxScopeHref builds a scope-switch link (resets to the all tab).
+// inboxScopeHref builds a scope-switch link (resets to the all tab and drops
+// the account project filter).
 func inboxScopeHref(scope string) string {
 	return "/inbox?" + url.Values{"scope": {scope}}.Encode()
 }

@@ -35,7 +35,7 @@ var adoptionFindings = []AdoptionFinding{
 	{File: "chat.templ", Line: 821, Marker: "class:alert", Owners: []string{"Alert"}},
 	{File: "datasources.templ", Line: 423, Marker: "class:toggle", Owners: []string{"ToggleField", "ToggleInput"}},
 	{File: "documents.templ", Line: 397, Marker: "class:card-border", Owners: []string{"CardRaw", "PanelCard", "TableCard"}},
-	{File: "inbox.templ", Line: 118, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
+	{File: "inbox.templ", Line: 142, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "notifications_bell.templ", Line: 39, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 94, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 100, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},

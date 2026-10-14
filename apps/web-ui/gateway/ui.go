@@ -90,7 +90,6 @@ func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
 			// Ungrouped top-level entries: pulled out of their groups to sit
 			// at the very top of the sidebar.
 			Items: []layout.SidebarItem{
-				{Label: "Inbox", Href: base + "/inbox", Icon: "lucide--inbox"},
 				{Label: "Approvals", Href: base + "/settings/approvals", Icon: "lucide--shield-check"},
 				{Label: "Chat", Href: base + "/chat", Icon: "lucide--messages-square"},
 				{Label: "Sessions", Href: base + "/sessions", Icon: "lucide--history"},

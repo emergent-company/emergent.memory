@@ -203,6 +203,76 @@ func TestInboxPageTabsAndCounts(t *testing.T) {
 	}
 }
 
+// TestInboxPageProjectChip asserts account-scope rows attribute their
+// originating project when the id resolves, and omit the chip otherwise; the
+// project scope never renders the chip (its scope switch already names the
+// project).
+func TestInboxPageProjectChip(t *testing.T) {
+	account := inboxView{
+		Scope:        "account",
+		Tab:          "all",
+		ProjectNames: map[string]string{"p1": "Acme"},
+		Notifications: []Notification{
+			{ID: "n1", Scope: "account", ProjectID: "p1", Title: "Added to project"},
+			{ID: "n2", Scope: "account", ProjectID: "ghost", Title: "Unknown project"},
+		},
+	}
+	html := renderHTML(t, InboxPage(account))
+	if !strings.Contains(html, "Acme") {
+		t.Error("account row with a resolvable project id must render a project chip")
+	}
+	if strings.Count(html, "Acme") != 1 {
+		t.Errorf("project chip must render exactly once, got %d", strings.Count(html, "Acme"))
+	}
+
+	projectScope := inboxView{
+		Scope: "project", Tab: "all",
+		Project:         &Project{ID: "p1", Name: "Acme"},
+		ProjectSelected: true,
+		ProjectNames:    map[string]string{"p1": "Acme"},
+		Notifications:   []Notification{{ID: "n1", Scope: "project", ProjectID: "p1", Title: "Added to project"}},
+	}
+	if got := renderHTML(t, InboxPage(projectScope)); strings.Contains(got, "Acme") {
+		t.Error("project scope must not repeat the project label as a chip")
+	}
+}
+
+// TestInboxPageProjectFilter asserts the account scope renders the project
+// filter and the project scope does not.
+func TestInboxPageProjectFilter(t *testing.T) {
+	account := inboxView{
+		Scope:          "account",
+		Tab:            "all",
+		ProjectFilter:  "p1",
+		ProjectOptions: []ProjectRef{{ID: "p1", Name: "Acme"}, {ID: "p2", Name: "Globex"}},
+		Notifications:  []Notification{},
+	}
+	html := renderHTML(t, InboxPage(account))
+	for _, want := range []string{
+		"data-inbox-project-filter",
+		`name="project"`,
+		">All projects<",
+		">Acme<",
+		">Globex<",
+		`value="p1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("account inbox filter missing %q", want)
+		}
+	}
+
+	projectScope := inboxView{
+		Scope: "project", Tab: "all",
+		Project:         &Project{ID: "p1", Name: "Acme"},
+		ProjectSelected: true,
+		ProjectOptions:  []ProjectRef{{ID: "p1", Name: "Acme"}},
+		Notifications:   []Notification{},
+	}
+	if got := renderHTML(t, InboxPage(projectScope)); strings.Contains(got, "data-inbox-project-filter") {
+		t.Error("project scope must not render the project filter")
+	}
+}
+
 // --- Bell render tests (task 8.1) ---
 
 func TestNotificationsBellCount(t *testing.T) {
@@ -256,27 +326,30 @@ func TestAppShellRendersBell(t *testing.T) {
 	}
 }
 
-// TestInboxProjectFilter is the #1342 root-cause regression: the Account inbox
-// is global and must not be narrowed to the active project. The defect passed
+// TestInboxProjectFilter guards the #1342 root cause: the Account inbox is
+// global and must not be auto-narrowed to the active project. The defect passed
 // the active project id for every scope, so a user with 11 account unread
 // spread across 7 projects saw only the 2 belonging to the active project,
-// while the bell (all account unread) read 11.
+// while the bell (all account unread) read 11. The account scope's project id
+// is now the user's explicit filter, not the active project.
 func TestInboxProjectFilter(t *testing.T) {
 	p := &Project{ID: "active-project"}
 	for _, tc := range []struct {
-		name  string
-		scope string
-		proj  *Project
-		want  string
+		name   string
+		scope  string
+		proj   *Project
+		filter string
+		want   string
 	}{
-		{"account is global", "account", p, ""},
-		{"account with no project", "account", nil, ""},
-		{"project narrows", "project", p, "active-project"},
-		{"project with no project", "project", nil, ""},
+		{"account is global", "account", p, "", ""},
+		{"account passes explicit filter", "account", p, "proj-x", "proj-x"},
+		{"account with no project", "account", nil, "", ""},
+		{"project narrows", "project", p, "proj-x", "active-project"},
+		{"project with no project", "project", nil, "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := inboxProjectFilter(tc.scope, tc.proj); got != tc.want {
-				t.Errorf("inboxProjectFilter(%q, %v) = %q, want %q", tc.scope, tc.proj, got, tc.want)
+			if got := inboxProjectFilter(tc.scope, tc.proj, tc.filter); got != tc.want {
+				t.Errorf("inboxProjectFilter(%q, %v, %q) = %q, want %q", tc.scope, tc.proj, tc.filter, got, tc.want)
 			}
 		})
 	}
@@ -334,6 +407,54 @@ func TestUIInboxScopeProjectFilter(t *testing.T) {
 	}
 	if f.lastCountsScope != "project" || f.lastCountsProject != "active-project" {
 		t.Errorf("project counts forwarded scope/project = %q/%q, want project/active-project", f.lastCountsScope, f.lastCountsProject)
+	}
+}
+
+// TestUIInboxAccountProjectFilter drives the real inbox handler and asserts the
+// account scope forwards an explicit, validated ?project= filter to the list
+// and counts, and ignores unknown values (fail closed).
+func TestUIInboxAccountProjectFilter(t *testing.T) {
+	f := &fakeMemory{
+		project:            &Project{ID: "active-project", Name: "Active"},
+		projects:           []ProjectRef{{ID: "p1", Name: "Acme"}, {ID: "p2", Name: "Globex"}},
+		notificationCounts: &NotificationCounts{Unread: 3},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// No Sub: page() skips the bell's own counts call, so the recorded
+			// counts are exactly the ones uiInbox forwarded for the list.
+			ctx := withSessionContext(c.Request().Context(), &sessionContext{Token: "tok"})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.GET("/inbox", s.uiInbox)
+
+	serve := func(path string) {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	// A known project id narrows the account list and counts to that project.
+	serve("/inbox?scope=account&project=p1")
+	if f.lastListParams.Scope != "account" || f.lastListParams.ProjectID != "p1" {
+		t.Errorf("account list forwarded scope/project = %q/%q, want account/p1", f.lastListParams.Scope, f.lastListParams.ProjectID)
+	}
+	if f.lastCountsScope != "account" || f.lastCountsProject != "p1" {
+		t.Errorf("account counts forwarded scope/project = %q/%q, want account/p1", f.lastCountsScope, f.lastCountsProject)
+	}
+
+	// An unknown project id is ignored (fail closed): the account inbox stays
+	// unfiltered.
+	serve("/inbox?scope=account&project=does-not-exist")
+	if f.lastListParams.ProjectID != "" || f.lastCountsProject != "" {
+		t.Errorf("unknown project must be ignored; list/counts project = %q/%q, want ''/''", f.lastListParams.ProjectID, f.lastCountsProject)
 	}
 }
 
@@ -407,36 +528,35 @@ func TestInboxBellScope(t *testing.T) {
 
 // --- Nav render test (task 8.3) ---
 
-func TestSidebarGroupsIncludesInbox(t *testing.T) {
+// TestSidebarGroupsOmitsInbox asserts the Inbox entry was removed from the
+// project sidebar: the account inbox is cross-project and is reached from the
+// topbar inbox entry, not a project-scoped nav item.
+func TestSidebarGroupsOmitsInbox(t *testing.T) {
 	for _, admin := range []bool{true, false} {
-		found := false
 		for _, g := range sidebarGroups("", admin) {
 			for _, item := range g.Items {
 				if item.Href == "/inbox" {
-					found = true
-					if item.Icon != "lucide--inbox" {
-						t.Errorf("inbox icon = %q, want lucide--inbox", item.Icon)
-					}
+					t.Errorf("sidebarGroups(admin=%v) still contains the Inbox entry", admin)
 				}
 			}
-		}
-		if !found {
-			t.Errorf("sidebarGroups(admin=%v) missing the Inbox entry", admin)
 		}
 	}
 }
 
-// TestLayoutSidebarActiveInbox asserts the active-state mechanism marks the
-// inbox entry on /inbox.
-func TestLayoutSidebarActiveInbox(t *testing.T) {
-	groups := layout.ActiveSidebarGroups(sidebarGroups("", false), "/inbox")
+// TestLayoutSidebarActiveApprovals asserts the active-state mechanism still
+// marks a remaining top-level entry now that the Inbox entry is gone.
+func TestLayoutSidebarActiveApprovals(t *testing.T) {
+	groups := layout.ActiveSidebarGroups(sidebarGroups("", false), "/settings/approvals")
+	found := false
 	for _, g := range groups {
 		for _, item := range g.Items {
-			if item.Href == "/inbox" && !item.Active {
-				// A missing Active flag here means the nav would not highlight.
-				t.Error("Inbox entry not marked active on /inbox")
+			if item.Href == "/settings/approvals" && item.Active {
+				found = true
 			}
 		}
+	}
+	if !found {
+		t.Error("Approvals entry not marked active on /settings/approvals")
 	}
 }
 
