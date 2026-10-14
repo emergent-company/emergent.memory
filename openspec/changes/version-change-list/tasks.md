@@ -1,3 +1,4 @@
+<!-- openspec:archive-hold: capability web-object-preview-history is shared with the still-unarchived board-ux-improvements, whose base history requirements must land first; do not archive version-change-list alone -->
 # Tasks
 
 ## 1. Gateway client decodes the per-version change_summary
