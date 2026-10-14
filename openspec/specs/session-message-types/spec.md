@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Schema pre-registration and embedding policies for Session and Message graph object types, applied at server startup across all projects.
+The platform's conversation primitives for graph objects — the `Session` and `Message` object types and the `has_message` relationship, shipped as the built-in `session-message-types` blueprint pack that materializes only when a project applies the blueprint — together with the system embedding policy that auto-embeds `Message.content` in every project.
 
 ## Requirements
 
