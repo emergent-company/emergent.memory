@@ -376,3 +376,65 @@ func TestClassifyAuthRequired_NoMetadataReportsUnavailable(t *testing.T) {
 		t.Errorf("AuthorizationServer = %q, want empty for an unavailable requirement", auth.AuthorizationServer)
 	}
 }
+
+// --- install classification ---
+
+func TestClassifyInstallAuth_ChallengeBecomesAuthorization(t *testing.T) {
+	withTestOAuthHTTP(t)
+	ts := newOAuthTestServer(t)
+	defer ts.Close()
+
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr(ts.URL + "/mcp")}
+
+	requiresAuth, requiresTokenHeader := classifyInstallAuth(context.Background(), server, &ErrMCPAuthRejected{Status: http.StatusUnauthorized})
+	if !requiresAuth {
+		t.Error("requiresAuthorization = false, want true (discoverable metadata)")
+	}
+	if requiresTokenHeader {
+		t.Error("requiresTokenHeader = true, want false when metadata is discoverable")
+	}
+}
+
+func TestClassifyInstallAuth_NoMetadataRequiresTokenHeader(t *testing.T) {
+	withTestOAuthHTTP(t)
+
+	mux := http.NewServeMux()
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	issuer := srv.URL + "/login/oauth"
+
+	mux.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+srv.URL+`/.well-known/oauth-protected-resource"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              srv.URL + "/mcp",
+			"authorization_servers": []string{issuer},
+		})
+	})
+	// No well-known metadata anywhere: the connect flow cannot work.
+
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr(srv.URL + "/mcp")}
+
+	requiresAuth, requiresTokenHeader := classifyInstallAuth(context.Background(), server, &ErrMCPAuthRejected{Status: http.StatusUnauthorized})
+	if requiresAuth {
+		t.Error("requiresAuthorization = true, want false (no discoverable metadata)")
+	}
+	if !requiresTokenHeader {
+		t.Error("requiresTokenHeader = false, want true (token header is the remedy)")
+	}
+}
+
+func TestClassifyInstallAuth_NonAuthErrorIsNeither(t *testing.T) {
+	withTestOAuthHTTP(t)
+	server := &MCPServer{ID: "s1", Type: ServerTypeHTTP, URL: strPtr("https://mcp.test/mcp")}
+
+	requiresAuth, requiresTokenHeader := classifyInstallAuth(context.Background(), server, context.DeadlineExceeded)
+	if requiresAuth {
+		t.Error("requiresAuthorization = true, want false for a non-auth error")
+	}
+	if requiresTokenHeader {
+		t.Error("requiresTokenHeader = true, want false for a non-auth error")
+	}
+}

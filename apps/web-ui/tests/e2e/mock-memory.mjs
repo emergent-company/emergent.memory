@@ -1056,6 +1056,51 @@ const server = http.createServer((req, res) => {
     return json(res, doc);
   }
 
+  // --- MCP servers (settings page, specs/mcp/) --------------------------------
+  //
+  // The MCP servers settings page needs one outbound http server whose inspect
+  // answers auth_required + unavailable, so the disabled-Connect branch in
+  // gateway/mcp_servers.templ renderInspect is exercised deterministically. The
+  // gateway proxies memory's /api/admin/mcp-servers namespace (list + inspect),
+  // so the mock serves both shapes here.
+  if (path === "/api/admin/mcp-servers" && req.method === "GET") {
+    return json(res, {
+      success: true,
+      data: [
+        {
+          id: "mcp-unavailable",
+          name: "unavailable-oauth-server",
+          type: "http",
+          url: "http://localhost:9999",
+          enabled: true,
+          toolCount: 0,
+        },
+      ],
+    });
+  }
+
+  const mcpInspectMatch = path.match(/^\/api\/admin\/mcp-servers\/([^/]+)\/inspect$/);
+  if (mcpInspectMatch && req.method === "POST") {
+    return json(res, {
+      success: true,
+      data: {
+        serverId: mcpInspectMatch[1],
+        serverName: "unavailable-oauth-server",
+        serverType: "http",
+        status: "auth_required",
+        latencyMs: 0,
+        auth: {
+          unavailable: true,
+          remedy: "configure a token header for this server instead (e.g. Authorization: Bearer <token>)",
+        },
+        tools: [],
+        prompts: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    });
+  }
+
   res.statusCode = 404;
   json(res, { error: { code: "not_found", message: "not found" } });
 });

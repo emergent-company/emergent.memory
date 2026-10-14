@@ -57,6 +57,10 @@ export default defineConfig({
         // sources, sync jobs, versions) and no real Drive credentials, so it
         // runs under its own hermetic mock harness (`datasources.config.ts`).
         /specs\/datasources\/.*\.spec\.ts/,
+        // MCP inspect surface. It needs a deterministically OAuth-unavailable
+        // server that the live memory backend cannot produce, so it runs under
+        // its own hermetic mock harness (`mcp-inspect.config.ts`).
+        /specs\/mcp\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
       dependencies: ['setup'],

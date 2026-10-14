@@ -1344,6 +1344,7 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 	// resolved required configuration (unfilled credentials), skip discovery:
 	// the server is created disabled and the connection would fail.
 	requiresAuthorization := false
+	requiresTokenHeader := false
 	if len(createDTO.RequiredConfig) == 0 && (createDTO.Type == ServerTypeSSE || createDTO.Type == ServerTypeHTTP) {
 		discovered, err := s.DiscoverAndSyncTools(ctx, server.ID, projectID)
 		if err != nil {
@@ -1357,9 +1358,7 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 			// connect flow, and the install result says so rather than leaving
 			// the user with a server that silently has no tools.
 			if isAuthRejection(err) {
-				if _, authErr := discoverServerAuthRequirement(ctx, server); authErr == nil {
-					requiresAuthorization = true
-				}
+				requiresAuthorization, requiresTokenHeader = classifyInstallAuth(ctx, server, err)
 			}
 		} else {
 			s.log.Info("auto-discovered tools after install",
@@ -1390,6 +1389,9 @@ func (s *Service) InstallFromRegistry(ctx context.Context, projectID string, dto
 	}
 	if requiresAuthorization {
 		message = fmt.Sprintf("Server installed, but it requires OAuth authorization before its tools are available. Connect it from the MCP servers page (POST /api/admin/mcp-servers/%s/oauth/authorize to start the flow).", server.ID)
+	}
+	if requiresTokenHeader {
+		message = fmt.Sprintf("Server installed, but it requires authorization and its provider publishes no discoverable OAuth metadata, so the browser connect flow cannot be used — %s", oauthMetadataUnavailableRemedy)
 	}
 
 	return &InstallResultDTO{

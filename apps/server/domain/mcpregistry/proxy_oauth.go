@@ -227,6 +227,26 @@ func isAuthRejection(err error) bool {
 	return err != nil && errors.As(err, &rejected)
 }
 
+// classifyInstallAuth classifies a tool-discovery error for the registry
+// install flow into the install result's auth flags. It mirrors
+// classifyAuthRequired (the inspect path) but returns booleans the install
+// result surfaces: requiresAuthorization when the server answered an OAuth
+// challenge with discoverable metadata (the connect flow works), and
+// requiresTokenHeader when the server rejected us but publishes no discoverable
+// OAuth metadata (the browser connect flow cannot work — a token header is the
+// remedy). A non-auth error or an unusable challenge yields neither flag.
+func classifyInstallAuth(ctx context.Context, server *MCPServer, err error) (requiresAuthorization, requiresTokenHeader bool) {
+	if !isAuthRejection(err) {
+		return false, false
+	}
+	if _, authErr := discoverServerAuthRequirement(ctx, server); authErr == nil {
+		return true, false
+	} else if errors.Is(authErr, ErrOAuthMetadataUnavailable) {
+		return false, true
+	}
+	return false, false
+}
+
 // nonNilStrings returns a non-nil slice so JSON emits [] rather than null.
 func nonNilStrings(in []string) []string {
 	if in == nil {
