@@ -52,6 +52,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # github_token lets the Dockerfile clone the private memory repo at
+          # build time; contents:read + GITHUB_TOKEN can read it. build-push-action
+          # exposes each secret entry to `RUN --mount=type=secret,id=github_token`.
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
           # Verified single-stage (docker/workspace-base.Dockerfile): min already
           # exports every layer of the image, so max would add nothing. Export
           # errors stay fatal so a broken cache cannot hide behind a release.

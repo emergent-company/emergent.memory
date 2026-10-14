@@ -41,9 +41,12 @@ func NewCheckoutService(credProvider GitCredentialProvider, log *slog.Logger) *C
 
 // CloneRepository clones a repository into a workspace container.
 // destPath is the absolute path inside the container to clone into (e.g. "/workspace").
+// token is an optional git token (GH_TOKEN/GITHUB_TOKEN) used to authenticate the
+// clone; when non-empty it is injected into https://github.com/ URLs so that private
+// repositories can be cloned. The token is never logged or returned in errors.
 // Handles public/private repos, branch/SHA checkout, and retries.
 // Returns nil on success or if no repository URL is provided.
-func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provider, providerID string, repoURL string, branch string, destPath string) error {
+func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provider, providerID string, repoURL string, branch string, destPath string, token string) error {
 	if repoURL == "" {
 		return nil // No repo to clone
 	}
@@ -52,7 +55,7 @@ func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provide
 	}
 
 	// Build clone URL (with credentials for private repos)
-	cloneURL, err := cs.buildCloneURL(ctx, repoURL)
+	cloneURL, err := cs.buildCloneURL(ctx, repoURL, token)
 	if err != nil {
 		cs.log.Warn("failed to build authenticated clone URL, trying unauthenticated",
 			"repo", repoURL,
@@ -213,23 +216,47 @@ func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Pr
 	}
 }
 
-// buildCloneURL creates an authenticated clone URL using GitHub App installation tokens.
-func (cs *CheckoutService) buildCloneURL(ctx context.Context, repoURL string) (string, error) {
+// buildCloneURL creates an authenticated clone URL. An explicit token (from
+// GH_TOKEN/GITHUB_TOKEN) takes precedence: when non-empty and the repo URL is a
+// GitHub HTTPS URL, it is injected as `https://x-access-token:<token>@github.com/…`.
+// Otherwise it falls back to the configured GitCredentialProvider (GitHub App
+// installation tokens), and finally to the repoURL unchanged (public clone).
+func (cs *CheckoutService) buildCloneURL(ctx context.Context, repoURL string, token string) (string, error) {
+	// Explicit token (GH_TOKEN/GITHUB_TOKEN) wins — this is the load-bearing path
+	// for private repositories when no GitHub App credential provider is wired.
+	if token != "" && strings.HasPrefix(repoURL, "https://github.com/") {
+		return strings.Replace(repoURL, "https://github.com/", fmt.Sprintf("https://x-access-token:%s@github.com/", token), 1), nil
+	}
+
 	if cs.credProvider == nil {
 		return repoURL, nil
 	}
 
-	token, err := cs.credProvider.GetInstallationToken(ctx)
+	credToken, err := cs.credProvider.GetInstallationToken(ctx)
 	if err != nil {
 		return "", err
 	}
 
 	// Inject token: https://github.com/org/repo -> https://x-access-token:TOKEN@github.com/org/repo
 	if strings.HasPrefix(repoURL, "https://") {
-		return strings.Replace(repoURL, "https://", fmt.Sprintf("https://x-access-token:%s@", token), 1), nil
+		return strings.Replace(repoURL, "https://", fmt.Sprintf("https://x-access-token:%s@", credToken), 1), nil
 	}
 
 	return repoURL, nil
+}
+
+// ResolveGitToken returns the first non-empty git token across the given env maps,
+// checking GH_TOKEN before GITHUB_TOKEN within each map, in the order the maps are
+// provided. Returns "" when no token is configured.
+func ResolveGitToken(envs ...map[string]string) string {
+	for _, env := range envs {
+		for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+			if v := env[key]; v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // isSHA checks if a string looks like a git commit SHA (40 or 7+ hex chars).

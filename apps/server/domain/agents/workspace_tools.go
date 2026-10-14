@@ -967,9 +967,13 @@ func executeGitClone(ctx agent.Context, args map[string]any, deps WorkspaceToolD
 		return map[string]any{"error": "invalid path: path traversal (..) is not allowed"}, nil
 	}
 
-	// Prefer credential-aware CheckoutService if available
+	// Prefer credential-aware CheckoutService if available.
+	// Resolve the git token from the per-session env vars so interactive
+	// workspace_git action=clone is authenticated the same way as the
+	// CheckoutService change (GH_TOKEN before GITHUB_TOKEN).
 	if deps.CheckoutService != nil {
-		if err := deps.CheckoutService.CloneRepository(ctx, deps.Provider, deps.ProviderID, url, branch, destPath); err != nil {
+		gitToken := sandbox.ResolveGitToken(deps.SessionEnv)
+		if err := deps.CheckoutService.CloneRepository(ctx, deps.Provider, deps.ProviderID, url, branch, destPath, gitToken); err != nil {
 			return map[string]any{"error": err.Error()}, nil
 		}
 		return map[string]any{"cloned_to": destPath}, nil

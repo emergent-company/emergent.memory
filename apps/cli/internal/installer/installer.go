@@ -335,17 +335,17 @@ func (i *Installer) Install() error {
 
 	// Build sandbox images required by the agent (non-fatal if Docker unavailable).
 	i.output.Step("Building sandbox images...")
-	if err := docker.BuildSandboxImages(GetWorkspaceBaseDockerfile(), WorkspaceBaseImage); err != nil {
+	if err := docker.BuildSandboxImages(GetWorkspaceBaseDockerfile(), WorkspaceBaseImage, gitTokenSecretEnv()); err != nil {
 		i.output.Warn("Could not build workspace base sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Workspace base sandbox image ready")
 	}
-	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest"); err != nil {
+	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest", ""); err != nil {
 		i.output.Warn("Could not build Python SDK sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Python SDK sandbox image ready")
 	}
-	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest"); err != nil {
+	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest", ""); err != nil {
 		i.output.Warn("Could not build Go SDK sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Go SDK sandbox image ready")
@@ -477,17 +477,17 @@ func (i *Installer) Upgrade(version string) error {
 
 	// Build sandbox images required by the agent (non-fatal if Docker unavailable).
 	i.output.Step("Building sandbox images...")
-	if err := docker.BuildSandboxImages(GetWorkspaceBaseDockerfile(), WorkspaceBaseImage); err != nil {
+	if err := docker.BuildSandboxImages(GetWorkspaceBaseDockerfile(), WorkspaceBaseImage, gitTokenSecretEnv()); err != nil {
 		i.output.Warn("Could not build workspace base sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Workspace base sandbox image ready")
 	}
-	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest"); err != nil {
+	if err := docker.BuildSandboxImages(GetPythonSDKDockerfile(), "emergent-memory-python-sdk:latest", ""); err != nil {
 		i.output.Warn("Could not build Python SDK sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Python SDK sandbox image ready")
 	}
-	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest"); err != nil {
+	if err := docker.BuildSandboxImages(GetGoSDKDockerfile(), "emergent-memory-go-sdk:latest", ""); err != nil {
 		i.output.Warn("Could not build Go SDK sandbox image (non-fatal): %v", err)
 	} else {
 		i.output.Success("Go SDK sandbox image ready")

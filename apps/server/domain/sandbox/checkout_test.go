@@ -43,13 +43,71 @@ func TestCloneConstants(t *testing.T) {
 func TestCheckoutService_BuildCloneURL_NoProvider(t *testing.T) {
 	cs := &CheckoutService{credProvider: nil}
 
-	url, err := cs.buildCloneURL(context.TODO(), "https://github.com/org/repo")
+	url, err := cs.buildCloneURL(context.TODO(), "https://github.com/org/repo", "")
 	assert.NoError(t, err)
 	assert.Equal(t, "https://github.com/org/repo", url)
 }
 
+func TestCheckoutService_BuildCloneURL_WithToken(t *testing.T) {
+	cs := &CheckoutService{credProvider: nil}
+
+	url, err := cs.buildCloneURL(context.TODO(), "https://github.com/org/repo", "ghp_testtoken")
+	assert.NoError(t, err)
+	assert.Equal(t, "https://x-access-token:ghp_testtoken@github.com/org/repo", url)
+}
+
 func TestCheckoutService_CloneRepository_EmptyURL(t *testing.T) {
 	cs := &CheckoutService{}
-	err := cs.CloneRepository(context.TODO(), nil, "", "", "", "")
+	err := cs.CloneRepository(context.TODO(), nil, "", "", "", "", "")
 	assert.NoError(t, err) // No-op for empty URL
+}
+
+func TestResolveGitToken_Precedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		envs     []map[string]string
+		expected string
+	}{
+		{
+			name:     "no env vars",
+			envs:     nil,
+			expected: "",
+		},
+		{
+			name:     "GH_TOKEN wins over GITHUB_TOKEN within a map",
+			envs:     []map[string]string{{"GH_TOKEN": "ghp_a", "GITHUB_TOKEN": "ghp_b"}},
+			expected: "ghp_a",
+		},
+		{
+			name:     "first map wins over later map",
+			envs:     []map[string]string{{"GH_TOKEN": "ghp_cfg"}, {"GH_TOKEN": "ghp_rt"}},
+			expected: "ghp_cfg",
+		},
+		{
+			name:     "GITHUB_TOKEN used when GH_TOKEN absent",
+			envs:     []map[string]string{{"GITHUB_TOKEN": "ghp_b"}},
+			expected: "ghp_b",
+		},
+		{
+			name:     "cfg GITHUB_TOKEN beats runtime GH_TOKEN",
+			envs:     []map[string]string{{"GITHUB_TOKEN": "ghp_cfg_gh"}, {"GH_TOKEN": "ghp_rt_gh"}},
+			expected: "ghp_cfg_gh",
+		},
+		{
+			name:     "empty GH_TOKEN falls through to GITHUB_TOKEN",
+			envs:     []map[string]string{{"GH_TOKEN": "", "GITHUB_TOKEN": "ghp_b"}},
+			expected: "ghp_b",
+		},
+		{
+			name:     "empty cfg falls through to runtime",
+			envs:     []map[string]string{{"GH_TOKEN": ""}, {"GH_TOKEN": "ghp_rt"}},
+			expected: "ghp_rt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, ResolveGitToken(tt.envs...))
+		})
+	}
 }

@@ -487,7 +487,7 @@ func TestIntegration_Checkout_SuccessfulClone(t *testing.T) {
 
 	cs := NewCheckoutService(cred, testLogger())
 
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", "main", "/workspace")
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", "main", "/workspace", "")
 	assert.NoError(t, err)
 
 	// Verify the clone command was called with token-injected URL and branch
@@ -522,7 +522,7 @@ func TestIntegration_Checkout_CloneFailure_Retries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 
-	err := cs.CloneRepository(ctx, cp, "container-1", "https://github.com/org/repo", "main", "/workspace")
+	err := cs.CloneRepository(ctx, cp, "container-1", "https://github.com/org/repo", "main", "/workspace", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "git clone failed")
 
@@ -557,7 +557,7 @@ func TestIntegration_Checkout_SHACheckout(t *testing.T) {
 	cs := NewCheckoutService(cred, testLogger())
 
 	sha := "abc123def456789012345678901234567890abcd"
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", sha, "/workspace")
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/repo", sha, "/workspace", "")
 	assert.NoError(t, err)
 
 	// Verify: clone (without --branch), fetch --unshallow, git checkout SHA
@@ -585,7 +585,7 @@ func TestIntegration_Checkout_SHACheckout(t *testing.T) {
 
 func TestIntegration_Checkout_EmptyURL_NoOp(t *testing.T) {
 	cs := NewCheckoutService(nil, testLogger())
-	err := cs.CloneRepository(t.Context(), nil, "", "", "", "")
+	err := cs.CloneRepository(t.Context(), nil, "", "", "", "", "")
 	assert.NoError(t, err)
 }
 
@@ -605,7 +605,7 @@ func TestIntegration_Checkout_NoCredentials_FallsBackToPublic(t *testing.T) {
 
 	cs := NewCheckoutService(cred, testLogger())
 
-	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/public-repo", "main", "/workspace")
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/public-repo", "main", "/workspace", "")
 	assert.NoError(t, err)
 
 	// Clone should use unauthenticated URL (no token)
@@ -613,6 +613,52 @@ func TestIntegration_Checkout_NoCredentials_FallsBackToPublic(t *testing.T) {
 	defer cp.mu.Unlock()
 	require.GreaterOrEqual(t, len(cp.execCalls), 1)
 	assert.NotContains(t, cp.execCalls[0], "x-access-token")
+}
+
+func TestIntegration_Checkout_ExplicitToken_Used(t *testing.T) {
+	// A non-empty token passed to CloneRepository must be injected into the clone
+	// command for GitHub HTTPS URLs (the load-bearing path for private repos when
+	// no GitHub App credential provider is wired).
+	cp := &checkoutProvider{
+		mockProvider: mockProvider{name: "gv", providerType: ProviderGVisor, healthy: true},
+		execResults: map[string]*ExecResult{
+			"git clone":  {ExitCode: 0, Stdout: "Cloning into 'workspace'..."},
+			"git config": {ExitCode: 0},
+		},
+	}
+
+	cs := NewCheckoutService(nil, testLogger()) // nil cred provider — token comes from the arg
+
+	const token = "ghp_secret123"
+	err := cs.CloneRepository(t.Context(), cp, "container-1", "https://github.com/org/private-repo", "main", "/workspace", token)
+	assert.NoError(t, err)
+
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	require.GreaterOrEqual(t, len(cp.execCalls), 1)
+	assert.Contains(t, cp.execCalls[0], "git clone")
+	assert.Contains(t, cp.execCalls[0], "x-access-token:ghp_secret123@github.com/org/private-repo")
+}
+
+func TestIntegration_Checkout_ExplicitToken_NotLeakedInError(t *testing.T) {
+	// When a token is used and the clone fails, the token must not appear in the
+	// returned error (stderr is passed through sanitizeGitOutput).
+	cp := &checkoutProvider{
+		mockProvider: mockProvider{name: "gv", providerType: ProviderGVisor, healthy: true},
+		execResults: map[string]*ExecResult{
+			"git clone": {ExitCode: 128, Stderr: "fatal: could not read Username for 'https://x-access-token:ghp_secret123@github.com/org/private-repo'"},
+		},
+	}
+
+	cs := NewCheckoutService(nil, testLogger())
+
+	const token = "ghp_secret123"
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+
+	err := cs.CloneRepository(ctx, cp, "container-1", "https://github.com/org/private-repo", "main", "/workspace", token)
+	assert.Error(t, err)
+	assert.NotContains(t, err.Error(), "ghp_secret123")
 }
 
 func TestIntegration_Checkout_BuildCloneURL(t *testing.T) {
@@ -648,7 +694,7 @@ func TestIntegration_Checkout_BuildCloneURL(t *testing.T) {
 			cred := &mockCredentialProvider{token: tt.token, tokenErr: tt.tokenErr}
 			cs := NewCheckoutService(cred, testLogger())
 
-			url, err := cs.buildCloneURL(t.Context(), tt.repoURL)
+			url, err := cs.buildCloneURL(t.Context(), tt.repoURL, "")
 			if tt.tokenErr != nil {
 				assert.Error(t, err)
 			} else {
@@ -661,7 +707,7 @@ func TestIntegration_Checkout_BuildCloneURL(t *testing.T) {
 
 func TestIntegration_Checkout_NilCredentialProvider(t *testing.T) {
 	cs := &CheckoutService{credProvider: nil, log: testLogger()}
-	url, err := cs.buildCloneURL(t.Context(), "https://github.com/org/repo")
+	url, err := cs.buildCloneURL(t.Context(), "https://github.com/org/repo", "")
 	require.NoError(t, err)
 	assert.Equal(t, "https://github.com/org/repo", url)
 }

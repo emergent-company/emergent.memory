@@ -111,7 +111,12 @@ func (d *DockerManager) WaitForHealth(port int, timeoutSeconds int) error {
 
 // BuildSandboxImages builds a Docker image only when it is missing or its
 // Dockerfile content changed (tracked via the emergent.dockerfile.sha label).
-func (d *DockerManager) BuildSandboxImages(dockerfileContent, imageName string) error {
+//
+// gitTokenEnv is the name of an environment variable holding a GitHub token
+// (e.g. "GH_TOKEN" or "GITHUB_TOKEN"); when non-empty it is passed to the
+// build as the github_token BuildKit secret so the Dockerfile can clone the
+// private memory repo. Empty means no secret is passed (unauthenticated).
+func (d *DockerManager) BuildSandboxImages(dockerfileContent, imageName, gitTokenEnv string) error {
 	contentHash := dockerfileContentHash(dockerfileContent)
 	if d.imageHasDockerfileHash(imageName, contentHash) {
 		d.output.Info("Sandbox image %s is up to date, skipping build", imageName)
@@ -129,12 +134,33 @@ func (d *DockerManager) BuildSandboxImages(dockerfileContent, imageName string) 
 		return fmt.Errorf("failed to write Dockerfile: %w", err)
 	}
 
-	cmd := exec.Command("docker", "build", "-t", imageName, "--label", "emergent.dockerfile.sha="+contentHash, tmpDir)
+	args := []string{"build", "-t", imageName, "--label", "emergent.dockerfile.sha=" + contentHash}
+	if gitTokenEnv != "" {
+		args = append(args, "--secret", "id=github_token,env="+gitTokenEnv)
+	}
+	args = append(args, tmpDir)
+
+	cmd := exec.Command("docker", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker build %s failed: %w\n%s", imageName, err, string(output))
 	}
 	return nil
+}
+
+// gitTokenSecretEnv returns the name of the GitHub token env var to expose to
+// docker builds as the github_token BuildKit secret: "GH_TOKEN" if set, else
+// "GITHUB_TOKEN", else "" (no secret). The CLI passes the var NAME (not the
+// value) so docker reads the token from the CLI process's own environment via
+// --secret id=github_token,env=<NAME>.
+func gitTokenSecretEnv() string {
+	if os.Getenv("GH_TOKEN") != "" {
+		return "GH_TOKEN"
+	}
+	if os.Getenv("GITHUB_TOKEN") != "" {
+		return "GITHUB_TOKEN"
+	}
+	return ""
 }
 
 // dockerfileContentHash returns the sha256 hex digest of a Dockerfile's content.
