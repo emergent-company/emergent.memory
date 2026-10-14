@@ -1709,6 +1709,10 @@ routes:
       path: /api/share/agent/sessions
       level: auth
       note: RequireAuth, RequireShareLink, RequireShareIdentity
+    - method: DELETE
+      path: /api/share/agent/sessions/:id
+      level: auth
+      note: RequireAuth, RequireShareLink, RequireShareIdentity
     - method: GET
       path: /api/share/agent/sessions/:id
       level: auth
@@ -1718,7 +1722,15 @@ routes:
       level: auth
       note: RequireAuth, RequireShareLink, RequireShareIdentity
     - method: POST
+      path: /api/share/agent/sessions/:id/approvals/:questionId/cancel
+      level: auth
+      note: RequireAuth, RequireShareLink, RequireShareIdentity
+    - method: POST
       path: /api/share/agent/sessions/:id/archive
+      level: auth
+      note: RequireAuth, RequireShareLink, RequireShareIdentity
+    - method: POST
+      path: /api/share/agent/sessions/:id/unarchive
       level: auth
       note: RequireAuth, RequireShareLink, RequireShareIdentity
     - method: POST
