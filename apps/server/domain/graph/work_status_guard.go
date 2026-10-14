@@ -144,3 +144,33 @@ func validateSubgraphObjectKeys(schemas *ExtractionSchemas, objects []SubgraphOb
 	}
 	return nil
 }
+
+// validateSubgraphWorkStatus applies the per-type work-status rules to a
+// subgraph/bulk create batch, matching the single-object create path: for a
+// board-enabled type a status outside its declared allowed set is rejected
+// (validateTypeStatus), and an agent-originated create that sets a work status
+// is rejected (rejectAgentWorkStatusWrite). It is pure — it reads only the
+// already-resolved schemas — so the whole batch can be validated before any
+// write, making an off-vocabulary or agent status write fail the request
+// atomically with no partial state. Unknown/unconfigured types are never
+// constrained. A nil schema set (schema provider unavailable) leaves the guard
+// inert, matching the rest of the subgraph path's fail-open validation.
+func validateSubgraphWorkStatus(actorType string, schemas *ExtractionSchemas, objects []SubgraphObjectRequest) error {
+	if schemas == nil {
+		return nil
+	}
+	for i := range objects {
+		schema, ok := schemas.ObjectSchemas[objects[i].Type]
+		if !ok {
+			continue
+		}
+		cfg := &schema.ObjectTypeWorkConfig
+		if err := rejectAgentWorkStatusWrite(actorType, isBoardEnabledConfig(cfg), writesStatus(objects[i].Status, objects[i].Properties)); err != nil {
+			return err
+		}
+		if err := validateTypeStatus(cfg, objects[i].Status, objects[i].Properties); err != nil {
+			return err
+		}
+	}
+	return nil
+}

@@ -394,13 +394,18 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if t.KeepStatus && lockedHead.Status != nil {
 		toStatus = *lockedHead.Status
 	}
+	prevStatus := ""
+	if lockedHead.Status != nil {
+		prevStatus = *lockedHead.Status
+	}
+	newProps := withStatusProperty(lockedHead.Properties, toStatus)
 	newVersion := &GraphObject{
 		Type:       lockedHead.Type,
 		Key:        lockedHead.Key,
 		Namespace:  lockedHead.Namespace,
 		Status:     &toStatus,
 		Assignee:   assignee,
-		Properties: withStatusProperty(lockedHead.Properties, toStatus),
+		Properties: newProps,
 		Labels:     lockedHead.Labels,
 		ActorType:  &actorType,
 		// Preserve versioned metadata from the locked HEAD so a status transition
@@ -423,6 +428,14 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if t.SetReviewedAt != nil {
 		newVersion.ReviewedAt = t.SetReviewedAt
 	}
+	// Record the explicit change summary for this transition. The work path is
+	// the only writer of work status, so without this every board-history entry
+	// for a claim/complete/block/approve/request-changes/reassign/set-status move
+	// could only be *derived* by diffing versions (#1850). The summary is built
+	// from the same property diff the general update path uses, plus the assignee
+	// (a built-in column, appended as a synthetic `/assignee` path) so the two
+	// surfaces never disagree; it is nil when nothing changed.
+	newVersion.ChangeSummary = workTransitionChangeSummary(lockedHead.Properties, prevStatus, newProps, lockedHead.Assignee, assignee)
 	if err := s.repo.CreateVersion(ctx, tx.Tx, lockedHead, newVersion); err != nil {
 		return false, err
 	}
@@ -434,10 +447,6 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	// and must not roll back with the write. The reassign path emits `assigned`;
 	// every other status transition emits `status_changed` only when the status
 	// actually moved.
-	prevStatus := ""
-	if lockedHead.Status != nil {
-		prevStatus = *lockedHead.Status
-	}
 	if t.EmitAssigned {
 		s.emitObjectAssigned(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assignee)
 	} else if toStatus != prevStatus {
@@ -516,6 +525,59 @@ func withStatusProperty(props map[string]any, status string) map[string]any {
 	}
 	out["status"] = status
 	return out
+}
+
+// workTransitionChangeSummary builds the explicit change summary for a
+// single-work-status transition. It reuses computeChangeSummary for the property
+// diff — the status mirror in properties is the only property a transition
+// changes — but normalizes the previous status onto the old properties first, so
+// the status *move* is recorded as an updated `/status` (prev → new) even on the
+// first transition, when the create path stored the status only in the column.
+// The assignee is a built-in column, so when it moves it is appended as a
+// synthetic `/assignee` path in the same RFC 6901 shape. Recording both keeps
+// the stored summary — which the board history prefers over its derived
+// status/assignee diff (gateway object_preview.go) — complete, so a transition
+// can never hide the assignee change. Returns nil when neither the status nor
+// the assignee changed (a no-op transition records no change).
+func workTransitionChangeSummary(oldProps map[string]any, oldStatus string, newProps map[string]any, oldAssignee, newAssignee *string) map[string]any {
+	summary := computeChangeSummary(withStatusProperty(oldProps, oldStatus), newProps)
+	if assigneeOrEmpty(oldAssignee) == assigneeOrEmpty(newAssignee) {
+		return summary
+	}
+	if summary == nil {
+		summary = map[string]any{
+			"added":   map[string]any{},
+			"removed": []string{},
+			"updated": map[string]any{},
+			"paths":   []string{},
+			"meta":    map[string]any{"added": 0, "removed": 0, "updated": 0},
+		}
+	}
+	updated, _ := summary["updated"].(map[string]any)
+	if updated == nil {
+		updated = map[string]any{}
+		summary["updated"] = updated
+	}
+	updated["/assignee"] = map[string]any{
+		"from": assigneeSummaryValue(oldAssignee),
+		"to":   assigneeSummaryValue(newAssignee),
+	}
+	paths, _ := summary["paths"].([]string)
+	summary["paths"] = append(paths, "/assignee")
+	if meta, ok := summary["meta"].(map[string]any); ok {
+		meta["updated"] = len(updated)
+	}
+	return summary
+}
+
+// assigneeSummaryValue renders a nullable assignee for the change summary: nil
+// becomes JSON null so a cleared assignee reads as an explicit change rather
+// than a missing one.
+func assigneeSummaryValue(a *string) any {
+	if a == nil {
+		return nil
+	}
+	return *a
 }
 
 // ListWorkObjectsByStatus returns the HEAD projections of board-enabled work

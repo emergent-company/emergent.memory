@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"testing"
@@ -259,4 +260,86 @@ func TestUpdateWorkObjectStatus_AgentRejected(t *testing.T) {
 
 	_, err := svc.UpdateWorkObjectStatus(agentCtx, projectID.String(), obj.CanonicalID.String(), "done", "review")
 	require.Error(t, err)
+}
+
+// headChangeSummary reads and JSON-decodes the HEAD version's change_summary,
+// mirroring the DB→API→gateway round trip ([]any/map[string]any shapes).
+func headChangeSummary(t *testing.T, ctx context.Context, db bun.IDB, canonicalID string) map[string]any {
+	t.Helper()
+	var raw string
+	require.NoError(t, db.NewRaw(
+		`SELECT COALESCE(change_summary::text, '') FROM kb.graph_objects WHERE canonical_id = ?::uuid AND supersedes_id IS NULL`,
+		canonicalID,
+	).Scan(ctx, &raw))
+	require.NotEmpty(t, raw, "HEAD change_summary is NULL")
+	var cs map[string]any
+	require.NoError(t, json.Unmarshal([]byte(raw), &cs))
+	return cs
+}
+
+// TestTransitionWorkObject_WritesChangeSummary is the #1850 regression: a
+// work-path status transition must record an explicit change_summary (the status
+// move as /status from→to), not rely on the gateway's derived fallback.
+func TestTransitionWorkObject_WritesChangeSummary(t *testing.T) {
+	ctx, svc, projectID, db := setupWorkTransitionTest(t)
+	obj := createAssignedWorkObject(t, ctx, svc, projectID, "cs-1", "in_progress")
+
+	ok, err := svc.CompleteWorkObject(ctx, projectID.String(), obj.CanonicalID.String(), "in_progress", "done", "review", false)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	cs := headChangeSummary(t, ctx, db, obj.CanonicalID.String())
+	updated, ok := cs["updated"].(map[string]any)
+	require.True(t, ok, "change_summary.updated must be present, got %v", cs)
+	status, ok := updated["/status"].(map[string]any)
+	require.True(t, ok, "status move must be recorded as /status, got %v", updated)
+	require.Equal(t, "in_progress", status["from"])
+	require.Equal(t, "done", status["to"])
+}
+
+// TestReassignWorkObject_WritesAssigneeChangeSummary verifies the status-
+// preserving reassign records the assignee move as a synthetic /assignee path
+// and does not fabricate a /status change.
+func TestReassignWorkObject_WritesAssigneeChangeSummary(t *testing.T) {
+	ctx, svc, projectID, db := setupWorkTransitionTest(t)
+	obj := createAssignedWorkObject(t, ctx, svc, projectID, "cs-2", "in_progress")
+
+	next := "other-agent"
+	ok, err := svc.ReassignWorkObject(ctx, projectID.String(), obj.CanonicalID.String(), &next)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	cs := headChangeSummary(t, ctx, db, obj.CanonicalID.String())
+	updated, ok := cs["updated"].(map[string]any)
+	require.True(t, ok, "change_summary.updated must be present, got %v", cs)
+	assignee, ok := updated["/assignee"].(map[string]any)
+	require.True(t, ok, "assignee move must be recorded as /assignee, got %v", updated)
+	require.Equal(t, "researcher", assignee["from"])
+	require.Equal(t, "other-agent", assignee["to"])
+	_, statusPresent := updated["/status"]
+	require.False(t, statusPresent, "status-preserving reassign must not record a /status change")
+}
+
+// TestUnassignWorkObject_ChangeSummaryCoversStatusAndAssignee guards the
+// conflict the issue warns about: a transition that moves both the status and
+// the assignee must record both, so the recorded summary (which wins over the
+// derived fallback) cannot hide the cleared assignee.
+func TestUnassignWorkObject_ChangeSummaryCoversStatusAndAssignee(t *testing.T) {
+	ctx, svc, projectID, db := setupWorkTransitionTest(t)
+	obj := createAssignedWorkObject(t, ctx, svc, projectID, "cs-3", "in_progress")
+
+	ok, err := svc.UnassignWorkObject(ctx, projectID.String(), obj.CanonicalID.String(), "in_progress", "ready")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	cs := headChangeSummary(t, ctx, db, obj.CanonicalID.String())
+	updated, ok := cs["updated"].(map[string]any)
+	require.True(t, ok, "change_summary.updated must be present, got %v", cs)
+	status, ok := updated["/status"].(map[string]any)
+	require.True(t, ok, "status move must be recorded, got %v", updated)
+	require.Equal(t, "ready", status["to"])
+	assignee, ok := updated["/assignee"].(map[string]any)
+	require.True(t, ok, "the summary must not hide the assignee clear, got %v", updated)
+	require.Equal(t, "researcher", assignee["from"])
+	require.Nil(t, assignee["to"])
 }

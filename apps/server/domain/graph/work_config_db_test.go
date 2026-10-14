@@ -140,6 +140,54 @@ func TestPatch_RejectsStatusOutsideAllowedSet(t *testing.T) {
 	require.Equal(t, "ready", *head.Status)
 }
 
+// TestCreateSubgraph_RejectsStatusOutsideAllowedSet closes the last generic
+// create door: POST /api/graph/subgraph must reject a board-enabled object whose
+// status is outside the type's declared allowed set, exactly like the
+// single-object create/patch path (issue #1851). Nothing is written — the batch
+// fails before the transaction.
+func TestCreateSubgraph_RejectsStatusOutsideAllowedSet(t *testing.T) {
+	ctx, svc, projectID := setupWorkConfigTest(t, map[string]agents.ObjectSchema{
+		"BoardTask": {ObjectTypeWorkConfig: agents.ObjectTypeWorkConfig{
+			BoardEnabled:    true,
+			AllowedStatuses: []string{"ready", "in_progress", "review", "done"},
+		}},
+	})
+
+	shipped := "shipped"
+	key := "sg-1"
+	_, err := svc.CreateSubgraph(ctx, projectID, &graph.CreateSubgraphRequest{
+		Objects: []graph.SubgraphObjectRequest{{Type: "BoardTask", Key: &key, Status: &shipped}},
+	}, nil)
+	require.Error(t, err)
+
+	// The object is unchanged: no BoardTask row exists.
+	bt := "BoardTask"
+	list, err := svc.List(ctx, graph.ListParams{Type: &bt})
+	require.NoError(t, err)
+	require.NotNil(t, list.Total)
+	require.Equal(t, 0, *list.Total)
+}
+
+// TestCreateSubgraph_AcceptsStatusInAllowedSet is the green half of the guard:
+// an in-vocabulary status still creates the object.
+func TestCreateSubgraph_AcceptsStatusInAllowedSet(t *testing.T) {
+	ctx, svc, projectID := setupWorkConfigTest(t, map[string]agents.ObjectSchema{
+		"BoardTask": {ObjectTypeWorkConfig: agents.ObjectTypeWorkConfig{
+			BoardEnabled:    true,
+			AllowedStatuses: []string{"ready", "in_progress", "review", "done"},
+		}},
+	})
+
+	ready := "ready"
+	key := "sg-2"
+	resp, err := svc.CreateSubgraph(ctx, projectID, &graph.CreateSubgraphRequest{
+		Objects: []graph.SubgraphObjectRequest{{Type: "BoardTask", Key: &key, Status: &ready}},
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, resp.Objects, 1)
+	require.Equal(t, "ready", *resp.Objects[0].Status)
+}
+
 // fakeEmbeddingEnqueuer records the object IDs enqueued for embedding. Its
 // write methods are mutex-guarded so the bulk worker pool (issue #1573) can
 // enqueue from several goroutines without a data race under -race.

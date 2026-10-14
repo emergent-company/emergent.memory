@@ -5359,6 +5359,17 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 		return nil, err
 	}
 
+	// Guard: the per-type work-status vocabulary and the agent-write rule apply
+	// to the subgraph create path exactly as they do to the single-object create
+	// path (issue #1851) — otherwise this endpoint is a second door that can
+	// create a board-enabled object in a status the board does not offer. Validate
+	// the whole batch up front, before the transaction, so a rejected status
+	// fails atomically with no partial writes.
+	actorType, actorID := actorFromContext(ctx, actorID)
+	if err := validateSubgraphWorkStatus(actorType, schemas, req.Objects); err != nil {
+		return nil, err
+	}
+
 	// Start transaction
 	tx, err := s.repo.BeginTx(ctx)
 	if err != nil {
@@ -5366,7 +5377,6 @@ func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *
 	}
 	defer tx.Rollback()
 
-	actorType, actorID := actorFromContext(ctx, actorID)
 	refMap := make(map[string]uuid.UUID, len(req.Objects))
 	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
 	objByRef := make(map[string]*GraphObject, len(req.Objects))
