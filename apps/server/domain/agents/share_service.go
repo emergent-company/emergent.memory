@@ -17,6 +17,8 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/chat/citations"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -46,6 +48,8 @@ type ShareRepo interface {
 	GetShareSessionByProject(ctx context.Context, sessionID, projectID string) (*shareSessionProjectRow, error)
 	CountActiveShareSessions(ctx context.Context, linkID, endUserRef string) (int, error)
 	ArchiveShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error)
+	UnarchiveShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error)
+	DeleteShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error)
 	TouchShareSession(ctx context.Context, sessionID string) error
 	FindShareSessionByRunAndEndUser(ctx context.Context, linkID, endUserRef, runID string) (*AgentShareSession, error)
 	CountActiveShareRuns(ctx context.Context, linkID string) (int, error)
@@ -57,6 +61,8 @@ type ShareRepo interface {
 	CountSessionToolApprovals(ctx context.Context, shareLinkID, sessionID string) (int, error)
 	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, sessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
 	ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
+	ListAnsweredQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
+	ListPendingToolApprovalsForSession(ctx context.Context, sessionID string) ([]*AgentToolApproval, error)
 	// end users
 	UpsertShareEndUser(ctx context.Context, u *AgentShareEndUser) error
 	FindShareEndUser(ctx context.Context, linkID, endUserRef string) (*AgentShareEndUser, error)
@@ -77,12 +83,14 @@ type ShareRepo interface {
 	FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error)
 	GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error)
 	GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error)
+	FindToolCallsByRunID(ctx context.Context, runID string) ([]*AgentRunToolCall, error)
 }
 
 // QuestionResponder is the shared question-respond/resume helper. *Handler
 // satisfies it.
 type QuestionResponder interface {
 	RespondToQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error)
+	CancelQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error)
 }
 
 // shareTokenService is the narrow apitoken surface the share service uses.
@@ -654,23 +662,113 @@ func (s *ShareService) GetSessionEntity(ctx context.Context, binding *ShareLinkB
 }
 
 // GetSession returns one session belonging to (link, end user), including its
-// message transcript (reusing the existing session history retrieval).
+// full run timeline (the same ConversationHistoryItem shape as the authenticated
+// /chat history) plus the pending tool-policy approvals, so the gateway renders
+// the public surface through the identical history path.
 func (s *ShareService) GetSession(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef string) (*ShareSessionDetailDTO, error) {
 	sess, err := s.GetSessionEntity(ctx, binding, sessionID, endUserRef)
 	if err != nil {
 		return nil, err
 	}
-	messages, err := s.sessionTranscript(ctx, sess.SessionID)
+	items, err := s.repo.GetConversationFullHistory(ctx, sess.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	// The full timeline deliberately exposes tool I/O, run markers, reasoning and
+	// citations to the anonymous share surface (see the capability spec), but NOT
+	// the composed system instruction: the run persists the owner's SystemPrompt
+	// (+ skills appendix) as a role:"system" message, which the authenticated
+	// chat renders as a prompt card and which must never leak to an end user.
+	items = stripSystemMessages(items)
+	// Annotate answered ask_user tool calls with the end user's response so the
+	// shared transcript renders each question card in its answered state instead
+	// of re-offering the options (same contract as the authenticated history
+	// path's injectQuestionAnswers). Non-fatal: on failure the transcript still
+	// renders, just without the answer highlight.
+	if answered, aerr := s.repo.ListAnsweredQuestionsForSession(ctx, sess.SessionID); aerr == nil {
+		injectQuestionResponses(items, answered)
+	}
+	pending, err := s.pendingApprovals(ctx, sess.SessionID)
 	if err != nil {
 		return nil, err
 	}
 	return &ShareSessionDetailDTO{
-		ID:         sess.ID,
-		Title:      sess.Title,
-		IsArchived: sess.IsArchived,
-		Messages:   messages,
-		CreatedAt:  sess.CreatedAt,
+		ID:               sess.ID,
+		Title:            sess.Title,
+		IsArchived:       sess.IsArchived,
+		Items:            items,
+		PendingApprovals: pending,
+		CreatedAt:        sess.CreatedAt,
 	}, nil
+}
+
+// stripSystemMessages drops the composed system instruction (owner SystemPrompt
+// + skills appendix) from a transcript before it reaches the public share
+// surface. The old text-only transcript filter dropped it; the full-timeline
+// path must keep doing so, or the anonymous client renders the owner's prompt.
+func stripSystemMessages(items []*ConversationHistoryItem) []*ConversationHistoryItem {
+	out := make([]*ConversationHistoryItem, 0, len(items))
+	for _, it := range items {
+		if it != nil && it.Kind == "message" && it.Role == "system" {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+// injectQuestionResponses writes each answered question's response onto the
+// matching ask_user tool call's tool_output, keyed by question_id. It is the
+// server-side counterpart of the gateway's injectQuestionAnswers: the answer
+// lives on kb.agent_questions.response, not on the persisted tool call, so
+// without it the client cannot tell an answered question from a pending one.
+func injectQuestionResponses(items []*ConversationHistoryItem, answered []*AgentQuestion) {
+	if len(answered) == 0 {
+		return
+	}
+	responses := make(map[string]string, len(answered))
+	for _, q := range answered {
+		if q == nil || q.Response == nil || *q.Response == "" {
+			continue
+		}
+		responses[q.ID] = *q.Response
+	}
+	if len(responses) == 0 {
+		return
+	}
+	for _, it := range items {
+		if it == nil || it.Kind != "tool_call" || it.ToolName != "ask_user" || it.ToolOutput == nil {
+			continue
+		}
+		qid, _ := it.ToolOutput["question_id"].(string)
+		answer, ok := responses[qid]
+		if qid == "" || !ok {
+			continue
+		}
+		it.ToolOutput["response"] = answer
+	}
+}
+
+// pendingApprovals returns the pending tool-policy approval items for a session,
+// carrying the tool name + input args so the shared approval card renders the
+// same body as the authenticated chat.
+func (s *ShareService) pendingApprovals(ctx context.Context, sessionID string) ([]SharePendingApprovalItem, error) {
+	approvals, err := s.repo.ListPendingToolApprovalsForSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SharePendingApprovalItem, 0, len(approvals))
+	for _, a := range approvals {
+		if a == nil {
+			continue
+		}
+		out = append(out, SharePendingApprovalItem{
+			QuestionID: a.QuestionID,
+			Tool:       a.ToolName,
+			Input:      a.ArgsSummary,
+		})
+	}
+	return out, nil
 }
 
 // sessionTranscript returns the plain user/assistant message history for a
@@ -788,6 +886,31 @@ func (s *ShareService) ArchiveSession(ctx context.Context, binding *ShareLinkBin
 	return nil
 }
 
+// UnarchiveSession unarchives one session, with the same ownership scoping as
+// ArchiveSession.
+func (s *ShareService) UnarchiveSession(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef string) error {
+	unarchived, err := s.repo.UnarchiveShareSession(ctx, sessionID, binding.Link.ID, endUserRef)
+	if err != nil {
+		return err
+	}
+	if !unarchived {
+		return apperror.New(http.StatusNotFound, "not_found", "session not found or already unarchived")
+	}
+	return nil
+}
+
+// DeleteSession deletes one session belonging to (link, end user).
+func (s *ShareService) DeleteSession(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef string) error {
+	deleted, err := s.repo.DeleteShareSession(ctx, sessionID, binding.Link.ID, endUserRef)
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return apperror.New(http.StatusNotFound, "not_found", "session not found")
+	}
+	return nil
+}
+
 // PendingQuestions returns pending questions for a session (or all of an end
 // user's sessions when sessionID is empty).
 func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkBinding, endUserRef, sessionID string) ([]*AgentQuestionDTO, error) {
@@ -795,6 +918,7 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 		return nil, apperror.NewBadRequest("endUserRef is required")
 	}
 	var questions []*AgentQuestion
+	var sessionIDs []string
 	if sessionID != "" {
 		sess, err := s.repo.GetShareSessionByID(ctx, sessionID, binding.Link.ID, endUserRef)
 		if err != nil {
@@ -807,6 +931,7 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 		if err != nil {
 			return nil, err
 		}
+		sessionIDs = []string{sess.SessionID}
 	} else {
 		sessions, err := s.repo.ListShareSessionsByEndUser(ctx, binding.Link.ID, endUserRef, false)
 		if err != nil {
@@ -818,12 +943,34 @@ func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkB
 				return nil, err
 			}
 			questions = append(questions, qs...)
+			sessionIDs = append(sessionIDs, sess.SessionID)
+		}
+	}
+
+	// Enrich tool-policy questions with the tool name + args from the matching
+	// pending AgentToolApproval rows (joined by question_id), so the shared
+	// approval card renders the same body as the authenticated chat.
+	toolByQuestion := make(map[string]*AgentToolApproval, len(sessionIDs))
+	for _, sid := range sessionIDs {
+		approvals, err := s.repo.ListPendingToolApprovalsForSession(ctx, sid)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range approvals {
+			if a != nil {
+				toolByQuestion[a.QuestionID] = a
+			}
 		}
 	}
 
 	out := make([]*AgentQuestionDTO, 0, len(questions))
 	for _, q := range questions {
-		out = append(out, q.ToDTO())
+		dto := q.ToDTO()
+		if a := toolByQuestion[q.ID]; a != nil {
+			dto.Tool = a.ToolName
+			dto.Input = a.ArgsSummary
+		}
+		out = append(out, dto)
 	}
 	return out, nil
 }
@@ -1122,6 +1269,94 @@ func (s *ShareService) RespondToQuestion(ctx context.Context, binding *ShareLink
 		SessionID:              session.SessionID,
 		OnRunSettled:           s.resumeSettled(binding),
 	})
+}
+
+// CancelQuestion verifies question->run->session->share_session ownership (the
+// same checks as RespondToQuestion), then delegates to the shared cancel helper
+// with the share resume params so the run resumes with the call treated as not
+// taken and the resumed leg's budget is reconciled.
+func (s *ShareService) CancelQuestion(ctx context.Context, binding *ShareLinkBinding, sessionID, endUserRef, questionID, ipHash string) (*AgentQuestionDTO, error) {
+	if endUserRef == "" {
+		return nil, apperror.NewBadRequest("endUserRef is required")
+	}
+	// end_user_ref is written to kb.agent_questions.responded_by (a uuid column),
+	// so it must be UUID-form. The gateway generates a UUID end-user reference.
+	if _, err := uuid.Parse(endUserRef); err != nil {
+		return nil, apperror.NewBadRequest("endUserRef must be a UUID")
+	}
+	if !binding.Config.AllowEndUserApprovals {
+		return nil, apperror.NewForbidden("end-user approvals are disabled for this link")
+	}
+
+	session, err := s.repo.GetShareSessionByID(ctx, sessionID, binding.Link.ID, endUserRef)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
+	}
+	if session.IsArchived {
+		return nil, apperror.New(http.StatusConflict, "conflict", "session is archived")
+	}
+
+	question, err := s.repo.FindQuestionByID(ctx, questionID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to get question", err)
+	}
+	if question == nil {
+		return nil, apperror.NewNotFound("AgentQuestion", questionID)
+	}
+
+	// Ownership: the question's run must map to one of the caller's sessions on
+	// this link. A foreign end_user_ref can never cancel another user's question.
+	ss, err := s.repo.FindShareSessionByRunAndEndUser(ctx, binding.Link.ID, endUserRef, question.RunID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to verify session ownership", err)
+	}
+	if ss == nil || ss.ID != session.ID {
+		return nil, apperror.New(http.StatusNotFound, "not_found", "question not found for this session")
+	}
+
+	_ = s.repo.CreateShareAccessLog(ctx, binding.Link.ID, endUserRef, ipHash, "cancel")
+
+	return s.responder.CancelQuestion(ctx, RespondParams{
+		ProjectID:       binding.ProjectID,
+		OrgID:           binding.OrgID,
+		RespondedBy:     endUserRef, // uuid-form end_user_ref
+		UserID:          "",         // no notifications for anonymous users
+		QuestionID:      questionID,
+		ShareLinkID:     binding.Link.ID,
+		ShareToolDeny:   binding.Config.ComputeShareToolDeny(),
+		DisableAuthMint: true,
+		SessionID:       session.SessionID,
+		OnRunSettled:    s.resumeSettled(binding),
+	})
+}
+
+// DeriveCitations derives the grounded object/relationship citations for a
+// finished share turn, mirroring the /api/chat emit path: the run's tool-call
+// outputs form the candidates, and only references actually present in the
+// response text + A2UI surfaces are kept. Non-fatal on error (returns nil).
+func (s *ShareService) DeriveCitations(ctx context.Context, runID, responseText string, surfaces []a2ui.Message) []citations.Citation {
+	if runID == "" {
+		return nil
+	}
+	toolCalls, err := s.repo.FindToolCallsByRunID(ctx, runID)
+	if err != nil {
+		s.log.Warn("failed to load tool calls for citations",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+	outputs := make([]citations.ToolCall, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		if tc != nil {
+			outputs = append(outputs, citations.ToolCall{Output: tc.Output})
+		}
+	}
+	candidates := citations.Candidates(outputs)
+	return citations.Derive(responseText, surfaces, candidates)
 }
 
 // ============================================================================

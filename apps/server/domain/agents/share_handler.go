@@ -3,9 +3,11 @@ package agents
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/sse"
@@ -71,9 +73,12 @@ func RegisterShareRoutes(e *echo.Echo, h *ShareHandler, authMiddleware *auth.Mid
 	identity.GET("/sessions", h.ListSessions)
 	identity.GET("/sessions/:id", h.GetSession)
 	identity.POST("/sessions/:id/archive", h.ArchiveSession)
+	identity.POST("/sessions/:id/unarchive", h.UnarchiveSession)
+	identity.DELETE("/sessions/:id", h.DeleteSession)
 	identity.POST("/stream", h.Stream)
 	identity.GET("/questions", h.ListQuestions)
 	identity.POST("/sessions/:id/approvals/:questionId", h.Approve)
+	identity.POST("/sessions/:id/approvals/:questionId/cancel", h.CancelQuestion)
 
 	// Session creation verifies the signature but does NOT require the end-user
 	// row to pre-exist (it creates it on first use).
@@ -225,6 +230,24 @@ func (h *ShareHandler) ArchiveSession(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "archived"})
 }
 
+// UnarchiveSession handles POST /api/share/agent/sessions/:id/unarchive.
+func (h *ShareHandler) UnarchiveSession(c echo.Context) error {
+	binding := mustShareBinding(c)
+	if err := h.svc.UnarchiveSession(c.Request().Context(), binding, c.Param("id"), verifiedEndUserRef(c)); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "unarchived"})
+}
+
+// DeleteSession handles DELETE /api/share/agent/sessions/:id.
+func (h *ShareHandler) DeleteSession(c echo.Context) error {
+	binding := mustShareBinding(c)
+	if err := h.svc.DeleteSession(c.Request().Context(), binding, c.Param("id"), verifiedEndUserRef(c)); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // streamShareRequest is the body for POST /api/share/agent/stream. The end-user
 // ref comes from the signed header, not the body.
 type streamShareRequest struct {
@@ -259,9 +282,16 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 	writer := sse.NewWriter(c.Response().Writer)
 	_ = writer.Start()
 
+	// Collect the full response text and any A2UI surfaces emitted during the
+	// run so citations can be derived and emitted before the `done` event,
+	// mirroring the /api/chat emit path.
+	var fullResponse strings.Builder
+	var surfaces []a2ui.Message
+
 	streamCallback := func(event StreamEvent) {
 		switch event.Type {
 		case StreamEventTextDelta:
+			fullResponse.WriteString(event.Text)
 			_ = writer.WriteData(sse.NewTokenEvent(event.Text))
 		case StreamEventThinking:
 			_ = writer.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
@@ -280,6 +310,9 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 			_ = writer.WriteData(sse.NewErrorEvent(event.Error))
 		case StreamEventToolApproval:
 			_ = writer.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
+		case StreamEventA2UI:
+			surfaces = append(surfaces, event.A2UI...)
+			_ = writer.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		}
 	}
 
@@ -292,6 +325,11 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 	}
 
 	if result != nil {
+		// Derive and emit grounded citations after the run completes and before
+		// the `done` event (non-fatal; emitted only when at least one exists).
+		if cits := h.svc.DeriveCitations(c.Request().Context(), result.RunID, fullResponse.String(), surfaces); len(cits) > 0 {
+			_ = writer.WriteData(sse.NewCitationsEvent(cits))
+		}
 		_ = writer.WriteData(sse.NewDoneEventWithRun(result.RunID))
 	} else {
 		_ = writer.WriteData(sse.NewDoneEvent())
@@ -334,6 +372,22 @@ func (h *ShareHandler) Approve(c echo.Context) error {
 	endUserRef := verifiedEndUserRef(c)
 
 	dto, err := h.svc.RespondToQuestion(c.Request().Context(), binding, sessionID, endUserRef, questionID, req.Response, req.Message, HashIP(clientIP(c)))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusAccepted, SuccessResponse(dto))
+}
+
+// CancelQuestion handles POST /api/share/agent/sessions/:id/approvals/:questionId/cancel.
+func (h *ShareHandler) CancelQuestion(c echo.Context) error {
+	binding := mustShareBinding(c)
+
+	sessionID := c.Param("id")
+	questionID := c.Param("questionId")
+
+	endUserRef := verifiedEndUserRef(c)
+
+	dto, err := h.svc.CancelQuestion(c.Request().Context(), binding, sessionID, endUserRef, questionID, HashIP(clientIP(c)))
 	if err != nil {
 		return err
 	}

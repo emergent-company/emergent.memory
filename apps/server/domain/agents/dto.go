@@ -866,9 +866,14 @@ type AgentQuestionDTO struct {
 	Status          AgentQuestionStatus          `json:"status"`
 	NotificationID  *string                      `json:"notificationId,omitempty"`
 	ResumeRunID     *string                      `json:"resumeRunId,omitempty"` // new run ID created on resume
-	ConversationID  *string                      `json:"conversationId,omitempty"`
-	CreatedAt       time.Time                    `json:"createdAt"`
-	UpdatedAt       time.Time                    `json:"updatedAt"`
+	// Tool / Input carry the tool-policy confirmation's tool name + args when the
+	// question is a tool-policy approval (from the AgentToolApproval audit row
+	// joined by question_id). Empty for plain ask_user questions.
+	Tool           string         `json:"tool,omitempty"`
+	Input          map[string]any `json:"input,omitempty"`
+	ConversationID *string        `json:"conversationId,omitempty"`
+	CreatedAt      time.Time      `json:"createdAt"`
+	UpdatedAt      time.Time      `json:"updatedAt"`
 }
 
 // ToDTO converts an AgentQuestion entity to a DTO.

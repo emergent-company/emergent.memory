@@ -63,22 +63,28 @@ type ShareMessage struct {
 }
 
 // ShareSessionDetail is the transcript-bearing response for
-// GET /api/share/agent/sessions/:id: the list DTO plus its messages.
+// GET /api/share/agent/sessions/:id: the list DTO plus its full run timeline
+// (items) and pending approvals, matching the admin /api/chat/:id/history shape.
 type ShareSessionDetail struct {
-	ID         string         `json:"id"`
-	Title      *string        `json:"title,omitempty"`
-	IsArchived bool           `json:"isArchived"`
-	Messages   []ShareMessage `json:"messages"`
-	CreatedAt  time.Time      `json:"createdAt"`
+	ID               string                `json:"id"`
+	Title            *string               `json:"title,omitempty"`
+	IsArchived       bool                  `json:"isArchived"`
+	Items            []json.RawMessage     `json:"items"`
+	PendingApprovals []PendingApprovalItem `json:"pending_approvals,omitempty"`
+	CreatedAt        time.Time             `json:"createdAt"`
 }
 
 // ShareQuestion is the subset of the server's agent-question DTO the share
-// surface relays (pending tool-approval questions).
+// surface relays (pending tool-approval questions). Tool + Input carry the tool
+// name and args so the shared approval card renders the same body as admin
+// ({questionId, tool, input}).
 type ShareQuestion struct {
 	ID       string         `json:"id"`
 	RunID    string         `json:"runId"`
 	Question string         `json:"question"`
 	Proposal map[string]any `json:"proposal,omitempty"`
+	Tool     string         `json:"tool,omitempty"`
+	Input    map[string]any `json:"input,omitempty"`
 	Status   string         `json:"status"`
 }
 
@@ -311,6 +317,22 @@ func (m *MemoryClient) ShareArchiveSession(ctx context.Context, token, endUserRe
 	return m.doShare(ctx, http.MethodPost, "/api/share/agent/sessions/"+url.PathEscape(id)+"/archive", token, hdrs, nil, nil)
 }
 
+func (m *MemoryClient) ShareUnarchiveSession(ctx context.Context, token, endUserRef, id string) error {
+	hdrs, err := m.shareRefHeaders(endUserRef)
+	if err != nil {
+		return err
+	}
+	return m.doShare(ctx, http.MethodPost, "/api/share/agent/sessions/"+url.PathEscape(id)+"/unarchive", token, hdrs, nil, nil)
+}
+
+func (m *MemoryClient) ShareDeleteSession(ctx context.Context, token, endUserRef, id string) error {
+	hdrs, err := m.shareRefHeaders(endUserRef)
+	if err != nil {
+		return err
+	}
+	return m.doShare(ctx, http.MethodDelete, "/api/share/agent/sessions/"+url.PathEscape(id), token, hdrs, nil, nil)
+}
+
 func (m *MemoryClient) ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error) {
 	hdrs, err := m.shareRefHeaders(endUserRef)
 	if err != nil {
@@ -334,6 +356,17 @@ func (m *MemoryClient) ShareApprove(ctx context.Context, token, endUserRef, sess
 	}
 	path := "/api/share/agent/sessions/" + url.PathEscape(sessionID) + "/approvals/" + url.PathEscape(questionID)
 	return m.doShare(ctx, http.MethodPost, path, token, hdrs, in, nil)
+}
+
+// ShareCancelApproval cancels a pending share approval, resuming the run with
+// the call treated as not taken.
+func (m *MemoryClient) ShareCancelApproval(ctx context.Context, token, endUserRef, sessionID, questionID string) error {
+	hdrs, err := m.shareRefHeaders(endUserRef)
+	if err != nil {
+		return err
+	}
+	path := "/api/share/agent/sessions/" + url.PathEscape(sessionID) + "/approvals/" + url.PathEscape(questionID) + "/cancel"
+	return m.doShare(ctx, http.MethodPost, path, token, hdrs, nil, nil)
 }
 
 // ShareChatStream opens the share SSE stream with an explicit bearer token and

@@ -48,19 +48,66 @@ const TERMINAL_KEYS = {
 // map so session JSON stays clean.
 const sessionsByRef = {};
 const questionsBySession = {};
-// Deterministic transcript for the seeded sessions, served by
-// GET /api/share/agent/sessions/:id (the gateway now relays messages so
-// resuming a session renders its history).
-const messagesBySession = {
+// Grounded citations shared by the live `citations` frame and the timeline
+// assistant message so Sources renders identically on both paths.
+const CITATIONS = [
+  { kind: "object", id: "11111111-1111-4111-8111-111111111111", type: "Note", label: "A note", url: "/objects/11111111-1111-4111-8111-111111111111" },
+];
+
+// Full-timeline transcripts for the seeded sessions (all item kinds: run
+// markers, messages, tool calls, reasoning, citations), served by
+// GET /api/share/agent/sessions/:id in the admin history shape (`items` +
+// `pending_approvals`). seed-1 is rich (tool chip + thinking + Sources + a code
+// block); seed-2 is plain; seed-3 carries a pending ask_user question so the
+// inline question card renders on load.
+const timelineBySession = {
   "seed-1": [
-    { role: "user", content: "What can you do?" },
-    { role: "assistant", content: "I can help with tasks." },
+    { kind: "run_start", run_id: "run-seed-1", step_number: 0, created_at: "2026-08-25T09:00:00Z", run_status: "completed", run_model: "deepseek-v4-flash" },
+    { kind: "message", run_id: "run-seed-1", step_number: 1, created_at: "2026-08-25T09:00:01Z", role: "user", content: { text: "What can you do?" } },
+    { kind: "tool_call", run_id: "run-seed-1", step_number: 2, created_at: "2026-08-25T09:00:02Z", id: "tc-seed-1", tool_name: "web_search", tool_input: { query: "capabilities" }, tool_output: { results: [{ title: "Memory capabilities" }] }, tool_status: "completed", duration_ms: 120 },
+    { kind: "message", run_id: "run-seed-1", step_number: 3, created_at: "2026-08-25T09:00:03Z", role: "assistant", content: { text: "I can help with tasks.\n\n```js\nconsole.log('hi')\n```", reasoning: "The visitor asked what I can do." }, citations: CITATIONS },
+    { kind: "run_end", run_id: "run-seed-1", step_number: 0, created_at: "2026-08-25T09:00:03Z", run_status: "completed", completed_at: "2026-08-25T09:00:04Z" },
   ],
   "seed-2": [
-    { role: "user", content: "Set a reminder." },
-    { role: "assistant", content: "Reminder set." },
+    { kind: "run_start", run_id: "run-seed-2", step_number: 0, created_at: "2026-08-24T09:00:00Z", run_status: "completed", run_model: "deepseek-v4-flash" },
+    { kind: "message", run_id: "run-seed-2", step_number: 1, created_at: "2026-08-24T09:00:01Z", role: "user", content: { text: "Set a reminder." } },
+    { kind: "message", run_id: "run-seed-2", step_number: 2, created_at: "2026-08-24T09:00:02Z", role: "assistant", content: { text: "Reminder set." } },
+    { kind: "run_end", run_id: "run-seed-2", step_number: 0, created_at: "2026-08-24T09:00:02Z", run_status: "completed", completed_at: "2026-08-24T09:00:03Z" },
+  ],
+  "seed-3": [
+    { kind: "run_start", run_id: "run-seed-3", step_number: 0, created_at: "2026-08-23T09:00:00Z", run_status: "input-required", run_model: "deepseek-v4-flash" },
+    { kind: "message", run_id: "run-seed-3", step_number: 1, created_at: "2026-08-23T09:00:01Z", role: "user", content: { text: "Ask me something." } },
+    { kind: "tool_call", run_id: "run-seed-3", step_number: 2, created_at: "2026-08-23T09:00:02Z", id: "tc-seed-3", tool_name: "ask_user", tool_input: { question: "Which option?", interaction_type: "buttons", options: [{ label: "Alpha", value: "alpha" }, { label: "Beta", value: "beta" }] }, tool_output: { question_id: "q-seed-3" }, tool_status: "awaiting_confirmation" },
+    { kind: "run_end", run_id: "run-seed-3", step_number: 0, created_at: "2026-08-23T09:00:02Z", run_status: "input-required" },
   ],
 };
+
+// recordTurn appends one full run to a session's timeline (the turn the mock
+// just streamed), so a post-turn transcript refresh returns the same items the
+// live stream rendered. wantQuestion turns record no web_search tool call (the
+// ask_user question renders live via the `question` frame).
+function recordTurn(sid, msg, wantQuestion) {
+  if (!timelineBySession[sid]) timelineBySession[sid] = [];
+  const t = timelineBySession[sid];
+  const n = t.filter((x) => x.kind === "run_start").length + 1;
+  const runId = `run-${sid}-${n}`;
+  const at = nowISO();
+  t.push({ kind: "run_start", run_id: runId, step_number: 0, created_at: at, run_status: "completed", run_model: "deepseek-v4-flash" });
+  t.push({ kind: "message", run_id: runId, step_number: 1, created_at: at, role: "user", content: { text: msg } });
+  if (wantQuestion) {
+    t.push({ kind: "tool_call", run_id: runId, step_number: 2, created_at: at, id: `tc-${sid}-${n}`, tool_name: "ask_user", tool_input: { question: "Which option do you want?", interaction_type: "buttons", options: [{ label: "Alpha", value: "alpha" }, { label: "Beta", value: "beta" }] }, tool_output: { question_id: `q-live-${sid}` }, tool_status: "awaiting_confirmation" });
+  } else {
+    t.push({ kind: "tool_call", run_id: runId, step_number: 2, created_at: at, id: `tc-${sid}-${n}`, tool_name: "web_search", tool_input: { query: "latest news" }, tool_output: { results: [{ title: "News item" }] }, tool_status: "completed", duration_ms: 120 });
+  }
+  t.push({ kind: "message", run_id: runId, step_number: 3, created_at: at, role: "assistant", content: { text: "**Hello** from share!", reasoning: "The visitor asked a question; I searched and answered." }, citations: CITATIONS });
+  t.push({ kind: "run_end", run_id: runId, step_number: 0, created_at: at, run_status: "completed", completed_at: at });
+}
+
+// pendingApprovalsOf maps the seeded pending questions to the admin
+// pending_approvals shape ({ questionId, tool, input }).
+function pendingApprovalsOf(sid) {
+  return (questionsBySession[sid] || []).map((q) => ({ questionId: q.id, tool: q.tool, input: q.input }));
+}
 // Per-token count of GET /api/share/agent calls, so a "revoke-later" key can
 // succeed on the first call (exchange) then fail on the next (config rehydrate).
 const configCalls = {};
@@ -77,6 +124,7 @@ function ensureSessions(ref) {
     sessionsByRef[ref] = [
       { id: "seed-1", title: "Welcome chat", isArchived: false, lastActivityAt: nowISO(), createdAt: nowISO() },
       { id: "seed-2", title: "Archived chat", isArchived: true, lastActivityAt: nowISO(), createdAt: nowISO() },
+      { id: "seed-3", title: "Question chat", isArchived: false, lastActivityAt: nowISO(), createdAt: nowISO() },
     ];
   }
   return sessionsByRef[ref];
@@ -412,17 +460,40 @@ const server = http.createServer((req, res) => {
       const ref = payload.endUserRef || endUserRefOf(req);
       const sid = String(payload.sessionId || "");
       const msg = String(payload.message || "");
+      const wantQuestion = /question/i.test(msg);
       const list = ensureSessions(ref);
       const sess = list.find((s) => s.id === sid);
       if (sess && !sess.title) sess.title = msg.slice(0, 60) || "Untitled chat";
-      sess.lastActivityAt = nowISO();
+      if (sess) sess.lastActivityAt = nowISO();
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
+      // Full shared-admin engine frame set: reasoning/thinking, tool progress,
+      // token deltas, grounded citations, then either an approval request or an
+      // ask_user question, then done. The gateway still injects `meta` + `html`
+      // snapshot frames upstream of the client.
+      res.write(`data: ${JSON.stringify({ type: "thinking", id: "th-1", role: "assistant", text: "The visitor asked a question; I searched and answered.", done: true })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "mcp_tool", tool: "web_search", id: "tc-live", status: "running" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "mcp_tool", tool: "web_search", id: "tc-live", status: "completed", result: { results: [{ title: "News item" }] } })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "token", token: "**Hello**" })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: "token", token: " from share!" })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "citations", citations: CITATIONS })}\n\n`);
+      if (wantQuestion) {
+        // Real wire for a live pause: the agent emits an ask_user MCP tool call
+        // (start carries the question, completed carries the question_id). The
+        // gateway translates it into the client `question` frame exactly as it
+        // does for /api/chat, and suppresses the raw tool frames.
+        res.write(`data: ${JSON.stringify({ type: "mcp_tool", tool: "ask_user", id: "tc-live-q", status: "started", result: { question: "Which option do you want?", interaction_type: "buttons", options: [{ label: "Alpha", value: "alpha" }, { label: "Beta", value: "beta" }] } })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "mcp_tool", tool: "ask_user", id: "tc-live-q", status: "completed", result: { question_id: `q-live-${sid}`, status: "pausing" } })}\n\n`);
+      } else {
+        res.write(`data: ${JSON.stringify({ type: "approval", questionId: `q-live-${sid}`, tool: "web_search", input: { query: "latest news" } })}\n\n`);
+      }
       res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
       res.end();
+
+      // Record the streamed turn into the timeline so a post-turn transcript
+      // refresh is consistent with what the live stream rendered.
+      recordTurn(sid, msg, wantQuestion);
     });
   }
 
@@ -442,7 +513,7 @@ const server = http.createServer((req, res) => {
       // Every POST-created session carries one pending approval so the end-user
       // approval flow is deterministic (seeded sessions carry none).
       questionsBySession[id] = [
-        { id: `q-${id}`, runId: "run-1", question: "Approve this action?", proposal: { kind: "web_search", query: "latest news" }, status: "pending" },
+        { id: `q-${id}`, runId: "run-1", question: "Approve this action?", tool: "web_search", input: { query: "latest news" }, status: "pending" },
       ];
       res.statusCode = 201;
       return json(res, sess);
@@ -457,6 +528,25 @@ const server = http.createServer((req, res) => {
     return json(res, { status: "archived" });
   }
 
+  const unarchiveMatch = path.match(/^\/api\/share\/agent\/sessions\/([^/]+)\/unarchive$/);
+  if (unarchiveMatch && req.method === "POST") {
+    const ref = endUserRefOf(req);
+    const sess = ensureSessions(ref).find((s) => s.id === unarchiveMatch[1]);
+    if (sess) sess.isArchived = false;
+    return json(res, { status: "unarchived" });
+  }
+
+  const deleteSessionMatch = path.match(/^\/api\/share\/agent\/sessions\/([^/]+)$/);
+  if (deleteSessionMatch && req.method === "DELETE") {
+    const ref = endUserRefOf(req);
+    const id = deleteSessionMatch[1];
+    sessionsByRef[ref] = (ensureSessions(ref) || []).filter((s) => s.id !== id);
+    delete questionsBySession[id];
+    delete timelineBySession[id];
+    res.statusCode = 204;
+    return res.end();
+  }
+
   const approveMatch = path.match(/^\/api\/share\/agent\/sessions\/([^/]+)\/approvals\/([^/]+)$/);
   if (approveMatch && req.method === "POST") {
     return readBody(req, () => {
@@ -468,6 +558,15 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  const cancelMatch = path.match(/^\/api\/share\/agent\/sessions\/([^/]+)\/approvals\/([^/]+)\/cancel$/);
+  if (cancelMatch && req.method === "POST") {
+    const sid = cancelMatch[1];
+    const qid = cancelMatch[2];
+    const qs = questionsBySession[sid];
+    if (qs) questionsBySession[sid] = qs.filter((q) => q.id !== qid);
+    return json(res, { ok: true });
+  }
+
   if (path === "/api/share/agent/questions" && req.method === "GET") {
     const sid = url.searchParams.get("sessionId") || "";
     return json(res, questionsBySession[sid] || []);
@@ -477,14 +576,16 @@ const server = http.createServer((req, res) => {
   if (shareSessionMatch && req.method === "GET") {
     const ref = endUserRefOf(req);
     const sess = ensureSessions(ref).find((s) => s.id === shareSessionMatch[1]);
-    // Detail shape (ShareSessionDetail): list DTO + transcript messages.
+    // Detail shape (admin history shape): list DTO + full-timeline `items` +
+    // `pending_approvals`, replacing the old transcript `messages`.
     const detail = sess || { id: shareSessionMatch[1], title: "", isArchived: false, createdAt: nowISO() };
     return json(res, {
       id: detail.id,
       title: detail.title,
       isArchived: detail.isArchived,
-      messages: messagesBySession[detail.id] || [],
       createdAt: detail.createdAt,
+      items: timelineBySession[detail.id] || [],
+      pending_approvals: pendingApprovalsOf(detail.id),
     });
   }
 

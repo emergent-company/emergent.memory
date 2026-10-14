@@ -166,8 +166,6 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 			}
 			.share-scrim { display: none; }
 			.share-rail.hidden { display: none; }
-			/* The approvals slot only takes space when a card is present. */
-			#share-approvals:empty { padding-block: 0; }
 			/* Below lg the rail becomes a slide-in drawer over the transcript. */
 			@media (max-width: 1023px) {
 				.share-rail {
@@ -246,7 +244,15 @@ templ ShareAgentPage(props ShareAgentPageProps) {
 				@shareFrame(props)
 			}
 			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-transport.js")) } defer></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) } defer></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) } defer></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) } defer></script>
 			<script src={ templ.SafeURL(webui.AssetPath("/js/share-agent.js")) } defer></script>
+			<!-- The rail's per-row actions menu is a go-daisy ui.Popover; it opens
+			     only through the go-daisy popover runtime. The public page loads its
+			     own chat client scripts (not the app shell that includes this), so
+			     pull the runtime in here or the row menu never opens. -->
+			@ui.PopoverScript()
 		</body>
 	</html>
 }
@@ -336,10 +342,6 @@ templ shareFrame(props ShareAgentPageProps) {
 				@layout.Container(layout.ContainerLG, nil) {
 					@shareFirstLoad(props)
 					<div id="share-messages" class="flex flex-col gap-3"></div>
-					<div id="share-typing" class="mt-3 hidden px-1" role="status" aria-live="polite" data-testid="share-typing">
-						<span class="memory-typing"><span></span><span></span><span></span></span>
-						<span class="text-muted-faint ml-1.5 text-xs">Thinking…</span>
-					</div>
 					<!-- Client-revealable terminal states for a link that runs out
 					     mid-conversation (rate limit / budget). Kept out of the
 					     initial view; share-agent.js unhides the matching one. -->
@@ -349,7 +351,6 @@ templ shareFrame(props ShareAgentPageProps) {
 					</div>
 				}
 				</div>
-				@shareApprovalMount()
 				@shareComposer(props)
 			</section>
 		</div>
@@ -440,14 +441,17 @@ templ shareSuggestion(text string) {
 	>{ text }</button>
 }
 
-// shareSessionList renders the visitor's rail items, or the empty state.
+// shareSessionList renders the visitor's rail items, or the empty state. It
+// mirrors the authenticated chat rail: rows are the shared `ui.List`/`ui.ListRow`
+// components with a per-row archive/unarchive/delete menu.
 templ shareSessionList(sessions []ShareSessionItem) {
 	if len(sessions) == 0 {
 		@shareEmptySessions()
-	}
-	if len(sessions) > 0 {
-		for _, s := range sessions {
-			@shareSessionRow(s)
+	} else {
+		@ui.List(ui.ListProps{}) {
+			for _, s := range sessions {
+				@shareSessionRow(s)
+			}
 		}
 	}
 }
@@ -459,33 +463,85 @@ templ ShareSessionList(items []ShareSessionItem) {
 	@shareSessionList(items)
 }
 
-// shareSessionRow is one resumable chat in the visitor's rail.
+// shareSessionRow is one resumable chat in the visitor's rail, rendered with
+// the admin rail's `ui.ListRow` markup and a per-row actions menu.
 templ shareSessionRow(s ShareSessionItem) {
 	{{
-		rowClass := "flex w-full items-start gap-3 rounded-box px-3 py-2 text-left transition-colors hover:bg-base-200/60"
+		attrs := templ.Attributes{
+			"data-action":   "share-resume-session",
+			"data-id":       s.ID,
+			"data-archived": boolAttr(s.Archived),
+			"data-testid":   "share-session-row",
+			"aria-current":  shareAriaCurrent(s.Active),
+		}
 		if s.Active {
-			rowClass += " bg-base-200/80 ring-1 ring-primary/30"
+			attrs["data-active"] = "true"
 		}
 		if s.Archived {
-			rowClass += " opacity-60"
+			attrs["class"] = "opacity-60"
 		}
 	}}
-	<button
-		type="button"
-		class={ rowClass }
-		data-action="share-resume-session"
-		data-id={ s.ID }
-		data-archived={ boolAttr(s.Archived) }
-		data-testid="share-session-row"
-		aria-current={ shareAriaCurrent(s.Active) }
-	>
-		<span class="text-muted-faint mt-0.5 shrink-0">@ui.IconSpan("lucide--message-square", "size-4")
-</span>
-		<span class="min-w-0 grow">
-			<span class="block truncate text-sm">{ s.Title }</span>
-			<span class="text-muted-faint block text-xs">{ s.LastActivity } · { strconv.Itoa(s.MessageCount) } messages</span>
-		</span>
-	</button>
+	@ui.ListRow(ui.ListRowProps{
+		Title:    s.Title,
+		Subtitle: s.LastActivity + " · " + strconv.Itoa(s.MessageCount) + " messages",
+		Leading:  ui.IconSpan("lucide--message-square", "size-4 shrink-0 text-muted-faint"),
+		Trailing: []templ.Component{
+			ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle"),
+			shareSessionMenu(s),
+		},
+		Attrs: attrs,
+	})
+}
+
+// shareSessionMenu is the per-row actions popover (archive / unarchive /
+// delete), mirroring the admin session rail's menu. The trigger carries its own
+// data-action so the delegated row handler never confuses opening the menu with
+// resuming the session.
+templ shareSessionMenu(s ShareSessionItem) {
+	@ui.Popover(ui.PopoverRootProps{Attrs: templ.Attributes{"data-testid": "share-session-actions"}}) {
+		@ui.PopoverTrigger(ui.PopoverTriggerProps{
+			Class: "btn btn-ghost btn-xs btn-square",
+			Attrs: templ.Attributes{
+				"data-action":   "share-session-menu",
+				"aria-haspopup": "menu",
+				"aria-expanded": "false",
+				"aria-label":    "Actions for " + s.Title,
+			},
+		}) {
+			@ui.IconSpan("lucide--ellipsis-vertical", "size-4")
+		}
+		@ui.PopoverContent(ui.PopoverContentProps{
+			Placement: ui.PopoverBottomEnd,
+			Offset:    4,
+			Exclusive: true,
+			Class:     "w-36",
+			Attrs:     templ.Attributes{"role": "menu", "data-testid": "share-session-actions-menu"},
+		}) {
+			<ul class="menu menu-sm p-1">
+				if s.Archived {
+					<li role="none">
+						<button type="button" role="menuitem" data-action="share-unarchive-session" data-id={ s.ID } data-testid="share-session-unarchive" class="flex w-full items-center gap-2 text-left">
+							@ui.IconSpan("lucide--archive-restore", "size-4")
+							<span>Unarchive</span>
+						</button>
+					</li>
+				} else {
+					<li role="none">
+						<button type="button" role="menuitem" data-action="share-archive-session" data-id={ s.ID } data-testid="share-session-archive" class="flex w-full items-center gap-2 text-left">
+							@ui.IconSpan("lucide--archive", "size-4")
+							<span>Archive</span>
+						</button>
+					</li>
+				}
+				<li role="none">
+					<button type="button" role="menuitem" data-action="share-delete-session" data-id={ s.ID } data-title={ s.Title } data-testid="share-session-delete" class="flex w-full items-center gap-2 text-left text-error">
+						@ui.IconSpan("lucide--trash-2", "size-4")
+						<span>Delete</span>
+					</button>
+				</li>
+			</ul>
+		}
+	}
 }
 
 // shareEmptySessions is the rail's empty state.
@@ -594,17 +650,6 @@ templ shareEmailGate(props ShareAgentPageProps) {
 			</form>
 		}
 	</div>
-}
-
-// shareApprovalMount is the inline card slot for pending approvals/questions.
-// share-agent.js fills it from GET /share/api/questions and posts decisions to
-// POST /share/api/sessions/:id/approvals/:questionId.
-templ shareApprovalMount() {
-	@layout.Container(layout.ContainerLG, templ.Attributes{
-		"id":           "share-approvals",
-		"data-testid":  "share-approvals",
-		"aria-live":    "polite",
-	})
 }
 
 // shareTerminalScreen is the full-page screen for a link the visitor cannot use.

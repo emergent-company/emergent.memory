@@ -3105,8 +3105,115 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 	return dto, nil
 }
 
-// resumeQuestionRun resumes a paused run after a question decision. It pre-creates
-// the resume run, persists the resume_run_id, and launches the resume goroutine
+// CancelQuestion is a parameterized variant of the question-cancel flow that
+// mirrors HandleCancelQuestion (it stays in lockstep with it by convention, not
+// by delegation) so the public share path can drive it with share resume params.
+// Unlike RespondToQuestion it performs no kill-switch check (a cancel always
+// resumes the run with the call treated as not taken), matching the
+// authenticated cancel path. Share callers must verify question->run->session
+// ownership BEFORE calling this.
+func (h *Handler) CancelQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	if p.ProjectID == "" {
+		return nil, apperror.NewBadRequest("projectId is required")
+	}
+	if p.QuestionID == "" {
+		return nil, apperror.NewBadRequest("questionId is required")
+	}
+
+	question, err := h.repo.FindQuestionByID(ctx, p.QuestionID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to get question", err)
+	}
+	if question == nil {
+		return nil, apperror.NewNotFound("AgentQuestion", p.QuestionID)
+	}
+	if question.ProjectID != p.ProjectID {
+		return nil, apperror.NewNotFound("AgentQuestion", p.QuestionID)
+	}
+	if question.Status != QuestionStatusPending {
+		return nil, apperror.NewConflict(fmt.Sprintf("question is already %s", question.Status))
+	}
+
+	run, err := h.repo.FindRunByID(ctx, question.RunID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to get run", err)
+	}
+	if run == nil {
+		return nil, apperror.NewInternal("associated run not found", nil)
+	}
+	if run.Status != RunStatusPaused {
+		return nil, apperror.NewConflict(fmt.Sprintf("run is %s, expected paused", run.Status))
+	}
+
+	claimed, err := h.repo.CancelQuestion(ctx, p.QuestionID)
+	if err != nil {
+		return nil, apperror.NewInternal("failed to cancel question", err)
+	}
+	if !claimed {
+		return nil, apperror.NewConflict("question is no longer pending")
+	}
+
+	// Record the cancellation in the audit trail (only affects tool-confirm approvals).
+	_ = h.repo.UpdateToolApprovalDecision(ctx, p.QuestionID, "cancelled", "", p.RespondedBy)
+
+	if question.NotificationID != nil {
+		_ = h.repo.UpdateNotificationActionStatus(ctx, *question.NotificationID, "cancelled", p.UserID)
+	}
+
+	var preCreatedRun *AgentRun
+	var resumeNow = true
+	if h.executor != nil {
+		agent, err := h.repo.FindByID(ctx, run.AgentID, nil)
+		if err != nil || agent == nil {
+			_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+			return nil, apperror.NewInternal("failed to find agent for resume", err)
+		}
+		agentDef, _ := h.repo.ResolveDefinitionForAgent(ctx, agent)
+
+		// Batch coordination: mark this cancellation in suspend_context and
+		// resume only once every confirmation in the batch is decided.
+		if sc := SuspendSignalFromMap(run.SuspendContext); sc != nil && len(sc.PendingToolConfirmations) > 0 {
+			var markErr error
+			resumeNow, markErr = h.repo.MarkToolConfirmationDecision(ctx, run.ID, p.QuestionID, "cancel", "")
+			if markErr != nil {
+				_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+				return nil, apperror.NewInternal("failed to record decision", markErr)
+			}
+			if resumeNow {
+				fresh, ferr := h.repo.FindRunByID(ctx, run.ID)
+				if ferr != nil || fresh == nil {
+					_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+					return nil, apperror.NewInternal("failed to re-fetch run after decision", ferr)
+				}
+				run = fresh
+			}
+		}
+
+		if resumeNow {
+			preCreatedRun, err = h.resumeQuestionRun(ctx, p, run, agent, agentDef, "cancel", "")
+			if err != nil {
+				_ = h.repo.ReopenQuestion(ctx, p.QuestionID)
+				return nil, err
+			}
+		}
+	}
+
+	updatedQuestion, err := h.repo.FindQuestionByID(ctx, p.QuestionID)
+	var dto *AgentQuestionDTO
+	if err != nil || updatedQuestion == nil {
+		dto = question.ToDTO()
+	} else {
+		dto = updatedQuestion.ToDTO()
+	}
+	if preCreatedRun != nil {
+		dto.ResumeRunID = &preCreatedRun.ID
+	}
+
+	return dto, nil
+}
+
+// resumeQuestionRun resumes a paused run after a question decision. It
+// pre-creates the resume run, persists the resume_run_id, and launches the resume goroutine
 // with the given resolved user message and optional reject message. It returns
 // the pre-created run (whose ID clients poll) or an error.
 func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *AgentRun, agent *Agent, agentDef *AgentDefinition, userMessage, rejectMessage string) (*AgentRun, error) {

@@ -78,7 +78,6 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternSurfaceOpacity, file: "schema.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "sessions.templ", count: 3, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "share_manage.templ", count: 3, note: "normalise to bg-base-200/40"},
-		{pattern: patternSurfaceOpacity, file: "share_page.templ", count: 2, note: "normalise to bg-base-200/40"},
 
 		// border-token-drift — canonical is border-base-content/10.
 		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 3, note: "normalise to border-base-content/10"},

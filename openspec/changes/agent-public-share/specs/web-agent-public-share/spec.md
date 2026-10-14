@@ -105,23 +105,23 @@ The public share page SHALL NOT initialize Sentry or load any third-party script
 - **WHEN** the share page is rendered
 - **THEN** it does not wire Sentry or any third-party script, because the CSP would block them
 
-### Requirement: Session list and approve/deny surface
-The public page SHALL render the end user's own sessions (respecting `show_session_list` and the `filter` parameter) and SHALL render an approve/deny surface for pending approvals and `ask_user` questions. The surface SHALL support approve/deny only; no richer approval UI is in scope.
+### Requirement: Session list and approval surface
+The public page SHALL render the end user's own sessions (respecting `show_session_list` and the `filter` parameter) and SHALL render approval and question controls for pending approvals and `ask_user` questions. The controls are the same inline cards the authenticated chat workspace uses (approve, reject-with-reason, cancel), per the `web-share-chat-parity` capability.
 
 #### Scenario: Session list shows only own sessions
 - **WHEN** an end user loads the public page and `show_session_list` is true
 - **THEN** the page lists only that end user's own sessions for the link, filtered by `filter` (default active)
 
-#### Scenario: Approve/deny surface
+#### Scenario: Approval surface
 - **WHEN** a pending approval or question exists for the end user's session
-- **THEN** the page renders approve and deny actions; no richer approval controls are offered
+- **THEN** the page renders the same inline approve/reject-with-reason/cancel controls as the authenticated chat workspace
 
 ### Requirement: Session detail with transcript is surfaced end-to-end
-The gateway SHALL carry the session detail — including its `messages` transcript — through from the server, so resuming a session renders its history client-side. `GET /share/api/sessions/:id` SHALL return the session's transcript (`messages`) for the caller's session.
+The gateway SHALL carry the session detail — including its transcript — through from the server, so resuming a session renders its history client-side. `GET /share/api/sessions/:id` SHALL return the caller's session transcript (full run timeline, per the `web-share-chat-parity` capability).
 
 #### Scenario: Resuming a session renders its history
 - **WHEN** an end user opens one of their own sessions
-- **THEN** the gateway returns the session detail including its `messages` transcript, and the client renders the prior user/assistant history
+- **THEN** the gateway returns the session detail including its full-timeline transcript, and the client renders the prior history with the shared chat components
 
 #### Scenario: Transcript is scoped to the caller's session
 - **WHEN** an end user requests a session id they do not own on the link

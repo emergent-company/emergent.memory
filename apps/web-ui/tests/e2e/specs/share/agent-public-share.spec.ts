@@ -127,12 +127,21 @@ test.describe('public share page', () => {
       page.getByTestId('share-session-row').filter({ hasText: 'Archived chat' }),
     ).toHaveCount(0);
 
-    // Selecting the row loads and renders the session transcript (the gateway
-    // now relays messages through /share/api/sessions/:id).
+    // Selecting the row loads and renders the full admin-history timeline
+    // through the shared engine (GET /share/api/sessions/:id → items +
+    // pending_approvals): user + assistant bubbles, tool chip, reasoning,
+    // grounded Sources, and copy affordances.
     await welcome.click();
     const chatLog = page.getByTestId('share-chat-log');
-    await expect(chatLog.locator('[data-role="user"]')).toContainText('What can you do?');
-    await expect(chatLog.locator('[data-role="assistant"]')).toContainText('I can help with tasks.');
+    await expect(chatLog.locator('.chat-bubble-primary')).toContainText('What can you do?');
+    await expect(chatLog.locator('.chat-bubble-neutral')).toContainText('I can help with tasks.');
+    await expect(chatLog.locator('[data-tool="web_search"]')).toBeVisible();
+    await expect(chatLog.locator('.memory-thinking')).toBeVisible();
+    await expect(chatLog.locator('.memory-thinking-body')).toContainText('The visitor asked what I can do.');
+    await expect(chatLog.getByTestId('chat-sources')).toBeVisible();
+    await expect(chatLog.getByTestId('chat-sources-toggle')).toHaveText(/1 source/);
+    await expect(chatLog.getByRole('button', { name: 'Copy message' })).toBeVisible();
+    await expect(chatLog.getByRole('button', { name: 'Copy code' })).toBeVisible();
     await expect(page.getByTestId('share-first-load')).toBeHidden();
 
     // Archived filter swaps the list to the archived session.
@@ -154,7 +163,7 @@ test.describe('public share page', () => {
     ).toBeVisible();
   });
 
-  test('streams a reply and surfaces a pending approval with approve/deny', async ({ page }) => {
+  test('streams a full admin-engine reply and surfaces an inline tool approval', async ({ page }) => {
     await openShare(page, 'valid-key-123');
 
     await page.getByTestId('share-input').fill('hello');
@@ -162,23 +171,122 @@ test.describe('public share page', () => {
 
     // Live SSE streaming is fully expressible in the mock: the gateway proxies
     // the upstream token frames and the assistant bubble accumulates them.
-    await expect(page.locator('[data-role="assistant"]')).toContainText('Hello from share!');
+    await expect(page.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
 
     // Markdown in the reply is rendered server-side: the gateway buffers the
     // token deltas and emits an `html` frame at completion, so **Hello** becomes
     // <strong>Hello</strong> in the assistant bubble.
-    await expect(page.locator('[data-role="assistant"] strong')).toContainText('Hello');
+    await expect(page.locator('.chat-bubble-neutral strong')).toContainText('Hello');
 
-    // The just-created session owns one pending approval.
-    const card = page.getByTestId('share-approval');
+    // The live stream emits the full shared-engine frame set: a web_search tool
+    // chip, a thinking block, and grounded Sources.
+    await expect(page.locator('[data-tool="web_search"]')).toBeVisible();
+    await expect(page.locator('.memory-thinking')).toBeVisible();
+    await expect(page.getByTestId('chat-sources')).toBeVisible();
+
+    // A tool-policy approval renders inline (approve / reject / cancel).
+    const card = page.getByTestId('chat-approval-card');
     await expect(card).toBeVisible();
-    await expect(card).toContainText('Approve this action?');
-    await expect(card.getByTestId('share-approval-approve')).toBeVisible();
-    await expect(card.getByTestId('share-approval-deny')).toBeVisible();
+    await expect(card).toContainText('web_search');
+    await expect(card.getByTestId('chat-approval-approve')).toBeVisible();
+    await expect(card.getByTestId('chat-approval-reject')).toBeVisible();
+    await expect(card.getByTestId('chat-approval-cancel')).toBeVisible();
 
-    // Approve → the gateway posts the decision and the card is removed.
-    await card.getByTestId('share-approval-approve').click();
-    await expect(page.getByTestId('share-approval')).toHaveCount(0);
+    // Approve → the decision is posted and the card is removed.
+    await card.getByTestId('chat-approval-approve').click();
+    await expect(page.getByTestId('chat-approval-card')).toHaveCount(0);
+  });
+
+  test('rejecting an inline approval with a reason clears the card', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+
+    await page.getByTestId('share-input').fill('run this action');
+    await page.getByTestId('share-send').click();
+
+    const card = page.getByTestId('chat-approval-card');
+    await expect(card).toBeVisible();
+    // The reject button first reveals a reason box, then (as "Confirm reject")
+    // posts the decision with the reason.
+    await card.getByTestId('chat-approval-reject').click();
+    await card.getByPlaceholder('Reason (optional)').fill('Not needed');
+    await card.getByTestId('chat-approval-reject').click();
+    await expect(page.getByTestId('chat-approval-card')).toHaveCount(0);
+  });
+
+  test('cancelling an inline approval clears the card', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+
+    await page.getByTestId('share-input').fill('another action');
+    await page.getByTestId('share-send').click();
+
+    const card = page.getByTestId('chat-approval-card');
+    await expect(card).toBeVisible();
+    await card.getByTestId('chat-approval-cancel').click();
+    await expect(page.getByTestId('chat-approval-card')).toHaveCount(0);
+  });
+
+  test('a paused ask_user question renders the inline question card from history', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+
+    const qrow = page.getByTestId('share-session-row').filter({ hasText: 'Question chat' });
+    await expect(qrow).toBeVisible();
+    await qrow.click();
+
+    // The seeded timeline carries an ask_user tool_call (paused run); the shared
+    // engine renders it as the interactive question card, not a tool chip.
+    const card = page.getByTestId('chat-question-card');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('Which option?');
+    await expect(card.getByTestId('chat-question-option')).toHaveCount(2);
+  });
+
+  test('a live ask_user pause renders the inline question card from the stream', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+
+    // The mock emits the real wire for a live pause: an ask_user MCP tool call.
+    // The gateway must translate it into the client `question` frame (as it does
+    // for /api/chat) — the raw tool call must not leak through as a chip.
+    await page.getByTestId('share-input').fill('please ask me a question');
+    await page.getByTestId('share-send').click();
+
+    const card = page.getByTestId('chat-question-card');
+    await expect(card).toBeVisible();
+    await expect(card).toContainText('Which option do you want?');
+    await expect(card.getByTestId('chat-question-option')).toHaveCount(2);
+    await expect(page.locator('[data-tool="ask_user"]')).toHaveCount(0);
+  });
+
+  test('the rail menu archives, unarchives, and deletes a session', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+
+    // Archive "Welcome chat" from its row menu.
+    const welcome = page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' });
+    await welcome.getByRole('button', { name: 'Actions for Welcome chat' }).click();
+    await welcome.getByTestId('share-session-archive').click();
+    await expect(
+      page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),
+    ).toHaveCount(0);
+
+    // Unarchive it from the archived list.
+    await page.getByTestId('share-archived-filter').selectOption('archived');
+    const archivedWelcome = page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' });
+    await expect(archivedWelcome).toBeVisible();
+    await archivedWelcome.getByRole('button', { name: 'Actions for Welcome chat' }).click();
+    await archivedWelcome.getByTestId('share-session-unarchive').click();
+    await page.getByTestId('share-archived-filter').selectOption('active');
+    await expect(
+      page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),
+    ).toBeVisible();
+
+    // Delete the archived "Archived chat" session.
+    await page.getByTestId('share-archived-filter').selectOption('archived');
+    const archivedChat = page.getByTestId('share-session-row').filter({ hasText: 'Archived chat' });
+    await expect(archivedChat).toBeVisible();
+    await archivedChat.getByRole('button', { name: 'Actions for Archived chat' }).click();
+    await archivedChat.getByTestId('share-session-delete').click();
+    await expect(
+      page.getByTestId('share-session-row').filter({ hasText: 'Archived chat' }),
+    ).toHaveCount(0);
   });
 
   test('a second browser context does not see the first visitor’s sessions', async ({ browser }) => {
@@ -189,7 +297,7 @@ test.describe('public share page', () => {
       await openShare(pageA, 'valid-key-123');
       await pageA.getByTestId('share-input').fill('alpha-unique-123');
       await pageA.getByTestId('share-send').click();
-      await expect(pageA.locator('[data-role="assistant"]')).toContainText('Hello from share!');
+      await expect(pageA.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
       // The first visitor's new chat is titled from its first message.
       await expect(
         pageA.getByTestId('share-session-row').filter({ hasText: 'alpha-unique-123' }),
@@ -414,7 +522,7 @@ test.describe('public share page (owner-created links)', () => {
 
     await page.getByTestId('share-input').fill('hi');
     await page.getByTestId('share-send').click();
-    await expect(page.locator('[data-role="assistant"]')).toContainText('Hello from share!');
+    await expect(page.locator('.chat-bubble-neutral')).toContainText('Hello from share!');
   });
 
   test('showSessionList off hides the session rail', async ({ page }) => {

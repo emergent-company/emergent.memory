@@ -930,36 +930,61 @@
       // the message rendered per failure mode, and its own finish/fail handlers.
       streamFailed = false;
       ctx.aborter = new AbortController();
-      var payload = { agentDefinitionId: agent, message: text };
-      if (ctx.conversationId) payload.conversationId = ctx.conversationId;
+
+      // Wire target: default to the authenticated /api/chat turn. A host that
+      // streams elsewhere (the public share page → /share/api/chat) supplies
+      // ctx.streamPath / ctx.streamPayload / ctx.streamOptions, which replace the
+      // defaults here; chat.js and sidepanel.js omit them and stay byte-identical.
+      var path = (typeof ctx.streamPath === "function" && ctx.streamPath(agent, text)) || "/api/chat";
+      var payload = (typeof ctx.streamPayload === "function")
+        ? ctx.streamPayload(agent, text)
+        : (function () {
+            var p = { agentDefinitionId: agent, message: text };
+            if (ctx.conversationId) p.conversationId = ctx.conversationId;
+            return p;
+          })();
+
+      var opts = {
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        body: JSON.stringify(payload),
+        signal: ctx.aborter.signal,
+        // handleEvent takes the raw JSON string (it parses it itself), so
+        // re-serialize the frame the transport already parsed.
+        onFrame: function (frame) { ctx.handleEvent(JSON.stringify(frame)); },
+        // Non-ok response: prefer the gateway's JSON {error} body, else the
+        // generic status message — the same contract as the old inline reader.
+        onHTTPError: function (res) {
+          return res.json().then(
+            function (j) {
+              failStream(j && j.error ? j.error : "Gateway error " + res.status);
+            },
+            function () {
+              failStream("Gateway error " + res.status);
+            }
+          );
+        },
+        // An `error` frame already ran failStream and set the failure state.
+        // Suppress the transport's trailing onFinish("done") so a success
+        // finalization can't updateBubbleText away the error and refresh the
+        // transcript as a completed turn.
+        isStopped: function () { return streamFailed; },
+        onFinish: finishStream,
+      };
+
+      // Host-supplied overrides (e.g. the share page's credentials:"include" and
+      // its own terminal-error onHTTPError). Applied after the defaults so a host
+      // can replace any single option without re-specifying the rest.
+      if (typeof ctx.streamOptions === "function") {
+        var overrides = ctx.streamOptions();
+        if (overrides && typeof overrides === "object") {
+          for (var k in overrides) {
+            if (Object.prototype.hasOwnProperty.call(overrides, k)) opts[k] = overrides[k];
+          }
+        }
+      }
 
       try {
-        await MemoryChatTransport.streamSSE("/api/chat", {
-          headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-          body: JSON.stringify(payload),
-          signal: ctx.aborter.signal,
-          // handleEvent takes the raw JSON string (it parses it itself), so
-          // re-serialize the frame the transport already parsed.
-          onFrame: function (frame) { ctx.handleEvent(JSON.stringify(frame)); },
-          // Non-ok response: prefer the gateway's JSON {error} body, else the
-          // generic status message — the same contract as the old inline reader.
-          onHTTPError: function (res) {
-            return res.json().then(
-              function (j) {
-                failStream(j && j.error ? j.error : "Gateway error " + res.status);
-              },
-              function () {
-                failStream("Gateway error " + res.status);
-              }
-            );
-          },
-          // An `error` frame already ran failStream and set the failure state.
-          // Suppress the transport's trailing onFinish("done") so a success
-          // finalization can't updateBubbleText away the error and refresh the
-          // transcript as a completed turn.
-          isStopped: function () { return streamFailed; },
-          onFinish: finishStream,
-        });
+        await MemoryChatTransport.streamSSE(path, opts);
       } catch (err) {
         if (err && err.name === "AbortError") { finishStream("aborted"); return; }
         // A drop after the response connected reads as "Stream interrupted"; a

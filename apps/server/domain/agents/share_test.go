@@ -81,6 +81,21 @@ type fakeShareRepo struct {
 	// transcript history (GetConversationFullHistory).
 	historyCalled bool
 	historyItems  []*ConversationHistoryItem
+
+	// pending tool approvals (ListPendingToolApprovalsForSession).
+	pendingApprovals []*AgentToolApproval
+
+	// pending questions (ListPendingQuestionsForSession).
+	pendingQuestions []*AgentQuestion
+
+	// answered questions (ListAnsweredQuestionsForSession).
+	answeredQuestions []*AgentQuestion
+
+	// tool calls (FindToolCallsByRunID).
+	toolCalls []*AgentRunToolCall
+
+	// deletedSessionID records the most recent DeleteShareSession call.
+	deletedSessionID string
 }
 
 type accessLogEntry struct {
@@ -198,6 +213,22 @@ func (f *fakeShareRepo) ArchiveShareSession(_ context.Context, id, _, _ string) 
 	s.IsArchived = true
 	return true, nil
 }
+func (f *fakeShareRepo) UnarchiveShareSession(_ context.Context, id, _, _ string) (bool, error) {
+	s := f.sessions[id]
+	if s == nil || !s.IsArchived {
+		return false, nil
+	}
+	s.IsArchived = false
+	return true, nil
+}
+func (f *fakeShareRepo) DeleteShareSession(_ context.Context, id, _, _ string) (bool, error) {
+	if _, ok := f.sessions[id]; !ok {
+		return false, nil
+	}
+	delete(f.sessions, id)
+	f.deletedSessionID = id
+	return true, nil
+}
 func (f *fakeShareRepo) TouchShareSession(_ context.Context, _ string) error { return nil }
 func (f *fakeShareRepo) FindShareSessionByRunAndEndUser(_ context.Context, _, _, _ string) (*AgentShareSession, error) {
 	return f.sessionByRunAndUser, nil
@@ -239,7 +270,13 @@ func (f *fakeShareRepo) ReserveAndDecideShareApproval(_ context.Context, _, _, _
 	return true, nil
 }
 func (f *fakeShareRepo) ListPendingQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
-	return nil, nil
+	return f.pendingQuestions, nil
+}
+func (f *fakeShareRepo) ListAnsweredQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
+	return f.answeredQuestions, nil
+}
+func (f *fakeShareRepo) ListPendingToolApprovalsForSession(_ context.Context, _ string) ([]*AgentToolApproval, error) {
+	return f.pendingApprovals, nil
 }
 
 // --- end users ---
@@ -304,6 +341,9 @@ func (f *fakeShareRepo) GetConversationFullHistory(_ context.Context, _ string) 
 	f.historyCalled = true
 	return f.historyItems, nil
 }
+func (f *fakeShareRepo) FindToolCallsByRunID(_ context.Context, _ string) ([]*AgentRunToolCall, error) {
+	return f.toolCalls, nil
+}
 
 type shareFakeRunner struct {
 	captured ExecuteRequest
@@ -328,6 +368,11 @@ type shareFakeResponder struct {
 }
 
 func (f *shareFakeResponder) RespondToQuestion(_ context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	f.captured = p
+	return f.dto, f.err
+}
+
+func (f *shareFakeResponder) CancelQuestion(_ context.Context, p RespondParams) (*AgentQuestionDTO, error) {
 	f.captured = p
 	return f.dto, f.err
 }
@@ -958,4 +1003,287 @@ func TestStreamMessage_ExecutionDisabledRace_MarksPreCreatedRunTerminal(t *testi
 	assert.Equal(t, "pre-run", repo.failedRunID, "the refused share run must be marked terminal")
 	assert.Contains(t, repo.failedRunErr, ErrExecutionDisabled.Error(), "the disabled reason must be persisted")
 	assert.NotEqual(t, RunStatusRunning, repo.createdRun.Status, "the share run must not be left running")
+}
+
+// =============================================================================
+// Unify share chat with admin chat (change: unify-share-chat-with-admin-chat)
+// =============================================================================
+
+// 1.1 — GetSession must return the full run timeline (all kinds), not a
+// text-only transcript, plus the pending tool-policy approvals.
+func TestGetSession_FullTimelineAndPendingApprovals(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "run_start", RunID: "run-1", RunStatus: "running"},
+		{Kind: "message", RunID: "run-1", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "search", ToolInput: map[string]any{"q": "x"}},
+		{Kind: "message", RunID: "run-1", Role: "assistant", Content: map[string]any{"text": "hi"}},
+		{Kind: "run_end", RunID: "run-1", RunStatus: "completed"},
+	}
+	repo.pendingApprovals = []*AgentToolApproval{
+		{QuestionID: "q-1", ToolName: "entity-create", ArgsSummary: map[string]any{"name": "X"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+
+	require.Len(t, dto.Items, 5, "full timeline must carry every kind, not just user/assistant text")
+	assert.Equal(t, "run_start", dto.Items[0].Kind)
+	assert.Equal(t, "tool_call", dto.Items[2].Kind)
+
+	require.Len(t, dto.PendingApprovals, 1)
+	assert.Equal(t, "q-1", dto.PendingApprovals[0].QuestionID)
+	assert.Equal(t, "entity-create", dto.PendingApprovals[0].Tool)
+	assert.Equal(t, "X", dto.PendingApprovals[0].Input["name"])
+}
+
+// 1.1 — GetSession must annotate an answered ask_user tool call with the end
+// user's response (from kb.agent_questions.response), so the shared transcript
+// renders the question card answered instead of re-offering the options; a
+// pending question (no response) is left unannotated.
+func TestGetSession_AnnotatesAnsweredQuestions(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	answered := "yes"
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "tool_call", RunID: "run-1", ToolName: "ask_user", ToolInput: map[string]any{"question": "Deploy?"}, ToolOutput: map[string]any{"question_id": "q-answered"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "ask_user", ToolInput: map[string]any{"question": "Continue?"}, ToolOutput: map[string]any{"question_id": "q-pending"}},
+		{Kind: "tool_call", RunID: "run-1", ToolName: "search", ToolOutput: map[string]any{"question_id": "q-answered"}},
+	}
+	repo.answeredQuestions = []*AgentQuestion{
+		{ID: "q-answered", Response: &answered},
+		{ID: "q-pending", Response: nil},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+	require.Len(t, dto.Items, 3)
+
+	assert.Equal(t, "yes", dto.Items[0].ToolOutput["response"], "answered ask_user must carry the response")
+	_, pendingHasResponse := dto.Items[1].ToolOutput["response"]
+	assert.False(t, pendingHasResponse, "a pending question must not be annotated")
+	_, otherHasResponse := dto.Items[2].ToolOutput["response"]
+	assert.False(t, otherHasResponse, "only ask_user tool calls are annotated")
+}
+
+// 1.1 — GetSession must never return the composed system instruction to the
+// anonymous share surface: the owner's SystemPrompt (+ skills appendix) is
+// persisted as a role:"system" message and must be stripped (the authenticated
+// chat renders it, the public page must not).
+func TestGetSession_StripsSystemMessages(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	repo.historyItems = []*ConversationHistoryItem{
+		{Kind: "message", RunID: "run-1", Role: "system", Content: map[string]any{"text": "SECRET owner instruction"}},
+		{Kind: "message", RunID: "run-1", Role: "user", Content: map[string]any{"text": "hello"}},
+		{Kind: "message", RunID: "run-1", Role: "assistant", Content: map[string]any{"text": "hi"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.GetSession(context.Background(), binding, "sess-1", alice)
+	require.NoError(t, err)
+	require.Len(t, dto.Items, 2, "the system message must be dropped")
+	for _, it := range dto.Items {
+		assert.NotEqual(t, "system", it.Role, "no system-role item may reach the share surface")
+	}
+}
+
+// 1.1 — GetSession must be scoped to (link, session, end_user_ref): a foreign
+// session id is a 404 and history is never queried.
+func TestGetSession_ForeignSession404(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	_, err := svc.GetSession(context.Background(), binding, "sess-foreign", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.False(t, repo.historyCalled, "history must not be queried for a foreign session")
+}
+
+// 1.2 — UnarchiveSession flips an archived session back to active.
+func TestUnarchiveSession(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1", IsArchived: true}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	require.NoError(t, svc.UnarchiveSession(context.Background(), binding, "sess-1", alice))
+	assert.False(t, repo.sessions["sess-1"].IsArchived)
+
+	// Unarchiving an already-active session is a 404.
+	err := svc.UnarchiveSession(context.Background(), binding, "sess-1", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+}
+
+// 1.3 — DeleteSession removes the session, scoped to (link, end user).
+func TestDeleteSession(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	require.NoError(t, svc.DeleteSession(context.Background(), binding, "sess-1", alice))
+	assert.Equal(t, "sess-1", repo.deletedSessionID)
+	_, ok := repo.sessions["sess-1"]
+	assert.False(t, ok, "session must be removed")
+
+	// Deleting again is a 404.
+	err := svc.DeleteSession(context.Background(), binding, "sess-1", alice)
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+}
+
+// 1.4 — A foreign end_user_ref can never cancel another user's question.
+func TestCancelQuestion_ForeignEndUserRef(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	bob := "22222222-2222-2222-2222-222222222222"
+
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = &AgentShareSession{ID: "sess-2", ShareLinkID: "link-a", EndUserRef: bob, SessionID: "acp-1"}
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusNotFound, apperrStatus(err))
+	assert.Equal(t, "", responder.captured.QuestionID, "the responder must not be called for a foreign question")
+}
+
+// 1.4 — CancelQuestion must honour allow_end_user_approvals: when the link
+// disables end-user approvals, a cancel is forbidden (it is a decision that
+// resumes the run) and the responder is never reached.
+func TestCancelQuestion_DisabledApprovalsForbidden(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+	binding.Config.AllowEndUserApprovals = false
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.Error(t, err)
+	assert.Equal(t, http.StatusForbidden, apperrStatus(err))
+	assert.Equal(t, "", responder.captured.QuestionID, "the responder must not be called when approvals are disabled")
+}
+
+// 1.4 — CancelQuestion must delegate with share resume params (DisableAuthMint,
+// share deny list, SessionID) and wire OnRunSettled for budget reconciliation.
+func TestCancelQuestion_SetsShareParams(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+	repo.sessionByRunAndUser = repo.sessions["sess-1"]
+	repo.question = &AgentQuestion{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending}
+	repo.runUsage = &RunTokenUsage{TotalInputTokens: 10, TotalOutputTokens: 5, EstimatedCostUSD: 0.01}
+
+	responder := &shareFakeResponder{}
+	svc := NewShareService(repo, nil, nil, responder, "", nil)
+
+	_, err := svc.CancelQuestion(context.Background(), binding, "sess-1", alice, "q-1", "iphash")
+	require.NoError(t, err)
+
+	require.NotNil(t, responder.captured.OnRunSettled, "CancelQuestion must wire OnRunSettled")
+	assert.True(t, responder.captured.DisableAuthMint, "share cancel must disable auth mint")
+	assert.Equal(t, "acp-1", responder.captured.SessionID)
+	responder.captured.OnRunSettled(&ExecuteResult{RunID: "run-resumed"})
+	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded via the wired callback")
+}
+
+// 1.6 — PendingQuestions must enrich tool-policy questions with the tool name
+// + args from the matching pending approval (keyed by question_id).
+func TestPendingQuestions_EnrichesToolAndInput(t *testing.T) {
+	repo := newFakeShareRepo()
+	link := testLink("link-a", "proj-a", "def-a", "token-a")
+	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
+
+	alice := "11111111-1111-1111-1111-111111111111"
+	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
+
+	repo.pendingQuestions = []*AgentQuestion{
+		{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending, Question: "Approve this?"},
+		{ID: "q-2", RunID: "run-2", ProjectID: "proj-a", Status: QuestionStatusPending, Question: "Plain ask_user"},
+	}
+	repo.pendingApprovals = []*AgentToolApproval{
+		{QuestionID: "q-1", ToolName: "entity-create", ArgsSummary: map[string]any{"name": "X"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	dto, err := svc.PendingQuestions(context.Background(), binding, alice, "sess-1")
+	require.NoError(t, err)
+	require.Len(t, dto, 2)
+
+	assert.Equal(t, "entity-create", dto[0].Tool)
+	assert.Equal(t, "X", dto[0].Input["name"])
+	assert.Equal(t, "", dto[1].Tool, "a plain ask_user question has no tool name")
+	assert.Nil(t, dto[1].Input, "a plain ask_user question has no tool input")
+}
+
+// 1.5 — DeriveCitations returns the grounded citations for a finished turn from
+// the run's tool-call outputs + the answer text (and drops unreferenced ids).
+func TestDeriveCitations(t *testing.T) {
+	repo := newFakeShareRepo()
+	id := "11111111-1111-1111-1111-111111111111"
+	repo.toolCalls = []*AgentRunToolCall{
+		{Output: map[string]any{"id": id, "type": "person", "name": "Alice"}},
+	}
+
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	cits := svc.DeriveCitations(context.Background(), "run-1", "See [Alice](/objects/"+id+") for details.", nil)
+
+	require.Len(t, cits, 1)
+	assert.Equal(t, "object", cits[0].Kind)
+	assert.Equal(t, id, cits[0].ID)
+	assert.Equal(t, "person", cits[0].Type)
+}
+
+// 1.5 — DeriveCitations is non-fatal when tool calls cannot be loaded (nil).
+func TestDeriveCitations_NoRunID(t *testing.T) {
+	repo := newFakeShareRepo()
+	svc := NewShareService(repo, nil, nil, nil, "", nil)
+	assert.Nil(t, svc.DeriveCitations(context.Background(), "", "text", nil))
 }

@@ -384,14 +384,27 @@ type ShareTranscriptMessage struct {
 	Content string `json:"content"` // plain text
 }
 
+// SharePendingApprovalItem is one pending tool approval surfaced on the share
+// transcript. It mirrors the admin chat's pending_approvals item shape
+// ({questionId, tool, input}) so the shared approval card renders the same body
+// as the authenticated chat.
+type SharePendingApprovalItem struct {
+	QuestionID string         `json:"questionId"`
+	Tool       string         `json:"tool"`
+	Input      map[string]any `json:"input"`
+}
+
 // ShareSessionDetailDTO is the transcript-bearing response for
-// GET /api/share/agent/sessions/:id.
+// GET /api/share/agent/sessions/:id. It carries the full run timeline (the same
+// ConversationHistoryItem shape as /api/chat/:id/history) plus the pending tool
+// approvals so the gateway renders it through the identical history path.
 type ShareSessionDetailDTO struct {
-	ID         string                   `json:"id"`
-	Title      *string                  `json:"title,omitempty"`
-	IsArchived bool                     `json:"isArchived"`
-	Messages   []ShareTranscriptMessage `json:"messages"`
-	CreatedAt  time.Time                `json:"createdAt"`
+	ID               string                     `json:"id"`
+	Title            *string                    `json:"title,omitempty"`
+	IsArchived       bool                       `json:"isArchived"`
+	Items            []*ConversationHistoryItem `json:"items"`
+	PendingApprovals []SharePendingApprovalItem `json:"pending_approvals,omitempty"`
+	CreatedAt        time.Time                  `json:"createdAt"`
 }
 
 // ShareUsageDTO is the owner-facing usage summary for a link.

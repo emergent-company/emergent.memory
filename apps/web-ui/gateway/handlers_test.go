@@ -76,6 +76,17 @@ type fakeMemory struct {
 	shareSessionsErr   error
 	shareTranscriptErr error
 
+	// public agent-share surface (share.go handlers).
+	shareDetail           *ShareSessionDetail // ShareGetSession result
+	shareDetailErr        error
+	shareQuestions        []ShareQuestion // ShareListQuestions result
+	sharePublicSessions   []ShareSession  // ShareListSessions result
+	sharePublicListFilter string          // last filter received by ShareListSessions
+	shareUnarchivedIDs    []string        // ids received by ShareUnarchiveSession
+	shareDeletedIDs       []string        // ids received by ShareDeleteSession
+	shareCancelledIDs     []string        // question ids received by ShareCancelApproval
+	shareCancelledSess    []string        // session ids received by ShareCancelApproval
+
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
 	// Writes go through recordCatalog; reads through catalogCallCount.
@@ -4026,11 +4037,15 @@ func (f *fakeMemory) SharePublicConfig(ctx context.Context, token string) (*Shar
 }
 
 func (f *fakeMemory) ShareListSessions(ctx context.Context, token, endUserRef, filter string) ([]ShareSession, error) {
-	return nil, errors.New("share: not implemented")
+	f.sharePublicListFilter = filter
+	return f.sharePublicSessions, nil
 }
 
 func (f *fakeMemory) ShareGetSession(ctx context.Context, token, endUserRef, id string) (*ShareSessionDetail, error) {
-	return nil, errors.New("share: not implemented")
+	if f.shareDetailErr != nil {
+		return nil, f.shareDetailErr
+	}
+	return f.shareDetail, nil
 }
 
 func (f *fakeMemory) ShareCreateSession(ctx context.Context, token, endUserRef string, in ShareCreateSessionInput) (*ShareSession, error) {
@@ -4041,8 +4056,24 @@ func (f *fakeMemory) ShareArchiveSession(ctx context.Context, token, endUserRef,
 	return errors.New("share: not implemented")
 }
 
+func (f *fakeMemory) ShareUnarchiveSession(ctx context.Context, token, endUserRef, id string) error {
+	f.shareUnarchivedIDs = append(f.shareUnarchivedIDs, id)
+	return nil
+}
+
+func (f *fakeMemory) ShareDeleteSession(ctx context.Context, token, endUserRef, id string) error {
+	f.shareDeletedIDs = append(f.shareDeletedIDs, id)
+	return nil
+}
+
 func (f *fakeMemory) ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error) {
-	return nil, errors.New("share: not implemented")
+	return f.shareQuestions, nil
+}
+
+func (f *fakeMemory) ShareCancelApproval(ctx context.Context, token, endUserRef, sessionID, questionID string) error {
+	f.shareCancelledSess = append(f.shareCancelledSess, sessionID)
+	f.shareCancelledIDs = append(f.shareCancelledIDs, questionID)
+	return nil
 }
 
 func (f *fakeMemory) ShareApprove(ctx context.Context, token, endUserRef, sessionID, questionID string, in ShareApproveInput) error {

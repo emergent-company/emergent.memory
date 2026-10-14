@@ -319,8 +319,11 @@ func main() {
 	share.POST("/api/sessions", s.shareCreateSession)
 	share.GET("/api/sessions/:id", s.shareGetSession)
 	share.POST("/api/sessions/:id/archive", s.shareArchiveSession)
+	share.POST("/api/sessions/:id/unarchive", s.shareUnarchiveSession)
+	share.DELETE("/api/sessions/:id", s.shareDeleteSession)
 	share.GET("/api/questions", s.shareQuestions)
 	share.POST("/api/sessions/:id/approvals/:questionId", s.shareApprove)
+	share.POST("/api/sessions/:id/approvals/:questionId/cancel", s.shareApproveCancel)
 	share.GET("/api/partial/sessions", s.sharePartialSessions)
 	// Owner agent-share management (session-gated; see share_owner.go). The
 	// list lives at /share; create is a standalone page at /share/new (mirroring

@@ -337,6 +337,39 @@ func (r *Repository) ArchiveShareSession(ctx context.Context, sessionID, linkID,
 	return n > 0, nil
 }
 
+// UnarchiveShareSession marks a session unarchived (returns true when changed).
+func (r *Repository) UnarchiveShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error) {
+	res, err := r.db.NewUpdate().
+		Model((*AgentShareSession)(nil)).
+		Set("is_archived = false").
+		Where("id = ?", sessionID).
+		Where("share_link_id = ?", linkID).
+		Where("end_user_ref = ?", endUserRef).
+		Where("is_archived = true").
+		Exec(ctx)
+	if err != nil {
+		return false, apperror.NewDatabase("Database operation failed", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
+// DeleteShareSession deletes one session belonging to (link, end user). Returns
+// true when a row was deleted.
+func (r *Repository) DeleteShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error) {
+	res, err := r.db.NewDelete().
+		Model((*AgentShareSession)(nil)).
+		Where("id = ?", sessionID).
+		Where("share_link_id = ?", linkID).
+		Where("end_user_ref = ?", endUserRef).
+		Exec(ctx)
+	if err != nil {
+		return false, apperror.NewDatabase("Database operation failed", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // TouchShareSession updates a session's last_activity_at (best-effort).
 func (r *Repository) TouchShareSession(ctx context.Context, sessionID string) error {
 	now := time.Now()
@@ -663,6 +696,45 @@ func (r *Repository) ListPendingQuestionsForSession(ctx context.Context, session
 		return nil, apperror.NewDatabase("Database operation failed", err)
 	}
 	return questions, nil
+}
+
+// ListAnsweredQuestionsForSession returns the questions whose run belongs to
+// the given session and that carry a non-empty response, so the full-timeline
+// transcript can annotate each answered ask_user tool call with the end user's
+// answer. Cancelled/expired questions have no response and are excluded.
+func (r *Repository) ListAnsweredQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error) {
+	var questions []*AgentQuestion
+	err := r.db.NewSelect().
+		Model(&questions).
+		Join("JOIN kb.agent_runs AS ar ON ar.id = aq.run_id").
+		Where("ar.session_id = ?", sessionID).
+		Where("aq.response IS NOT NULL").
+		Where("aq.response <> ''").
+		Order("aq.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return questions, nil
+}
+
+// ListPendingToolApprovalsForSession returns the pending tool-policy approval
+// records whose run belongs to the given session, ordered oldest first. Each
+// record carries the tool name + args summary (input) for the shared approval
+// card, keyed by question_id for the pending-question DTO enrichment.
+func (r *Repository) ListPendingToolApprovalsForSession(ctx context.Context, sessionID string) ([]*AgentToolApproval, error) {
+	var approvals []*AgentToolApproval
+	err := r.db.NewSelect().
+		Model(&approvals).
+		Join("JOIN kb.agent_runs AS ar ON ar.id = ata.run_id").
+		Where("ar.session_id = ?", sessionID).
+		Where("ata.decision = ?", "pending").
+		Order("ata.created_at ASC").
+		Scan(ctx)
+	if err != nil {
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return approvals, nil
 }
 
 // CountSessionToolApprovals counts decided tool-approval rows for a share

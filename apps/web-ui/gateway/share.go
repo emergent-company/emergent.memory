@@ -437,26 +437,36 @@ func (s *Server) shareCreateSession(c echo.Context) error {
 	return c.JSON(http.StatusCreated, shareSessionToJSON(*sess))
 }
 
-// shareGetSession handles GET /share/api/sessions/:id. It returns the session
-// detail including the transcript messages, so resuming a session renders its
-// history (the client reuses its own bubble renderer).
+// shareGetSession handles GET /share/api/sessions/:id. It returns the full run
+// timeline (all item kinds — messages, tool calls, run markers, reasoning,
+// citations) rendered through the same history path as /api/chat/:id/history,
+// plus the pending approvals surfaced as inline cards.
 func (s *Server) shareGetSession(c echo.Context) error {
 	claims, ok := s.shareClaimsOrFail(c)
 	if !ok {
 		return nil
 	}
-	sess, err := s.memory.ShareGetSession(c.Request().Context(), claims.Token, claims.EndUserRef, c.Param("id"))
+	id := c.Param("id")
+	ctx := c.Request().Context()
+	sess, err := s.memory.ShareGetSession(ctx, claims.Token, claims.EndUserRef, id)
 	if err != nil {
 		return s.shareProxyErrorResponse(c, err)
 	}
-	// Render markdown server-side for assistant messages only; user messages
-	// stay plain text and are never interpreted as HTML by the client.
-	for i := range sess.Messages {
-		if sess.Messages[i].Role == "assistant" {
-			sess.Messages[i].HTML = renderMarkdown(sess.Messages[i].Content)
-		}
+	// Render assistant markdown + tool highlights + ask_user question HTML
+	// exactly like the chat history path (renderHistoryHTML).
+	sess.Items = renderHistoryHTML(sess.Items)
+	// Pending tool approvals ride on the detail itself: the server's
+	// ShareSessionDetailDTO.pending_approvals is sourced from the same pending
+	// tool-approval rows the authenticated chat reads. Do NOT also merge
+	// GET /questions here — that endpoint returns *every* pending question
+	// (ask_user included, enriched from the approval rows), so merging it
+	// duplicated each tool-policy approval into two identical cards.
+	data, err := marshalNoEscape(sess)
+	if err != nil {
+		captureError(err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal server error"})
 	}
-	return c.JSON(http.StatusOK, sess)
+	return c.Blob(http.StatusOK, echo.MIMEApplicationJSON, data)
 }
 
 // shareArchiveSession handles POST /share/api/sessions/:id/archive.
@@ -471,15 +481,44 @@ func (s *Server) shareArchiveSession(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "archived"})
 }
 
+// shareUnarchiveSession handles POST /share/api/sessions/:id/unarchive.
+func (s *Server) shareUnarchiveSession(c echo.Context) error {
+	claims, ok := s.shareClaimsOrFail(c)
+	if !ok {
+		return nil
+	}
+	if err := s.memory.ShareUnarchiveSession(c.Request().Context(), claims.Token, claims.EndUserRef, c.Param("id")); err != nil {
+		return s.shareProxyErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "unarchived"})
+}
+
+// shareDeleteSession handles DELETE /share/api/sessions/:id (end-user scoped).
+func (s *Server) shareDeleteSession(c echo.Context) error {
+	claims, ok := s.shareClaimsOrFail(c)
+	if !ok {
+		return nil
+	}
+	if err := s.memory.ShareDeleteSession(c.Request().Context(), claims.Token, claims.EndUserRef, c.Param("id")); err != nil {
+		return s.shareProxyErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // sharePartialSessions handles GET /share/api/partial/sessions — the
 // server-rendered rail fragment swapped into #share-session-list. The filter is
-// passed through so the archived filter works.
+// passed through so the archived filter works; ?includeArchived=true mirrors the
+// admin rail's "Include archived" toggle by widening the filter to "all".
 func (s *Server) sharePartialSessions(c echo.Context) error {
 	claims, ok := s.shareClaimsOrFail(c)
 	if !ok {
 		return nil
 	}
-	sessions, err := s.memory.ShareListSessions(c.Request().Context(), claims.Token, claims.EndUserRef, c.QueryParam("filter"))
+	filter := c.QueryParam("filter")
+	if c.QueryParam("includeArchived") == "true" {
+		filter = "all"
+	}
+	sessions, err := s.memory.ShareListSessions(c.Request().Context(), claims.Token, claims.EndUserRef, filter)
 	if err != nil {
 		return s.shareProxyErrorResponse(c, err)
 	}
@@ -565,6 +604,20 @@ func (s *Server) shareApprove(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
+// shareApproveCancel handles POST /share/api/sessions/:id/approvals/:questionId/cancel.
+// It marks the pending question cancelled and resumes the run with the call
+// treated as not taken (mirrors the authenticated HandleCancelQuestion flow).
+func (s *Server) shareApproveCancel(c echo.Context) error {
+	claims, ok := s.shareClaimsOrFail(c)
+	if !ok {
+		return nil
+	}
+	if err := s.memory.ShareCancelApproval(c.Request().Context(), claims.Token, claims.EndUserRef, c.Param("id"), c.Param("questionId")); err != nil {
+		return s.shareProxyErrorResponse(c, err)
+	}
+	return c.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
 // --- chat (SSE proxy) -------------------------------------------------------
 
 // shareChat handles POST /share/api/chat. When the client has no session id yet
@@ -628,9 +681,11 @@ func (s *Server) shareChat(c echo.Context) error {
 }
 
 // rewriteShareStream proxies the share SSE stream: it emits a leading `meta`
-// frame carrying the session id, rewrites `token` frames to the client's
-// `delta` field, annotates known `error` frames with a terminal `code`, and
-// passes everything else through verbatim.
+// frame carrying the session id, forwards `token` frames unchanged (wire parity
+// with /api/chat — the shared engine reads `token`, not a share-only `delta`),
+// accumulates the turn text for the terminal `html` markdown snapshot,
+// annotates known `error` frames with a terminal `code`, and passes everything
+// else through verbatim.
 func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 	meta, err := marshalNoEscape(map[string]string{"type": "meta", "sessionId": sessionID})
 	if err != nil {
@@ -643,8 +698,9 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	sc.Split(splitSSEEvent)
 	var sb strings.Builder
-	var snapshotEmitted bool // true once this turn's html snapshot was emitted
-	var citations []citation // this turn's citations, from the terminal `citations` event
+	var snapshotEmitted bool   // true once this turn's html snapshot was emitted
+	var citations []citation   // this turn's citations, from the terminal `citations` event
+	var askInput *askUserInput // ask_user args awaiting the tool's question_id
 	for sc.Scan() {
 		raw := sc.Bytes()
 		data := extractSSEData(raw)
@@ -652,10 +708,13 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 			continue
 		}
 		var ev struct {
-			Type      string     `json:"type"`
-			Token     string     `json:"token"`
-			Error     string     `json:"error"`
-			Citations []citation `json:"citations"`
+			Type      string          `json:"type"`
+			Token     string          `json:"token"`
+			Error     string          `json:"error"`
+			Citations []citation      `json:"citations"`
+			Tool      string          `json:"tool"`
+			Status    string          `json:"status"`
+			Result    json.RawMessage `json:"result"`
 		}
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			if _, werr := w.Write(raw); werr != nil {
@@ -666,7 +725,7 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 		switch ev.Type {
 		case "token":
 			sb.WriteString(ev.Token)
-			payload, merr := marshalNoEscape(map[string]string{"type": "token", "delta": ev.Token})
+			payload, merr := marshalNoEscape(map[string]string{"type": "token", "token": ev.Token})
 			if merr != nil {
 				return merr
 			}
@@ -701,6 +760,20 @@ func rewriteShareStream(w io.Writer, r io.Reader, sessionID string) error {
 				if _, werr := fmtEvent(w, payload); werr != nil {
 					return werr
 				}
+				continue
+			}
+			if _, werr := w.Write(raw); werr != nil {
+				return werr
+			}
+		case "mcp_tool":
+			// Rewrite a live ask_user tool call into the shared client `question`
+			// event (same translation the authenticated chat stream applies), so a
+			// paused question renders inline instead of as a raw tool chip.
+			handled, herr := askUserFrame(w, raw, ev.Tool, ev.Status, ev.Result, &askInput)
+			if herr != nil {
+				return herr
+			}
+			if handled {
 				continue
 			}
 			if _, werr := w.Write(raw); werr != nil {

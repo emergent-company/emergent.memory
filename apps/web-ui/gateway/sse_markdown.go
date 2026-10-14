@@ -124,55 +124,17 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			citations = nil
 			seenDone = true
 		case "mcp_tool":
-			if ev.Tool != "ask_user" {
-				if err := emitToolResultHTML(w, raw, data, ev.Result); err != nil {
-					return err
-				}
+			handled, herr := askUserFrame(w, raw, ev.Tool, ev.Status, ev.Result, &askInput)
+			if herr != nil {
+				return herr
+			}
+			if handled {
 				continue
 			}
-			if ev.Status == "started" || ev.Status == "running" {
-				var in askUserInput
-				if err := json.Unmarshal(ev.Result, &in); err == nil {
-					askInput = &in
-				}
-				continue
-			}
-			var res struct {
-				QuestionID string `json:"question_id"`
-			}
-			_ = json.Unmarshal(ev.Result, &res)
-			if res.QuestionID != "" && askInput != nil {
-				questionHTML, proposalHTML := askUserQuestionHTML(askInput.Proposal, askInput.Question)
-				q := questionEvent{
-					Type:            "question",
-					QuestionID:      res.QuestionID,
-					Question:        askInput.Question,
-					QuestionHTML:    questionHTML,
-					ProposalHTML:    proposalHTML,
-					InteractionType: askInput.InteractionType,
-					Options:         askInput.Options,
-					Placeholder:     askInput.Placeholder,
-					MaxLength:       askInput.MaxLength,
-				}
-				if q.InteractionType == "" {
-					q.InteractionType = "buttons"
-				}
-				payload, err := marshalNoEscape(q)
-				if err != nil {
-					return err
-				}
-				if _, err := fmtEvent(w, payload); err != nil {
-					return err
-				}
-				askInput = nil
-				continue
-			}
-			// ask_user finished without pausing (e.g. validation error on bad
-			// options) — surface the raw event so the error shows as a chip.
-			askInput = nil
-			if _, err := w.Write(raw); err != nil {
+			if err := emitToolResultHTML(w, raw, data, ev.Result); err != nil {
 				return err
 			}
+			continue
 		case "approval":
 			// Tool-policy approval request from memory: pass through verbatim so
 			// the client renders an approval card (tool + input + questionId).
@@ -216,6 +178,67 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 		}
 	}
 	return sc.Err()
+}
+
+// askUserFrame rewrites an `ask_user` MCP tool frame into the client-facing
+// `question` event, keeping the pending tool args across the pair of frames (the
+// `started`/`running` frame carries the question, the terminal frame the
+// question_id). Both the authenticated chat stream and the public share stream
+// call it, so a live ask_user pause renders the same interactive question card
+// on either surface.
+//
+// It reports handled=true when it consumed the frame: either the `question`
+// event was written, or the start frame was folded into *pending and suppressed,
+// or an ask_user frame finished without pausing (e.g. a validation error on bad
+// options) and was forwarded raw so the failure shows as a chip. handled=false
+// means the frame is not an ask_user frame and the caller forwards it its own
+// way (raw, or through the tool-result HTML renderer).
+func askUserFrame(w io.Writer, raw []byte, tool, status string, result json.RawMessage, pending **askUserInput) (handled bool, err error) {
+	if tool != "ask_user" {
+		return false, nil
+	}
+	if status == "started" || status == "running" {
+		var in askUserInput
+		if uerr := json.Unmarshal(result, &in); uerr == nil {
+			*pending = &in
+		}
+		return true, nil
+	}
+	var res struct {
+		QuestionID string `json:"question_id"`
+	}
+	_ = json.Unmarshal(result, &res)
+	in := *pending
+	*pending = nil
+	if res.QuestionID == "" || in == nil {
+		if _, werr := w.Write(raw); werr != nil {
+			return false, werr
+		}
+		return true, nil
+	}
+	questionHTML, proposalHTML := askUserQuestionHTML(in.Proposal, in.Question)
+	q := questionEvent{
+		Type:            "question",
+		QuestionID:      res.QuestionID,
+		Question:        in.Question,
+		QuestionHTML:    questionHTML,
+		ProposalHTML:    proposalHTML,
+		InteractionType: in.InteractionType,
+		Options:         in.Options,
+		Placeholder:     in.Placeholder,
+		MaxLength:       in.MaxLength,
+	}
+	if q.InteractionType == "" {
+		q.InteractionType = "buttons"
+	}
+	payload, merr := marshalNoEscape(q)
+	if merr != nil {
+		return false, merr
+	}
+	if _, werr := fmtEvent(w, payload); werr != nil {
+		return false, werr
+	}
+	return true, nil
 }
 
 // emitMarkdownSnapshot emits the single authoritative `html` snapshot for the
