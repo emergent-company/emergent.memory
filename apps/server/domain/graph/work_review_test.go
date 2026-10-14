@@ -62,7 +62,7 @@ func TestRequestChangesWorkObject(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = svc.RequestChangesWorkObject(ctx, projectID.String(), obj.CanonicalID.String(), "review", "revision")
+	ok, err = svc.RequestChangesWorkObject(ctx, projectID.String(), obj.CanonicalID.String(), "review", "revision", nil)
 	require.NoError(t, err)
 	require.True(t, ok)
 

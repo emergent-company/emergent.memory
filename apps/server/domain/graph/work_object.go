@@ -105,6 +105,12 @@ type WorkObjectTransition struct {
 	// instead of the status_changed event (used by the reassign path, which
 	// preserves status). The event is emitted only after a successful commit.
 	EmitAssigned bool
+	// ReworkAgentID, when non-nil, marks the transition as a request-changes
+	// rework owned by the given agent. It is carried on the emitted
+	// status_changed payload under "rework_agent_id" so the event-driven
+	// dispatch can suppress the owning agent's re-dispatch (the request-changes
+	// action has already enqueued the feedback-carrying rework run directly).
+	ReworkAgentID *uuid.UUID
 }
 
 // GetHeadObject returns the HEAD version of a work object identified by its
@@ -233,13 +239,17 @@ func (s *Service) ApproveWorkObject(ctx context.Context, projectID, canonicalID,
 // review→revision and clears needs_review (the item is no longer awaiting
 // review; the next work_complete re-sets it). Feedback recording and the rework
 // enqueue are the agents domain's responsibility (they need the run/queue
-// surface).
-func (s *Service) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error) {
+// surface). reworkAgentID, when non-nil, records the agent that owns the rework
+// dispatch so the emitted status_changed event can suppress that agent's own
+// re-dispatch (the request-changes action already enqueued the feedback-carrying
+// rework run).
+func (s *Service) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string, reworkAgentID *uuid.UUID) (bool, error) {
 	nr := false
 	return s.transitionWorkObject(ctx, projectID, canonicalID, WorkObjectTransition{
 		FromStatus:     reviewStatus,
 		ToStatus:       revisionStatus,
 		SetNeedsReview: &nr,
+		ReworkAgentID:  reworkAgentID,
 	})
 }
 
@@ -390,7 +400,7 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 	if t.EmitAssigned {
 		s.emitObjectAssigned(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assignee)
 	} else if toStatus != prevStatus {
-		s.emitObjectStatusChanged(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assigneeOrEmpty(assignee))
+		s.emitObjectStatusChanged(ctx, projectID, canonicalID, head.Type, newVersion.Version, toStatus, prevStatus, assigneeOrEmpty(assignee), t.ReworkAgentID)
 	}
 	return true, nil
 }
@@ -398,15 +408,17 @@ func (s *Service) transitionWorkObject(ctx context.Context, projectID, canonical
 // emitObjectStatusChanged emits a graph_object entity.status_changed event
 // (no-op if events not wired). The payload carries the new status, the previous
 // status, and the assignee so reaction dispatch can match the status_changed
-// signal without a second graph read.
-func (s *Service) emitObjectStatusChanged(ctx context.Context, projectID, canonicalID, objType string, version int, newStatus, previousStatus, assignee string) {
+// signal without a second graph read. When reworkAgentID is non-nil it is
+// carried as "rework_agent_id" so the owning agent can be suppressed from
+// re-dispatch.
+func (s *Service) emitObjectStatusChanged(ctx context.Context, projectID, canonicalID, objType string, version int, newStatus, previousStatus, assignee string, reworkAgentID *uuid.UUID) {
 	if s.events == nil {
 		return
 	}
 	s.events.EmitStatusChanged(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		Version:    &version,
 		ObjectType: objType,
-		Data:       statusChangeData(newStatus, previousStatus, assignee),
+		Data:       statusChangeData(newStatus, previousStatus, assignee, reworkAgentID),
 	})
 }
 
@@ -420,14 +432,16 @@ func (s *Service) emitObjectAssigned(ctx context.Context, projectID, canonicalID
 	s.events.EmitAssigned(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
 		Version:    &version,
 		ObjectType: objType,
-		Data:       statusChangeData(newStatus, previousStatus, assigneeOrEmpty(assignee)),
+		Data:       statusChangeData(newStatus, previousStatus, assigneeOrEmpty(assignee), nil),
 	})
 }
 
 // statusChangeData builds the event payload carrying the new status, previous
-// status, and assignee for status_changed/assigned events.
-func statusChangeData(newStatus, previousStatus, assignee string) map[string]any {
-	data := make(map[string]any, 3)
+// status, and assignee for status_changed/assigned events. reworkAgentID, when
+// non-nil, adds the "rework_agent_id" marker used to suppress the owning
+// agent's re-dispatch on a request-changes transition.
+func statusChangeData(newStatus, previousStatus, assignee string, reworkAgentID *uuid.UUID) map[string]any {
+	data := make(map[string]any, 4)
 	if newStatus != "" {
 		data["status"] = newStatus
 	}
@@ -436,6 +450,9 @@ func statusChangeData(newStatus, previousStatus, assignee string) map[string]any
 	}
 	if assignee != "" {
 		data["assignee"] = assignee
+	}
+	if reworkAgentID != nil {
+		data["rework_agent_id"] = reworkAgentID.String()
 	}
 	return data
 }

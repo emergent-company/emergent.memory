@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -150,7 +151,7 @@ func (r *recordingWorkObjectStore) UnassignWorkObject(ctx context.Context, proje
 func (r *recordingWorkObjectStore) ApproveWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, doneStatus, reviewerID string) (bool, error) {
 	return true, nil
 }
-func (r *recordingWorkObjectStore) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error) {
+func (r *recordingWorkObjectStore) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string, reworkAgentID *uuid.UUID) (bool, error) {
 	return true, nil
 }
 func (r *recordingWorkObjectStore) ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error) {

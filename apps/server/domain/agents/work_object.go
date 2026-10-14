@@ -4,6 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 )
@@ -43,7 +45,9 @@ type WorkObjectStore interface {
 	// clears needs_review.
 	ApproveWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, doneStatus, reviewerID string) (bool, error)
 	// RequestChangesWorkObject sends a review back for rework: review→revision.
-	RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error)
+	// reworkAgentID, when non-nil, marks the agent that owns the rework dispatch
+	// so the emitted status_changed event can suppress that agent's re-dispatch.
+	RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string, reworkAgentID *uuid.UUID) (bool, error)
 	// ReassignWorkObject sets/clears the assignee without a status move.
 	ReassignWorkObject(ctx context.Context, projectID, canonicalID string, assignee *string) (bool, error)
 	// CancelWorkObject closes a work item: any→blocked.

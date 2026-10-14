@@ -525,6 +525,17 @@ func (ts *TriggerService) enqueueWorkRun(ctx context.Context, agent *Agent, agen
 		return
 	}
 
+	// Rework-dispatch ownership: when this status_changed event was emitted by a
+	// request-changes transition, it carries the owning agent's id under
+	// "rework_agent_id". The request-changes action has already enqueued the
+	// feedback-carrying rework run directly; a second dispatch here could win the
+	// revision→in_progress claim without the feedback and execute the rework
+	// blind. Suppress only the owner — a different work agent that also declares
+	// the revision status must still dispatch.
+	if ownerID, ok := data["rework_agent_id"].(string); ok && ownerID != "" && ownerID == agent.ID {
+		return
+	}
+
 	// Resolve the object version at dispatch. The single-event path carries it in
 	// the payload; the batch path omits it, so fall back to the HEAD version.
 	version, hasVersion := intFromInput(input["version"])

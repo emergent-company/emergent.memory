@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/tasks"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -118,7 +120,12 @@ func (s *WorkActionService) RequestChanges(ctx context.Context, projectID, canon
 		return nil, apperror.New(http.StatusBadRequest, "bad_request", "feedback is required")
 	}
 	wc := workConfigOf(def)
-	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.RevisionStatus())
+	var reworkAgentID *uuid.UUID
+	if agent != nil {
+		id := uuid.MustParse(agent.ID)
+		reworkAgentID = &id
+	}
+	ok, err := s.workObjects.RequestChangesWorkObject(ctx, projectID, canonicalID, wc.ReviewStatus(), wc.RevisionStatus(), reworkAgentID)
 	if err != nil {
 		return nil, err
 	}

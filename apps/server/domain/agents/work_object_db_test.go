@@ -282,7 +282,7 @@ func (f *fakeWorkObjectStore) ApproveWorkObject(ctx context.Context, projectID, 
 	return true, nil
 }
 
-func (f *fakeWorkObjectStore) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string) (bool, error) {
+func (f *fakeWorkObjectStore) RequestChangesWorkObject(ctx context.Context, projectID, canonicalID, reviewStatus, revisionStatus string, reworkAgentID *uuid.UUID) (bool, error) {
 	return true, nil
 }
 
