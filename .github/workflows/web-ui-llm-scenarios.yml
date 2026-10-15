@@ -22,10 +22,12 @@ on:
   workflow_dispatch:
 
 # Serialize runs (a manual dispatch queues behind a scheduled run). The `setup`
-# project reuses the stable "E2E Main" tenant, so two concurrent live-LLM runs
-# would race each other on the same org/project. Never cancel an in-flight run.
+# project reuses the stable "E2E Main" tenant, so two concurrent session-mode
+# suites would race each other on the same org/project. Shared literal group
+# (not `${{ github.workflow }}`) so this workflow and web-ui-mutations.yml
+# serialize against each other; never cancel an in-flight run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: web-ui-session-e2e
   cancel-in-progress: false
 
 permissions:

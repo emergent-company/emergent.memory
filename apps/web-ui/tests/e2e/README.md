@@ -468,6 +468,18 @@ workflow (`.github/workflows/web-ui-llm-scenarios.yml`). That workflow has no
 `pull_request` trigger, so it can never block a PR — it fires on a daily cron
 and on manual `workflow_dispatch`.
 
+### Mutations (scheduled, not PR-gated)
+
+The `mutations` project — every `*-ui.spec.ts` (org/project/provider/agent/
+skill/schedule/token/object/board/document/backup UI mutations) — is likewise
+**not** part of any PR CI gate. It needs the running session-mode gateway plus a
+Zitadel test user (the same `E2E_TEST_USER_*` credentials as the live-LLM suite),
+so it runs on the self-hosted `memory` runner via a scheduled + manually
+dispatchable workflow (`.github/workflows/web-ui-mutations.yml`) with no
+`pull_request` trigger. It shares a concurrency group with the live-LLM workflow
+because both reuse the stable `E2E Main` tenant. (Before #1857 this project had
+no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.)
+
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.
