@@ -855,8 +855,8 @@ func TestUIDeleteProjects(t *testing.T) {
 		s := &Server{cfg: sessionCfg(), memory: f}
 		e := orgContextUIServer(s)
 		rec := orgPost(t, e, "/projects/delete", "orgId=o1&projectId=p1&projectId=p2")
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1?deleted=2" {
-			t.Errorf("bulk delete = %d %q, want 303 /orgs/o1?deleted=2", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1?deleted=2" {
+			t.Errorf("bulk delete = %d %q, want 303 /o/o1?deleted=2", rec.Code, rec.Header().Get("Location"))
 		}
 		if got := f.deletedProjectIDs; !reflect.DeepEqual(got, []string{"p1", "p2"}) {
 			t.Errorf("DeleteProject ids = %v, want [p1 p2]", got)
@@ -876,8 +876,8 @@ func TestUIDeleteProjects(t *testing.T) {
 			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		}))
 		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/orgs/o1?deleted=1" {
-			t.Errorf("single HTMX delete = %d HX-Redirect %q, want 200 /orgs/o1?deleted=1", rec.Code, rec.Header().Get("HX-Redirect"))
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/o1?deleted=1" {
+			t.Errorf("single HTMX delete = %d HX-Redirect %q, want 200 /o/o1?deleted=1", rec.Code, rec.Header().Get("HX-Redirect"))
 		}
 		if got := f.deletedProjectIDs; !reflect.DeepEqual(got, []string{"p1"}) {
 			t.Errorf("DeleteProject ids = %v, want [p1]", got)
@@ -921,8 +921,8 @@ func TestUITransferProject(t *testing.T) {
 		s := &Server{cfg: sessionCfg(), memory: f}
 		e := orgContextUIServer(s)
 		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1&destinationOrgId=o2")
-		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1?moved=o2&project=p1" {
-			t.Errorf("transfer = %d %q, want 303 /orgs/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("Location"))
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1?moved=o2&project=p1" {
+			t.Errorf("transfer = %d %q, want 303 /o/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("Location"))
 		}
 		if f.transferCount != 1 || f.transferredID != "p1" || f.transferredToOrg != "o2" {
 			t.Errorf("TransferProject = (%d, %q -> %q), want (1, p1 -> o2)", f.transferCount, f.transferredID, f.transferredToOrg)
@@ -942,8 +942,8 @@ func TestUITransferProject(t *testing.T) {
 			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		}))
 		e.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/orgs/o1?moved=o2&project=p1" {
-			t.Errorf("HTMX transfer = %d HX-Redirect %q, want 200 /orgs/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("HX-Redirect"))
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/o1?moved=o2&project=p1" {
+			t.Errorf("HTMX transfer = %d HX-Redirect %q, want 200 /o/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("HX-Redirect"))
 		}
 		if f.transferCount != 1 || f.transferredID != "p1" || f.transferredToOrg != "o2" {
 			t.Errorf("TransferProject = (%d, %q -> %q), want (1, p1 -> o2)", f.transferCount, f.transferredID, f.transferredToOrg)

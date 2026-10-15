@@ -164,7 +164,7 @@ templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
 // configured generative models: it points the user at the providers settings
 // page while making clear they can still proceed with the project default.
 templ blueprintModelMapNoModels() {
-	<div class="flex flex-col gap-2">
+	<div class="flex flex-col gap-2" data-testid="blueprint-model-map-no-models">
 		@ui.Alert(ui.AlertProps{
 			Type:    ui.AlertInfo,
 			Style:   ui.AlertStyleSoft,

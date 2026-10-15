@@ -29,9 +29,15 @@ function requireBootstrap() {
   return bootstrap!;
 }
 
-/** Click the operator blueprint's install action and wait for the review step. */
-async function openOperatorReview(page: Page): Promise<void> {
-  await goto(page, '/blueprints');
+/**
+ * Click the operator blueprint's install action and wait for the review step.
+ * Navigates to the FRESH scratch project (explicit org/project scope) so the
+ * pinned-model review premise — no configured provider — holds. The bootstrap
+ * project persists an openai provider (#1896), which would pre-fill the model
+ * and render no unresolved note.
+ */
+async function openOperatorReview(page: Page, orgId: string, projectId: string): Promise<void> {
+  await goto(page, '/blueprints', { orgId, projectId });
   const row = page.locator(`[data-testid="available-blueprint-${OPERATOR}"]`);
   await expect(row).toBeVisible();
   await row.locator(`[data-testid="blueprint-install-${OPERATOR}"]`).click();
@@ -62,7 +68,7 @@ test('installing a pinned blueprint shows the model-review step, then applies on
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
 
-    await openOperatorReview(page);
+    await openOperatorReview(page, bootstrap.orgId, projectId);
 
     // The review form posts to the install-confirm route and carries the
     // blueprint id through a hidden input.
@@ -80,7 +86,12 @@ test('installing a pinned blueprint shows the model-review step, then applies on
       'name',
       'model.operator',
     );
-    await expect(row.locator('a[href$="/settings/providers"]')).toBeVisible();
+    // The unresolved-model note's "Configure a provider" link renders in the
+    // sibling no-models empty state (blueprintModelMapNoModels) when the
+    // project has no configured provider — never inside the row itself.
+    const noModels = page.locator('[data-testid="blueprint-model-map-no-models"]');
+    await expect(noModels).toBeVisible();
+    await expect(noModels.locator('a[href$="/settings/providers"]')).toBeVisible();
 
     // Submitting the review (project default) applies and lands on the
     // installed flash.
@@ -118,7 +129,7 @@ test('review pre-fills the pinned model when its provider is configured', async 
       return;
     }
 
-    await openOperatorReview(page);
+    await openOperatorReview(page, bootstrap.orgId, projectId);
 
     // The openai provider matches the pinned model's prefix, so the row has no
     // unresolved note and the select pre-fills the pinned model.
