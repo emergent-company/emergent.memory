@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Regression guard for the go-daisy CSS scan (commit 9fa687f): a Tailwind
 // `@source` misconfig dropped the go-daisy-derived rules from the compiled
@@ -14,7 +14,7 @@ test.use({ viewport: { width: 390, height: 844 } });
 
 test.describe('go-daisy compiled CSS on mobile (390x844)', () => {
   test('hamburger icon renders via a mask-image', async ({ page }) => {
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     // #_topbar-menu-icon is display:inline-block below the lg (64rem)
@@ -41,7 +41,7 @@ test.describe('go-daisy compiled CSS on mobile (390x844)', () => {
   });
 
   test('spotlight toggle checkbox stays hidden', async ({ page }) => {
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     // .modal-toggle{appearance:none;opacity:0;width:0;height:0;position:fixed}

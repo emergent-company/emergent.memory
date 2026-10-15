@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Response } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Remember-agent field (gateway/project_settings.templ `rememberDedupPanel` →
 // POST /settings/remember/agent, `hx-trigger="change"` + `hx-swap="none"`).
@@ -60,7 +60,7 @@ test('remember-agent select autosaves inline and persists after reload', async (
     expect(created.ok(), `create scratch agent failed (HTTP ${created.status()})`).toBeTruthy();
     agentId = ((await created.json()) as { id: string }).id;
 
-    await page.goto(SETTINGS);
+    await goto(page, SETTINGS);
     await expectAppPage(page, /Project Settings/);
     const select = page.locator('#remember-agent');
     await expect(select).toBeVisible();
@@ -79,7 +79,7 @@ test('remember-agent select autosaves inline and persists after reload', async (
     await expect(page.locator('#remember-agent')).toHaveValue(name);
   } finally {
     if (original !== null) {
-      await page.goto(SETTINGS);
+      await goto(page, SETTINGS);
       const select = page.locator('#remember-agent');
       if ((await select.inputValue()) !== original) {
         await Promise.all([

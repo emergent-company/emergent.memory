@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 test('invites a member via the form', async ({ page }) => {
   const email = `e2e-invite-${Date.now()}@example.com`;
 
   try {
-    await page.goto('/members/new');
+    await goto(page, '/members/new');
     await page.locator('#invite-email').fill(email);
     await page.getByRole('button', { name: 'Send invitation' }).click();
 

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Document delete (gateway/documents.templ + gateway/ui.go):
 //
@@ -19,7 +19,7 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // uploadDocument submits the /documents form and waits for the success redirect.
 async function uploadDocument(page: Page, name: string, body: string): Promise<void> {
-  await page.goto('/documents');
+  await goto(page, '/documents');
   await expectAppPage(page, /Documents/);
   await page.setInputFiles('input[type="file"][name="file"]', {
     name,
@@ -82,7 +82,7 @@ test.describe('Document delete', () => {
 
       // … and its detail / chunk view is no longer reachable — the load fails
       // into the page's error state rather than rendering the document.
-      await page.goto(`/documents/${id}`);
+      await goto(page, `/documents/${id}`);
       await expect(
         page.getByRole('heading', { name: 'Document unavailable', exact: true }),
       ).toBeVisible();

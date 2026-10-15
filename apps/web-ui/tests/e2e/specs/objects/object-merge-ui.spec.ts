@@ -6,6 +6,8 @@ import {
   cleanupObjects,
 } from '../../helpers/objects';
 import { MEMORY_API_URL } from '../../helpers/tokens';
+import { goto } from '../../helpers/page';
+import { scopedPath } from '../../helpers/scope';
 
 // Object merge — GET /objects/:id/merge (uiObjectMerge).
 //
@@ -79,7 +81,7 @@ test('object merge: starts a merge session naming both objects and leaves the gr
 
     // The route redirects into a chat merge session; inspect the redirect
     // without following it into the chat surface.
-    const resp = await page.request.get(`/objects/${sourceId}/merge?with=${targetId}`, {
+    const resp = await page.request.get(scopedPath(`/objects/${sourceId}/merge?with=${targetId}`), {
       maxRedirects: 0,
     });
     expect(resp.status(), 'GET /objects/:id/merge should 303').toBe(303);
@@ -87,7 +89,7 @@ test('object merge: starts a merge session naming both objects and leaves the gr
     const location = resp.headers()['location'];
     expect(location, 'merge redirect must carry a Location header').toBeTruthy();
     const redirect = new URL(location!, 'http://localhost');
-    expect(redirect.pathname).toBe('/chat');
+    expect(redirect.pathname).toMatch(/\/chat$/);
     expect(redirect.searchParams.get('agent'), 'merge session must name an agent').toBeTruthy();
 
     // The instruction names both objects by label AND id, and frames source vs
@@ -134,24 +136,26 @@ test('object merge: missing or unknown merge target redirects back to the object
     objectId = await createTypedObject(page, 'Person', key);
 
     // No `with` at all.
-    const noTarget = await page.request.get(`/objects/${objectId}/merge`, { maxRedirects: 0 });
+    const noTarget = await page.request.get(scopedPath(`/objects/${objectId}/merge`), {
+      maxRedirects: 0,
+    });
     expect(noTarget.status()).toBe(303);
-    expect(new URL(noTarget.headers()['location']!, 'http://localhost').pathname).toBe(
-      `/objects/${objectId}`,
+    expect(new URL(noTarget.headers()['location']!, 'http://localhost').pathname).toMatch(
+      new RegExp(`/objects/${objectId}$`),
     );
 
     // Unknown target id.
     const unknown = await page.request.get(
-      `/objects/${objectId}/merge?with=00000000-0000-0000-0000-000000000000`,
+      scopedPath(`/objects/${objectId}/merge?with=00000000-0000-0000-0000-000000000000`),
       { maxRedirects: 0 },
     );
     expect(unknown.status()).toBe(303);
-    expect(new URL(unknown.headers()['location']!, 'http://localhost').pathname).toBe(
-      `/objects/${objectId}`,
+    expect(new URL(unknown.headers()['location']!, 'http://localhost').pathname).toMatch(
+      new RegExp(`/objects/${objectId}$`),
     );
 
     // The object is untouched and still renders.
-    await page.goto(`/objects/${objectId}`);
+    await goto(page, `/objects/${objectId}`);
     await expect(page.getByRole('heading', { name: key })).toBeVisible();
     await expect(page.locator('#object-key')).toHaveValue(key);
   } finally {

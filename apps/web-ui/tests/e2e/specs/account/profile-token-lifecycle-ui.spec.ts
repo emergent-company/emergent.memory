@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 import {
   cleanupTokens,
   createTokenViaUi,
@@ -76,7 +77,7 @@ test('account token: create → edit scopes → regenerate → revoke', async ({
       await openScopesEditor(page, name);
       await expect(page.locator('input[name="scopes"][value="projects:read"]')).toBeChecked();
       await expect(page.locator('input[name="scopes"][value="journal:read"]')).toBeChecked();
-      await page.goto(tokenBasePath('profile'));
+      await goto(page, tokenBasePath('profile'));
     });
 
     // 3. REGENERATE — POST /profile/tokens/:id/regenerate. The original is

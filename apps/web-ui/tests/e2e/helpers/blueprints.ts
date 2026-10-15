@@ -1,4 +1,5 @@
 import { Page } from '@playwright/test';
+import { scopedPath } from './scope';
 
 // External public repo that now ships the personal-memory pack. Pin the ref so
 // the e2e fixture cannot silently change with a future push to the repo's HEAD.
@@ -14,6 +15,21 @@ export const PERSONAL_MEMORY_BLUEPRINT_VERSION = '3.0.0';
 // The import backend allows the archive fetch alone up to 60s; give the
 // post-submit wait a budget consistent with that (button/form waits stay at 10s).
 const IMPORT_TIMEOUT_MS = 90_000;
+
+/** Scope ids for a navigation (setup navigates before the bootstrap is written). */
+interface ScopeIds {
+  orgId?: string;
+  projectId?: string;
+}
+
+/**
+ * The scoped /blueprints path for the current (or explicit) org/project. Used
+ * both to navigate and to match the PRG landing + form action, since the
+ * rendered form action and redirect Location are scope-prefixed by the gateway.
+ */
+function blueprintsPath(scope?: ScopeIds): string {
+  return scopedPath('/blueprints', scope);
+}
 
 /** Best-effort visible error copy for a failed blueprint install/import. */
 async function visibleErrorText(page: Page): Promise<string> {
@@ -35,30 +51,33 @@ async function visibleErrorText(page: Page): Promise<string> {
  * GitHub" modal on /blueprints. Mirrors installBlueprint's PRG landing:
  * /blueprints?installed=1, or /blueprints/migrations?migrateMsg=… on migration
  * drift. `opts.ref` pins a branch/tag/commit; `opts.token` supplies a token for
- * a private repo.
+ * a private repo; `opts.scope` supplies org/project ids when navigating before
+ * the bootstrap is written (auth.setup.ts).
  */
 export async function importGitHubBlueprint(
   page: Page,
   url: string,
-  opts?: { ref?: string; token?: string },
+  opts?: { ref?: string; token?: string; scope?: ScopeIds },
 ): Promise<void> {
-  await page.goto('/blueprints');
+  const target = blueprintsPath(opts?.scope);
+  await page.goto(target);
 
   const openBtn = page.locator('[data-testid="blueprint-import-open"]');
   try {
     await openBtn.waitFor({ state: 'visible', timeout: 10_000 });
   } catch (err) {
-    throw new Error(`importGitHubBlueprint("${url}"): no Import button on /blueprints`, {
+    throw new Error(`importGitHubBlueprint("${url}"): no Import button on ${target}`, {
       cause: err,
     });
   }
   await openBtn.click();
 
-  const form = page.locator('form[action="/blueprints/import"]');
+  // The import form's rendered action is scope-prefixed (/o/{org}/p/{project}/blueprints/import).
+  const form = page.locator('form[action$="/blueprints/import"]');
   try {
     await form.waitFor({ state: 'visible', timeout: 10_000 });
   } catch (err) {
-    throw new Error(`importGitHubBlueprint("${url}"): import form did not open on /blueprints`, {
+    throw new Error(`importGitHubBlueprint("${url}"): import form did not open on ${target}`, {
       cause: err,
     });
   }
@@ -70,17 +89,38 @@ export async function importGitHubBlueprint(
   await form.locator('button[type="submit"]').click();
 
   // Success: installed → list with ?installed=1; migration drift → /blueprints/migrations.
+  // The landing pathname is scope-prefixed, so match on the trailing segments.
   const success = (u: URL) =>
-    u.pathname === '/blueprints/migrations' ||
-    (u.pathname === '/blueprints' && u.searchParams.get('installed') === '1');
+    u.pathname.endsWith('/blueprints/migrations') ||
+    (u.pathname.endsWith('/blueprints') && u.searchParams.get('installed') === '1');
   // Failure: the handler PRG-redirects to /blueprints?err=<message> (the legacy
   // sentinel is ?err=1). Match it too so a failed import throws the instant the
   // error landing loads instead of burning the full IMPORT_TIMEOUT_MS waiting on
   // a success URL that will never arrive (#1530).
-  const errorLanding = (u: URL) => u.pathname === '/blueprints' && u.searchParams.has('err');
+  const errorLanding = (u: URL) =>
+    u.pathname.endsWith('/blueprints') && u.searchParams.has('err');
+  const finalLanding = (u: URL) => success(u) || errorLanding(u);
+
+  // A blueprint whose manifest pins models does not apply directly: the gateway
+  // renders the model-review step in place (same /blueprints/import URL) and only
+  // applies on confirm. Wait for whichever arrives first — the direct landing or
+  // the review step's submit — then confirm the review (project defaults) if it
+  // appeared.
+  const reviewSubmit = page.locator('[data-testid="blueprint-model-map-submit"]');
+  const reviewShown = reviewSubmit
+    .waitFor({ state: 'visible', timeout: IMPORT_TIMEOUT_MS })
+    .then(() => true)
+    .catch(() => false);
+  const directLanding = page
+    .waitForURL((u) => finalLanding(u), { timeout: IMPORT_TIMEOUT_MS })
+    .then(() => false)
+    .catch(() => false);
+  if (await Promise.race([reviewShown, directLanding])) {
+    await reviewSubmit.click();
+  }
 
   try {
-    await page.waitForURL((u) => success(u) || errorLanding(u), { timeout: IMPORT_TIMEOUT_MS });
+    await page.waitForURL((u) => finalLanding(u), { timeout: IMPORT_TIMEOUT_MS });
   } catch (err) {
     // Timed out with neither landing: surface the URL plus visible error copy.
     throw new Error(
@@ -110,7 +150,7 @@ export async function importGitHubBlueprint(
  * migration drift is detected.
  */
 export async function installBlueprint(page: Page, name: string): Promise<void> {
-  await page.goto('/blueprints');
+  await page.goto(blueprintsPath());
 
   const row = page.locator(`[data-testid="available-blueprint-${name}"]`);
   try {
@@ -125,8 +165,8 @@ export async function installBlueprint(page: Page, name: string): Promise<void> 
 
   // Success: installed → list with ?installed=1; migration drift → /blueprints/migrations.
   const success = (url: URL) =>
-    url.pathname === '/blueprints/migrations' ||
-    (url.pathname === '/blueprints' && url.searchParams.get('installed') === '1');
+    url.pathname.endsWith('/blueprints/migrations') ||
+    (url.pathname.endsWith('/blueprints') && url.searchParams.get('installed') === '1');
 
   try {
     await page.waitForURL(success, { timeout: 10_000 });
@@ -149,7 +189,7 @@ export async function installBlueprint(page: Page, name: string): Promise<void> 
  * helper only applies to user/import blueprints.
  */
 export async function removeBlueprint(page: Page, name: string): Promise<void> {
-  await page.goto('/blueprints');
+  await page.goto(blueprintsPath());
 
   const row = page.locator(`[data-testid="available-blueprint-${name}"]`);
   try {
@@ -173,8 +213,10 @@ export async function removeBlueprint(page: Page, name: string): Promise<void> {
   await page.locator(`[data-testid="blueprint-remove-confirm-${id}"]`).click();
 
   // Success: removed → list with ?removed=1; blocked → ?err=….
-  const success = (u: URL) => u.pathname === '/blueprints' && u.searchParams.get('removed') === '1';
-  const errorLanding = (u: URL) => u.pathname === '/blueprints' && u.searchParams.has('err');
+  const success = (u: URL) =>
+    u.pathname.endsWith('/blueprints') && u.searchParams.get('removed') === '1';
+  const errorLanding = (u: URL) =>
+    u.pathname.endsWith('/blueprints') && u.searchParams.has('err');
 
   try {
     await page.waitForURL((u) => success(u) || errorLanding(u), { timeout: 10_000 });

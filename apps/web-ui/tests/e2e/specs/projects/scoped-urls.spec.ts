@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { orgScopedPath, scopedPath } from '../../helpers/scope';
 
 // Scoped URLs (scoped-web-urls): a project page is served at
@@ -17,7 +17,7 @@ test.describe('Scoped URLs', () => {
     expect(bootstrap, 'setup project must run first').toBeTruthy();
     const { orgId, projectId, projectName } = bootstrap!;
 
-    await page.goto(scopedPath('/agents'));
+    await goto(page, scopedPath('/agents'));
     await expectAppPage(page, /Agents/);
     await expect(page).toHaveURL(new RegExp(`/o/${orgId}/p/${projectId}/agents$`));
 
@@ -38,8 +38,9 @@ test.describe('Scoped URLs', () => {
     expect(bootstrap, 'setup project must run first').toBeTruthy();
     const { orgId, orgName } = bootstrap!;
 
-    await page.goto(orgScopedPath(orgId));
-    await expectAppPage(page, /Organizations/);
+    await goto(page, orgScopedPath(orgId));
+    // The org landing titles itself with the org name (not a static label).
+    await expectAppPage(page, new RegExp(orgName));
     await expect(page).toHaveURL(new RegExp(`/o/${orgId}$`));
     await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
 

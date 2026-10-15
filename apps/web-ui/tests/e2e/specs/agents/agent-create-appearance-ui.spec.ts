@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Creation-time appearance coverage for the "New agent" modal (/agents). Agents
 // can be created with any combination of the Appearance options — an icon from
@@ -16,7 +16,7 @@ const COLOR = '#16A34A';
 const PRESET_COLOR = '#10B981';
 
 async function openCreateModal(page: Page, name: string): Promise<void> {
-  await page.goto('/agents');
+  await goto(page, '/agents');
   await page.getByRole('button', { name: 'New agent' }).first().click();
   await expect(page.locator('#agent-name')).toBeVisible();
   await page.locator('#agent-name').fill(name);
@@ -31,7 +31,7 @@ async function pickIcon(page: Page, value: string): Promise<void> {
 
 async function submit(page: Page, name: string): Promise<string> {
   await page.getByRole('button', { name: 'Create agent' }).click();
-  const rowLink = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+  const rowLink = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
   await expect(rowLink).toBeVisible();
   const href = await rowLink.getAttribute('href');
   if (!href) throw new Error(`no href for row "${name}"`);
@@ -58,15 +58,15 @@ test('creating an agent with a typed colour preserves and renders it', async ({ 
     expect(await uiConfig(page, id)).toEqual({ color: COLOR });
 
     // The list row tile carries the accent, and the detail summary card too.
-    const row = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+    const row = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
     await expect(row.locator(`div[style*="color:${COLOR}"]`).first()).toBeVisible();
 
-    await page.goto(`/agents/${id}`);
+    await goto(page, `/agents/${id}`);
     await expectAppPage(page, new RegExp(name));
     await expect(page.locator(`#main-content div[style*="color:${COLOR}"]`).first()).toBeVisible();
 
     // Settings reflects it as well.
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expect(page.locator('#agent-settings-color')).toHaveValue(COLOR);
   } finally {
     if (id) await page.request.delete(`/api/agents/${id}`).catch(() => {});
@@ -92,12 +92,12 @@ test('creating an agent with an icon picker choice and a preset colour preserves
 
     expect(await uiConfig(page, id)).toEqual({ icon: 'database', color: PRESET_COLOR });
 
-    const row = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+    const row = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
     const tile = row.locator(`div[style*="color:${PRESET_COLOR}"]`).first();
     await expect(tile).toBeVisible();
     await expect(tile.locator('.iconify.lucide--database')).toHaveCount(1);
 
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expect(page.locator('#agent-settings-icon')).toHaveValue('database');
     await expect(page.locator('#agent-settings-color')).toHaveValue(PRESET_COLOR);
   } finally {
@@ -116,7 +116,7 @@ test('creating an agent with no appearance stores an empty uiConfig and renders 
 
     expect(await uiConfig(page, id)).toEqual({});
 
-    const row = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+    const row = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
     await expect(row.locator('.iconify.lucide--bot').first()).toBeVisible();
     // No accent colour is painted on the row tile.
     expect(await row.locator('div[style*="color:#"]').count()).toBe(0);

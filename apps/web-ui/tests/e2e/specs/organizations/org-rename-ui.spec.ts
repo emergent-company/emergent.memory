@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createOrg } from '../../helpers/bootstrap';
+import { goto } from '../../helpers/page';
 
 // Org rename: gateway/org_context.go `uiOrgRename` (POST /orgs/:id/rename,
 // form field `name`) surfaced on the org Settings hub → General section
@@ -34,14 +35,14 @@ test('renaming an org persists on the General settings page', async ({ page }) =
   const orgId = await createOrg(page, name);
 
   try {
-    await page.goto(`/orgs/${orgId}/settings/general`);
+    await goto(page, `/orgs/${orgId}/settings/general`);
     await expect(page.locator('#org-name')).toHaveValue(name);
 
     await page.locator('#org-name').fill(renamed);
     await page.getByRole('button', { name: 'Save name' }).click();
 
     // Success PRG redirects back with ?renamed=1; the new name persists.
-    await page.waitForURL(new RegExp(`/orgs/${orgId}/settings/general\\?renamed=1`));
+    await page.waitForURL(new RegExp(`/o/${orgId}/settings/general\\?renamed=1`));
     await page.reload();
     await expect(page.locator('#org-name')).toHaveValue(renamed);
   } finally {

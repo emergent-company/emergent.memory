@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Usage dashboard render: gateway/usage.templ `uiUsage` (GET /usage). The
 // summary cards (total tokens, estimated cost, sessions), the two daily chart
@@ -12,7 +12,7 @@ import { expectAppPage } from '../../helpers/page';
 // it is omitted when the backend reports no month-spend data (`hasMonthSpend`).
 
 test('usage dashboard renders summary cards and chart mounts when data exists', async ({ page }) => {
-  await page.goto('/usage');
+  await goto(page, '/usage');
   await expectAppPage(page, /Usage/);
 
   // The populated summary/chart section is keyed off `stat-total-tokens`; its

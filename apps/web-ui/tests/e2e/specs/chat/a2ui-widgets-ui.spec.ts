@@ -1,6 +1,6 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // A2UI (v0.9.1) structured-UI card renderer, exercised end-to-end in the
 // browser.
@@ -141,7 +141,7 @@ async function renderSurfaces(page: Page, agentName: string): Promise<string> {
     }),
   );
 
-  await page.goto(`/chat?agent=${agentId}`);
+  await goto(page, `/chat?agent=${agentId}`);
   await expectAppPage(page, /Chat/);
   const agentSelect = page.locator('#chat-agent');
   await expect(agentSelect).toBeVisible();

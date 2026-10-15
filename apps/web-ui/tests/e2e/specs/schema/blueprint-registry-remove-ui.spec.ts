@@ -3,6 +3,7 @@ import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { removeBlueprint, installBlueprint } from '../../helpers/blueprints';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { MEMORY_API_URL } from '../../helpers/tokens';
+import { goto } from '../../helpers/page';
 
 // Registry remove (gateway/blueprints_handlers.go → POST /blueprints/:id/remove →
 // memory DELETE /api/blueprints/:id). The Available list is registry-backed: a
@@ -96,7 +97,7 @@ test.describe('Blueprint registry remove', () => {
 
       // Uninstalled → it remains in the Available list, carries NO Built-in
       // badge, and offers a Remove action (non-built-in only).
-      await page.goto('/blueprints');
+      await goto(page, '/blueprints');
       const row = page.locator(`[data-testid="available-blueprint-${blueprintName}"]`);
       await expect(row).toBeVisible();
       await expect(row.locator(`[data-testid="blueprint-builtin-${blueprintName}"]`)).toHaveCount(0);

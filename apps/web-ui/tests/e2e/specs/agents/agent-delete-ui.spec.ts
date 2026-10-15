@@ -23,7 +23,7 @@ test('deleting an agent from the list removes it', async ({ page }) => {
     // Confirm → JS DELETE + reload. Wait for the row to disappear from the list.
     await page.locator('#delete-agent-go').click();
     await expect(
-      page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }),
+      page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }),
     ).toHaveCount(0, { timeout: 15000 });
     deleted = true;
   } finally {

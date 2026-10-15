@@ -5,7 +5,7 @@ import {
   configureLiveProvider,
   hasLiveProviderCreds,
 } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Blueprint-pinned model warnings (gateway unservable-model surface): the
 // blueprint details page (/blueprints/<id>) renders agent rows from the
@@ -27,10 +27,10 @@ const OPERATOR = 'operator';
 
 /** Open the operator blueprint's detail page via its Available-list link. */
 async function openOperatorDetail(page: Page): Promise<void> {
-  await page.goto('/blueprints');
+  await goto(page, '/blueprints');
   const row = page.locator(`[data-testid="available-blueprint-${OPERATOR}"]`);
   await expect(row).toBeVisible();
-  await row.locator('a[href^="/blueprints/"]').click();
+  await row.locator('a[href*="/blueprints/"]').click();
   await expectAppPage(page, /operator/);
 }
 
@@ -74,7 +74,7 @@ test("built-in operator agent warns when its pinned model's provider is unconfig
     await expect(alert).toContainText(PIN_ERR);
     const link = page.getByRole('link', { name: 'Configure a provider' });
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/settings/providers');
+    await expect(link).toHaveAttribute('href', /\/settings\/providers$/);
   } finally {
     await cleanup(page, projectId);
   }

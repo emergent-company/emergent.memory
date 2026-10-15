@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { goto } from '../../helpers/page';
 import {
   API_KEY,
   SKIP_NO_KEY,
@@ -245,7 +246,7 @@ test.describe('chat run-control scenarios', () => {
       await expect(badge).toBeHidden();
       await expect(badge).not.toContainText('Done');
 
-      expect(new URL(page.url()).pathname).toBe('/chat');
+      expect(new URL(page.url()).pathname).toMatch(/\/chat$/);
     } finally {
       await cleanup(page, { agentIds: [agentId], projectId });
     }
@@ -299,7 +300,7 @@ test.describe('chat run-control scenarios', () => {
         }
       });
 
-      await page.goto(`/runs/${runId}`);
+      await goto(page, `/runs/${runId}`);
       await expect(page.locator('#chat-root[data-run]')).toBeVisible();
       await expect.poll(() => eventsCalls.length, { timeout: 30_000 }).toBeGreaterThan(0);
     } finally {

@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { readBootstrap, createOrg, createProject } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Focused coverage for the restore half of the soft-delete project lifecycle
 // (org_context.templ → POST /projects/restore, uiRestoreProject). The
@@ -90,7 +90,7 @@ test.describe('Project restore', () => {
     try {
       projectId = await createProject(page, orgId, projectName);
 
-      await page.goto(`/orgs/${orgId}`);
+      await goto(page, `/orgs/${orgId}`);
       await expectAppPage(page, new RegExp(orgName));
       await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
 
@@ -115,7 +115,7 @@ test.describe('Project restore', () => {
       );
       await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
       await deleteResp;
-      await page.waitForURL(new RegExp(`/orgs/${orgId}\\?deleted=1`), { timeout: 20_000 });
+      await page.waitForURL(new RegExp(`/o/${orgId}\\?deleted=1`), { timeout: 20_000 });
       await page.waitForLoadState('domcontentloaded');
 
       // Resulting state: soft-deleted. The row stays but is flagged pending,
@@ -143,7 +143,7 @@ test.describe('Project restore', () => {
       );
       await pendingMenu.getByRole('button', { name: 'Cancel deletion', exact: true }).click();
       await restoreResp;
-      await page.waitForURL(new RegExp(`/orgs/${orgId}\\?restored=1`), { timeout: 20_000 });
+      await page.waitForURL(new RegExp(`/o/${orgId}\\?restored=1`), { timeout: 20_000 });
       await page.waitForLoadState('domcontentloaded');
 
       // Resulting state: active again. The badge is gone, the named checkbox is

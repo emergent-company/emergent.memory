@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Project agent-definition overrides (gateway/project_settings.templ
 // agentOverridesPanel + settings_handlers.go):
@@ -29,7 +29,7 @@ test('project overrides: create then delete, each reflected in the list and afte
   const deleteBtn = () => page.getByRole('button', { name: `Delete override for ${agentName}` });
 
   try {
-    await page.goto(OVERRIDES);
+    await goto(page, OVERRIDES);
     await expectAppPage(page, /Agent overrides/);
     await expect(deleteBtn()).toHaveCount(0);
 
@@ -75,7 +75,7 @@ test('project overrides: create then delete, each reflected in the list and afte
 });
 
 test('leaves no E2E overrides behind (self-cleanup guard)', async ({ page }) => {
-  await page.goto(OVERRIDES);
+  await goto(page, OVERRIDES);
   await expectAppPage(page, /Agent overrides/);
   await expect(page.getByRole('button', { name: /^Delete override for E2E override / })).toHaveCount(
     0,

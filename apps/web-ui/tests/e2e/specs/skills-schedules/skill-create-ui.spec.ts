@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test('creates a skill and opens its detail', async ({ page }) => {
   // Skill names are slugs: lowercase, digits, hyphen-separated.
@@ -7,7 +7,7 @@ test('creates a skill and opens its detail', async ({ page }) => {
   let skillId = '';
 
   try {
-    await page.goto('/skills/new');
+    await goto(page, '/skills/new');
     await page.locator('#skill-name').fill(slug);
     await page.locator('#skill-description').fill('E2E test skill');
     await page.locator('#skill-content').fill('Summarize the input concisely.');

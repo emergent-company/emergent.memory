@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Signed-in user's Memory profile (GET /api/user/profile). The gateway only
 // maps displayName/firstName/lastName/email — reconstructing the display name
@@ -50,7 +50,7 @@ test('topbar account trigger is avatar-only; dropdown shows name + email identit
   const apiName = displayNameOf(profile);
   const apiEmail = (profile.email ?? '').trim();
 
-  await page.goto('/agents');
+  await goto(page, '/agents');
   await expectAppPage(page, /Agents/);
 
   // Avatar-only trigger: the account menu opens from a bare avatar button.
@@ -106,7 +106,7 @@ test('profile identity card second line is the email, not a duplicated name', as
   const profile = await fetchProfile(page);
   const apiEmail = (profile.email ?? '').trim();
 
-  await page.goto('/profile');
+  await goto(page, '/profile');
   await expectAppPage(page, /Profile/);
 
   // The Profile section identity card (avatar button + name + second line).

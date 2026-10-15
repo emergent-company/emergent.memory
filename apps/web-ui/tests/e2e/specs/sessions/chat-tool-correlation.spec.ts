@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Regression coverage for the tool-call correlation + in-flight replay lanes:
 // mcp_tool events now carry a stable call `id` and the client matches chips by
@@ -14,7 +14,7 @@ type DebugHooks = {
 };
 
 async function boot(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/chat');
+  await goto(page, '/chat');
   await expectAppPage(page, /Chat/);
   await page.waitForFunction(() => {
     const w = window as unknown as { MemoryChat?: Partial<DebugHooks> };

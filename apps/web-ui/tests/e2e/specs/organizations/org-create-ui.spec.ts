@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test('creates an org via the form and deletes it', async ({ page }) => {
   const orgName = `E2E UI Org ${Date.now()}`;
@@ -7,7 +7,7 @@ test('creates an org via the form and deletes it', async ({ page }) => {
   let deletedViaUi = false;
 
   try {
-    await page.goto('/orgs/new');
+    await goto(page, '/orgs/new');
     await expectAppPage(page, /New organization/);
 
     await page.locator('#new-org-name').fill(orgName);
@@ -21,7 +21,7 @@ test('creates an org via the form and deletes it', async ({ page }) => {
 
     // Delete through the UI too: org Settings hub → danger zone. The delete
     // form is gated by a confirm() dialog — accept it.
-    await page.goto(`/orgs/${orgId}/settings`);
+    await goto(page, `/orgs/${orgId}/settings`);
     await page.getByRole('link', { name: 'Danger zone' }).click();
     page.on('dialog', (d) => d.accept());
     await page.getByRole('button', { name: 'Delete organization' }).click();

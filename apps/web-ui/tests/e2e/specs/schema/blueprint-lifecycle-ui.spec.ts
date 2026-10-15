@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { installBlueprint } from '../../helpers/blueprints';
+import { goto } from '../../helpers/page';
 
 // Blueprint install + unapply (gateway/blueprints_handlers.go → POST
 // /blueprints/install, POST /blueprints/:id/unapply). The bootstrap project
@@ -100,7 +101,7 @@ test.describe('Blueprint install + unapply', () => {
       // `agent-notes` is a built-in blueprint: its Available row carries the
       // Built-in badge and — because built-ins are global/immutable — NO remove
       // action.
-      await page.goto('/blueprints');
+      await goto(page, '/blueprints');
       const availableRow = page.locator(`[data-testid="available-blueprint-${BLUEPRINT}"]`);
       await expect(availableRow).toBeVisible();
       await expect(
@@ -129,13 +130,13 @@ test.describe('Blueprint install + unapply', () => {
       // User-facing proof: the object-create form now offers the type. Asserting
       // the <option> count (selectOption would also work) keeps this a
       // resulting-state check rather than a render smoke test.
-      await page.goto('/objects/new');
+      await goto(page, '/objects/new');
       await expect(page.locator('select[name="type"] option[value="Note"]')).toHaveCount(1);
 
       // Unapply through the real row action on the gallery: the applied row's
       // destructive submit carries aria-label "Remove <name>" (POST
       // /blueprints/:id/unapply, PRG back to /blueprints).
-      await page.goto('/blueprints');
+      await goto(page, '/blueprints');
       const removeButton = page.getByRole('button', { name: `Remove ${BLUEPRINT}` });
       await expect(removeButton).toBeVisible();
       const unapplyResponse = page.waitForResponse(
@@ -159,7 +160,7 @@ test.describe('Blueprint install + unapply', () => {
         .toBe(false);
 
       // And the object-create form no longer offers the type.
-      await page.goto('/objects/new');
+      await goto(page, '/objects/new');
       await expect(page.locator('select[name="type"] option[value="Note"]')).toHaveCount(0);
     } finally {
       await cleanup(page, projectId);

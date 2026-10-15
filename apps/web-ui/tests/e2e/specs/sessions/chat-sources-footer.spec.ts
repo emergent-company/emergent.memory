@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Deterministic client-render contract for the chat Sources footer. No LLM and
 // no backend fixture: we build an assistant bubble in the page and hand it to
@@ -57,7 +57,7 @@ async function seedObjectTypes(
 
 test.describe('Chat sources footer', () => {
   test('citations render as a collapsed in-bubble footer', async ({ page }) => {
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expectAppPage(page, /Chat/);
 
     // The map label is intentionally distinct from the humanizer output
@@ -102,14 +102,15 @@ test.describe('Chat sources footer', () => {
     await expect(bubble.locator('[data-testid=chat-source-type]').nth(1)).toHaveText('Zzz unknown type');
 
     // Link safety: a valid /objects/<uuid> url and a UUID id become links; an
-    // untrusted url with a non-UUID id stays plain text (no anchor).
+    // untrusted url with a non-UUID id stays plain text (no anchor). The href is
+    // scope-prefixed by the client link renderer, so match the trailing path.
     await expect(bubble.locator('[data-testid=chat-source]').nth(0).locator('a')).toHaveAttribute(
       'href',
-      `/objects/${UUID_A}`,
+      new RegExp(`/objects/${UUID_A}$`),
     );
     await expect(bubble.locator('[data-testid=chat-source]').nth(1).locator('a')).toHaveAttribute(
       'href',
-      `/objects/${UUID_B}`,
+      new RegExp(`/objects/${UUID_B}$`),
     );
     await expect(bubble.locator('[data-testid=chat-source]').nth(2).locator('a')).toHaveCount(0);
 
@@ -120,7 +121,7 @@ test.describe('Chat sources footer', () => {
   });
 
   test('a single citation reads "1 source"', async ({ page }) => {
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expectAppPage(page, /Chat/);
 
     await attachSources(page, [
@@ -132,7 +133,7 @@ test.describe('Chat sources footer', () => {
   });
 
   test('no citations renders no footer', async ({ page }) => {
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expectAppPage(page, /Chat/);
 
     await attachSources(page, []);

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createTypedObject, cleanupObjects } from '../../helpers/objects';
+import { goto } from '../../helpers/page';
 
 // Object relationships — POST /objects/:id/relationships (uiObjectRelationshipCreate).
 //
@@ -46,7 +47,7 @@ test('object relationships: an edge created from the connect dialog is visible f
 
     // Open the source object: no edges yet, so the empty state's Connect CTA
     // (the only button with this aria-label) opens the dialog.
-    await page.goto(`/objects/${taskId}`);
+    await goto(page, `/objects/${taskId}`);
     const relSection = relationshipsSection(page);
     await expect(relSection.getByText('No relationships')).toBeVisible();
 
@@ -80,7 +81,7 @@ test('object relationships: an edge created from the connect dialog is visible f
     await expect(sourceRel.getByText('No relationships')).toHaveCount(0);
 
     // Resulting state on the TARGET: the same edge is listed as incoming.
-    await page.goto(`/objects/${personId}`);
+    await goto(page, `/objects/${personId}`);
     const targetRel = relationshipsSection(page);
     await expect(targetRel.getByText('Assigned To')).toBeVisible();
     await expect(targetRel.getByText(taskKey, { exact: true })).toBeVisible();

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { goto } from '../../helpers/page';
 import {
   readBootstrap,
   createProject,
@@ -30,7 +31,7 @@ function requireBootstrap() {
 
 /** Click the operator blueprint's install action and wait for the review step. */
 async function openOperatorReview(page: Page): Promise<void> {
-  await page.goto('/blueprints');
+  await goto(page, '/blueprints');
   const row = page.locator(`[data-testid="available-blueprint-${OPERATOR}"]`);
   await expect(row).toBeVisible();
   await row.locator(`[data-testid="blueprint-install-${OPERATOR}"]`).click();
@@ -66,7 +67,7 @@ test('installing a pinned blueprint shows the model-review step, then applies on
     // The review form posts to the install-confirm route and carries the
     // blueprint id through a hidden input.
     const form = page.locator('[data-testid="blueprint-import-map"]');
-    await expect(form).toHaveAttribute('action', '/blueprints/install/confirm');
+    await expect(form).toHaveAttribute('action', /\/blueprints\/install\/confirm$/);
     await expect(form.locator('input[name="id"]')).toHaveAttribute('value', /.+/);
 
     // One row per pinned agent, with the neutral "Blueprint: <model>" badge and
@@ -79,12 +80,14 @@ test('installing a pinned blueprint shows the model-review step, then applies on
       'name',
       'model.operator',
     );
-    await expect(row.locator('a[href="/settings/providers"]')).toBeVisible();
+    await expect(row.locator('a[href$="/settings/providers"]')).toBeVisible();
 
     // Submitting the review (project default) applies and lands on the
     // installed flash.
     await page.locator('[data-testid="blueprint-model-map-submit"]').click();
-    await page.waitForURL((u) => u.pathname === '/blueprints' && u.searchParams.get('installed') === '1');
+    await page.waitForURL(
+      (u) => u.pathname.endsWith('/blueprints') && u.searchParams.get('installed') === '1',
+    );
   } finally {
     await cleanup(page, projectId);
   }
@@ -121,7 +124,7 @@ test('review pre-fills the pinned model when its provider is configured', async 
     // unresolved note and the select pre-fills the pinned model.
     const row = page.locator('[data-testid="blueprint-model-map-row"]');
     await expect(row).toHaveCount(1);
-    await expect(row.locator('a[href="/settings/providers"]')).toHaveCount(0);
+    await expect(row.locator('a[href$="/settings/providers"]')).toHaveCount(0);
     await expect(row.locator('[data-testid="blueprint-model-map-select"]')).toHaveValue(PINNED_MODEL);
   } finally {
     await cleanup(page, projectId);

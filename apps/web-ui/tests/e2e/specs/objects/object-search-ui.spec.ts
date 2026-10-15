@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { createTypedObject, cleanupObjects } from '../../helpers/objects';
+import { goto } from '../../helpers/page';
+import { scopedPath } from '../../helpers/scope';
 
 // Object search — GET /objects/search (uiObjectSearch).
 //
@@ -36,7 +38,7 @@ test('object search: filters to the created object and its result opens the obje
     objectId = await createTypedObject(page, 'Person', key);
 
     // 1a. The JSON contract: the unique token resolves to exactly this object.
-    const hitResp = await page.request.get(`/objects/search?q=${encodeURIComponent(key)}`);
+    const hitResp = await page.request.get(scopedPath(`/objects/search?q=${encodeURIComponent(key)}`));
     expect(hitResp.ok(), `GET /objects/search failed (HTTP ${hitResp.status()})`).toBeTruthy();
     const hits = (await hitResp.json()) as SearchResult[];
     const mine = hits.filter((r) => r.id === objectId);
@@ -47,15 +49,15 @@ test('object search: filters to the created object and its result opens the obje
     // 1b. Filtering: an unmatched token returns no results (and an empty query
     // short-circuits to []), so the surface is not echoing the whole graph.
     const noneResp = await page.request.get(
-      `/objects/search?q=${encodeURIComponent(`E2Enomatch${stamp}`)}`,
+      scopedPath(`/objects/search?q=${encodeURIComponent(`E2Enomatch${stamp}`)}`),
     );
     expect(((await noneResp.json()) as SearchResult[])).toHaveLength(0);
-    const emptyResp = await page.request.get('/objects/search?q=');
+    const emptyResp = await page.request.get(scopedPath('/objects/search?q='));
     expect(((await emptyResp.json()) as SearchResult[])).toHaveLength(0);
 
     // 2. The real search surface: typing the object's name into the connect
     // dialog's target picker populates the datalist with the object's id + label.
-    await page.goto(`/objects/${objectId}`);
+    await goto(page, `/objects/${objectId}`);
     await page.getByRole('button', { name: 'Connect this object to another' }).click();
     await expect(page.locator('#object-connect-modal')).toBeVisible();
     await page.locator('#connect-dst').fill(key);
@@ -64,7 +66,7 @@ test('object search: filters to the created object and its result opens the obje
     await expect(option).toHaveText(key);
 
     // 3. The result links through to the object page (id → /objects/:id).
-    await page.goto(`/objects/${objectId}`);
+    await goto(page, `/objects/${objectId}`);
     await expect(page.getByRole('heading', { name: key })).toBeVisible();
     await expect(page.locator('#object-key')).toHaveValue(key);
   } finally {

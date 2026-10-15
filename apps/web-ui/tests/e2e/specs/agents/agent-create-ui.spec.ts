@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
 
 /**
@@ -24,16 +24,16 @@ test('creates an agent via the form and renders its detail pages', async ({ page
     // failed loads.
     const title = new RegExp(name);
 
-    await page.goto(`/agents/${id}`);
+    await goto(page, `/agents/${id}`);
     await expectAppPage(page, title);
 
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expectAppPage(page, title);
 
-    await page.goto(`/agents/${id}/sandbox`);
+    await goto(page, `/agents/${id}/sandbox`);
     await expectAppPage(page, title);
 
-    await page.goto(`/agents/${id}/sessions`);
+    await goto(page, `/agents/${id}/sessions`);
     await expectAppPage(page, title);
   } finally {
     await page.request.delete(`/api/agents/${id}`).catch(() => {});

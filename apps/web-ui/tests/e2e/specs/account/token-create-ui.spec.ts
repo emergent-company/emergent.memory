@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 test('creates a token via the form', async ({ page }) => {
-  await page.goto('/settings/tokens/new');
+  await goto(page, '/settings/tokens/new');
   await page.locator('#api-token-name').fill(`e2e-token-${Date.now()}`);
   // At least one scope is required.
   await page.locator('input[name="scopes"]').first().check();

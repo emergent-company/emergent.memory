@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createOrg } from '../../helpers/bootstrap';
+import { goto } from '../../helpers/page';
 
 // Org tool settings: gateway/org_context.go `uiOrgToolSettingUpdate` +
 // `uiOrgToolSettingDelete` (POST /orgs/:id/tool-settings/:toolName [+ /delete]),
@@ -43,19 +44,19 @@ test('org tool-setting override toggles and deletes', async ({ page }) => {
     );
     expect(created.ok(), `seed override failed (HTTP ${created.status()})`).toBeTruthy();
 
-    await page.goto(`/orgs/${orgId}/settings`);
+    await goto(page, `/orgs/${orgId}/settings`);
     await expect(page.getByText(toolName, { exact: true })).toBeVisible();
     await expect(page.getByText('Enabled', { exact: true })).toBeVisible();
 
     // Toggle off via the Disable form (enabled=false).
     await page.getByRole('button', { name: 'Disable' }).click();
-    await page.waitForURL(new RegExp(`/orgs/${orgId}/settings\\?updated=1`));
+    await page.waitForURL(new RegExp(`/o/${orgId}/settings\\?updated=1`));
     await expect(page.getByText('Disabled', { exact: true })).toBeVisible();
     await expect(page.getByText('Enabled', { exact: true })).toHaveCount(0);
 
     // Delete the override; the row disappears.
     await page.getByRole('button', { name: `Delete ${toolName}` }).click();
-    await page.waitForURL(new RegExp(`/orgs/${orgId}/settings\\?updated=1`));
+    await page.waitForURL(new RegExp(`/o/${orgId}/settings\\?updated=1`));
     await expect(page.getByText(toolName, { exact: true })).toHaveCount(0);
   } finally {
     if (bootstrap?.projectId) {

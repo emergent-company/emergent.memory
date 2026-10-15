@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Regression coverage for the go-daisy IconPicker inside the schema object-type
 // editor (/schema/object-types/Person/edit). The seeded `personal-memory` pack
@@ -30,7 +30,7 @@ function option(page: Page, value: string) {
 }
 
 async function openEditor(page: Page): Promise<void> {
-  await page.goto(`/schema/object-types/${TYPE}/edit`);
+  await goto(page, `/schema/object-types/${TYPE}/edit`);
   await expectAppPage(page, new RegExp(`Edit ${TYPE}`));
   await expect(page.locator('#object-type-name')).toHaveValue(TYPE);
 }
@@ -183,7 +183,7 @@ test('picked icon and color persist across save and reload', async ({ page }) =>
     saved = true;
 
     // Full server round-trip: reopen the editor and reload.
-    await page.goto(`/schema/object-types/${TYPE}/edit`);
+    await goto(page, `/schema/object-types/${TYPE}/edit`);
     await expect(page.locator(HIDDEN)).toHaveValue('database');
     await expect(page.locator(LABEL)).toHaveText('Database');
     await expect(page.locator('#object-type-color')).toHaveValue(color);
@@ -199,7 +199,7 @@ test('picked icon and color persist across save and reload', async ({ page }) =>
         await page.locator('#object-type-color').fill(original.color);
         await page.locator('#object-type-description').fill(original.description);
         await submitEditor(page);
-        await page.goto(`/schema/object-types/${TYPE}/edit`);
+        await goto(page, `/schema/object-types/${TYPE}/edit`);
         await expect(page.locator(HIDDEN)).toHaveValue(original.icon);
         await expect(page.locator('#object-type-color')).toHaveValue(original.color);
       } catch (err) {

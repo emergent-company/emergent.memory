@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Read-surface smoke test for the /embeddings "no embedding model" warning.
 //
@@ -10,7 +10,7 @@ import { expectAppPage } from '../../helpers/page';
 // model and the project default model are configured.
 test.describe('Embeddings status page', () => {
   test('shows the no-embedding-model warning with a configure CTA', async ({ page }) => {
-    await page.goto('/embeddings');
+    await goto(page, '/embeddings');
     await expectAppPage(page, /Embeddings/);
 
     // Main content root renders (session-auth page, no login redirect).
@@ -24,6 +24,6 @@ test.describe('Embeddings status page', () => {
     // CTA points at the settings page where the model is configured.
     const cta = page.getByRole('link', { name: /Configure embedding model/ });
     await expect(cta).toBeVisible();
-    await expect(cta).toHaveAttribute('href', '/settings/providers');
+    await expect(cta).toHaveAttribute('href', /\/settings\/providers$/);
   });
 });

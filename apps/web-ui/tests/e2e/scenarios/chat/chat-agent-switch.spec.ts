@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createProject } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
 import { sendChatMessage } from '../../helpers/chat';
 import {
@@ -61,7 +61,7 @@ test.describe('Chat agent-switch navigation scenario', () => {
       // 4. CHAT WITH A (UI): pick A in the welcome hero and complete one turn.
       // The fresh workspace has no conversation, so the empty state (and its
       // #chat-agent picker) is visible.
-      await page.goto('/chat');
+      await goto(page, '/chat');
       await expectAppPage(page, /Chat/);
       await page.locator('#chat-agent').selectOption(agentA);
 

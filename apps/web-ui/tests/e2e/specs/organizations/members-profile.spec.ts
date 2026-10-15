@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 const routes: Array<[string, RegExp]> = [
   ['/members/new', /Invite a member/],
@@ -10,7 +10,7 @@ const routes: Array<[string, RegExp]> = [
 test.describe('Members + Profile sub-pages', () => {
   for (const [route, title] of routes) {
     test(`renders ${route}`, async ({ page }) => {
-      await page.goto(route);
+      await goto(page, route);
       await expectAppPage(page, title);
     });
   }

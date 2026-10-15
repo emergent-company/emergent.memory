@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
+import { expectAppPage, goto } from '../helpers/page';
 import { addProvider } from '../helpers/providers';
 import { memoryAuthHeaders } from '../helpers/objects';
 import { MEMORY_API_URL } from '../helpers/tokens';
@@ -344,7 +344,7 @@ test.describe('Agent delegation scenario', () => {
       // settings-subpage split moved it off the General page), so the submit control
       // navigates + 303-redirects to /agents/:id/settings/delegation?updated=1
       // on success.
-      await page.goto(`/agents/${delegatorId}/settings/delegation`);
+      await goto(page, `/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
 
       const enabled = page.locator('#agent-settings-delegation-enabled');
@@ -374,7 +374,7 @@ test.describe('Agent delegation scenario', () => {
       // (b) NO-TARGET REJECTION: enabling delegation with no target selected
       // must be refused with a readable error, and C must gain neither
       // delegation tool nor a spawn policy.
-      await page.goto(`/agents/${rejectId}/settings/delegation`);
+      await goto(page, `/agents/${rejectId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').check();
       await page.getByRole('button', { name: 'Save changes' }).click();
@@ -406,7 +406,7 @@ test.describe('Agent delegation scenario', () => {
 
       // (c) DISABLE: unchecking the toggle must strip both delegation tools
       // and the spawnPolicy from A's stored definition.
-      await page.goto(`/agents/${delegatorId}/settings/delegation`);
+      await goto(page, `/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').uncheck();
       await page.getByRole('button', { name: 'Save changes' }).click();
@@ -432,7 +432,7 @@ test.describe('Agent delegation scenario', () => {
       ).toBeUndefined();
 
       // Re-enable A so the live chat turn below still runs delegated.
-      await page.goto(`/agents/${delegatorId}/settings/delegation`);
+      await goto(page, `/agents/${delegatorId}/settings/delegation`);
       await expectAppPage(page, /Settings/);
       await page.locator('#agent-settings-delegation-enabled').check();
       await page.locator(`input[name="delegation-target"][value="${targetName}"]`).check();
@@ -462,7 +462,7 @@ test.describe('Agent delegation scenario', () => {
       // answer entirely inside its reasoning stream, so waiting on bubble text
       // would time out); the spawn_agents tool events arrive before the stream
       // closes.
-      await page.goto(`/chat?agent=${delegatorId}`);
+      await goto(page, `/chat?agent=${delegatorId}`);
       await expectAppPage(page, /Chat/);
       const agentSelect = page.locator('#chat-agent');
       await expect(agentSelect).toBeVisible();

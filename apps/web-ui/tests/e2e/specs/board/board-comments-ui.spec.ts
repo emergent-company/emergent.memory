@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { readBootstrap } from '../../helpers/bootstrap';
 import { MEMORY_API_URL } from '../../helpers/tokens';
@@ -243,7 +243,7 @@ test.describe.serial('board comments thread', () => {
 
   test('an item with no comments or feedback shows the muted empty state', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     await openPreview(page);
@@ -261,7 +261,7 @@ test.describe.serial('board comments thread', () => {
   });
 
   test('posting a comment from the inline form adds it to the merged thread', async ({ page }) => {
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     // The inline form (this spec drives the preview surface) posts to #board;
@@ -291,7 +291,7 @@ test.describe.serial('board comments thread', () => {
     await requestChanges(page, 'Rework the title please');
     await addCommentViaApi(page, 'Follow-up note');
 
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
     await openPreview(page);
 
@@ -315,7 +315,7 @@ test.describe.serial('board comments thread', () => {
   });
 
   test('both surfaces render the thread, each under its own test ids', async ({ page }) => {
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     // Card-click path: the preview's board slot carries the thread.

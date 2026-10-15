@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test';
+import { goto } from './page';
 
 /**
  * Create an agent through the real UI (Agents page → "New agent" modal) and
@@ -20,7 +21,7 @@ import { Page, expect } from '@playwright/test';
  * injected), so chat-about-object turns need real tools.
  */
 export async function createAgentViaModal(page: Page, name: string, model?: string, tools?: string): Promise<string> {
-  await page.goto('/agents');
+  await goto(page, '/agents');
 
   await page.getByRole('button', { name: 'New agent' }).first().click();
   await expect(page.locator('#agent-name')).toBeVisible();
@@ -44,15 +45,15 @@ export async function createAgentViaModal(page: Page, name: string, model?: stri
   await page.getByRole('button', { name: 'Create agent' }).click();
 
   // The agents list is responsive: desktop (md+) renders agentsTable rows as a
-  // real <a href="/agents/<id>"> link; below md agentCardGrid cards carry
-  // data-href but are md:hidden on desktop. e2e runs Desktop Chrome (md+), so
-  // the visible target is the table-row link — read the id from its href.
+  // real <a href="…/agents/<id>"> link (scoped); below md agentCardGrid cards
+  // carry data-href but are md:hidden on desktop. e2e runs Desktop Chrome (md+),
+  // so the visible target is the table-row link — read the id from its href.
   // (The mobile card's only <a> is the "Chat with <name>" affordance,
   // /chat?agent=<id>, which never matches the /agents/ prefix.)
   // Scope to #main-content: the spotlight/command palette renders its own
-  // a[href^="/agents/<id>"] rows earlier in DOM order, so an unscoped .first()
+  // a[href*="/agents/<id>"] rows earlier in DOM order, so an unscoped .first()
   // can pick a hidden palette row instead of the visible list row.
-  const rowLink = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+  const rowLink = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
   await expect(rowLink).toBeVisible();
   const href = await rowLink.getAttribute('href');
   if (!href) {

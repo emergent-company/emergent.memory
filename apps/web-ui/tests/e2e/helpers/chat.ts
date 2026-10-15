@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test';
+import { goto } from './page';
 
 // Assistant reply bubbles stream into #chat-messages as
 // .chat.chat-start > .chat-bubble.chat-bubble-neutral > .memory-md
@@ -15,14 +16,14 @@ const ASSISTANT_MD = '#chat-messages .chat.chat-start .chat-bubble .memory-md';
  * /objects/{objectId} with an ?err= flash instead — surface that as an error.
  */
 export async function startObjectChat(page: Page, objectId: string): Promise<void> {
-  await page.goto(`/objects/${objectId}`);
+  await goto(page, `/objects/${objectId}`);
   await page.getByRole('link', { name: 'Chat about object' }).click();
 
   try {
     await page.waitForURL(/\/chat\?c=/, { timeout: 10_000 });
   } catch (err) {
     const u = new URL(page.url());
-    if (u.pathname === `/objects/${objectId}` && u.searchParams.has('err')) {
+    if (u.pathname.endsWith(`/objects/${objectId}`) && u.searchParams.has('err')) {
       throw new Error(
         `startObjectChat: chat about object ${objectId} redirected back with an error ` +
           `(${u.searchParams.get('err')}) — is an agent configured?`,

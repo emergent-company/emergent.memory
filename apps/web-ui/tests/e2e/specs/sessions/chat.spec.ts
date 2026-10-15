@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test.describe('Chat page', () => {
   test('renders (empty state or chat UI)', async ({ page }) => {
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expectAppPage(page, /Chat/);
 
     // A fresh tenant has no agents → empty state; a reused tenant (with agents

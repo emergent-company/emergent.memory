@@ -1,6 +1,6 @@
 import { test, expect, Locator, Page } from '@playwright/test';
 import { readBootstrap, createOrg, createProject } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Each project inside an org tree row on /orgs is a submit button POSTing
 // /projects/activate (hidden projectId input), so a row click opens the
@@ -36,7 +36,7 @@ test('clicking a scratch project row on /orgs activates it and lands on /agents'
     orgId = await createOrg(page, orgName);
     const projectId = await createProject(page, orgId, projectName);
 
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     // The scratch org tree row shows the project as a full-row submit form
@@ -84,7 +84,7 @@ test('clicking the bootstrap project row opens /agents with it still active', as
   const bootstrap = readBootstrap();
   expect(bootstrap, 'setup project must run first').toBeTruthy();
 
-  await page.goto('/orgs');
+  await goto(page, '/orgs');
   await expectAppPage(page, /Organizations/);
 
   // Cheap sanity pass over the same row-click path with no scratch fixtures.

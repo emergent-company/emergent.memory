@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
+import { goto } from '../../helpers/page';
 
 // The assistant agent selection is shell chrome: choosing an agent gates the
 // topbar "Assistant" button (and the sidepanel), clearing it hides them. Both
@@ -53,7 +54,7 @@ test('assistant button appears after setting the agent — no manual reload', as
     const toggle = page.locator('[data-testid="sidepanel-toggle"]');
 
     // Initial: a fresh project has no assistant configured → no topbar button.
-    await page.goto('/settings/assistant');
+    await goto(page, '/settings/assistant');
     await expect(page).not.toHaveURL(/\/auth\/login/);
     await expect(page.locator('#assistant-agent')).toBeVisible();
     await expect(toggle).toHaveCount(0);

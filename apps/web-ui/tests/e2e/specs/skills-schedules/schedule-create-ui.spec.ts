@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 test('creates a schedule for an agent', async ({ page }) => {
   const name = `E2E Sched ${Date.now()}`;
@@ -12,7 +13,7 @@ test('creates a schedule for an agent', async ({ page }) => {
   const agentId = agent.id as string;
 
   try {
-    await page.goto('/schedules/new');
+    await goto(page, '/schedules/new');
     await page.locator('#sched-name').fill(name);
     await page.locator('#sched-cron').fill('0 8 * * *');
     await page.locator('#sched-def').selectOption(agentId);

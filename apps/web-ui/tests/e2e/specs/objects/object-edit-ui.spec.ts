@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 // Regression coverage for the object detail edit form. The gateway shell is
 // hx-boosted (SPA-style in-page navigation), so assertions must target the URL
@@ -11,7 +12,7 @@ import { test, expect } from '@playwright/test';
 // survives a full reload. Before the fix, an errored save redirected silently
 // with no toast and no saved data — indistinguishable from a no-op.
 async function createPerson(page: import('@playwright/test').Page, key: string): Promise<void> {
-  await page.goto('/objects/new');
+  await goto(page, '/objects/new');
   await page.locator('select[name="type"]').selectOption('Person');
   await expect(page.locator('#object-key')).toBeVisible();
   await page.locator('#object-key').fill(key);

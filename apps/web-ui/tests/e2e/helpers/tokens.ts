@@ -1,4 +1,5 @@
 import { Page, Locator, APIRequestContext, expect } from '@playwright/test';
+import { goto } from './page';
 
 /**
  * Shared helper for the API token management surfaces:
@@ -185,7 +186,7 @@ export async function createTokenViaUi(
   name: string,
   scopes: string[],
 ): Promise<string> {
-  await page.goto(`${tokenBasePath(surface)}/new`);
+  await goto(page, `${tokenBasePath(surface)}/new`);
   const nameInput = page.locator('#api-token-name');
   await expect(nameInput).toBeVisible();
   await nameInput.fill(name);
@@ -257,7 +258,7 @@ export async function cleanupTokens(
 ): Promise<void> {
   try {
     const base = tokenBasePath(surface);
-    await page.goto(base).catch(() => {});
+    await goto(page, base).catch(() => {});
     for (const name of names) {
       // Bounded: a name can have at most one live row per regenerate cycle.
       for (let guard = 0; guard < 10; guard++) {
@@ -291,7 +292,7 @@ export async function expectNoLiveTokens(
   surface: TokenSurface,
   prefix: string,
 ): Promise<void> {
-  await page.goto(tokenBasePath(surface));
+  await goto(page, tokenBasePath(surface));
   const leaked = tokenRows(page)
     .filter({ hasText: prefix })
     .filter({ hasNot: revokedBadge(page) });

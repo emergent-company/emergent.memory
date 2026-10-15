@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
 
 // Regression coverage for the go-daisy IconPicker + ColorPicker inside the
@@ -45,7 +45,7 @@ async function pick(page: Page, value: string): Promise<void> {
 }
 
 async function openSettings(page: Page, id: string): Promise<void> {
-  await page.goto(`/agents/${id}/settings`);
+  await goto(page, `/agents/${id}/settings`);
   await expectAppPage(page, /Settings/);
   await expect(page.locator(HIDDEN)).toHaveCount(1);
 }
@@ -94,21 +94,21 @@ test('creates an agent, picks an icon and colour, and renders them on list + det
     await expectAppearance(page, id, { icon: 'database', color });
 
     // --- settings page round-trips the choice ---
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expect(page.locator(HIDDEN)).toHaveValue('database');
     await expect(page.locator(LABEL)).toHaveText('Database');
     await expect(page.locator(COLOR)).toHaveValue(color);
 
     // --- the agents list renders the picked icon + colour on the row tile ---
-    await page.goto('/agents');
-    const row = page.locator('#main-content a[href^="/agents/"]').filter({ hasText: name }).first();
+    await goto(page, '/agents');
+    const row = page.locator('#main-content a[href*="/agents/"]').filter({ hasText: name }).first();
     await expect(row).toBeVisible();
     const tile = row.locator('div[style*="color:#2563EB"]').first();
     await expect(tile).toBeVisible();
     await expect(tile.locator('.iconify.lucide--database')).toHaveCount(1);
 
     // --- the agent detail summary card renders the same accent ---
-    await page.goto(`/agents/${id}`);
+    await goto(page, `/agents/${id}`);
     await expectAppPage(page, new RegExp(name));
     const detailTile = page.locator('#main-content div[style*="color:#2563EB"]').first();
     await expect(detailTile).toBeVisible();
@@ -139,7 +139,7 @@ test('picking a colour preset on the settings form auto-saves and persists it', 
     await expectAppearance(page, id, { color: presetColor });
 
     // Survives a full reload.
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expect(page.locator(COLOR)).toHaveValue(presetColor);
   } finally {
     if (id) await page.request.delete(`/api/agents/${id}`).catch(() => {});

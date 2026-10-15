@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgentViaModal } from '../../helpers/agents';
+import { goto } from '../../helpers/page';
 
 // Agent Work settings subpage: gateway/agent.templ `agentWorkSettingsForm` →
 // POST /agents/:id/settings/work (agent.go `uiAgentUpdateWork` +
@@ -22,7 +23,7 @@ test('work configuration persists across a full reload', async ({ page }) => {
   const id = await createAgentViaModal(page, name);
 
   try {
-    await page.goto(WORK(id));
+    await goto(page, WORK(id));
 
     const ready = page.locator('input[name="workStatus.ready"]');
     await expect(ready).toBeVisible();

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Skill edit + delete: gateway/skills.templ + ui.go (uiUpdateSkill / uiDeleteSkill).
 // Drives the full mutation lifecycle on a scratch skill — create (form) → edit
@@ -16,7 +16,7 @@ test('skill edit persists and delete removes it from the list', async ({ page })
 
   try {
     // --- create ---
-    await page.goto('/skills/new');
+    await goto(page, '/skills/new');
     await page.locator('#skill-name').fill(slug);
     await page.locator('#skill-description').fill('E2E test skill');
     await page.locator('#skill-content').fill('Summarize the input concisely.');

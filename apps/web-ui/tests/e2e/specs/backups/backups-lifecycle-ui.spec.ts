@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
+import { scopedPath } from '../../helpers/scope';
 
 // Backup lifecycle (gateway/backups.go + gateway/backups.templ):
 //
@@ -26,13 +27,13 @@ import { expectAppPage } from '../../helpers/page';
 
 // A list/detail row title link: every `/backups/<id>` anchor except the
 // per-row/preview `/download` action.
-const BACKUP_ROW_LINK = 'a[href^="/backups/"]:not([href$="/download"])';
+const BACKUP_ROW_LINK = 'a[href*="/backups/"]:not([href$="/download"])';
 
 // beforeEach lands on /backups and skips the whole test when Memory has the
 // backup feature gated off (the page renders the "Backups unavailable" empty
 // state instead of the list).
 test.beforeEach(async ({ page }) => {
-  await page.goto('/backups');
+  await goto(page, '/backups');
   await expectAppPage(page, /Backups/);
   test.skip(
     (await page.getByText('Backups unavailable', { exact: true }).count()) > 0,
@@ -43,7 +44,7 @@ test.beforeEach(async ({ page }) => {
 // rowForBackup locates the list row whose title/preview link points at the id
 // this run created.
 function rowForBackup(page: Page, id: string): Locator {
-  return page.locator('tr').filter({ has: page.locator(`a[href="/backups/${id}"]`) });
+  return page.locator('tr').filter({ has: page.locator(`a[href$="/backups/${id}"]`) });
 }
 
 // firstRowBackupId reads the id of the newest backup row (the list is ordered
@@ -51,7 +52,7 @@ function rowForBackup(page: Page, id: string): Locator {
 async function firstRowBackupId(page: Page): Promise<string> {
   const href = await page.locator(BACKUP_ROW_LINK).first().getAttribute('href');
   if (!href) throw new Error('no backup row link found on /backups');
-  return href.replace(/^\/backups\//, '').split('/')[0];
+  return href.match(/\/backups\/([^/]+)/)?.[1] ?? '';
 }
 
 // startBackupViaForm submits the real inline create form (Start backup) and
@@ -115,7 +116,7 @@ test.describe('Backup lifecycle', () => {
       }
 
       // 3. DETAILS: the created backup's dedicated page renders its sections.
-      await page.goto(`/backups/${id}`);
+      await goto(page, `/backups/${id}`);
       await expectAppPage(page, /Backup/);
       await expect(page.getByRole('heading', { name: 'Overview', exact: true })).toBeVisible();
       await expect(page.getByRole('heading', { name: 'Contents', exact: true })).toBeVisible();
@@ -127,9 +128,9 @@ test.describe('Backup lifecycle', () => {
       // never chases the expiring URL off-origin.
       const downloadLink = page.getByRole('link', { name: 'Download', exact: true });
       await expect(downloadLink).toBeVisible();
-      await expect(downloadLink).toHaveAttribute('href', `/backups/${id}/download`);
+      await expect(downloadLink).toHaveAttribute('href', new RegExp(`/backups/${id}/download$`));
 
-      const downloadResp = await page.request.get(`/backups/${id}/download`, {
+      const downloadResp = await page.request.get(scopedPath(`/backups/${id}/download`), {
         maxRedirects: 0,
       });
       expect(
@@ -152,7 +153,7 @@ test.describe('Backup lifecycle', () => {
       await expectAppPage(page, /Backups/);
 
       // 6. RESULTING STATE: the created backup's links are gone from the list.
-      await expect(page.locator(`a[href="/backups/${id}"]`)).toHaveCount(0);
+      await expect(page.locator(`a[href$="/backups/${id}"]`)).toHaveCount(0);
       await expect(page.locator(`#backup-delete-${id}`)).toHaveCount(0);
     } finally {
       // Self-cleanup: never leave this run's backup behind, even when the UI

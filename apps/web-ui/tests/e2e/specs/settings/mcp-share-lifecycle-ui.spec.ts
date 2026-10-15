@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { expectTokenAuthenticated, expectTokenRejected } from '../../helpers/tokens';
+import { goto } from '../../helpers/page';
 
 // MCP Sharing lifecycle: gateway/mcp_shares_handlers.go + mcp_shares.templ,
 // the project-scoped share surface at /settings/mcp-servers/shares. A share
@@ -37,7 +38,7 @@ test('MCP share lifecycle: create, reveal once, edit, rotate, revoke', async ({ 
 
   try {
     // --- create ---
-    await page.goto(SHARES_NEW);
+    await goto(page, SHARES_NEW);
     await expect(page.locator('#mcp-share-name')).toBeVisible();
 
     // The share requires ≥1 tool; skip cleanly when the catalog is empty.
@@ -64,17 +65,17 @@ test('MCP share lifecycle: create, reveal once, edit, rotate, revoke', async ({ 
 
     // --- revealed once ---
     // A plain list load never carries the key.
-    await page.goto(SHARES);
+    await goto(page, SHARES);
     await expect(page.locator('#mcp-share-key')).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText(createdToken);
 
     // --- edit/update ---
-    await page.goto(SHARES_EDIT(id));
+    await goto(page, SHARES_EDIT(id));
     await expect(page.locator('#mcp-share-name')).toHaveValue(name);
     await page.locator('#mcp-share-description').fill(updatedDescription);
     await page.getByRole('button', { name: 'Save changes' }).click();
     await page.waitForURL(/\/shares\?updated=1/);
-    await page.goto(SHARES);
+    await goto(page, SHARES);
     await expect(
       page.locator('[data-mcp-share-row]').filter({ hasText: name }),
     ).toContainText(updatedDescription);

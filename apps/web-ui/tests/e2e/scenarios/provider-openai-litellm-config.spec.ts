@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
+import { expectAppPage, goto } from '../helpers/page';
 
 // OpenAI-compatible provider scenario: configure the "openai" provider type
 // against a LiteLLM proxy from a FRESH project, via the settings UI.
@@ -49,7 +49,7 @@ function requireBootstrap() {
 // boosted 303 / no-swap save would leave the shell (and icon) stale.
 function sidebarProviderWarning(page: Page) {
   return page
-    .locator('#_layout-sidebar a[href="/settings"]')
+    .locator('#_layout-sidebar a[href$="/settings"]')
     .locator('[role="img"][aria-label*="No provider configured"]');
 }
 
@@ -99,7 +99,7 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
       // 2. NAVIGATE (UI): a fresh project has zero providers, so the Providers
       // page shows the hero CTA instead of the management panel — and the shell
       // sidebar carries the zero-provider warning icon (initial state).
-      await page.goto('/settings/providers');
+      await goto(page, '/settings/providers');
       await expectAppPage(page, /Providers/);
       await expect(sidebarProviderWarning(page)).toBeVisible();
       await page.getByRole('link', { name: 'Add your first provider' }).click();
@@ -194,7 +194,7 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
       await expect(row.getByText('openai', { exact: true }).first()).toBeVisible();
       await expect(row.getByRole('link', { name: 'Edit' })).toHaveAttribute(
         'href',
-        '/settings/providers/openai/edit',
+        /\/settings\/providers\/openai\/edit$/,
       );
     } finally {
       await cleanup(page, projectId, 'openai');
@@ -228,7 +228,7 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
       // 2. NAVIGATE (UI): a fresh project has zero providers, so the Providers
       // page shows the hero CTA instead of the management panel — and the shell
       // sidebar carries the zero-provider warning icon (initial state).
-      await page.goto('/settings/providers');
+      await goto(page, '/settings/providers');
       await expectAppPage(page, /Providers/);
       await expect(sidebarProviderWarning(page)).toBeVisible();
       await page.getByRole('link', { name: 'Add your first provider' }).click();
@@ -321,7 +321,7 @@ test.describe('OpenAI-compatible provider via LiteLLM', () => {
       await expect(row.getByText('generic', { exact: true }).first()).toBeVisible();
       await expect(row.getByRole('link', { name: 'Edit' })).toHaveAttribute(
         'href',
-        '/settings/providers/generic/edit',
+        /\/settings\/providers\/generic\/edit$/,
       );
     } finally {
       await cleanup(page, projectId, 'generic');

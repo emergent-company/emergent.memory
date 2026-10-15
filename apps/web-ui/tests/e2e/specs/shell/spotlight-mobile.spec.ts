@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Spotlight (⌘K) palette: read-only, no session/org mutation. Runs in the
 // `chromium` project (parallel) against the shared bootstrap session.
@@ -11,7 +11,7 @@ import { expectAppPage } from '../../helpers/page';
 test.describe('Spotlight palette (⌘K search)', () => {
   test('desktop: pill trigger opens palette; Esc label and Escape key close it', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     const trigger = page.locator('button[aria-label="Search"]');
@@ -42,7 +42,7 @@ test.describe('Spotlight palette (⌘K search)', () => {
 
   test('mobile: icon-only trigger opens a full-screen sheet; ✕ closes it', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     const trigger = page.locator('button[aria-label="Search"]');
@@ -91,7 +91,7 @@ test.describe('Spotlight palette (⌘K search)', () => {
 
   test('desktop: typing filters the palette results', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
 
     await page.locator('button[aria-label="Search"]').click();

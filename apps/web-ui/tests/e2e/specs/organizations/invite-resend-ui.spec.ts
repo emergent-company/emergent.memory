@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
+import { goto } from '../../helpers/page';
 
 // Coverage for the sent-invite resend surface (org_members_ui.templ →
 // POST /invites/:id/resend, uiResendInvite). A pending invitation renders, next
@@ -59,7 +60,7 @@ test.describe('Invite resend', () => {
 
     try {
       // Create the pending invitation from the invite form.
-      await page.goto('/members/new');
+      await goto(page, '/members/new');
       await page.locator('#invite-email').fill(email);
       await page.locator('#invite-role').selectOption('project_user');
       await page.getByRole('button', { name: 'Send invitation' }).click();

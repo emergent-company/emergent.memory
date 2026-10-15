@@ -1,5 +1,5 @@
 import { test } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 const routes: Array<[string, RegExp]> = [
   ['/skills', /Skills/],
@@ -11,7 +11,7 @@ const routes: Array<[string, RegExp]> = [
 test.describe('Skills + Schedules surface', () => {
   for (const [route, title] of routes) {
     test(`renders ${route}`, async ({ page }) => {
-      await page.goto(route);
+      await goto(page, route);
       await expectAppPage(page, title);
     });
   }

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgentViaModal } from '../../helpers/agents';
+import { goto } from '../../helpers/page';
 
 // Agent name edit: gateway/agent.templ `agentGeneralSettingsForm` (the General
 // subpage, the default landing of `/agents/:id/settings`) auto-saves through
@@ -18,7 +19,7 @@ test('editing an agent name auto-saves and persists across a full reload', async
 
   try {
     // The General section is the default landing of the settings hub.
-    await page.goto(`/agents/${id}/settings`);
+    await goto(page, `/agents/${id}/settings`);
     await expect(page.locator('#agent-settings-name')).toHaveValue(name);
 
     // No explicit Save: the field auto-saves after a short debounce and the

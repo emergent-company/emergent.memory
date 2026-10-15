@@ -1,6 +1,7 @@
 import { Page, expect } from '@playwright/test';
 import { readBootstrap } from './bootstrap';
 import { MEMORY_API_URL } from './tokens';
+import { goto } from './page';
 
 // uiObjectCreate redirects to the new object's detail page (/objects/:id).
 const OBJECT_DETAIL_URL = /\/objects\/[0-9a-f-]{36}/;
@@ -10,7 +11,7 @@ const OBJECT_DETAIL_URL = /\/objects\/[0-9a-f-]{36}/;
  * (key + fields) to render.
  */
 export async function openObjectForm(page: Page, type: string): Promise<void> {
-  await page.goto('/objects/new');
+  await goto(page, '/objects/new');
   await page.locator('select[name="type"]').selectOption(type);
   await expect(page.locator('#object-key')).toBeVisible();
 }

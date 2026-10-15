@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
+import { expectAppPage, goto } from '../helpers/page';
 import { addProvider } from '../helpers/providers';
 
 // Full MCP value-loop scenario: register an external MCP server in a FRESH
@@ -273,7 +273,7 @@ test.describe('MCP server → agent tool → real tool call scenario', () => {
       // answer entirely inside its reasoning stream without a final assistant
       // bubble, so waiting on bubble text would time out. The stream always
       // terminates, and the tool chips + mcp_tool events arrive before it does.
-      await page.goto(`/chat?agent=${agentId}`);
+      await goto(page, `/chat?agent=${agentId}`);
       await expectAppPage(page, /Chat/);
       const agentSelect = page.locator('#chat-agent');
       await expect(agentSelect).toBeVisible();

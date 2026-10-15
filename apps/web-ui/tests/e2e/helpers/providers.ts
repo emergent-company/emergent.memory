@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test';
+import { goto } from './page';
 
 export type ProviderSaveResult = 'saved' | 'error';
 
@@ -13,7 +14,7 @@ const PROVIDER_SAVE_ERROR = /couldn't save provider|could not save provider/i;
  * button.
  */
 export async function openProviderForm(page: Page): Promise<void> {
-  await page.goto('/settings/providers/new');
+  await goto(page, '/settings/providers/new');
   await expect(page.locator('#provider-type')).toBeVisible();
   await expect(page.locator('input[name="api_key"]')).toBeVisible();
   await expect(page.locator('#provider-save-btn')).toBeVisible();
@@ -79,7 +80,7 @@ export async function addProvider(page: Page, provider: string, apiKey: string, 
  * (the server re-renders it selected from the stored project model config).
  */
 export async function setDefaultEmbeddingModel(page: Page, model: string): Promise<void> {
-  await page.goto('/settings/providers');
+  await goto(page, '/settings/providers');
   const emb = page.locator('select[name="embedding_model"]');
   await expect(emb).toBeVisible();
 
@@ -111,7 +112,7 @@ export async function setDefaultEmbeddingModel(page: Page, model: string): Promi
  * "provider/model" catalog value (e.g. "openai/deepseek-v4-flash").
  */
 export async function setDefaultGenerativeModel(page: Page, model: string): Promise<void> {
-  await page.goto('/settings/providers');
+  await goto(page, '/settings/providers');
   const gen = page.locator('select[name="generative_model"]');
   await expect(gen).toBeVisible();
 

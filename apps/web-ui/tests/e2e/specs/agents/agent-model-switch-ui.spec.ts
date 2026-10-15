@@ -6,7 +6,7 @@ import {
   hasLiveProviderCreds,
   LIVE_PROVIDER_MODEL,
 } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Two agents, each switched default → specific → back to default, with the
 // model's presentation verified on every surface after every switch. This is
@@ -84,7 +84,7 @@ async function expectAgentModelInUI(
   isDefault: boolean,
 ): Promise<void> {
   // 1. Agents list — the agent's row shows the effective model string.
-  await page.goto('/agents');
+  await goto(page, '/agents');
   await expectAppPage(page, /Agents/);
   const row = page
     .locator('#main-content tr')
@@ -94,7 +94,7 @@ async function expectAgentModelInUI(
 
   // 2. Dashboard — the "Model" summary field: the model name in a font-mono
   //    span, with a " (default)" suffix only when inherited.
-  await page.goto(`/agents/${agentId}`);
+  await goto(page, `/agents/${agentId}`);
   await expectAppPage(page, new RegExp(agentName));
   await expect(
     page.locator('span.font-mono').filter({ hasText: expectedModel }).first(),
@@ -108,7 +108,7 @@ async function expectAgentModelInUI(
   // 3. Settings → Model — the picker's value: "" for Auto (default), else the
   //    pinned provider/model string (a stored model outside the catalog still
   //    renders as a "(current)" option carrying that exact value).
-  await page.goto(`/agents/${agentId}/settings/model`);
+  await goto(page, `/agents/${agentId}/settings/model`);
   await expectAppPage(page, new RegExp(agentName));
   if (isDefault) {
     await expect(page.locator('#agent-settings-model')).toHaveValue('');
@@ -147,7 +147,7 @@ async function requireConfiguredDefault(page: Page): Promise<boolean> {
   // as a 200 + error toast, so the response alone proves nothing. Confirm
   // persistence the way setDefaultEmbeddingModel does: reload and read the
   // server-rendered select.
-  await page.goto('/settings/providers');
+  await goto(page, '/settings/providers');
   const gen = page.locator('select[name="generative_model"]');
   if ((await gen.count()) === 0) {
     test.skip(true, 'default-models panel unavailable — cannot pin the project default model');

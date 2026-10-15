@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgentViaModal } from '../../helpers/agents';
+import { goto } from '../../helpers/page';
 
 // Per-agent sandbox (workspace) config page: gateway/agent.templ
 // `agentSandboxForm` → POST /agents/:id/sandbox/update (agent.go
@@ -30,7 +31,7 @@ test('sandbox config persists across a full reload', async ({ page }) => {
   const repoBranch = 'main';
 
   try {
-    await page.goto(SANDBOX(id));
+    await goto(page, SANDBOX(id));
 
     // The form is present and starts disabled with no repo source.
     await expect(page.locator('#agent-sandbox-enabled')).toBeVisible();
@@ -83,7 +84,7 @@ test('fixed repo source without a URL is rejected', async ({ page }) => {
   const id = await createAgentViaModal(page, name);
 
   try {
-    await page.goto(SANDBOX(id));
+    await goto(page, SANDBOX(id));
 
     // "fixed" requires a repository URL (agent.go uiAgentSandboxUpdate); an
     // empty URL redirects back with a flash error rather than persisting.

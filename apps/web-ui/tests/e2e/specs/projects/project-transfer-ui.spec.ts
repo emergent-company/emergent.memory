@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Transfers a project from the bootstrap org ("E2E Main") into a destination
 // org, verifying the org-view Transfer action end to end (success flash +
@@ -58,7 +58,7 @@ test('transfers a project to another org from the org view', async ({ page }) =>
   try {
     probeProjectId = await createProject(page, sourceOrgId, probeName);
 
-    await page.goto(`/orgs/${sourceOrgId}`);
+    await goto(page, `/orgs/${sourceOrgId}`);
     await expectAppPage(page, new RegExp(sourceOrgName));
     await expect(page.getByRole('heading', { name: sourceOrgName })).toBeVisible();
 

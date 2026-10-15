@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
+import { expectAppPage, goto } from '../helpers/page';
 import { addProvider } from '../helpers/providers';
 
 // Full ask_user proposal-card scenario, parametrized over every first-class
@@ -413,7 +413,7 @@ test.describe('ask_user proposal card scenario', () => {
         // on the proposal card (the ask_user tool pauses the run; there is no
         // closed stream or settled bubble to wait on).
         await installProposalSseInterceptor(page);
-        await page.goto(`/chat?agent=${agentId}`);
+        await goto(page, `/chat?agent=${agentId}`);
         await expectAppPage(page, /Chat/);
         const agentSelect = page.locator('#chat-agent');
         await expect(agentSelect).toBeVisible();

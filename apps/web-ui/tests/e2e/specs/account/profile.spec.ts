@@ -1,9 +1,9 @@
 import { test } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test.describe('Profile', () => {
   test('renders under session', async ({ page }) => {
-    await page.goto('/profile');
+    await goto(page, '/profile');
     await expectAppPage(page, /Profile/);
   });
 });

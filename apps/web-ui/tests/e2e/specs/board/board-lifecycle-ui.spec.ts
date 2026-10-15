@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { readBootstrap } from '../../helpers/bootstrap';
 import { MEMORY_API_URL } from '../../helpers/tokens';
@@ -145,7 +145,7 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('renders the seeded item in the ready lane and opens the shared preview', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     await expect(cardIn(page, 'ready')).toBeVisible();
@@ -161,7 +161,7 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('approve moves a review item to done', async ({ page }) => {
     await setStatus(page, 'review');
-    await page.goto('/board');
+    await goto(page, '/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Approve' }).click();
@@ -174,7 +174,7 @@ test.describe.serial('board work-item lifecycle', () => {
 
   test('retry moves a blocked item back to ready', async ({ page }) => {
     await setStatus(page, 'blocked');
-    await page.goto('/board');
+    await goto(page, '/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Retry' }).click();
@@ -194,7 +194,7 @@ test.describe.serial('board work-item lifecycle', () => {
     const target = memberLabel(members[0] ?? {});
     expect(target, 'a project member must exist to reassign').toBeTruthy();
 
-    await page.goto('/board');
+    await goto(page, '/board');
     await openPreview(page);
 
     // Open the assignee dropdown (trigger is the avatar+name pill). The menu is
@@ -217,7 +217,7 @@ test.describe.serial('board work-item lifecycle', () => {
   });
 
   test('cancel moves the item to blocked', async ({ page }) => {
-    await page.goto('/board');
+    await goto(page, '/board');
     await openPreview(page);
 
     await previewActions(page).getByRole('button', { name: 'Cancel' }).click();

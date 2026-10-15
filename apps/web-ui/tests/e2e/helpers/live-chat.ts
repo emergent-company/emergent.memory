@@ -1,7 +1,7 @@
 import { Page, expect, test } from '@playwright/test';
 import { readBootstrap, createProject } from './bootstrap';
 import { addProvider } from './providers';
-import { expectAppPage } from './page';
+import { expectAppPage, goto } from './page';
 
 // Shared scaffolding for the live-LLM chat scenarios (scenarios/chat/). Each
 // scenario runs on a FRESH scratch project so the session rail, provider and
@@ -110,7 +110,7 @@ export async function createScratchAgent(
 
 /** Navigate to /chat for an agent and wait for the composer to be usable. */
 export async function openChat(page: Page, agentId: string): Promise<void> {
-  await page.goto(`/chat?agent=${agentId}`);
+  await goto(page, `/chat?agent=${agentId}`);
   await expectAppPage(page, /Chat/);
   const agentSelect = page.locator('#chat-agent');
   await expect(agentSelect).toBeVisible();

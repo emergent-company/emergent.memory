@@ -1,6 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { readBootstrap, createOrg, createProject } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Org-landing projects data table (org_context.templ): a bulk-delete toolbar
 // driven by a select-all header checkbox, per-row popover action menus
@@ -130,7 +130,7 @@ test('schedules every project for deletion via select-all + the dialog, then can
   );
 
   try {
-    await page.goto(`/orgs/${orgId}`);
+    await goto(page, `/orgs/${orgId}`);
     await expectAppPage(page, new RegExp(orgName));
     await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
 
@@ -190,7 +190,7 @@ test('schedules every project for deletion via select-all + the dialog, then can
     // Confirm → native POST /projects/delete → PRG back to the org landing with
     // the scheduled-deletion flash (was "deletions started").
     await confirmDeletion(page);
-    await page.waitForURL(new RegExp(`/orgs/${orgId}\\?deleted=${projectNames.length}`), {
+    await page.waitForURL(new RegExp(`/o/${orgId}\\?deleted=${projectNames.length}`), {
       timeout: 20_000,
     });
     await page.waitForLoadState('domcontentloaded');
@@ -219,7 +219,7 @@ test('schedules every project for deletion via select-all + the dialog, then can
     );
     await pendingMenu.getByRole('button', { name: 'Cancel deletion', exact: true }).click();
     await restoreResp;
-    await page.waitForURL(new RegExp(`/orgs/${orgId}\\?restored=1`), { timeout: 20_000 });
+    await page.waitForURL(new RegExp(`/o/${orgId}\\?restored=1`), { timeout: 20_000 });
     await page.waitForLoadState('domcontentloaded');
     await expectFlash(page, 'Deletion cancelled.');
 
@@ -247,7 +247,7 @@ test('deletes one project via its row menu, shows pending, then cancels deletion
   const [delName, openName] = projectNames;
 
   try {
-    await page.goto(`/orgs/${orgId}`);
+    await goto(page, `/orgs/${orgId}`);
     await expectAppPage(page, new RegExp(orgName));
     await expect(page.getByRole('heading', { name: orgName })).toBeVisible();
     for (const name of projectNames) {
@@ -269,7 +269,7 @@ test('deletes one project via its row menu, shows pending, then cancels deletion
 
     // Confirm → native POST /projects/delete → PRG with the scheduled flash.
     await confirmDeletion(page);
-    await page.waitForURL(new RegExp(`/orgs/${orgId}\\?deleted=1`), { timeout: 20_000 });
+    await page.waitForURL(new RegExp(`/o/${orgId}\\?deleted=1`), { timeout: 20_000 });
     await page.waitForLoadState('domcontentloaded');
     await expectFlash(page, 'Project scheduled for deletion.');
 
@@ -290,7 +290,7 @@ test('deletes one project via its row menu, shows pending, then cancels deletion
     );
     await pendingMenu.getByRole('button', { name: 'Cancel deletion', exact: true }).click();
     await restoreResp;
-    await page.waitForURL(new RegExp(`/orgs/${orgId}\\?restored=1`), { timeout: 20_000 });
+    await page.waitForURL(new RegExp(`/o/${orgId}\\?restored=1`), { timeout: 20_000 });
     await page.waitForLoadState('domcontentloaded');
     await expectFlash(page, 'Deletion cancelled.');
 

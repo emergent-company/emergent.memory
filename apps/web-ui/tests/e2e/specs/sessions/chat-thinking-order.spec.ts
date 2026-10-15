@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test.describe('Chat live badge ordering', () => {
   test('thinking and tool badges stay below the in-progress assistant bubble', async ({ page }) => {
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expectAppPage(page, /Chat/);
 
     // The live stream order must be chronological: assistant bubble (typing →

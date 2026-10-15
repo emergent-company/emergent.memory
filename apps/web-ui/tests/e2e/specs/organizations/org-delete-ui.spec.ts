@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 test('deletes an org via the danger zone', async ({ page }) => {
   const name = `E2E UI Del Org ${Date.now()}`;
@@ -9,7 +10,7 @@ test('deletes an org via the danger zone', async ({ page }) => {
   const orgId = org.id as string;
 
   // The delete-org danger zone lives in the org Settings hub.
-  await page.goto(`/orgs/${orgId}/settings`);
+  await goto(page, `/orgs/${orgId}/settings`);
   await page.getByRole('link', { name: 'Danger zone' }).click();
 
   // The delete form is gated by a confirm() dialog — accept it.

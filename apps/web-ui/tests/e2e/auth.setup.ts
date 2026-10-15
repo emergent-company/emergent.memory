@@ -99,6 +99,9 @@ setup('authenticate and reuse-or-create tenant', async ({ page }) => {
   if (!seeded) {
     await importGitHubBlueprint(page, PERSONAL_MEMORY_BLUEPRINT_URL, {
       ref: PERSONAL_MEMORY_BLUEPRINT_REF,
+      // Navigate scoped: the bootstrap file is not written yet (writeBootstrap
+      // runs below), so pass the org/project ids resolved above explicitly.
+      scope: { orgId, projectId },
     });
   } else if (seeded.version !== PERSONAL_MEMORY_BLUEPRINT_VERSION) {
     throw new Error(

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { addProvider, setDefaultEmbeddingModel, setDefaultGenerativeModel } from '../../helpers/providers';
 
@@ -44,7 +44,7 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /** Upload one document through the /documents form and wait for the success redirect. */
 async function uploadDocument(page: Page, name: string, body: string): Promise<void> {
-  await page.goto('/documents');
+  await goto(page, '/documents');
   await expectAppPage(page, /Documents/);
   await page.setInputFiles('input[type="file"][name="file"]', {
     name,
@@ -218,7 +218,7 @@ test.describe('Document upload + extraction', () => {
       await expect(page.getByText('Extraction needs a generative model.')).toBeVisible();
       await expect(page.getByRole('link', { name: 'Configure a model' })).toHaveAttribute(
         'href',
-        '/settings/providers',
+        /\/settings\/providers$/,
       );
     } finally {
       // Restore the bootstrap project, then delete the scratch project.

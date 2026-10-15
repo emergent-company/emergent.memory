@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgentViaModal } from '../../helpers/agents';
+import { goto } from '../../helpers/page';
 
 // Agent Tools settings subpage: gateway/agent.templ `agentToolsSettingsForm` →
 // POST /agents/:id/settings/tools (agent.go `uiAgentUpdateTools` +
@@ -26,7 +27,7 @@ test('default approval policy persists across a full reload', async ({ page }) =
   const id = await createAgentViaModal(page, name);
 
   try {
-    await page.goto(TOOLS(id));
+    await goto(page, TOOLS(id));
 
     const policy = page.locator('select[name="defaultToolPolicy"]');
     await expect(policy).toBeVisible();
@@ -47,7 +48,7 @@ test('capability-group approval policy and enable switch persist', async ({ page
   const id = await createAgentViaModal(page, name);
 
   try {
-    await page.goto(TOOLS(id));
+    await goto(page, TOOLS(id));
 
     // Capability groups render inside `[data-testid="tool-groups"]` as
     // `[data-testid="tool-group"]` elements; the "other" uncovered bucket uses a

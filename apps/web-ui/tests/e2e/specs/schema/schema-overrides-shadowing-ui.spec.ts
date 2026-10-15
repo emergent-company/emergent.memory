@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Regression coverage for project-owned schema override packs.
 //
@@ -18,11 +18,11 @@ import { expectAppPage } from '../../helpers/page';
 const TYPE = 'Person';
 const BLUEPRINT = 'personal-memory'; // seeded pack (GitHub-imported) that defines Person
 const OVERRIDE_PACK = 'project-schema-overrides';
-const OBJECT_TYPE_LINK = `a[href="/schema/object-types/${TYPE}"]`;
+const OBJECT_TYPE_LINK = `a[href$="/schema/object-types/${TYPE}"]`;
 
 /** Open the object-type editor and wait for it to prefill (mirrors the edit spec). */
 async function openEditor(page: Page): Promise<void> {
-  await page.goto(`/schema/object-types/${TYPE}/edit`);
+  await goto(page, `/schema/object-types/${TYPE}/edit`);
   await expectAppPage(page, new RegExp(`Edit ${TYPE}`));
   await expect(page.locator('#object-type-name')).toHaveValue(TYPE);
   await expect(page.locator('#object-type-description')).toBeVisible();
@@ -74,7 +74,7 @@ test('project schema override pack does not duplicate, shadow-install, or leak',
 
     // 2. /schema renders exactly one object-type row for the name — the
     //    shadowed (losing) duplicate must be gone.
-    await page.goto('/schema');
+    await goto(page, '/schema');
     await expectAppPage(page, /Schema/);
     await expect(page.locator(OBJECT_TYPE_LINK)).toHaveCount(1);
 
@@ -83,13 +83,13 @@ test('project schema override pack does not duplicate, shadow-install, or leak',
     await expect(page.getByText(OVERRIDE_PACK).first()).toBeVisible();
 
     // 4. /schema/add must not offer the internal override pack as installable.
-    await page.goto('/schema/add');
+    await goto(page, '/schema/add');
     await expectAppPage(page, /Add schema/);
     await expect(page.locator('body')).not.toContainText(OVERRIDE_PACK);
 
     // 5. /blueprints must not list it in any section (Installed/Drafts/Available/
     //    Upgrades), and the blueprint that owns Person stays installed.
-    await page.goto('/blueprints');
+    await goto(page, '/blueprints');
     await expectAppPage(page, /Blueprints/);
     await expect(page.locator('body')).not.toContainText(OVERRIDE_PACK);
     await expect(

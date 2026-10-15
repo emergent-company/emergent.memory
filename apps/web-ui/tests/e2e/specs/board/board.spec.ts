@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Kanban board read surface. The board renders its six canonical status lanes
 // whenever at least one work item exists, or a single empty state when none do
@@ -10,7 +10,7 @@ const COLUMNS = ['ready', 'in_progress', 'review', 'revision', 'blocked', 'done'
 
 test.describe('Board page', () => {
   test('renders the board under session', async ({ page }) => {
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     // Stable anchors: the main-content root (title-derived) and the board region.
@@ -31,11 +31,11 @@ test.describe('Board page', () => {
   });
 
   test('sidebar nav exposes the Board link', async ({ page }) => {
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
 
     const link = page.getByRole('link', { name: 'Board', exact: true });
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/board');
+    await expect(link).toHaveAttribute('href', /\/board$/);
   });
 });

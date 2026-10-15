@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { createAgentViaModal } from '../../helpers/agents';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { readBootstrap } from '../../helpers/bootstrap';
@@ -176,7 +176,7 @@ function keyRow(page: Page, label: string) {
  * raw secret exists only in that response).
  */
 async function createKeyViaUi(page: Page, label: string): Promise<string> {
-  await page.goto(SETTINGS(agentId));
+  await goto(page, SETTINGS(agentId));
   await page.locator('#agent-mcp-key-label').fill(label);
   await page.getByTestId('agent-mcp-create-key').getByRole('button', { name: 'Create key' }).click();
 
@@ -257,7 +257,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
   });
 
   test('exposes the MCP section on the agent Settings page', async ({ page }) => {
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await expectAppPage(page, new RegExp(agentName));
 
     await expect(page.getByTestId('agent-mcp-section')).toBeVisible();
@@ -270,7 +270,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
 
   test('creates the endpoint and shows a readable, copyable client URL', async ({ page }) => {
     requireAgentMCPBackend();
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await page.getByTestId('agent-mcp-create-endpoint').getByRole('button', { name: 'Create MCP endpoint' }).click();
     await page.waitForURL(/mcpCreated=1/);
 
@@ -305,7 +305,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
   test('renders the sessions panel with its empty state for an endpoint with no sessions', async ({ page }) => {
     requireAgentMCPBackend();
     expect(endpointId, 'the previous test must have created the endpoint').toBeTruthy();
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
 
     await expect(page.getByTestId('agent-mcp-sessions')).toBeVisible();
     // A brand-new endpoint has no external client sessions. This must not
@@ -342,7 +342,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     const token = await createKeyViaUi(page, label);
 
     // Leave the one-time reveal response and come back through a plain GET...
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await expect(page.getByTestId('agent-mcp-key-secret')).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText(token);
 
@@ -374,7 +374,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     await expect(page.getByTestId('agent-mcp-key-secret')).toHaveCount(0);
 
     // Exactly one key with that label exists — the duplicate was rejected.
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await expect(keyRow(page, label)).toHaveCount(1);
     const keys = await endpointKeys(page);
     expect(keys.filter((k) => k.label === label)).toHaveLength(1);
@@ -403,7 +403,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     expect(after, 'the key must still exist after rotation').toBeTruthy();
     expect(after?.id).toBe(before?.id);
 
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await expect(page.getByTestId('agent-mcp-key-secret')).toHaveCount(0);
     await expect(page.locator('body')).not.toContainText(rotatedToken);
     await page.reload();
@@ -445,7 +445,7 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     // agent sharing lives on the agent's own Settings page. A regression that
     // reintroduced an agent picker here would break the agent-owned endpoint
     // model, so assert its absence structurally.
-    await page.goto(SHARES_NEW);
+    await goto(page, SHARES_NEW);
     await expectAppPage(page, /New MCP share/);
     await expect(page.locator('#mcp-share-name')).toBeVisible();
     await expect(page.locator('[data-mcp-share-form-fields]')).toBeVisible();
@@ -455,14 +455,14 @@ test.describe.serial('agent MCP endpoint keys and sessions', () => {
     await expect(form.locator('[name*="agent" i]')).toHaveCount(0);
 
     // The only agent affordance is a link out to the agent surface.
-    await page.goto(SHARES);
-    await expect(page.getByRole('link', { name: 'Manage an agent endpoint' })).toHaveAttribute('href', '/agents');
+    await goto(page, SHARES);
+    await expect(page.getByRole('link', { name: 'Manage an agent endpoint' })).toHaveAttribute('href', /\/agents$/);
   });
 
   test('revoking the endpoint returns the section to its not-enabled state', async ({ page }) => {
     requireAgentMCPBackend();
     expect(endpointId, 'an endpoint must exist to revoke').toBeTruthy();
-    await page.goto(SETTINGS(agentId));
+    await goto(page, SETTINGS(agentId));
     await expect(page.getByTestId('agent-mcp-endpoint')).toBeVisible();
 
     await confirmRowAction(

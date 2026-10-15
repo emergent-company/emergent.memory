@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Regression guard for the htmx v4 browser back/forward bug.
 //
@@ -16,7 +16,7 @@ import { expectAppPage } from '../../helpers/page';
 test.describe('Shell history restore (browser Back/Forward)', () => {
   test('Back restores the full shell: CSS, sidebar and JS intact', async ({ page }) => {
     // Full page load → a native (non-htmx) history entry.
-    await page.goto('/agents');
+    await goto(page, '/agents');
     await expectAppPage(page, /Agents/);
 
     // Two boosted sidebar navigations → htmx pushState entries.

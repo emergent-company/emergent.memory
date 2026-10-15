@@ -7,7 +7,7 @@ import {
   LIVE_PROVIDER,
   LIVE_PROVIDER_MODEL,
 } from '../../helpers/bootstrap';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Agent-model config warnings (gateway 9c573b7): an agent with no explicit
 // model and no resolvable default renders a severity alert on the agent
@@ -98,8 +98,8 @@ async function requireConfiguredProvider(page: Page): Promise<boolean> {
   // A 303 redirect + "Providers saved." flash is not proof the provider
   // survived the credential/catalog check; re-read the project's provider list
   // from the settings panel and skip when the row is absent.
-  await page.goto('/settings/providers');
-  if ((await page.locator(`a[href="/settings/providers/${LIVE_PROVIDER}/edit"]`).count()) === 0) {
+  await goto(page, '/settings/providers');
+  if ((await page.locator(`a[href$="/settings/providers/${LIVE_PROVIDER}/edit"]`).count()) === 0) {
     test.skip(
       true,
       `dev memory did not retain the ${LIVE_PROVIDER} provider — project still has no configured provider`,
@@ -123,7 +123,7 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
     const title = new RegExp(name);
 
     // Dashboard: error alert + "Configure a provider" link.
-    await page.goto(`/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -133,10 +133,10 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
     await expect(dashAlert).toContainText(DASH_ERR);
     const dashLink = page.getByRole('link', { name: 'Configure a provider' });
     await expect(dashLink).toBeVisible();
-    await expect(dashLink).toHaveAttribute('href', '/settings/providers');
+    await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored error text + the same link.
-    await page.goto(`/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent has no model' });
     await expect(setAlert).toBeVisible();
@@ -144,7 +144,7 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
     await expect(setAlert).toContainText(SET_ERR);
     const setLink = page.getByRole('link', { name: 'Configure a provider' });
     await expect(setLink).toBeVisible();
-    await expect(setLink).toHaveAttribute('href', '/settings/providers');
+    await expect(setLink).toHaveAttribute('href', /\/settings\/providers$/);
   } finally {
     await cleanup(page, agentId, projectId);
   }
@@ -168,7 +168,7 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     const title = new RegExp(name);
 
     // Dashboard: warning alert + "Set a default model" link.
-    await page.goto(`/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -178,10 +178,10 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     await expect(dashAlert).toContainText(DASH_WARN);
     const dashLink = page.getByRole('link', { name: 'Set a default model' });
     await expect(dashLink).toBeVisible();
-    await expect(dashLink).toHaveAttribute('href', '/settings/providers');
+    await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored warning text + the same link.
-    await page.goto(`/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page
       .getByRole('alert')
@@ -191,7 +191,7 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     await expect(setAlert).toContainText(SET_WARN);
     const setLink = page.getByRole('link', { name: 'Set a default model' });
     await expect(setLink).toBeVisible();
-    await expect(setLink).toHaveAttribute('href', '/settings/providers');
+    await expect(setLink).toHaveAttribute('href', /\/settings\/providers$/);
   } finally {
     await cleanup(page, agentId, projectId);
   }
@@ -245,7 +245,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     const title = new RegExp(name);
 
     // Dashboard: error alert naming the pinned model + "Configure a provider" link.
-    await page.goto(`/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -255,10 +255,10 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     await expect(dashAlert).toContainText(DASH_PIN_ERR);
     const dashLink = page.getByRole('link', { name: 'Configure a provider' });
     await expect(dashLink).toBeVisible();
-    await expect(dashLink).toHaveAttribute('href', '/settings/providers');
+    await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored error text ("pinned") + the same link.
-    await page.goto(`/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent is pinned to' });
     await expect(setAlert).toBeVisible();
@@ -266,7 +266,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     await expect(setAlert).toContainText(SET_PIN_ERR);
     const setLink = page.getByRole('link', { name: 'Configure a provider' });
     await expect(setLink).toBeVisible();
-    await expect(setLink).toHaveAttribute('href', '/settings/providers');
+    await expect(setLink).toHaveAttribute('href', /\/settings\/providers$/);
   } finally {
     await cleanup(page, agentId, projectId);
   }
@@ -324,14 +324,14 @@ test("no alert when the explicit model's provider is configured", async ({ page 
     const title = new RegExp(name);
 
     // Dashboard renders no model-config alert (provider prefix is configured).
-    await page.goto(`/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`);
     await expectAppPage(page, title);
     await expect(page.getByRole('alert')).toHaveCount(0);
 
     // Settings renders no model-config alert and the model select is pinned to
     // the explicit model (catalog match or the "(current)" fallback both give
     // the select the stored model name as its value).
-    await page.goto(`/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`);
     await expectAppPage(page, title);
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect(page.locator('#agent-settings-model')).toHaveValue(MODEL_NAME);
@@ -387,7 +387,7 @@ test('chat workspace warns before send when the selected agent model is unservab
 
     // The chat workspace selects the agent via ?agent=<id> and must show the
     // same unservable-model banner the agent dashboard renders, before send.
-    await page.goto(`/chat?agent=${agentId}`);
+    await goto(page, `/chat?agent=${agentId}`);
     await expectAppPage(page, /Chat/);
     const banner = page
       .getByRole('alert')
@@ -397,7 +397,7 @@ test('chat workspace warns before send when the selected agent model is unservab
     await expect(banner).toContainText(DASH_PIN_ERR);
     const link = page.getByRole('link', { name: 'Configure a provider' });
     await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', '/settings/providers');
+    await expect(link).toHaveAttribute('href', /\/settings\/providers$/);
   } finally {
     await cleanup(page, agentId, projectId);
   }

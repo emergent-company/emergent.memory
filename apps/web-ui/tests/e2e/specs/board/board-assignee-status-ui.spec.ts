@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { readBootstrap } from '../../helpers/bootstrap';
 import { MEMORY_API_URL } from '../../helpers/tokens';
@@ -171,7 +171,7 @@ test.describe.serial('board assignee + status controls', () => {
     const target = memberLabel(members[0] ?? {});
     expect(target, 'a project member must exist to reassign').toBeTruthy();
 
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
     await openPreview(page);
 
@@ -191,7 +191,7 @@ test.describe.serial('board assignee + status controls', () => {
   test('status control moves the item to an exact phase', async ({ page }) => {
     expect(canonicalId, 'beforeAll must seed the item').toBeTruthy();
 
-    await page.goto('/board');
+    await goto(page, '/board');
     await expectAppPage(page, /Board/);
     await openItemDialog(page);
 

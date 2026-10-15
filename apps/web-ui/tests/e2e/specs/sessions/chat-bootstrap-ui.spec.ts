@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { createAgentViaModal } from '../../helpers/agents';
+import { goto } from '../../helpers/page';
 
 // Regression coverage for the hx-boosted chat navigation bug: the chat page's
 // client scripts used to load INSIDE the swapped #chat-root fragment, so htmx
@@ -22,7 +23,7 @@ test('boosted navigation to /chat re-initializes the composer and rail grip', as
   try {
     id = await createAgentViaModal(page, name);
 
-    await page.goto('/chat');
+    await goto(page, '/chat');
     await expect(page.getByTestId('chat-input')).toBeVisible();
 
     // Full page load booted the chat root.

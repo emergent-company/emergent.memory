@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { installBlueprint } from '../../helpers/blueprints';
+import { goto } from '../../helpers/page';
 
 // Schema migration apply + rollback (gateway/migrations.go → POST
 // /blueprints/migrate for preview/execute, POST /blueprints/migrate/rollback;
@@ -130,7 +131,7 @@ test.describe('Blueprint schema migration + rollback', () => {
   }) => {
     const fixture = await setupFixture(page, `${SCRATCH_PREFIX}Apply ${Date.now()}`);
     try {
-      await page.goto(`/objects/${fixture.objectId}`);
+      await goto(page, `/objects/${fixture.objectId}`);
       await expect(legacyField(page)).toHaveValue(LEGACY_VALUE);
 
       // Preview: the dry-run plan renders with the type and the property it
@@ -150,7 +151,7 @@ test.describe('Blueprint schema migration + rollback', () => {
 
       // Resulting data state: the undeclared property is gone from the stored
       // object; the schema-declared properties are intact.
-      await page.goto(`/objects/${fixture.objectId}`);
+      await goto(page, `/objects/${fixture.objectId}`);
       await expect(legacyField(page)).toHaveCount(0);
       await expect(page.locator('textarea[name="prop_content"]')).toHaveValue(CONTENT_VALUE);
     } finally {
@@ -164,7 +165,7 @@ test.describe('Blueprint schema migration + rollback', () => {
       // Apply the migration first — same forced path as the apply test.
       const execute = await executeMigration(page, fixture);
       expect(execute.status()).toBe(303);
-      await page.goto(`/objects/${fixture.objectId}`);
+      await goto(page, `/objects/${fixture.objectId}`);
       await expect(legacyField(page)).toHaveCount(0);
 
       // Drive the real rollback route (the page's Rollback form posts toVersion).
@@ -178,7 +179,7 @@ test.describe('Blueprint schema migration + rollback', () => {
       );
 
       // Resulting state: the archived property is restored to the object.
-      await page.goto(`/objects/${fixture.objectId}`);
+      await goto(page, `/objects/${fixture.objectId}`);
       if ((await legacyField(page).count()) === 0) {
         test.skip(
           true,

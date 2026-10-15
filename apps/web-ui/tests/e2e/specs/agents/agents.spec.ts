@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test.describe('Agents page', () => {
   test('renders under session', async ({ page }) => {
-    await page.goto('/agents');
+    await goto(page, '/agents');
     await expectAppPage(page, /Agents/);
     await expect(page.getByRole('link', { name: 'Agents', exact: true })).toBeVisible();
     // Stable data-testid anchor (derived from the page title).
@@ -11,7 +11,7 @@ test.describe('Agents page', () => {
   });
 
   test('sidebar nav crosses to Chat and back', async ({ page }) => {
-    await page.goto('/agents');
+    await goto(page, '/agents');
     await expect(page).toHaveTitle(/Agents/);
     // Sidebar nav is HTMX (swaps #main-content, pushes the URL) — the <title>
     // is not updated, so assert on the URL, not the title.

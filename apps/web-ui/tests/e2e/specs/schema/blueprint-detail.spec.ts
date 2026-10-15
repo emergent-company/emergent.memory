@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 test('blueprint detail renders', async ({ page }) => {
   // The seeded `personal-memory` pack is applied; find its blueprint id.
@@ -9,6 +9,6 @@ test('blueprint detail renders', async ({ page }) => {
   const bp = installed.find((b) => b.name === 'personal-memory');
   expect(bp, 'personal-memory blueprint should be installed').toBeTruthy();
 
-  await page.goto(`/blueprints/${bp!.blueprintId}`);
+  await goto(page, `/blueprints/${bp!.blueprintId}`);
   await expectAppPage(page, /personal-memory/);
 });

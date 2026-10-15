@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { goto } from '../../helpers/page';
 
 // Registry-driven provider picker (Settings → Providers → add): the vendor
 // `<select id="provider-type">` is rendered from the server's provider registry
@@ -24,7 +25,7 @@ const VENDORS = [
 ];
 
 test('provider picker is registry-driven', async ({ page }) => {
-  await page.goto('/settings/providers/new');
+  await goto(page, '/settings/providers/new');
 
   const select = page.locator('#provider-type');
   await expect(select).toBeVisible();
@@ -60,7 +61,7 @@ test('provider picker is registry-driven', async ({ page }) => {
 });
 
 test('vendor selection reveals the right fields', async ({ page }) => {
-  await page.goto('/settings/providers/new');
+  await goto(page, '/settings/providers/new');
 
   const select = page.locator('#provider-type');
   await expect(select).toBeVisible();

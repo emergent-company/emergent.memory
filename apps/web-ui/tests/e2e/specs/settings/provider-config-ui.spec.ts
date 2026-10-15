@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { fillProviderForm, saveProviderForm } from '../../helpers/providers';
+import { goto } from '../../helpers/page';
 
 test('provider form renders and surfaces the save error', async ({ page }) => {
-  await page.goto('/settings/providers/new');
+  await goto(page, '/settings/providers/new');
 
   // Add-provider form renders with the provider select, API-key field, and save.
   await expect(page.locator('#provider-type')).toBeVisible();

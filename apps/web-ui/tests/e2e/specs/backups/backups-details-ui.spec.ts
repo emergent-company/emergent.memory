@@ -1,5 +1,5 @@
 import { test, expect, Page, Locator } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Backup details page + list cleanup (gateway/backups.templ, gateway/backups.go).
 //
@@ -17,13 +17,13 @@ import { expectAppPage } from '../../helpers/page';
 
 // A list/detail row title link: every `/backups/<id>` anchor except the
 // per-row/preview `/download` action.
-const BACKUP_ROW_LINK = 'a[href^="/backups/"]:not([href$="/download"])';
+const BACKUP_ROW_LINK = 'a[href*="/backups/"]:not([href$="/download"])';
 
 // beforeEach lands on /backups and skips the whole test when Memory has the
 // backup feature gated off (the page renders the "Backups unavailable" empty
 // state instead of the list).
 test.beforeEach(async ({ page }) => {
-  await page.goto('/backups');
+  await goto(page, '/backups');
   await expectAppPage(page, /Backups/);
   test.skip(
     (await page.getByText('Backups unavailable', { exact: true }).count()) > 0,
@@ -40,7 +40,7 @@ function section(page: Page, heading: string): Locator {
 
 // rowForBackup locates the list row whose title/preview link points at the id.
 function rowForBackup(page: Page, id: string): Locator {
-  return page.locator('tr').filter({ has: page.locator(`a[href="/backups/${id}"]`) });
+  return page.locator('tr').filter({ has: page.locator(`a[href$="/backups/${id}"]`) });
 }
 
 // firstRowBackupId reads the id of the newest backup row (the list is ordered
@@ -48,7 +48,7 @@ function rowForBackup(page: Page, id: string): Locator {
 async function firstRowBackupId(page: Page): Promise<string> {
   const href = await page.locator(BACKUP_ROW_LINK).first().getAttribute('href');
   if (!href) throw new Error('no backup row link found on /backups');
-  return href.replace(/^\/backups\//, '').split('/')[0];
+  return href.match(/\/backups\/([^/]+)/)?.[1] ?? '';
 }
 
 // startBackupViaForm submits the real inline create form (Start backup) and
@@ -68,7 +68,7 @@ async function readyBackupId(page: Page): Promise<string | null> {
     .filter({ has: page.getByText('ready', { exact: true }) });
   for (let i = 0; i < (await readyRows.count()); i++) {
     const href = await readyRows.nth(i).locator(BACKUP_ROW_LINK).first().getAttribute('href');
-    if (href) return href.replace(/^\/backups\//, '').split('/')[0];
+    if (href) return href.match(/\/backups\/([^/]+)/)?.[1] ?? '';
   }
   return null;
 }
@@ -145,7 +145,7 @@ test.describe('Backup details + list cleanup', () => {
         if (status !== 'ready') test.skip(true, `created backup ${id} ended as ${status}`);
       }
 
-      await page.goto(`/backups/${id}`);
+      await goto(page, `/backups/${id}`);
       await expectAppPage(page, /Backup/);
 
       for (const heading of ['Contents', 'Settings', 'Archive format', 'Integrity']) {
@@ -181,7 +181,7 @@ test.describe('Backup details + list cleanup', () => {
   });
 
   test('renders the error state for a missing backup instead of crashing', async ({ page }) => {
-    await page.goto('/backups/00000000-0000-0000-0000-000000000000');
+    await goto(page, '/backups/00000000-0000-0000-0000-000000000000');
     await expect(page).not.toHaveURL(/\/auth\/login/);
     await expect(
       page.getByRole('heading', { name: 'Backup unavailable', exact: true }),

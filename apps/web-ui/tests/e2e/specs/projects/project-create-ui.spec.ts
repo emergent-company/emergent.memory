@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { readBootstrap } from '../../helpers/bootstrap';
+import { goto } from '../../helpers/page';
 
 test('creates a project via the switcher and activates it', async ({ page }) => {
   const bootstrap = readBootstrap();
   const projectName = `E2E UI Project ${Date.now()}`;
 
-  await page.goto('/agents');
+  await goto(page, '/agents');
 
   await page.getByTestId('project-switcher').click();
   // The "New project" footer row is a link that opens the create dialog

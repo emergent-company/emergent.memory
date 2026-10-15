@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
 import { addProvider } from '../helpers/providers';
+import { goto } from '../helpers/page';
 
 // Approvals page scenario: prove a pending human-in-the-loop tool approval can
 // be resolved from /settings/approvals (gateway/approvals_handlers.go +
@@ -162,7 +163,7 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
 
     // 5. CHAT (UI): fire the turn; the run pauses on the gated tool, so the SSE
     // stream stays open — do not await the body. Just confirm the POST started.
-    await page.goto(`/chat?agent=${agentId}`);
+    await goto(page, `/chat?agent=${agentId}`);
     const agentSelect = page.locator('#chat-agent');
     await expect(agentSelect).toBeVisible();
     await agentSelect.selectOption(agentId);
@@ -187,7 +188,7 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
     // refresh, so poll by reloading the sibling until the Approve control appears.
     const approvalsPage = await page.context().newPage();
     try {
-      await approvalsPage.goto('/settings/approvals');
+      await goto(approvalsPage, '/settings/approvals');
 
       // Page-health gate: a login redirect / 500 / broken selector must HARD-FAIL
       // here, not degrade into the model-deviation skip below.
@@ -217,7 +218,7 @@ test('a pending tool approval is resolved from the approvals page', async ({ pag
       // paused on the approval, so the operator can jump to it.
       const sessionLink = pendingRow.getByTestId('approval-session-link');
       await expect(sessionLink).toBeVisible();
-      await expect(sessionLink).toHaveAttribute('href', /^\/chat\?c=.+/);
+      await expect(sessionLink).toHaveAttribute('href', /\/chat\?c=.+/);
 
       await pendingRow.getByRole('button', { name: 'Approve' }).click();
       await approvalsPage.waitForURL(/\/settings\/approvals/);

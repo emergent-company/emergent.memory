@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { cleanupObjects } from '../../helpers/objects';
+import { goto } from '../../helpers/page';
 
 // Regression: a long, multi-line string property must present as a grown field
 // with an initialised character counter after *boosted* client-side navigation
@@ -39,7 +40,7 @@ test('long-text field grows and counts after boosted navigation', async ({ page 
   try {
     // 1. Create a Person whose `notes` (a schema string with widget: textarea)
     //    holds a long value, through the real create form (hard navigation).
-    await page.goto('/objects/new');
+    await goto(page, '/objects/new');
     await page.locator('select[name="type"]').selectOption('Person');
     await expect(page.locator('#object-key')).toBeVisible();
     await page.locator('#object-key').fill(key);
@@ -51,15 +52,15 @@ test('long-text field grows and counts after boosted navigation', async ({ page 
     expect(objectId, 'no object id in the detail URL').not.toBe('');
 
     // 2. Load the list, then click into the object via the boosted row link —
-    //    deliberately NOT page.goto(detail): a hard load would fire
+    //    deliberately NOT goto(page, detail): a hard load would fire
     //    DOMContentLoaded and mask the regression. A window flag survives a
     //    boosted swap but is lost on a full reload, so it also proves the
     //    navigation was client-side.
-    await page.goto('/objects');
+    await goto(page, '/objects');
     await page.evaluate(() => {
       (window as any).__e2eBoosted = true;
     });
-    const rowLink = page.locator(`#objects-list a[href="/objects/${objectId}"]`);
+    const rowLink = page.locator(`#objects-list a[href$="/objects/${objectId}"]`);
     await expect(rowLink).toBeVisible();
     await rowLink.click();
 

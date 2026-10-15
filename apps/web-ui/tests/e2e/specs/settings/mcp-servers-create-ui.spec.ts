@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // MCP Servers management UI (gateway/mcp_servers.templ +
 // mcp_servers_handlers.go): registers an external http-transport server through
@@ -165,7 +165,7 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
 
   try {
     // 1. NAVIGATE (UI): the list page → New server form.
-    await page.goto(MCP_BASE);
+    await goto(page, MCP_BASE);
     await expectAppPage(page, /MCP Servers/);
     const newLink = page.getByRole('link', { name: 'New server' });
     if (await newLink.isVisible().catch(() => false)) {
@@ -246,7 +246,7 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     // pre-filled edit page. Transport is now editable after registration, so
     // the URL is one of two editable connection details. Memory re-validates
     // only URL syntax here, so this step runs in both env-gated modes.
-    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await goto(page, `${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await expect(page.locator('#mcp-server-url')).toHaveValue(createUrl);
     await page.locator('#mcp-server-url').fill(editedUrl);
@@ -254,7 +254,7 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     await page.waitForURL(/\/settings\/mcp-servers\?updated=1/);
     await expectAppPage(page, /MCP Servers/);
     await expect(page.locator('[data-mcp-row]', { hasText: name })).toBeVisible();
-    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await goto(page, `${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await expect(page.locator('#mcp-server-url')).toHaveValue(editedUrl);
 
@@ -273,7 +273,7 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     await expect(row).toBeVisible();
     await expect(row.getByText('stdio', { exact: true })).toBeVisible();
 
-    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await goto(page, `${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await page.locator('input[name="type"][value="http"]').check();
     await expect(page.locator('#mcp-server-url')).toBeVisible();
@@ -284,12 +284,12 @@ test('registers an MCP server via the settings UI end-to-end', async ({ page }) 
     row = page.locator('[data-mcp-row]', { hasText: name });
     await expect(row).toBeVisible();
     await expect(row.getByText('http', { exact: true })).toBeVisible();
-    await page.goto(`${MCP_BASE}/${serverId}/edit`);
+    await goto(page, `${MCP_BASE}/${serverId}/edit`);
     await expectAppPage(page, /Edit server/);
     await expect(page.locator('#mcp-server-url')).toHaveValue(editedUrl);
 
     // 6. DELETE (UI): row action → confirm dialog → ?deleted=1 → row gone.
-    await page.goto(MCP_BASE);
+    await goto(page, MCP_BASE);
     await expectAppPage(page, /MCP Servers/);
     await deleteServerViaUi(page, name, serverId);
   } finally {

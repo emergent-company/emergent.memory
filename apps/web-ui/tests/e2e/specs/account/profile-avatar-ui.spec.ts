@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Minimal 1x1 PNG. The backend validates by magic bytes (http.DetectContentType),
 // so any buffer with the PNG signature is accepted as image/png.
@@ -17,7 +17,7 @@ async function openModal(page: Page) {
 }
 
 test('uploads and removes a profile photo via the modal', async ({ page }) => {
-  await page.goto('/profile');
+  await goto(page, '/profile');
   await expectAppPage(page, /Profile/);
 
   // Idempotent cleanup: remove any leftover photo from a prior (possibly failed)

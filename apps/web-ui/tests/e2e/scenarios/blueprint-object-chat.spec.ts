@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../helpers/bootstrap';
-import { expectAppPage } from '../helpers/page';
+import { expectAppPage, goto } from '../helpers/page';
 import { addProvider, setDefaultEmbeddingModel } from '../helpers/providers';
 import { createAgentViaModal } from '../helpers/agents';
 import { importGitHubBlueprint, PERSONAL_MEMORY_BLUEPRINT_URL, PERSONAL_MEMORY_BLUEPRINT_REF } from '../helpers/blueprints';
@@ -171,14 +171,14 @@ test('full journey: provider → agent → blueprint → object → chat', async
     // object-creation form. (selectOption asserts the option exists and is
     // enabled; a bare toBeVisible on an <option> never passes because options
     // in a closed select are not "visible" to Playwright.)
-    await page.goto('/objects/new');
+    await goto(page, '/objects/new');
     await page.locator('select[name="type"]').selectOption('Person');
     await expect(page.locator('#object-key')).toBeVisible();
 
     // 6. OBJECT (UI): create a Person object and confirm its detail page
     // rendered (the detail page titles itself with the object's key).
     const objectId = await createObjectViaForm(page, 'Person', key, [tag]);
-    await page.goto(`/objects/${objectId}`);
+    await goto(page, `/objects/${objectId}`);
     await expectAppPage(page, new RegExp(key));
 
     // 7. CHAT ABOUT OBJECT (UI): object detail → "Chat about object" → the

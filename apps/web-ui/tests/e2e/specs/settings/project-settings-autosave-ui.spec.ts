@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Response } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 
 // Project Settings (gateway/project_settings.templ + settings_handlers.go) is
 // the gateway's heaviest HTMX surface: most fields are inline autosaves
@@ -88,7 +88,7 @@ test('project settings: project-info autosaves inline and persists after reload'
   let original: string | null = null;
 
   try {
-    await page.goto(SETTINGS);
+    await goto(page, SETTINGS);
     await expectAppPage(page, /Project Settings/);
     const field = page.locator('#project-info');
     await expect(field).toBeVisible();
@@ -105,7 +105,7 @@ test('project settings: project-info autosaves inline and persists after reload'
   } finally {
     // Restore the original value (only when we captured it before mutating).
     if (original !== null) {
-      await page.goto(SETTINGS);
+      await goto(page, SETTINGS);
       const field = page.locator('#project-info');
       if ((await field.inputValue()) !== original) {
         await autosaveText(page, '#project-info', original, '/settings/project/project_info');
@@ -129,7 +129,7 @@ test('project settings: editor-agent autosaves inline and persists after reload'
     expect(created.ok(), `create scratch agent failed (HTTP ${created.status()})`).toBeTruthy();
     agentId = ((await created.json()) as { id: string }).id;
 
-    await page.goto(SETTINGS);
+    await goto(page, SETTINGS);
     await expectAppPage(page, /Project Settings/);
     const select = page.locator('#editor-agent');
     await expect(select).toBeVisible();
@@ -148,7 +148,7 @@ test('project settings: editor-agent autosaves inline and persists after reload'
     await expect(page.locator('#editor-agent')).toHaveValue(agentId);
   } finally {
     if (original !== null) {
-      await page.goto(SETTINGS);
+      await goto(page, SETTINGS);
       const select = page.locator('#editor-agent');
       if ((await select.inputValue()) !== original) {
         await Promise.all([waitForSave(page, '/settings/editor'), select.selectOption(original)]);

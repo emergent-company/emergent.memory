@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { expectAppPage } from '../../helpers/page';
+import { expectAppPage, goto } from '../../helpers/page';
 import { readBootstrap } from '../../helpers/bootstrap';
 
 test.describe('Organizations', () => {
@@ -7,7 +7,7 @@ test.describe('Organizations', () => {
     const bootstrap = readBootstrap();
     expect(bootstrap?.orgName, 'bootstrap org must exist').toBeTruthy();
 
-    await page.goto('/orgs');
+    await goto(page, '/orgs');
     await expectAppPage(page, /Organizations/);
     // The org name appears in the project switcher, an <option>, and the list;
     // scope to the main content to assert the org list entry specifically.
