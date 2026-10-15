@@ -234,7 +234,9 @@ templ BoardDrawer(detail *WorkItemDetail, statusMap boardStatusMap, deliverables
 			})
 		</div>
 
-		@ui.DialogTitle(ui.DialogTitleProps{Tracking: true, Class: "mt-3"}) { item.Key }
+		@ui.DialogTitle(ui.DialogTitleProps{Tracking: true, Class: "mt-3"}) {
+			{ item.Key }
+		}
 		<div class="mt-2 flex flex-wrap items-center gap-1.5">
 			@ui.Badge(ui.BadgeProps{Label: "v" + strconv.Itoa(item.Version), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			if item.Assignee != "" {

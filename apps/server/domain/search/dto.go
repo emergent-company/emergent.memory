@@ -56,7 +56,7 @@ type UnifiedSearchRequest struct {
 	IncludeDebug        bool                              `json:"includeDebug,omitempty"`
 	MaxTokenBudget      int                               `json:"maxTokenBudget,omitempty"`
 	BranchID            *string                           `json:"branch_id,omitempty"` // nil = main graph
-	Namespace           *string                           `json:"namespace,omitempty"` // filter graph results by namespace
+	Namespace           *string                           `json:"namespace,omitempty"` // filter both legs by namespace: graph objects by their namespace field, chunks through kb.object_chunks → kb.graph_objects (#1902)
 	Types               []string                          `json:"types,omitempty"`     // restrict graph-object candidates to these types at retrieval time
 	Labels              []string                          `json:"labels,omitempty"`    // restrict graph-object candidates to objects carrying any of these labels at retrieval time
 	RecencyBoost        *float32                          `json:"recencyBoost,omitempty"`

@@ -623,6 +623,10 @@ func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, re
 		LexicalWeight: 0.5,
 		VectorWeight:  0.5,
 		Limit:         req.Limit,
+		// Chunks carry no namespace, so a namespace-restricted search must scope
+		// them through the object→chunk link or the text leg leaks chunks from
+		// every namespace (#1902).
+		Namespace: req.Namespace,
 	}
 
 	var resp *TextSearchResponse

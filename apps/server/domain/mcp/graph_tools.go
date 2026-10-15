@@ -360,12 +360,15 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 		case search.ItemTypeText:
 			textType := "text_chunk"
 
-			// Chunks carry no entity type and no namespace, so the namespace
-			// allowlist (allowedTypes) and system blocklist (blockedTypes) do not
-			// gate them. A caller-supplied `types` list that omits "text_chunk"
-			// suppresses them, and a restricted agent object-type scope suppresses
-			// them by design: scope expansion rewrites `types` to the scope
-			// allowlist before this point (see FilterRequestedObjectTypes).
+			// Chunks carry no entity type, so the type allowlist (allowedTypes) and
+			// system blocklist (blockedTypes) do not gate them — they are keyed on
+			// schema type names. A caller-supplied `types` list that omits
+			// "text_chunk" suppresses them, and a restricted agent object-type scope
+			// suppresses them by design: scope expansion rewrites `types` to the
+			// scope allowlist before this point (see FilterRequestedObjectTypes).
+			// A namespace restriction is enforced earlier, in the chunks query
+			// itself (via kb.object_chunks → kb.graph_objects.namespace), because
+			// a chunk has no namespace of its own to test here (#1902).
 			if len(types) > 0 && !containsStr(types, textType) {
 				continue
 			}

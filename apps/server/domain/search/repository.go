@@ -49,6 +49,40 @@ type TextSearchParams struct {
 	LexicalWeight float32
 	VectorWeight  float32
 	Limit         int
+	// Namespace, when non-nil and non-empty, restricts chunk results to chunks
+	// extracted into at least one graph object carrying that namespace. Chunks
+	// have no namespace of their own (kb.chunks is project-scoped); the
+	// object→chunk link (kb.object_chunks) is what makes a chunk belong to a
+	// namespace. Without this the text leg would leak chunks from every
+	// namespace into a namespace-restricted search.
+	Namespace *string
+}
+
+// chunkNamespacePredicate returns the extra WHERE fragment (and its bind args)
+// that scopes chunk results to a namespace, or ("", nil) when no namespace
+// restriction applies. It assumes the enclosing query aliases kb.chunks as `c`
+// and kb.documents as `d`. The predicate is fail-closed: a chunk with no
+// extracted object in the requested namespace is excluded. Soft-deleted objects
+// do not count, so a chunk whose only extraction was deleted is excluded too.
+// Branch/version scoping is deliberately not applied: namespace is inherited
+// across versions within a branch, so a chunk reached through a superseded
+// version — or a branch version that carries the namespace — was genuinely
+// extracted into that namespace. A branch-forked copy carries no namespace of
+// its own, so it cannot admit a chunk under a namespace it was never extracted
+// into.
+func chunkNamespacePredicate(namespace *string) (string, []any) {
+	if namespace == nil || *namespace == "" {
+		return "", nil
+	}
+	return `
+		  AND EXISTS (
+			SELECT 1 FROM kb.object_chunks oc
+			JOIN kb.graph_objects o ON o.id = oc.object_id
+			WHERE oc.chunk_id = c.id
+			  AND o.project_id = d.project_id
+			  AND o.deleted_at IS NULL
+			  AND o.namespace = ?
+		  )`, []any{*namespace}
 }
 
 // TextSearchResultRow represents a single text search result from the database
@@ -71,7 +105,7 @@ type TextSearchResponse struct {
 func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams) (*TextSearchResponse, error) {
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 
-	results, err := r.lexicalSearch(ctx, params.ProjectID, params.Query, limit)
+	results, err := r.lexicalSearch(ctx, params, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +124,15 @@ func (r *Repository) LexicalSearch(ctx context.Context, params TextSearchParams)
 // this index, which zeroes the whole AND clause — see ftsquery.Relax. A natural
 // multi-term query over chunks where no single chunk holds every term is
 // zeroed by AND semantics but well represented under OR — see ftsquery.Disjoin.
-func (r *Repository) lexicalSearch(ctx context.Context, projectID uuid.UUID, queryText string, limit int) ([]*TextSearchResult, error) {
-	results, err := r.runChunkLexical(ctx, projectID, queryText, limit, false)
+func (r *Repository) lexicalSearch(ctx context.Context, params TextSearchParams, limit int) ([]*TextSearchResult, error) {
+	results, err := r.runChunkLexical(ctx, params, params.Query, limit, false)
 	if err != nil || len(results) > 0 {
 		return results, err
 	}
 
-	relaxed, ok := ftsquery.Relax(queryText)
+	relaxed, ok := ftsquery.Relax(params.Query)
 	if ok {
-		relaxedResults, err := r.runChunkLexical(ctx, projectID, relaxed, limit, false)
+		relaxedResults, err := r.runChunkLexical(ctx, params, relaxed, limit, false)
 		if err != nil {
 			return nil, err
 		}
@@ -107,21 +141,23 @@ func (r *Repository) lexicalSearch(ctx context.Context, projectID uuid.UUID, que
 		}
 	}
 
-	disjoined, ok := ftsquery.Disjoin(queryText)
+	disjoined, ok := ftsquery.Disjoin(params.Query)
 	if !ok {
 		return results, nil
 	}
-	return r.runChunkLexical(ctx, projectID, disjoined, limit, true)
+	return r.runChunkLexical(ctx, params, disjoined, limit, true)
 }
 
 // runChunkLexical executes the chunks lexical query for queryText. When
 // disjoin is true, queryText is a `|`-joined term disjunction matched with
 // to_tsquery (OR semantics) instead of websearch_to_tsquery (AND semantics).
-func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, queryText string, limit int, disjoin bool) ([]*TextSearchResult, error) {
+func (r *Repository) runChunkLexical(ctx context.Context, params TextSearchParams, queryText string, limit int, disjoin bool) ([]*TextSearchResult, error) {
 	tsqueryFn := "websearch_to_tsquery"
 	if disjoin {
 		tsqueryFn = "to_tsquery"
 	}
+
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
 
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
@@ -130,12 +166,16 @@ func (r *Repository) runChunkLexical(ctx context.Context, projectID uuid.UUID, q
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.tsv @@ ` + tsqueryFn + `('simple', ?)
 		  AND d.project_id = ?
-		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false
+		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY score DESC, c.id ASC
 		LIMIT ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, queryText, queryText, projectID, limit)
+	args := []any{queryText, queryText, params.ProjectID}
+	args = append(args, nsArgs...)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		r.log.Error("lexical search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -178,6 +218,8 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
+
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
@@ -186,12 +228,16 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false
+		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
 
-	rows, err := r.db.QueryContext(ctx, query, vectorStr, params.ProjectID, vectorStr, limit)
+	args := []any{vectorStr, params.ProjectID}
+	args = append(args, nsArgs...)
+	args = append(args, vectorStr, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		r.log.Error("vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -253,7 +299,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 	}
 
 	// Execute lexical search
-	lexicalHits, err := r.lexicalSearch(ctx, params.ProjectID, params.Query, fetchLimit)
+	lexicalHits, err := r.lexicalSearch(ctx, params, fetchLimit)
 	if err != nil {
 		r.log.Error("hybrid lexical search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
@@ -272,6 +318,8 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
 
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
+
 	vectorQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
 			   (1 - (c.embedding <=> ?::vector)) AS score
@@ -279,11 +327,15 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		JOIN kb.documents d ON d.id = c.document_id
 		WHERE c.embedding IS NOT NULL
 		  AND d.project_id = ?
-		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false
+		  AND COALESCE((c.metadata->>'isParent')::boolean, false) = false` + nsPredicate + `
 		ORDER BY c.embedding <=> ?::vector
 		LIMIT ?
 	`
-	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorStr, params.ProjectID, vectorStr, fetchLimit)
+	vectorArgs := []any{vectorStr, params.ProjectID}
+	vectorArgs = append(vectorArgs, nsArgs...)
+	vectorArgs = append(vectorArgs, vectorStr, fetchLimit)
+
+	vectorRows, err := r.db.QueryContext(ctx, vectorQuery, vectorArgs...)
 	if err != nil {
 		r.log.Error("hybrid vector search failed", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
