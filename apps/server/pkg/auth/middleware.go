@@ -1017,21 +1017,29 @@ func (m *Middleware) validateToken(ctx context.Context, token, projectID string)
 		return m.validateAPIToken(ctx, token)
 	}
 
-	// 2. Check for static test tokens (development only)
-	if m.cfg.Debug || m.cfg.Environment != "production" {
+	// 2. Check for static test tokens (development only). The gate is an explicit
+	// environment allowlist, not a standalone-ness check: test tokens are accepted
+	// in local/dev (including the standalone e2e stack, which runs
+	// STANDALONE_MODE=true with ENVIRONMENT=local) but rejected in production and
+	// in every preview environment — standalone (STANDALONE_MODE) or Zitadel-auth
+	// (PREVIEW_AUTH_MODE=zitadel) both set ENVIRONMENT=preview — because a public
+	// preview would otherwise accept the published e2e-* constants and the e2e-
+	// prefix and grant full scopes to anyone (issue #1833). DEBUG is an explicit
+	// opt-in escape hatch.
+	if m.cfg.Debug || (m.cfg.Environment != "production" && m.cfg.Environment != "preview") {
 		if user := m.checkTestToken(ctx, token); user != nil {
 			return user, nil
 		}
 	}
 
 	// 2b. Standalone mode has no external OIDC provider: authentication is the
-	// static API key (already checked in authenticate) plus emt_* API tokens and
-	// development test tokens handled above. Any other token is simply not valid
-	// for this deployment. Do NOT attempt external introspection/userinfo — with
-	// no Zitadel configured that path fails with a transport error, which the
-	// infra classification below would report as a retryable 503 even though the
-	// token is permanently invalid here. Fail closed with 401 instead; this is
-	// the documented "invalid token returns 401" contract (issue #1481).
+	// static API key (already checked in authenticate) plus emt_* API tokens.
+	// Any other token is simply not valid for this deployment. Do NOT attempt
+	// external introspection/userinfo — with no Zitadel configured that path
+	// fails with a transport error, which the infra classification below would
+	// report as a retryable 503 even though the token is permanently invalid
+	// here. Fail closed with 401 instead; this is the documented "invalid token
+	// returns 401" contract (issue #1481).
 	if m.cfg.Standalone.IsEnabled() {
 		return nil, apperror.ErrInvalidToken
 	}

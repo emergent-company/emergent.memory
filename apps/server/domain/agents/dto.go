@@ -7,6 +7,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/agents/toolgroups"
 	"github.com/emergent-company/emergent.memory/domain/chat/citations"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
@@ -548,7 +549,7 @@ func (d *AgentDefinition) ToDTO() *AgentDefinitionDTO {
 		IncludeProjectInfo: d.IncludeProjectInfo(),
 		ObjectTypes:        d.ObjectTypes(),
 		RelationshipTypes:  d.RelationshipTypes(),
-		SandboxConfig:      d.SandboxConfig,
+		SandboxConfig:      sandbox.RedactSandboxConfigMap(d.SandboxConfig),
 		ToolPolicies:       d.ToolPolicies,
 		DefaultToolPolicy:  d.DefaultToolPolicy,
 		UIConfig:           d.UIConfig,

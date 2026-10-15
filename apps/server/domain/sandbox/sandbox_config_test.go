@@ -287,6 +287,84 @@ func TestDefaultAgentSandboxConfig(t *testing.T) {
 	assert.Nil(t, cfg.SetupCommands)
 }
 
+// --- Secret redaction (issue #1844) ---
+
+func TestIsSecretEnvKey(t *testing.T) {
+	secret := []string{"GH_TOKEN", "GITHUB_TOKEN", "gh_token", "MY_TOKEN", "API_KEY", "CLIENT_SECRET", "DB_PASSWORD", "SOME_CREDENTIAL", "apikey"}
+	for _, k := range secret {
+		assert.True(t, IsSecretEnvKey(k), "expected secret: %q", k)
+	}
+	notSecret := []string{"PATH", "HOME", "REPO_URL", "BRANCH", "NODE_ENV", "GITHUB_REPOSITORY", "FOO"}
+	for _, k := range notSecret {
+		assert.False(t, IsSecretEnvKey(k), "expected not secret: %q", k)
+	}
+}
+
+func TestAgentSandboxConfig_RedactSecrets(t *testing.T) {
+	cfg := &AgentSandboxConfig{
+		Enabled: true,
+		EnvVars: map[string]string{
+			"GH_TOKEN":     "ghp_realTokenValue",
+			"GITHUB_TOKEN": "gho_anotherRealToken",
+			"REPO_URL":     "https://github.com/org/repo",
+			"NODE_ENV":     "production",
+		},
+	}
+
+	out := cfg.RedactSecrets()
+	require.NotNil(t, out)
+	// Original is untouched.
+	assert.Equal(t, "ghp_realTokenValue", cfg.EnvVars["GH_TOKEN"])
+	// Secret keys are redacted.
+	assert.Equal(t, RedactedSecretValue, out.EnvVars["GH_TOKEN"])
+	assert.Equal(t, RedactedSecretValue, out.EnvVars["GITHUB_TOKEN"])
+	// Non-secret keys are preserved.
+	assert.Equal(t, "https://github.com/org/repo", out.EnvVars["REPO_URL"])
+	assert.Equal(t, "production", out.EnvVars["NODE_ENV"])
+}
+
+func TestAgentSandboxConfig_RedactSecrets_NoEnvVars(t *testing.T) {
+	cfg := &AgentSandboxConfig{Enabled: true}
+	out := cfg.RedactSecrets()
+	require.NotNil(t, out)
+	assert.True(t, out.Enabled)
+	assert.Nil(t, out.EnvVars)
+}
+
+func TestRedactSandboxConfigMap_RedactsEnvVarsOnly(t *testing.T) {
+	in := map[string]any{
+		"enabled":     true,
+		"base_image":  "ubuntu:22.04",
+		"repo_source": map[string]any{"type": "fixed", "url": "https://github.com/org/repo"},
+		"env_vars": map[string]any{
+			"GH_TOKEN":   "ghp_realTokenValue",
+			"NODE_ENV":   "production",
+			"SOME_TOKEN": "plain-secret",
+		},
+		"unknown_key": "preserved",
+	}
+
+	out := RedactSandboxConfigMap(in)
+	require.NotNil(t, out)
+	// Non-env_vars entries are preserved verbatim (including an unknown key).
+	assert.Equal(t, in["base_image"], out["base_image"])
+	assert.Equal(t, in["repo_source"], out["repo_source"])
+	assert.Equal(t, "preserved", out["unknown_key"])
+
+	env, ok := out["env_vars"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, RedactedSecretValue, env["GH_TOKEN"])
+	assert.Equal(t, RedactedSecretValue, env["SOME_TOKEN"])
+	assert.Equal(t, "production", env["NODE_ENV"])
+
+	// The input map's env_vars must not be mutated.
+	assert.Equal(t, "ghp_realTokenValue", in["env_vars"].(map[string]any)["GH_TOKEN"])
+}
+
+func TestRedactSandboxConfigMap_Nil(t *testing.T) {
+	assert.Nil(t, RedactSandboxConfigMap(nil))
+}
+
 // --- ResolveRepoSource ---
 
 func TestResolveRepoSource_FixedConfig(t *testing.T) {

@@ -48,6 +48,88 @@ func DefaultAgentSandboxConfig() *AgentSandboxConfig {
 	}
 }
 
+// RedactedSecretValue is the placeholder returned by read endpoints in place of a
+// secret env var value (e.g. a git token). It is deliberately not a valid token
+// so it can never be mistaken for — or replayed as — a real credential.
+const RedactedSecretValue = "••••••••"
+
+// IsSecretEnvKey reports whether an env var key names a credential that must
+// never be echoed to a client. It uses the same credential vocabulary as the
+// audit redactor (token/password/secret/api_key/credential) and additionally
+// treats the two git token keys as secret even without a marker suffix.
+func IsSecretEnvKey(key string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	switch {
+	case k == "gh_token", k == "github_token":
+		return true
+	case strings.Contains(k, "token"),
+		strings.Contains(k, "password"),
+		strings.Contains(k, "secret"),
+		strings.Contains(k, "api_key"),
+		strings.Contains(k, "apikey"),
+		strings.Contains(k, "credential"):
+		return true
+	}
+	return false
+}
+
+// RedactSecrets returns a copy of the config with secret env var values replaced
+// by RedactedSecretValue. Read endpoints must use this so a git token or other
+// credential persisted in env_vars is never returned to a client (issue #1844).
+func (c *AgentSandboxConfig) RedactSecrets() *AgentSandboxConfig {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	if len(c.EnvVars) == 0 {
+		return &out
+	}
+	out.EnvVars = make(map[string]string, len(c.EnvVars))
+	for k, v := range c.EnvVars {
+		if IsSecretEnvKey(k) && v != "" {
+			out.EnvVars[k] = RedactedSecretValue
+		} else {
+			out.EnvVars[k] = v
+		}
+	}
+	return &out
+}
+
+// RedactSandboxConfigMap returns a copy of the raw workspace-config map (the
+// JSONB shape stored on kb.agent_definitions.sandbox_config) with secret env var
+// values redacted. Only the env_vars object is touched; every other key and value
+// is preserved verbatim so read endpoints do not alter the config's shape.
+func RedactSandboxConfigMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if k == "env_vars" {
+			out[k] = redactEnvVarsMap(v)
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func redactEnvVarsMap(v any) any {
+	env, ok := v.(map[string]any)
+	if !ok || len(env) == 0 {
+		return v
+	}
+	out := make(map[string]any, len(env))
+	for k, val := range env {
+		if s, ok := val.(string); ok && s != "" && IsSecretEnvKey(k) {
+			out[k] = RedactedSecretValue
+		} else {
+			out[k] = val
+		}
+	}
+	return out
+}
+
 // Validate validates the workspace configuration and returns a list of validation errors.
 func (c *AgentSandboxConfig) Validate() []string {
 	var errs []string

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,6 +170,33 @@ func TestAgentRunDTOJSONCarriesSpans(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(bare), `"spans"`)
 	require.NotContains(t, string(bare), "spanId")
+}
+
+// TestAgentDefinitionToDTORedactsSandboxSecrets locks the secret-redaction
+// contract (issue #1844): a git token stored in the sandbox env_vars must never
+// surface — in the DTO or its JSON — through the agent-definition read path.
+func TestAgentDefinitionToDTORedactsSandboxSecrets(t *testing.T) {
+	const realToken = "ghp_realTokenValue"
+	d := &AgentDefinition{
+		ID: "ad-1",
+		SandboxConfig: map[string]any{
+			"enabled": true,
+			"env_vars": map[string]any{
+				"GH_TOKEN": realToken,
+				"NODE_ENV": "production",
+			},
+		},
+	}
+
+	dto := d.ToDTO()
+	env, ok := dto.SandboxConfig["env_vars"].(map[string]any)
+	require.True(t, ok, "env_vars must be preserved in workspaceConfig")
+	require.Equal(t, sandbox.RedactedSecretValue, env["GH_TOKEN"])
+	require.Equal(t, "production", env["NODE_ENV"])
+
+	b, err := json.Marshal(dto)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), realToken, "raw git token must not appear in the DTO JSON")
 }
 
 // TestAgentRunDTOSpansCompanionToTokenUsage documents the pairing: enrichRunTrace

@@ -2780,7 +2780,8 @@ func (h *Handler) GetSandboxConfig(c echo.Context) error {
 		cfg = sandbox.DefaultAgentSandboxConfig()
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(cfg))
+	// Never return raw secrets (e.g. a git token in env_vars) to the client.
+	return c.JSON(http.StatusOK, SuccessResponse(cfg.RedactSecrets()))
 }
 
 // UpdateSandboxConfig handles PUT /api/admin/agent-definitions/:id/sandbox-config
@@ -2833,6 +2834,20 @@ func (h *Handler) UpdateSandboxConfig(c echo.Context) error {
 		return apperror.NewNotFound("AgentDefinition", id)
 	}
 
+	// Secrets are redacted on read (see GetSandboxConfig). If the client sends
+	// back the redaction placeholder for a secret env var — i.e. it did not
+	// change the value — preserve the existing stored value instead of
+	// overwriting a real credential with the placeholder.
+	if existing, err := sandbox.ParseAgentSandboxConfig(def.SandboxConfig); err == nil && existing != nil {
+		for k, v := range cfg.EnvVars {
+			if v == sandbox.RedactedSecretValue {
+				if old, ok := existing.EnvVars[k]; ok && old != "" {
+					cfg.EnvVars[k] = old
+				}
+			}
+		}
+	}
+
 	// Convert to map for JSONB storage
 	cfgMap, err := cfg.ToMap()
 	if err != nil {
@@ -2845,7 +2860,9 @@ func (h *Handler) UpdateSandboxConfig(c echo.Context) error {
 		return apperror.NewInternal("failed to update agent definition", err)
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(&cfg))
+	// The preserve-block above may have restored a real stored secret into cfg;
+	// redact it so the response never echoes the plaintext credential back.
+	return c.JSON(http.StatusOK, SuccessResponse(cfg.RedactSecrets()))
 }
 
 // --- Agent Question Handlers ---
@@ -3672,9 +3689,16 @@ func (h *Handler) ListAgentOverrides(c echo.Context) error {
 
 	entries := make([]OverrideEntry, len(settings))
 	for i, s := range settings {
+		value := s.Value
+		// An override's sandbox config can carry secret env vars (e.g. a git
+		// token) that ApplyAgentOverride applies verbatim; redact them so a
+		// read-only caller (agents:read) can't recover stored credentials (#1844).
+		if sc, ok := value["sandboxConfig"].(map[string]any); ok {
+			value["sandboxConfig"] = sandbox.RedactSandboxConfigMap(sc)
+		}
 		entries[i] = OverrideEntry{
 			AgentName: s.Key,
-			Override:  s.Value,
+			Override:  value,
 		}
 	}
 
@@ -3704,6 +3728,13 @@ func (h *Handler) GetAgentOverride(c echo.Context) error {
 	}
 	if override == nil {
 		return apperror.NewNotFound("AgentOverride", agentName)
+	}
+
+	// An override's sandbox config can carry secret env vars (e.g. a git token)
+	// that ApplyAgentOverride applies verbatim; redact them so a read-only caller
+	// (agents:read) can't recover stored credentials (issue #1844).
+	if override.SandboxConfig != nil {
+		override.SandboxConfig = sandbox.RedactSandboxConfigMap(override.SandboxConfig)
 	}
 
 	return c.JSON(http.StatusOK, SuccessResponse(override))
@@ -3806,6 +3837,19 @@ func (h *Handler) GetProjectSetting(c echo.Context) error {
 	if setting == nil {
 		return apperror.NewNotFound("ProjectSetting", category+"/"+key)
 	}
+
+	// The generic settings store also backs agent overrides: SetAgentOverride
+	// persists the marshalled AgentOverride — including sandboxConfig — via
+	// UpsertProjectSetting under category "agent_override". An override's
+	// sandboxConfig can carry secret env vars (e.g. a git token), so redact them
+	// here too, or a caller with agents:read could reach the secret through this
+	// generic path instead of the override endpoints (issue #1844).
+	if category == SettingsCategoryAgentOverride {
+		if sc, ok := setting.Value["sandboxConfig"].(map[string]any); ok {
+			setting.Value["sandboxConfig"] = sandbox.RedactSandboxConfigMap(sc)
+		}
+	}
+
 	return c.JSON(http.StatusOK, SuccessResponse(setting))
 }
 

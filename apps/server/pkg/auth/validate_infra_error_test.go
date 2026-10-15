@@ -179,3 +179,135 @@ func TestValidateTokenStandaloneUnknownTokenIsUnauthorized(t *testing.T) {
 	}
 	assertAppError(t, err, http.StatusUnauthorized, apperror.ErrInvalidToken.Code)
 }
+
+// Dev test tokens are gated on an environment allowlist: accepted in local/dev
+// (including the standalone e2e stack, which runs STANDALONE_MODE=true with
+// ENVIRONMENT=local) and rejected in production and preview (issue #1833). This
+// test covers the standalone+local case — the e2e API stack's secondary
+// identities must authenticate so authorization layers decide 403/200, not auth.
+func TestValidateTokenStandaloneLocalAllowsDevTestTokens(t *testing.T) {
+	cases := []struct {
+		token      string
+		wantScopes []string
+	}{
+		{"e2e-attacker", GetAllScopes()},
+		{"graph-read", []string{"graph:read", "graph:search:read"}},
+		{"no-scope", []string{}},
+		{"all-scopes", GetAllScopes()},
+	}
+	for _, tc := range cases {
+		m := newTestMiddleware(t)
+		m.cfg.Standalone.Enabled = true
+		m.cfg.Standalone.APIKey = "standalone-key"
+		// Environment stays "local" (the config default).
+
+		user, err := m.validateToken(context.Background(), tc.token, "")
+		if err != nil {
+			t.Fatalf("validateToken(%q) in standalone-local errored: %v; dev test tokens must authenticate", tc.token, err)
+		}
+		if user == nil {
+			t.Fatalf("validateToken(%q) in standalone-local returned nil user; dev test tokens must authenticate", tc.token)
+		}
+		if !scopesEqual(user.Scopes, tc.wantScopes) {
+			t.Fatalf("validateToken(%q) scopes = %v, want %v", tc.token, user.Scopes, tc.wantScopes)
+		}
+	}
+}
+
+// A standalone preview (STANDALONE_MODE=true, ENVIRONMENT=preview) must reject
+// the published dev test tokens: the environment allowlist is false there, and
+// the standalone path fails closed with 401 rather than reaching the token map
+// (issue #1833).
+func TestValidateTokenStandalonePreviewRejectsDevTestTokens(t *testing.T) {
+	for _, tok := range []string{"e2e-test-user", "e2e-query-token", "e2e-arbitrary", "all-scopes", "with-scope"} {
+		m := newTestMiddleware(t)
+		m.cfg.Standalone.Enabled = true
+		m.cfg.Standalone.APIKey = "standalone-key"
+		m.cfg.Environment = "preview"
+
+		user, err := m.validateToken(context.Background(), tok, "")
+		if user != nil {
+			t.Fatalf("validateToken(%q) in standalone preview authenticated %+v; dev test tokens must be rejected", tok, user)
+		}
+		assertAppError(t, err, http.StatusUnauthorized, apperror.ErrInvalidToken.Code)
+	}
+}
+
+// A non-standalone preview using Zitadel auth (PREVIEW_AUTH_MODE=zitadel sets
+// STANDALONE_MODE=false with ENVIRONMENT=preview) must also reject the published
+// dev test tokens. checkTestToken is gated off, so the introspection path — not
+// the token map — decides the credential, and an inactive introspection verdict
+// surfaces as 401 (issue #1833).
+func TestValidateTokenZitadelPreviewRejectsDevTestTokens(t *testing.T) {
+	for _, tok := range []string{"e2e-test-user", "e2e-arbitrary", "all-scopes", "with-scope"} {
+		m := newTestMiddleware(t)
+		m.cfg.Environment = "preview" // standalone stays disabled (default)
+		m.introspectCacheLookup = cacheMiss
+		m.zitadelSvc = &fakeIntrospector{
+			introResult: &IntrospectionResult{Active: false},
+			userInfoErr: errUserInfoInvalidToken,
+		}
+		m.roleLookup = func(context.Context, string, string) (string, error) { return "", nil }
+
+		user, err := m.validateToken(context.Background(), tok, "")
+		if user != nil {
+			t.Fatalf("validateToken(%q) in zitadel preview authenticated %+v; dev test tokens must be rejected", tok, user)
+		}
+		assertAppError(t, err, http.StatusUnauthorized, apperror.ErrInvalidToken.Code)
+	}
+}
+
+// TestValidateTokenDevTestTokenEnvironmentAllowlist is the full truth table for
+// the test-token gate: accepted in local/development regardless of standalone
+// mode, rejected in preview/production regardless of standalone mode, and the
+// DEBUG escape hatch re-enables acceptance everywhere (issue #1833).
+func TestValidateTokenDevTestTokenEnvironmentAllowlist(t *testing.T) {
+	cases := []struct {
+		name        string
+		standalone  bool
+		environment string
+		debug       bool
+		wantAuth    bool
+	}{
+		{"standalone local", true, "local", false, true},
+		{"non-standalone local", false, "local", false, true},
+		{"standalone development", true, "development", false, true},
+		{"non-standalone development", false, "development", false, true},
+		{"standalone preview", true, "preview", false, false},
+		{"non-standalone preview", false, "preview", false, false},
+		{"standalone production", true, "production", false, false},
+		{"non-standalone production", false, "production", false, false},
+		{"standalone preview debug", true, "preview", true, true},
+		{"non-standalone production debug", false, "production", true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMiddleware(t)
+			m.cfg.Standalone.Enabled = tc.standalone
+			m.cfg.Standalone.APIKey = "standalone-key"
+			m.cfg.Environment = tc.environment
+			m.cfg.Debug = tc.debug
+			// Rejection cases that are non-standalone fall through to OIDC
+			// introspection; give a deterministic inactive verdict so they resolve
+			// authoritatively to 401 (standalone rejections fail closed earlier).
+			m.introspectCacheLookup = cacheMiss
+			m.zitadelSvc = &fakeIntrospector{
+				introResult: &IntrospectionResult{Active: false},
+				userInfoErr: errUserInfoInvalidToken,
+			}
+			m.roleLookup = func(context.Context, string, string) (string, error) { return "", nil }
+
+			user, err := m.validateToken(context.Background(), "all-scopes", "")
+			if tc.wantAuth {
+				if err != nil || user == nil {
+					t.Fatalf("validateToken() = (user=%v, err=%v), want authenticated", user, err)
+				}
+				return
+			}
+			if user != nil {
+				t.Fatalf("validateToken() authenticated %+v, want rejection", user)
+			}
+			assertAppError(t, err, http.StatusUnauthorized, apperror.ErrInvalidToken.Code)
+		})
+	}
+}
