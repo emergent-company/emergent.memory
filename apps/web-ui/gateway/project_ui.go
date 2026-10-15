@@ -17,12 +17,17 @@ import (
 func (s *Server) uiCreateProject(c echo.Context) error {
 	name := strings.TrimSpace(c.FormValue("name"))
 	orgID := strings.TrimSpace(c.FormValue("orgId"))
+	// The create form posts to the global POST /projects route (scoped surfaces
+	// are GET-only here), so scopeLocation no-ops and the PRG target must be
+	// scoped directly. Return to the org landing (which surfaces the ?err= flash)
+	// when the org is known, else the global org list.
+	back := orgScopeURL(orgID)
 	if name == "" || orgID == "" {
-		return redirectWithError(c, "/agents", fmt.Errorf("project name and organization are required"))
+		return redirectWithError(c, back, fmt.Errorf("project name and organization are required"))
 	}
 	project, err := s.memory.CreateProject(c.Request().Context(), name, orgID)
 	if err != nil {
-		return redirectWithError(c, "/agents", err)
+		return redirectWithError(c, back, err)
 	}
 	s.activateProjectInSession(c, project.ID, orgID)
 	return c.Redirect(http.StatusSeeOther, projectScopeURL(orgID, project.ID)+"/agents")
@@ -31,11 +36,14 @@ func (s *Server) uiCreateProject(c echo.Context) error {
 // uiActivateProject handles the project-switcher activate form (POST
 // /projects/activate; form field projectId). It re-issues the session with the
 // new active project and redirects back to the page the switch happened on
-// (PRG), falling back to /agents when no Referer is present.
+// (PRG), falling back to the org list when no Referer is present or the
+// project's org cannot be resolved.
 func (s *Server) uiActivateProject(c echo.Context) error {
 	id := strings.TrimSpace(c.FormValue("projectId"))
 	if id == "" {
-		return redirectWithError(c, "/agents", fmt.Errorf("project id is required"))
+		// No project to activate: land on the org list (a global page) rather
+		// than the now-cut unscoped /agents.
+		return redirectWithError(c, "/orgs", fmt.Errorf("project id is required"))
 	}
 	// Recover the project's org so org-scoped routes (backups, X-Org-ID) resolve
 	// after the switch; best-effort — an unresolved org leaves it empty.
@@ -50,7 +58,7 @@ func (s *Server) uiActivateProject(c echo.Context) error {
 	}
 	back := c.Request().Header.Get("Referer")
 	if back == "" || isOrgContextPath(back) {
-		back = "/agents"
+		back = "/orgs"
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back)
 	return nil

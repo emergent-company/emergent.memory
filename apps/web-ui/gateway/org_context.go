@@ -495,10 +495,7 @@ func (s *Server) uiDeleteProjects(c echo.Context) error {
 	if orgID == "" {
 		orgID = strings.TrimSpace(c.QueryParam("orgId"))
 	}
-	back := "/orgs"
-	if orgID != "" {
-		back = "/o/" + url.PathEscape(orgID)
-	}
+	back := orgScopeURL(orgID)
 	if err := c.Request().ParseForm(); err != nil {
 		return redirectWithError(c, back, err)
 	}
@@ -541,10 +538,7 @@ func (s *Server) uiTransferProject(c echo.Context) error {
 	if orgID == "" {
 		orgID = strings.TrimSpace(c.QueryParam("orgId"))
 	}
-	back := "/orgs"
-	if orgID != "" {
-		back = "/o/" + url.PathEscape(orgID)
-	}
+	back := orgScopeURL(orgID)
 	projectID := strings.TrimSpace(c.FormValue("projectId"))
 	if projectID == "" {
 		projectID = strings.TrimSpace(c.QueryParam("projectId"))
@@ -601,10 +595,7 @@ func (s *Server) uiRestoreProject(c echo.Context) error {
 	if orgID == "" {
 		orgID = strings.TrimSpace(c.QueryParam("orgId"))
 	}
-	back := "/orgs"
-	if orgID != "" {
-		back = "/o/" + url.PathEscape(orgID)
-	}
+	back := orgScopeURL(orgID)
 	projectID := strings.TrimSpace(c.FormValue("projectId"))
 	if projectID == "" {
 		projectID = strings.TrimSpace(c.QueryParam("projectId"))

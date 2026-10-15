@@ -252,11 +252,20 @@ func linkBaseFromContext(ctx context.Context) string {
 // same helper without double-prefixing.
 var globalLinkPrefixes = []string{
 	"/api", "/auth/", "/share/", "/static/", "/assets/",
-	"/webhooks/", "/internal/", "/o/", "/profile", "/invites", "/projects",
+	"/webhooks/", "/internal/", "/o/", "/profile", "/projects",
 	// Dev-gated component-gallery previews/nav are global paths (see
 	// globalScopePath); their src must never be scoped.
 	"/dev/",
 }
+
+// Note: /invites is deliberately absent from globalLinkPrefixes. The
+// accept/decline forms live on the global /profile/invitations page (base ==
+// ""), so their /invites/:id/… actions stay global regardless. But the
+// revoke/resend forms also render on the scoped Project Settings members
+// surface (/settings/members), and those forms must POST to a scoped
+// /o/{org}/p/{proj}/invites/:id/… URL so scopeLocation can rewrite their
+// PRG redirect back onto the scoped members page — see uiRevokeInvite /
+// uiResendInvite.
 
 // resolveProjectRefAnyOrg finds a project by ref across every org in the
 // access tree, returning its owning org. Used when a client supplies only a
@@ -336,6 +345,19 @@ func projectScopeURL(orgID, projectID string) string {
 		return ""
 	}
 	return "/o/" + url.PathEscape(orgID) + "/p/" + url.PathEscape(projectID)
+}
+
+// orgScopeURL builds the canonical scoped URL for an org landing (/o/{orgID}),
+// or the global org-list fallback (/orgs) when orgID is empty. PRG mutation
+// handlers that return to an org surface emit this directly: their forms post
+// to global routes (e.g. /projects/*), so scopeLocation no-ops and the target
+// must already be scoped. The org list is a global page (see globalScopePath),
+// so the fallback stays reachable when no org is known.
+func orgScopeURL(orgID string) string {
+	if orgID == "" {
+		return "/orgs"
+	}
+	return "/o/" + url.PathEscape(orgID)
 }
 
 // linkURL builds a link for the current render: absolute app paths get the

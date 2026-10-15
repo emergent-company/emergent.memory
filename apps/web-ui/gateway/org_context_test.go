@@ -835,14 +835,14 @@ func TestUIActivateProjectFromOrgContext(t *testing.T) {
 		return rec
 	}
 
-	if rec := post("http://localhost:8095/orgs/o1"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents" {
-		t.Errorf("activate from org = %d %q, want 303 /agents", rec.Code, rec.Header().Get("Location"))
+	if rec := post("http://localhost:8095/orgs/o1"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs" {
+		t.Errorf("activate from org = %d %q, want 303 /orgs", rec.Code, rec.Header().Get("Location"))
 	}
 	if rec := post("http://localhost:8095/settings"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "http://localhost:8095/settings" {
 		t.Errorf("activate from settings = %d %q, want 303 back to settings", rec.Code, rec.Header().Get("Location"))
 	}
-	if rec := post(""); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents" {
-		t.Errorf("activate without referer = %d %q, want 303 /agents", rec.Code, rec.Header().Get("Location"))
+	if rec := post(""); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs" {
+		t.Errorf("activate without referer = %d %q, want 303 /orgs", rec.Code, rec.Header().Get("Location"))
 	}
 }
 

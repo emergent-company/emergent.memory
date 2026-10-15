@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -546,5 +547,63 @@ func TestScopeMiddlewaresSkipDeviceContexts(t *testing.T) {
 	newServer().ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK || rec.Body.String() != "o1/p1" {
 		t.Fatalf("device headers = %d %q, want 200 o1/p1 (headers must not override device scope)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestOrgScopeURL(t *testing.T) {
+	if got := orgScopeURL("o1"); got != "/o/o1" {
+		t.Errorf("orgScopeURL(o1) = %q, want /o/o1", got)
+	}
+	if got := orgScopeURL(""); got != "/orgs" {
+		t.Errorf("orgScopeURL() = %q, want /orgs", got)
+	}
+	// Org ids are path-escaped so an id with reserved characters stays a single
+	// URL segment.
+	if got := orgScopeURL("a/b"); got != "/o/a%2Fb" {
+		t.Errorf("orgScopeURL(a/b) = %q, want /o/a%%2Fb", got)
+	}
+}
+
+// TestInvitesActionScopesOnSettingsSurface pins the /invites link rule: the
+// accept/decline forms live on the global /profile/invitations page (base ""),
+// while the revoke/resend forms also render on the scoped Project Settings
+// members surface (/settings/members). /invites must therefore take a scope
+// prefix on a scoped render (so scopeLocation can rewrite the PRG redirect back
+// onto the scoped members page) while staying global on global renders.
+func TestInvitesActionScopesOnSettingsSurface(t *testing.T) {
+	scoped := withLinkBase(context.Background(), "/o/o1/p/p1")
+	if got := linkURL(scoped, "/invites/inv-1/revoke"); got != "/o/o1/p/p1/invites/inv-1/revoke" {
+		t.Errorf("scoped linkURL(/invites/.../revoke) = %q, want /o/o1/p/p1/invites/inv-1/revoke", got)
+	}
+	if got := linkURL(scoped, "/profile/invitations"); got != "/profile/invitations" {
+		t.Errorf("scoped linkURL(/profile/invitations) = %q, want /profile/invitations (global)", got)
+	}
+	if got := linkURL(context.Background(), "/invites/inv-1/revoke"); got != "/invites/inv-1/revoke" {
+		t.Errorf("global linkURL(/invites/.../revoke) = %q, want unchanged", got)
+	}
+}
+
+// TestMembersSettingsRedirectStaysScoped pins the settings-surface revoke PRG:
+// the form POSTs to the scoped /o/{org}/p/{proj}/invites/:id/revoke route, so
+// scopeLocation rewrites the /settings/members target back onto the scope
+// instead of leaving the now-cut unscoped app path.
+func TestMembersSettingsRedirectStaysScoped(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := echo.New()
+	e.Pre(s.scopeRewrite)
+	e.Use(s.scopeLocation)
+	e.POST("/invites/:id/revoke", s.uiRevokeInvite)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/o/o1/p/p1/invites/inv-1/revoke",
+		strings.NewReader(url.Values{"surface": {"/settings/members"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1/p/p1/settings/members?revoked=1" {
+		t.Fatalf("settings revoke = %d %q, want 303 /o/o1/p/p1/settings/members?revoked=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.canceledInvite != "inv-1" {
+		t.Errorf("CancelInvite not forwarded: %q", f.canceledInvite)
 	}
 }
