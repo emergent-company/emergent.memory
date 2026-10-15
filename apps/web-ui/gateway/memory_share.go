@@ -74,20 +74,6 @@ type ShareSessionDetail struct {
 	CreatedAt        time.Time             `json:"createdAt"`
 }
 
-// ShareQuestion is the subset of the server's agent-question DTO the share
-// surface relays (pending tool-approval questions). Tool + Input carry the tool
-// name and args so the shared approval card renders the same body as admin
-// ({questionId, tool, input}).
-type ShareQuestion struct {
-	ID       string         `json:"id"`
-	RunID    string         `json:"runId"`
-	Question string         `json:"question"`
-	Proposal map[string]any `json:"proposal,omitempty"`
-	Tool     string         `json:"tool,omitempty"`
-	Input    map[string]any `json:"input,omitempty"`
-	Status   string         `json:"status"`
-}
-
 // ShareCreateSessionInput is the body for POST /api/share/agent/sessions. The
 // end-user ref is NOT sent in the body — it rides the signed X-End-User-Ref
 // header.
@@ -331,22 +317,6 @@ func (m *MemoryClient) ShareDeleteSession(ctx context.Context, token, endUserRef
 		return err
 	}
 	return m.doShare(ctx, http.MethodDelete, "/api/share/agent/sessions/"+url.PathEscape(id), token, hdrs, nil, nil)
-}
-
-func (m *MemoryClient) ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error) {
-	hdrs, err := m.shareRefHeaders(endUserRef)
-	if err != nil {
-		return nil, err
-	}
-	path := "/api/share/agent/questions"
-	if sessionID != "" {
-		path += "?sessionId=" + url.QueryEscape(sessionID)
-	}
-	var out []ShareQuestion
-	if err := m.doShare(ctx, http.MethodGet, path, token, hdrs, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (m *MemoryClient) ShareApprove(ctx context.Context, token, endUserRef, sessionID, questionID string, in ShareApproveInput) error {

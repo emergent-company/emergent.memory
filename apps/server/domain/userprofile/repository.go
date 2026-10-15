@@ -40,7 +40,10 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*Profile, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound.WithMessage("user profile not found")
 		}
-		r.log.Error("failed to get profile by id", logger.Error(err))
+		// Debug, not Error: apperror.HTTPErrorHandler logs the 5xx (and its
+		// wrapped cause) once, so logging here too would double every failure
+		// (#1887). The query context is still useful when debug logging is on.
+		r.log.Debug("failed to get profile by id", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -60,7 +63,7 @@ func (r *Repository) GetByZitadelUserID(ctx context.Context, zitadelUserID strin
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, apperror.ErrNotFound.WithMessage("user profile not found")
 		}
-		r.log.Error("failed to get profile by zitadel user id", logger.Error(err))
+		r.log.Debug("failed to get profile by zitadel user id", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -92,7 +95,7 @@ func (r *Repository) Update(ctx context.Context, id string, req *UpdateProfileRe
 
 	result, err := query.Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to update profile", logger.Error(err))
+		r.log.Debug("failed to update profile", logger.Error(err))
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -117,7 +120,7 @@ func (r *Repository) SetAvatar(ctx context.Context, id string, key *string) erro
 
 	result, err := query.Exec(ctx)
 	if err != nil {
-		r.log.Error("failed to set profile avatar", logger.Error(err))
+		r.log.Debug("failed to set profile avatar", logger.Error(err))
 		return apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -146,7 +149,7 @@ func (r *Repository) GetEmail(ctx context.Context, userID string) (string, error
 			// No verified email is a legitimate state, not an error.
 			return "", nil
 		}
-		r.log.Error("failed to get user email", logger.Error(err))
+		r.log.Debug("failed to get user email", logger.Error(err))
 		return "", apperror.ErrDatabase.WithInternal(err)
 	}
 	return email, nil

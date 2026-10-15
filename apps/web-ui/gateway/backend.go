@@ -301,7 +301,6 @@ type MemoryBackend interface {
 	ShareArchiveSession(ctx context.Context, token, endUserRef, id string) error
 	ShareUnarchiveSession(ctx context.Context, token, endUserRef, id string) error
 	ShareDeleteSession(ctx context.Context, token, endUserRef, id string) error
-	ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error)
 	ShareCancelApproval(ctx context.Context, token, endUserRef, sessionID, questionID string) error
 	ShareApprove(ctx context.Context, token, endUserRef, sessionID, questionID string, in ShareApproveInput) error
 	ShareChatStream(ctx context.Context, token, endUserRef string, in ShareStreamInput) (io.ReadCloser, error)

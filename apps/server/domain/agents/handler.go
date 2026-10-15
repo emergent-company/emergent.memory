@@ -3133,14 +3133,20 @@ func (h *Handler) RespondToQuestion(ctx context.Context, p RespondParams) (*Agen
 	return dto, nil
 }
 
-// CancelQuestion is a parameterized variant of the question-cancel flow that
-// mirrors HandleCancelQuestion (it stays in lockstep with it by convention, not
-// by delegation) so the public share path can drive it with share resume params.
+// CancelQuestion is the share-path entry point for the question-cancel flow. It
+// drives the single implementation in cancelQuestion with share resume params.
 // Unlike RespondToQuestion it performs no kill-switch check (a cancel always
 // resumes the run with the call treated as not taken), matching the
 // authenticated cancel path. Share callers must verify question->run->session
 // ownership BEFORE calling this.
 func (h *Handler) CancelQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error) {
+	return h.cancelQuestion(ctx, p)
+}
+
+// cancelQuestion is the single implementation behind both the authenticated HTTP
+// handler (HandleCancelQuestion) and the share responder path (CancelQuestion),
+// so the two entry points cannot drift out of lockstep (#1889).
+func (h *Handler) cancelQuestion(ctx context.Context, p RespondParams) (*AgentQuestionDTO, error) {
 	if p.ProjectID == "" {
 		return nil, apperror.NewBadRequest("projectId is required")
 	}
@@ -3350,99 +3356,19 @@ func (h *Handler) HandleCancelQuestion(c echo.Context) error {
 		return apperror.NewBadRequest("questionId is required")
 	}
 
-	question, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
+	// Delegate to the shared implementation so this HTTP entry point and the
+	// share path cannot drift (#1889). The authenticated caller's identity and
+	// raw token ride on the params, exactly as the previous inline body used.
+	dto, err := h.cancelQuestion(c.Request().Context(), RespondParams{
+		ProjectID:   projectID,
+		QuestionID:  questionID,
+		OrgID:       user.OrgID,
+		RespondedBy: user.ID,
+		UserID:      user.ID,
+		AuthToken:   auth.RawTokenFromContext(c.Request().Context()),
+	})
 	if err != nil {
-		return apperror.NewInternal("failed to get question", err)
-	}
-	if question == nil {
-		return apperror.NewNotFound("AgentQuestion", questionID)
-	}
-	if question.ProjectID != projectID {
-		return apperror.NewNotFound("AgentQuestion", questionID)
-	}
-	if question.Status != QuestionStatusPending {
-		return apperror.ErrConflict.WithMessage(fmt.Sprintf("question is already %s", question.Status))
-	}
-
-	run, err := h.repo.FindRunByID(c.Request().Context(), question.RunID)
-	if err != nil {
-		return apperror.NewInternal("failed to get run", err)
-	}
-	if run == nil {
-		return apperror.NewInternal("associated run not found", nil)
-	}
-	if run.Status != RunStatusPaused {
-		return apperror.ErrConflict.WithMessage(fmt.Sprintf("run is %s, expected paused", run.Status))
-	}
-
-	claimed, err := h.repo.CancelQuestion(c.Request().Context(), questionID)
-	if err != nil {
-		return apperror.NewInternal("failed to cancel question", err)
-	}
-	if !claimed {
-		return apperror.ErrConflict.WithMessage("question is no longer pending")
-	}
-
-	// Record the cancellation in the audit trail (only affects tool-confirm approvals).
-	_ = h.repo.UpdateToolApprovalDecision(c.Request().Context(), questionID, "cancelled", "", user.ID)
-
-	if question.NotificationID != nil {
-		_ = h.repo.UpdateNotificationActionStatus(c.Request().Context(), *question.NotificationID, "cancelled", user.ID)
-	}
-
-	var preCreatedRun *AgentRun
-	var resumeNow = true
-	if h.executor != nil {
-		agent, err := h.repo.FindByID(c.Request().Context(), run.AgentID, nil)
-		if err != nil || agent == nil {
-			_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-			return apperror.NewInternal("failed to find agent for resume", err)
-		}
-		agentDef, _ := h.repo.ResolveDefinitionForAgent(c.Request().Context(), agent)
-
-		// Batch coordination: mark this cancellation in suspend_context and
-		// resume only once every confirmation in the batch is decided.
-		if sc := SuspendSignalFromMap(run.SuspendContext); sc != nil && len(sc.PendingToolConfirmations) > 0 {
-			var markErr error
-			resumeNow, markErr = h.repo.MarkToolConfirmationDecision(c.Request().Context(), run.ID, questionID, "cancel", "")
-			if markErr != nil {
-				_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-				return apperror.NewInternal("failed to record decision", markErr)
-			}
-			if resumeNow {
-				fresh, ferr := h.repo.FindRunByID(c.Request().Context(), run.ID)
-				if ferr != nil || fresh == nil {
-					_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-					return apperror.NewInternal("failed to re-fetch run after decision", ferr)
-				}
-				run = fresh
-			}
-		}
-
-		if resumeNow {
-			preCreatedRun, err = h.resumeQuestionRun(c.Request().Context(), RespondParams{
-				ProjectID:   projectID,
-				OrgID:       user.OrgID,
-				RespondedBy: user.ID,
-				UserID:      user.ID,
-				AuthToken:   auth.RawTokenFromContext(c.Request().Context()),
-			}, run, agent, agentDef, "cancel", "")
-			if err != nil {
-				_ = h.repo.ReopenQuestion(c.Request().Context(), questionID)
-				return err
-			}
-		}
-	}
-
-	updatedQuestion, err := h.repo.FindQuestionByID(c.Request().Context(), questionID)
-	var dto *AgentQuestionDTO
-	if err != nil || updatedQuestion == nil {
-		dto = question.ToDTO()
-	} else {
-		dto = updatedQuestion.ToDTO()
-	}
-	if preCreatedRun != nil {
-		dto.ResumeRunID = &preCreatedRun.ID
+		return err
 	}
 
 	return c.JSON(http.StatusAccepted, SuccessResponse(dto))

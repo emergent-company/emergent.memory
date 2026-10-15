@@ -79,13 +79,12 @@ type fakeMemory struct {
 	// public agent-share surface (share.go handlers).
 	shareDetail           *ShareSessionDetail // ShareGetSession result
 	shareDetailErr        error
-	shareQuestions        []ShareQuestion // ShareListQuestions result
-	sharePublicSessions   []ShareSession  // ShareListSessions result
-	sharePublicListFilter string          // last filter received by ShareListSessions
-	shareUnarchivedIDs    []string        // ids received by ShareUnarchiveSession
-	shareDeletedIDs       []string        // ids received by ShareDeleteSession
-	shareCancelledIDs     []string        // question ids received by ShareCancelApproval
-	shareCancelledSess    []string        // session ids received by ShareCancelApproval
+	sharePublicSessions   []ShareSession // ShareListSessions result
+	sharePublicListFilter string         // last filter received by ShareListSessions
+	shareUnarchivedIDs    []string       // ids received by ShareUnarchiveSession
+	shareDeletedIDs       []string       // ids received by ShareDeleteSession
+	shareCancelledIDs     []string       // question ids received by ShareCancelApproval
+	shareCancelledSess    []string       // session ids received by ShareCancelApproval
 
 	// catalogCalls counts backend catalog fetches (keyed by method name) so
 	// tests can assert the settings loader only fetches a section's catalogs.
@@ -4064,10 +4063,6 @@ func (f *fakeMemory) ShareUnarchiveSession(ctx context.Context, token, endUserRe
 func (f *fakeMemory) ShareDeleteSession(ctx context.Context, token, endUserRef, id string) error {
 	f.shareDeletedIDs = append(f.shareDeletedIDs, id)
 	return nil
-}
-
-func (f *fakeMemory) ShareListQuestions(ctx context.Context, token, endUserRef, sessionID string) ([]ShareQuestion, error) {
-	return f.shareQuestions, nil
 }
 
 func (f *fakeMemory) ShareCancelApproval(ctx context.Context, token, endUserRef, sessionID, questionID string) error {

@@ -118,6 +118,15 @@
     return state.email !== "";
   }
 
+  // approvalsEnabled reports whether end users may answer questions / decide
+  // tool approvals on this link. It reads the flag the sanitized config wrote
+  // onto the root (the server 403s every decision when the link disables
+  // end-user approvals), and is handed to the shared chat engine so question
+  // and approval cards render read-only instead of showing controls that fail.
+  function approvalsEnabled() {
+    return root.getAttribute("data-allow-approvals") !== "false";
+  }
+
   // composerBlocked reports whether the composer must stay disabled independent
   // of streaming: the email gate is unsatisfied, or a terminal notice is shown.
   function composerBlocked() {
@@ -393,6 +402,11 @@
     // Record the require-email flag on the root for any email flow / footer.
     root.setAttribute("data-require-email", config.requireEmail ? "true" : "false");
 
+    // Record the approvals flag on the root: approvalsEnabled() reads it and the
+    // shared chat engine renders question/approval cards read-only when the link
+    // disables end-user approvals (#1892).
+    root.setAttribute("data-allow-approvals", config.allowEndUserApprovals === false ? "false" : "true");
+
     // requireEmail links must collect an email before the first message; a
     // refresh forgets the in-memory value, so the gate prompts again.
     syncEmailGate();
@@ -415,10 +429,13 @@
   var hideEmpty = composer.hideEmpty;
 
   // Shared badge/thinking renderers (chat-components.js) take a context object.
+  // approvalsEnabled gates the decision-bearing A2UI cards too, so the `ui`
+  // frame cannot offer a control the link disables (#1892).
   var badgeCtx = {
     get messages() { return els.messages; },
     hideEmpty: hideEmpty,
     scrollToBottom: scrollToBottom,
+    approvalsEnabled: approvalsEnabled,
   };
 
   // Share-local POST helper: the shared MemoryChatHost.postJSON omits
@@ -633,6 +650,7 @@
     },
     answerQuestion: answerQuestion,
     postDecision: postDecision,
+    approvalsEnabled: approvalsEnabled,
     badgeCtx: badgeCtx,
     handleEvent: handleEvent,
     streamPath: shareStreamPath,
@@ -715,55 +733,15 @@
 
   /* ---------- sessions rail ---------- */
 
-  function loadSessions() {
-    var filter = els.filter ? els.filter.value : "active";
-    return fetch(API + "/sessions?filter=" + encodeURIComponent(filter), {
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then(function (res) { return res.ok ? res.json() : { sessions: [] }; })
-      .then(function (body) {
-        renderSessions((body && body.sessions) || []);
-      })
-      .catch(function () { /* keep current rail on failure */ });
-  }
-
-  function renderSessions(sessions) {
-    if (!els.railList) return;
-    els.railList.replaceChildren();
-    if (!sessions.length) {
-      var empty = el("div", "px-3 py-8 text-center");
-      empty.setAttribute("data-testid", "share-sessions-empty");
-      empty.appendChild(el("p", "text-muted text-sm font-medium", "No chats yet"));
-      empty.appendChild(el("p", "text-muted-faint mt-1 text-xs", "Start a new chat and it will show up here."));
-      els.railList.appendChild(empty);
-      return;
-    }
-    sessions.forEach(function (s) { els.railList.appendChild(sessionRow(s)); });
-  }
-
-  function sessionRow(s) {
-    var btn = el("button", "flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-base-200/60");
-    btn.type = "button";
-    btn.setAttribute("data-action", "share-resume-session");
-    btn.setAttribute("data-id", s.id);
-    btn.setAttribute("data-testid", "share-session-row");
-    if (s.id === state.sessionId) {
-      btn.classList.add("bg-base-200/80", "ring-1", "ring-primary/30");
-      btn.setAttribute("aria-current", "true");
-    }
-    var icon = el("span", "text-muted-faint mt-0.5 shrink-0");
-    var glyph = el("span", "iconify lucide--message-square size-4");
-    glyph.setAttribute("aria-hidden", "true");
-    icon.appendChild(glyph);
-    var main = el("span", "min-w-0 grow");
-    main.appendChild(el("span", "block truncate text-sm", s.title || "Untitled chat"));
-    var meta = (s.lastActivity || "") + (s.messageCount != null ? " · " + s.messageCount + " messages" : "");
-    main.appendChild(el("span", "text-muted-faint block text-xs", meta));
-    btn.appendChild(icon);
-    btn.appendChild(main);
-    btn.addEventListener("click", function () { openSession(s.id); });
-    return btn;
+  // isSessionsPartial guards against a 2xx that is not the rail fragment — a
+  // soft-404 page or an error body served with status 200. Only the
+  // server-rendered partial carries a session row or the empty state, so
+  // anything else is treated as a failure instead of being injected into the
+  // rail (which would drop the per-row actions).
+  function isSessionsPartial(html) {
+    if (!html) return false;
+    return html.indexOf('data-testid="share-session-row"') !== -1 ||
+      html.indexOf('data-testid="share-sessions-empty"') !== -1;
   }
 
   function refreshRail() {
@@ -776,12 +754,35 @@
     })
       .then(function (res) { return res.ok ? res.text() : ""; })
       .then(function (html) {
-        if (html) {
+        if (isSessionsPartial(html)) {
           els.railList.innerHTML = html;
           highlightActive();
+          return;
         }
+        renderRailError();
       })
-      .catch(function () { loadSessions(); });
+      .catch(function () { renderRailError(); });
+  }
+
+  // renderRailError replaces the rail with an explicit, recoverable failure
+  // state. The rail markup (including each row's archive/unarchive/delete menu)
+  // is server-rendered, so a fetch failure cannot be patched up client-side
+  // without silently dropping those actions — a previously menu-less JSON
+  // fallback hid the failure and left the user unable to manage sessions
+  // (#1890). Surfacing the error with a Retry is the recoverable alternative.
+  function renderRailError() {
+    if (!els.railList) return;
+    els.railList.replaceChildren();
+    var wrap = el("div", "px-3 py-8 text-center");
+    wrap.setAttribute("data-testid", "share-sessions-error");
+    wrap.appendChild(el("p", "text-muted text-sm font-medium", "Couldn't load your chats"));
+    wrap.appendChild(el("p", "text-muted-faint mt-1 text-xs", "Something went wrong loading this list."));
+    var retry = el("button", "btn btn-ghost btn-xs mt-3", "Retry");
+    retry.type = "button";
+    retry.setAttribute("data-action", "share-retry-rail");
+    retry.setAttribute("data-testid", "share-sessions-retry");
+    wrap.appendChild(retry);
+    els.railList.appendChild(wrap);
   }
 
   function openSession(id) {
@@ -1021,6 +1022,7 @@
     if (action === "share-open-rail") { ev.preventDefault(); openRail(); }
     else if (action === "share-close-rail") { ev.preventDefault(); closeRail(); }
     else if (action === "share-new-chat") { ev.preventDefault(); newChat(); closeRail(); }
+    else if (action === "share-retry-rail") { ev.preventDefault(); refreshRail(); }
     else if (action === "share-suggestion") {
       ev.preventDefault();
       send(target.getAttribute("data-text") || "");

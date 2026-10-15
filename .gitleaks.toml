@@ -41,4 +41,13 @@ paths       = [
   '''gateway/api_tokens_test\.go''',
   '''gateway/auth_test\.go''',
   '''gateway/voice_settings_test\.go''',
+  '''domain/sandbox/integration_mock_test\.go''',
 ]
+
+[[allowlists]]
+description = "Unmistakably-named E2E env-var *names* (never values) trip the generic-api-key heuristic"
+regexes     = ['''\bE2E_SCENARIO_LLM_API_KEY\b''']
+
+[[allowlists]]
+description = "templ's own generated error identifier (templ_<hash>_Err, e.g. templ_7745c5c3_Err) is not a secret — matched by shape so it is covered in gitignored web-ui output and in the committed CLI *_templ.go alike"
+regexes     = ['''templ_[0-9a-f]{8}_Err''']

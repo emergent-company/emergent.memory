@@ -396,24 +396,6 @@ func shareSessionItems(sessions []ShareSession) []ShareSessionItem {
 	return items
 }
 
-// shareListSessions handles GET /share/api/sessions?filter=active|all|archived.
-// The filter is passed through to the backend, which defaults to "active".
-func (s *Server) shareListSessions(c echo.Context) error {
-	claims, ok := s.shareClaimsOrFail(c)
-	if !ok {
-		return nil
-	}
-	sessions, err := s.memory.ShareListSessions(c.Request().Context(), claims.Token, claims.EndUserRef, c.QueryParam("filter"))
-	if err != nil {
-		return s.shareProxyErrorResponse(c, err)
-	}
-	out := make([]shareSessionJSON, 0, len(sessions))
-	for _, sess := range sessions {
-		out = append(out, shareSessionToJSON(sess))
-	}
-	return c.JSON(http.StatusOK, map[string]any{"sessions": out})
-}
-
 // shareCreateSession handles POST /share/api/sessions.
 func (s *Server) shareCreateSession(c echo.Context) error {
 	claims, ok := s.shareClaimsOrFail(c)
@@ -527,56 +509,6 @@ func (s *Server) sharePartialSessions(c echo.Context) error {
 }
 
 // --- questions / approvals --------------------------------------------------
-
-// shareQuestionJSON is the client-facing question shape. The server's question
-// DTO carries no session id, so the gateway fetches per-session and tags each
-// question with the session that owns it.
-type shareQuestionJSON struct {
-	ID        string `json:"id"`
-	SessionID string `json:"sessionId"`
-	Title     string `json:"title,omitempty"`
-	Tool      string `json:"tool,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-}
-
-func mapShareQuestion(q ShareQuestion, sessionID string) shareQuestionJSON {
-	var tool string
-	if len(q.Proposal) > 0 {
-		if b, err := json.Marshal(q.Proposal); err == nil {
-			tool = string(b)
-		}
-	}
-	return shareQuestionJSON{
-		ID:        q.ID,
-		SessionID: sessionID,
-		Title:     q.Question,
-		Tool:      tool,
-	}
-}
-
-// shareQuestions handles GET /share/api/questions: pending approvals for every
-// session the end user owns on this link, each tagged with its session id.
-func (s *Server) shareQuestions(c echo.Context) error {
-	claims, ok := s.shareClaimsOrFail(c)
-	if !ok {
-		return nil
-	}
-	sessions, err := s.memory.ShareListSessions(c.Request().Context(), claims.Token, claims.EndUserRef, "")
-	if err != nil {
-		return s.shareProxyErrorResponse(c, err)
-	}
-	out := []shareQuestionJSON{}
-	for _, sess := range sessions {
-		qs, qerr := s.memory.ShareListQuestions(c.Request().Context(), claims.Token, claims.EndUserRef, sess.ID)
-		if qerr != nil {
-			continue // best-effort: one session's failure must not drop the rest
-		}
-		for _, q := range qs {
-			out = append(out, mapShareQuestion(q, sess.ID))
-		}
-	}
-	return c.JSON(http.StatusOK, map[string]any{"questions": out})
-}
 
 // shareApprove handles POST /share/api/sessions/:id/approvals/:questionId. The
 // client's {decision} maps onto the server's {response} ("approve"/"deny").

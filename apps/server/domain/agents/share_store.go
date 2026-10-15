@@ -354,20 +354,88 @@ func (r *Repository) UnarchiveShareSession(ctx context.Context, sessionID, linkI
 	return n > 0, nil
 }
 
-// DeleteShareSession deletes one session belonging to (link, end user). Returns
-// true when a row was deleted.
+// DeleteShareSession deletes one session belonging to (link, end user) and, when
+// that was the last share reference to the backing conversation, reclaims the
+// conversation itself: its run history is deleted and the kb.sessions row is
+// removed, so an end user's "delete" is destructive end to end instead of
+// stranding the session, its runs, and its messages forever (#1891). A session
+// still shared through another link is left in place. Returns true when the
+// caller owned a join row for this session: a concurrent delete that read the
+// row before the winner committed also reports true, while a later delete finds
+// no row, reports false, and surfaces as 404.
 func (r *Repository) DeleteShareSession(ctx context.Context, sessionID, linkID, endUserRef string) (bool, error) {
-	res, err := r.db.NewDelete().
-		Model((*AgentShareSession)(nil)).
-		Where("id = ?", sessionID).
-		Where("share_link_id = ?", linkID).
-		Where("end_user_ref = ?", endUserRef).
-		Exec(ctx)
+	// backingSessionID is the kb.sessions id the deleted join row pointed at; it
+	// stays empty when the caller owns no such row (the delete is a no-op).
+	var backingSessionID string
+
+	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Resolve the backing conversation before the join row goes away.
+		row := new(AgentShareSession)
+		if err := tx.NewSelect().
+			Model(row).
+			Where("id = ?", sessionID).
+			Where("share_link_id = ?", linkID).
+			Where("end_user_ref = ?", endUserRef).
+			Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil // nothing owned by this caller — no-op
+			}
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		backingSessionID = row.SessionID
+
+		// Serialise reclaim decisions per backing conversation: under READ
+		// COMMITTED two concurrent deletes of the last two references could each
+		// still see the other's join row and both skip the reclaim, orphaning the
+		// session this fix exists to remove. Same advisory-lock pattern as the
+		// cap and run guards above.
+		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", backingSessionID).Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+
+		if _, err := tx.NewDelete().
+			Model((*AgentShareSession)(nil)).
+			Where("id = ?", sessionID).
+			Where("share_link_id = ?", linkID).
+			Where("end_user_ref = ?", endUserRef).
+			Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+
+		// Only reclaim the conversation when no other share link references it.
+		remaining, err := tx.NewSelect().
+			Model((*AgentShareSession)(nil)).
+			Where("session_id = ?", backingSessionID).
+			Count(ctx)
+		if err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		if remaining > 0 {
+			return nil
+		}
+
+		// kb.agent_runs.session_id is ON DELETE SET NULL, so the run history must
+		// be removed explicitly (its events, messages, questions, and jobs cascade
+		// from the runs). Deleting the session then cascades session_todos and any
+		// residual share join rows.
+		if _, err := tx.NewDelete().
+			Model((*AgentRun)(nil)).
+			Where("session_id = ?", backingSessionID).
+			Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		if _, err := tx.NewDelete().
+			Model((*Session)(nil)).
+			Where("id = ?", backingSessionID).
+			Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return false, apperror.NewDatabase("Database operation failed", err)
+		return false, err
 	}
-	n, _ := res.RowsAffected()
-	return n > 0, nil
+	return backingSessionID != "", nil
 }
 
 // TouchShareSession updates a session's last_activity_at (best-effort).

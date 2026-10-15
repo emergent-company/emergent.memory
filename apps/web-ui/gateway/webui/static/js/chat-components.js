@@ -841,6 +841,14 @@
     var hideEmpty = ctx.hideEmpty;
     var scrollToBottom = ctx.scrollToBottom || function () {};
 
+    // canDecide mirrors the question/approval cards in chat-stream.js: a host
+    // that disables end-user decisions (the public share page when the link has
+    // allow_end_user_approvals false) supplies an approvalsEnabled hook, and the
+    // decision-bearing A2UI cards then render read-only instead of offering a
+    // control the server would reject with 403. Hosts that omit the hook (the
+    // authenticated chat and sidepanel) keep the full controls.
+    var canDecide = !ctx.approvalsEnabled || ctx.approvalsEnabled();
+
     // Accumulate components from updateComponents; ignore other envelope kinds.
     var components = [];
     var list = Array.isArray(messages) ? messages : [];
@@ -856,18 +864,18 @@
     }
 
     for (var k = 0; k < components.length; k++) {
-      var node = buildA2UICard(components[k], surfaceId);
+      var node = buildA2UICard(components[k], surfaceId, canDecide);
       if (node) container.appendChild(node);
     }
     if (hideEmpty) hideEmpty();
     scrollToBottom();
   }
 
-  function buildA2UICard(comp, surfaceId) {
+  function buildA2UICard(comp, surfaceId, canDecide) {
     switch (comp && comp.component) {
-      case "proposal": return a2uiProposal(comp, surfaceId);
-      case "approval": return a2uiApproval(comp, surfaceId);
-      case "question": return a2uiQuestion(comp, surfaceId);
+      case "proposal": return a2uiProposal(comp, surfaceId, canDecide);
+      case "approval": return a2uiApproval(comp, surfaceId, canDecide);
+      case "question": return a2uiQuestion(comp, surfaceId, canDecide);
       case "code": return a2uiCode(comp, surfaceId);
       case "entity": return a2uiEntity(comp, surfaceId);
       case "object-form": return a2uiObjectForm(comp, surfaceId);
@@ -1033,6 +1041,20 @@
     return btn;
   }
 
+  // a2uiApprovalsDisabledNote is the read-only footer the decision-bearing A2UI
+  // cards show when the host disables end-user decisions: same right-aligned
+  // muted-text footer, and the same copy, as the chat-stream question/approval
+  // read-only cards, so both renderers read the same.
+  function a2uiApprovalsDisabledNote() {
+    var note = document.createElement("div");
+    note.className = "memory-approval__actions flex items-center justify-end gap-2 pt-1";
+    var span = document.createElement("span");
+    span.className = "text-xs text-muted-faint";
+    span.textContent = "Approvals are disabled for this chat.";
+    note.appendChild(span);
+    return note;
+  }
+
   function a2uiActions(surfaceId, comp, pairs) {
     // pairs = [[label, responseValue, primary], ...]
     var row = document.createElement("div");
@@ -1048,7 +1070,7 @@
     return row;
   }
 
-  function a2uiProposal(comp, surfaceId) {
+  function a2uiProposal(comp, surfaceId, canDecide) {
     var shell = a2uiShell();
     shell.body.appendChild(a2uiHeader("Proposal", comp.kind || "proposal"));
     if (comp.summary != null && comp.summary !== "") {
@@ -1062,10 +1084,14 @@
         shell.body.appendChild(a2uiPre(comp.body));
       }
     }
-    shell.body.appendChild(a2uiActions(surfaceId, comp, [
-      ["Reject", "reject", false],
-      ["Accept", "accept", true],
-    ]));
+    if (canDecide) {
+      shell.body.appendChild(a2uiActions(surfaceId, comp, [
+        ["Reject", "reject", false],
+        ["Accept", "accept", true],
+      ]));
+    } else {
+      shell.body.appendChild(a2uiApprovalsDisabledNote());
+    }
     return shell.wrap;
   }
 
@@ -1074,7 +1100,7 @@
   // (chat-stream.js renderApproval), so the shared CSS and the card contract
   // test apply to both renderers. Decisions still dispatch an `a2ui:action`
   // CustomEvent — the A2UI action round-trip is a separate, unwired follow-up.
-  function a2uiApproval(comp, surfaceId) {
+  function a2uiApproval(comp, surfaceId, canDecide) {
     var shell = a2uiShell();
     shell.card.className =
       "memory-approval card card-border bg-base-100 col-start-2 row-start-2 w-full max-w-[85%] shadow-sm border-warning/30";
@@ -1105,6 +1131,13 @@
         "memory-approval__args approval-args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
       args.textContent = safeJSON(comp.input);
       shell.body.appendChild(args);
+    }
+
+    // Read-only when the host disables end-user decisions: the tool call and its
+    // args stay visible, but no decision controls render (the server 403s them).
+    if (!canDecide) {
+      shell.body.appendChild(a2uiApprovalsDisabledNote());
+      return shell.wrap;
     }
 
     var actions = document.createElement("div");
@@ -1157,7 +1190,7 @@
   // canonical option hook classes and the chat-question-option testid, while the
   // submit button/footer are omitted. Choices dispatch an `a2ui:action`
   // CustomEvent.
-  function a2uiQuestion(comp, surfaceId) {
+  function a2uiQuestion(comp, surfaceId, canDecide) {
     var shell = a2uiShell();
     shell.card.className =
       "memory-question card card-border bg-base-100 col-start-2 row-start-2 w-fit min-w-[min(100%,30rem)] max-w-[85%] shadow-sm";
@@ -1168,6 +1201,13 @@
     body.className = "memory-question__body q-body memory-md text-base leading-snug break-words";
     body.textContent = (comp.prompt != null && comp.prompt !== "") ? comp.prompt : "Question";
     shell.body.appendChild(body);
+
+    // Read-only when the host disables end-user decisions: no option rows, no
+    // decision controls — the prompt stays visible (mirrors chat-stream.js).
+    if (!canDecide) {
+      shell.body.appendChild(a2uiApprovalsDisabledNote());
+      return shell.wrap;
+    }
 
     var options = comp.options;
     if (Array.isArray(options) && options.length) {

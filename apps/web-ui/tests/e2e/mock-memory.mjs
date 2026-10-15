@@ -195,7 +195,7 @@ function publicConfigForLink(linkConfig) {
     requireEmail: !!cfg.require_email,
     showSessionList: !!cfg.show_session_list,
     maxMessageChars: cfg.max_message_chars,
-    allowEndUserApprovals: true,
+    allowEndUserApprovals: !!cfg.allow_end_user_approvals,
     sandboxEnabled: !!cfg.sandbox_enabled,
     retentionDays: cfg.retention_days,
     budgetMaxMessages: cfg.budget_max_messages,
@@ -443,6 +443,12 @@ const server = http.createServer((req, res) => {
     // exchange without the owner-page round trip.
     if (key === "no-rail-key") {
       return json(res, { ...publicConfig(), showSessionList: false });
+    }
+    // A well-known key whose link has end-user approvals disabled, so the
+    // read-only card test can drive a deterministic allowEndUserApprovals:false
+    // exchange without an owner-page round trip.
+    if (key === "no-approvals-key") {
+      return json(res, { ...publicConfig(), allowEndUserApprovals: false });
     }
     const created = shareLinks.find((l) => l.token === key && !l.revokedAt);
     if (VALID_KEYS.has(key)) {

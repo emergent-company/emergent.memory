@@ -583,6 +583,12 @@
         ? "Select all answers that apply"
         : isText ? "" : "Select one answer";
 
+      // A host may disable end-user decisions (the public share link's
+      // allow_end_user_approvals). The server then 403s every decision, so the
+      // card renders read-only rather than offering controls that always fail.
+      // Hosts that omit the hook (the authenticated chat) keep deciding.
+      var canDecide = !ctx.approvalsEnabled || ctx.approvalsEnabled();
+
       ctx.hideEmpty();
 
       // Same shell as an assistant bubble so the card reads as the agent asking
@@ -603,18 +609,28 @@
         '<div class="memory-question__body q-body memory-md text-base leading-snug break-words">' + (evt.questionHtml || escapeHTML(q)) + '</div>' +
         (hint ? '<p class="memory-question__hint mt-0.5 text-xs text-muted">' + escapeHTML(hint) + '</p>' : "") +
         (evt.proposalHtml || "") +
-        '<div class="memory-question__options q-options flex flex-col gap-2"></div>' +
+        (canDecide || answered ? '<div class="memory-question__options q-options flex flex-col gap-2"></div>' : "") +
         (answered
           ? '<div class="memory-question__footer flex items-center justify-end gap-2 pt-1">' +
             '<span class="badge badge-success badge-sm gap-1">' +
             '<span class="iconify lucide--check size-3" aria-hidden="true"></span> Answered</span></div>'
-          : '<div class="memory-question__footer flex items-center justify-between gap-3 pt-1">' +
-            '<span class="text-xs text-muted-faint">Esc to dismiss</span>' +
-            '<button type="button" data-testid="chat-question-submit" class="memory-question__submit q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
-            '</div>') +
+          : canDecide
+            ? '<div class="memory-question__footer flex items-center justify-between gap-3 pt-1">' +
+              '<span class="text-xs text-muted-faint">Esc to dismiss</span>' +
+              '<button type="button" data-testid="chat-question-submit" class="memory-question__submit q-submit btn btn-primary btn-sm min-w-28" disabled>Submit</button>' +
+              '</div>'
+            : '<div class="memory-question__footer flex items-center justify-end gap-2 pt-1">' +
+              '<span class="text-xs text-muted-faint">Approvals are disabled for this chat.</span></div>') +
         '</div>';
       wrap.appendChild(card);
       ctx.messages.appendChild(wrap);
+
+      if (!canDecide && !answered) {
+        // Read-only: no option rows, no submit. The card still shows the
+        // question body/proposal so the transcript reads correctly.
+        ctx.scrollToBottom();
+        return;
+      }
 
       var optsEl = card.querySelector(".q-options");
       var submitBtn = card.querySelector(".q-submit");
@@ -840,6 +856,9 @@
       var tool = evt.tool || "a tool";
       var input = evt.input || {};
 
+      // Read-only when the host disables end-user decisions (see renderQuestion).
+      var canDecide = !ctx.approvalsEnabled || ctx.approvalsEnabled();
+
       ctx.hideEmpty();
 
       var wrap = document.createElement("div");
@@ -858,17 +877,27 @@
         '<h3 class="memory-approval__title text-base leading-snug font-semibold break-words">Approve tool call</h3>' +
         '<p class="memory-approval__sentence mt-0.5 text-xs text-muted-strong">The agent wants to run <code class="font-mono text-xs">' + escapeHTML(tool) + '</code>.</p>' +
         '<pre class="memory-approval__args approval-args max-h-40 overflow-y-auto rounded-field bg-base-200/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' + escapeHTML(JSON.stringify(input, null, 2)) + '</pre>' +
-        '<div class="memory-approval__reject approval-reject-box hidden flex-col gap-2">' +
-        '<input type="text" class="memory-approval__message approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +
-        '</div>' +
-        '<div class="memory-approval__actions flex items-center justify-end gap-2 pt-1">' +
-        '<button type="button" data-testid="chat-approval-cancel" class="memory-approval__cancel approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
-        '<button type="button" data-testid="chat-approval-reject" class="memory-approval__reject-action approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
-        '<button type="button" data-testid="chat-approval-approve" class="memory-approval__approve approval-approve btn btn-primary btn-sm">Approve</button>' +
-        '</div>' +
+        (canDecide
+          ? '<div class="memory-approval__reject approval-reject-box hidden flex-col gap-2">' +
+            '<input type="text" class="memory-approval__message approval-msg input input-sm w-full" placeholder="Reason (optional)" maxlength="500">' +
+            '</div>' +
+            '<div class="memory-approval__actions flex items-center justify-end gap-2 pt-1">' +
+            '<button type="button" data-testid="chat-approval-cancel" class="memory-approval__cancel approval-cancel btn btn-ghost btn-sm">Cancel</button>' +
+            '<button type="button" data-testid="chat-approval-reject" class="memory-approval__reject-action approval-reject btn btn-ghost btn-sm text-error">Reject</button>' +
+            '<button type="button" data-testid="chat-approval-approve" class="memory-approval__approve approval-approve btn btn-primary btn-sm">Approve</button>' +
+            '</div>'
+          : '<div class="memory-approval__actions flex items-center justify-end gap-2 pt-1">' +
+            '<span class="text-xs text-muted-faint">Approvals are disabled for this chat.</span></div>') +
         '</div>';
       wrap.appendChild(card);
       ctx.messages.appendChild(wrap);
+
+      if (!canDecide) {
+        // Read-only: the tool call and its args stay visible, but no decision
+        // controls render (the server 403s them when approvals are disabled).
+        ctx.scrollToBottom();
+        return;
+      }
 
       var rejectBox = card.querySelector(".approval-reject-box");
       var msgInput = card.querySelector(".approval-msg");

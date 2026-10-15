@@ -355,6 +355,64 @@ test.describe('public share page', () => {
       await expect(page.getByTestId('share-composer')).toHaveCount(0);
     });
   }
+
+  test('a failed rail refresh shows an explicit error with a working retry', async ({ page }) => {
+    await openShare(page, 'valid-key-123');
+    // The rail is server-rendered, so rows (and their per-row menu) arrive with
+    // the page. This is the state the old JSON fallback silently replaced.
+    const welcome = page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' });
+    await expect(welcome).toBeVisible();
+
+    // Fail the next server-rendered rail partial. The post-stream refresh is the
+    // deterministic trigger for it.
+    await page.route('**/share/api/partial/sessions*', (route) => route.abort());
+    await page.getByTestId('share-input').fill('hello');
+    await page.getByTestId('share-send').click();
+
+    // The failure is surfaced instead of swapping in a menu-less list (#1890).
+    await expect(page.getByTestId('share-sessions-error')).toBeVisible();
+    await expect(page.getByTestId('share-sessions-retry')).toBeVisible();
+
+    // Retry with the upstream reachable again restores the server-rendered rail,
+    // including the row menu that the fallback used to drop.
+    await page.unroute('**/share/api/partial/sessions*');
+    await page.getByTestId('share-sessions-retry').click();
+    await expect(
+      page.getByTestId('share-session-row').filter({ hasText: 'Welcome chat' }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Actions for Welcome chat' }),
+    ).toBeVisible();
+  });
+
+  test('a link with end-user approvals disabled renders question and approval cards read-only', async ({ page }) => {
+    await openShare(page, 'no-approvals-key');
+    await expectReadyShell(page);
+
+    // Live path first, from a fresh chat: a streamed tool approval renders
+    // read-only — the tool call stays visible, the decision buttons do not,
+    // matching the server's 403 for the same link (#1892).
+    await page.getByTestId('share-input').fill('run this action');
+    await page.getByTestId('share-send').click();
+
+    const approvalCard = page.getByTestId('chat-approval-card');
+    await expect(approvalCard).toBeVisible();
+    await expect(approvalCard.getByTestId('chat-approval-approve')).toHaveCount(0);
+    await expect(approvalCard.getByTestId('chat-approval-reject')).toHaveCount(0);
+    await expect(approvalCard.getByTestId('chat-approval-cancel')).toHaveCount(0);
+
+    // History path: the seeded paused ask_user question renders its body but no
+    // decision controls either.
+    const questionRow = page.getByTestId('share-session-row').filter({ hasText: 'Question chat' });
+    await expect(questionRow).toBeVisible();
+    await questionRow.click();
+
+    const questionCard = page.getByTestId('chat-question-card');
+    await expect(questionCard).toBeVisible();
+    await expect(questionCard).toContainText('Which option?');
+    await expect(questionCard.getByTestId('chat-question-option')).toHaveCount(0);
+    await expect(questionCard.getByTestId('chat-question-submit')).toHaveCount(0);
+  });
 });
 
 test.describe('owner share-link management', () => {
