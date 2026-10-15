@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -208,13 +209,14 @@ func (s *Service) StartMCPOAuth(ctx context.Context, projectID, serverID, userID
 		return nil, err
 	}
 
-	row, err := s.repo.FindOAuthByServerID(ctx, server.ID)
+	row, err := s.repo.FindOAuthForUser(ctx, server.ID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server authorization: %w", err)
 	}
 	if row == nil {
 		row = &MCPServerOAuth{
 			ServerID:             server.ID,
+			UserID:               userIDOrNil(userID),
 			ProjectID:            projectID,
 			AuthorizationServer:  req.AuthorizationServer,
 			TokenEndpoint:        req.TokenEndpoint,
@@ -322,6 +324,10 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 		return "", "", ErrOAuthStateInvalid
 	}
 	projectID = pending.ProjectID
+	userID := ""
+	if pending.UserID != nil {
+		userID = *pending.UserID
+	}
 
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
@@ -330,7 +336,7 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 	if server == nil {
 		return "", "", ErrServerNotFound
 	}
-	row, err := s.repo.FindOAuthByServerID(ctx, serverID)
+	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
 	if err != nil {
 		return "", "", fmt.Errorf("loading MCP server authorization: %w", err)
 	}
@@ -363,9 +369,11 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 
 	// The credential is now usable: refresh the tool list so the newly
 	// authorized server's tools appear. Best-effort — the connect itself
-	// already succeeded.
+	// already succeeded. Discovery is run as the connecting user so it resolves
+	// that user's freshly stored credential.
 	s.invalidateToolPool(projectID)
-	if _, err := s.DiscoverAndSyncTools(ctx, serverID, projectID); err != nil {
+	discoverCtx := auth.ContextWithUser(ctx, &auth.AuthUser{ID: userID})
+	if _, err := s.DiscoverAndSyncTools(discoverCtx, serverID, projectID); err != nil {
 		s.log.Warn("tool discovery after MCP OAuth connect failed",
 			slog.String("server_id", serverID),
 			slog.String("error", err.Error()),
@@ -398,7 +406,7 @@ func (s *Service) storeTokens(ctx context.Context, row *MCPServerOAuth, tokens *
 	if scope == "" {
 		scope = row.Scope
 	}
-	if err := s.repo.UpdateOAuthTokens(ctx, row.ServerID, access, refreshSecret, scope, expiresAt); err != nil {
+	if err := s.repo.UpdateOAuthTokens(ctx, row.ServerID, oauthUserID(row), access, refreshSecret, scope, expiresAt); err != nil {
 		return err
 	}
 	row.AccessToken = access
@@ -410,9 +418,9 @@ func (s *Service) storeTokens(ctx context.Context, row *MCPServerOAuth, tokens *
 
 // --- Status / disconnect ---
 
-// MCPOAuthStatus reports the stored authorization state of one server without
-// ever exposing token material.
-func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID string) (*MCPServerOAuthStatusDTO, error) {
+// MCPOAuthStatus reports the stored authorization state of one server, resolved
+// for the requesting user, without ever exposing token material.
+func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID, userID string) (*MCPServerOAuthStatusDTO, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server: %w", err)
@@ -424,7 +432,7 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID string
 		ServerID: server.ID,
 		Scopes:   []string{},
 	}
-	row, err := s.repo.FindOAuthByServerID(ctx, serverID)
+	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server authorization: %w", err)
 	}
@@ -433,6 +441,10 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID string
 	}
 	status.Configured = true
 	status.Connected = row.AccessToken != nil
+	status.Shared = row.UserID == nil
+	if row.UserID != nil {
+		status.UserID = row.UserID
+	}
 	status.ClientConfigured = strings.TrimSpace(row.ClientID) != ""
 	if row.AuthorizationServer != "" {
 		server := row.AuthorizationServer
@@ -454,9 +466,11 @@ func (s *Service) MCPOAuthStatus(ctx context.Context, projectID, serverID string
 	return status, nil
 }
 
-// DisconnectMCPOAuth deletes a server's stored OAuth credential and drops any
-// pooled connection that was using it.
-func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID string) error {
+// DisconnectMCPOAuth deletes the requesting user's stored OAuth credential and
+// drops any pooled connection that was using it. A user may only disconnect
+// their own credential; the shared (project-wide) row is deleted only when
+// userID is empty (an operator/administrative disconnect).
+func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID, userID string) error {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return fmt.Errorf("loading MCP server: %w", err)
@@ -464,7 +478,7 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID st
 	if server == nil {
 		return ErrServerNotFound
 	}
-	if err := s.repo.DeleteOAuthByServerID(ctx, serverID); err != nil {
+	if err := s.repo.DeleteOAuthByServerID(ctx, serverID, userID); err != nil {
 		return err
 	}
 	s.proxy.CloseServer(serverID)
@@ -477,10 +491,11 @@ func (s *Service) DisconnectMCPOAuth(ctx context.Context, projectID, serverID st
 }
 
 // ProvisionOAuthClient stores a pre-registered OAuth client identity for a
-// remote server, clearing any token set issued to a previous client (tokens are
-// bound to the client they were issued to). It returns the server's refreshed
-// authorization status, which never carries token material.
-func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, clientID, clientSecret string) (*MCPServerOAuthStatusDTO, error) {
+// remote server and user (the shared row when userID is empty), clearing any
+// token set issued to a previous client (tokens are bound to the client they
+// were issued to). It returns the server's refreshed authorization status,
+// which never carries token material.
+func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID, userID, clientID, clientSecret string) (*MCPServerOAuthStatusDTO, error) {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server: %w", err)
@@ -500,7 +515,7 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 		}
 	}
 
-	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, clientID, secret); err != nil {
+	if err := s.repo.UpsertOAuthClient(ctx, server.ID, projectID, userID, clientID, secret); err != nil {
 		return nil, err
 	}
 
@@ -509,13 +524,13 @@ func (s *Service) ProvisionOAuthClient(ctx context.Context, projectID, serverID,
 	s.proxy.CloseServer(serverID)
 	s.invalidateToolPool(projectID)
 
-	return s.MCPOAuthStatus(ctx, projectID, serverID)
+	return s.MCPOAuthStatus(ctx, projectID, serverID, userID)
 }
 
-// ClearOAuthClient removes a server's stored client identity and any token set,
-// leaving the discovered endpoints in place so a later authorize can re-provision
-// or re-register.
-func (s *Service) ClearOAuthClient(ctx context.Context, projectID, serverID string) error {
+// ClearOAuthClient removes the requesting user's stored client identity and any
+// token set, leaving the discovered endpoints in place so a later authorize can
+// re-provision or re-register.
+func (s *Service) ClearOAuthClient(ctx context.Context, projectID, serverID, userID string) error {
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
 		return fmt.Errorf("loading MCP server: %w", err)
@@ -523,7 +538,7 @@ func (s *Service) ClearOAuthClient(ctx context.Context, projectID, serverID stri
 	if server == nil {
 		return ErrServerNotFound
 	}
-	if err := s.repo.ClearOAuthClient(ctx, serverID); err != nil {
+	if err := s.repo.ClearOAuthClient(ctx, serverID, userID); err != nil {
 		return err
 	}
 	s.proxy.CloseServer(serverID)
@@ -550,9 +565,10 @@ func withDeviceAuthorization(headers map[string]any, auth string) map[string]any
 }
 
 // oauthSummaries returns the authorization summary per server id for a set of
-// project servers. Servers that cannot use the flow (non-remote transports) are
+// project servers, resolved for the requesting user (personal row first, shared
+// row fallback). Servers that cannot use the flow (non-remote transports) are
 // omitted so the UI only offers Connect where it can work.
-func (s *Service) oauthSummaries(ctx context.Context, projectID string, servers []*MCPServer) (map[string]*MCPServerOAuthSummaryDTO, error) {
+func (s *Service) oauthSummaries(ctx context.Context, projectID, userID string, servers []*MCPServer) (map[string]*MCPServerOAuthSummaryDTO, error) {
 	ids := make([]string, 0, len(servers))
 	for _, srv := range servers {
 		if srv == nil || srv.Type == ServerTypeBuiltin || srv.Type == ServerTypeStdio {
@@ -560,7 +576,7 @@ func (s *Service) oauthSummaries(ctx context.Context, projectID string, servers 
 		}
 		ids = append(ids, srv.ID)
 	}
-	rows, err := s.repo.FindOAuthByServerIDs(ctx, projectID, ids)
+	rows, err := s.repo.FindOAuthByServerIDs(ctx, projectID, ids, userID)
 	if err != nil {
 		return nil, fmt.Errorf("loading MCP server authorizations: %w", err)
 	}
@@ -571,6 +587,8 @@ func (s *Service) oauthSummaries(ctx context.Context, projectID string, servers 
 		if row, ok := rows[id]; ok {
 			summary.Configured = true
 			summary.Connected = row.AccessToken != nil
+			summary.Shared = row.UserID == nil
+			summary.UserID = row.UserID
 			if row.AuthorizationServer != "" {
 				server := row.AuthorizationServer
 				summary.AuthorizationServer = &server
@@ -599,11 +617,11 @@ func attachOAuthSummaries(dtos []*MCPServerDTO, summaries map[string]*MCPServerO
 }
 
 // DecorateOAuthSummaries fills the per-server authorization summary (whether a
-// credential is registered/connected) on the DTOs for the given server rows. An
-// error is returned only for a store failure: the summary is presentation
-// detail, so callers may log-and-continue.
-func (s *Service) DecorateOAuthSummaries(ctx context.Context, projectID string, servers []*MCPServer, dtos []*MCPServerDTO) error {
-	summaries, err := s.oauthSummaries(ctx, projectID, servers)
+// credential is registered/connected) on the DTOs for the given server rows,
+// resolved for the requesting user. An error is returned only for a store
+// failure: the summary is presentation detail, so callers may log-and-continue.
+func (s *Service) DecorateOAuthSummaries(ctx context.Context, projectID, userID string, servers []*MCPServer, dtos []*MCPServerDTO) error {
+	summaries, err := s.oauthSummaries(ctx, projectID, userID, servers)
 	if err != nil {
 		return err
 	}

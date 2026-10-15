@@ -81,7 +81,7 @@ func TestMCPServersCommandStructure(t *testing.T) {
 		subcommandNames[cmd.Name()] = true
 	}
 
-	expected := []string{"list", "get", "create", "delete", "sync", "inspect", "tools"}
+	expected := []string{"list", "get", "create", "delete", "sync", "inspect", "tools", "oauth"}
 	for _, name := range expected {
 		assert.True(t, subcommandNames[name], "expected subcommand %q to be registered", name)
 	}

@@ -56,7 +56,7 @@ func (h *Handler) ListServers(c echo.Context) error {
 		dtos = append(dtos, s.ToDTO())
 	}
 	// Advisory presentation detail: a failure here must not break the list.
-	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, servers, dtos); err != nil {
+	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, user.ID, servers, dtos); err != nil {
 		slog.Warn("failed to load MCP server authorization summaries", "error", err, "project_id", user.ProjectID)
 	}
 
@@ -95,7 +95,7 @@ func (h *Handler) GetServer(c echo.Context) error {
 	}
 
 	dto := server.ToDetailDTO()
-	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, []*MCPServer{server}, []*MCPServerDTO{&dto.MCPServerDTO}); err != nil {
+	if err := h.svc.DecorateOAuthSummaries(c.Request().Context(), user.ProjectID, user.ID, []*MCPServer{server}, []*MCPServerDTO{&dto.MCPServerDTO}); err != nil {
 		slog.Warn("failed to load MCP server authorization summary", "error", err, "server_id", id)
 	}
 
@@ -349,10 +349,14 @@ func (h *Handler) CallToolOnServer(c echo.Context) error {
 		return apperror.NewBadRequest("invalid request body")
 	}
 
+	// Stamp the caller into the context so the proxy resolves this user's OAuth
+	// credential (personal row first, shared fallback) when the server needs one.
+	ctx := auth.ContextWithUser(c.Request().Context(), user)
+
 	// The explicit *mcp.ToolResult declaration keeps the package import live so
 	// swag resolves the @Success type (mcp.ToolResult) in the annotation above.
 	var result *mcp.ToolResult
-	result, err := h.svc.CallToolOnServer(c.Request().Context(), user.ProjectID, serverID, toolName, req.Arguments, user.Scopes, user.APITokenID)
+	result, err := h.svc.CallToolOnServer(ctx, user.ProjectID, serverID, toolName, req.Arguments, user.Scopes, user.APITokenID)
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrServerNotFound):
@@ -395,7 +399,11 @@ func (h *Handler) InspectServer(c echo.Context) error {
 		return apperror.NewBadRequest("server ID is required")
 	}
 
-	result, err := h.svc.InspectServer(c.Request().Context(), serverID, user.ProjectID)
+	// Resolve the caller's OAuth credential (not the shared fallback) so inspect
+	// reports this user's actual authorization state.
+	ctx := auth.ContextWithUser(c.Request().Context(), user)
+
+	result, err := h.svc.InspectServer(ctx, serverID, user.ProjectID)
 	if err != nil {
 		if errors.Is(err, ErrOutboundURLNotAllowed) {
 			return apperror.NewBadRequest(err.Error())
@@ -435,7 +443,10 @@ func (h *Handler) TestServerConfig(c echo.Context) error {
 		return apperror.NewBadRequest("invalid request body")
 	}
 
-	result, err := h.svc.TestServerConfig(c.Request().Context(), user.ProjectID, &req.CreateMCPServerDTO, req.ServerID)
+	// Resolve the caller's OAuth credential for the edit-mode probe.
+	ctx := auth.ContextWithUser(c.Request().Context(), user)
+
+	result, err := h.svc.TestServerConfig(ctx, user.ProjectID, &req.CreateMCPServerDTO, req.ServerID)
 	if err != nil {
 		return apperror.NewBadRequest(err.Error())
 	}
@@ -471,7 +482,7 @@ func (h *Handler) SyncTools(c echo.Context) error {
 		return apperror.NewNotFound("mcp_server", serverID)
 	}
 
-	ctx := c.Request().Context()
+	ctx := auth.ContextWithUser(c.Request().Context(), user)
 
 	// Try to parse the body to determine sync mode.
 	// If body is empty, a JSON object, or contains auto_discover: true → auto-discover.

@@ -14,15 +14,56 @@ import (
 
 // --- OAuth credential rows (kb.mcp_server_oauth) ---
 
-// FindOAuthByServerID returns the OAuth credential row for a server, or nil when
-// none exists.
-func (r *Repository) FindOAuthByServerID(ctx context.Context, serverID string) (*MCPServerOAuth, error) {
+// userIDOrNil maps an empty user id to nil (the shared/project-wide row) and a
+// non-empty id to a pointer, matching the nullable user_id column's semantics.
+func userIDOrNil(userID string) *string {
+	if userID == "" {
+		return nil
+	}
+	return &userID
+}
+
+// oauthUserID returns a row's owner user id as a string ("" for the shared row).
+func oauthUserID(row *MCPServerOAuth) string {
+	if row == nil || row.UserID == nil {
+		return ""
+	}
+	return *row.UserID
+}
+
+// oauthConflictTarget builds the ON CONFLICT clause for an OAuth upsert. The
+// identity is the composite uniqueness of (server_id, user_id) expressed as two
+// partial indexes, so the conflict target differs for a shared row (user_id IS
+// NULL) and a personal row (server_id, user_id).
+func oauthConflictTarget(userID *string) string {
+	if userID == nil {
+		return "CONFLICT (server_id) WHERE user_id IS NULL DO UPDATE"
+	}
+	return "CONFLICT (server_id, user_id) WHERE user_id IS NOT NULL DO UPDATE"
+}
+
+// FindOAuthForUser returns the OAuth credential row for a server, resolving the
+// caller's personal row first and falling back to the shared (user_id IS NULL)
+// row. It returns nil when neither exists. userID may be empty to read only the
+// shared row.
+func (r *Repository) FindOAuthForUser(ctx context.Context, serverID, userID string) (*MCPServerOAuth, error) {
+	uid := userIDOrNil(userID)
 	row := &MCPServerOAuth{}
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(row).
-		Where("server_id = ?", serverID).
-		Scan(ctx)
-	if err != nil {
+		Where("server_id = ?", serverID)
+	if uid == nil {
+		q = q.Where("user_id IS NULL")
+	} else {
+		// Personal row first, shared row as the fallback.
+		q = q.
+			WhereGroup(" AND ", func(q *bun.SelectQuery) *bun.SelectQuery {
+				return q.Where("user_id = ?", uid).WhereOr("user_id IS NULL")
+			}).
+			OrderExpr("(user_id IS NULL) ASC").
+			Limit(1)
+	}
+	if err := q.Scan(ctx); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -32,37 +73,48 @@ func (r *Repository) FindOAuthByServerID(ctx context.Context, serverID string) (
 }
 
 // FindOAuthByServerIDs returns the OAuth credential rows for a set of servers,
-// keyed by server id. It is the bulk read behind the list endpoint's per-server
-// authorization summary.
-func (r *Repository) FindOAuthByServerIDs(ctx context.Context, projectID string, serverIDs []string) (map[string]*MCPServerOAuth, error) {
+// keyed by server id, resolving each server's personal row (for userID) with a
+// fallback to the shared row. It is the bulk read behind the list endpoint's
+// per-server authorization summary.
+func (r *Repository) FindOAuthByServerIDs(ctx context.Context, projectID string, serverIDs []string, userID string) (map[string]*MCPServerOAuth, error) {
 	out := make(map[string]*MCPServerOAuth, len(serverIDs))
 	if len(serverIDs) == 0 {
 		return out, nil
 	}
+	uid := userIDOrNil(userID)
 	rows := []*MCPServerOAuth{}
-	err := r.db.NewSelect().
+	q := r.db.NewSelect().
 		Model(&rows).
 		Where("project_id = ?", projectID).
-		Where("server_id IN (?)", bun.In(serverIDs)).
-		Scan(ctx)
-	if err != nil {
+		Where("server_id IN (?)", bun.In(serverIDs))
+	if uid == nil {
+		q = q.Where("user_id IS NULL")
+	} else {
+		q = q.Where("(user_id = ? OR user_id IS NULL)", uid)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return nil, err
 	}
 	for _, row := range rows {
-		out[row.ServerID] = row
+		existing, ok := out[row.ServerID]
+		// Prefer the personal row over the shared row for the same server.
+		if !ok || (row.UserID != nil && existing.UserID == nil) {
+			out[row.ServerID] = row
+		}
 	}
 	return out, nil
 }
 
-// UpsertOAuth inserts or updates the OAuth row for a server. Callers pass the
-// full desired state; created_at is preserved on update.
+// UpsertOAuth inserts or updates the OAuth row for a server and user. Callers
+// pass the full desired state (including UserID, nil for the shared row);
+// created_at is preserved on update.
 func (r *Repository) UpsertOAuth(ctx context.Context, row *MCPServerOAuth) error {
 	if row == nil || row.ServerID == "" {
 		return fmt.Errorf("oauth row requires a server id")
 	}
 	_, err := r.db.NewInsert().
 		Model(row).
-		On("CONFLICT (server_id) DO UPDATE").
+		On(oauthConflictTarget(row.UserID)).
 		Set("project_id = EXCLUDED.project_id").
 		Set("authorization_server = EXCLUDED.authorization_server").
 		Set("token_endpoint = EXCLUDED.token_endpoint").
@@ -82,9 +134,9 @@ func (r *Repository) UpsertOAuth(ctx context.Context, row *MCPServerOAuth) error
 	return nil
 }
 
-// UpdateOAuthTokens persists a refreshed/new token set for a server without
-// touching the registered client identity or the discovered endpoints.
-func (r *Repository) UpdateOAuthTokens(ctx context.Context, serverID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
+// UpdateOAuthTokens persists a refreshed/new token set for a server and user
+// without touching the registered client identity or the discovered endpoints.
+func (r *Repository) UpdateOAuthTokens(ctx context.Context, serverID, userID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
 	q := r.db.NewUpdate().
 		Model((*MCPServerOAuth)(nil)).
 		Set("access_token = ?", access).
@@ -96,18 +148,21 @@ func (r *Repository) UpdateOAuthTokens(ctx context.Context, serverID string, acc
 	if expiresAt != nil {
 		q = q.Set("expires_at = ?", expiresAt)
 	}
-	if _, err := q.Where("server_id = ?", serverID).Exec(ctx); err != nil {
+	q = q.Where("server_id = ?", serverID).
+		Where("user_id IS NOT DISTINCT FROM ?", userIDOrNil(userID))
+	if _, err := q.Exec(ctx); err != nil {
 		return fmt.Errorf("updating mcp server oauth tokens: %w", err)
 	}
 	return nil
 }
 
-// DeleteOAuthByServerID removes the OAuth credential row for a server. It is a
-// no-op when no row exists.
-func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID string) error {
+// DeleteOAuthByServerID removes the OAuth credential row for a server and user
+// (the shared row when userID is empty). It is a no-op when no row exists.
+func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID, userID string) error {
 	if _, err := r.db.NewDelete().
 		Model((*MCPServerOAuth)(nil)).
 		Where("server_id = ?", serverID).
+		Where("user_id IS NOT DISTINCT FROM ?", userIDOrNil(userID)).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("deleting mcp server oauth: %w", err)
 	}
@@ -115,23 +170,26 @@ func (r *Repository) DeleteOAuthByServerID(ctx context.Context, serverID string)
 }
 
 // UpsertOAuthClient stores a pre-registered OAuth client identity for a server
-// and clears any token set, because tokens issued to a previous client are
-// invalid. Discovered endpoints (authorization_server, token_endpoint,
-// registration_endpoint, resource, scope) are left untouched when the row
-// already exists; a new row starts with their defaults and is filled in by the
-// next authorize. clientSecret may be nil for a public client.
-func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, clientID string, clientSecret *EncryptedSecret) error {
+// and user (the shared row when userID is empty) and clears any token set,
+// because tokens issued to a previous client are invalid. Discovered endpoints
+// (authorization_server, token_endpoint, registration_endpoint, resource,
+// scope) are left untouched when the row already exists; a new row starts with
+// their defaults and is filled in by the next authorize. clientSecret may be nil
+// for a public client.
+func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID, userID, clientID string, clientSecret *EncryptedSecret) error {
 	if serverID == "" {
 		return fmt.Errorf("oauth row requires a server id")
 	}
+	uid := userIDOrNil(userID)
 	_, err := r.db.NewInsert().
 		Model(&MCPServerOAuth{
 			ServerID:     serverID,
+			UserID:       uid,
 			ProjectID:    projectID,
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 		}).
-		On("CONFLICT (server_id) DO UPDATE").
+		On(oauthConflictTarget(uid)).
 		Set("client_id = EXCLUDED.client_id").
 		Set("client_secret = EXCLUDED.client_secret").
 		Set("access_token = ?", nil).
@@ -145,9 +203,10 @@ func (r *Repository) UpsertOAuthClient(ctx context.Context, serverID, projectID,
 	return nil
 }
 
-// ClearOAuthClient clears a server's stored client identity and token set,
-// leaving the discovered endpoints in place. It is a no-op when no row exists.
-func (r *Repository) ClearOAuthClient(ctx context.Context, serverID string) error {
+// ClearOAuthClient clears a server's stored client identity and token set for a
+// server and user (the shared row when userID is empty), leaving the discovered
+// endpoints in place. It is a no-op when no row exists.
+func (r *Repository) ClearOAuthClient(ctx context.Context, serverID, userID string) error {
 	if _, err := r.db.NewUpdate().
 		Model((*MCPServerOAuth)(nil)).
 		Set("client_id = ?", "").
@@ -157,6 +216,7 @@ func (r *Repository) ClearOAuthClient(ctx context.Context, serverID string) erro
 		Set("expires_at = ?", nil).
 		Set("updated_at = now()").
 		Where("server_id = ?", serverID).
+		Where("user_id IS NOT DISTINCT FROM ?", userIDOrNil(userID)).
 		Exec(ctx); err != nil {
 		return fmt.Errorf("clearing mcp server oauth client: %w", err)
 	}

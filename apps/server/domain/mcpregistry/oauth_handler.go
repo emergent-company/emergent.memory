@@ -65,7 +65,7 @@ func (h *Handler) MCPOAuthStatus(c echo.Context) error {
 		return apperror.NewBadRequest("server ID is required")
 	}
 
-	status, err := h.svc.MCPOAuthStatus(c.Request().Context(), user.ProjectID, id)
+	status, err := h.svc.MCPOAuthStatus(c.Request().Context(), user.ProjectID, id, user.ID)
 	if err != nil {
 		return mcpOAuthError(err)
 	}
@@ -92,7 +92,7 @@ func (h *Handler) DisconnectMCPOAuth(c echo.Context) error {
 		return apperror.NewBadRequest("server ID is required")
 	}
 
-	if err := h.svc.DisconnectMCPOAuth(c.Request().Context(), user.ProjectID, id); err != nil {
+	if err := h.svc.DisconnectMCPOAuth(c.Request().Context(), user.ProjectID, id, user.ID); err != nil {
 		return mcpOAuthError(err)
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -129,7 +129,7 @@ func (h *Handler) ProvisionMCPOAuthClient(c echo.Context) error {
 		return apperror.NewBadRequest("clientId is required")
 	}
 
-	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, body.ClientID, body.ClientSecret)
+	status, err := h.svc.ProvisionOAuthClient(c.Request().Context(), user.ProjectID, id, user.ID, body.ClientID, body.ClientSecret)
 	if err != nil {
 		return mcpOAuthError(err)
 	}
@@ -156,7 +156,7 @@ func (h *Handler) ClearMCPOAuthClient(c echo.Context) error {
 		return apperror.NewBadRequest("server ID is required")
 	}
 
-	if err := h.svc.ClearOAuthClient(c.Request().Context(), user.ProjectID, id); err != nil {
+	if err := h.svc.ClearOAuthClient(c.Request().Context(), user.ProjectID, id, user.ID); err != nil {
 		return mcpOAuthError(err)
 	}
 	return c.NoContent(http.StatusNoContent)

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcpregistry"
 	"github.com/spf13/cobra"
@@ -595,6 +597,184 @@ func runListMCPServerTools(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+var mcpOAuthCmd = &cobra.Command{
+	Use:   "oauth",
+	Short: "Manage OAuth authorization for an MCP server",
+	Long: `Connect, inspect, or disconnect the current user's OAuth authorization for
+an MCP server that requires OAuth 2.1 authorization.
+
+Commands:
+  connect    Begin an OAuth connect flow, open the authorization URL in a
+             browser, and poll until the server reports Connected.
+  status     Show the stored OAuth state for the current user.
+  disconnect Remove the current user's stored OAuth credential.`,
+}
+
+var mcpOAuthConnectCmd = &cobra.Command{
+	Use:   "connect [server-id]",
+	Short: "Connect OAuth for an MCP server",
+	Long: `Begin an OAuth connect flow for an MCP server and open the authorization
+URL in a browser. The CLI polls the server until the credential is stored and
+the server reports Connected.
+
+The connect flow is bound to the current user; each user connects their own
+credential.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthConnect,
+}
+
+var mcpOAuthStatusCmd = &cobra.Command{
+	Use:   "status [server-id]",
+	Short: "Show MCP server OAuth status",
+	Long: `Show the stored OAuth state for the current user.
+
+Displays whether a client is configured, whether a credential is connected,
+whether that credential is the project-wide shared credential or the current
+user's personal one, and token expiry. Token values are never shown.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthStatus,
+}
+
+var mcpOAuthDisconnectCmd = &cobra.Command{
+	Use:   "disconnect [server-id]",
+	Short: "Disconnect OAuth for an MCP server",
+	Long: `Remove the current user's stored OAuth credential for an MCP server.
+
+Disconnect removes only the current user's personal credential; it cannot
+remove the project-wide shared credential.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runMCPOAuthDisconnect,
+}
+
+func runMCPOAuthConnect(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	authz, err := c.SDK.MCPRegistry.Authorize(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to start OAuth connect: %w", err)
+	}
+
+	if authz.Data.AuthorizeURL == "" {
+		return fmt.Errorf("server did not return an authorization URL")
+	}
+
+	fmt.Println("Opening authorization URL in your browser...")
+	fmt.Println(authz.Data.AuthorizeURL)
+	if err := auth.OpenBrowser(authz.Data.AuthorizeURL); err != nil {
+		return err
+	}
+
+	fmt.Println("Waiting for authorization to complete (this can take up to a few minutes)...")
+
+	deadline := time.Now().Add(5 * time.Minute)
+	interval := 2 * time.Second
+	for {
+		st, pollErr := c.SDK.MCPRegistry.Status(context.Background(), serverID)
+		if pollErr == nil && st.Data.Connected {
+			fmt.Printf("Connected! OAuth credential stored for server %s.\n", serverID)
+			if st.Data.Shared {
+				fmt.Println("  Note: this credential is the project-wide shared credential.")
+			} else if st.Data.UserID != nil {
+				fmt.Printf("  Credential owner: %s\n", *st.Data.UserID)
+			}
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for OAuth authorization; run 'memory agents mcp-servers oauth status %s' to check", serverID)
+		}
+		time.Sleep(interval)
+	}
+}
+
+func runMCPOAuthStatus(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	st, err := c.SDK.MCPRegistry.Status(context.Background(), serverID)
+	if err != nil {
+		return fmt.Errorf("failed to get MCP server OAuth status: %w", err)
+	}
+
+	s := st.Data
+	fmt.Printf("MCP Server OAuth Status: %s\n", s.ServerID)
+	fmt.Printf("  OAuth configured:    %v\n", s.Configured)
+	fmt.Printf("  Client configured:   %v\n", s.ClientConfigured)
+	fmt.Printf("  Connected:           %v\n", s.Connected)
+	if s.Connected {
+		if s.Shared {
+			fmt.Printf("  Credential:          shared (project-wide)\n")
+		} else if s.UserID != nil {
+			fmt.Printf("  Credential:          personal (owner %s)\n", *s.UserID)
+		}
+		if s.ExpiresAt != nil {
+			fmt.Printf("  Expires:             %s\n", fmtTime(*s.ExpiresAt))
+		}
+	}
+	if s.AuthorizationServer != nil {
+		fmt.Printf("  Auth server:         %s\n", *s.AuthorizationServer)
+	}
+	if s.TokenEndpoint != nil {
+		fmt.Printf("  Token endpoint:      %s\n", *s.TokenEndpoint)
+	}
+	if len(s.Scopes) > 0 {
+		fmt.Printf("  Scopes:              %s\n", strings.Join(s.Scopes, ", "))
+	}
+
+	return nil
+}
+
+func runMCPOAuthDisconnect(cmd *cobra.Command, args []string) error {
+	projectID, err := resolveProjectContext(cmd, "")
+	if err != nil {
+		return err
+	}
+
+	c, err := getClient(cmd)
+	if err != nil {
+		return err
+	}
+	c.SetContext("", projectID)
+
+	serverID, err := resolveServerArgOrPick(cmd, c, args)
+	if err != nil {
+		return err
+	}
+
+	if err := c.SDK.MCPRegistry.Disconnect(context.Background(), serverID); err != nil {
+		return fmt.Errorf("failed to disconnect OAuth: %w", err)
+	}
+
+	fmt.Printf("OAuth disconnected for server %s.\n", serverID)
+	return nil
+}
+
 func init() {
 	// Create command flags
 	createMCPServerCmd.Flags().StringVar(&mcpServerName, "name", "", "Server name (required)")
@@ -618,6 +798,11 @@ func init() {
 	mcpServersCmd.AddCommand(inspectMCPServerCmd)
 	mcpServersCmd.AddCommand(toolsMCPServerCmd)
 	mcpServersCmd.AddCommand(configureMCPServerCmd)
+
+	mcpOAuthCmd.AddCommand(mcpOAuthConnectCmd)
+	mcpOAuthCmd.AddCommand(mcpOAuthStatusCmd)
+	mcpOAuthCmd.AddCommand(mcpOAuthDisconnectCmd)
+	mcpServersCmd.AddCommand(mcpOAuthCmd)
 
 	// Register with agents command
 	agentsCmd.AddCommand(mcpServersCmd)

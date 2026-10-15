@@ -627,3 +627,122 @@ func (c *Client) UpdateBuiltinTool(ctx context.Context, toolID string, updateReq
 
 	return &result, nil
 }
+
+// --- OAuth connect API ---
+
+// AuthorizeResponse is the response to starting an MCP server OAuth connect:
+// the authorization URL to open in a browser and the single-use state that
+// binds the flow.
+type AuthorizeResponse struct {
+	AuthorizeURL string `json:"authorizeUrl"`
+	State        string `json:"state"`
+}
+
+// MCPOAuthStatus is the stored authorization state of one MCP server, resolved
+// for the requesting user. Shared is true when the resolved credential is the
+// project-wide shared row; UserID is the owning user's id for a personal
+// credential. It never carries token material.
+type MCPOAuthStatus struct {
+	ServerID              string     `json:"serverId"`
+	Configured            bool       `json:"configured"`
+	Connected             bool       `json:"connected"`
+	Shared                bool       `json:"shared"`
+	UserID                *string    `json:"userId,omitempty"`
+	ClientConfigured      bool       `json:"clientConfigured"`
+	AuthorizationServer   *string    `json:"authorizationServer,omitempty"`
+	TokenEndpoint         *string    `json:"tokenEndpoint,omitempty"`
+	RegistrationSupported bool       `json:"registrationSupported"`
+	Scopes                []string   `json:"scopes"`
+	Scope                 *string    `json:"scope,omitempty"`
+	ExpiresAt             *time.Time `json:"expiresAt,omitempty"`
+	UpdatedAt             *time.Time `json:"updatedAt,omitempty"`
+}
+
+// Authorize begins an OAuth connect flow for an MCP server and returns the
+// authorization URL to open in a browser (state + PKCE).
+// POST /api/admin/mcp-servers/:id/oauth/authorize
+func (c *Client) Authorize(ctx context.Context, serverID string) (*APIResponse[AuthorizeResponse], error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/admin/mcp-servers/"+url.PathEscape(serverID)+"/oauth/authorize", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[AuthorizeResponse]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Status returns the stored authorization state of one MCP server.
+// GET /api/admin/mcp-servers/:id/oauth/status
+func (c *Client) Status(ctx context.Context, serverID string) (*APIResponse[MCPOAuthStatus], error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/admin/mcp-servers/"+url.PathEscape(serverID)+"/oauth/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result APIResponse[MCPOAuthStatus]
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// Disconnect deletes the MCP server's stored OAuth credential for the
+// requesting user.
+// DELETE /api/admin/mcp-servers/:id/oauth
+func (c *Client) Disconnect(ctx context.Context, serverID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/admin/mcp-servers/"+url.PathEscape(serverID)+"/oauth", nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	return nil
+}

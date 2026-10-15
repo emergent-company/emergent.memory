@@ -111,13 +111,50 @@ func (s *MCPOAuthDBSuite) seedCredential(server *mcpregistry.MCPServer, access s
 	return row
 }
 
+// seedPersonalCredential writes a personal (UserID non-nil) credential row for
+// the given user, exercising the partial-index ON CONFLICT clause that the
+// shared-row seed does not reach.
+func (s *MCPOAuthDBSuite) seedPersonalCredential(server *mcpregistry.MCPServer, userID, access string) *mcpregistry.MCPServerOAuth {
+	s.T().Helper()
+	expiry := time.Now().UTC().Add(time.Hour)
+	row := &mcpregistry.MCPServerOAuth{
+		ServerID:             server.ID,
+		UserID:               &userID,
+		ProjectID:            s.ProjectID,
+		AuthorizationServer:  "https://api.figma.com",
+		TokenEndpoint:        "https://api.figma.com/v1/oauth/token",
+		RegistrationEndpoint: "https://api.figma.com/v1/oauth/mcp/register",
+		Resource:             "https://mcp.figma.com/mcp",
+		Scope:                "mcp:connect",
+		ClientID:             "client-" + userID[:8],
+		ClientSecret:         s.encrypt("client-secret-value"),
+		AccessToken:          s.encrypt(access),
+		RefreshToken:         s.encrypt("refresh-token-value"),
+		ExpiresAt:            &expiry,
+	}
+	s.Require().NoError(s.repo.UpsertOAuth(s.Ctx, row))
+	return row
+}
+
+// countOAuthRows returns the number of OAuth credential rows for a server,
+// across all users (personal and shared).
+func (s *MCPOAuthDBSuite) countOAuthRows(serverID string) int {
+	s.T().Helper()
+	n, err := s.DB().NewSelect().
+		Model((*mcpregistry.MCPServerOAuth)(nil)).
+		Where("server_id = ?", serverID).
+		Count(s.Ctx)
+	s.Require().NoError(err)
+	return n
+}
+
 // --- store round-trip ---
 
 func (s *MCPOAuthDBSuite) TestOAuthCredentialRoundTrip() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	seeded := s.seedCredential(server, "access-token-value")
 
-	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(row)
 	s.Equal(seeded.AuthorizationServer, row.AuthorizationServer)
@@ -134,7 +171,7 @@ func (s *MCPOAuthDBSuite) TestOAuthCredentialRoundTrip() {
 	// duplicate row.
 	seeded.Scope = "mcp:connect offline_access"
 	s.Require().NoError(s.repo.UpsertOAuth(s.Ctx, seeded))
-	all, err := s.repo.FindOAuthByServerIDs(s.Ctx, s.ProjectID, []string{server.ID})
+	all, err := s.repo.FindOAuthByServerIDs(s.Ctx, s.ProjectID, []string{server.ID}, "")
 	s.Require().NoError(err)
 	s.Require().Len(all, 1)
 	s.Equal("mcp:connect offline_access", all[server.ID].Scope)
@@ -142,9 +179,9 @@ func (s *MCPOAuthDBSuite) TestOAuthCredentialRoundTrip() {
 	// A token refresh updates only the token columns and keeps the registered
 	// client identity.
 	newExpiry := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Millisecond)
-	s.Require().NoError(s.repo.UpdateOAuthTokens(s.Ctx, server.ID, s.encrypt("access-2"), s.encrypt("refresh-2"), "mcp:connect", &newExpiry))
+	s.Require().NoError(s.repo.UpdateOAuthTokens(s.Ctx, server.ID, "", s.encrypt("access-2"), s.encrypt("refresh-2"), "mcp:connect", &newExpiry))
 
-	refreshed, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	refreshed, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(refreshed)
 	s.Equal("access-2", s.decrypt(refreshed.AccessToken))
@@ -154,8 +191,8 @@ func (s *MCPOAuthDBSuite) TestOAuthCredentialRoundTrip() {
 	s.Require().NotNil(refreshed.ExpiresAt)
 	s.True(refreshed.ExpiresAt.UTC().Equal(newExpiry))
 
-	s.Require().NoError(s.repo.DeleteOAuthByServerID(s.Ctx, server.ID))
-	deleted, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	s.Require().NoError(s.repo.DeleteOAuthByServerID(s.Ctx, server.ID, ""))
+	deleted, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Nil(deleted)
 }
@@ -176,7 +213,7 @@ func (s *MCPOAuthDBSuite) TestOAuthSummaryAttachedToListDTO() {
 	}
 	s.Require().NotNil(target)
 
-	s.Require().NoError(s.svc.DecorateOAuthSummaries(s.Ctx, s.ProjectID, []*mcpregistry.MCPServer{target}, dtos))
+	s.Require().NoError(s.svc.DecorateOAuthSummaries(s.Ctx, s.ProjectID, "", []*mcpregistry.MCPServer{target}, dtos))
 
 	var found *mcpregistry.MCPServerDTO
 	for _, dto := range dtos {
@@ -198,7 +235,7 @@ func (s *MCPOAuthDBSuite) TestStatusNeverExposesTokenMaterial() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
 
-	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID)
+	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, "")
 	s.Require().NoError(err)
 	s.True(status.Configured)
 	s.True(status.Connected)
@@ -217,7 +254,7 @@ func (s *MCPOAuthDBSuite) TestStatusNeverExposesTokenMaterial() {
 func (s *MCPOAuthDBSuite) TestStatusAndSummaryWithoutCredential() {
 	server := s.createServer("plain", mcpregistry.ServerTypeHTTP, "https://example.com/mcp")
 
-	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID)
+	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, "")
 	s.Require().NoError(err)
 	s.False(status.Configured)
 	s.False(status.Connected)
@@ -225,7 +262,7 @@ func (s *MCPOAuthDBSuite) TestStatusAndSummaryWithoutCredential() {
 }
 
 func (s *MCPOAuthDBSuite) TestStatusUnknownServer() {
-	_, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111")
+	_, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
 }
 
@@ -233,21 +270,130 @@ func (s *MCPOAuthDBSuite) TestDisconnectRemovesCredentialButKeepsStaticHeaders()
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
 
-	s.Require().NoError(s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID))
+	s.Require().NoError(s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID, ""))
 
-	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Nil(row)
 
-	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID)
+	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, "")
 	s.Require().NoError(err)
 	s.False(status.Configured)
 	s.False(status.Connected)
 }
 
 func (s *MCPOAuthDBSuite) TestDisconnectUnknownServer() {
-	err := s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111")
+	err := s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
+}
+
+// --- per-user isolation ---
+
+// TestPerUserOAuthTwoUsersUpsertIndependently is the regression guard for the
+// partial-index ON CONFLICT clause: a personal (user_id non-nil) upsert must
+// succeed (it previously errored at parse time because PostgreSQL cannot infer a
+// partial unique index from `ON CONFLICT (server_id, user_id)`), and re-upserting
+// the same user must update in place rather than insert a duplicate row.
+func (s *MCPOAuthDBSuite) TestPerUserOAuthTwoUsersUpsertIndependently() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	userA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	userB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	// Two different users each upsert their own personal row for the same server.
+	s.seedPersonalCredential(server, userA, "access-a")
+	s.seedPersonalCredential(server, userB, "access-b")
+	s.Equal(2, s.countOAuthRows(server.ID))
+
+	// Re-upserting user A updates in place rather than inserting a third row.
+	s.seedPersonalCredential(server, userA, "access-a2")
+	s.Equal(2, s.countOAuthRows(server.ID))
+
+	rowA, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userA)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowA)
+	s.Equal("access-a2", s.decrypt(rowA.AccessToken))
+
+	rowB, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userB)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowB)
+	s.Equal("access-b", s.decrypt(rowB.AccessToken), "re-upserting A must not disturb B's row")
+}
+
+// TestPerUserOAuthPersonalResolvesOverShared verifies the credential-resolution
+// precedence: a user with a personal row reads their own, and a user without one
+// falls back to the shared row. The status DTO reports the resolved identity.
+func (s *MCPOAuthDBSuite) TestPerUserOAuthPersonalResolvesOverShared() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	userA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	other := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+
+	s.seedCredential(server, "access-shared")
+	s.seedPersonalCredential(server, userA, "access-a")
+
+	rowA, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userA)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowA)
+	s.Require().NotNil(rowA.UserID)
+	s.Equal(userA, *rowA.UserID)
+	s.Equal("access-a", s.decrypt(rowA.AccessToken), "A must read their own row, not the shared one")
+
+	rowOther, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, other)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowOther)
+	s.Nil(rowOther.UserID, "a user with no personal row must resolve the shared row")
+	s.Equal("access-shared", s.decrypt(rowOther.AccessToken))
+
+	statusA, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, userA)
+	s.Require().NoError(err)
+	s.True(statusA.Connected)
+	s.False(statusA.Shared, "A's credential is personal, not shared")
+	s.Require().NotNil(statusA.UserID)
+	s.Equal(userA, *statusA.UserID)
+
+	statusOther, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, other)
+	s.Require().NoError(err)
+	s.True(statusOther.Connected)
+	s.True(statusOther.Shared, "a user without a personal row resolves the shared credential")
+	s.Nil(statusOther.UserID)
+}
+
+// TestPerUserOAuthDisconnectRemovesOnlyCallerRow verifies per-user isolation on
+// disconnect: deleting A's credential leaves B's personal row and the shared row
+// intact, and A falls back to the shared row afterward.
+func (s *MCPOAuthDBSuite) TestPerUserOAuthDisconnectRemovesOnlyCallerRow() {
+	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
+	userA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	userB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	s.seedCredential(server, "access-shared")
+	s.seedPersonalCredential(server, userA, "access-a")
+	s.seedPersonalCredential(server, userB, "access-b")
+	s.Equal(3, s.countOAuthRows(server.ID))
+
+	s.Require().NoError(s.svc.DisconnectMCPOAuth(s.Ctx, s.ProjectID, server.ID, userA))
+
+	// Only A's personal row is gone; B's row and the shared row remain.
+	s.Equal(2, s.countOAuthRows(server.ID))
+
+	rowB, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userB)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowB)
+	s.Require().NotNil(rowB.UserID)
+	s.Equal(userB, *rowB.UserID)
+	s.Equal("access-b", s.decrypt(rowB.AccessToken))
+
+	sharedRow, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
+	s.Require().NoError(err)
+	s.Require().NotNil(sharedRow)
+	s.Nil(sharedRow.UserID)
+	s.Equal("access-shared", s.decrypt(sharedRow.AccessToken))
+
+	// A has no personal row left, so A now falls back to the shared row.
+	rowA, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, userA)
+	s.Require().NoError(err)
+	s.Require().NotNil(rowA)
+	s.Nil(rowA.UserID, "A's personal row must be gone; only the shared fallback remains")
+	s.Equal("access-shared", s.decrypt(rowA.AccessToken))
 }
 
 // --- client provisioning ---
@@ -258,12 +404,12 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClears
 	// clear the tokens issued to the old client.
 	s.seedCredential(server, "access-token-value")
 
-	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "provisioned-client", "provisioned-secret")
+	status, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "provisioned-client", "provisioned-secret")
 	s.Require().NoError(err)
 	s.True(status.ClientConfigured)
 	s.False(status.Connected, "provisioning must clear the prior connection")
 
-	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(row)
 	s.Equal("provisioned-client", row.ClientID)
@@ -281,13 +427,13 @@ func (s *MCPOAuthDBSuite) TestProvisionOAuthClientStoresEncryptedSecretAndClears
 }
 
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientUnknownServer() {
-	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "cid", "sec")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "", "cid", "sec")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
 }
 
 func (s *MCPOAuthDBSuite) TestProvisionOAuthClientRejectsNonRemoteTransport() {
 	server := s.createServer("local-stdio", mcpregistry.ServerTypeStdio, "")
-	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "cid", "sec")
+	_, err := s.svc.ProvisionOAuthClient(s.Ctx, s.ProjectID, server.ID, "", "cid", "sec")
 	s.ErrorIs(err, mcpregistry.ErrOAuthNotSupported)
 }
 
@@ -295,9 +441,9 @@ func (s *MCPOAuthDBSuite) TestClearOAuthClientClearsIdentity() {
 	server := s.createServer("figma", mcpregistry.ServerTypeHTTP, "https://mcp.figma.com/mcp")
 	s.seedCredential(server, "access-token-value")
 
-	s.Require().NoError(s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, server.ID))
+	s.Require().NoError(s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, server.ID, ""))
 
-	row, err := s.repo.FindOAuthByServerID(s.Ctx, server.ID)
+	row, err := s.repo.FindOAuthForUser(s.Ctx, server.ID, "")
 	s.Require().NoError(err)
 	s.Require().NotNil(row, "clear must keep the row so a later authorize can re-provision")
 	s.Empty(row.ClientID)
@@ -306,14 +452,14 @@ func (s *MCPOAuthDBSuite) TestClearOAuthClientClearsIdentity() {
 	s.Nil(row.RefreshToken)
 	s.Nil(row.ExpiresAt)
 
-	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID)
+	status, err := s.svc.MCPOAuthStatus(s.Ctx, s.ProjectID, server.ID, "")
 	s.Require().NoError(err)
 	s.False(status.ClientConfigured)
 	s.False(status.Connected)
 }
 
 func (s *MCPOAuthDBSuite) TestClearOAuthClientUnknownServer() {
-	err := s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111")
+	err := s.svc.ClearOAuthClient(s.Ctx, s.ProjectID, "11111111-1111-1111-1111-111111111111", "")
 	s.ErrorIs(err, mcpregistry.ErrServerNotFound)
 }
 

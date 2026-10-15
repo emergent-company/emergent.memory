@@ -8,11 +8,34 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // This file wires a server's stored OAuth credential into the outbound path:
 // resolving the header set for a connection, refreshing an expired token, and
 // classifying an authorization failure during inspect.
+
+// userIDFromContext extracts the authenticated user's id from the request
+// context. It returns "" for a context with no user (system/background runs,
+// device config resolution), which selects the shared/project-wide credential.
+func userIDFromContext(ctx context.Context) string {
+	if u := auth.UserFromContext(ctx); u != nil {
+		return u.ID
+	}
+	return ""
+}
+
+// oauthPoolKey builds the connection-pool key for a server + caller. A caller
+// with no user id shares the plain server key (the shared credential), while a
+// caller with a user id gets a per-user key so two users never share a pooled
+// connection carrying one user's bearer.
+func oauthPoolKey(serverID, userID string) string {
+	if userID == "" {
+		return serverID
+	}
+	return serverID + "\x00" + userID
+}
 
 // oauthRefreshLocks serializes token refreshes per server. Two concurrent tool
 // calls on an expired token must not both hit the token endpoint (the second
@@ -81,7 +104,8 @@ func (pm *ProxyManager) oauthAuthorizationHeader(ctx context.Context, server *MC
 	if server == nil || server.Type == ServerTypeStdio || server.Type == ServerTypeBuiltin {
 		return "", nil
 	}
-	row, err := pm.repo.FindOAuthByServerID(ctx, server.ID)
+	userID := userIDFromContext(ctx)
+	row, err := pm.repo.FindOAuthForUser(ctx, server.ID, userID)
 	if err != nil {
 		return "", fmt.Errorf("loading MCP server authorization: %w", err)
 	}
@@ -105,7 +129,7 @@ func (pm *ProxyManager) oauthAuthorizationHeader(ctx context.Context, server *MC
 	defer lock.Unlock()
 
 	// Re-read: another goroutine may have refreshed while we waited.
-	row, err = pm.repo.FindOAuthByServerID(ctx, server.ID)
+	row, err = pm.repo.FindOAuthForUser(ctx, server.ID, userID)
 	if err != nil {
 		return "", fmt.Errorf("loading MCP server authorization: %w", err)
 	}
@@ -165,12 +189,12 @@ func (pm *ProxyManager) oauthAuthorizationHeader(ctx context.Context, server *MC
 	if scope == "" {
 		scope = row.Scope
 	}
-	if err := pm.repo.UpdateOAuthTokens(ctx, server.ID, access, refreshSecret, scope, expiresAt); err != nil {
+	if err := pm.repo.UpdateOAuthTokens(ctx, server.ID, oauthUserID(row), access, refreshSecret, scope, expiresAt); err != nil {
 		return "", err
 	}
-	// The pooled connection still carries the previous header, so drop it; the
-	// next call reconnects with the refreshed bearer.
-	pm.evict(server.ID)
+	// Every pooled connection to this server may still carry the previous
+	// bearer, so drop them all; the next call reconnects with the refreshed one.
+	pm.CloseServer(server.ID)
 
 	pm.log.Info("refreshed MCP server OAuth token", slog.String("server_id", server.ID))
 	return "Bearer " + tokens.AccessToken, nil

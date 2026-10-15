@@ -45,10 +45,14 @@ func (f *fakeProxyRepo) FindAllServers(_ context.Context, projectID string) ([]*
 	return out, nil
 }
 
-func (f *fakeProxyRepo) FindOAuthByServerID(_ context.Context, serverID string) (*MCPServerOAuth, error) {
+func (f *fakeProxyRepo) FindOAuthForUser(_ context.Context, serverID, userID string) (*MCPServerOAuth, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	row := f.oauth[serverID]
+	row := f.oauth[oauthPoolKey(serverID, userID)]
+	if row == nil && userID != "" {
+		// Fall back to the shared row, mirroring the real store.
+		row = f.oauth[serverID]
+	}
 	if row == nil {
 		return nil, nil
 	}
@@ -59,16 +63,17 @@ func (f *fakeProxyRepo) FindOAuthByServerID(_ context.Context, serverID string) 
 	return &cp, nil
 }
 
-func (f *fakeProxyRepo) UpdateOAuthTokens(_ context.Context, serverID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
+func (f *fakeProxyRepo) UpdateOAuthTokens(_ context.Context, serverID, userID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.oauth == nil {
 		f.oauth = map[string]*MCPServerOAuth{}
 	}
-	row := f.oauth[serverID]
+	key := oauthPoolKey(serverID, userID)
+	row := f.oauth[key]
 	if row == nil {
-		row = &MCPServerOAuth{ServerID: serverID}
-		f.oauth[serverID] = row
+		row = &MCPServerOAuth{ServerID: serverID, UserID: userIDOrNil(userID)}
+		f.oauth[key] = row
 	}
 	row.AccessToken = access
 	row.RefreshToken = refresh
@@ -211,7 +216,7 @@ func TestCallTool_SluggedKey_RoutesToRawServerWithUnprefixedTool(t *testing.T) {
 	}}
 	pm := newTestProxyManager(repo)
 	fake := &fakeMCPClient{}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "E2E MCP 123"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "E2E MCP 123"}
 
 	args := map[string]any{"url": "https://example.com"}
 	result, err := pm.CallTool(context.Background(), "p1", "e2e_mcp_123_web_fetch_exa", args)
@@ -230,7 +235,7 @@ func TestCallTool_RawKey_StillRoutes(t *testing.T) {
 	}}
 	pm := newTestProxyManager(repo)
 	fake := &fakeMCPClient{}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "myserver"}
 
 	result, err := pm.CallTool(context.Background(), "p1", "myserver_search", map[string]any{"q": "x"})
 	require.NoError(t, err)
@@ -244,7 +249,7 @@ func TestCallTool_DisabledServer_RejectedBeforeConnect(t *testing.T) {
 	}}
 	pm := newTestProxyManager(repo)
 	fake := &fakeMCPClient{}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "E2E MCP 123"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "E2E MCP 123"}
 
 	_, err := pm.CallTool(context.Background(), "p1", "e2e_mcp_123_web_fetch_exa", nil)
 	require.Error(t, err)
@@ -259,7 +264,7 @@ func TestCallTool_ClientError_Propagates(t *testing.T) {
 	}}
 	pm := newTestProxyManager(repo)
 	fake := &fakeMCPClient{callErr: errors.New("tool boom")}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "myserver"}
 
 	_, err := pm.CallTool(context.Background(), "p1", "myserver_search", nil)
 	require.Error(t, err)
@@ -273,7 +278,7 @@ func TestCallTool_ClientError_Propagates(t *testing.T) {
 func TestCallToolOnServer_ForwardsArgsAndConvertsResult(t *testing.T) {
 	pm := newTestProxyManager(&fakeProxyRepo{})
 	fake := &fakeMCPClient{}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "myserver"}
 
 	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeHTTP}
 	args := map[string]any{"url": "https://example.com", "depth": float64(2)}
@@ -290,7 +295,7 @@ func TestCallToolOnServer_ForwardsArgsAndConvertsResult(t *testing.T) {
 func TestCallToolOnServer_UpstreamErrorEvictsConnection(t *testing.T) {
 	pm := newTestProxyManager(&fakeProxyRepo{})
 	fake := &fakeMCPClient{callErr: errors.New("boom")}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "myserver"}
 
 	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeStdio}
 
@@ -325,7 +330,7 @@ func (f *blockingMCPClient) Close() error { return nil }
 func TestCallToolOnServer_ContextDeadlineAborts(t *testing.T) {
 	pm := newTestProxyManager(&fakeProxyRepo{})
 	fake := &blockingMCPClient{started: make(chan struct{})}
-	pm.conns["s1"] = &mcpConnection{client: fake, serverID: "s1", serverName: "myserver"}
+	pm.conns["s1"] = &mcpConnection{key: "s1", client: fake, serverID: "s1", serverName: "myserver"}
 
 	srv := &MCPServer{ID: "s1", ProjectID: "p1", Name: "myserver", Enabled: true, Type: ServerTypeStdio}
 

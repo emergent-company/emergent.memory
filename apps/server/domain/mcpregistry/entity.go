@@ -120,21 +120,28 @@ type MCPServer struct {
 }
 
 // MCPServerOAuth is the OAuth credential row for a remote MCP server
-// (kb.mcp_server_oauth, one row per server). It holds the discovered endpoint
-// set, the registered client identity, and the token set. ClientSecret,
-// AccessToken, and RefreshToken are AES-GCM ciphertext (json:"-" keeps them out
-// of serialization); only the service layer ever decrypts them.
+// (kb.mcp_server_oauth). It holds the discovered endpoint set, the registered
+// client identity, and the token set. ClientSecret, AccessToken, and
+// RefreshToken are AES-GCM ciphertext (json:"-" keeps them out of
+// serialization); only the service layer ever decrypts them.
+//
+// A row is either a personal credential (UserID non-nil) or the project-wide
+// shared credential (UserID nil). The identity is the composite uniqueness of
+// (server_id, user_id) — a literal PRIMARY KEY cannot carry a nullable user_id —
+// so neither column is tagged pk; store methods target rows with explicit
+// Where/On clauses.
 type MCPServerOAuth struct {
 	bun.BaseModel `bun:"table:kb.mcp_server_oauth,alias:mso"`
 
-	ServerID             string `bun:"server_id,pk,type:uuid" json:"serverId"`
-	ProjectID            string `bun:"project_id,type:uuid,notnull" json:"projectId"`
-	AuthorizationServer  string `bun:"authorization_server,notnull,default:''" json:"authorizationServer"`
-	TokenEndpoint        string `bun:"token_endpoint,notnull,default:''" json:"-"`
-	RegistrationEndpoint string `bun:"registration_endpoint,notnull,default:''" json:"-"`
-	Resource             string `bun:"resource,notnull,default:''" json:"-"`
-	Scope                string `bun:"scope,notnull,default:''" json:"scope"`
-	ClientID             string `bun:"client_id,notnull,default:''" json:"-"`
+	ServerID             string  `bun:"server_id,type:uuid" json:"serverId"`
+	UserID               *string `bun:"user_id,type:uuid" json:"userId,omitempty"`
+	ProjectID            string  `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	AuthorizationServer  string  `bun:"authorization_server,notnull,default:''" json:"authorizationServer"`
+	TokenEndpoint        string  `bun:"token_endpoint,notnull,default:''" json:"-"`
+	RegistrationEndpoint string  `bun:"registration_endpoint,notnull,default:''" json:"-"`
+	Resource             string  `bun:"resource,notnull,default:''" json:"-"`
+	Scope                string  `bun:"scope,notnull,default:''" json:"scope"`
+	ClientID             string  `bun:"client_id,notnull,default:''" json:"-"`
 	// ClientSecret / AccessToken / RefreshToken are nil until issued.
 	ClientSecret *EncryptedSecret `bun:"client_secret,type:jsonb,nullzero" json:"-"`
 	AccessToken  *EncryptedSecret `bun:"access_token,type:jsonb,nullzero" json:"-"`
@@ -213,21 +220,31 @@ type MCPServerDTO struct {
 }
 
 // MCPServerOAuthSummaryDTO is the authorization-state summary attached to a
-// server DTO. Configured means an authorization row exists (a client is
-// registered); Connected means a usable token set is stored.
+// server DTO, resolved for the requesting user. Configured means an
+// authorization row exists (a client is registered); Connected means a usable
+// token set is stored for that user (personal or shared). Shared is true when
+// the resolved credential is the project-wide shared row rather than the user's
+// own.
 type MCPServerOAuthSummaryDTO struct {
 	Configured          bool       `json:"configured"`
 	Connected           bool       `json:"connected"`
+	Shared              bool       `json:"shared"`
+	UserID              *string    `json:"userId,omitempty"`
 	AuthorizationServer *string    `json:"authorizationServer,omitempty"`
 	Scope               *string    `json:"scope,omitempty"`
 	ExpiresAt           *time.Time `json:"expiresAt,omitempty"`
 }
 
-// MCPServerOAuthStatusDTO is the detailed authorization status of one server.
+// MCPServerOAuthStatusDTO is the detailed authorization status of one server,
+// resolved for the requesting user. Shared is true when the resolved credential
+// is the project-wide shared row; UserID is the owning user's id for a personal
+// credential. Neither field ever carries token material.
 type MCPServerOAuthStatusDTO struct {
 	ServerID              string     `json:"serverId"`
 	Configured            bool       `json:"configured"`
 	Connected             bool       `json:"connected"`
+	Shared                bool       `json:"shared"`
+	UserID                *string    `json:"userId,omitempty"`
 	ClientConfigured      bool       `json:"clientConfigured"`
 	AuthorizationServer   *string    `json:"authorizationServer,omitempty"`
 	TokenEndpoint         *string    `json:"tokenEndpoint,omitempty"`

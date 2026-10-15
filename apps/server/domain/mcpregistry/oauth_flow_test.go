@@ -162,7 +162,7 @@ func TestStartMCPOAuth_Success(t *testing.T) {
 
 	require.Equal(t, 1, fs.registerCalls, "a client must be registered exactly once")
 
-	row, err := repo.FindOAuthByServerID(context.Background(), server.ID)
+	row, err := repo.FindOAuthForUser(context.Background(), server.ID, "")
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	require.Equal(t, "cid-flow", row.ClientID)
@@ -199,7 +199,7 @@ func TestStartMCPOAuth_UsesProvisionedClient(t *testing.T) {
 
 	// Provision a pre-registered client first; the authorize flow must reuse it
 	// and never hit the dynamic registration endpoint.
-	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "provisioned-client", "provisioned-secret")
+	status, err := svc.ProvisionOAuthClient(context.Background(), projectID, server.ID, "", "provisioned-client", "provisioned-secret")
 	require.NoError(t, err)
 	require.True(t, status.ClientConfigured)
 
@@ -243,7 +243,7 @@ func TestCompleteMCPOAuth_Success(t *testing.T) {
 	require.Equal(t, projectID, gotProjectID)
 	require.Equal(t, 1, fs.tokenCalls, "the authorization code must be exchanged exactly once")
 
-	row, err := repo.FindOAuthByServerID(context.Background(), server.ID)
+	row, err := repo.FindOAuthForUser(context.Background(), server.ID, "")
 	require.NoError(t, err)
 	require.NotNil(t, row)
 	require.NotNil(t, row.AccessToken)

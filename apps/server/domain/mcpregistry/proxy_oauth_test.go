@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // --- helpers ---
@@ -171,7 +173,7 @@ func TestOAuthAuthorizationHeader_RefreshesExpiredTokenSingleFlight(t *testing.T
 	}
 
 	// The refreshed token set is persisted for the next call.
-	row, err := repo.FindOAuthByServerID(context.Background(), "s1")
+	row, err := repo.FindOAuthForUser(context.Background(), "s1", "")
 	require.NoError(t, err)
 	stored, err := decryptSecretValue(pm.encryptor, row.AccessToken)
 	require.NoError(t, err)
@@ -201,7 +203,7 @@ func TestOAuthAuthorizationHeader_RefreshRetainsRefreshTokenWhenNotReissued(t *t
 	if _, err := pm.oauthAuthorizationHeader(context.Background(), remoteServer("s1", "p1", "figma", "https://mcp.test/mcp")); err != nil {
 		t.Fatalf("oauthAuthorizationHeader: %v", err)
 	}
-	row, err := repo.FindOAuthByServerID(context.Background(), "s1")
+	row, err := repo.FindOAuthForUser(context.Background(), "s1", "")
 	require.NoError(t, err)
 	refresh, err := decryptSecretValue(pm.encryptor, row.RefreshToken)
 	require.NoError(t, err)
@@ -253,6 +255,80 @@ func TestOAuthAuthorizationHeader_NoCredential(t *testing.T) {
 	require.NoError(t, err)
 	if got != "" {
 		t.Errorf("header = %q, want empty for a server with no credential", got)
+	}
+}
+
+// TestOAuthAuthorizationHeader_PerUserCredentialWinsOverShared verifies the
+// proxy resolves the calling user's personal credential over the shared row,
+// and that a user without one (or a background context) falls back to shared.
+func TestOAuthAuthorizationHeader_PerUserCredentialWinsOverShared(t *testing.T) {
+	repo := &fakeProxyRepo{}
+	pm := oauthTestProxy(t, repo)
+	expiry := time.Now().UTC().Add(time.Hour)
+	userA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+	shared := oauthRow(t, pm, "s1", "shared-access", "rt", "https://auth.test/token", "https://mcp.test/mcp", &expiry)
+	personal := oauthRow(t, pm, "s1", "personal-access", "rt", "https://auth.test/token", "https://mcp.test/mcp", &expiry)
+	personal.UserID = &userA
+
+	repo.oauth = map[string]*MCPServerOAuth{
+		"s1":                      shared,
+		oauthPoolKey("s1", userA): personal,
+	}
+	server := remoteServer("s1", "p1", "figma", "https://mcp.test/mcp")
+
+	// A user with a personal row resolves their own bearer, not the shared one.
+	ctxA := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: userA})
+	got, err := pm.oauthAuthorizationHeader(ctxA, server)
+	require.NoError(t, err)
+	if got != "Bearer personal-access" {
+		t.Errorf("personal header = %q, want Bearer personal-access", got)
+	}
+
+	// A user with no personal row falls back to the shared bearer.
+	ctxOther := auth.ContextWithUser(context.Background(), &auth.AuthUser{ID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc"})
+	got, err = pm.oauthAuthorizationHeader(ctxOther, server)
+	require.NoError(t, err)
+	if got != "Bearer shared-access" {
+		t.Errorf("fallback header = %q, want Bearer shared-access", got)
+	}
+
+	// A background context (no user) resolves the shared bearer.
+	got, err = pm.oauthAuthorizationHeader(context.Background(), server)
+	require.NoError(t, err)
+	if got != "Bearer shared-access" {
+		t.Errorf("background header = %q, want Bearer shared-access", got)
+	}
+}
+
+// TestCloseServerEvictsAllPerUserConnections verifies that closing a server
+// evicts every pooled connection for it — the shared key and each per-user key —
+// while leaving unrelated servers pooled. A token refresh calls CloseServer, so
+// this is what guarantees a refreshed bearer is not served from a stale pooled
+// connection.
+func TestCloseServerEvictsAllPerUserConnections(t *testing.T) {
+	pm := oauthTestProxy(t, &fakeProxyRepo{})
+	userA := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	userB := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+
+	pm.conns[oauthPoolKey("s1", userA)] = &mcpConnection{key: oauthPoolKey("s1", userA), serverID: "s1", serverName: "figma", client: &fakeMCPClient{}}
+	pm.conns[oauthPoolKey("s1", userB)] = &mcpConnection{key: oauthPoolKey("s1", userB), serverID: "s1", serverName: "figma", client: &fakeMCPClient{}}
+	pm.conns["s1"] = &mcpConnection{key: "s1", serverID: "s1", serverName: "figma", client: &fakeMCPClient{}}
+	pm.conns["s2"] = &mcpConnection{key: "s2", serverID: "s2", serverName: "other", client: &fakeMCPClient{}}
+
+	pm.CloseServer("s1")
+
+	if _, ok := pm.conns[oauthPoolKey("s1", userA)]; ok {
+		t.Error("per-user connection for user A was not evicted")
+	}
+	if _, ok := pm.conns[oauthPoolKey("s1", userB)]; ok {
+		t.Error("per-user connection for user B was not evicted")
+	}
+	if _, ok := pm.conns["s1"]; ok {
+		t.Error("shared connection was not evicted")
+	}
+	if _, ok := pm.conns["s2"]; !ok {
+		t.Error("unrelated server connection was evicted")
 	}
 }
 

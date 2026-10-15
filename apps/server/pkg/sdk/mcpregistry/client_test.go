@@ -405,3 +405,82 @@ func TestMCPRegistryHTTPError(t *testing.T) {
 	_, err := client.MCPRegistry.Get(context.Background(), "nonexistent")
 	assert.Error(t, err)
 }
+
+func TestMCPRegistryAuthorize(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("POST", "/api/admin/mcp-servers/srv-1/oauth/authorize", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-Project-ID", "proj_test123")
+
+		resp := mcpregistry.APIResponse[mcpregistry.AuthorizeResponse]{
+			Success: true,
+			Data: mcpregistry.AuthorizeResponse{
+				AuthorizeURL: "https://auth.test/authorize?state=abc",
+				State:        "abc",
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	client := newTestClient(t, mock)
+
+	result, err := client.MCPRegistry.Authorize(context.Background(), "srv-1")
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, "https://auth.test/authorize?state=abc", result.Data.AuthorizeURL)
+	assert.Equal(t, "abc", result.Data.State)
+}
+
+func TestMCPRegistryOAuthStatus(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("GET", "/api/admin/mcp-servers/srv-1/oauth/status", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-Project-ID", "proj_test123")
+
+		resp := mcpregistry.APIResponse[mcpregistry.MCPOAuthStatus]{
+			Success: true,
+			Data: mcpregistry.MCPOAuthStatus{
+				ServerID:              "srv-1",
+				Configured:            true,
+				Connected:             true,
+				Shared:                false,
+				ClientConfigured:      true,
+				RegistrationSupported: true,
+				Scopes:                []string{"mcp:connect"},
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	client := newTestClient(t, mock)
+
+	result, err := client.MCPRegistry.Status(context.Background(), "srv-1")
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+	assert.Equal(t, "srv-1", result.Data.ServerID)
+	assert.True(t, result.Data.Configured)
+	assert.True(t, result.Data.Connected)
+	assert.False(t, result.Data.Shared)
+	assert.Equal(t, []string{"mcp:connect"}, result.Data.Scopes)
+}
+
+func TestMCPRegistryOAuthDisconnect(t *testing.T) {
+	mock := testutil.NewMockServer(t)
+	defer mock.Close()
+
+	mock.On("DELETE", "/api/admin/mcp-servers/srv-1/oauth", func(w http.ResponseWriter, r *http.Request) {
+		testutil.AssertHeader(t, r, "X-Project-ID", "proj_test123")
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	client := newTestClient(t, mock)
+
+	err := client.MCPRegistry.Disconnect(context.Background(), "srv-1")
+	assert.NoError(t, err)
+}

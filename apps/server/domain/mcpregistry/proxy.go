@@ -24,10 +24,10 @@ import (
 type proxyRepo interface {
 	FindServerByName(ctx context.Context, projectID, name string) (*MCPServer, error)
 	FindAllServers(ctx context.Context, projectID string) ([]*MCPServer, error)
-	// FindOAuthByServerID / UpdateOAuthTokens back the outbound OAuth credential:
-	// reading the stored token set and persisting a refreshed one.
-	FindOAuthByServerID(ctx context.Context, serverID string) (*MCPServerOAuth, error)
-	UpdateOAuthTokens(ctx context.Context, serverID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error
+	// FindOAuthForUser / UpdateOAuthTokens back the outbound OAuth credential:
+	// reading the caller's (or shared) token set and persisting a refreshed one.
+	FindOAuthForUser(ctx context.Context, serverID, userID string) (*MCPServerOAuth, error)
+	UpdateOAuthTokens(ctx context.Context, serverID, userID string, access, refresh *EncryptedSecret, scope string, expiresAt *time.Time) error
 }
 
 // mcpClientConn is the client surface the proxy uses on an MCP connection.
@@ -55,8 +55,12 @@ type ProxyManager struct {
 }
 
 // mcpConnection wraps an mcp-go client with metadata for lifecycle management.
+// key is the pool key (server id, or server id + user id for a per-user
+// credential) under which this connection is pooled; it is used to evict exactly
+// this connection on a call failure.
 type mcpConnection struct {
 	client      mcpClientConn
+	key         string
 	serverID    string
 	serverName  string
 	serverType  MCPServerType
@@ -117,7 +121,7 @@ func (pm *ProxyManager) CallTool(ctx context.Context, projectID, prefixedToolNam
 	})
 	if err != nil {
 		// On call failure, evict the connection so next call reconnects
-		pm.evict(server.ID)
+		pm.evict(conn.key)
 		return nil, fmt.Errorf("calling tool %q on server %q: %w", toolName, server.Name, err)
 	}
 
@@ -150,7 +154,7 @@ func (pm *ProxyManager) CallToolOnServer(ctx context.Context, server *MCPServer,
 	})
 	if err != nil {
 		// On call failure, evict the connection so the next call reconnects.
-		pm.evict(server.ID)
+		pm.evict(conn.key)
 		return nil, fmt.Errorf("calling tool %q on server %q: %w", toolName, server.Name, err)
 	}
 
@@ -249,7 +253,7 @@ func (pm *ProxyManager) DiscoverTools(ctx context.Context, server *MCPServer) ([
 
 	result, err := conn.client.ListTools(ctx, mcpgo.ListToolsRequest{})
 	if err != nil {
-		pm.evict(server.ID)
+		pm.evict(conn.key)
 		return nil, fmt.Errorf("listing tools on server %q: %w", server.Name, err)
 	}
 
@@ -551,18 +555,68 @@ func (pm *ProxyManager) Close() {
 	pm.log.Info("closed all MCP proxy connections")
 }
 
-// CloseServer closes the connection to a specific server (e.g. when server config changes).
+// CloseServer closes every pooled connection to a specific server (e.g. when
+// the server config changes or a token refresh invalidates all bearers for it).
+// With per-user pooling there may be several keys for one server, so it evicts
+// by server id rather than by a single key.
 func (pm *ProxyManager) CloseServer(serverID string) {
-	pm.evict(serverID)
+	pm.mu.Lock()
+	var toClose []*mcpConnection
+	for key, conn := range pm.conns {
+		if conn.serverID == serverID {
+			toClose = append(toClose, conn)
+			delete(pm.conns, key)
+		}
+	}
+	pm.mu.Unlock()
+
+	for _, conn := range toClose {
+		pm.closeConn(conn)
+	}
 }
 
-// --- Internal ---
+// evict removes and closes one pooled connection by its pool key.
+func (pm *ProxyManager) evict(key string) {
+	pm.mu.Lock()
+	conn, ok := pm.conns[key]
+	if ok {
+		delete(pm.conns, key)
+	}
+	pm.mu.Unlock()
 
-// getOrConnect returns an existing connection or creates a new one.
+	if ok {
+		pm.closeConn(conn)
+	}
+}
+
+// closeConn closes a pooled connection and logs the eviction.
+func (pm *ProxyManager) closeConn(conn *mcpConnection) {
+	if conn == nil || conn.client == nil {
+		return
+	}
+	if err := conn.client.Close(); err != nil {
+		pm.log.Warn("error closing evicted MCP connection",
+			slog.String("server_id", conn.serverID),
+			slog.String("server_name", conn.serverName),
+			slog.String("error", err.Error()),
+		)
+	}
+	pm.log.Info("evicted MCP connection",
+		slog.String("server_id", conn.serverID),
+		slog.String("server_name", conn.serverName),
+	)
+}
+
+// getOrConnect returns an existing connection or creates a new one. The pool is
+// keyed by server id when no authenticated user is present, and by
+// (server id, user id) when one is, so two users never share a pooled connection
+// that carries one user's OAuth bearer.
 func (pm *ProxyManager) getOrConnect(ctx context.Context, server *MCPServer) (*mcpConnection, error) {
+	key := oauthPoolKey(server.ID, userIDFromContext(ctx))
+
 	// Fast path: read lock
 	pm.mu.RLock()
-	if conn, ok := pm.conns[server.ID]; ok {
+	if conn, ok := pm.conns[key]; ok {
 		pm.mu.RUnlock()
 		return conn, nil
 	}
@@ -571,18 +625,19 @@ func (pm *ProxyManager) getOrConnect(ctx context.Context, server *MCPServer) (*m
 	// Slow path: write lock
 	pm.mu.Lock()
 	// Double-check
-	if conn, ok := pm.conns[server.ID]; ok {
+	if conn, ok := pm.conns[key]; ok {
 		pm.mu.Unlock()
 		return conn, nil
 	}
 
 	// Create placeholder connection entry (release pool lock during connect)
 	conn := &mcpConnection{
+		key:        key,
 		serverID:   server.ID,
 		serverName: server.Name,
 		serverType: server.Type,
 	}
-	pm.conns[server.ID] = conn
+	pm.conns[key] = conn
 	pm.mu.Unlock()
 
 	// Lock the connection itself for the connect operation
@@ -598,7 +653,7 @@ func (pm *ProxyManager) getOrConnect(ctx context.Context, server *MCPServer) (*m
 	if err != nil {
 		// Remove failed placeholder
 		pm.mu.Lock()
-		delete(pm.conns, server.ID)
+		delete(pm.conns, key)
 		pm.mu.Unlock()
 		return nil, err
 	}
@@ -741,30 +796,6 @@ func (pm *ProxyManager) initializeClient(ctx context.Context, c *mcpclient.Clien
 		return fmt.Errorf("initializing MCP session with %q: %w", serverName, err)
 	}
 	return nil
-}
-
-// evict removes and closes a connection from the pool.
-func (pm *ProxyManager) evict(serverID string) {
-	pm.mu.Lock()
-	conn, ok := pm.conns[serverID]
-	if ok {
-		delete(pm.conns, serverID)
-	}
-	pm.mu.Unlock()
-
-	if ok && conn.client != nil {
-		if err := conn.client.Close(); err != nil {
-			pm.log.Warn("error closing evicted MCP connection",
-				slog.String("server_id", serverID),
-				slog.String("server_name", conn.serverName),
-				slog.String("error", err.Error()),
-			)
-		}
-		pm.log.Info("evicted MCP connection",
-			slog.String("server_id", serverID),
-			slog.String("server_name", conn.serverName),
-		)
-	}
 }
 
 // --- Helpers ---
