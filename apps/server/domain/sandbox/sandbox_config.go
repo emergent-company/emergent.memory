@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -32,6 +33,20 @@ type AgentSandboxConfig struct {
 	BaseImage      string            `json:"base_image,omitempty"`
 	SetupCommands  []string          `json:"setup_commands,omitempty"`
 	EnvVars        map[string]string `json:"env_vars,omitempty"`
+
+	// GitTokenSecretRef names a server-side git credential. It is a reference, not
+	// a secret value: the token is resolved from the server environment at
+	// provision time (see ResolveGitTokenSecretRef), so the database never stores a
+	// plaintext token on new writes. Only the allowlisted name
+	// (GitTokenSecretRefEnv) may be referenced (issue #1844).
+	GitTokenSecretRef string `json:"git_token_secret_ref,omitempty"`
+
+	// GitToken is a legacy plaintext git token backfilled out of env_vars by
+	// migration 00244. It is retained only so pre-existing rows keep cloning until
+	// the operator rotates the credential to a server-side secret referenced by
+	// GitTokenSecretRef (issue #1844). It is server-managed: read endpoints redact
+	// it, and the write path never accepts a new value.
+	GitToken string `json:"git_token,omitempty"`
 }
 
 // RepoSourceConfig defines the repository source for a workspace.
@@ -53,6 +68,37 @@ func DefaultAgentSandboxConfig() *AgentSandboxConfig {
 // so it can never be mistaken for — or replayed as — a real credential.
 const RedactedSecretValue = "••••••••"
 
+// GitTokenSecretRefEnv is the only server environment variable a sandbox's
+// git_token_secret_ref may name. It holds the deployment-level git token. The
+// allowlist is deliberately a single name: a caller must not be able to use the
+// reference to exfiltrate an arbitrary server environment value (e.g. a database
+// password) by naming it.
+const GitTokenSecretRefEnv = "SANDBOX_GIT_TOKEN"
+
+// IsValidGitTokenSecretRef reports whether name is an allowlisted git token
+// secret reference.
+func IsValidGitTokenSecretRef(name string) bool {
+	return name == GitTokenSecretRefEnv
+}
+
+// ResolveGitTokenSecretRef resolves a git token secret reference from the server
+// environment. It returns "" for an empty or non-allowlisted reference so an
+// arbitrary name can never read an arbitrary environment variable. The resolved
+// value is a credential and must never be logged.
+func ResolveGitTokenSecretRef(ref string) string {
+	if !IsValidGitTokenSecretRef(ref) {
+		return ""
+	}
+	return os.Getenv(ref)
+}
+
+// IsGitTokenEnvKey reports whether an env var key is a git token key
+// (GH_TOKEN / GITHUB_TOKEN), case-insensitive.
+func IsGitTokenEnvKey(key string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	return k == "gh_token" || k == "github_token"
+}
+
 // IsSecretEnvKey reports whether an env var key names a credential that must
 // never be echoed to a client. It uses the same credential vocabulary as the
 // audit redactor (token/password/secret/api_key/credential) and additionally
@@ -60,7 +106,7 @@ const RedactedSecretValue = "••••••••"
 func IsSecretEnvKey(key string) bool {
 	k := strings.ToLower(strings.TrimSpace(key))
 	switch {
-	case k == "gh_token", k == "github_token":
+	case IsGitTokenEnvKey(k):
 		return true
 	case strings.Contains(k, "token"),
 		strings.Contains(k, "password"),
@@ -81,6 +127,9 @@ func (c *AgentSandboxConfig) RedactSecrets() *AgentSandboxConfig {
 		return nil
 	}
 	out := *c
+	if c.GitToken != "" {
+		out.GitToken = RedactedSecretValue
+	}
 	if len(c.EnvVars) == 0 {
 		return &out
 	}
@@ -105,9 +154,17 @@ func RedactSandboxConfigMap(m map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {
-		if k == "env_vars" {
+		switch k {
+		case "env_vars":
 			out[k] = redactEnvVarsMap(v)
 			continue
+		case "git_token":
+			// The legacy plaintext git token (migration 00244) is a secret; redact
+			// it like any other secret env var.
+			if s, ok := v.(string); ok && s != "" {
+				out[k] = RedactedSecretValue
+				continue
+			}
 		}
 		out[k] = v
 	}
@@ -128,6 +185,124 @@ func redactEnvVarsMap(v any) any {
 		}
 	}
 	return out
+}
+
+// NormalizeSecretsForWrite applies write-path secret handling to the incoming
+// typed config against the previously stored config, returning validation
+// errors. It delegates to NormalizeSandboxConfigForWrite — the single map-level
+// entry point — so the typed and raw-map write paths share one implementation.
+func NormalizeSecretsForWrite(incoming, existing *AgentSandboxConfig) []string {
+	if incoming == nil {
+		return nil
+	}
+	inMap, err := incoming.ToMap()
+	if err != nil {
+		return []string{"failed to encode workspace config for write normalization"}
+	}
+	var exMap map[string]any
+	if existing != nil {
+		if exMap, err = existing.ToMap(); err != nil {
+			return []string{"failed to encode existing workspace config for write normalization"}
+		}
+	}
+	errs := NormalizeSandboxConfigForWrite(inMap, exMap)
+	// Rehydrate only the two secret-bearing fields; every other field on the
+	// typed config is left untouched by normalization.
+	if parsed, perr := ParseAgentSandboxConfig(inMap); perr == nil && parsed != nil {
+		incoming.GitToken = parsed.GitToken
+		incoming.EnvVars = parsed.EnvVars
+	}
+	return errs
+}
+
+// mapStringValue reads a string value from a raw workspace-config map.
+func mapStringValue(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	s, _ := m[key].(string)
+	return s
+}
+
+// NormalizeSandboxConfigForWrite applies write-path secret handling to a raw
+// workspace-config map (the JSONB shape persisted on kb.agent_definitions and on
+// agent override settings), returning validation errors. It is the single entry
+// point every write path that accepts a full sandbox-config map must funnel
+// through: CreateDefinition, UpdateDefinition, SetAgentOverride, blueprint apply,
+// and — via NormalizeSecretsForWrite — UpdateSandboxConfig.
+//
+//   - The legacy git_token field is server-managed (backfilled by migration
+//     00244): a stored value is carried forward verbatim (so a placeholder echo
+//     or an omitted value never erases it), and a client-supplied plaintext value
+//     is rejected.
+//   - A secret env var echoed as RedactedSecretValue is restored from the stored
+//     value, so a placeholder round-trip never erases a stored credential (#1883).
+//   - A newly-supplied plaintext git token (GH_TOKEN / GITHUB_TOKEN) is rejected:
+//     new git credentials must use git_token_secret_ref (#1844).
+//
+// incoming is mutated in place; existing is read-only and may be nil (create
+// paths). A full-replace write that omits env_vars clears any stored env vars.
+func NormalizeSandboxConfigForWrite(incoming, existing map[string]any) []string {
+	if incoming == nil {
+		return nil
+	}
+	var errs []string
+
+	// Legacy git_token: server-managed. Carry forward the stored value regardless
+	// of what the client sent (it can neither set nor clear the credential), and
+	// reject a plaintext value when there is none stored.
+	existingGitToken := mapStringValue(existing, "git_token")
+	if incomingGitToken := mapStringValue(incoming, "git_token"); existingGitToken != "" {
+		incoming["git_token"] = existingGitToken
+	} else if incomingGitToken != "" && incomingGitToken != RedactedSecretValue {
+		errs = append(errs, "git_token must not be set directly; use git_token_secret_ref")
+		// Defense in depth: strip the literal even if the caller ignores errs.
+		delete(incoming, "git_token")
+	} else {
+		delete(incoming, "git_token")
+	}
+
+	// Secret env vars. Only normalized when the incoming map carries an env_vars
+	// object; a full-replace write that omits env_vars clears stored env vars.
+	if env, ok := incoming["env_vars"].(map[string]any); ok {
+		existingEnv, _ := existing["env_vars"].(map[string]any)
+		normalized := make(map[string]any, len(env))
+		for k, v := range env {
+			s, isStr := v.(string)
+			if isStr && s == RedactedSecretValue {
+				// Placeholder echo — restore the stored secret so a read→write
+				// round-trip never overwrites a real credential with the marker.
+				if old, ok := existingEnv[k]; ok {
+					if oldS, oldIsStr := old.(string); oldIsStr && oldS != "" {
+						normalized[k] = old
+						continue
+					}
+				}
+				// Placeholder with no stored value — drop it.
+				continue
+			}
+			if isStr && s != "" && IsGitTokenEnvKey(k) {
+				// A git token must not be persisted as a fresh literal. Accept only
+				// an unchanged legacy value (already stored); reject anything new.
+				if old, ok := existingEnv[k]; ok {
+					if oldS, oldIsStr := old.(string); oldIsStr && oldS == s {
+						normalized[k] = v
+						continue
+					}
+				}
+				errs = append(errs, fmt.Sprintf("env_vars[%q] must not contain a plaintext git token; use git_token_secret_ref", k))
+				continue
+			}
+			normalized[k] = v
+		}
+		if len(normalized) > 0 {
+			incoming["env_vars"] = normalized
+		} else {
+			delete(incoming, "env_vars")
+		}
+	}
+
+	return errs
 }
 
 // Validate validates the workspace configuration and returns a list of validation errors.
@@ -193,6 +368,12 @@ func (c *AgentSandboxConfig) Validate() []string {
 		if _, ok := c.EnvVars[rk]; ok {
 			errs = append(errs, fmt.Sprintf("env_vars contains reserved key %q — it will be overridden by the system at runtime", rk))
 		}
+	}
+
+	// The git token secret reference must name the allowlisted server secret; any
+	// other value is treated as an arbitrary-env read attempt and rejected.
+	if c.GitTokenSecretRef != "" && !IsValidGitTokenSecretRef(c.GitTokenSecretRef) {
+		errs = append(errs, fmt.Sprintf("git_token_secret_ref must be %q (or empty)", GitTokenSecretRefEnv))
 	}
 
 	// Validate resource limits

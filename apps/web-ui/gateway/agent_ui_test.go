@@ -2849,3 +2849,58 @@ func TestUIAgentSandboxExplicitAutoSubmit(t *testing.T) {
 		t.Errorf("explicit Auto must persist an empty provider, got %+v", f.sandboxConfig)
 	}
 }
+
+// TestUIAgentSandboxGitTokenRef covers the git-token secret-reference field: it is
+// rendered from the stored config, mapped back on submit, and a raw git token in
+// the env-vars textarea is rejected (issue #1844).
+func TestUIAgentSandboxGitTokenRef(t *testing.T) {
+	f := &fakeMemory{
+		defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		sandboxConfig: &AgentSandboxConfig{Enabled: true, GitTokenSecretRef: "SANDBOX_GIT_TOKEN"},
+		providers:     []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+	// Renders the stored reference.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `name="gitTokenSecretRef"`) || !strings.Contains(rec.Body.String(), `value="SANDBOX_GIT_TOKEN"`) {
+		t.Errorf("sandbox page should render the git token secret reference input, got body=%s", rec.Body.String())
+	}
+
+	// Maps back on submit.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&gitTokenSecretRef=SANDBOX_GIT_TOKEN"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sandbox update status %d", rec.Code)
+	}
+	if f.sandboxConfig == nil || f.sandboxConfig.GitTokenSecretRef != "SANDBOX_GIT_TOKEN" {
+		t.Errorf("git token secret ref not persisted, got %+v", f.sandboxConfig)
+	}
+
+	// Rejects a raw GH_TOKEN line in the env-vars textarea.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&envVars=GH_TOKEN%3Dghp_raw"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "git+token+must+be+set+via+the+Git+token+reference") {
+		t.Errorf("raw GH_TOKEN env var should be rejected, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// A non-secret env var still maps through.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&envVars=FOO%3Dbar"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || f.sandboxConfig.EnvVars["FOO"] != "bar" {
+		t.Errorf("non-secret env var should map through, got %d %+v", rec.Code, f.sandboxConfig)
+	}
+}

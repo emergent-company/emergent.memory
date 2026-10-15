@@ -1752,6 +1752,9 @@ func (s *Server) uiAgentSandboxUpdate(c echo.Context) error {
 		Enabled:   c.FormValue("enabled") == "on",
 		Provider:  strings.TrimSpace(c.FormValue("provider")),
 		BaseImage: strings.TrimSpace(c.FormValue("baseImage")),
+		// A git token is a server-managed secret: the form stores a reference, not
+		// a literal (issue #1844).
+		GitTokenSecretRef: strings.TrimSpace(c.FormValue("gitTokenSecretRef")),
 	}
 
 	switch repoType := strings.TrimSpace(c.FormValue("repoSourceType")); repoType {
@@ -1794,6 +1797,9 @@ func (s *Server) uiAgentSandboxUpdate(c echo.Context) error {
 		k = strings.TrimSpace(k)
 		if !ok || k == "" {
 			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", fmt.Errorf("env vars: each line must be KEY=VALUE"))
+		}
+		if isGitTokenEnvKey(k) {
+			return redirectWithError(c, "/agents/"+url.PathEscape(id)+"/sandbox", fmt.Errorf("a git token must be set via the Git token reference, not an environment variable"))
 		}
 		cfg.EnvVars[k] = strings.TrimSpace(v)
 	}
@@ -1895,6 +1901,22 @@ func sandboxEnvVars(cfg *AgentSandboxConfig) string {
 		lines = append(lines, k+"="+cfg.EnvVars[k])
 	}
 	return strings.Join(lines, "\n")
+}
+
+// isGitTokenEnvKey reports whether an env var key is a git token key
+// (GH_TOKEN / GITHUB_TOKEN), case-insensitive.
+func isGitTokenEnvKey(key string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	return k == "gh_token" || k == "github_token"
+}
+
+// sandboxGitTokenSecretRef returns the configured git token secret reference, or
+// "" when unset.
+func sandboxGitTokenSecretRef(cfg *AgentSandboxConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.GitTokenSecretRef
 }
 
 // sandboxToolEnabled reports whether tool is in the config's tool allowlist

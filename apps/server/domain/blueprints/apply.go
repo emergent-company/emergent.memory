@@ -12,6 +12,7 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
 	"github.com/emergent-company/emergent.memory/domain/schemas"
 	"github.com/emergent-company/emergent.memory/domain/skills"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -776,6 +777,15 @@ func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefi
 		dispatchMode = agents.DispatchModeSync
 	}
 
+	// Write-path secret handling: a blueprint workspace config must never persist
+	// a plaintext git token — it must use git_token_secret_ref. No existing config
+	// on the create path, so a literal is rejected outright (#1844).
+	if m.WorkspaceConfig != nil {
+		if errs := sandbox.NormalizeSandboxConfigForWrite(m.WorkspaceConfig, nil); len(errs) > 0 {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("agent %q: workspace config rejected: %s", m.Name, strings.Join(errs, "; ")))
+		}
+	}
+
 	def := &agents.AgentDefinition{
 		ProjectID:      projectID,
 		Name:           m.Name,
@@ -916,6 +926,13 @@ func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest)
 		def.Config = m.Config
 	}
 	if m.WorkspaceConfig != nil {
+		// Write-path secret handling against the stored config: carry forward a
+		// stored git token, restore placeholder echoes, and reject a newly-supplied
+		// plaintext git token (#1844). def.SandboxConfig still holds the stored
+		// value here (it has not been overwritten yet).
+		if errs := sandbox.NormalizeSandboxConfigForWrite(m.WorkspaceConfig, def.SandboxConfig); len(errs) > 0 {
+			return apperror.NewBadRequest(fmt.Sprintf("agent %q: workspace config rejected: %s", m.Name, strings.Join(errs, "; ")))
+		}
 		def.SandboxConfig = m.WorkspaceConfig
 	}
 	if len(m.ToolPolicies) > 0 {

@@ -474,11 +474,10 @@ func (ap *AutoProvisioner) attemptProvision(
 			"repo_url", repoURL,
 			"branch", branch,
 		)
-		// Resolve a git token with precedence cfg.EnvVars → runtimeEnvVars
-		// (GH_TOKEN before GITHUB_TOKEN within each), so private repositories
-		// configured via the agent definition's sandbox_config.env_vars clone
-		// authenticated. The token is never logged.
-		gitToken := ResolveGitToken(cfg.EnvVars, runtimeEnvVars)
+		// Resolve a git token with precedence git_token_secret_ref → legacy literal
+		// → runtime env vars (GH_TOKEN before GITHUB_TOKEN within each), so private
+		// repositories clone authenticated. The token is never logged.
+		gitToken := ResolveGitTokenForConfig(cfg, runtimeEnvVars)
 		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch, "/workspace", gitToken); cloneErr != nil {
 			ap.log.Warn("repository clone failed",
 				"workspace_id", ws.ID,

@@ -111,3 +111,34 @@ func TestResolveGitToken_Precedence(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveGitTokenForConfig_Precedence(t *testing.T) {
+	// The secret ref wins over everything else, and resolves from the server env.
+	t.Setenv(GitTokenSecretRefEnv, "ghp_server")
+	cfg := &AgentSandboxConfig{
+		GitTokenSecretRef: GitTokenSecretRefEnv,
+		GitToken:          "ghp_legacy",
+		EnvVars:           map[string]string{"GH_TOKEN": "ghp_env"},
+	}
+	assert.Equal(t, "ghp_server", ResolveGitTokenForConfig(cfg, map[string]string{"GH_TOKEN": "ghp_runtime"}))
+
+	// Without a ref, the legacy literal wins over env_vars and runtime.
+	t.Setenv(GitTokenSecretRefEnv, "")
+	cfg = &AgentSandboxConfig{
+		GitToken: "ghp_legacy",
+		EnvVars:  map[string]string{"GH_TOKEN": "ghp_env"},
+	}
+	assert.Equal(t, "ghp_legacy", ResolveGitTokenForConfig(cfg, map[string]string{"GH_TOKEN": "ghp_runtime"}))
+
+	// Without a ref or legacy literal, env_vars wins over runtime.
+	cfg = &AgentSandboxConfig{EnvVars: map[string]string{"GITHUB_TOKEN": "ghp_env"}}
+	assert.Equal(t, "ghp_env", ResolveGitTokenForConfig(cfg, map[string]string{"GH_TOKEN": "ghp_runtime"}))
+
+	// Without any config token, runtime is used.
+	assert.Equal(t, "ghp_runtime", ResolveGitTokenForConfig(nil, map[string]string{"GH_TOKEN": "ghp_runtime"}))
+
+	// A non-allowlisted ref is ignored entirely (no arbitrary env read).
+	t.Setenv("DATABASE_PASSWORD", "db-secret")
+	cfg = &AgentSandboxConfig{GitTokenSecretRef: "DATABASE_PASSWORD", GitToken: "ghp_legacy"}
+	assert.Equal(t, "ghp_legacy", ResolveGitTokenForConfig(cfg))
+}

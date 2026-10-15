@@ -16,6 +16,12 @@ type AgentSandboxConfig struct {
 	BaseImage      string            `json:"base_image,omitempty"`
 	SetupCommands  []string          `json:"setup_commands,omitempty"`
 	EnvVars        map[string]string `json:"env_vars,omitempty"`
+	// GitTokenSecretRef names a server-side git credential (not a literal); the
+	// server resolves it at provision time.
+	GitTokenSecretRef string `json:"git_token_secret_ref,omitempty"`
+	// GitToken is the legacy plaintext git token; memory redacts it on read so the
+	// gateway only ever sees the redaction placeholder.
+	GitToken string `json:"git_token,omitempty"`
 }
 
 type RepoSourceConfig struct {

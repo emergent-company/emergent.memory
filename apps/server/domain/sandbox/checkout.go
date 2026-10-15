@@ -259,6 +259,31 @@ func ResolveGitToken(envs ...map[string]string) string {
 	return ""
 }
 
+// ResolveGitTokenForConfig resolves the effective git token for a sandbox config
+// using the documented precedence (first non-empty wins):
+//
+//  1. cfg.GitTokenSecretRef → resolved from the server environment (allowlisted
+//     name only; see ResolveGitTokenSecretRef).
+//  2. cfg.GitToken — the legacy plaintext literal backfilled by migration 00244.
+//  3. cfg.EnvVars GH_TOKEN / GITHUB_TOKEN — pre-migration stored literals.
+//  4. runtimeEnv maps — per-run env vars (GH_TOKEN / GITHUB_TOKEN), never persisted.
+//
+// The token is never logged.
+func ResolveGitTokenForConfig(cfg *AgentSandboxConfig, runtimeEnv ...map[string]string) string {
+	if cfg != nil {
+		if t := ResolveGitTokenSecretRef(cfg.GitTokenSecretRef); t != "" {
+			return t
+		}
+		if cfg.GitToken != "" {
+			return cfg.GitToken
+		}
+		if t := ResolveGitToken(cfg.EnvVars); t != "" {
+			return t
+		}
+	}
+	return ResolveGitToken(runtimeEnv...)
+}
+
 // isSHA checks if a string looks like a git commit SHA (40 or 7+ hex chars).
 var shaPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 

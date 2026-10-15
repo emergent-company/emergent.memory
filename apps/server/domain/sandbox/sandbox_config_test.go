@@ -365,6 +365,227 @@ func TestRedactSandboxConfigMap_Nil(t *testing.T) {
 	assert.Nil(t, RedactSandboxConfigMap(nil))
 }
 
+// --- Git token secret reference + legacy literal (issue #1844) ---
+
+func TestIsValidGitTokenSecretRef(t *testing.T) {
+	assert.True(t, IsValidGitTokenSecretRef(GitTokenSecretRefEnv))
+	assert.False(t, IsValidGitTokenSecretRef(""))
+	assert.False(t, IsValidGitTokenSecretRef("GH_TOKEN"))
+	assert.False(t, IsValidGitTokenSecretRef("DATABASE_PASSWORD"))
+}
+
+func TestResolveGitTokenSecretRef(t *testing.T) {
+	// Non-allowlisted names can never read an arbitrary env var.
+	t.Setenv("DATABASE_PASSWORD", "super-secret")
+	assert.Equal(t, "", ResolveGitTokenSecretRef("DATABASE_PASSWORD"))
+	assert.Equal(t, "", ResolveGitTokenSecretRef(""))
+	assert.Equal(t, "", ResolveGitTokenSecretRef("GH_TOKEN"))
+
+	t.Setenv(GitTokenSecretRefEnv, "ghp_servertoken")
+	assert.Equal(t, "ghp_servertoken", ResolveGitTokenSecretRef(GitTokenSecretRefEnv))
+}
+
+func TestIsGitTokenEnvKey(t *testing.T) {
+	assert.True(t, IsGitTokenEnvKey("GH_TOKEN"))
+	assert.True(t, IsGitTokenEnvKey("GITHUB_TOKEN"))
+	assert.True(t, IsGitTokenEnvKey("gh_token"))
+	assert.True(t, IsGitTokenEnvKey("github_token"))
+	assert.False(t, IsGitTokenEnvKey("SOME_TOKEN"))
+	assert.False(t, IsGitTokenEnvKey("GH_TOKEN_X"))
+	assert.False(t, IsGitTokenEnvKey(""))
+}
+
+func TestValidate_GitTokenSecretRef(t *testing.T) {
+	ok := &AgentSandboxConfig{Enabled: true, GitTokenSecretRef: GitTokenSecretRefEnv}
+	assert.Empty(t, ok.Validate())
+
+	bad := &AgentSandboxConfig{Enabled: true, GitTokenSecretRef: "DATABASE_PASSWORD"}
+	errs := bad.Validate()
+	assert.NotEmpty(t, errs)
+}
+
+func TestAgentSandboxConfig_RedactSecrets_RedactsGitToken(t *testing.T) {
+	cfg := &AgentSandboxConfig{
+		Enabled:  true,
+		GitToken: "ghp_legacyLiteral",
+		EnvVars:  map[string]string{"FOO": "bar"},
+	}
+	out := cfg.RedactSecrets()
+	require.NotNil(t, out)
+	assert.Equal(t, RedactedSecretValue, out.GitToken)
+	// Original untouched.
+	assert.Equal(t, "ghp_legacyLiteral", cfg.GitToken)
+	// Secret ref is not a secret value — it must pass through untouched.
+}
+
+func TestAgentSandboxConfig_RedactSecrets_KeepsSecretRef(t *testing.T) {
+	cfg := &AgentSandboxConfig{
+		Enabled:           true,
+		GitTokenSecretRef: GitTokenSecretRefEnv,
+	}
+	out := cfg.RedactSecrets()
+	require.NotNil(t, out)
+	assert.Equal(t, GitTokenSecretRefEnv, out.GitTokenSecretRef)
+}
+
+func TestRedactSandboxConfigMap_RedactsGitToken(t *testing.T) {
+	in := map[string]any{
+		"enabled":              true,
+		"git_token":            "ghp_legacyLiteral",
+		"git_token_secret_ref": GitTokenSecretRefEnv,
+		"env_vars":             map[string]any{"NODE_ENV": "production"},
+	}
+	out := RedactSandboxConfigMap(in)
+	require.NotNil(t, out)
+	assert.Equal(t, RedactedSecretValue, out["git_token"])
+	// The reference name is not a secret.
+	assert.Equal(t, GitTokenSecretRefEnv, out["git_token_secret_ref"])
+	// Original map untouched.
+	assert.Equal(t, "ghp_legacyLiteral", in["git_token"])
+}
+
+func TestNormalizeSecretsForWrite_PlaceholderRoundTrip(t *testing.T) {
+	existing := &AgentSandboxConfig{
+		EnvVars:  map[string]string{"GH_TOKEN": "ghp_stored", "FOO": "bar"},
+		GitToken: "ghp_legacy",
+	}
+	incoming := &AgentSandboxConfig{
+		EnvVars:  map[string]string{"GH_TOKEN": RedactedSecretValue, "FOO": "baz"},
+		GitToken: RedactedSecretValue,
+	}
+	errs := NormalizeSecretsForWrite(incoming, existing)
+	assert.Empty(t, errs)
+	assert.Equal(t, "ghp_stored", incoming.EnvVars["GH_TOKEN"])
+	assert.Equal(t, "ghp_legacy", incoming.GitToken)
+	assert.Equal(t, "baz", incoming.EnvVars["FOO"])
+}
+
+func TestNormalizeSecretsForWrite_RejectsNewGitTokenLiteral(t *testing.T) {
+	incoming := &AgentSandboxConfig{
+		EnvVars: map[string]string{"GH_TOKEN": "ghp_brandnew"},
+	}
+	errs := NormalizeSecretsForWrite(incoming, nil)
+	assert.NotEmpty(t, errs)
+
+	// GITHUB_TOKEN too.
+	incoming = &AgentSandboxConfig{
+		EnvVars: map[string]string{"GITHUB_TOKEN": "ghp_brandnew"},
+	}
+	assert.NotEmpty(t, NormalizeSecretsForWrite(incoming, nil))
+}
+
+func TestNormalizeSecretsForWrite_AllowsUnchangedLegacyLiteral(t *testing.T) {
+	existing := &AgentSandboxConfig{EnvVars: map[string]string{"GH_TOKEN": "ghp_stored"}}
+	incoming := &AgentSandboxConfig{EnvVars: map[string]string{"GH_TOKEN": "ghp_stored"}}
+	assert.Empty(t, NormalizeSecretsForWrite(incoming, existing))
+	assert.Equal(t, "ghp_stored", incoming.EnvVars["GH_TOKEN"])
+}
+
+func TestNormalizeSecretsForWrite_DropsPlaceholderWithNoStored(t *testing.T) {
+	incoming := &AgentSandboxConfig{
+		EnvVars: map[string]string{"GH_TOKEN": RedactedSecretValue, "FOO": "bar"},
+	}
+	assert.Empty(t, NormalizeSecretsForWrite(incoming, nil))
+	_, ok := incoming.EnvVars["GH_TOKEN"]
+	assert.False(t, ok)
+	assert.Equal(t, "bar", incoming.EnvVars["FOO"])
+}
+
+func TestNormalizeSecretsForWrite_NonSecretEnvVarUntouched(t *testing.T) {
+	// A non-git-token secret env var (e.g. SOME_TOKEN) is not subject to the
+	// git-token literal rejection — it round-trips like #1883 but is otherwise left
+	// as-is (out of scope for the git-token secret ref).
+	incoming := &AgentSandboxConfig{EnvVars: map[string]string{"SOME_TOKEN": "plain"}}
+	assert.Empty(t, NormalizeSecretsForWrite(incoming, nil))
+	assert.Equal(t, "plain", incoming.EnvVars["SOME_TOKEN"])
+}
+
+func TestNormalizeSecretsForWrite_RejectsClientGitTokenField(t *testing.T) {
+	incoming := &AgentSandboxConfig{GitToken: "ghp_attacker"}
+	assert.NotEmpty(t, NormalizeSecretsForWrite(incoming, nil))
+}
+
+// --- NormalizeSandboxConfigForWrite (map-level write path, #1844) ---
+
+func TestNormalizeSandboxConfigForWrite_RejectsClientGitTokenLiteral(t *testing.T) {
+	in := map[string]any{"enabled": true, "git_token": "ghp_attacker"}
+	errs := NormalizeSandboxConfigForWrite(in, nil)
+	assert.NotEmpty(t, errs)
+	_, ok := in["git_token"]
+	assert.False(t, ok, "rejected git_token literal must not be persisted")
+}
+
+func TestNormalizeSandboxConfigForWrite_RejectsEnvGitTokenLiteral(t *testing.T) {
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+		in := map[string]any{
+			"enabled":  true,
+			"env_vars": map[string]any{key: "ghp_brandnew", "FOO": "bar"},
+		}
+		errs := NormalizeSandboxConfigForWrite(in, nil)
+		require.NotEmpty(t, errs, "key %q must be rejected", key)
+		env := in["env_vars"].(map[string]any)
+		_, hasToken := env[key]
+		assert.False(t, hasToken, "rejected literal for %q must not be persisted", key)
+		assert.Equal(t, "bar", env["FOO"], "non-secret env var must survive rejection of a sibling")
+	}
+}
+
+func TestNormalizeSandboxConfigForWrite_PlaceholderRoundTripPreserves(t *testing.T) {
+	existing := map[string]any{
+		"git_token": "ghp_legacy",
+		"env_vars":  map[string]any{"GH_TOKEN": "ghp_stored", "FOO": "bar"},
+	}
+	in := map[string]any{
+		"git_token": RedactedSecretValue,
+		"env_vars":  map[string]any{"GH_TOKEN": RedactedSecretValue, "FOO": "baz"},
+	}
+	assert.Empty(t, NormalizeSandboxConfigForWrite(in, existing))
+	assert.Equal(t, "ghp_legacy", in["git_token"])
+	env := in["env_vars"].(map[string]any)
+	assert.Equal(t, "ghp_stored", env["GH_TOKEN"])
+	assert.Equal(t, "baz", env["FOO"])
+}
+
+func TestNormalizeSandboxConfigForWrite_CarriesForwardLegacyGitToken(t *testing.T) {
+	existing := map[string]any{"git_token": "ghp_legacy"}
+	in := map[string]any{"enabled": true}
+	assert.Empty(t, NormalizeSandboxConfigForWrite(in, existing))
+	assert.Equal(t, "ghp_legacy", in["git_token"], "stored legacy token must be carried forward verbatim")
+}
+
+func TestNormalizeSandboxConfigForWrite_DropsPlaceholderWithNoStored(t *testing.T) {
+	in := map[string]any{"env_vars": map[string]any{"GH_TOKEN": RedactedSecretValue, "FOO": "bar"}}
+	assert.Empty(t, NormalizeSandboxConfigForWrite(in, nil))
+	env := in["env_vars"].(map[string]any)
+	_, hasToken := env["GH_TOKEN"]
+	assert.False(t, hasToken, "placeholder with no stored value must be dropped")
+	assert.Equal(t, "bar", env["FOO"])
+}
+
+func TestNormalizeSandboxConfigForWrite_PreservesUnknownAndNonSecretKeys(t *testing.T) {
+	in := map[string]any{
+		"enabled":              true,
+		"base_image":           "ubuntu:22.04",
+		"unknown_key":          "preserved",
+		"env_vars":             map[string]any{"SOME_TOKEN": "plain", "NODE_ENV": "prod"},
+		"git_token_secret_ref": GitTokenSecretRefEnv,
+	}
+	assert.Empty(t, NormalizeSandboxConfigForWrite(in, nil))
+	assert.Equal(t, "ubuntu:22.04", in["base_image"])
+	assert.Equal(t, "preserved", in["unknown_key"])
+	assert.Equal(t, GitTokenSecretRefEnv, in["git_token_secret_ref"])
+	env := in["env_vars"].(map[string]any)
+	assert.Equal(t, "plain", env["SOME_TOKEN"], "non-git-token secret env vars are out of scope")
+	assert.Equal(t, "prod", env["NODE_ENV"])
+}
+
+func TestNormalizeSandboxConfigForWrite_AllowsUnchangedLegacyEnvLiteral(t *testing.T) {
+	existing := map[string]any{"env_vars": map[string]any{"GH_TOKEN": "ghp_stored"}}
+	in := map[string]any{"env_vars": map[string]any{"GH_TOKEN": "ghp_stored"}}
+	assert.Empty(t, NormalizeSandboxConfigForWrite(in, existing))
+	assert.Equal(t, "ghp_stored", in["env_vars"].(map[string]any)["GH_TOKEN"])
+}
+
 // --- ResolveRepoSource ---
 
 func TestResolveRepoSource_FixedConfig(t *testing.T) {

@@ -1694,6 +1694,14 @@ func (h *Handler) CreateDefinition(c echo.Context) error {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
 	}
 
+	// Write-path secret handling: a workspace config must never persist a
+	// plaintext git token supplied by the client — it must use
+	// git_token_secret_ref. There is no existing config on create, so a
+	// client-supplied literal is rejected outright (#1844).
+	if errs := sandbox.NormalizeSandboxConfigForWrite(def.SandboxConfig, nil); len(errs) > 0 {
+		return apperror.NewBadRequest("workspace config rejected: " + strings.Join(errs, "; "))
+	}
+
 	// Check for existing definition with same name to return a clear 409 instead of a 500
 	// from a unique constraint violation on (project_id, name).
 	existing, err := h.repo.FindDefinitionByName(c.Request().Context(), projectID, dto.Name)
@@ -1815,6 +1823,13 @@ func (h *Handler) UpdateDefinition(c echo.Context) error {
 		def.SetRelationshipTypes(dto.RelationshipTypes)
 	}
 	if dto.SandboxConfig != nil {
+		// Write-path secret handling against the stored config: carry forward the
+		// stored git token, restore placeholder echoes, and reject a newly-supplied
+		// plaintext git token (#1844). def.SandboxConfig still holds the stored
+		// value here (it has not been overwritten yet).
+		if errs := sandbox.NormalizeSandboxConfigForWrite(dto.SandboxConfig, def.SandboxConfig); len(errs) > 0 {
+			return apperror.NewBadRequest("workspace config rejected: " + strings.Join(errs, "; "))
+		}
 		def.SandboxConfig = dto.SandboxConfig
 	}
 	if dto.ToolPolicies != nil {
@@ -2834,18 +2849,14 @@ func (h *Handler) UpdateSandboxConfig(c echo.Context) error {
 		return apperror.NewNotFound("AgentDefinition", id)
 	}
 
-	// Secrets are redacted on read (see GetSandboxConfig). If the client sends
-	// back the redaction placeholder for a secret env var — i.e. it did not
-	// change the value — preserve the existing stored value instead of
-	// overwriting a real credential with the placeholder.
-	if existing, err := sandbox.ParseAgentSandboxConfig(def.SandboxConfig); err == nil && existing != nil {
-		for k, v := range cfg.EnvVars {
-			if v == sandbox.RedactedSecretValue {
-				if old, ok := existing.EnvVars[k]; ok && old != "" {
-					cfg.EnvVars[k] = old
-				}
-			}
-		}
+	// Secrets are redacted on read (see GetSandboxConfig). Apply write-path secret
+	// handling against the stored config: a redaction placeholder echoes the stored
+	// value (so it is never erased), a placeholder with no stored value is dropped,
+	// the server-managed legacy git_token is carried forward, and a newly-supplied
+	// plaintext git token is rejected (issue #1844).
+	existing, _ := sandbox.ParseAgentSandboxConfig(def.SandboxConfig)
+	if errs := sandbox.NormalizeSecretsForWrite(&cfg, existing); len(errs) > 0 {
+		return apperror.NewBadRequest("workspace config rejected: " + strings.Join(errs, "; "))
 	}
 
 	// Convert to map for JSONB storage
@@ -3766,6 +3777,23 @@ func (h *Handler) SetAgentOverride(c echo.Context) error {
 		return apperror.NewBadRequest(err.Error())
 	}
 
+	// Write-path secret handling against the previously stored override config:
+	// carry forward a stored git token, restore placeholder echoes, and reject a
+	// newly-supplied plaintext git token (#1844).
+	if override.SandboxConfig != nil {
+		existing, err := h.repo.GetAgentOverride(c.Request().Context(), projectID, agentName)
+		if err != nil {
+			return apperror.NewInternal("failed to get agent override", err)
+		}
+		var existingCfg map[string]any
+		if existing != nil {
+			existingCfg = existing.SandboxConfig
+		}
+		if errs := sandbox.NormalizeSandboxConfigForWrite(override.SandboxConfig, existingCfg); len(errs) > 0 {
+			return apperror.NewBadRequest("workspace config rejected: " + strings.Join(errs, "; "))
+		}
+	}
+
 	setting, err := h.repo.SetAgentOverride(c.Request().Context(), projectID, agentName, &override)
 	if err != nil {
 		return apperror.NewInternal("failed to set agent override", err)
@@ -3868,6 +3896,19 @@ func (h *Handler) SetProjectSetting(c echo.Context) error {
 	if category == "" || key == "" {
 		return apperror.NewBadRequest("category and key are required")
 	}
+
+	// Agent overrides are NOT writable through this generic key/value endpoint.
+	// They have a single authoritative write path — SetAgentOverride — which
+	// normalizes the sandbox config (rejecting plaintext git tokens, carrying
+	// forward stored secrets). Accepting category=agent_override here would let a
+	// caller bypass that normalization and persist a raw sandboxConfig map
+	// straight into kb.project_settings.value, which GetAgentOverride would later
+	// apply to a definition's sandbox (issue #1844). No other settings category is
+	// consumed as a sandbox config, so this one guard closes the whole class.
+	if category == SettingsCategoryAgentOverride {
+		return apperror.NewBadRequest("agent overrides are managed through the dedicated endpoint PUT /api/projects/:projectId/agent-definitions/overrides/:agentName; the generic settings endpoint does not accept them")
+	}
+
 	var value map[string]any
 	if err := c.Bind(&value); err != nil {
 		return apperror.NewBadRequest("invalid request body: expected a JSON object")

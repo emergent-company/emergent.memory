@@ -1093,6 +1093,9 @@ templ agentSandboxForm(data agentSandboxData) {
 				@form.FormControl("agent-sandbox-env", "Environment variables", form.LabelAbove, "KEY=VALUE, one per line.", "", nil) {
 					<textarea id="agent-sandbox-env" name="envVars" rows="4" placeholder="FOO=bar" class="textarea w-full resize-none">{ sandboxEnvVars(data.Config) }</textarea>
 				}
+				@form.FormControl("agent-sandbox-git-token-ref", "Git token (server secret)", form.LabelAbove, "Reference to a server-managed git credential, not a literal token. Leave empty for public repositories.", "", nil) {
+					<input id="agent-sandbox-git-token-ref" name="gitTokenSecretRef" type="text" value={ sandboxGitTokenSecretRef(data.Config) } placeholder="SANDBOX_GIT_TOKEN" class="input w-full"/>
+				}
 			</div>
 			}
 		}

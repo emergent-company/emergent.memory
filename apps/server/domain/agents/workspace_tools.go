@@ -968,11 +968,12 @@ func executeGitClone(ctx agent.Context, args map[string]any, deps WorkspaceToolD
 	}
 
 	// Prefer credential-aware CheckoutService if available.
-	// Resolve the git token from the per-session env vars so interactive
-	// workspace_git action=clone is authenticated the same way as the
-	// CheckoutService change (GH_TOKEN before GITHUB_TOKEN).
+	// Resolve the git token via the full config precedence
+	// (git_token_secret_ref → legacy literal → env vars → session env) so
+	// interactive workspace_git action=clone is authenticated the same way as the
+	// CheckoutService clone (GH_TOKEN before GITHUB_TOKEN within each map).
 	if deps.CheckoutService != nil {
-		gitToken := sandbox.ResolveGitToken(deps.SessionEnv)
+		gitToken := sandbox.ResolveGitTokenForConfig(deps.Config, deps.SessionEnv)
 		if err := deps.CheckoutService.CloneRepository(ctx, deps.Provider, deps.ProviderID, url, branch, destPath, gitToken); err != nil {
 			return map[string]any{"error": err.Error()}, nil
 		}
