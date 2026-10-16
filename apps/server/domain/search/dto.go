@@ -57,12 +57,18 @@ type UnifiedSearchRequest struct {
 	MaxTokenBudget      int                               `json:"maxTokenBudget,omitempty"`
 	BranchID            *string                           `json:"branch_id,omitempty"` // nil = main graph
 	Namespace           *string                           `json:"namespace,omitempty"` // filter both legs by namespace: graph objects by their namespace field, chunks through kb.object_chunks → kb.graph_objects (#1902)
-	Types               []string                          `json:"types,omitempty"`     // restrict graph-object candidates to these types at retrieval time
-	Labels              []string                          `json:"labels,omitempty"`    // restrict graph-object candidates to objects carrying any of these labels at retrieval time
-	RecencyBoost        *float32                          `json:"recencyBoost,omitempty"`
-	RecencyHalfLife     *float32                          `json:"recencyHalfLife,omitempty"`
-	AccessBoost         *float32                          `json:"accessBoost,omitempty"`
-	MinScore            *float32                          `json:"minScore,omitempty"` // drop results scoring below this fused score (0-1)
+	// NamespaceIsNull scopes the chunk (text) leg to objects whose live HEAD has
+	// namespace IS NULL. Internal only (not part of the HTTP contract): the MCP
+	// default search treats an omitted namespace as the null namespace, so it
+	// sets this to keep chunks extracted into non-null-namespace objects out of a
+	// default search (#1910). Ignored when Namespace is set.
+	NamespaceIsNull bool     `json:"-"`
+	Types           []string `json:"types,omitempty"`  // restrict graph-object candidates to these types at retrieval time
+	Labels          []string `json:"labels,omitempty"` // restrict graph-object candidates to objects carrying any of these labels at retrieval time
+	RecencyBoost    *float32 `json:"recencyBoost,omitempty"`
+	RecencyHalfLife *float32 `json:"recencyHalfLife,omitempty"`
+	AccessBoost     *float32 `json:"accessBoost,omitempty"`
+	MinScore        *float32 `json:"minScore,omitempty"` // drop results scoring below this fused score (0-1)
 	// IncludeRelationships controls the relationship-vector search leg.
 	// nil preserves existing behaviour (leg runs when ResultTypes allows);
 	// false skips it for faster entity/text-only searches.

@@ -50,39 +50,68 @@ type TextSearchParams struct {
 	VectorWeight  float32
 	Limit         int
 	// Namespace, when non-nil and non-empty, restricts chunk results to chunks
-	// extracted into at least one graph object carrying that namespace. Chunks
-	// have no namespace of their own (kb.chunks is project-scoped); the
-	// object→chunk link (kb.object_chunks) is what makes a chunk belong to a
-	// namespace. Without this the text leg would leak chunks from every
-	// namespace into a namespace-restricted search.
+	// extracted into at least one graph object whose live HEAD carries that
+	// namespace. Chunks have no namespace of their own (kb.chunks is
+	// project-scoped); the object→chunk link (kb.object_chunks) is what makes a
+	// chunk belong to a namespace. Without this the text leg would leak chunks
+	// from every namespace into a namespace-restricted search.
 	Namespace *string
+	// NamespaceIsNull, when true (and Namespace unset), scopes chunk results to
+	// chunks extracted into a graph object whose live HEAD has namespace IS NULL.
+	// The MCP default search treats an omitted namespace as the null namespace
+	// (matching its schema-type allow/block lists), so its chunk leg must carry
+	// the same scoping or it leaks chunks extracted into non-null-namespace
+	// objects (#1910).
+	NamespaceIsNull bool
 }
 
 // chunkNamespacePredicate returns the extra WHERE fragment (and its bind args)
 // that scopes chunk results to a namespace, or ("", nil) when no namespace
 // restriction applies. It assumes the enclosing query aliases kb.chunks as `c`
-// and kb.documents as `d`. The predicate is fail-closed: a chunk with no
-// extracted object in the requested namespace is excluded. Soft-deleted objects
-// do not count, so a chunk whose only extraction was deleted is excluded too.
-// Branch/version scoping is deliberately not applied: namespace is inherited
-// across versions within a branch, so a chunk reached through a superseded
-// version — or a branch version that carries the namespace — was genuinely
-// extracted into that namespace. A branch-forked copy carries no namespace of
-// its own, so it cannot admit a chunk under a namespace it was never extracted
-// into.
-func chunkNamespacePredicate(namespace *string) (string, []any) {
-	if namespace == nil || *namespace == "" {
+// and kb.documents as `d`.
+//
+// A chunk belongs to the namespace of the object it was extracted from. Because
+// graph deletes are versioned — SoftDelete inserts a tombstone HEAD and
+// supersedes the prior HEAD, leaving the prior row's own deleted_at NULL — the
+// predicate resolves the version linked by kb.object_chunks.object_id to the
+// object's live HEAD (the supersedes_id IS NULL AND deleted_at IS NULL row of
+// the same canonical_id and branch) and tests that HEAD. So a soft-deleted
+// object's chunks are excluded, while a chunk linked to a superseded but still
+// live version still counts: namespace is inherited across versions within a
+// branch, and a branch-forked copy (which carries no namespace of its own)
+// cannot admit a chunk under a namespace it was never extracted into. The
+// predicate is fail-closed: a chunk with no live extracted object in the
+// requested namespace is excluded.
+//
+// When namespace is nil/empty and nullNamespace is true, the predicate instead
+// matches objects whose live HEAD has namespace IS NULL (the MCP default
+// search). Both unset means no restriction.
+func chunkNamespacePredicate(namespace *string, nullNamespace bool) (string, []any) {
+	namespaceCond := ""
+	var args []any
+	switch {
+	case namespace != nil && *namespace != "":
+		namespaceCond = "o.namespace = ?"
+		args = []any{*namespace}
+	case nullNamespace:
+		namespaceCond = "o.namespace IS NULL"
+	default:
 		return "", nil
 	}
 	return `
 		  AND EXISTS (
 			SELECT 1 FROM kb.object_chunks oc
-			JOIN kb.graph_objects o ON o.id = oc.object_id
+			JOIN kb.graph_objects ov ON ov.id = oc.object_id
+			JOIN kb.graph_objects o
+			  ON o.canonical_id = ov.canonical_id
+			 AND o.project_id = ov.project_id
+			 AND o.branch_id IS NOT DISTINCT FROM ov.branch_id
 			WHERE oc.chunk_id = c.id
 			  AND o.project_id = d.project_id
+			  AND o.supersedes_id IS NULL
 			  AND o.deleted_at IS NULL
-			  AND o.namespace = ?
-		  )`, []any{*namespace}
+			  AND ` + namespaceCond + `
+		  )`, args
 }
 
 // TextSearchResultRow represents a single text search result from the database
@@ -157,7 +186,7 @@ func (r *Repository) runChunkLexical(ctx context.Context, params TextSearchParam
 		tsqueryFn = "to_tsquery"
 	}
 
-	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace, params.NamespaceIsNull)
 
 	query := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,
@@ -218,7 +247,7 @@ func (r *Repository) VectorSearch(ctx context.Context, params TextSearchParams) 
 	limit := mathutil.ClampLimit(params.Limit, 20, 100)
 	vectorStr := pgutils.FormatVector(params.Vector)
 
-	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace, params.NamespaceIsNull)
 
 	// Cosine distance: lower is better, convert to similarity score (1 - distance)
 	query := `
@@ -318,7 +347,7 @@ func (r *Repository) HybridSearch(ctx context.Context, params TextSearchParams) 
 		lexicalScores = append(lexicalScores, hit.Score)
 	}
 
-	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace)
+	nsPredicate, nsArgs := chunkNamespacePredicate(params.Namespace, params.NamespaceIsNull)
 
 	vectorQuery := `
 		SELECT c.id, c.document_id, c.chunk_index, c.text,

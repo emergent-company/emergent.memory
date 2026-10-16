@@ -1698,10 +1698,6 @@ routes:
       level: auth
       note: RequireAuth, RequireShareLink
     - method: GET
-      path: /api/share/agent/questions
-      level: auth
-      note: RequireAuth, RequireShareLink, RequireShareIdentity
-    - method: GET
       path: /api/share/agent/sessions
       level: auth
       note: RequireAuth, RequireShareLink, RequireShareIdentity

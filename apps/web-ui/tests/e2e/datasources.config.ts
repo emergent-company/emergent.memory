@@ -10,6 +10,13 @@ import { defineConfig, devices } from '@playwright/test';
 // with no Google credentials and no OIDC session.
 //
 // Run:  npx playwright test --config=datasources.config.ts
+//
+// The gateway port is overridable so this suite can run concurrently with
+// `share` on one machine/runner without sharing a server (see share.config.ts);
+// the default stays 8097 for local runs. `run-e2e.sh` reads the same variables.
+const port = process.env.MEMORY_PORT ?? '8097';
+const baseURL = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: './specs/datasources',
   // The mock is one stateful process; serial workers keep tests from racing the
@@ -25,7 +32,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   use: {
-    baseURL: 'http://localhost:8097',
+    baseURL,
     headless: true,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
@@ -34,7 +41,7 @@ export default defineConfig({
   webServer: {
     command: 'bash run-e2e.sh',
     cwd: __dirname,
-    url: 'http://localhost:8097/api/health',
+    url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     timeout: 120_000,
     stdout: 'pipe',

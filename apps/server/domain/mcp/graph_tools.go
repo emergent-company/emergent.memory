@@ -140,9 +140,19 @@ func buildHybridUnifiedRequest(args map[string]any, query string, limit int, typ
 	}
 
 	// Pass namespace to unified search for DB-level filtering.
-	// "all" means no filter; specific value filters graph objects by namespace field.
-	if namespaceFilter != "" && namespaceFilter != "all" {
-		req.Namespace = &namespaceFilter
+	// "all" means no filter; "" is the default (null) namespace, which the
+	// schema-type allow/block lists already treat as `namespace IS NULL`, so the
+	// chunk leg is scoped to null-namespace objects too rather than leaking
+	// chunks extracted into non-null-namespace objects (#1910). A specific value
+	// filters graph objects by their namespace field.
+	switch namespaceFilter {
+	case "all":
+		// unfiltered
+	case "":
+		req.NamespaceIsNull = true
+	default:
+		ns := namespaceFilter
+		req.Namespace = &ns
 	}
 
 	if rb, ok := args["recency_boost"].(float64); ok && rb > 0 {
@@ -534,9 +544,17 @@ func (s *Service) executeSemanticSearch(ctx context.Context, projectID string, a
 			MinScore:    minScore,
 			ResultTypes: resultTypes,
 		}
-		// Pass namespace for DB-level filtering.
-		if namespaceFilter != "" && namespaceFilter != "all" {
-			unifiedReq.Namespace = &namespaceFilter
+		// Pass namespace for DB-level filtering. "" is the default (null)
+		// namespace, scoped on the chunk leg to null-namespace objects (#1910);
+		// "all" is unfiltered; a specific value filters by namespace field.
+		switch namespaceFilter {
+		case "all":
+			// unfiltered
+		case "":
+			unifiedReq.NamespaceIsNull = true
+		default:
+			ns := namespaceFilter
+			unifiedReq.Namespace = &ns
 		}
 		res, err := s.searchSvc.Search(ctx, projectUUID, unifiedReq, nil)
 		if err != nil {

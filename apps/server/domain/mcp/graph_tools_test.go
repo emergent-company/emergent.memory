@@ -156,6 +156,31 @@ func TestBuildHybridUnifiedRequest_ResultTypes(t *testing.T) {
 	})
 }
 
+// TestBuildHybridUnifiedRequest_NamespaceMapping pins #1910: the default (absent)
+// namespace must scope the chunk leg to the null namespace, while "all" stays
+// unfiltered and an explicit namespace filters by value.
+func TestBuildHybridUnifiedRequest_NamespaceMapping(t *testing.T) {
+	t.Run("default namespace scopes chunks to null", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "", true)
+		assert.True(t, req.NamespaceIsNull,
+			"the default MCP search must scope the chunk leg to the null namespace (#1910)")
+		assert.Nil(t, req.Namespace)
+	})
+
+	t.Run("all is unfiltered", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "all", true)
+		assert.False(t, req.NamespaceIsNull, `namespace "all" must not scope chunks`)
+		assert.Nil(t, req.Namespace)
+	})
+
+	t.Run("explicit namespace filters by value", func(t *testing.T) {
+		req := buildHybridUnifiedRequest(map[string]any{}, "q", 20, nil, nil, nil, "system", true)
+		require.NotNil(t, req.Namespace)
+		assert.Equal(t, "system", *req.Namespace)
+		assert.False(t, req.NamespaceIsNull)
+	})
+}
+
 func TestToolDefinitions_IncludeChunksSchema(t *testing.T) {
 	svc := &Service{}
 	tools := svc.GetToolDefinitions()

@@ -426,9 +426,32 @@ htmx swaps), session/auth flows, and the rest of the session-mode suite
 (navigation, mutations, live-LLM scenarios). Those still require the running
 dev installation and stay manual / not-in-CI. Making the full suite hermetic
 would need a stub gateway + memory fixtures that cover every surface. The
-`mock-memory.mjs` harness now serves the public agent-share surface **and** the
+`mock-memory.mjs` harness serves the public agent-share surface **and** the
 data-source-integrations + document-version endpoints (see the data-sources
 note below); the remaining surfaces are still tracked as follow-up.
+
+### Hermetic agent public-share gate
+
+The agent public-share suite — `specs/share/*` under `share.config.ts` — is
+credential-free and deterministic: it drives the anonymous `/share/agent`
+surface against the dev-mode mock harness (`mock-memory.mjs`), with no OIDC
+session and no live memory backend. It runs in CI as the `share` job in
+`web-ui.yml`, folded into the advisory `web-ui-ci` aggregate. It boots
+`bash run-e2e.sh` exactly like `datasources.config.ts`, so its CI job provisions
+the same Go + templ + `task` prerequisites; the suite is excluded from the live
+session-mode suite via `testIgnore` (`specs/share/**`).
+
+Because the `share` and `datasources` jobs can be live on the same self-hosted
+runner at once, each pins its own gateway + mock ports via job-level
+`MEMORY_PORT`/`MOCK_PORT` (`share`: 8098/5302, `datasources`: 8097/5301).
+`run-e2e.sh` reads those variables (default 8097/5301, so local runs are
+unchanged) and now fails fast if either port is already served, instead of
+silently attaching to a sibling job's gateway + stateful mock.
+
+```bash
+cd tests/e2e
+npx playwright test --config=share.config.ts
+```
 
 ### Hermetic Data Sources gate
 
@@ -443,7 +466,8 @@ Unlike the `js` gate it does need the gateway binary:
 `datasources.config.ts` boots `bash run-e2e.sh` as its Playwright `webServer`,
 which builds the gateway (generating the gitignored templ + `app.css` assets on
 a cold tree — see the cold-tree note under **Notes**) and starts
-`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on `http://localhost:8097`.
+`mock-memory.mjs` + the gateway with `AUTH_MODE=dev` on
+`http://localhost:${MEMORY_PORT:-8097}` (mock on `${MOCK_PORT:-5301}`).
 
 ```bash
 cd tests/e2e

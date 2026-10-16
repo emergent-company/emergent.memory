@@ -573,11 +573,6 @@ const server = http.createServer((req, res) => {
     return json(res, { ok: true });
   }
 
-  if (path === "/api/share/agent/questions" && req.method === "GET") {
-    const sid = url.searchParams.get("sessionId") || "";
-    return json(res, questionsBySession[sid] || []);
-  }
-
   const shareSessionMatch = path.match(/^\/api\/share\/agent\/sessions\/([^/]+)$/);
   if (shareSessionMatch && req.method === "GET") {
     const ref = endUserRefOf(req);

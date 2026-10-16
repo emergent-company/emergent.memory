@@ -41,7 +41,7 @@ type ShareRepo interface {
 	TouchShareLink(ctx context.Context, linkID string) error
 	// sessions
 	CreateShareSession(ctx context.Context, s *AgentShareSession) error
-	CreateShareSessionIfUnderCap(ctx context.Context, s *AgentShareSession, maxActive int) (bool, error)
+	CreateShareSessionIfUnderCap(ctx context.Context, session *Session, s *AgentShareSession, maxActive int) (bool, error)
 	GetShareSessionByID(ctx context.Context, sessionID, linkID, endUserRef string) (*AgentShareSession, error)
 	ListShareSessionsByEndUser(ctx context.Context, linkID, endUserRef string, includeArchived bool) ([]*AgentShareSession, error)
 	ListShareSessionsByProject(ctx context.Context, projectID string) ([]shareSessionProjectRow, error)
@@ -60,7 +60,6 @@ type ShareRepo interface {
 	FailRunWithSteps(ctx context.Context, runID, errorMessage string, stepCount int) error
 	CountSessionToolApprovals(ctx context.Context, shareLinkID, sessionID string) (int, error)
 	ReserveAndDecideShareApproval(ctx context.Context, shareLinkID, sessionID, questionID, decision, message, decidedBy string, maxApprovals int) (bool, error)
-	ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
 	ListAnsweredQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error)
 	ListPendingToolApprovalsForSession(ctx context.Context, sessionID string) ([]*AgentToolApproval, error)
 	// end users
@@ -79,7 +78,6 @@ type ShareRepo interface {
 	GetOrgIDByProjectID(ctx context.Context, projectID string) (string, error)
 	FindByName(ctx context.Context, projectID, name string) (*Agent, error)
 	Create(ctx context.Context, agent *Agent) error
-	CreateSession(ctx context.Context, session *Session) error
 	FindQuestionByID(ctx context.Context, id string) (*AgentQuestion, error)
 	GetRunTokenUsage(ctx context.Context, runID string) (*RunTokenUsage, error)
 	GetConversationFullHistory(ctx context.Context, sessionID string) ([]*ConversationHistoryItem, error)
@@ -589,9 +587,6 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 
 	agentName := binding.Definition.Name
 	session := &Session{ProjectID: binding.ProjectID, AgentName: &agentName}
-	if err := s.repo.CreateSession(ctx, session); err != nil {
-		return nil, err
-	}
 
 	now := time.Now()
 	var titlePtr *string
@@ -601,15 +596,14 @@ func (s *ShareService) CreateSession(ctx context.Context, binding *ShareLinkBind
 	}
 	sess := &AgentShareSession{
 		ShareLinkID:    binding.Link.ID,
-		SessionID:      session.ID,
 		EndUserRef:     endUserRef,
 		Title:          titlePtr,
 		LastActivityAt: &now,
 	}
-	// Enforce the session cap atomically at insert (advisory lock + count), so
-	// two concurrent first-session requests cannot both create a session past
-	// the cap.
-	created, err := s.repo.CreateShareSessionIfUnderCap(ctx, sess, cfg.MaxActiveSessionsPerUser)
+	// Enforce the session cap atomically at insert (advisory lock + count), and
+	// create the backing kb.sessions row only once the cap check has passed, so a
+	// capped request (created=false) never leaves an orphaned session row behind.
+	created, err := s.repo.CreateShareSessionIfUnderCap(ctx, session, sess, cfg.MaxActiveSessionsPerUser)
 	if err != nil {
 		return nil, err
 	}
@@ -909,70 +903,6 @@ func (s *ShareService) DeleteSession(ctx context.Context, binding *ShareLinkBind
 		return apperror.New(http.StatusNotFound, "not_found", "session not found")
 	}
 	return nil
-}
-
-// PendingQuestions returns pending questions for a session (or all of an end
-// user's sessions when sessionID is empty).
-func (s *ShareService) PendingQuestions(ctx context.Context, binding *ShareLinkBinding, endUserRef, sessionID string) ([]*AgentQuestionDTO, error) {
-	if endUserRef == "" {
-		return nil, apperror.NewBadRequest("endUserRef is required")
-	}
-	var questions []*AgentQuestion
-	var sessionIDs []string
-	if sessionID != "" {
-		sess, err := s.repo.GetShareSessionByID(ctx, sessionID, binding.Link.ID, endUserRef)
-		if err != nil {
-			return nil, err
-		}
-		if sess == nil {
-			return nil, apperror.New(http.StatusNotFound, "not_found", "session not found")
-		}
-		questions, err = s.repo.ListPendingQuestionsForSession(ctx, sess.SessionID)
-		if err != nil {
-			return nil, err
-		}
-		sessionIDs = []string{sess.SessionID}
-	} else {
-		sessions, err := s.repo.ListShareSessionsByEndUser(ctx, binding.Link.ID, endUserRef, false)
-		if err != nil {
-			return nil, err
-		}
-		for _, sess := range sessions {
-			qs, err := s.repo.ListPendingQuestionsForSession(ctx, sess.SessionID)
-			if err != nil {
-				return nil, err
-			}
-			questions = append(questions, qs...)
-			sessionIDs = append(sessionIDs, sess.SessionID)
-		}
-	}
-
-	// Enrich tool-policy questions with the tool name + args from the matching
-	// pending AgentToolApproval rows (joined by question_id), so the shared
-	// approval card renders the same body as the authenticated chat.
-	toolByQuestion := make(map[string]*AgentToolApproval, len(sessionIDs))
-	for _, sid := range sessionIDs {
-		approvals, err := s.repo.ListPendingToolApprovalsForSession(ctx, sid)
-		if err != nil {
-			return nil, err
-		}
-		for _, a := range approvals {
-			if a != nil {
-				toolByQuestion[a.QuestionID] = a
-			}
-		}
-	}
-
-	out := make([]*AgentQuestionDTO, 0, len(questions))
-	for _, q := range questions {
-		dto := q.ToDTO()
-		if a := toolByQuestion[q.ID]; a != nil {
-			dto.Tool = a.ToolName
-			dto.Input = a.ArgsSummary
-		}
-		out = append(out, dto)
-	}
-	return out, nil
 }
 
 // ============================================================================

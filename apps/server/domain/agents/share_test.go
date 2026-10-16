@@ -60,7 +60,6 @@ type fakeShareRepo struct {
 	failedRunErr string
 
 	// recording
-	createdSession      *Session
 	createdShareSession *AgentShareSession
 	createdShareLink    *AgentShareLink
 	createdAgent        *Agent
@@ -84,9 +83,6 @@ type fakeShareRepo struct {
 
 	// pending tool approvals (ListPendingToolApprovalsForSession).
 	pendingApprovals []*AgentToolApproval
-
-	// pending questions (ListPendingQuestionsForSession).
-	pendingQuestions []*AgentQuestion
 
 	// answered questions (ListAnsweredQuestionsForSession).
 	answeredQuestions []*AgentQuestion
@@ -166,13 +162,14 @@ func (f *fakeShareRepo) CreateShareSession(_ context.Context, s *AgentShareSessi
 	f.sessions[s.ID] = s
 	return nil
 }
-func (f *fakeShareRepo) CreateShareSessionIfUnderCap(_ context.Context, s *AgentShareSession, maxActive int) (bool, error) {
+func (f *fakeShareRepo) CreateShareSessionIfUnderCap(_ context.Context, session *Session, s *AgentShareSession, maxActive int) (bool, error) {
 	if f.sessionCapErr != nil {
 		return false, f.sessionCapErr
 	}
 	if maxActive > 0 && f.activeSessions >= maxActive {
 		return false, nil
 	}
+	s.SessionID = session.ID
 	f.createdShareSession = s
 	f.sessions[s.ID] = s
 	return true, nil
@@ -269,9 +266,6 @@ func (f *fakeShareRepo) ReserveAndDecideShareApproval(_ context.Context, _, _, _
 	f.approvals++
 	return true, nil
 }
-func (f *fakeShareRepo) ListPendingQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
-	return f.pendingQuestions, nil
-}
 func (f *fakeShareRepo) ListAnsweredQuestionsForSession(_ context.Context, _ string) ([]*AgentQuestion, error) {
 	return f.answeredQuestions, nil
 }
@@ -325,10 +319,6 @@ func (f *fakeShareRepo) FindByName(_ context.Context, _, name string) (*Agent, e
 func (f *fakeShareRepo) Create(_ context.Context, a *Agent) error {
 	f.createdAgent = a
 	f.agents[a.Name] = a
-	return nil
-}
-func (f *fakeShareRepo) CreateSession(_ context.Context, s *Session) error {
-	f.createdSession = s
 	return nil
 }
 func (f *fakeShareRepo) FindQuestionByID(_ context.Context, _ string) (*AgentQuestion, error) {
@@ -1232,35 +1222,6 @@ func TestCancelQuestion_SetsShareParams(t *testing.T) {
 	assert.Equal(t, "acp-1", responder.captured.SessionID)
 	responder.captured.OnRunSettled(&ExecuteResult{RunID: "run-resumed"})
 	assert.True(t, repo.incrementedUsage, "resumed leg usage must be recorded via the wired callback")
-}
-
-// 1.6 — PendingQuestions must enrich tool-policy questions with the tool name
-// + args from the matching pending approval (keyed by question_id).
-func TestPendingQuestions_EnrichesToolAndInput(t *testing.T) {
-	repo := newFakeShareRepo()
-	link := testLink("link-a", "proj-a", "def-a", "token-a")
-	binding := testBinding(link, testDefinition("def-a", "proj-a", "Agent A"))
-
-	alice := "11111111-1111-1111-1111-111111111111"
-	repo.sessions["sess-1"] = &AgentShareSession{ID: "sess-1", ShareLinkID: "link-a", EndUserRef: alice, SessionID: "acp-1"}
-
-	repo.pendingQuestions = []*AgentQuestion{
-		{ID: "q-1", RunID: "run-1", ProjectID: "proj-a", Status: QuestionStatusPending, Question: "Approve this?"},
-		{ID: "q-2", RunID: "run-2", ProjectID: "proj-a", Status: QuestionStatusPending, Question: "Plain ask_user"},
-	}
-	repo.pendingApprovals = []*AgentToolApproval{
-		{QuestionID: "q-1", ToolName: "entity-create", ArgsSummary: map[string]any{"name": "X"}},
-	}
-
-	svc := NewShareService(repo, nil, nil, nil, "", nil)
-	dto, err := svc.PendingQuestions(context.Background(), binding, alice, "sess-1")
-	require.NoError(t, err)
-	require.Len(t, dto, 2)
-
-	assert.Equal(t, "entity-create", dto[0].Tool)
-	assert.Equal(t, "X", dto[0].Input["name"])
-	assert.Equal(t, "", dto[1].Tool, "a plain ask_user question has no tool name")
-	assert.Nil(t, dto[1].Input, "a plain ask_user question has no tool input")
 }
 
 // 1.5 — DeriveCitations returns the grounded citations for a finished turn from

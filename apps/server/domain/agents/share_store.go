@@ -158,11 +158,14 @@ func (r *Repository) CreateShareSession(ctx context.Context, s *AgentShareSessio
 	return nil
 }
 
-// CreateShareSessionIfUnderCap inserts a share session atomically under an
-// advisory lock, enforcing the max-active-sessions cap per (link, end user).
-// Returns created=false (no error) when the cap is already reached, so two
-// concurrent first-session requests cannot both create a session past the cap.
-func (r *Repository) CreateShareSessionIfUnderCap(ctx context.Context, s *AgentShareSession, maxActive int) (bool, error) {
+// CreateShareSessionIfUnderCap creates the backing kb.sessions row and the share
+// session join row atomically under an advisory lock, enforcing the
+// max-active-sessions cap per (link, end user). The cap is counted before any
+// insert, and both rows are created only when the count is under the cap, so a
+// capped request (created=false, no error) leaves no orphaned kb.sessions row
+// behind. Two concurrent first-session requests cannot both create a session
+// past the cap.
+func (r *Repository) CreateShareSessionIfUnderCap(ctx context.Context, session *Session, s *AgentShareSession, maxActive int) (bool, error) {
 	created := false
 	err := r.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw("SELECT pg_advisory_xact_lock(hashtext(?))", s.ShareLinkID+":"+s.EndUserRef).Exec(ctx); err != nil {
@@ -184,6 +187,15 @@ func (r *Repository) CreateShareSessionIfUnderCap(ctx context.Context, s *AgentS
 				return nil
 			}
 		}
+		// Create the backing session only now that the cap check has passed, so a
+		// capped request never leaves an orphaned kb.sessions row.
+		if _, err := tx.NewInsert().
+			Model(session).
+			Returning("id, project_id, agent_name, title, created_at, updated_at").
+			Exec(ctx); err != nil {
+			return apperror.NewDatabase("Database operation failed", err)
+		}
+		s.SessionID = session.ID
 		if _, err := tx.NewInsert().Model(s).Exec(ctx); err != nil {
 			return apperror.NewDatabase("Database operation failed", err)
 		}
@@ -747,23 +759,6 @@ func (r *Repository) ListPausedShareRuns(ctx context.Context) ([]shareReapCandid
 		})
 	}
 	return out, nil
-}
-
-// ListPendingQuestionsForSession returns pending questions whose run belongs
-// to the given session (share session linkage).
-func (r *Repository) ListPendingQuestionsForSession(ctx context.Context, sessionID string) ([]*AgentQuestion, error) {
-	var questions []*AgentQuestion
-	err := r.db.NewSelect().
-		Model(&questions).
-		Join("JOIN kb.agent_runs AS ar ON ar.id = aq.run_id").
-		Where("ar.session_id = ?", sessionID).
-		Where("aq.status = ?", QuestionStatusPending).
-		Order("aq.created_at ASC").
-		Scan(ctx)
-	if err != nil {
-		return nil, apperror.NewDatabase("Database operation failed", err)
-	}
-	return questions, nil
 }
 
 // ListAnsweredQuestionsForSession returns the questions whose run belongs to

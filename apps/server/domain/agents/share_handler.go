@@ -76,7 +76,6 @@ func RegisterShareRoutes(e *echo.Echo, h *ShareHandler, authMiddleware *auth.Mid
 	identity.POST("/sessions/:id/unarchive", h.UnarchiveSession)
 	identity.DELETE("/sessions/:id", h.DeleteSession)
 	identity.POST("/stream", h.Stream)
-	identity.GET("/questions", h.ListQuestions)
 	identity.POST("/sessions/:id/approvals/:questionId", h.Approve)
 	identity.POST("/sessions/:id/approvals/:questionId/cancel", h.CancelQuestion)
 
@@ -335,17 +334,6 @@ func (h *ShareHandler) Stream(c echo.Context) error {
 		_ = writer.WriteData(sse.NewDoneEvent())
 	}
 	return nil
-}
-
-// ListQuestions handles GET /api/share/agent/questions.
-func (h *ShareHandler) ListQuestions(c echo.Context) error {
-	binding := mustShareBinding(c)
-	sessionID := c.QueryParam("sessionId")
-	dto, err := h.svc.PendingQuestions(c.Request().Context(), binding, verifiedEndUserRef(c), sessionID)
-	if err != nil {
-		return err
-	}
-	return c.JSON(http.StatusOK, dto)
 }
 
 // approveShareRequest is the body for POST .../approvals/:questionId. The

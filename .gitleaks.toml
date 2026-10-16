@@ -41,8 +41,11 @@ paths       = [
   '''gateway/api_tokens_test\.go''',
   '''gateway/auth_test\.go''',
   '''gateway/voice_settings_test\.go''',
-  '''domain/sandbox/integration_mock_test\.go''',
 ]
+
+[[allowlists]]
+description = "The sandbox integration mock uses a fabricated GitHub token literal (ghp_secret123), never a real secret — matched by value so any other secret added to that file is still scanned"
+regexes     = ['''ghp_secret123''']
 
 [[allowlists]]
 description = "Unmistakably-named E2E env-var *names* (never values) trip the generic-api-key heuristic"
