@@ -5,6 +5,12 @@ import http from "node:http";
 
 const PORT = Number(process.env.MOCK_PORT || 5301);
 
+// The gateway origin. `run-e2e.sh` boots the gateway on `MEMORY_PORT` (default
+// 8097), so OAuth metadata this mock returns must name the same origin — a
+// hardcoded 8097 would point a non-default-port run's authorize/redirect flows
+// at the wrong server.
+const GATEWAY_ORIGIN = `http://localhost:${process.env.MEMORY_PORT || 8097}`;
+
 const agents = [
   { id: "agent-1", name: "memory", flowType: "single", visibility: "project", toolCount: 3, isDefault: false, createdAt: "2026-08-25T08:18:01Z", updatedAt: "2026-08-25T08:18:01Z" },
   { id: "agent-2", name: "diane", flowType: "single", visibility: "project", toolCount: 6, isDefault: false, createdAt: "2026-08-25T08:18:02Z", updatedAt: "2026-08-25T08:18:02Z" },
@@ -721,7 +727,7 @@ const server = http.createServer((req, res) => {
   // /data-sources/oauth/callback, which redirects to the connected source.
   const dsAuthorizeMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/oauth\/authorize$/);
   if (dsAuthorizeMatch && (req.method === "GET" || req.method === "POST")) {
-    return json(res, { authorizeUrl: "http://localhost:8097/data-sources/oauth/callback?connected=s1" });
+    return json(res, { authorizeUrl: `${GATEWAY_ORIGIN}/data-sources/oauth/callback?connected=s1` });
   }
 
   // --- org OAuth-client config (org-admin only; write-only secret) -----------
@@ -765,8 +771,8 @@ const server = http.createServer((req, res) => {
     return json(res, {
       providerType: dsProjectClientMatch[2],
       clientId: "",
-      redirectUri: `http://localhost:8097/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
-      javascriptOrigin: "http://localhost:8097",
+      redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
+      javascriptOrigin: GATEWAY_ORIGIN,
       configured: false,
     });
   }
@@ -775,8 +781,8 @@ const server = http.createServer((req, res) => {
       providerType: dsProjectClientMatch[2],
       clientId: String(payload.clientId || ""),
       strategy: String(payload.strategy || ""),
-      redirectUri: `http://localhost:8097/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
-      javascriptOrigin: "http://localhost:8097",
+      redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
+      javascriptOrigin: GATEWAY_ORIGIN,
       configured: true,
       createdAt: "2026-09-01T00:00:00Z",
       updatedAt: "2026-09-01T00:00:00Z",

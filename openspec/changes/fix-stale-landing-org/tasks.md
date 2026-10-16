@@ -15,3 +15,5 @@
 - [x] 3.1 `go build ./...` and `go test ./...` pass in `apps/web-ui/gateway/`
 - [x] 3.2 `golangci-lint run ./...` passes for this change (0 issues)
 - [x] 3.3 `openspec validate fix-stale-landing-org --strict` passes
+
+<!-- openspec:archive-hold: blocked — this change's `web-routing` delta MODIFIES the "Scoped landing redirect" requirement, but the `web-routing` capability does not exist in `openspec/specs/`: it is introduced by the still-unarchived `scoped-web-urls` change (#1564), which is merged to `main` but not archive-ready (task 7.4 manual browser check unticked, no `openspec:archive-ready` marker). `openspec archive fix-stale-landing-org --yes` is therefore structurally refused ("web-routing: target spec does not exist; only ADDED requirements are allowed for new specs"). Same shape as the `fix-share-parity-and-retention` hold in issue #1914. Unblock: archive `scoped-web-urls` first (tick 7.4 or add its own archive-ready marker), then delete this hold and run `openspec archive fix-stale-landing-org --yes`. -->

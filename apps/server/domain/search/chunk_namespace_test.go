@@ -213,3 +213,31 @@ func TestExecuteTextSearch_ForwardsNamespace(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet(),
 		"executeTextSearch must forward req.Namespace into TextSearchParams (#1902/#1910)")
 }
+
+// TestExecuteTextSearch_ForwardsNamespaceIsNull is the sibling pin to
+// TestExecuteTextSearch_ForwardsNamespace: `executeTextSearch` must forward
+// `req.NamespaceIsNull` into TextSearchParams, not drop it or hardcode false.
+// Dropping the forward leaves an MCP default search unscoped — chunks extracted
+// into non-null-namespace objects leak into it (#1910). With no query vector the
+// lexical leg runs alone, so the single expectation (which requires the
+// `o.namespace IS NULL` predicate) fails when the forward is broken.
+func TestExecuteTextSearch_ForwardsNamespaceIsNull(t *testing.T) {
+	repo, mock := newChunkSearchRepo(t)
+	projectID := uuid.New()
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	svc := NewService(repo, nil, nil, log, nil)
+
+	mock.ExpectQuery(chunkNullScopedRE + `[\s\S]*LIMIT 20`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "document_id", "chunk_index", "text", "score"}).
+			AddRow(uuid.New(), uuid.New(), 0, "default hit", 0.9))
+
+	results, _, _, err := svc.executeTextSearch(context.Background(), projectID, &UnifiedSearchRequest{
+		Query:           "needle",
+		Limit:           20,
+		NamespaceIsNull: true,
+	}, nil, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.NoError(t, mock.ExpectationsWereMet(),
+		"executeTextSearch must forward req.NamespaceIsNull into TextSearchParams (#1910)")
+}

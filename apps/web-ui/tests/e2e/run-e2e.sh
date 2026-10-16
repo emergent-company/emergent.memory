@@ -78,7 +78,10 @@ SUPERVISOR_INTERVAL=60s \
 GW=$!
 
 cleanup() { kill "$MOCK" "$GW" 2>/dev/null || true; }
-trap cleanup EXIT
+# Also clean up on INT/TERM: a cancelled or timed-out job (Playwright's webServer
+# teardown escalates to SIGTERM, CI cancels with signals) must not leak the mock
+# and gateway children still holding the port.
+trap cleanup EXIT INT TERM
 
 # Wait for readiness — and for *our* process, not a sibling's. The pre-flight
 # guard above should make a bind failure impossible, but a backgrounded process

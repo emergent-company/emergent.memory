@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test';
 
+// The feedback overlay URL is configured from the mock port (`run-e2e.sh` sets
+// FEEDBACK_OVERLAY_URL=http://localhost:$MOCK_PORT), so derive the expectation
+// from the same default rather than hardcoding it — a non-default-port run would
+// otherwise assert the wrong origin.
+const mockOrigin = `http://localhost:${process.env.MOCK_PORT ?? '5301'}`;
+
 // The component gallery (/dev/components) is a dev-gated surface rendered by the
 // gateway (gateway/devgallery.go + devgallery.templ). It only serves when
 // MEMORY_COMPONENT_GALLERY=on, so it runs under the dedicated flag-on harness
@@ -95,7 +101,7 @@ test('opens a component standalone (chromeless) with the feedback overlay', asyn
   // The feedback overlay is loaded exactly once, with the configured base URL.
   const overlay = page.locator('script[src$="/emergent-feedback.js"]');
   await expect(overlay).toHaveCount(1);
-  await expect(overlay).toHaveAttribute('data-api', 'http://localhost:5301');
+  await expect(overlay).toHaveAttribute('data-api', mockOrigin);
   await expect(overlay).toHaveAttribute('data-repo', 'emergent-company/emergent.memory');
 });
 
