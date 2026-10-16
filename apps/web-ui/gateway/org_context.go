@@ -612,8 +612,11 @@ func (s *Server) uiRestoreProject(c echo.Context) error {
 
 // uiRoot resolves the landing redirect (GET /): dev/API-key mode keeps the
 // static-project landing; session mode resolves last-used project → activate,
-// else the active org → org landing, else the first org → activate + landing,
-// else the no-org wizard. Project/org landings are the canonical scoped URLs.
+// else the active org → org landing (validated against the live org list), else
+// the first org → activate + landing, else the no-org wizard. A remembered org
+// that was deleted is cleared and the landing falls through to the next
+// fallback instead of bouncing onto the dead org. Project/org landings are the
+// canonical scoped URLs.
 func (s *Server) uiRoot(c echo.Context) error {
 	sc, hasSession := sessionContextFrom(c.Request().Context())
 	if !hasSession {
@@ -640,9 +643,11 @@ func (s *Server) uiRoot(c echo.Context) error {
 			}
 		}
 	}
-	if sc.OrgID != "" {
-		return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(sc.OrgID))
-	}
+	// Resolve the caller's orgs once and validate the remembered org against
+	// the live list: a remembered org that was deleted must not bounce the
+	// landing back onto it (the /o/<dead-org> 404 loop). Redirect to the
+	// remembered org only when it is still live; otherwise clear the stale
+	// context and fall through to the first live org or the no-org wizard.
 	orgs, err := s.memory.ListOrgs(c.Request().Context())
 	if err != nil {
 		// A backend failure must surface the explicit unavailable state, never
@@ -650,6 +655,17 @@ func (s *Server) uiRoot(c echo.Context) error {
 		// authenticated zero-org response, so an outage cannot look like data
 		// loss.
 		return s.page(c, pageTitle("Service temporarily unavailable"), RootUnavailablePage(errors.New(userFacingMemoryError(err))))
+	}
+	if sc.OrgID != "" {
+		for _, o := range orgs {
+			if o.ID == sc.OrgID {
+				return c.Redirect(http.StatusFound, "/o/"+url.PathEscape(sc.OrgID))
+			}
+		}
+		// Remembered org is gone: clear the stale session context and fall
+		// through to the existing fallbacks (first live org → /o/<id>, else
+		// the onboarding wizard).
+		s.clearContext(c)
 	}
 	if len(orgs) > 0 {
 		s.activateOrg(c, orgs[0].ID)

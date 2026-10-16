@@ -49,6 +49,28 @@ func sessionCookie(t *testing.T, secret string, claims sessionClaims) *http.Cook
 	return &http.Cookie{Name: sessionCookieName, Value: val, Path: "/"}
 }
 
+// lastSessionClaims decodes the last re-issued session cookie on the response
+// (the effective value when a handler writes the cookie more than once, e.g.
+// clearContext followed by activateOrg). Fails the test when no session cookie
+// is present or it does not verify.
+func lastSessionClaims(t *testing.T, rec *httptest.ResponseRecorder) *sessionClaims {
+	t.Helper()
+	var ck *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			ck = c
+		}
+	}
+	if ck == nil {
+		t.Fatal("session cookie not re-issued")
+	}
+	claims, err := verifySessionSignature("test-secret", ck.Value)
+	if err != nil {
+		t.Fatalf("verify re-issued session: %v", err)
+	}
+	return claims
+}
+
 // TestUIRootRedirect covers the GET / landing resolution across contexts.
 func TestUIRootRedirect(t *testing.T) {
 	t.Run("dev mode keeps the static-project landing", func(t *testing.T) {
@@ -90,6 +112,50 @@ func TestUIRootRedirect(t *testing.T) {
 		e.ServeHTTP(rec, req)
 		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1" {
 			t.Fatalf("/ with org = %d %q, want 302 /o/o1", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("stale remembered org falls through to first live org", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgs: []Org{{ID: "o2", Name: "Globex"}, {ID: "o3", Name: "Initech"}}}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o-dead",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o2" {
+			t.Fatalf("/ with stale org = %d %q, want 302 /o/o2", rec.Code, rec.Header().Get("Location"))
+		}
+		// The stale org is cleared from the session and re-activated to the
+		// first live org: never the dead id. clearContext + activateOrg each
+		// re-issue the cookie, so the effective value is the last one.
+		claims := lastSessionClaims(t, rec)
+		if claims.OrgID != "o2" {
+			t.Errorf("session org = %q, want o2 (stale org cleared)", claims.OrgID)
+		}
+	})
+
+	t.Run("stale remembered org with no live orgs goes to the wizard", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			OrgID:       "o-dead",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/orgs/new" {
+			t.Fatalf("/ with stale org and no live orgs = %d %q, want 302 /orgs/new", rec.Code, rec.Header().Get("Location"))
+		}
+		claims := lastSessionClaims(t, rec)
+		if claims.OrgID != "" {
+			t.Errorf("session org = %q, want cleared to empty", claims.OrgID)
 		}
 	})
 
