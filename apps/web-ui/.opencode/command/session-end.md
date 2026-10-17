@@ -30,7 +30,7 @@ If `docs/sessions/README.md` is missing, create it first with the naming and tem
 ## 3. Sync the docs
 
 Check the guides and specs for staleness and update them to match reality. Review at minimum:
-- `docs/spec/` — the system specification (read `docs/spec/README.md` for the index). If behavior, API, or architecture changed this session, update the relevant numbered file in the same change. Record new decisions in `docs/spec/00-vision.md` (decision log / open items).
+- `emergent.memory.infra:docs/spec/` — the system specification (read `emergent.memory.infra:docs/spec/README.md` for the index). If behavior, API, or architecture changed this session, update the relevant numbered file in the same change. Record new decisions in `emergent.memory.infra:docs/spec/00-vision.md` (decision log / open items).
 - `INFRASTRUCTURE.md` and `MEMORY_GUIDE.md` (and any other top-level `*.md` guides) — update if the session changed how anything is deployed, run, or configured.
 
 Fix any drift you find; keep edits minimal and factual. Do not leave a spec/guide knowingly wrong.
@@ -40,7 +40,7 @@ Fix any drift you find; keep edits minimal and factual. Do not leave a spec/guid
 Maintain the future-work repository under `docs/tasks/`:
 - For each follow-up, future idea, or deferred suggestion that emerged this session, write a task file `docs/tasks/<slug>.md` using the template in `docs/tasks/README.md`, and add/update its entry in `docs/tasks/BACKLOG.md`.
 - Default status is `proposed`. Link the originating session log.
-- Do NOT duplicate items already tracked elsewhere (e.g. the spec roadmap `docs/spec/13-roadmap.md`); link to them instead.
+- Do NOT duplicate items already tracked elsewhere (e.g. the spec roadmap `emergent.memory.infra:docs/spec/13-roadmap.md`); link to them instead.
 
 ## 5. Report
 

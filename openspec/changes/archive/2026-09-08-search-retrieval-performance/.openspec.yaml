@@ -1,6 +1,0 @@
-schema: spec-driven
-created: 2026-09-07
-goal: "Backend performance improvements for Memory: fix N+1 relationship
-  expansion, add similarity-score cutoff, wire config knobs (ivfflat probes,
-  chunk size, worker concurrency, pgx pool), fix TraverseGraph pagination,
-  enable adaptive scaling, add result caching"

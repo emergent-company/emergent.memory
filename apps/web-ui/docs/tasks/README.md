@@ -1,6 +1,6 @@
 # Tasks — remaining work
 
-Repository of future work, follow-ups, and deferred ideas. Distinct from the spec roadmap (`docs/spec/13-roadmap.md`), which tracks architectural phasing. If an item is architectural phasing, put it in the roadmap instead; if it's a concrete follow-up or idea, put it here.
+Repository of future work, follow-ups, and deferred ideas. Distinct from the spec roadmap (`emergent.memory.infra:docs/spec/13-roadmap.md`), which tracks architectural phasing. If an item is architectural phasing, put it in the roadmap instead; if it's a concrete follow-up or idea, put it here.
 
 ## Structure
 

@@ -597,7 +597,7 @@ private calculateChangeSummary(
 6. **Recovery**: Ability to see and restore previous versions
 
 ## Related Documentation
-- `docs/spec/19-dynamic-object-graph.md` - Versioning strategy (section 5)
+- [`emergent.memory.infra:docs/spec/19-dynamic-object-graph.md`](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/spec/19-dynamic-object-graph.md) - Versioning strategy (section 5)
 - Database schema has `version`, `supersedes_id`, `canonical_id`, `change_summary` columns
 - `kb.merge_provenance` table for merge tracking
 - `kb.product_versions` for release snapshots

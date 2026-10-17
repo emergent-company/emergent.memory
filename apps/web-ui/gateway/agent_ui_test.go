@@ -2475,8 +2475,8 @@ func goldenToolGroupsPath(t *testing.T) string {
 	if !ok {
 		t.Fatal("cannot resolve the test file path")
 	}
-	return filepath.Join(filepath.Dir(file), "..", "..", "..",
-		"openspec", "changes", "add-agent-tool-groups", "fixtures", "tool-groups.golden.json")
+	return filepath.Join(filepath.Dir(file), "..", "..",
+		"server", "domain", "agents", "testdata", "tool-groups.golden.json")
 }
 
 // TestGoldenToolGroupsFixtureContract is the cross-lane contract test: it parses

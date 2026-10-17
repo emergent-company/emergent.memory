@@ -1,4 +1,0 @@
-schema: spec-driven
-created: 2026-10-15
-goal: Per-user OAuth credentials for remote MCP servers (#1783) and CLI
-  mcp-servers oauth connect parity (#1784)

@@ -56,33 +56,6 @@ memory init
 memory upgrade
 ```
 
-## Getting Started
-
-- **[Environment Setup Guide](docs/guides/ENVIRONMENT_SETUP.md)** - Comprehensive guide for local, dev, staging, and production environments.
-- **[Deployment docs](docs/deployment/)** - Deployment and operational details.
-
-## Key Commands
-
-The project uses `task` (Taskfile) for automation:
-
-```bash
-# Build server
-task build
-
-# Run unit tests
-task test
-
-# Run integration tests
-task test:integration
-
-# Run server with hot reload (requires air)
-task dev
-
-# Database migrations
-task migrate:up
-task migrate:status
-```
-
 ## Schema-Aware Chat (MCP Integration)
 
 The chat system integrates with the Model Context Protocol (MCP) to provide intelligent, real-time schema information. When users ask questions about the database schema (version, changes, type definitions), the system automatically:
@@ -97,27 +70,14 @@ The chat system integrates with the Model Context Protocol (MCP) to provide inte
 The system supports integration with:
 - **Grafana Tempo**: For OpenTelemetry tracing (opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`).
 
-## Production Deployment
-
-Memory supports production deployment with Docker Compose.
-
-### Architecture
-
-**Production Stack:**
-- **Backend**: Go (Single binary)
-- **Database**: PostgreSQL 16 with pgvector extension
-- **Auth**: Zitadel (self-hosted or cloud IAM)
-
-See `docker-compose.staging.yml` for a production-ready template.
-
 ## Documentation
 
 Published documentation is available at **https://emergent-company.github.io/emergent.memory/**.
 
+Development, deployment and environment documentation lives in the [emergent.memory.infra](https://github.com/emergent-company/emergent.memory.infra) repository.
+
 Additional in-repo documentation is located in the `/docs` directory:
 
-- **/docs/setup**: Guides for setting up the project and its dependencies.
-- **/docs/guides**: How-to guides and quick references for developers.
 - **/docs/features**: Detailed documentation on specific features.
 - **/docs/technical**: Deep dives into the architecture and technical implementation details.
 - **/docs/database**: Database schema documentation.

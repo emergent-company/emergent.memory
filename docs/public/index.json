@@ -6,7 +6,7 @@
       "id": "guides",
       "name": "Guides",
       "description": "How-to guides and tutorials for using Emergent features",
-      "count": 2
+      "count": 1
     },
     {
       "id": "tutorials",
@@ -35,29 +35,18 @@
       "category": "guides",
       "path": "docs/public/guides/template-pack-creation.md",
       "description": "Comprehensive guide for AI agents to create and manage template packs via MCP and REST API",
-      "tags": ["template-packs", "mcp", "api", "ai-agents"],
-      "lastUpdated": "2025-02-11",
-      "readTime": 15,
-      "related": ["mcp-quick-reference", "template-pack-examples"]
-    },
-    {
-      "id": "environment-setup",
-      "slug": "environment-setup",
-      "title": "Environment Setup Guide",
-      "category": "guides",
-      "path": "docs/public/guides/environment-setup.md",
-      "description": "Comprehensive guide for setting up Local, Dev, Staging, and Production environments",
       "tags": [
-        "environment",
-        "setup",
-        "docker",
-        "development",
-        "production",
-        "deployment"
+        "template-packs",
+        "mcp",
+        "api",
+        "ai-agents"
       ],
       "lastUpdated": "2025-02-11",
-      "readTime": 45,
-      "related": ["template-pack-creation"]
+      "readTime": 15,
+      "related": [
+        "mcp-quick-reference",
+        "template-pack-examples"
+      ]
     },
     {
       "id": "mcp-quick-reference",
@@ -76,7 +65,9 @@
       ],
       "lastUpdated": "2025-02-11",
       "readTime": 10,
-      "related": ["template-pack-creation", "environment-setup"]
+      "related": [
+        "template-pack-creation"
+      ]
     }
   ]
 }

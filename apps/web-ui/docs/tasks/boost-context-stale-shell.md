@@ -29,7 +29,7 @@ broke `org-delete-ui`). Deterministic fix per flow: full-load PRG
 
 ## Depends on
 
-- D19 / D23 in [docs/spec/00-vision.md](../spec/00-vision.md)
+- D19 / D23 in [emergent.memory.infra:docs/spec/00-vision.md](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/spec/00-vision.md)
 
 ## Notes
 

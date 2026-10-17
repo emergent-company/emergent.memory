@@ -1,7 +1,7 @@
 # Upgrading an existing install from MinIO to SeaweedFS
 
 MinIO archived its community edition and privatised its container images
-(see `openspec/changes/switch-object-storage-backend/`). New installs use
+(see the infra repo's [`openspec/changes/switch-object-storage-backend/`](https://github.com/emergent-company/emergent.memory.infra/tree/main/openspec/changes/switch-object-storage-backend)). New installs use
 SeaweedFS. Existing installs still hold their objects in the old `minio_data`
 volume, so the upgrade is an **object mirror followed by an endpoint flip** —
 never a in-place volume conversion.

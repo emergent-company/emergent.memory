@@ -345,8 +345,7 @@ func goldenFixturePath(t *testing.T) string {
 	if !ok {
 		t.Fatal("cannot determine test file path")
 	}
-	repoRoot := filepath.Join(filepath.Dir(file), "..", "..", "..", "..")
-	return filepath.Join(repoRoot, "openspec", "changes", "add-agent-tool-groups", "fixtures", "tool-groups.golden.json")
+	return filepath.Join(filepath.Dir(file), "testdata", "tool-groups.golden.json")
 }
 
 // TestUpdateAgentDefinitionDTO_IgnoresToolGroups proves the update path treats

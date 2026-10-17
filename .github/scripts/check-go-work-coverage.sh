@@ -8,7 +8,7 @@
 #   1. the root go.work lists it, or
 #   2. the allowlisted isolated root's own go.work claims it — `isolated_roots`
 #      below, currently only e2e (see
-#      openspec/specs/server-agent-runtime/spec.md, "E2E module SHALL be isolated
+#      emergent.memory.infra:openspec/specs/server-agent-runtime/spec.md, "E2E module SHALL be isolated
 #      from the workspace build list"). A deeper go.work inside the subtree does
 #      NOT count: the isolated root's workspace is the one a command run at that
 #      root resolves, so it is the one that must claim every module beneath it.

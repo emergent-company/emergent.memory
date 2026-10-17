@@ -87,11 +87,6 @@ tasks:
     cmds:
       - task: server:status
 
-  openspec:archive-check:
-    desc: "Fail if a merged OpenSpec change (on origin/main) is archive-ready but un-archived; ready = all tasks ticked or <!-- openspec:archive-ready -->, held via <!-- openspec:archive-hold: <reason> --> (#1063). Use CLI_ARGS for --base/--warn/--json."
-    cmds:
-      - bash scripts/preflight/openspec-archive.sh {{.CLI_ARGS}}
-
   skills:export-xcode:
     desc: Export Apple-licensed Xcode 27 agent skills from the macOS build host into the local opencode skills dir (never the repo). CLI_ARGS for --dry-run/--check/--host/--dest.
     cmds:

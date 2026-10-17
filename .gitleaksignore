@@ -51,17 +51,8 @@ docs/integrations/mcp/MCP_CHAT_DIAGRAMS.md:curl-auth-header:908
 docs/integrations/mcp/MCP_INSPECTOR_QUICKSTART.md:curl-auth-header:239
 docs/integrations/zitadel/AUTH_SCOPES_FIX.md:curl-auth-header:159
 docs/integrations/zitadel/SCOPES_DISABLED_MODE.md:curl-auth-header:59
-docs/setup/SERVICE_ACCOUNT_SETUP.md:generic-api-key:69
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:104
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:135
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:143
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:275
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:358
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:363
-docs/spec/27-extraction-worker-quickstart.md:curl-auth-header:68
 docs/technical/security/SECURITY_SCOPES.md:curl-auth-header:194
 docs/technical/security/SECURITY_SCOPES.md:curl-auth-header:233
-docs/testing/e2e/E2E_TEST_USER_SETUP.md:curl-auth-header:145
 e2e/tests/experiments/memory_benchmark_test.go:generic-api-key:429
 e2e/tests/integration/reextraction_test.go:generic-api-key:186
 tools/graph-import/enrich_scenarios.py:generic-api-key:33
