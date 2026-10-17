@@ -7,10 +7,12 @@ name: Runner Cache Hygiene
 # (re-downloading ~14G is the exact cost we are avoiding) and uses no GitHub
 # Actions cache layer at all.
 #
-# Cache ownership: GOCACHE is derived from the job user's HOME, which on these
-# runners resolves to /root/.cache/go-build (the runner service runs as root).
-# Every run logs the resolved path, and a missing directory raises a warning
-# annotation instead of silently skipping the prune forever.
+# Cache ownership: GOCACHE is derived from the job user's HOME unless the runner
+# overrides it — the `memory` runners set `GOCACHE=/srv/cache/go-build` in their
+# `actions-runner*/.env`, and the Mac runner uses ~/Library/Caches/go-build.
+# Never assume the path: every run logs what `go env GOCACHE` resolved to, and a
+# missing directory raises a warning annotation instead of silently skipping the
+# prune forever.
 #
 # The second job prunes the *GitHub Actions* cache (the repo-level 10 GB budget)
 # rather than local disk. Docker `build-push-action` `type=gha` layer caches
@@ -32,6 +34,9 @@ name: Runner Cache Hygiene
 # runner is idle (the Go cache prune needs all three eventually, the artifact
 # prune is repo-wide and host-independent); `workflow_dispatch` triggers an
 # on-demand prune.
+#
+# The macOS runner (`mac` label) gets its own Go cache prune: it is a separate
+# pool, and a job targeting `memory` can never reach its ~/Library/Caches/go-build.
 
 on:
   workflow_dispatch:
@@ -114,6 +119,61 @@ jobs:
       - name: Report post-prune cache usage
         run: |
           # The module cache is never touched, so it is not re-measured here.
+          GOCACHE="$(go env GOCACHE)"
+          df -h "$GOCACHE"
+          du -sh "$GOCACHE"
+
+  # Same prune for the macOS runner (`mac` label, the Mac build host). Its
+  # GOCACHE is ~/Library/Caches/go-build (verified: 1.4 GB, so the prune is a
+  # safety valve rather than a routine reclaim) and grows with every release
+  # build; the Linux job above cannot reach it because it targets the `memory`
+  # label. The host is a workstation that goes offline, so a scheduled run may
+  # sit queued until it returns — harmless, the prune is threshold-gated and
+  # idempotent. `du -sm`/`df -h`/`go clean -cache` are all BSD-compatible.
+  prune-go-build-cache-mac:
+    name: Prune Go build cache (macOS)
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/server/go.mod
+          cache: false
+
+      - name: Report cache usage
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          GOMODCACHE="$(go env GOMODCACHE)"
+          echo "GOCACHE=$GOCACHE"
+          echo "GOMODCACHE=$GOMODCACHE"
+          df -h "$GOCACHE" "$GOMODCACHE"
+          du -sh "$GOCACHE" "$GOMODCACHE"
+
+      - name: Prune Go build cache when oversized
+        run: |
+          GOCACHE="$(go env GOCACHE)"
+          if [ ! -d "$GOCACHE" ]; then
+            echo "::warning::GOCACHE ($GOCACHE) missing — nothing to prune. Check the job user's HOME."
+            exit 0
+          fi
+          SIZE_MB=$(du -sm "$GOCACHE" | cut -f1)
+          echo "GOCACHE=$GOCACHE is ${SIZE_MB} MB (threshold 20000 MB)"
+          if [ "$SIZE_MB" -gt 20000 ]; then
+            echo "Over threshold — running 'go clean -cache'."
+            go clean -cache
+          else
+            echo "Under threshold — skipping prune."
+          fi
+          # Never `go clean -modcache`: GOMODCACHE is the shared module cache and
+          # re-downloading it is the cost this workflow exists to avoid.
+          exit 0
+
+      - name: Report post-prune cache usage
+        run: |
           GOCACHE="$(go env GOCACHE)"
           df -h "$GOCACHE"
           du -sh "$GOCACHE"
