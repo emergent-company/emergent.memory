@@ -31,7 +31,8 @@ If `docs/sessions/README.md` is missing, create it first with the naming and tem
 
 Check the guides and specs for staleness and update them to match reality. Review at minimum:
 - `emergent.memory.infra:docs/spec/` — the system specification (read `emergent.memory.infra:docs/spec/README.md` for the index). If behavior, API, or architecture changed this session, update the relevant numbered file in the same change. Record new decisions in `emergent.memory.infra:docs/spec/00-vision.md` (decision log / open items).
-- `INFRASTRUCTURE.md` and `MEMORY_GUIDE.md` (and any other top-level `*.md` guides) — update if the session changed how anything is deployed, run, or configured.
+- `MEMORY_GUIDE.md` (and any other top-level `*.md` guides) — update if the session changed how anything is deployed, run, or configured.
+- `emergent.memory.infra:docs/` — host, voice and deployment facts live there now (`voice-stack.md`, `headroom-proxy.md`, `agent-host-reference.md`); update them in the infra repo, not here.
 
 Fix any drift you find; keep edits minimal and factual. Do not leave a spec/guide knowingly wrong.
 

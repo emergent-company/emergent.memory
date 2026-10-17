@@ -17,8 +17,8 @@ redirect URI or Development mode would break new installs (e.g. the `tool` Mac)
 with a confusing error.
 
 ## Depends on
-- Infra/Zitadel console access (see `INFRASTRUCTURE.md` for the values).
+- Infra/Zitadel console access (see the infra repo's [voice-stack.md](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/voice-stack.md) for the values).
 
 ## Notes
 - Prod app: client `390138006318678019`, issuer `https://auth.emergent-company.ai`.
-- Record the outcome in `INFRASTRUCTURE.md` if anything changed.
+- Record the outcome in the infra repo's `docs/voice-stack.md` if anything changed.

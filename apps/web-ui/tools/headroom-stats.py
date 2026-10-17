@@ -2,7 +2,7 @@
 """Human-friendly stats for the local Headroom compression proxy.
 
 Headroom (http://127.0.0.1:8787) compresses opencode -> litellm-gateway LLM
-traffic on this box (see INFRASTRUCTURE.md, "Headroom proxy"). This script
+traffic on this box (see emergent.memory.infra docs/headroom-proxy.md). This script
 pulls the proxy's durable savings history and prints it in a readable form.
 
 Usage:

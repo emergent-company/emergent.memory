@@ -17,7 +17,7 @@ Deferred from the rename (design D4): these are *data* values persisted in Memor
 
 ## Depends on
 
-none (but coordinate with `deploy-topology-rename` for a single flag-day)
+none (but coordinate the deploy-topology rename — now tracked in the infra repo — for a single flag-day)
 
 ## Notes
 

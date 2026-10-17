@@ -15,7 +15,7 @@ Headroom; the daemons that were already running (and the subagent lanes they spa
 litellm gateway directly, so real compression savings do not accrue for them yet.
 
 ## Depends on
-- Headroom proxy service described in `INFRASTRUCTURE.md` → "Headroom proxy".
+- Headroom proxy service described in the infra repo's [headroom-proxy.md](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/headroom-proxy.md) → "Headroom proxy".
 
 ## Notes
 - Restarting the daemons drops in-flight sessions; do it when no work is active.

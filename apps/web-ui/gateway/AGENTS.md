@@ -6,10 +6,13 @@ Modern, idiomatic Go — always. Source of truth: the `use-modern-go` skill (Jet
 - `go 1.26` (from `go.mod`). Use only idioms available up to 1.26.
 
 ## How to write Go here
-- Before editing any `.go` file, run the guideline CLI and follow what applies:
+- Before editing any `.go` file, run the guideline CLI (from the infra repo's `use-modern-go`
+  skill — `emergent-company/emergent.memory.infra`, `.opencode/skills/use-modern-go/scripts/run-tool.sh`)
+  and follow what applies:
 
   ```sh
-  sh ../.opencode/skills/use-modern-go/scripts/run-tool.sh list --file-path <file>.go
+  # run from the infra repo checkout:
+  sh .opencode/skills/use-modern-go/scripts/run-tool.sh list --file-path <file>.go
   ```
 
 - Read the full list (newest first). Treat returned guidelines as authoritative, even over nearby older code.

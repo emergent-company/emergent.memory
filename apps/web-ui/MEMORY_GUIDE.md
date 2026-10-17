@@ -54,7 +54,7 @@ Builtin servers are read-only.
 - **Requires memory ≥ the release containing PRs #406/#410.** Older builds silently drop
   whitelisted tools — the model only ever sees `set_session_title`.
 - Dev test targets (project `bf10f0e4…`): `exa` (keyless), `firecrawl` (keyless sync/list;
-  key needed for calls). See `INFRASTRUCTURE.md`.
+  key needed for calls). See [dev-mcp-servers.md](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/dev-mcp-servers.md) in the infra repo.
 
 ### Relay nodes (external MCP tools)
 

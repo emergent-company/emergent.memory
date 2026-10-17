@@ -37,7 +37,6 @@ Index of future work, follow-ups, and deferred ideas. See `docs/tasks/README.md`
 | done | org-level-invite | Org-level (org_admin) invitations | [2026-09-05-add-org-members-ui](sessions/2026-09-05-add-org-members-ui.md) | 2026-09-05 |
 | done | ios-bundle-id-rename | iOS bundle id com.mcj.alfred → com.memory.* (provisioning migration) | [2026-09-04-rename-alfred-to-memory](sessions/2026-09-04-rename-alfred-to-memory.md) | 2026-09-04 |
 | proposed | wake-word-retrain | Retrain hey_alfred → hey_memory ONNX wake word | [2026-09-04-rename-alfred-to-memory](sessions/2026-09-04-rename-alfred-to-memory.md) | 2026-09-04 |
-| proposed | deploy-topology-rename | home2 systemd + /opt paths + on-disk checkout dirs | [2026-09-04-rename-alfred-to-memory](sessions/2026-09-04-rename-alfred-to-memory.md) | 2026-09-04 |
 | proposed | backend-seed-data-rename | Rename persisted agent/project "alfred" → "memory" | [2026-09-04-rename-alfred-to-memory](sessions/2026-09-04-rename-alfred-to-memory.md) | 2026-09-04 |
 | done | provider-model-catalog-resync | Periodic/startup re-sync of the OpenAI-compatible model catalog | [2026-09-07-litellm-model-catalog](sessions/2026-09-07-litellm-model-catalog.md) | 2026-09-07 |
 | proposed | verify-project-switcher-dropdown | Browser/e2e verify switcher dropdown: single column, pinned footer, name-fit width | [2026-09-08-project-switcher-dropdown](sessions/2026-09-08-project-switcher-dropdown.md) | 2026-09-08 |
