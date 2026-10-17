@@ -246,7 +246,7 @@ func TestRenderSchemaColorPicker(t *testing.T) {
 		`data-gd-color-swatch`,
 		`data-gd-color-clear`, // AllowEmpty renders a clear affordance
 		`data-gd-color-preset`,
-		`_gdColorPickerInit`, // inline sync runtime
+		`gdColorPickerInit`, // inline sync runtime (v0.16.0 gdOnce guard)
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("color picker markup missing %q", want)

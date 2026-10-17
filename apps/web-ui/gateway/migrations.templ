@@ -221,7 +221,7 @@ templ migrationForm(data migrationData) {
 		}
 		<form method="post" action="/blueprints/migrate" class="mt-4 flex flex-col gap-3">
 			if migrationCardKindFor(data) == migrationCardResync && len(data.ActivePacks) > 1 {
-				<label class="form-control">
+				<label>
 					<span class="label-text text-xs font-medium">Pack to re-stamp</span>
 					<select name="resyncPack" class="select select-bordered select-sm w-full">
 						for _, p := range data.ActivePacks {
@@ -232,13 +232,13 @@ templ migrationForm(data migrationData) {
 				</label>
 			} else {
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-					<label class="form-control">
+					<label>
 						<span class="label-text text-xs font-medium">From schema</span>
 						<select name="from" class="select select-bordered select-sm w-full">
 							@components.SelectOptionGroups(schemaSelectGroups(data.History, data.FromID))
 						</select>
 					</label>
-					<label class="form-control">
+					<label>
 						<span class="label-text text-xs font-medium">To schema</span>
 						<select name="to" class="select select-bordered select-sm w-full">
 							@components.SelectOptionGroups(schemaSelectGroups(data.History, data.ToID))
@@ -395,7 +395,7 @@ templ rollbackForm() {
 			Restore object data to a prior schema version (from the migration archive).
 		}
 		<form method="post" action="/blueprints/migrate/rollback" class="mt-4 flex flex-wrap items-end gap-3">
-			<label class="form-control grow">
+			<label class="grow">
 				<span class="label-text text-xs font-medium">To version</span>
 				<input type="text" name="toVersion" placeholder="e.g. 1.0.0" class="input input-bordered input-sm w-full"/>
 			</label>

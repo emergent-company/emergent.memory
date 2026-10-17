@@ -394,7 +394,7 @@ templ extractionHistory(documentID string, jobs []ExtractionJob) {
 }
 
 templ extractionJobRow(documentID string, job ExtractionJob) {
-	<div class="card-border overflow-hidden" data-testid="extraction-job-row">
+	<div class="border border-line overflow-hidden" data-testid="extraction-job-row">
 		<div class="flex flex-wrap items-center gap-2 px-4 py-3">
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
 			<div class="min-w-0 grow">

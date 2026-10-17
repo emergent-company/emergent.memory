@@ -343,10 +343,10 @@ func gallerySeed() []GalleryEntry {
 		{
 			ID: "CardRaw", Slug: "card-raw", Name: "CardRaw", Layer: LayerDaisy,
 			Category: "go-daisy", Subcategory: "card", SourceFile: "<go-daisy ui>",
-			PropsType:   "cardClass, bodyClass string, attrs templ.Attributes",
+			PropsType:   "CardRawProps",
 			Description: "A raw card with explicit card/body classes.",
 			Render: func() templ.Component {
-				return withChildren(ui.CardRaw("card-border", "memory-density-comfortable", nil), templ.Raw(`<p class="text-sm">Card content</p>`))
+				return withChildren(ui.CardRaw(ui.CardRawProps{BodyClass: "memory-density-comfortable"}), templ.Raw(`<p class="text-sm">Card content</p>`))
 			},
 		},
 		{

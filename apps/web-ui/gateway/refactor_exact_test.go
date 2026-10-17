@@ -72,7 +72,7 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// countBadge / countBadgeLabel
 	got = render(countBadge(3, "agent", "lucide--bot"))
-	if !strings.Contains(got, "3 agents") || !strings.Contains(got, `class="badge gap-1 badge-ghost  badge-sm"`) {
+	if !strings.Contains(got, "3 agents") || !strings.Contains(got, `class="badge gap-1 badge-ghost badge-sm"`) {
 		t.Errorf("countBadge: %q", got)
 	}
 	got = render(countBadgeLabel("2 documents", "lucide--file-text"))
@@ -82,17 +82,17 @@ func TestRefactorOutputExact(t *testing.T) {
 
 	// cardList — titled Section variant
 	got = render(cardList("Chunks", cardListProps{Margin: "mt-6", Empty: false}), "<p>row1</p>")
-	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>row1</p></div></div></div></section>`
+	want = `<section class="mt-6"><h2 class="mb-3 text-lg font-semibold tracking-tight">Chunks</h2><div class="card bg-base-100 border border-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>row1</p></div></div></div></section>`
 	check("cardList titled", got, want)
 
 	// cardList — bare CardRaw variant
 	got = render(cardList("", cardListProps{}), "<p>r1</p>", "<p>r2</p>")
-	want = `<div class="card bg-base-100 card-border overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>r1</p><p>r2</p></div></div></div>`
+	want = `<div class="card bg-base-100 border border-line overflow-hidden"><div class="card-body memory-density-flush"><div class="divide-y divide-line"><p>r1</p><p>r2</p></div></div></div>`
 	check("cardList bare", got, want)
 
 	// cardList — empty state
 	got = render(cardList("Installed", cardListProps{Margin: "mb-8", Empty: true, EmptyIcon: "lucide--library", EmptyTitle: "No blueprints installed", EmptyDesc: "Install a blueprint to extend the graph schema."}), "<p>row</p>")
-	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 card-border"><div class="card-body "><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-base-content/50 mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
+	want = `<section class="mb-8"><h2 class="mb-3 text-lg font-semibold tracking-tight">Installed</h2><div class="card bg-base-100 border border-line"><div class="card-body"><div class="flex flex-col items-center justify-center py-16 text-center px-4"><span class="iconify size-12 text-base-content/20 mb-4 lucide--library"></span><h3 class="text-base font-semibold text-base-content mb-1">No blueprints installed</h3><p class="text-sm text-base-content/50 mb-4">Install a blueprint to extend the graph schema.</p></div></div></div></section>`
 	check("cardList empty", got, want)
 
 	// ui.Dialog (was the local modalShell — same markup)

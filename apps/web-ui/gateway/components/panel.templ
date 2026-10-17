@@ -14,12 +14,12 @@ import (
 // bodyClass optionally overrides the body's density class (default
 // "memory-density-comfortable"). Callers whose panel needs a different density
 // (e.g. "memory-density-compact", or a layout class like "p-4" / "gap-4") pass
-// it through instead of opening the raw ui.CardRaw shell, so the card-border
+// it through instead of opening the raw ui.CardRaw shell, so the border
 // treatment still lives in one place.
 templ PanelCard(extraClass string, attrs templ.Attributes, bodyClass ...string) {
 	{{ bc := "memory-density-comfortable"
 	if len(bodyClass) > 0 { bc = bodyClass[0] } }}
-	@ui.CardRaw(strings.TrimSpace("card-border "+extraClass), bc, attrs) {
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace(extraClass), BodyClass: bc, Attrs: attrs}) {
 		{ children... }
 	}
 }

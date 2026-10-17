@@ -116,7 +116,7 @@ import (
 
 func PanelCard(extra string) templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-		ui.CardRaw("card "+extra, "", nil).Render(ctx, w)
+		ui.CardRaw(ui.CardRawProps{Class: "card " + extra}).Render(ctx, w)
 		return nil
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/behaviors"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -47,6 +48,7 @@ templ errorPage(data errorPageData) {
 			<link rel="manifest" href="/assets/manifest.webmanifest"/>
 			@appleSplashLinks()
 			<title>{ pageTitle(data.Heading) }</title>
+			@behaviors.Tag()
 			<!-- Pre-paint guard: single source is foucBackgroundGuard(). -->
 			@foucBackgroundGuard()
 			<style>

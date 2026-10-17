@@ -25,7 +25,7 @@ import (
 templ page() {
 	<div>
 		<span class="badge badge-xs">status</span>
-		<div class="card card-border bg-base-100">panel</div>
+		<div class="card bg-base-100">panel</div>
 		<button type="button" class="btn btn-primary">Save</button>
 		<dialog class="modal">
 			<div class="modal-box"></div>
@@ -83,11 +83,11 @@ const adoptionCommentTempl = `package main
 templ commented() {
 	/*
 	<span class="badge">block</span>
-	<div class="card card-border">block</div>
+	<div class="card">block</div>
 	*/
 	<!--
 	<span class="badge">html</span>
-	<div class="card card-border">html</div>
+	<div class="card">html</div>
 	-->
 	<span class="badge">real</span>
 }
@@ -160,8 +160,7 @@ func TestScanAdoption(t *testing.T) {
 
 	// Raw ad-hoc reuse in page.templ.
 	assert("page.templ", lineOf(adoptionPageTempl, `class="badge badge-xs"`), "class:badge", []string{"Badge", "StatusBadge"})
-	assert("page.templ", lineOf(adoptionPageTempl, `class="card card-border`), "class:card", []string{"CardRaw", "PanelCard", "TableCard"})
-	assert("page.templ", lineOf(adoptionPageTempl, `class="card card-border`), "class:card-border", []string{"CardRaw", "PanelCard", "TableCard"})
+	assert("page.templ", lineOf(adoptionPageTempl, `class="card bg-base-100"`), "class:card", []string{"CardRaw", "PanelCard", "TableCard"})
 	assert("page.templ", lineOf(adoptionPageTempl, `class="btn btn-primary"`), "class:btn", []string{"Button", "SaveChangesButton"})
 
 	// The raw <dialog> element: both the tag and the modal wrapper classes.
@@ -270,7 +269,6 @@ func TestSignaturesInverted(t *testing.T) {
 		"class:badge":          {"Badge", "StatusBadge"},
 		"class:alert":          {"Alert"},
 		"class:card":           {"CardRaw", "PanelCard", "TableCard"},
-		"class:card-border":    {"CardRaw", "PanelCard", "TableCard"},
 		"class:modal":          {"Dialog", "SecretRevealModal"},
 		"class:modal-box":      {"Dialog", "SecretRevealModal"},
 		"class:modal-backdrop": {"Dialog", "SecretRevealModal"},

@@ -1124,7 +1124,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 						if p == nil {
 			{{ sel := providerSelectedType(vendors, draftProvider) }}
 			{{ iconURI := vendorIconURI(vendors, sel) }}
-			<label class="form-control w-full">
+			<label class="w-full">
 				<div class="label"><span class="label-text">Provider</span></div>
 				<div class="relative w-full">
 					@providerSelectIcon(resolveProviderIcon(iconURI))
@@ -1143,7 +1143,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			// Optional instance name. Leaving it blank saves the provider's
 			// default instance; a name adds a second endpoint of the same
 			// provider (e.g. a second OpenAI-compatible URL).
-			<label class="form-control w-full">
+			<label class="w-full">
 				<div class="label"><span class="label-text">Name (optional)</span></div>
 				<input
 					id="provider-slug"
@@ -1191,7 +1191,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 				A key is already stored and is never displayed. Leave the field blank to keep it, or enter a new value to replace it — the eye reveals what you type.
 			}
 		}
-		<label id="base-url-field" class="form-control w-full" style="display:none">
+		<label id="base-url-field" class="w-full" style="display:none">
 			<div class="label"><span class="label-text">Base URL (OpenAI-compatible)</span></div>
 			<input
 				name="base_url"
@@ -1216,7 +1216,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 			</div>
 		}
 		<div id="vertex-fields" class="flex flex-col gap-4" style={ vertexFieldsStyle(p) }>
-			<label class="form-control w-full">
+			<label class="w-full">
 				<div class="label"><span class="label-text">Service account JSON (Google Vertex AI)</span></div>
 				<textarea name="service_account_json" rows="4" class="textarea w-full resize-none" placeholder='{"type": "service_account", …}'>
 					if draft != nil {
@@ -1224,7 +1224,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					}
 				</textarea>
 			</label>
-			<label class="form-control w-full">
+			<label class="w-full">
 				<div class="label"><span class="label-text">GCP project</span></div>
 				<input
 					name="gcp_project"
@@ -1238,7 +1238,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 					}
 				/>
 			</label>
-			<label class="form-control w-full">
+			<label class="w-full">
 				<div class="label"><span class="label-text">Location</span></div>
 				<input
 					name="location"
@@ -1615,7 +1615,7 @@ templ providerConfigForm(p *ProjectProviderConfig, draft *ProviderConfigInput, d
 // value is the prefill already resolved from the draft/stored config; callers
 // pass "" for secret fields.
 templ providerExtraField(f ExtraField, value string) {
-	<label class="form-control w-full">
+	<label class="w-full">
 		<div class="label">
 			<span class="label-text">{ f.Label }</span>
 			if f.Required {

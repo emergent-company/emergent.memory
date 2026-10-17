@@ -57,7 +57,7 @@ templ ApprovalCard(props ApprovalCardProps) {
 	if mode == "" {
 		mode = ApprovalCardPending
 	} }}
-	@ui.CardRaw(strings.TrimSpace("memory-approval card-border "+props.Class), "gap-3 p-4", props.Attrs) {
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace("memory-approval " + props.Class), BodyClass: "gap-3 p-4", Attrs: props.Attrs}) {
 		<div class="flex items-start justify-between gap-3">
 			<div class="flex min-w-0 flex-wrap items-center gap-2">
 				@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD, Class: "memory-approval__title leading-snug break-words"}) {

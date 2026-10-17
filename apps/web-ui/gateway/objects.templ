@@ -972,7 +972,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject) {
 	@ui.Section("Relationships", ui.SectionProps{
 		Margin:    "mt-6",
-		CardClass: "card-border overflow-hidden",
+		CardClass: "overflow-hidden",
 		BodyClass: "memory-density-flush",
 	}) {
 		if len(edges) == 0 {
@@ -1128,7 +1128,7 @@ templ objectSimilarObjectsDeferred(obj *GraphObject) {
 	>
 		@ui.Section("Similar objects", ui.SectionProps{
 			Margin:      "mt-6",
-			CardClass:   "card-border overflow-hidden",
+			CardClass:   "overflow-hidden",
 			BodyClass:   "memory-density-flush",
 			Rows:        true,
 		}) {

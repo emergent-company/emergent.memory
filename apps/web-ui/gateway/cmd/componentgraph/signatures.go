@@ -18,9 +18,9 @@ type componentSignature struct {
 // componentSignatures maps each shared component id (the Go identifier as
 // written) to the markup markers it owns. When two components share a marker —
 // Button and SaveChangesButton both own "btn", Badge and StatusBadge both own
-// "badge", CardRaw/PanelCard/TableCard all own "card"/"card-border" — the
-// scanner reports every owner so an adoption gap surfaces all the components
-// that could replace the ad-hoc markup.
+// "badge", CardRaw/PanelCard/TableCard all own "card" — the scanner reports
+// every owner so an adoption gap surfaces all the components that could
+// replace the ad-hoc markup.
 func componentSignatures() map[string]componentSignature {
 	return map[string]componentSignature{
 		"Button":            {Classes: []string{"btn"}},
@@ -28,9 +28,9 @@ func componentSignatures() map[string]componentSignature {
 		"Badge":             {Classes: []string{"badge"}},
 		"StatusBadge":       {Classes: []string{"badge"}},
 		"Alert":             {Classes: []string{"alert"}},
-		"CardRaw":           {Classes: []string{"card", "card-border"}},
-		"PanelCard":         {Classes: []string{"card", "card-border"}},
-		"TableCard":         {Classes: []string{"card", "card-border"}},
+		"CardRaw":           {Classes: []string{"card"}},
+		"PanelCard":         {Classes: []string{"card"}},
+		"TableCard":         {Classes: []string{"card"}},
 		"Dialog": {
 			Classes: []string{"modal", "modal-box", "modal-backdrop"},
 			Tags:    []string{"dialog"},

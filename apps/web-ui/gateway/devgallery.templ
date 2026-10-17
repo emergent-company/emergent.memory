@@ -5,6 +5,7 @@ import (
 
 	tpl "github.com/a-h/templ"
 	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/behaviors"
 )
 
 // ComponentGalleryDocument is the standalone, chromeless document for the dev
@@ -27,6 +28,7 @@ templ ComponentGalleryDocument(content templ.Component, feedbackOverlayURL strin
 			<meta name="color-scheme" content="dark"/>
 			<meta name="robots" content="noindex,nofollow"/>
 			<title>{ pageTitle("Component gallery") }</title>
+			@behaviors.Tag()
 			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
 		</head>
 		<body class="bg-base-200 text-base-content min-h-screen">

@@ -29,7 +29,7 @@ templ TableCard(attrs templ.Attributes, opts ...TableCardOpt) {
 		if opts[0].CardClass != "" { cardClass = opts[0].CardClass }
 		if opts[0].BodyClass != "" { bodyClass = opts[0].BodyClass }
 	} }}
-	@ui.CardRaw(strings.TrimSpace("card-border "+cardClass), bodyClass, attrs) {
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace(cardClass), BodyClass: bodyClass, Attrs: attrs}) {
 		{ children... }
 	}
 }

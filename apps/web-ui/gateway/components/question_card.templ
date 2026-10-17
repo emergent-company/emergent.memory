@@ -137,7 +137,7 @@ templ QuestionCard(props QuestionCardProps) {
 		mode = QuestionCardInteractive
 	}
 	hint := questionCardHint(props.Multi, text) }}
-	@ui.CardRaw(strings.TrimSpace("memory-question card-border "+props.Class), "gap-3 p-4", props.Attrs) {
+	@ui.CardRaw(ui.CardRawProps{Class: strings.TrimSpace("memory-question " + props.Class), BodyClass: "gap-3 p-4", Attrs: props.Attrs}) {
 		<div class="memory-question__body memory-md text-base leading-snug break-words">@templ.Raw(props.Prompt)</div>
 		if hint != "" {
 			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "memory-question__hint mt-0.5"}) {

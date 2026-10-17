@@ -8,6 +8,7 @@ import (
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/alpine"
+	"github.com/emergent-company/go-daisy/components/behaviors"
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
@@ -51,6 +52,10 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<meta name="sentry-traces-sample-rate" content={ sentryTracesSampleRate }/>
 			<meta name="sentry-replay-session-sample-rate" content={ sentryReplaySessionSampleRate }/>
 			<meta name="sentry-replay-on-error-sample-rate" content={ sentryReplayOnErrorSampleRate }/>
+			<!-- go-daisy behaviour-init runtime: defines window.gdOnce/gdBehaviour/
+			     gdRescan before any component inline script runs (clipboard copy,
+			     spinners, sidebar, data-table, htmx after-settle rescan). -->
+			@behaviors.Tag()
 			if sentryDSN != "" {
 				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
 				<script>
@@ -849,7 +854,7 @@ type cardListProps struct {
 templ cardList(title string, props cardListProps) {
 	@ui.Section(title, ui.SectionProps{
 		Margin:      props.Margin,
-		CardClass:   "card-border overflow-hidden",
+		CardClass:   "overflow-hidden",
 		BodyClass:   "memory-density-flush",
 		Empty:       props.Empty,
 		EmptyIcon:   props.EmptyIcon,

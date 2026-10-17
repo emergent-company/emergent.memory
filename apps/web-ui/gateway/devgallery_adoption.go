@@ -30,10 +30,8 @@ var adoptionAllowlist = map[string][]string{
 	"chat.templ": {"alert"},
 	// share-inline-terminal rich children; ui.Alert has no children slot
 	"share_page.templ": {"alert"},
-	// <form class="card card-border">; ui.CardRaw as= supports only "a"
-	"share_manage.templ": {"card", "card-border"},
-	// border-only row (no card/card-body); ui.CardRaw always emits card bg-base-100 + card-body
-	"documents.templ": {"card-border"},
+	// <form class="card border border-line">; ui.CardRaw has no <form> element variant (As: div/a/button/section/article/li)
+	"share_manage.templ": {"card"},
 	// tab count badge renders the count as direct text (pinned by TestInboxPageTabsAndCounts);
 	// ui.Badge wraps the label in a nested <span>, which changes that markup
 	"inbox.templ": {"badge"},
