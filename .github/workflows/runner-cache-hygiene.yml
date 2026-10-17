@@ -18,16 +18,26 @@ name: Runner Cache Hygiene
 # evicting useful Go/Swift cache and slowing every job. It deletes entries not
 # accessed for 14 days; this is orthogonal to the Go build cache above.
 #
+# The third job prunes *Actions artifacts*. Artifact storage is an ACCOUNT-wide
+# quota shared with the sibling repo, and when it is exhausted every upload in
+# both repos fails — usually surfacing obliquely in an unrelated workflow that
+# ships a 2 KB credentials file (emergent-company/emergent.memory#1834). The
+# manual stopgap there was "keep the newest 2 per artifact name, delete nothing
+# younger than 6 h"; this job applies that rule unattended, so reproducible
+# build output cannot accumulate into the quota again.
+#
 # Scheduler note: the three memory runners share a single `memory` label (no
-# per-runner labels), so one job run can only land on one of them. A daily
-# schedule therefore covers the pool over time as the scheduler picks whichever
-# runner is idle; `workflow_dispatch` triggers an on-demand prune.
+# per-runner labels), so one job run can only land on one of them. Running every
+# 6 h therefore also covers the pool over time as the scheduler picks whichever
+# runner is idle (the Go cache prune needs all three eventually, the artifact
+# prune is repo-wide and host-independent); `workflow_dispatch` triggers an
+# on-demand prune.
 
 on:
   workflow_dispatch:
   schedule:
-    # Daily at 04:00 UTC — see scheduler note above (shared `memory` label).
-    - cron: '0 4 * * *'
+    # Every 6 hours — matches the artifact keep-window below, see scheduler note.
+    - cron: '0 */6 * * *'
 
 permissions:
   contents: read
@@ -107,3 +117,54 @@ jobs:
           GOCACHE="$(go env GOCACHE)"
           df -h "$GOCACHE"
           du -sh "$GOCACHE"
+
+  prune-actions-artifacts:
+    name: Prune stale Actions artifacts
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required to DELETE repo-level artifacts.
+      actions: write
+    steps:
+      - name: Delete artifacts outside the keep window
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          # Keep the newest N artifacts per name; never delete anything younger
+          # than MIN_AGE_HOURS. Same rule as the 2026-10-14 manual stopgap.
+          KEEP_PER_NAME: 2
+          MIN_AGE_HOURS: 6
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d "$MIN_AGE_HOURS hours ago" +%Y-%m-%dT%H:%M:%SZ)
+          LIST=$(mktemp)
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | [.id, .name, .created_at, (.expired|tostring), (.size_in_bytes|tostring)] | @tsv' \
+            > "$LIST"
+
+          awk -F'\t' '{ s += $5 } END { printf "Artifact storage before: %.2f GiB across %d artifacts\n", s/1073741824, NR }' "$LIST"
+          echo "Deleting artifacts beyond the newest $KEEP_PER_NAME per name that are older than $CUTOFF"
+
+          # Sort by name, newest first, then drop the kept prefix. Names are
+          # per-run unique in most workflows, so the age window is what actually
+          # reclaims space; the keep count protects the odd reused name.
+          # `release-*` is exempt: it is tag-only and declares 30 days on purpose,
+          # so a 6 h window here would silently void that intent.
+          sort -t $'\t' -k2,2 -k3,3r "$LIST" \
+            | awk -F'\t' -v keep="$KEEP_PER_NAME" -v cutoff="$CUTOFF" '
+                { n[$2]++; if ($2 !~ /^release-/ && n[$2] > keep && ($4 == "true" || $3 < cutoff)) print $1 }
+              ' \
+            | while read -r id; do
+                [ -n "$id" ] || continue
+                if gh api -X DELETE "repos/$REPO/actions/artifacts/$id" >/dev/null 2>&1; then
+                  echo "deleted artifact $id"
+                else
+                  echo "::warning::could not delete artifact $id (already gone or expired)"
+                fi
+              done
+
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[].size_in_bytes' \
+            | awk '{ s += $1 } END { printf "Artifact storage after: %.2f GiB\n", s/1073741824 }'
+          rm -f "$LIST"

@@ -287,7 +287,11 @@ jobs:
         with:
           name: memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
           path: apps/cli/dist/memory-cli-*
-          retention-days: 7
+          # Reproducible from the commit and not downloaded by any later job
+          # (release assets are uploaded from the build workspace, not from this
+          # artifact), so one day is enough. Artifact storage is an account-wide
+          # quota shared with the sibling repo (emergent-company/emergent.memory#1834).
+          retention-days: 1
 
   build-cross:
     name: Build Cross-Platform Binaries
