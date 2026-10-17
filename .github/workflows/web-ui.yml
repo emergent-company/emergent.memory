@@ -46,7 +46,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/web-ui/gateway/go.sum
           # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
           # with no hosted fallback, and the runner is persistent:
           # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
@@ -191,7 +190,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/web-ui/gateway/go.sum
           cache: false
 
       - name: Add gateway toolchain to PATH
@@ -268,7 +266,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/web-ui/gateway/go.sum
           cache: false
 
       - name: Add gateway toolchain to PATH

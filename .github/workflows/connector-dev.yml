@@ -59,18 +59,12 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/connector.linux/go.sum
-      - name: Cache Go build cache
-        uses: actions/cache@v4
-        with:
-          # GOCACHE differs per OS; list both, the key's runner.os partitions entries.
-          path: |
-            ~/.cache/go-build
-            ~/Library/Caches/go-build
-          key: go-build-${{ runner.os }}-connector-${{ hashFiles('apps/connector.linux/go.sum') }}
-          restore-keys: |
-            go-build-${{ runner.os }}-connector-
-
+          # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+          # disk between jobs, so the built-in Actions cache only adds multi-GB
+          # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+          cache: false
+      # No build-cache restore here: the persistent runner already keeps
+      # GOCACHE on local disk, so this step only re-uploaded ~5 GB.
       - name: Build binary
         working-directory: apps/connector.linux
         env:
