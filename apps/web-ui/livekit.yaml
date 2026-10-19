@@ -7,5 +7,7 @@ rtc:
   node_ip: 100.91.139.28
 redis:
   address: 127.0.0.1:6379
+# Credentials are host-held and never committed — see
+# the infra voice-stack runbook. Set real values in the host config.
 keys:
-  devkey: secretsecretsecretsecretsecret12
+  CHANGEME: CHANGEME
