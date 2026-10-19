@@ -139,19 +139,24 @@ agents are standalone (each is talked to directly by the owner).
 ```
 create agent (API/web) ──► memory AgentDefinition + Agent (enabled)
       │
-      └──► Go supervisor sees enabled agent ──► spawn bridge worker (name=x)
+      └──► voice token minted ──► supervisor EnsureWorker(agent)
+                 │
+        spawn bridge worker (AGENT_NAME=x) if none is running
                  │
         chat (text or voice) ──► memory chat loop (agent brain)
                  │
-        disable/delete ──► supervisor stops worker
+        disable/delete ──► undispatachable; disabled worker stopped on next
+                           token request or by the idle reaper
 ```
 
-- **Create** → immediately chat-capable (text) and voice-capable (bridge spawn is async,
-  seconds).
+- **Create** → immediately chat-capable (text); voice-capable once the first voice token
+  is minted and the bridge worker starts (async, seconds).
 - **Edit prompt/model/tools** → takes effect on the next chat turn (memory reads current
   definition; no worker restart required for text. Voice bridge holds no agent state, so
   edits flow through immediately).
-- **Disable/delete** → worker stopped by supervisor; agent no longer dispatchable.
+- **Disable/delete** → agent no longer dispatchable. A disabled agent's worker is stopped
+  on the next token request; deleting an agent leaves any running worker to the idle
+  reaper (`WORKER_IDLE_TTL` > 0).
 
 ## Invariants
 

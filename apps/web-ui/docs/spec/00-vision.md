@@ -44,8 +44,9 @@ hand-editing of worker config.
    never the raw A2A/run protocol.
 4. **Voice is just another transport.** The voice bridge converts audio ⇄ text around the same
    chat loop; it adds no agent intelligence.
-5. **Delete = stop.** Deleting/disabling an agent stops its worker; the supervisor reconciles
-   workers to agent state.
+5. **Delete = undispatachable.** Deleting/disabling an agent removes it from dispatch. A
+   disabled agent's worker is stopped on the next token request; idle workers are reaped
+   when `WORKER_IDLE_TTL` > 0.
 
 ## Decision log
 

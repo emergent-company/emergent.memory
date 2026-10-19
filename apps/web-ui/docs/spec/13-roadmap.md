@@ -33,11 +33,11 @@ P0 Memory provisioning ─► P1 Go gateway+supervisor ─┬─► P2 Python br
 - Skeleton: `echo` + `go-daisy` + memory Go SDK. One binary.
 - Gateway API: agent CRUD → memory; MCP-server CRUD → memory; conversation CRUD; chat relay
   (SSE pass-through); providers/model config; iOS token mint + QR.
-- Supervisor: reconcile loop (enabled agents ↔ child processes), spawn/stop/restart, crash
-  backoff. Stub bridge first.
+- Supervisor: on-demand spawn at token mint, idle reap, process monitoring. Stub bridge
+  first.
 - Auth (`X-API-Key`), pairing endpoint (from Diane pattern).
 - **Gate:** `go build ./...` + `go vet`; unit tests (fake memory SDK); CRUD round-trips against
-  memory; supervisor reconcile tested with a fake process.
+  memory; supervisor spawn/reap tested with a fake process.
 
 ### P2 — Python voice bridge
 
@@ -96,4 +96,4 @@ Skills (D10), A2A (D9), web voice (D5).
 | Cascaded voice latency (vs realtime) | P2 | token-level streaming → early TTS; tune endpointing; measure e2e before cut over |
 | Cartesia Polish TTS quality | P2 | verify PL voice early; fall back to another voice/model if poor |
 | MCP secrets plaintext in memory | P0 | tailnet-only; don't store master creds as MCP headers |
-| Cold-start dispatch window | P1/P2 | pre-warm workers on agent create |
+| Cold-start dispatch window | P1/P2 | on-demand spawn at token mint; client shows "agent starting…" and retries; tune `WORKER_IDLE_TTL` |

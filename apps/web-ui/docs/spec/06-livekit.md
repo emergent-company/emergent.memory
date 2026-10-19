@@ -11,11 +11,20 @@ holds no agent intelligence, no STT/TTS, no state.
 
 ## Server
 
-- **Self-hosted**, external to the Memory Compose (D3). Currently home2 LXC 112:
-  - signaling `ws://<tailnet>:7880` · RTC TCP `7881` · RTC media UDP `50000–60000`
+- **Self-hosted**, external to the Memory Compose (D3). Host coordinates and
+  credentials are out-of-band:
+  - signaling `ws://<host>:7880` · RTC TCP `7881` · RTC media UDP `50000–60000`
   - `rtc.node_ip` = Tailscale IP (required for cross-network media)
   - no TURN — all endpoints on the tailnet.
 - Memory connects to it as a client (`LIVEKIT_URL`). It is not managed by the Go supervisor.
+
+## Gateway / bridge placement
+
+- The gateway process, which owns the bridge supervisor, runs as one compose project.
+  Bridge workers are spawned on demand when a voice token is minted and reaped according
+  to `WORKER_IDLE_TTL` (the compose deployment sets `10m`; `0` disables reaping).
+- The compose deployment names the default agent `alfred`
+  (`LIVEKIT_AGENT_NAME=alfred`); the gateway falls back to `memory` when unset.
 
 ## Rooms & dispatch
 
@@ -30,11 +39,12 @@ Dispatch only succeeds once the bridge worker is **registered with LiveKit** (it
 `AgentServer` connected). Two timing facts matter:
 
 1. **Cold start:** a freshly spawned worker takes ~1–2s to connect and register. A client
-   joining before registration gets a "no agent available" failure → the supervisor should
-   prefer **pre-warmed workers** for known agents (spawn at agent-create time, keep idle).
+   joining before registration gets a "no agent available" failure. Because workers are
+   on-demand and only kept warm for `WORKER_IDLE_TTL`, this window is reachable after an
+   idle period; clients surface "agent starting…" and retry.
 2. **Ad-hoc agent:** creating an agent and immediately calling it may hit the cold-start
-   window. The client surfaces "agent starting…" and retries; the supervisor warms the worker
-   on create (async, seconds).
+   window. The client surfaces "agent starting…" and retries; the supervisor spawns the
+   worker on demand (async, seconds).
 
 ```
 iOS/Mac client ── join room(agent_name) ──► LiveKit ── dispatch ──► bridge worker(agent_name)
@@ -68,6 +78,6 @@ Room allow-list + `X-API-Key` gate preserved (see 09-security.md).
 
 ## Failure model
 
-- Worker process down → LiveKit dispatch fails → client surfaces retry (supervisor restarts
-  the worker independently).
+- Worker process down → LiveKit dispatch fails → the client retries; the next voice-token
+  request spawns a fresh worker. Idle workers are stopped by the reaper.
 - LiveKit down → voice unavailable; web text chat unaffected (chat does not touch LiveKit).

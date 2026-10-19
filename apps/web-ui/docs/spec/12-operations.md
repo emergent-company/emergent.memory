@@ -8,7 +8,7 @@ Cross-cutting concerns the roadmap depends on: observability, testing, migration
 |---|---|---|
 | Memory (brain) | conversation messages, LLM call logs, usage | memory `chat_messages`, `llm_call_logs`, usage service — **durable** |
 | Bridge (transport) | STT/TTS latency, audio events, turn timing | structured logs to supervisor (stdout/stderr → container log driver) |
-| Supervisor (lifecycle) | worker spawn/stop/restart, crash backoff, reconcile diffs | Go structured logs |
+| Supervisor (lifecycle) | worker spawn/stop/reap, on-demand transitions | Go structured logs |
 | Tracing | optional OpenTelemetry | memory has Tempo integration; Memory can opt in later |
 
 ### Error tracking, tracing & session replay (Sentry)
@@ -40,8 +40,8 @@ logs only transport-level timing for latency debugging.
 
 Per project convention (openspec `config.yaml`): **test-driven, unit tests minimum**.
 
-- **Go gateway** — unit tests: route handlers (fake memory SDK), supervisor reconcile loop
-  (fake process spawner + fake agent list), token mint (fake LiveKit API), auth middleware.
+- **Go gateway** — unit tests: route handlers (fake memory SDK), supervisor on-demand
+  spawn/reap (fake process spawner), token mint (fake LiveKit API), auth middleware.
 - **Bridge (Python)** — unit tests: audio→text→chat→TTS pipeline with **mocked** Deepgram,
   Cartesia, and memory SSE; turn-taking/away/exit-keyword logic against a fake chat stream.
 - **Contract tests** — against a real (or test) memory instance: chat stream shape, agent
@@ -51,8 +51,8 @@ Per project convention (openspec `config.yaml`): **test-driven, unit tests minim
 
 ## E2E (Playwright)
 
-Browser tests in `tests/e2e/` run **against the live dev gateway** (tailnet
-`alfred-dev:8095`/`8443`) on a real memory tenant. Four projects in
+Browser tests in `tests/e2e/` run **against the live dev gateway** (the tailnet
+host and ports are out-of-band) on a real memory tenant. Four projects in
 `playwright.config.ts`: `setup` (serial auth + tenant bootstrap, reuses the saved
 session when present), `chromium` (read surface, parallel), `mutations`
 (UI-mutating specs, single worker, self-cleaning), and `scenarios` (full-journey

@@ -9,7 +9,7 @@
                │ HTTPS REST (chat, agents, MCP)    │ ws/WebRTC (voice)
                │ X-API-Key                         │
 ┌──────────────▼───────────────────────────┐  ┌────▼─────────────────┐
-│  GO APP  (single binary, :8080)          │  │  LiveKit (self-host)  │
+│  GO APP  (single binary)                 │  │  LiveKit (self-host)  │
 │  ├ web UI (go-daisy)                     │  │  voice transport only │
 │  ├ gateway API (proxy → memory)          │  └────┬─────────────────┘
 │  ├ supervisor (worker lifecycle)         │       │ rtc_session
@@ -25,8 +25,10 @@
                                               └──────────────────────┘
 ```
 
-**External services** (not in the Memory Compose): LiveKit (home2 LXC), Memory (:5300),
+**External services** (not in the Memory Compose): LiveKit (self-hosted), Memory (:5300),
 LiteLLM (:4000), Deepgram + Cartesia (cloud APIs), ha-mcp / any user MCP servers.
+Deployment topology (hosts, published ports, credentials) is out-of-band; this
+document describes components and data flow.
 
 ## Component responsibilities
 
@@ -68,8 +70,9 @@ memory agent loop → SSE text tokens → bridge TTS (Cartesia, streaming) → L
 ### Ad-hoc agent creation
 ```
 user → Go web UI → Go gateway → memory agent-definition CRUD
-Go supervisor detects new enabled agent → spawns python bridge process (AGENT_NAME=x)
-agent is immediately chat-capable (text) and voice-capable (bridge)
+user starts a voice turn → gateway mints a token → supervisor EnsureWorker(agent)
+supervisor spawns python bridge (AGENT_NAME=x) if none is running
+agent joins the room and is voice-capable; idle workers are reaped after WORKER_IDLE_TTL
 ```
 
 ### A2A (deferred, memory-internal)
@@ -96,7 +99,7 @@ agent A (chat loop) → calls memory `trigger_agent`/`spawn_agents` → agent B 
 
 ## Failure model
 
-- **Memory down** → Go gateway returns 503; bridge can't complete turns. Workers stay up but idle.
+- **Memory down** → Go gateway returns 503; bridge can't complete turns. Workers stay up until the idle reaper stops them (`WORKER_IDLE_TTL` > 0) or the process exits; the next voice request cold-starts one if none is running.
 - **LiveKit down** → voice unavailable; web text chat unaffected.
-- **Bridge worker crash** → supervisor restarts it (crash-loop backoff). Room dispatch re-attempts.
+- **Bridge worker crash** → supervisor removes the worker; the next voice-token request spawns a fresh one. The client retries dispatch.
 - **Cloud STT/TTS down** → bridge surfaces error; text chat unaffected.

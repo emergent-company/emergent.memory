@@ -39,22 +39,22 @@ Notes:
 
 ### 2. Supervisor (worker lifecycle)
 
-Reconciles running bridge workers against memory's enabled agents (D2 "child processes").
+On-demand, not reconciled. The gateway does **not** poll memory's enabled-agent list and
+does not keep one worker per enabled agent.
 
-```
-loop (interval, e.g. 2–5s):
-  desired = { enabled agents in memory }
-  running = { bridge child processes (AGENT_NAME=x) }
-  spawn  for name in desired − running
-  stop   for name in running − desired
-```
+1. `POST /api/token` resolves the agent's voice binding and rejects disabled agents.
+2. For an enabled agent the gateway calls `EnsureWorker(agent)`: it spawns
+   `python -m memory_bridge start` with `AGENT_NAME=<name>` and the worker credential, or
+   refreshes the last-used time of the already-running process.
+3. A ticker (`SUPERVISOR_INTERVAL`, default 5s) only reaps workers idle longer than
+   `WORKER_IDLE_TTL`; the compose deployment sets `10m`, and `0` disables reaping.
+4. When a worker exits, the monitor removes it. The next token mint starts a fresh
+   process; there is no automatic restart-with-backoff.
+5. Disabling an agent stops its worker on the next token request (the binding check
+   returns "agent disabled" before `EnsureWorker`).
 
-- Each worker is a child process: `python -m memory_bridge --agent <name>` (or via
-  LiveKit's worker runner), `AGENT_NAME=<name>` env.
-- Crash → restart with backoff (e.g. 1s, 2s, 4s, cap 30s).
-- Delete/disable → terminate process, reconcile.
-- Worker stdout/stderr → supervisor logs (structured, forwarded to the container's log
-  driver).
+Worker stdout/stderr is forwarded to the supervisor logs (structured, then the
+container's log driver).
 
 ### 3. Web UI (go-daisy)
 
@@ -220,6 +220,7 @@ Voice is explicitly **not** in the web UI (D5).
 | `WORKER_IDLE_TTL` | idle timeout before an on-demand bridge worker is reaped; default `0` disables reaping (the gateway has no per-room liveness signal, so a worker on a long call looks idle) |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | token minting + worker env |
 | `LIVEKIT_PUBLIC_URL` | ws url returned to iOS clients |
+| `LIVEKIT_AGENT_NAME` | default agent when a client omits `agent`; compose sets `alfred` (gateway default `memory`) |
 | `PUBLIC_BASE_URL` | externally-reachable base URL (`scheme://host[:port]`) for client setup/config URLs; also pins the cookie `Secure` flag (`http://` disables it); empty = derive from request Host/scheme. Browser requests on a different `Host` are 302'd to this host (canonical-host redirect) so host-only cookies match the pinned `ZITADEL_REDIRECT_URI`. Session mode requires `https://` outside development |
 | `AUTH_MODE` | browser-auth posture: `session` (default) requires Zitadel sign-in; `dev` = explicit unauthenticated local dev (validated + warned at startup) |
 | `SESSION_SECRET` | HMAC key for the session cookie (required in session mode) |
