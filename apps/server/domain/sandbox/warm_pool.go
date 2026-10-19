@@ -22,7 +22,9 @@ const (
 	replenishTimeout = 30 * time.Second
 )
 
-// WarmPoolConfig configures the warm container pool.
+// WarmPoolConfig configures the warm container pool. The pool is image-only:
+// containers are pre-booted from an image with no repository, setup commands or
+// session env, and callers still run checkout/setup after Acquire.
 type WarmPoolConfig struct {
 	// Size is the target number of pre-booted containers to maintain for TargetImage.
 	Size int `json:"size"`
@@ -86,6 +88,8 @@ type WarmPoolMetrics struct {
 
 // WarmPool manages a pool of pre-booted workspace containers for fast assignment.
 // Containers are created using the default provider and matched to incoming requests.
+// They are not repo-aware: a request that needs a checkout still clones after
+// assignment, and the container is destroyed at teardown.
 type WarmPool struct {
 	mu           sync.Mutex
 	config       WarmPoolConfig
@@ -320,6 +324,9 @@ func (wp *WarmPool) Stop(ctx context.Context) error {
 // A warm container matches if its image matches the requested image, or if the pool's
 // TargetImage matches the requested image (handles the case where warm containers are
 // pre-booted with the same image the caller needs).
+//
+// Warm containers are image-only and not tied to a project/repository; a hit
+// still performs the caller's checkout/setup after assignment.
 //
 // Staleness check: if the warm container was booted from a digest that no longer matches
 // the current local digest of the image, the container is considered stale and destroyed
@@ -631,6 +638,10 @@ func (wp *WarmPool) drainExcess(ctx context.Context, target int) error {
 // enumeration + liveness leases: the gVisor provider. Firecracker and E2B
 // containers carry no Docker labels and implement neither SandboxResourceManager
 // nor ContainerHeartbeater, so they would leak exactly as before the fix.
+//
+// The container is intentionally image-only: no repository, branch, setup
+// commands or session env are baked in; the caller performs checkout/setup after
+// assignment.
 func (wp *WarmPool) createWarmContainer(ctx context.Context, image string) (*warmContainer, error) {
 	provider, err := wp.orchestrator.GetProvider(ProviderGVisor)
 	if err != nil {

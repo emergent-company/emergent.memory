@@ -362,13 +362,18 @@ Key subsystems:
 |-----------|------|---------|
 | Orchestrator | `orchestrator.go` | create/stop/resume/snapshot sandboxes; lifecycle FSM |
 | Checkout Service | `checkout.go` | git clone + branch setup inside a sandbox |
-| Warm Pool | `warm_pool.go` | pre-warmed sandbox pool to reduce cold-start latency |
+| Warm Pool | `warm_pool.go` | pre-booted container pool (cuts boot latency; repo checkout is per run) |
 | Cleanup Worker | `cleanup.go` | periodic eviction of expired/idle sandboxes |
 | Auto Provisioner | `auto_provisioner.go` | on-demand provisioning triggered by agent sessions |
 | MCP Hosting | `mcp_hosting.go` | start/stop/restart hosted MCP server containers |
 | Stdio Bridge | `stdio_bridge.go` | JSON-RPC bridge between HTTP and container stdio |
 | Setup Executor | `setup_executor.go` | run setup scripts inside a sandbox after creation |
 | Audit Middleware | `audit.go` | records every tool invocation for compliance |
+
+**Warm pool scope:** the pool pre-boots containers from an image only. It does not
+clone a repository, run setup commands, or carry session environment vars; callers
+still run checkout/setup after `Acquire`, and the container is destroyed at teardown.
+The pool cuts container boot time, not git clone time (see #1846).
 
 ### HTTP Routes — Sandbox Management
 

@@ -552,7 +552,9 @@ type SandboxConfig struct {
 	// destroyed by the cleanup cycle. 0 (the default) disables the policy and
 	// preserves current persistent semantics — nothing is reclaimed by idleness.
 	PersistentIdleTTLDays int `env:"WORKSPACE_PERSISTENT_IDLE_TTL_DAYS" envDefault:"0"`
-	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled, default: 2)
+	// WarmPoolSize is the number of pre-booted containers to keep ready (0 = disabled,
+	// default: 2). Containers are image-only: repository checkout and setup still
+	// run per session after acquire, so this cuts boot time, not clone time.
 	WarmPoolSize int `env:"WORKSPACE_WARM_POOL_SIZE" envDefault:"2"`
 	// WarmPoolTargetImage is the Docker image to pre-boot warm containers with.
 	// Should match the base_image your primary agent uses so warm containers are
