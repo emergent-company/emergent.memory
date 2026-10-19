@@ -90,8 +90,14 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
 
+      # Cache poisoning is transient (an evicted Azure blob makes the gha
+      # cache manifest resolve to a 404 BlobNotFound, which buildx treats as
+      # fatal). Bypassing cache on retry guarantees the release tag is
+      # published instead of silently missing.
       - name: Build and push
+        id: build
         if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
+        continue-on-error: true
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -109,6 +115,24 @@ jobs:
           # branch) keeps this scope warm for later tag and manual runs.
           cache-from: type=gha,scope=memory-server
           cache-to: type=gha,scope=memory-server,mode=max
+
+      - name: Build and push (retry, cache bypassed)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+          # Keep cache-to so a fresh cache is written for subsequent runs.
+          cache-to: type=gha,scope=memory-server,mode=max
+          no-cache: true
 
       # Unchanged tag push: re-tag the previous version's multi-arch manifest list
       # to the new version tags (no rebuild).
@@ -146,16 +170,16 @@ jobs:
           echo "Server image: ghcr.io/${{ github.repository_owner }}/memory-server:${TAG#v}" >> images-ready.txt
           echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
 
-          for i in $(seq 1 30); do
+          for i in $(seq 1 90); do
             if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
               echo "Release $TAG found, uploading sentinel..."
               gh release upload "$TAG" images-ready.txt --repo "${{ github.repository }}" --clobber
               echo "✓ Release $TAG marked as ready"
               exit 0
             fi
-            echo "Waiting for release $TAG to be created... (attempt $i/30)"
-            sleep 10
+            echo "Waiting for release $TAG to be created... (attempt $i/90)"
+            sleep 15
           done
 
-          echo "⚠️  Release $TAG not found after 5 minutes. Sentinel not uploaded."
+          echo "⚠️  Release $TAG not found after 15 minutes. Sentinel not uploaded."
           exit 1

@@ -83,8 +83,14 @@ jobs:
             type=semver,pattern={{raw}}
             type=semver,pattern={{version}}
 
+      # Cache poisoning is transient (an evicted Azure blob makes the gha
+      # cache manifest resolve to a 404 BlobNotFound, which buildx treats as
+      # fatal). Bypassing cache on retry guarantees the release tag is
+      # published instead of silently missing.
       - name: Build and push
+        id: build
         if: steps.changed.outputs.changed != 'false'
+        continue-on-error: true
         uses: docker/build-push-action@v5
         with:
           context: apps/web-ui
@@ -98,6 +104,21 @@ jobs:
           # absent from the final image and reused by later main-branch builds.
           cache-from: type=gha,scope=memory-web-ui
           cache-to: type=gha,scope=memory-web-ui,mode=max
+
+      - name: Build and push (retry, cache bypassed)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/web-ui
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ steps.version.outputs.commit }}
+          # Keep cache-to so a fresh cache is written for subsequent runs.
+          cache-to: type=gha,scope=memory-web-ui,mode=max
+          no-cache: true
 
       # Unchanged tag push: re-alias the existing image to the new version tag
       # (no rebuild — seconds instead of ~2min).
