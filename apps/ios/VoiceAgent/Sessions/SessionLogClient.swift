@@ -181,10 +181,10 @@ struct ToolCall: Codable, Equatable, Sendable {
 /// timeline.
 ///
 /// The session log lives on the same host:port as the token endpoint (the
-/// gateway, e.g. `http://100.91.139.28:8095`), NOT the control plane. The base
+/// gateway, e.g. `http://localhost:8095`), NOT the control plane. The base
 /// URL is derived from `config.tokenEndpoint` by stripping the `/api/token`
-/// path suffix, e.g. `http://100.91.139.28:8095/api/token` →
-/// `http://100.91.139.28:8095`. Read-only, same `X-API-Key` header as the
+/// path suffix, e.g. `http://localhost:8095/api/token` →
+/// `http://localhost:8095`. Read-only, same `X-API-Key` header as the
 /// token endpoint.
 ///
 /// Endpoints:

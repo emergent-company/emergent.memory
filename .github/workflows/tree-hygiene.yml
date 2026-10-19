@@ -57,7 +57,10 @@ jobs:
             return 1
           }
 
-          raw="$(git grep -n -I -E '\.ts\.net\b|emergent-dev|10\.10\.10\.|emergent\.memory\.infra|\.dev\.emergent-company\.ai' -- . 2>/dev/null || true)"
+          # Raw dev tailnet IPs are not hostnames, so they need their own
+          # alternatives. The 100.64.0.0/10 range appears legitimately in SSRF
+          # guards/tests; match the specific leaked hosts, not the whole range.
+          raw="$(git grep -n -I -E '\.ts\.net\b|emergent-dev|10\.10\.10\.|100\.69\.175\.118|100\.91\.139\.28|emergent\.memory\.infra|\.dev\.emergent-company\.ai' -- . 2>/dev/null || true)"
 
           violations=""
           while IFS= read -r hit; do

@@ -4,7 +4,9 @@ rtc:
   port_range_start: 50000
   port_range_end: 60000
   use_external_ip: false
-  node_ip: 100.91.139.28
+  # Host-held: set to the host's Tailscale/LAN IP for cross-network WebRTC.
+  # Never commit the real address.
+  node_ip: <TAILSCALE_IP>
 redis:
   address: 127.0.0.1:6379
 # Credentials are host-held and never committed — see

@@ -24,8 +24,8 @@ struct MemoryTokenSource: EndpointTokenSource {
 
     let config: MemoryConfig
 
-    /// The token endpoint URL (Memory's admin server), e.g.
-    /// `http://100.91.139.28:8095/api/token`.
+    /// The token endpoint URL (Memory's gateway), e.g.
+    /// `http://localhost:8095/api/token`.
     ///
     /// Non-failable to satisfy the SDK's `EndpointTokenSource` contract; a
     /// malformed endpoint surfaces as a clean error from `makeRequest`.

@@ -43,9 +43,9 @@ Stable, public API the settings screen binds to. All keys live in
 
 | Property | UserDefaults key | Default |
 |---|---|---|
-| `serverURL` | `alfred.serverURL` | `ws://100.69.175.118:7880` |
+| `serverURL` | `alfred.serverURL` | `ws://localhost:7880` |
 | `agentName` | `alfred.agentName` | `alfred` |
-| `tokenEndpoint` | `alfred.tokenEndpoint` | `http://100.91.139.28:8095/api/token` |
+| `tokenEndpoint` | `alfred.tokenEndpoint` | `http://localhost:8095/api/token` |
 | `apiKey` | `alfred.apiKey` | `""` (a scoped `emt_` device credential, sent as `X-API-Key`) |
 | `exitKeywords` | `alfred.exitKeywords` | `["goodbye"]` |
 | `agentConnectTimeout` | `alfred.agentConnectTimeout` | `20` (seconds) |
@@ -195,11 +195,12 @@ older than one already uploaded — check there rather than assuming success.
 
 ## Notes & trade-offs
 
-- **Transport**: `ws://100.69.175.118:7880` over Tailscale, no TLS. The
-  `Info.plist` carries `NSAppTransportSecurity → NSAllowsLocalNetworking` (the
-  narrow exception; no `NSAllowsArbitraryLoads`) and
-  `NSLocalNetworkUsageDescription`. UDP 50000–60000 must be reachable (WebRTC);
-  prefer Wi-Fi.
+- **Transport**: defaults to `ws://localhost:7880` for the simulator or a
+  same-host gateway; set the real host in the app's Settings (or via QR setup)
+  for a physical device or a remote/Tailscale deployment. The `Info.plist`
+  carries `NSAppTransportSecurity → NSAllowsLocalNetworking` (the narrow
+  exception; no `NSAllowsArbitraryLoads`) and `NSLocalNetworkUsageDescription`.
+  UDP 50000–60000 must be reachable (WebRTC); prefer Wi-Fi.
 - **Microphone permission**: exactly one authoritative string —
   `NSMicrophoneUsageDescription` in `VoiceAgent/Info.plist` (the upstream
   `INFOPLIST_KEY_NSMicrophoneUsageDescription` build setting was removed from

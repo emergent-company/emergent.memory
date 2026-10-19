@@ -23,11 +23,11 @@ extension Notification.Name {
 ///
 /// | Property                 | UserDefaults key                 | Default                            |
 /// |--------------------------|----------------------------------|------------------------------------|
-/// | `serverURL`              | `alfred.serverURL`               | `ws://100.69.175.118:7880`         |
+/// | `serverURL`              | `alfred.serverURL`               | `ws://localhost:7880`              |
 /// | `agentName`              | `alfred.agentName`               | `alfred`                           |
-/// | `tokenEndpoint`          | `alfred.tokenEndpoint`           | `http://100.91.139.28:8095/api/token` |
+/// | `tokenEndpoint`          | `alfred.tokenEndpoint`           | `http://localhost:8095/api/token`  |
 /// | `apiKey`                 | `alfred.apiKey`                  | `""`                               |
-/// | `apiBaseURL`             | `alfred.apiBaseURL`              | `http://100.91.139.28:8095`        |
+/// | `apiBaseURL`             | `alfred.apiBaseURL`              | `http://localhost:8095`            |
 /// | `exitKeywords`           | `alfred.exitKeywords`            | `["goodbye"]`                      |
 /// | `agentConnectTimeout`    | `alfred.agentConnectTimeout`     | `20` (seconds)                     |
 /// | `chimeSoundID`           | `alfred.chimeSoundID`            | `1057` (system sound "Tink")       |
@@ -70,11 +70,11 @@ struct MemoryConfig: Sendable, Equatable {
 
     // MARK: - Build-time defaults
 
-    static let defaultServerURL = "ws://100.69.175.118:7880"
+    static let defaultServerURL = "ws://localhost:7880"
     static let defaultAgentName = "alfred"
-    static let defaultTokenEndpoint = "http://100.91.139.28:8095/api/token"
+    static let defaultTokenEndpoint = "http://localhost:8095/api/token"
     static let defaultAPIKey = ""
-    static let defaultAPIBaseURL = "http://100.91.139.28:8095"
+    static let defaultAPIBaseURL = "http://localhost:8095"
     static let defaultExitKeywords = ["goodbye"]
     static let defaultAgentConnectTimeout: TimeInterval = 20
     static let defaultChimeSoundID: UInt32 = 1057
@@ -87,12 +87,10 @@ struct MemoryConfig: Sendable, Equatable {
     // MARK: - Retired defaults (migrated away)
 
     /// Persisted values that exactly match these retired defaults are ignored
-    /// and cleared on load, so installs that stored the old agent name / dead
-    /// admin API (port 8080) re-resolve to the current build-time defaults.
-    /// Any other user-set value is preserved untouched.
+    /// and cleared on load, so installs that stored the old agent name
+    /// re-resolve to the current build-time default. Any other user-set value
+    /// is preserved untouched.
     private static let retiredAgentNames: Set<String> = ["memory-google-rt"]
-    private static let retiredTokenEndpoints: Set<String> = ["http://100.69.175.118:8080/api/token"]
-    private static let retiredAPIBaseURLs: Set<String> = ["http://100.69.175.118:8080"]
 
     // MARK: - Values
 
@@ -121,9 +119,9 @@ struct MemoryConfig: Sendable, Equatable {
     init(defaults: UserDefaults = .standard) {
         serverURL = defaults.string(forKey: Self.serverURLKey) ?? Self.defaultServerURL
         agentName = Self.read(defaults, key: Self.agentNameKey, retired: Self.retiredAgentNames, fallback: Self.defaultAgentName)
-        tokenEndpoint = Self.read(defaults, key: Self.tokenEndpointKey, retired: Self.retiredTokenEndpoints, fallback: Self.defaultTokenEndpoint)
+        tokenEndpoint = defaults.string(forKey: Self.tokenEndpointKey) ?? Self.defaultTokenEndpoint
         apiKey = defaults.string(forKey: Self.apiKeyKey) ?? Self.defaultAPIKey
-        apiBaseURL = Self.read(defaults, key: Self.apiBaseURLKey, retired: Self.retiredAPIBaseURLs, fallback: Self.defaultAPIBaseURL)
+        apiBaseURL = defaults.string(forKey: Self.apiBaseURLKey) ?? Self.defaultAPIBaseURL
         exitKeywords = defaults.stringArray(forKey: Self.exitKeywordsKey) ?? Self.defaultExitKeywords
         let storedTimeout = defaults.double(forKey: Self.agentConnectTimeoutKey)
         agentConnectTimeout = storedTimeout > 0 ? storedTimeout : Self.defaultAgentConnectTimeout

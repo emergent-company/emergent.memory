@@ -71,19 +71,22 @@ struct MemoryConfigTests {
         #expect(MemoryConfig(defaults: defaults).apiBaseURL == MemoryConfig.defaultAPIBaseURL)
     }
 
-    @Test func legacyDefaultsFallBackToCurrentDefaults() throws {
+    @Test func buildDefaultsUseLocalHosts() {
+        // Public builds must not bake in a developer's tailnet host.
+        #expect(MemoryConfig.defaultServerURL == "ws://localhost:7880")
+        #expect(MemoryConfig.defaultTokenEndpoint == "http://localhost:8095/api/token")
+        #expect(MemoryConfig.defaultAPIBaseURL == "http://localhost:8095")
+    }
+
+    @Test func legacyAgentNameFallsBackToCurrentDefault() throws {
         let suite = "MemoryConfigTests.legacy.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
         defaults.set("memory-google-rt", forKey: MemoryConfig.agentNameKey)
-        defaults.set("http://100.69.175.118:8080/api/token", forKey: MemoryConfig.tokenEndpointKey)
-        defaults.set("http://100.69.175.118:8080", forKey: MemoryConfig.apiBaseURLKey)
 
         let config = MemoryConfig(defaults: defaults)
         #expect(config.agentName == MemoryConfig.defaultAgentName)
-        #expect(config.tokenEndpoint == MemoryConfig.defaultTokenEndpoint)
-        #expect(config.apiBaseURL == MemoryConfig.defaultAPIBaseURL)
     }
 
     @Test func customValuesArePreserved() throws {
