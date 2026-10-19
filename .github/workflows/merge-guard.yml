@@ -1,0 +1,194 @@
+name: Merge guard
+run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
+
+# Required status check that binds the merged commit to the reviewed commit.
+#
+# `main` requires `ci` plus `merge-guard`. Reviews are comment-based (three
+# independent agents share one GitHub identity, so GitHub-native approvals are
+# unusable), and nothing else prevents a push after review from merging an
+# unreviewed tree. A reviewer records the reviewed revision as a PR comment:
+#
+#     Reviewed-SHA: <40 lowercase hex>
+#
+# The guard passes only when the most recent TRUSTED marker equals the PR head.
+# A marker is trusted only when its author is OWNER/COLLABORATOR or their
+# immutable user id is in the MERGE_GUARD_TRUSTED_USER_IDS repository variable
+# (MEMBER alone is org membership, not write access). Fork contributors and bots
+# cannot mint one.
+#
+# A push changes the head and turns the guard red until a reviewer posts a new
+# marker for the new head and re-runs this workflow for that head. See the
+# internal control-repo runbook `docs/merge-guard.md`.
+#
+# Runs from the base branch (`pull_request_target`) so a PR cannot rewrite the
+# verification logic, and publishes an explicit check run on the PR head (the
+# job's own check is attached to the base ref). It never checks out or executes
+# pull-request code: it reads comments through the API and compares strings.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number to verify
+        required: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  checks: write
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify the reviewed SHA matches the head
+        id: verify
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          HEAD: ${{ github.event.pull_request.head.sha || '' }}
+          TRUSTED_IDS: ${{ vars.MERGE_GUARD_TRUSTED_USER_IDS }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HEAD}" ]]; then
+            HEAD=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.head.sha')
+          fi
+          HEAD=$(printf '%s' "${HEAD}" | tr '[:upper:]' '[:lower:]')
+          echo "PR #${PR} head: ${HEAD}"
+
+          # `author_association: MEMBER` is org membership, not write access, so
+          # MEMBER is trusted only when the immutable user id is in the
+          # MERGE_GUARD_TRUSTED_USER_IDS repo variable. OWNER and COLLABORATOR
+          # imply an explicit grant. The latest marker's current body counts;
+          # post a new comment rather than editing.
+          read -r -d '' MARKER_JQ <<'JQ' || true
+          ($trusted_ids // "" | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $allow
+          | [
+            .[]
+            | select(
+                .author_association == "OWNER"
+                or .author_association == "COLLABORATOR"
+                or ((.user.id | tostring) as $id | ($allow | index($id)) != null)
+              )
+            | select(.body | test("(?m)^Reviewed-SHA: [0-9a-f]{40}[ \\t\\r]*$"))
+            | {
+                created_at: .created_at,
+                sha: (.body | split("\n") | map(select(test("^Reviewed-SHA: [0-9a-f]{40}[ \\t\\r]*$"))) | last | capture("^Reviewed-SHA: (?<sha>[0-9a-f]{40})").sha),
+                url: .html_url
+              }
+            ]
+          | sort_by(.created_at)
+          | last
+          | if . == null then empty else "\(.sha)\t\(.created_at)\t\(.url)" end
+          JQ
+
+          comments=$(mktemp)
+          trap 'rm -f "${comments}"' EXIT
+          # Fail closed: no comment list means no review evidence.
+          gh api --paginate "repos/${REPO}/issues/${PR}/comments?per_page=100" \
+            --jq '.[]' >"${comments}"
+
+          marker=$(jq -s -r --arg trusted_ids "${TRUSTED_IDS:-}" "${MARKER_JQ}" "${comments}")
+          if [[ -z "${marker}" ]]; then
+            {
+              echo "### Merge guard: no trusted review marker"
+              echo
+              echo "PR #${PR} has no \`Reviewed-SHA:\` comment from a reviewer with write access or on the trust allowlist."
+              echo
+              echo "A reviewer must comment:"
+              echo
+              echo '```'
+              echo "Reviewed-SHA: ${HEAD}"
+              echo '```'
+              echo
+              echo "then re-run this workflow for the current head."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            echo "::error::No trusted Reviewed-SHA marker for PR #${PR}."
+            exit 1
+          fi
+
+          marker_sha=${marker%%$'\t'*}
+          marker_rest=${marker#*$'\t'}
+          marker_at=${marker_rest%%$'\t'*}
+          marker_url=${marker_rest#*$'\t'}
+
+          if [[ "${marker_sha}" != "${HEAD}" ]]; then
+            {
+              echo "### Merge guard: stale review marker"
+              echo
+              echo "The latest trusted marker names \`${marker_sha}\` (${marker_at})."
+              echo "The PR head is \`${HEAD}\`."
+              echo
+              echo "The branch changed after review. Re-review the delta, then comment:"
+              echo
+              echo '```'
+              echo "Reviewed-SHA: ${HEAD}"
+              echo '```'
+              echo
+              echo "and re-run this workflow for the current head."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            echo "::error::Marker ${marker_sha} does not match head ${HEAD}."
+            exit 1
+          fi
+
+          {
+            echo "### Merge guard: pass"
+            echo
+            echo "Head \`${HEAD}\` matches the latest trusted review marker (${marker_url})."
+          } >>"${GITHUB_STEP_SUMMARY}"
+          echo "merge-guard: head ${HEAD} matches marker ${marker_url}"
+
+      - name: Publish the merge-guard check on the PR head
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          HEAD: ${{ github.event.pull_request.head.sha || '' }}
+          OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${HEAD}" ]]; then
+            HEAD=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.head.sha')
+          fi
+          HEAD=$(printf '%s' "${HEAD}" | tr '[:upper:]' '[:lower:]')
+
+          summary=$(head -c 60000 "${GITHUB_STEP_SUMMARY}" 2>/dev/null || true)
+          [[ -n "${summary}" ]] || summary="merge-guard produced no summary."
+
+          conclusion=success
+          title="merge-guard: pass"
+          if [[ "${OUTCOME}" != "success" ]]; then
+            conclusion=failure
+            title="merge-guard: ${OUTCOME}"
+          fi
+
+          jq -n \
+            --arg name "merge-guard" \
+            --arg sha "${HEAD}" \
+            --arg conclusion "${conclusion}" \
+            --arg title "${title}" \
+            --arg summary "${summary}" \
+            --arg details "https://github.com/${REPO}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg external "${GITHUB_RUN_ID}" \
+            '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion,
+              details_url: $details, external_id: $external,
+              output: {title: $title, summary: $summary}}' \
+            | gh api -X POST "repos/${REPO}/check-runs" --input - >/dev/null
+
+          echo "merge-guard: published ${conclusion} on ${HEAD}"
+          if [[ "${conclusion}" == "failure" ]]; then
+            echo "::error::merge-guard failed for ${HEAD}; see the check run."
+            exit 1
+          fi
