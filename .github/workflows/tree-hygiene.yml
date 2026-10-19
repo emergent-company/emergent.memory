@@ -1,0 +1,77 @@
+name: Tree hygiene
+
+# Cheap, always-applicable gate: grep every tracked file for internal hostnames
+# and private-repo references and fail with the offending file:line list. Runs
+# on every PR and every push to main with no `paths:` filter — a leak can be
+# introduced in any file, and the scan costs almost nothing.
+#
+# Legitimate references that must stay (the preview dispatch workflow and the
+# README owned by a parallel lane) are allowlisted in
+# .github/tree-hygiene-allowlist.txt. Existing internal dev-host references that
+# predate this gate are grandfathered in .github/tree-hygiene-baseline.txt as a
+# ratchet — that file may shrink, never grow. The gate never fails on its own
+# file, the allowlist, or the baseline.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tree-hygiene:
+    name: Scan for internal hostnames
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan tracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          ALLOWLIST=".github/tree-hygiene-allowlist.txt"
+          BASELINE=".github/tree-hygiene-baseline.txt"
+          ALWAYS_EXEMPT=(".github/workflows/tree-hygiene.yml" "$ALLOWLIST" "$BASELINE")
+
+          exempt() {
+            local path="$1" p
+            for p in "${ALWAYS_EXEMPT[@]}"; do
+              [[ "$path" == "$p" ]] && return 0
+            done
+            # Allowlist = legitimate permanent references. Baseline = pre-existing
+            # internal dev-host debt, a ratchet: entries may be removed, never added.
+            while IFS= read -r line || [[ -n "$line" ]]; do
+              [[ -z "$line" || "$line" == \#* ]] && continue
+              p="${line%%#*}"        # drop inline comment
+              p="${p//[[:space:]]/}" # drop surrounding whitespace
+              p="${p%/}"             # accept a directory prefix with or without a trailing slash
+              [[ -z "$p" ]] && continue
+              if [[ "$path" == "$p" || "$path" == "$p"/* ]]; then
+                return 0
+              fi
+            done < <(cat "$ALLOWLIST" "$BASELINE" 2>/dev/null || true)
+            return 1
+          }
+
+          raw="$(git grep -n -I -E '\.ts\.net\b|emergent-dev|10\.10\.10\.|emergent\.memory\.infra|\.dev\.emergent-company\.ai' -- . 2>/dev/null || true)"
+
+          violations=""
+          while IFS= read -r hit; do
+            [[ -z "$hit" ]] && continue
+            path="${hit%%:*}"
+            if exempt "$path"; then
+              continue
+            fi
+            violations+="${hit}"$'\n'
+          done <<< "$raw"
+
+          if [[ -n "$violations" ]]; then
+            echo "::error::Internal hostnames / private-repo references found in tracked files:"
+            printf '%s' "$violations"
+            exit 1
+          fi
+          echo "Tree hygiene OK — no internal hostnames / private-repo references in tracked files."

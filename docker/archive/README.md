@@ -33,4 +33,4 @@ docker compose -f docker/docker-compose.yml up -d
 
 Both now use **machine-user zero-touch bootstrap** - no manual PAT creation needed!
 
-See: [Zitadel setup docs](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/setup/) (development/setup docs moved to the infra repo)
+See: the Zitadel setup docs in the infra repo (development/setup docs moved to the infra repo)

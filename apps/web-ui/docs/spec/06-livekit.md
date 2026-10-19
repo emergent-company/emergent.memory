@@ -62,7 +62,7 @@ Room allow-list + `X-API-Key` gate preserved (see 09-security.md).
   fetch token → connect → publish mic → attach agent audio on `TrackSubscribed`. Same
   `roomConfig.agents` dispatch as native — no server-sdk/webhook changes.
 - Secure-context requirement: the page must be served over HTTPS on a Tailscale
-  MagicDNS name (`*.ts.net`), not a raw `100.x.y.z` IP, and `LIVEKIT_PUBLIC_URL` must be
+  MagicDNS name, not a raw CGNAT-range IP, and `LIVEKIT_PUBLIC_URL` must be
   `wss://`/`https://` — otherwise the browser hits mixed-content or cert-hostname
   failures, and `getUserMedia` is unavailable on non-secure origins.
 

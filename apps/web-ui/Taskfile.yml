@@ -84,7 +84,7 @@ tasks:
       - npx playwright test --config=mcp-inspect.config.ts
 
   e2e:ui:
-    desc: Open the Playwright UI runner (observe + run tests interactively) on https://alfred-dev.tail0358fa.ts.net:8444 — auto-managed via systemd playwright-ui.service + air
+    desc: Open the Playwright UI runner (observe + run tests interactively) — auto-managed via systemd playwright-ui.service + air
     dir: tests/e2e
     cmds:
       - systemctl restart playwright-ui

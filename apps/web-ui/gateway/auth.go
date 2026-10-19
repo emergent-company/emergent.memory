@@ -483,9 +483,9 @@ func (s *Server) ensureFreshSession(c echo.Context) (*sessionClaims, error) {
 // to the PUBLIC_BASE_URL host (preserving path + query). Host-only cookies (the
 // OAuth state cookie and the session cookie) are scoped to the request Host, so
 // a mismatch between it and ZITADEL_REDIRECT_URI/PUBLIC_BASE_URL silently drops
-// them — e.g. signing in via the short Tailscale name "alfred-dev" while the
-// redirect_uri is pinned to "alfred-dev.tail0358fa.ts.net" ("missing oauth
-// state"). No-op when PUBLIC_BASE_URL is unset. Skips programmatic/asset paths
+// them — e.g. signing in via a short host alias while the redirect_uri is
+// pinned to the canonical gateway host ("missing oauth state"). No-op when
+// PUBLIC_BASE_URL is unset. Skips programmatic/asset paths
 // (iOS setup, internal worker, GitHub webhooks, health, static assets) so
 // non-browser clients are never redirected.
 func (s *Server) canonicalHostRedirect(next echo.HandlerFunc) echo.HandlerFunc {

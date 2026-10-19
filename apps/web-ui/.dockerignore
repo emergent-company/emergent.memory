@@ -1,7 +1,7 @@
 # Minimal .dockerignore — only exclude what's absolutely necessary.
 #
 # The web-ui image is built with context `apps/web-ui` (see
-# scripts/deploy-adhoc-dev.sh in emergent.memory.infra), NOT the repo root, so
+# scripts/deploy-adhoc-dev.sh in the infra repo), NOT the repo root, so
 # Docker reads THIS file, not ../.dockerignore.
 #
 # Excluding node_modules is load-bearing. Local dev symlinks

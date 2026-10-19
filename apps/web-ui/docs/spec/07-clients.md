@@ -75,9 +75,8 @@ Three clients. One is the main UI (web); two are voice (iOS, Mac).
   `com.emergent.memory.connector` (stable TCC/keychain identity). Build/install:
   `apps/connector.mac/Scripts/mac-build.sh --install` (product `Memory.app`); optional stable signing
   via `apps/connector.mac/Scripts/mac-sign.sh`.
-- See [voice-stack.md](https://github.com/emergent-company/emergent.memory.infra/blob/main/docs/voice-stack.md) for environment values and
-  [2026-09-13-memory-mac-connector](../sessions/2026-09-13-memory-mac-connector.md)
-  for the delivery log.
+- Deployment environment values (LiveKit URLs/keys, voice-stack wiring) are
+  deployment-specific and live in the infrastructure repo, not in this spec.
 
 ## Shared client behaviors
 

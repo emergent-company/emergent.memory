@@ -114,7 +114,7 @@ journalctl -u playwright-ui -f   # follow (shows air reload logs)
 - air watches `tests/e2e/**` and restarts the UI server on change (`.air.toml`).
 - systemd `Restart=always` keeps air itself alive across crashes/session teardown.
 - Unit file: `tests/e2e/playwright-ui.service` (install: `cp` to `/etc/systemd/system/`, then `systemctl daemon-reload && systemctl enable --now playwright-ui`).
-- The UI is served at `https://alfred-dev.tail0358fa.ts.net:8444` (tailscale serve → `127.0.0.1:8123`).
+- The UI is served at the dev gateway origin (tailscale serve → `127.0.0.1:8123`).
 
 ## Test-ID convention
 
@@ -507,7 +507,7 @@ no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.
 ## Notes
 
 - The suite reuses the already-running gateway; it does **not** start one.
-  `E2E_BASE_URL` overrides the target (default `http://alfred-dev.tail0358fa.ts.net:8095`).
+  `E2E_BASE_URL` overrides the target (default `http://localhost:8095`).
 - `E2E_MEMORY_API_URL` overrides the memory API origin the token-lifecycle specs
   probe directly (default `https://api.dev.emergent-company.ai`); those specs use it
   to prove a regenerated/revoked secret is rejected with HTTP 401.

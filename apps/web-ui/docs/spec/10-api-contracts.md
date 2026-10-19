@@ -141,7 +141,7 @@ proxies keep it.
 
 Host-only cookies (the OAuth state cookie and the session cookie) are scoped to the
 request `Host`, so a `Host` that differs from the pinned `PUBLIC_BASE_URL`/`ZITADEL_REDIRECT_URI`
-(e.g. the short Tailscale name `alfred-dev` vs `alfred-dev.tail0358fa.ts.net`) silently
+(e.g. a short host alias vs the full canonical hostname) silently
 drops them — surfacing as "missing oauth state". A canonical-host middleware 302s any
 browser request on a non-canonical `Host` to `PUBLIC_BASE_URL` (path + query preserved),
 skipping `/api/*`, `/internal/*`, `/static/*`, and `/assets/*` so non-browser clients are

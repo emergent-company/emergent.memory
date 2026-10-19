@@ -58,7 +58,7 @@ echo ""
 # 3. Test Count
 echo "3. Running E2E test suite..."
 TEST_START=$(date +%s%N)
-TEST_OUTPUT=$(cd "$SERVER_GO_DIR" && POSTGRES_PASSWORD=emergent-dev-password /usr/local/go/bin/go test ./tests/e2e/... -count=1 2>&1 || true)
+TEST_OUTPUT=$(cd "$SERVER_GO_DIR" && POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}" /usr/local/go/bin/go test ./tests/e2e/... -count=1 2>&1 || true)
 TEST_END=$(date +%s%N)
 TEST_DURATION_MS=$(( (TEST_END - TEST_START) / 1000000 ))
 

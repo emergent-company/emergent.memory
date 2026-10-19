@@ -1,12 +1,12 @@
 import path from 'node:path';
 
 /**
- * Base URL of the running gateway. Pinned to the tailnet URL (not localhost)
- * because the Zitadel OIDC redirect_uri + PUBLIC_BASE_URL are bound to that
- * origin, and the session cookie is set there. Override with E2E_BASE_URL.
+ * Base URL of the running gateway. Defaults to the local gateway (localhost);
+ * override with E2E_BASE_URL when targeting a remote/dev environment whose
+ * Zitadel OIDC redirect_uri + PUBLIC_BASE_URL are bound to that origin.
  */
 export const BASE_URL =
-  process.env.E2E_BASE_URL || 'http://alfred-dev.tail0358fa.ts.net:8095';
+  process.env.E2E_BASE_URL || 'http://localhost:8095';
 
 /** Where the setup project persists the signed-in session (gitignored). */
 export const STORAGE_STATE = path.join(__dirname, '..', '.auth', 'state.json');

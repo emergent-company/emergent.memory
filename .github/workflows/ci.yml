@@ -29,7 +29,7 @@ name: Meta CI
 # trusted ref to actually validate a fork.
 #
 # The review-bot meta checks (script syntax + review-gate tests) moved to
-# emergent-company/emergent.memory.infra. There is no review bot: the
+# the infra repo. There is no review bot: the
 # `emergent-code-reviewer` App survives only as the private-checkout credential.
 on:
   push:

@@ -1,0 +1,44 @@
+# Tree-hygiene baseline — TEMPORARY debt, ratchet only.
+#
+# These tracked files still contain `*.dev.emergent-company.ai` references that
+# predate the tree-hygiene gate. The gate matches that pattern so that NEW
+# occurrences fail CI; the files below are grandfathered until the internal-host
+# sweep lands.
+#
+# Rules:
+#   - Remove an entry only after that file is scrubbed.
+#   - NEVER add an entry. New internal hosts must be scrubbed, not baselined.
+#   - The gate never fails on this file itself.
+#
+# Tracking: internal-host sweep follow-up (from PR #1933 review 2).
+.env.example
+.vscode/mcp.json
+apps/cli/cmd/test_search/main.go
+apps/cli/internal/cmd/ask.go
+apps/connector.mac/MemoryConnector/Sources/Environment.swift
+apps/connector.mac/MemoryConnector/Tests/EnvironmentTests.swift
+apps/server/cmd/extraction-bench/main.go
+apps/server/domain/agents/a2a_discovery_test.go
+apps/server/domain/documents/UPLOAD_API.md
+apps/server/domain/mcp/README.md
+apps/server/domain/mcpregistry/oauth_live_test.go
+apps/server/domain/mcpregistry/oauth_service.go
+apps/server/internal/config/config.go
+apps/web-ui/tests/e2e/.env.e2e.example
+apps/web-ui/tests/e2e/README.md
+apps/web-ui/tests/e2e/helpers/tokens.ts
+apps/web-ui/tests/e2e/specs/agents/agent-mcp-keys-ui.spec.ts
+apps/web-ui/tests/e2e/specs/connector/connector-auth.spec.ts
+docs/guides/mcp-sharing.md
+docs/integrations/paseo/memory-acp.env.example
+docs/integrations/paseo/test-harness/setup.sh
+docs/site/developer-guide/extraction.md
+docs/site/developer-guide/health-ops.md
+docs/site/developer-guide/mcp-servers.md
+docs/site/developer-guide/provider-setup.md
+docs/site/developer-guide/sandbox.md
+docs/site/developer-guide/schema-registry.md
+docs/site/developer-guide/schema.md
+docs/site/user-guide/agents.md
+docs/site/user-guide/api-tokens.md
+docs/site/user-guide/model-setup.md

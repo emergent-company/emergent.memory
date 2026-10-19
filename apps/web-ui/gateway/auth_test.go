@@ -624,21 +624,21 @@ func TestCanonicalHostRedirect(t *testing.T) {
 	next := func(c echo.Context) error { return c.String(http.StatusOK, "ok") }
 
 	// Host mismatch on a browser path → 302 to canonical host, path+query kept.
-	s := &Server{cfg: Config{PublicBaseURL: "http://alfred-dev.tail0358fa.ts.net:8095"}, memory: &fakeMemory{}}
-	c, rec := newReq(http.MethodGet, "/settings?tab=voice", "alfred-dev:8095")
+	s := &Server{cfg: Config{PublicBaseURL: "http://gateway.example.com:8095"}, memory: &fakeMemory{}}
+	c, rec := newReq(http.MethodGet, "/settings?tab=voice", "gateway:8095")
 	if err := s.canonicalHostRedirect(next)(c); err != nil {
 		t.Fatal(err)
 	}
 	if rec.Code != http.StatusFound {
 		t.Errorf("status = %d, want 302", rec.Code)
 	}
-	want := "http://alfred-dev.tail0358fa.ts.net:8095/settings?tab=voice"
+	want := "http://gateway.example.com:8095/settings?tab=voice"
 	if got := rec.Header().Get("Location"); got != want {
 		t.Errorf("Location = %q, want %q", got, want)
 	}
 
 	// Host already canonical → pass-through.
-	c, rec = newReq(http.MethodGet, "/settings", "alfred-dev.tail0358fa.ts.net:8095")
+	c, rec = newReq(http.MethodGet, "/settings", "gateway.example.com:8095")
 	if err := s.canonicalHostRedirect(next)(c); err != nil {
 		t.Fatal(err)
 	}
@@ -647,7 +647,7 @@ func TestCanonicalHostRedirect(t *testing.T) {
 	}
 
 	// API path with a mismatched host → no redirect (programmatic clients).
-	c, rec = newReq(http.MethodGet, "/api/health", "alfred-dev:8095")
+	c, rec = newReq(http.MethodGet, "/api/health", "gateway:8095")
 	if err := s.canonicalHostRedirect(next)(c); err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +657,7 @@ func TestCanonicalHostRedirect(t *testing.T) {
 
 	// Unset PUBLIC_BASE_URL → no redirect regardless of host.
 	s = &Server{cfg: Config{}, memory: &fakeMemory{}}
-	c, rec = newReq(http.MethodGet, "/settings", "alfred-dev:8095")
+	c, rec = newReq(http.MethodGet, "/settings", "gateway:8095")
 	if err := s.canonicalHostRedirect(next)(c); err != nil {
 		t.Fatal(err)
 	}

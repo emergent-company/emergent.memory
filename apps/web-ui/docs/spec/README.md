@@ -17,13 +17,15 @@ This directory is the source of truth for the system design. Read in order.
 | [05-voice-bridge.md](05-voice-bridge.md) | Voice bridge | Python LiveKit worker: audio ⇄ memory chat |
 | [06-livekit.md](06-livekit.md) | LiveKit | Voice transport, rooms, agent dispatch, token minting |
 | [07-clients.md](07-clients.md) | Clients | Web (go-daisy), iOS, Mac wake-word |
-| [08-deployment.md](08-deployment.md) | Deployment | Docker Compose, external services, env & secrets |
 | [09-security.md](09-security.md) | Security | Trust boundary, auth, secret handling |
 | [10-api-contracts.md](10-api-contracts.md) | API contracts | Interfaces between components |
 | [11-reuse-from-diane.md](11-reuse-from-diane.md) | Reuse from Diane | What Memory lifts directly from the Diane project |
 | [12-operations.md](12-operations.md) | Operations | Observability, testing, migration, rollout |
 | [13-roadmap.md](13-roadmap.md) | Roadmap | Phased plan with dependencies and gates |
 | [14-assistant-agent.md](14-assistant-agent.md) | General assistant ("operator") agent | One agent that reads/changes all settings via proposal→accept chat; blueprint + UI integration |
+
+> Deployment, environment, and self-host setup are owned by the infrastructure
+> repo; the former `08-deployment.md` moved there.
 
 ## Status
 
