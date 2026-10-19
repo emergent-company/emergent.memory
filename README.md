@@ -74,7 +74,7 @@ The system supports integration with:
 
 Published documentation is available at **https://emergent-company.github.io/emergent.memory/**.
 
-Development, deployment and environment documentation lives in the [emergent.memory.infra](https://github.com/emergent-company/emergent.memory.infra) repository.
+Development, deployment and environment documentation is maintained in a separate repository.
 
 Additional in-repo documentation is located in the `/docs` directory:
 
@@ -82,3 +82,9 @@ Additional in-repo documentation is located in the `/docs` directory:
 - **/docs/technical**: Deep dives into the architecture and technical implementation details.
 - **/docs/database**: Database schema documentation.
 - **/docs/site**: Source for the published documentation, built via `mkdocs.yml`.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE) (© 2024-2026 Emergent Company).
+
+Third-party components are attributed separately in [NOTICE](NOTICE).
