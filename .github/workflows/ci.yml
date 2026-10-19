@@ -58,6 +58,19 @@ jobs:
           # against the base ref (`--base origin/main`) and need the base commit
           # and blob history present in this checkout.
           fetch-depth: 0
+      # Repo-wide secret scan (#1917). gitleaks was previously only wired into
+      # lefthook.yml — never into a workflow — and each lefthook job silently
+      # `exit 0` when the binary was absent, so the required `ci` check could
+      # merge a secret-bearing commit while reporting green. Provision a pinned,
+      # checksum-verified gitleaks here (never assume the runner's PATH) and run
+      # the same invocation the lint group uses. A missing binary is a hard
+      # failure, and findings fail the step: `.gitleaksignore` stays the ratchet.
+      - name: Install gitleaks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash .github/scripts/install-gitleaks.sh
+      - name: Secrets scan (gitleaks)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: gitleaks dir . --config .gitleaks.toml --no-banner
       # Canonical version guard: root VERSION must equal the `// @version`
       # annotation in apps/server/cmd/server/main.go. A release bumps both
       # together; this fails early when they drift (see #auto-tag dead-path).

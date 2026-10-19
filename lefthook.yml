@@ -210,7 +210,10 @@ pre-commit:
     - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
-          echo "gitleaks not installed, skipping secrets scan"; exit 0
+          if [ "${GITLEAKS_OPTIONAL:-0}" = "1" ]; then
+            echo "gitleaks not installed, skipping secrets scan (GITLEAKS_OPTIONAL=1)"; exit 0
+          fi
+          echo "gitleaks not installed — install it (bash .github/scripts/install-gitleaks.sh) or set GITLEAKS_OPTIONAL=1 to skip"; exit 1
         fi
         gitleaks git --staged --config .gitleaks.toml --no-banner
 
@@ -430,7 +433,10 @@ lint:
     - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
-          echo "gitleaks not installed, skipping secrets scan"; exit 0
+          if [ "${GITLEAKS_OPTIONAL:-0}" = "1" ]; then
+            echo "gitleaks not installed, skipping secrets scan (GITLEAKS_OPTIONAL=1)"; exit 0
+          fi
+          echo "gitleaks not installed — install it (bash .github/scripts/install-gitleaks.sh) or set GITLEAKS_OPTIONAL=1 to skip"; exit 1
         fi
         gitleaks dir . --config .gitleaks.toml --no-banner
 
@@ -545,7 +551,10 @@ lint-webui:
     - name: secrets
       run: |
         if ! command -v gitleaks >/dev/null 2>&1; then
-          echo "gitleaks not installed, skipping secrets scan"; exit 0
+          if [ "${GITLEAKS_OPTIONAL:-0}" = "1" ]; then
+            echo "gitleaks not installed, skipping secrets scan (GITLEAKS_OPTIONAL=1)"; exit 0
+          fi
+          echo "gitleaks not installed — install it (bash .github/scripts/install-gitleaks.sh) or set GITLEAKS_OPTIONAL=1 to skip"; exit 1
         fi
         gitleaks dir . --config .gitleaks.toml --no-banner
 
