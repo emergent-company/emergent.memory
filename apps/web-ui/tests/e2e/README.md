@@ -506,8 +506,10 @@ no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.
 
 ## Notes
 
-- The suite reuses the already-running gateway; it does **not** start one.
-  `E2E_BASE_URL` overrides the target (default `http://localhost:8095`).
+- The suite does **not** start a gateway. Set `E2E_BASE_URL` to the target
+  (default `http://localhost:8095`; the two session-mode CI workflows point it at
+  the deployed dev stack, `https://admin.dev.emergent-company.ai`, because the
+  self-hosted runners are not the gateway host).
 - `E2E_MEMORY_API_URL` overrides the memory API origin the token-lifecycle specs
   probe directly (default `https://api.dev.emergent-company.ai`); those specs use it
   to prove a regenerated/revoked secret is rejected with HTTP 401.

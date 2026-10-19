@@ -1,11 +1,16 @@
 name: Web UI live-LLM scenarios
 
-# Runs the live-LLM `scenarios/chat` Playwright suite against the persistent dev
-# installation (session-mode gateway + dev Zitadel + dev memory). The specs call
-# real models through a real provider key, so they are deliberately NOT part of
-# any PR gate: they are slow, cost money, and are non-deterministic. This is a
-# non-blocking, scheduled + manually-dispatchable job that can NEVER gate a PR —
-# there is no `pull_request` trigger and this workflow is not part of the
+# Runs the live-LLM `scenarios/chat` Playwright suite against the deployed dev
+# stack (session-mode gateway + dev Zitadel + dev memory):
+# E2E_BASE_URL=https://admin.dev.emergent-company.ai,
+# E2E_MEMORY_API_URL=https://api.dev.emergent-company.ai. The self-hosted
+# `memory` runners are separate machines from the gateway host, so the suite's
+# local default (`http://localhost:8095`) can never work there — same fix as the
+# mutations lane (#1901). The specs call real models through a real provider key,
+# so they are deliberately NOT part of any PR gate: they are slow, cost money,
+# and are non-deterministic. This is a non-blocking, scheduled +
+# manually-dispatchable job that can NEVER gate a PR — there is no
+# `pull_request` trigger and this workflow is not part of the
 # branch-protection-required `ci` aggregate.
 #
 # Required repo secrets:
@@ -13,7 +18,11 @@ name: Web UI live-LLM scenarios
 #     Without it the specs env-gate and skip fast (a missing secret degrades to
 #     a skip, not a false failure).
 #   E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD — the Zitadel test user (no
-#     MFA) that the `setup` dependency signs in as.
+#     MFA) that the `setup` dependency signs in as. Canonical values are
+#     host-managed by the operator on memory-dev and are only ever referenced as
+#     `${{ secrets.* }}` — never inlined. They are NOT currently present in
+#     `/opt/emergent-dev/.env`; the preflight step below fails explicitly until
+#     the operator provisions the two repo secrets from the credential vault.
 on:
   schedule:
     # 07:43 UTC daily — off the :00/:15 mark to avoid runner congestion
@@ -38,12 +47,44 @@ jobs:
     name: Live-LLM chat scenarios
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
+    # Target the DEPLOYED dev stack — the runner is not the gateway host, so the
+    # suite's local default never applies here. Inherited by every `run:` step.
+    env:
+      E2E_BASE_URL: https://admin.dev.emergent-company.ai
+      E2E_MEMORY_API_URL: https://api.dev.emergent-company.ai
     defaults:
       run:
         working-directory: apps/web-ui/tests/e2e
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Precondition — dev stack reachable and test user configured
+        # Fail in seconds, naming the broken URL or missing secret, instead of
+        # burning the full timeout on ECONNREFUSED/login failures.
+        env:
+          E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
+          E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+        run: |
+          status=0
+          for var in E2E_TEST_USER_EMAIL E2E_TEST_USER_PASSWORD; do
+            if [ -z "${!var}" ]; then
+              echo "::error::repository secret $var is empty — provision the dev Zitadel test user (no MFA) and set E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD repo secrets from the operator credential vault (they are not present in /opt/emergent-dev/.env). Never hardcode credentials in the workflow."
+              status=1
+            fi
+          done
+          [ "$status" -eq 0 ] || exit "$status"
+
+          # Both URLs are the health endpoints the suite itself depends on.
+          for probe in "${E2E_BASE_URL}/api/health" "${E2E_MEMORY_API_URL}/api/health"; do
+            if curl -sf --connect-timeout 10 --max-time 20 --retry 2 --retry-delay 2 --retry-connrefused -o /dev/null "$probe"; then
+              echo "reachable: $probe"
+            else
+              echo "::error::cannot reach $probe — E2E_BASE_URL=${E2E_BASE_URL}, E2E_MEMORY_API_URL=${E2E_MEMORY_API_URL}. The self-hosted runner has no route to the deployed dev stack, or the dev stack is down."
+              status=1
+            fi
+          done
+          exit "$status"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -79,4 +120,6 @@ jobs:
           E2E_SCENARIO_LLM_API_KEY: ${{ secrets.E2E_SCENARIO_LLM_API_KEY }}
           E2E_TEST_USER_EMAIL: ${{ secrets.E2E_TEST_USER_EMAIL }}
           E2E_TEST_USER_PASSWORD: ${{ secrets.E2E_TEST_USER_PASSWORD }}
+        # `--project=chat` pulls in `setup` as its dependency, then runs the
+        # live-LLM chat specs against the dev stack configured above.
         run: npx playwright test --config=playwright.config.ts --project=chat
