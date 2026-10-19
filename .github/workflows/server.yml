@@ -22,16 +22,23 @@ concurrency:
 env:
   GO_VERSION: '1.26'
 
+# Least privilege: PR-controlled source runs on the self-hosted runner only
+# behind the fork guard; keep the checkout token read-only as defense-in-depth.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # full history for the --new-from-rev ratchet
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -80,9 +87,12 @@ jobs:
     name: Build
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -110,9 +120,12 @@ jobs:
     name: Unit Tests
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -169,6 +182,7 @@ jobs:
     name: DB-backed Tests
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
       # A missing/unreachable DSN must fail this job, not skip its tests.
       REQUIRE_DB: '1'
@@ -181,6 +195,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -422,3 +438,30 @@ jobs:
     steps:
       - name: Server CI gate
         run: echo "Server CI passed"
+
+  server-ci-status:
+    name: server-ci-status
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted jobs are
+    # skipped by the fork guard) still yields a single satisfiable status check.
+    # 'skipped' is treated as pass — guarded jobs are legitimately skipped on
+    # fork PRs — so only 'failure'/'cancelled' fail the gate. ubuntu-latest keeps
+    # this summary off the self-hosted runner and it needs no secrets.
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard, route-authority-guard]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs['lint'].result }}" "${{ needs['build'].result }}" "${{ needs['test-unit'].result }}" "${{ needs['test-db'].result }}" "${{ needs['migration-guard'].result }}" "${{ needs['migration-order-guard'].result }}" "${{ needs['route-authority-guard'].result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "Server CI passed"

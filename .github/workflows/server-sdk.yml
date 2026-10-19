@@ -24,15 +24,23 @@ concurrency:
 env:
   GO_VERSION: '1.26'
 
+# Least privilege: PR-controlled source runs on the self-hosted runner only
+# behind the fork guard; keep the checkout token read-only as defense-in-depth.
+# (create-sdk-tag below keeps its own job-level `contents: write`.)
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: Lint
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -61,23 +69,29 @@ jobs:
 
   test:
     name: Test
-    runs-on: [self-hosted, linux, x64, memory]
+    # Hosted runner: `-race` needs cgo, and the heterogeneous self-hosted
+    # `memory` pool is not guaranteed to have a C compiler (memory-dev has no
+    # gcc and is Arch, so no apt fallback). Hosted ubuntu ships gcc, and running
+    # this unprivileged test job there is safe for fork PRs.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     if: "!startsWith(github.ref, 'refs/tags/')"
+    env:
+      CGO_ENABLED: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
-          # with no hosted fallback, and the runner is persistent:
-          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
-          # GH cache is redundant — it tries to upload ~10GB and always exceeds
-          # the 10GB cache limit.
-          cache: false
+          # Cache only the SDK module set. The old 10GB overflow was the
+          # persistent self-hosted GOMODCACHE, not this module.
+          cache: true
+          cache-dependency-path: apps/server/pkg/sdk/go.sum
 
       - name: Run tests
         working-directory: apps/server/pkg/sdk
@@ -105,10 +119,13 @@ jobs:
     name: Build Examples
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
     needs: [lint, test]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -163,3 +180,32 @@ jobs:
             git tag "$SDK_TAG"
             git push origin "$SDK_TAG"
           fi
+
+  server-sdk-ci-status:
+    name: server-sdk-ci-status
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted lint /
+    # build-examples jobs are skipped by the fork guard) still yields a single
+    # satisfiable status check. `test` runs on hosted for everyone.
+    # 'skipped' is treated as pass — guarded jobs are legitimately skipped on
+    # fork PRs (and lint/test are skipped on tag pushes) — so only
+    # 'failure'/'cancelled' fail the gate. ubuntu-latest keeps this summary off
+    # the self-hosted runner and it needs no secrets.
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, test, build-examples]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs['lint'].result }}" "${{ needs['test'].result }}" "${{ needs['build-examples'].result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "Server SDK CI passed"
