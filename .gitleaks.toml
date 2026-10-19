@@ -16,6 +16,26 @@ regex       = '''\b(memt_[A-Za-z0-9_\-]{10,})\b'''
 keywords    = ["memt_"]
 entropy     = 2.5
 
+# Legacy emergent.memory token — prefix: emt_ (no `m`)
+#
+# Pre-`memt_` tokens are 68 chars: `emt_` + 64 alphanumeric chars (the
+# historical tokens were lowercase hex; the rule accepts the full base62
+# shape). The rule above does not match them, which is why the token leaked in
+# `commands.sh` survived the secret scan (infra tracking issue #37). Match the
+# full legacy shape so
+# test fixtures such as `emt_test_*` and other short `emt_` literals do not
+# produce false positives.
+#
+# Deliberately no entropy gate: the exact 64-character anchor already excludes
+# short fixtures, while an entropy threshold rejects a large fraction of real
+# 64-hex tokens (the leaked token itself sits at ~4.01). A gate here hides the
+# tokens this rule exists to catch without adding any shape protection.
+[[rules]]
+id          = "emergent-memory-legacy-token"
+description = "emergent.memory legacy project/API token (emt_ prefix, 68 chars)"
+regex       = '''\b(emt_[A-Za-z0-9]{64})\b'''
+keywords    = ["emt_"]
+
 # ── Global allowlists ────────────────────────────────────────────────────────
 
 [[allowlists]]
