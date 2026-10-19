@@ -758,7 +758,7 @@ Add to `opencode.json` in your project directory:
   "mcp": {
     "memory": {
       "type": "remote",
-      "url": "https://api.dev.emergent-company.ai/api/mcp/sse/<project-id>",
+      "url": "https://api.example.com/api/mcp/sse/<project-id>",
       "headers": {"Authorization": "Bearer <your-api-token>"},
       "oauth": false,
       "enabled": true,
@@ -1066,7 +1066,7 @@ POST /api/projects/:projectId/mcp/share
 ```json
 {
   "token": "emt_...",
-  "mcpUrl": "https://api.dev.emergent-company.ai/api/mcp",
+  "mcpUrl": "https://api.example.com/api/mcp",
   "projectId": "<uuid>",
   "snippets": {
     "claudeDesktop": "{ ... }",

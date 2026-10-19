@@ -85,7 +85,7 @@ Assign only the scopes your integration needs.
 === "Go SDK"
     ```go
     client, err := sdk.New(sdk.Config{
-        ServerURL: "https://api.dev.emergent-company.ai",
+        ServerURL: "https://api.example.com",
         Auth: sdk.AuthConfig{
             Mode:   "apitoken",
             APIKey: "emt_abc123...",
@@ -131,6 +131,6 @@ The token is invalidated immediately. Any requests using it will receive `401 Un
   run: |
     memory agents trigger $AGENT_ID --project $PROJECT_ID
   env:
-    MEMORY_SERVER_URL: https://api.dev.emergent-company.ai
+    MEMORY_SERVER_URL: https://api.example.com
     MEMORY_PROJECT_API_KEY: ${{ secrets.MEMORY_TOKEN }}
 ```

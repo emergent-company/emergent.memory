@@ -17,9 +17,10 @@ import { completeZitadelLogin } from '../../helpers/auth';
 const EMAIL = process.env.E2E_TEST_USER_EMAIL;
 const PASSWORD = process.env.E2E_TEST_USER_PASSWORD;
 
-// Dev defaults overridable per environment.
+// Defaults to the memory API origin; override only when the connector targets a
+// different deployment. The live config requires E2E_MEMORY_API_URL.
 const SERVER =
-  process.env.E2E_CONNECTOR_SERVER || 'https://api.dev.emergent-company.ai';
+  process.env.E2E_CONNECTOR_SERVER || process.env.E2E_MEMORY_API_URL || '';
 const CLIENT_ID = process.env.E2E_CONNECTOR_CLIENT_ID || '390138928478289930';
 const REDIRECT_URI =
   process.env.E2E_CONNECTOR_REDIRECT || 'com.emergent.memory.connector://callback';

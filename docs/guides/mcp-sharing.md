@@ -15,7 +15,7 @@ The generated token appears in your project's token list and can be revoked at a
 ## Step 1 — Generate a share token
 
 ```bash
-curl -X POST "https://api.dev.emergent-company.ai/api/projects/<project-id>/mcp/share" \
+curl -X POST "https://api.example.com/api/projects/<project-id>/mcp/share" \
   -H "Authorization: Bearer <your-admin-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -28,7 +28,7 @@ curl -X POST "https://api.dev.emergent-company.ai/api/projects/<project-id>/mcp/
 ```json
 {
   "token": "emt_abc123...",
-  "mcpUrl": "https://api.dev.emergent-company.ai/api/mcp",
+  "mcpUrl": "https://api.example.com/api/mcp",
   "projectId": "<project-id>",
   "snippets": {
     "claudeDesktop": "{ \"mcpServers\": { \"memory\": { \"url\": \"...\", \"headers\": { \"X-API-Key\": \"emt_abc123...\" } } } }",
@@ -46,7 +46,7 @@ curl -X POST "https://api.dev.emergent-company.ai/api/projects/<project-id>/mcp/
 Add `"emails"` to the request body and the server will send each address an email containing the token, MCP endpoint, and setup instructions for Claude Desktop and Cursor.
 
 ```bash
-curl -X POST "https://api.dev.emergent-company.ai/api/projects/<project-id>/mcp/share" \
+curl -X POST "https://api.example.com/api/projects/<project-id>/mcp/share" \
   -H "Authorization: Bearer <your-admin-token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -69,7 +69,7 @@ Open `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 {
   "mcpServers": {
     "memory": {
-      "url": "https://api.dev.emergent-company.ai/api/mcp",
+      "url": "https://api.example.com/api/mcp",
       "headers": {
         "X-API-Key": "emt_abc123..."
       }
@@ -90,7 +90,7 @@ Open Cursor → Settings → MCP and add:
 {
   "mcpServers": {
     "memory": {
-      "url": "https://api.dev.emergent-company.ai/api/mcp",
+      "url": "https://api.example.com/api/mcp",
       "headers": {
         "X-API-Key": "emt_abc123..."
       }
@@ -110,7 +110,7 @@ Add to `opencode.json` in your project directory:
   "mcp": {
     "memory": {
       "type": "remote",
-      "url": "https://api.dev.emergent-company.ai/api/mcp",
+      "url": "https://api.example.com/api/mcp",
       "headers": { "X-API-Key": "emt_abc123..." },
       "enabled": true
     }
@@ -127,7 +127,7 @@ Verify: `opencode mcp list` — should show `memory` as connected.
 | Setting | Value |
 |---|---|
 | Transport | HTTP (streamable) |
-| URL | `https://api.dev.emergent-company.ai/api/mcp` |
+| URL | `https://api.example.com/api/mcp` |
 | Auth header | `X-API-Key: emt_abc123...` |
 | Protocol version | `2025-11-25` |
 
@@ -152,11 +152,11 @@ From the API:
 
 ```bash
 # List tokens to find the ID
-curl "https://api.dev.emergent-company.ai/api/projects/<project-id>/tokens" \
+curl "https://api.example.com/api/projects/<project-id>/tokens" \
   -H "Authorization: Bearer <your-admin-token>"
 
 # Revoke by token ID
-curl -X DELETE "https://api.dev.emergent-company.ai/api/projects/<project-id>/tokens/<token-id>" \
+curl -X DELETE "https://api.example.com/api/projects/<project-id>/tokens/<token-id>" \
   -H "Authorization: Bearer <your-admin-token>"
 ```
 

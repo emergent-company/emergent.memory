@@ -8,7 +8,7 @@
 // Usage:
 //
 //	go run ./cmd/extraction-bench/ \
-//	  --host https://api.dev.emergent-company.ai \
+//	  --host https://api.example.com \
 //	  --api-key emt_xxx... \
 //	  --project-id <uuid>
 //

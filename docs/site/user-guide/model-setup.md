@@ -242,7 +242,7 @@ memory provider list
 # Show the resolved effective models for a project (with source: project/org/none)
 # Via API:
 curl -H "Authorization: Bearer <token>" \
-  https://api.dev.emergent-company.ai/api/v1/projects/<project-id>/model-config/effective
+  https://api.example.com/api/v1/projects/<project-id>/model-config/effective
 ```
 
 Response:

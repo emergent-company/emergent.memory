@@ -116,7 +116,7 @@ type Config struct {
 	// A2AOrigin is the public origin advertised in A2A AgentCards
 	// (supportedInterfaces[].url). When empty, the interface URL is derived from
 	// the incoming request (respecting X-Forwarded-Proto/Host for proxied
-	// deployments). Set A2A_ORIGIN to override, e.g. https://api.dev.emergent-company.ai.
+	// deployments). Set A2A_ORIGIN to override, e.g. https://api.example.com.
 	A2AOrigin string `env:"A2A_ORIGIN" envDefault:""`
 
 	// AskV2 enables the code-generation variant of the CLI assistant agent.
@@ -223,7 +223,7 @@ func (d *DatabaseConfig) DSN() string {
 
 // ZitadelConfig holds Zitadel/OIDC authentication settings
 type ZitadelConfig struct {
-	// Domain for Zitadel instance (e.g., "zitadel.dev.emergent-company.ai")
+	// Domain for Zitadel instance (e.g., "zitadel.example.com")
 	Domain string `env:"ZITADEL_DOMAIN" envDefault:"localhost:8080"`
 
 	// Issuer URL for OIDC (defaults to https://{Domain} if not set)
@@ -850,7 +850,7 @@ type MCPRegistryConfig struct {
 	// disables the MCP OAuth connect flow with an actionable error.
 	OAuthRedirectBaseURL string `env:"MCP_REGISTRY_OAUTH_REDIRECT_BASE_URL" envDefault:""`
 	// OAuthLandingURL is the browser URL the OAuth callback redirects to after
-	// the flow, e.g. https://admin.dev.emergent-company.ai/settings/mcp-servers.
+	// the flow, e.g. https://admin.example.com/settings/mcp-servers.
 	// Empty falls back to <OAuthRedirectBaseURL>/settings/mcp-servers, which is
 	// only correct when the API and UI share an origin.
 	OAuthLandingURL string `env:"MCP_REGISTRY_OAUTH_LANDING_URL" envDefault:""`
@@ -864,14 +864,14 @@ type MCPRegistryConfig struct {
 // config (BYO) is layered on top in a later phase; this is the fallback.
 type SourceOAuthConfig struct {
 	// RedirectBaseURL is the public origin of the API (e.g.
-	// https://api.dev.emergent-company.ai). The OAuth redirect URI is
+	// https://api.example.com). The OAuth redirect URI is
 	// <RedirectBaseURL>/api/data-source-integrations/oauth/<provider>/callback,
 	// and the post-callback browser landing path is <RedirectBaseURL>/data-sources.
 	// Empty disables the connect flow with an actionable error.
 	RedirectBaseURL string `env:"SOURCES_OAUTH_REDIRECT_BASE_URL" envDefault:""`
 
 	// LandingURL is the browser URL the OAuth callback redirects to after the
-	// flow, e.g. https://admin.dev.emergent-company.ai/data-sources. Empty falls
+	// flow, e.g. https://admin.example.com/data-sources. Empty falls
 	// back to <RedirectBaseURL>/data-sources, which is only correct when the API
 	// and UI share an origin.
 	LandingURL string `env:"SOURCES_OAUTH_LANDING_URL" envDefault:""`

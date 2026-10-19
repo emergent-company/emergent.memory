@@ -89,10 +89,18 @@ func TestDiscoverServerAuthRequirement_LiveGitHub(t *testing.T) {
 	}
 }
 
-// liveProbeRedirectURI is the callback registered with live authorization servers
-// during a gated probe. It matches the dev deployment's configured redirect base
-// (MCP_REGISTRY_OAUTH_REDIRECT_BASE_URL=https://api.dev.emergent-company.ai).
-const liveProbeRedirectURI = "https://api.dev.emergent-company.ai/api/mcp-servers/oauth/callback"
+// liveProbeRedirectURI returns the callback registered with live authorization
+// servers during a gated probe. Set MCPREGISTRY_LIVE_OAUTH_REDIRECT_URI to the
+// callback registered for the deployment running the probe; there is no baked-in
+// deployment default.
+func liveProbeRedirectURI(t *testing.T) string {
+	t.Helper()
+	uri := os.Getenv("MCPREGISTRY_LIVE_OAUTH_REDIRECT_URI")
+	if uri == "" {
+		t.Fatal("set MCPREGISTRY_LIVE_OAUTH_REDIRECT_URI to the callback registered with the live provider")
+	}
+	return uri
+}
 
 // TestFigmaRegistrationRejected_Live backs the "a registration failure surfaces
 // as an actionable error" requirement: it drives a real dynamic client
@@ -101,6 +109,7 @@ const liveProbeRedirectURI = "https://api.dev.emergent-company.ai/api/mcp-server
 // opaque/internal error. Skipped unless MCPREGISTRY_LIVE_OAUTH_PROBE=1.
 func TestFigmaRegistrationRejected_Live(t *testing.T) {
 	skipUnlessLiveOAuthProbe(t, "Figma")
+	redirectURI := liveProbeRedirectURI(t)
 
 	server := &MCPServer{
 		ID:   "live-figma-registration",
@@ -117,7 +126,7 @@ func TestFigmaRegistrationRejected_Live(t *testing.T) {
 	}
 	t.Logf("registration endpoint: %s", req.RegistrationEndpoint)
 
-	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", liveProbeRedirectURI, req.Scopes)
+	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", redirectURI, req.Scopes)
 	if err == nil {
 		t.Fatalf("registerClient unexpectedly succeeded (client_id=%q): Figma was expected to reject the dynamic client", identity.ClientID)
 	}
@@ -135,6 +144,7 @@ func TestFigmaRegistrationRejected_Live(t *testing.T) {
 // Skipped unless MCPREGISTRY_LIVE_OAUTH_PROBE=1.
 func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
 	skipUnlessLiveOAuthProbe(t, "Linear")
+	redirectURI := liveProbeRedirectURI(t)
 
 	server := &MCPServer{
 		ID:   "live-linear",
@@ -159,7 +169,7 @@ func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
 		t.Fatal("resource identifier missing: the authorize request could not carry RFC 8707 resource")
 	}
 
-	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", liveProbeRedirectURI, req.Scopes)
+	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", redirectURI, req.Scopes)
 	if err != nil {
 		t.Fatalf("registerClient: %v", err)
 	}
@@ -180,7 +190,7 @@ func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
 		t.Fatalf("newCodeVerifier: %v", err)
 	}
 
-	authorizeURL, err := buildAuthorizeURL(req, identity, liveProbeRedirectURI, state, codeChallengeS256(verifier))
+	authorizeURL, err := buildAuthorizeURL(req, identity, redirectURI, state, codeChallengeS256(verifier))
 	if err != nil {
 		t.Fatalf("buildAuthorizeURL: %v", err)
 	}
@@ -195,7 +205,7 @@ func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
 		{"client_id", identity.ClientID},
 		{"code_challenge_method", "S256"},
 		{"resource", req.Resource},
-		{"redirect_uri", liveProbeRedirectURI},
+		{"redirect_uri", redirectURI},
 		{"state", state},
 	}
 	for _, kv := range exact {

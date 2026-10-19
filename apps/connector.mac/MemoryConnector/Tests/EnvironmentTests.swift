@@ -1,3 +1,4 @@
+import Foundation
 @testable import MemoryConnector
 import XCTest
 
@@ -12,12 +13,13 @@ final class EnvironmentTests: XCTestCase {
     }
 
     func testDevConstants() {
+        let env = ProcessInfo.processInfo.environment
         let dev = Environment.dev
         XCTAssertEqual(dev.id, "dev")
         XCTAssertEqual(dev.name, "Memory Dev")
-        XCTAssertEqual(dev.serverURL.absoluteString, "https://api.dev.emergent-company.ai")
-        XCTAssertEqual(dev.issuer.absoluteString, "https://zitadel.dev.emergent-company.ai")
-        XCTAssertEqual(dev.clientID, "390138928478289930")
+        XCTAssertEqual(dev.serverURL.absoluteString, env["MEMORY_DEV_SERVER_URL"] ?? "https://api.example.com")
+        XCTAssertEqual(dev.issuer.absoluteString, env["MEMORY_DEV_ISSUER_URL"] ?? "https://zitadel.example.com")
+        XCTAssertEqual(dev.clientID, env["MEMORY_DEV_CLIENT_ID"] ?? "390138928478289930")
     }
 
     func testAllIsProdThenDev() {

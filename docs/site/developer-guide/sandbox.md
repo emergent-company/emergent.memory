@@ -46,21 +46,21 @@ creating → ready → (stopping → stopped)
 ### List sandboxes
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/v1/agent/sandboxes \
+curl https://api.example.com/api/v1/agent/sandboxes \
   -H "Authorization: Bearer <token>"
 ```
 
 ### List available providers
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/providers \
+curl https://api.example.com/api/v1/agent/sandboxes/providers \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Create a sandbox
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -82,7 +82,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes \
 ### Create from snapshot
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/from-snapshot \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/from-snapshot \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -94,21 +94,21 @@ curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/from-sna
 ### Stop a sandbox
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/stop \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/stop \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Resume a stopped sandbox
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/resume \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/resume \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Take a snapshot
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/snapshot \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/snapshot \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -117,7 +117,7 @@ Returns `{"snapshotId": "..."}`. Use with `from-snapshot` to create pre-warmed s
 ### Delete a sandbox
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id> \
+curl -X DELETE https://api.example.com/api/v1/agent/sandboxes/<id> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -130,7 +130,7 @@ Once a sandbox is `ready`, you can execute tools inside it. All tool calls are r
 ### Bash
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/bash \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/bash \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -145,7 +145,7 @@ Response: `{ "stdout": "...", "stderr": "...", "exitCode": 0, "timedOut": false 
 ### Read a file
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/read \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/read \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "filePath": "/sandbox/src/main.go", "offset": 1, "limit": 100 }'
@@ -156,7 +156,7 @@ Response: `{ "content": "...", "lineCount": 100, "truncated": false }`
 ### Write a file
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/write \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/write \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "filePath": "/sandbox/output.txt", "content": "Hello, world!" }'
@@ -165,7 +165,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/wri
 ### Edit a file (exact string replacement)
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/edit \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/edit \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -181,7 +181,7 @@ Response: `{ "replacements": 1 }`
 ### Glob
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/glob \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/glob \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "pattern": "**/*.go", "path": "/sandbox/src" }'
@@ -192,7 +192,7 @@ Response: `{ "files": ["/sandbox/src/main.go", ...] }`
 ### Grep
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/grep \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/grep \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "pattern": "TODO", "path": "/sandbox", "include": "*.go", "maxResults": 50 }'
@@ -203,7 +203,7 @@ Response: `{ "matches": [{ "file": "...", "line": 42, "content": "// TODO: fix t
 ### Git
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/agent/sandboxes/<id>/git \
+curl -X POST https://api.example.com/api/v1/agent/sandboxes/<id>/git \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{ "args": ["status"], "workdir": "/sandbox" }'
@@ -263,14 +263,14 @@ You can run persistent MCP server containers inside the sandbox system. These ar
 ### List hosted servers
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/v1/mcp/hosted \
+curl https://api.example.com/api/v1/mcp/hosted \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Register a hosted server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/mcp/hosted \
+curl -X POST https://api.example.com/api/v1/mcp/hosted \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -285,7 +285,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/v1/mcp/hosted \
 ### Call a hosted server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/mcp/hosted/<id>/call \
+curl -X POST https://api.example.com/api/v1/mcp/hosted/<id>/call \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -297,14 +297,14 @@ curl -X POST https://api.dev.emergent-company.ai/api/v1/mcp/hosted/<id>/call \
 ### Restart a hosted server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/mcp/hosted/<id>/restart \
+curl -X POST https://api.example.com/api/v1/mcp/hosted/<id>/restart \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Delete a hosted server
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/v1/mcp/hosted/<id> \
+curl -X DELETE https://api.example.com/api/v1/mcp/hosted/<id> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -317,14 +317,14 @@ Sandbox images are the base Docker images used when creating sandboxes. Global i
 ### List images
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/sandbox-images \
+curl https://api.example.com/api/admin/sandbox-images \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Register a custom image
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/sandbox-images \
+curl -X POST https://api.example.com/api/admin/sandbox-images \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -340,6 +340,6 @@ Image status transitions: `pending → pulling → ready` (or `error` on failure
 ### Delete an image
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/admin/sandbox-images/<id> \
+curl -X DELETE https://api.example.com/api/admin/sandbox-images/<id> \
   -H "Authorization: Bearer <token>"
 ```

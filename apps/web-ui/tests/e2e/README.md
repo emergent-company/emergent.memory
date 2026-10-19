@@ -1,8 +1,7 @@
 # E2E tests (Playwright)
 
-End-to-end suite that drives the **real dev installation** — dev memory
-(`https://api.dev.emergent-company.ai`) + dev Zitadel + the gateway in session
-mode — through the full tenant lifecycle:
+End-to-end suite that drives a **real dev installation** — the memory API,
+Zitadel, and the gateway in session mode — through the full tenant lifecycle:
 
 ```
 setup project     OIDC login → create org → project → provider (API) → save storage state
@@ -23,9 +22,11 @@ globalTeardown    delete the bootstrap org (idempotent, runs on failure)
 
 ## Prerequisites
 
-1. The gateway is running in **session mode** on the tailnet URL
-   (`AUTH_MODE=session`, Zitadel configured). Start it with `task dev`.
-2. A Zitadel **test user** with no MFA exists in `zitadel.dev.emergent-company.ai`.
+1. The gateway is running in **session mode** on a reachable URL
+   (`AUTH_MODE=session`, Zitadel configured). Start it with `task dev`; set
+   `E2E_BASE_URL` if it is not `http://localhost:8095`.
+2. A Zitadel **test user** with no MFA exists on the deployment's issuer
+   (e.g. `https://zitadel.example.com`).
 
 ## Setup
 
@@ -34,9 +35,10 @@ cd tests/e2e
 npm install
 npx playwright install chromium   # once (--with-deps on a bare host)
 
-# credentials (gitignored)
+# credentials + deployment targets (gitignored)
 cp .env.e2e.example .env.e2e
-# edit .env.e2e → set E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD
+# edit .env.e2e → set E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD and
+#                 E2E_MEMORY_API_URL (the memory API origin)
 ```
 
 Live-LLM scenario credentials (optional — the scenario spec skips without a
@@ -93,8 +95,8 @@ built once via `go build ./cmd/memory-connector`; no gateway is needed.
 cd tests/e2e
 npx playwright test --project=connector
 
-# env overrides (defaults target dev):
-#   E2E_CONNECTOR_SERVER=https://api.dev.emergent-company.ai
+# env overrides (no baked-in default):
+#   E2E_CONNECTOR_SERVER=https://api.example.com   # defaults to E2E_MEMORY_API_URL
 #   E2E_CONNECTOR_CLIENT_ID=390138928478289930
 #   E2E_CONNECTOR_REDIRECT=com.emergent.memory.connector://callback
 #   MEMORY_CONNECTOR_BIN=/path/to/memory-connector   # skip the build
@@ -508,11 +510,11 @@ no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.
 
 - The suite does **not** start a gateway. Set `E2E_BASE_URL` to the target
   (default `http://localhost:8095`; the two session-mode CI workflows point it at
-  the deployed dev stack, `https://admin.dev.emergent-company.ai`, because the
-  self-hosted runners are not the gateway host).
-- `E2E_MEMORY_API_URL` overrides the memory API origin the token-lifecycle specs
-  probe directly (default `https://api.dev.emergent-company.ai`); those specs use it
-  to prove a regenerated/revoked secret is rejected with HTTP 401.
+  the deployed dev stack because the self-hosted runners are not the gateway host).
+- `E2E_MEMORY_API_URL` (required) sets the memory API origin the token-lifecycle
+  specs probe directly; those specs use it to prove a regenerated/revoked secret
+  is rejected with HTTP 401. The live config fails fast when it is unset, and the
+  session workflows set it to the deployed dev stack.
 - **Fresh Git worktree:** `apps/web-ui/gateway/*_templ.go` and
   `apps/web-ui/gateway/webui/static/css/app.css` are gitignored, so a new
   worktree has no generated templates or stylesheet and the gateway will **not**

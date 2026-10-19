@@ -62,7 +62,7 @@ Each stage is an independent job queue. Failures in one stage don't block others
 ### List jobs for a project
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/extraction-jobs/projects/<projectId> \
+curl https://api.example.com/api/admin/extraction-jobs/projects/<projectId> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -78,14 +78,14 @@ Query parameters:
 ### Get a specific job
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/extraction-jobs/<jobId> \
+curl https://api.example.com/api/admin/extraction-jobs/<jobId> \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Get job statistics
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/extraction-jobs/projects/<projectId>/statistics \
+curl https://api.example.com/api/admin/extraction-jobs/projects/<projectId>/statistics \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -94,7 +94,7 @@ Returns counts by status and job type, plus throughput metrics (jobs per hour, a
 ### Create a job manually
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs \
+curl -X POST https://api.example.com/api/admin/extraction-jobs \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -110,14 +110,14 @@ Higher `priority` values are processed first.
 ### Cancel a job
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/<jobId>/cancel \
+curl -X POST https://api.example.com/api/admin/extraction-jobs/<jobId>/cancel \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Retry a failed job
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/<jobId>/retry \
+curl -X POST https://api.example.com/api/admin/extraction-jobs/<jobId>/retry \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -128,7 +128,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/<jobI
 ### Bulk cancel
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/projects/<projectId>/bulk-cancel \
+curl -X POST https://api.example.com/api/admin/extraction-jobs/projects/<projectId>/bulk-cancel \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"status": "queued"}'
@@ -137,7 +137,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/proje
 ### Bulk retry
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/projects/<projectId>/bulk-retry \
+curl -X POST https://api.example.com/api/admin/extraction-jobs/projects/<projectId>/bulk-retry \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"status": "failed"}'
@@ -146,7 +146,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/extraction-jobs/proje
 ### Bulk delete
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/admin/extraction-jobs/projects/<projectId>/bulk-delete \
+curl -X DELETE https://api.example.com/api/admin/extraction-jobs/projects/<projectId>/bulk-delete \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"status": "completed", "olderThanDays": 30}'
@@ -161,7 +161,7 @@ Each extraction job records detailed logs for every step, including LLM calls, t
 ### Get logs for a job
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/extraction-jobs/<jobId>/logs \
+curl https://api.example.com/api/admin/extraction-jobs/<jobId>/logs \
   -H "Authorization: Bearer <token>"
 ```
 

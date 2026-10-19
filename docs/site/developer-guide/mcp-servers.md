@@ -29,7 +29,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/client-sse"],
       "env": {
-        "MCP_SERVER_URL": "https://api.dev.emergent-company.ai/mcp/sse",
+        "MCP_SERVER_URL": "https://api.example.com/mcp/sse",
         "MCP_API_TOKEN": "<your-api-token>"
       }
     }
@@ -40,7 +40,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 Or using the streamable HTTP transport with a client that supports it:
 
 ```
-https://api.dev.emergent-company.ai/mcp
+https://api.example.com/mcp
 Authorization: Bearer <api-token>
 ```
 
@@ -53,7 +53,7 @@ Add to `opencode.json` in your project directory:
   "mcp": {
     "memory": {
       "type": "remote",
-      "url": "https://api.dev.emergent-company.ai/api/mcp/sse/<project-id>",
+      "url": "https://api.example.com/api/mcp/sse/<project-id>",
       "headers": {"Authorization": "Bearer <your-api-token>"},
       "oauth": false,
       "enabled": true,
@@ -106,12 +106,12 @@ List the builtin server and its tools for your project:
 
 ```bash
 # 1. Find the builtin server ID (auto-created on first list)
-curl "https://api.dev.emergent-company.ai/api/admin/mcp-servers?projectId=<projectId>" \
+curl "https://api.example.com/api/admin/mcp-servers?projectId=<projectId>" \
   -H "Authorization: Bearer <token>"
 # → find the entry with "type": "builtin"
 
 # 2. List its tools (includes inheritedFrom field)
-curl https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools \
+curl https://api.example.com/api/admin/mcp-servers/<builtinServerId>/tools \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -120,7 +120,7 @@ Each tool in the response includes an `inheritedFrom` field: `"project"`, `"org"
 **Enable/disable a built-in tool at project level:**
 
 ```bash
-curl -X PATCH "https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
+curl -X PATCH "https://api.example.com/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
@@ -129,7 +129,7 @@ curl -X PATCH "https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builti
 **Set a per-project API key for `brave_web_search`:**
 
 ```bash
-curl -X PATCH "https://api.dev.emergent-company.ai/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
+curl -X PATCH "https://api.example.com/api/admin/mcp-servers/<builtinServerId>/tools/<toolId>" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -147,14 +147,14 @@ Org defaults apply to all projects in the org that have no project-level overrid
 **List current org defaults:**
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings \
+curl https://api.example.com/api/admin/orgs/<orgId>/tool-settings \
   -H "Authorization: Bearer <token>"
 ```
 
 **Set an org default (enable + API key):**
 
 ```bash
-curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+curl -X PUT "https://api.example.com/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -166,7 +166,7 @@ curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-set
 **Disable `brave_web_search` for all projects in the org by default:**
 
 ```bash
-curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+curl -X PUT "https://api.example.com/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
@@ -175,7 +175,7 @@ curl -X PUT "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-set
 **Remove an org default** (projects fall back to the global env var):
 
 ```bash
-curl -X DELETE "https://api.dev.emergent-company.ai/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
+curl -X DELETE "https://api.example.com/api/admin/orgs/<orgId>/tool-settings/brave_web_search" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -220,14 +220,14 @@ Each project can register external MCP servers. These servers are proxied on dem
 ### List registered servers
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/mcp-servers \
+curl https://api.example.com/api/admin/mcp-servers \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Register a stdio server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
+curl -X POST https://api.example.com/api/admin/mcp-servers \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -243,7 +243,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
 ### Register an SSE server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
+curl -X POST https://api.example.com/api/admin/mcp-servers \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -258,7 +258,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
 ### Register an HTTP server
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
+curl -X POST https://api.example.com/api/admin/mcp-servers \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -273,7 +273,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers \
 ### Inspect a server (preview tools without saving)
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId>/inspect \
+curl -X POST https://api.example.com/api/admin/mcp-servers/<serverId>/inspect \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -282,7 +282,7 @@ Returns the tool list from the live server without persisting anything.
 ### Sync tool catalog
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId>/sync \
+curl -X POST https://api.example.com/api/admin/mcp-servers/<serverId>/sync \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -291,14 +291,14 @@ Connects to the server, calls `tools/list`, and upserts results into the local t
 ### List synced tools
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId>/tools \
+curl https://api.example.com/api/admin/mcp-servers/<serverId>/tools \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Enable / disable a tool
 
 ```bash
-curl -X PATCH https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId>/tools/<toolId> \
+curl -X PATCH https://api.example.com/api/admin/mcp-servers/<serverId>/tools/<toolId> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
@@ -309,7 +309,7 @@ Disabled tools are filtered from the agent context.
 ### Update a server
 
 ```bash
-curl -X PATCH https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId> \
+curl -X PATCH https://api.example.com/api/admin/mcp-servers/<serverId> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
@@ -318,7 +318,7 @@ curl -X PATCH https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverI
 ### Delete a server
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/admin/mcp-servers/<serverId> \
+curl -X DELETE https://api.example.com/api/admin/mcp-servers/<serverId> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -331,21 +331,21 @@ Browse and install servers from the official MCP registry at `registry.modelcont
 ### Search the registry
 
 ```bash
-curl "https://api.dev.emergent-company.ai/api/admin/mcp-registry/search?q=github" \
+curl "https://api.example.com/api/admin/mcp-registry/search?q=github" \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Get details for a registry server
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/admin/mcp-registry/servers/github \
+curl https://api.example.com/api/admin/mcp-registry/servers/github \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Install from the registry
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/admin/mcp-registry/install \
+curl -X POST https://api.example.com/api/admin/mcp-registry/install \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{

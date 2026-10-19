@@ -63,11 +63,11 @@ var (
 // back to) and the UI URL the browser lands on afterwards.
 type OAuthConfig struct {
 	// RedirectBaseURL is the externally reachable origin of the API, e.g.
-	// https://api.dev.emergent-company.ai. The registered redirect URI is
+	// https://api.example.com. The registered redirect URI is
 	// <RedirectBaseURL>/api/mcp-servers/oauth/callback. Empty disables the flow.
 	RedirectBaseURL string
 	// LandingURL is the browser-facing URL the callback redirects to, e.g.
-	// https://admin.dev.emergent-company.ai/settings/mcp-servers. Empty falls
+	// https://admin.example.com/settings/mcp-servers. Empty falls
 	// back to <RedirectBaseURL>/settings/mcp-servers (single-origin setups).
 	LandingURL string
 	// ClientName is the client_name presented at dynamic client registration.

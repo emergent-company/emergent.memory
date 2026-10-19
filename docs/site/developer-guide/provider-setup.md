@@ -24,7 +24,7 @@ Org-level credentials are the default fallback for all projects in the org.
 ### Configure Google AI (Gemini API)
 
 ```bash
-curl -X PUT https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers/google-ai \
+curl -X PUT https://api.example.com/api/v1/organizations/<orgId>/providers/google-ai \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -37,7 +37,7 @@ curl -X PUT https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/pro
 ### Configure Vertex AI
 
 ```bash
-curl -X PUT https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers/vertex-ai \
+curl -X PUT https://api.example.com/api/v1/organizations/<orgId>/providers/vertex-ai \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -52,7 +52,7 @@ curl -X PUT https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/pro
 ### Check configuration status
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers/google-ai \
+curl https://api.example.com/api/v1/organizations/<orgId>/providers/google-ai \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -69,14 +69,14 @@ curl https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers/
 ### List all configured providers
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers \
+curl https://api.example.com/api/v1/organizations/<orgId>/providers \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Remove a provider
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/providers/google-ai \
+curl -X DELETE https://api.example.com/api/v1/organizations/<orgId>/providers/google-ai \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -91,7 +91,7 @@ A project-level config overrides the org default for that project only. Useful w
 - You are running A/B tests across projects
 
 ```bash
-curl -X PUT https://api.dev.emergent-company.ai/api/v1/projects/<projectId>/providers/google-ai \
+curl -X PUT https://api.example.com/api/v1/projects/<projectId>/providers/google-ai \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -110,7 +110,7 @@ The resolution order is: **project config → org config → error**.
 Before relying on a provider for production workloads, test the credentials:
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/v1/providers/google-ai/test \
+curl -X POST https://api.example.com/api/v1/providers/google-ai/test \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"apiKey": "AIza..."}'
@@ -125,7 +125,7 @@ Returns `200 OK` with a `{"success": true}` body on success, or an error message
 Retrieve the model catalog for a provider:
 
 ```bash
-curl "https://api.dev.emergent-company.ai/api/v1/providers/google-ai/models?type=generative" \
+curl "https://api.example.com/api/v1/providers/google-ai/models?type=generative" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -155,14 +155,14 @@ Every LLM call is recorded asynchronously. Events are buffered and bulk-inserted
 ### View org usage
 
 ```bash
-curl "https://api.dev.emergent-company.ai/api/v1/organizations/<orgId>/usage?since=2026-03-01" \
+curl "https://api.example.com/api/v1/organizations/<orgId>/usage?since=2026-03-01" \
   -H "Authorization: Bearer <token>"
 ```
 
 ### View project usage
 
 ```bash
-curl "https://api.dev.emergent-company.ai/api/v1/projects/<projectId>/usage" \
+curl "https://api.example.com/api/v1/projects/<projectId>/usage" \
   -H "Authorization: Bearer <token>"
 ```
 

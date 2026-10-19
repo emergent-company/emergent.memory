@@ -99,7 +99,8 @@ func runAsk(cmd *cobra.Command, args []string) error {
 	if cfgErr == nil && cfg.ServerURL != "" {
 		baseURL = cfg.ServerURL
 	} else {
-		baseURL = "https://api.dev.emergent-company.ai"
+		// Match the CLI's public default (config.defaults().ServerURL).
+		baseURL = "https://memory.emergent-company.ai"
 	}
 
 	// Try to get a full authenticated client.

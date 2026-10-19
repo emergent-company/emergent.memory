@@ -21,7 +21,7 @@ The liveness/readiness probes (`/health`, `/healthz`, `/ready`) are deliberately
 Returns a JSON object with overall status and per-subsystem checks.
 
 ```bash
-curl https://api.dev.emergent-company.ai/health
+curl https://api.example.com/health
 ```
 
 ```json
@@ -45,7 +45,7 @@ Returns `200` when healthy. Returns `503 Service Unavailable` when any check fai
 Returns plain text `OK` (200) or `Service Unavailable` (503). Use this for high-frequency Kubernetes liveness probes where JSON parsing overhead is undesirable.
 
 ```bash
-curl https://api.dev.emergent-company.ai/healthz
+curl https://api.example.com/healthz
 # OK
 ```
 
@@ -56,7 +56,7 @@ curl https://api.dev.emergent-company.ai/healthz
 Returns a JSON object indicating whether the server is ready to receive traffic. The server may be alive (`/healthz`) but not yet ready (e.g. still running migrations).
 
 ```bash
-curl https://api.dev.emergent-company.ai/ready
+curl https://api.example.com/ready
 ```
 
 ```json
@@ -108,7 +108,7 @@ The diagnostics endpoint provides live database pool inspection and slow-query d
 Requires an active `superadmin_full` grant. The `long_queries` report redacts raw SQL text — it exposes only the query length (`query_length`) alongside `pid`, `duration`, and `state`, so an in-flight query's literals (which may embed secrets or user data) never leave the server.
 
 ```bash
-curl -H "Authorization: Bearer <superadmin-token>" https://api.dev.emergent-company.ai/api/diagnostics
+curl -H "Authorization: Bearer <superadmin-token>" https://api.example.com/api/diagnostics
 ```
 
 Response fields:
@@ -163,7 +163,7 @@ GET /api/docs/openapi.json
 or in the admin UI:
 
 ```
-https://admin.dev.emergent-company.ai/api-reference
+https://admin.example.com/api-reference
 ```
 
 You can import the spec into Postman, Insomnia, or any OpenAPI-compatible tool.

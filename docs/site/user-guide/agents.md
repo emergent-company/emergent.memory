@@ -151,7 +151,7 @@ memory agents hooks create <agent-id> \
 ### Trigger from an external system
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/webhooks/agents/<hook-id> \
+curl -X POST https://api.example.com/api/webhooks/agents/<hook-id> \
   -H "Authorization: Bearer <token>"
 ```
 

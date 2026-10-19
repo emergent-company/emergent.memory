@@ -51,13 +51,23 @@ struct Environment: Identifiable, Hashable, Sendable {
         clientID: "390138006318678019"
     )
 
+    /// Reads a dev-only override from the launch environment. The fallbacks are
+    /// RFC 2606 reserved hosts so the public source never bakes in an internal
+    /// deployment; a dev build sets these in its Xcode scheme or shell.
+    private static func devValue(_ key: String, fallback: String) -> String {
+        ProcessInfo.processInfo.environment[key] ?? fallback
+    }
+
     /// Hosted development environment (separate Zitadel provider + client).
+    /// Configure it out-of-band with `MEMORY_DEV_SERVER_URL` /
+    /// `MEMORY_DEV_ISSUER_URL` (and optionally `MEMORY_DEV_CLIENT_ID`); without
+    /// them the entry stays on reserved example hosts.
     static let dev = Environment(
         id: "dev",
         name: "Memory Dev",
-        serverURL: URL(string: "https://api.dev.emergent-company.ai")!,
-        issuer: URL(string: "https://zitadel.dev.emergent-company.ai")!,
-        clientID: "390138928478289930"
+        serverURL: URL(string: devValue("MEMORY_DEV_SERVER_URL", fallback: "https://api.example.com"))!,
+        issuer: URL(string: devValue("MEMORY_DEV_ISSUER_URL", fallback: "https://zitadel.example.com"))!,
+        clientID: devValue("MEMORY_DEV_CLIENT_ID", fallback: "390138928478289930")
     )
 
     /// Built-in environments, in display order.

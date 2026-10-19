@@ -30,7 +30,7 @@ const SHARES = '/settings/mcp-servers/shares';
 // probes for it once and skips the endpoint-dependent tests with a stated
 // reason when the deployed backend predates it — the always-runnable render
 // assertions below still execute.
-const MEMORY_API_URL = process.env.E2E_MEMORY_API_URL || 'https://api.dev.emergent-company.ai';
+const MEMORY_API_URL = process.env.E2E_MEMORY_API_URL ?? '';
 
 /** One key row as returned by the gateway JSON list (no secret by construction). */
 interface AgentMCPKeyRow {

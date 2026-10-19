@@ -14,10 +14,13 @@ import (
 )
 
 func main() {
-	// Configuration
-	serverURL := "https://api.dev.emergent-company.ai"
-	projectID := "dfe2febb-1971-4325-8f97-c816c6609f6d" // IMDB project
-	orgID := "c9bfa6d1-dc9f-4c3b-ac37-7a0411a0beba"
+	// Configuration — no deployment coordinates are baked in.
+	serverURL := os.Getenv("MEMORY_SERVER_URL")
+	projectID := os.Getenv("MEMORY_PROJECT_ID")
+	orgID := os.Getenv("MEMORY_ORG_ID")
+	if serverURL == "" || projectID == "" {
+		log.Fatal("MEMORY_SERVER_URL and MEMORY_PROJECT_ID must be set")
+	}
 
 	// Load credentials from config
 	configPath := os.Getenv("HOME") + "/.memory/config.json"
@@ -48,7 +51,7 @@ func main() {
 	// Test query
 	query := "who directed fight club and what are the other movies of this director"
 	fmt.Printf("Testing query: %s\n", query)
-	fmt.Printf("Project: IMDB (%s)\n", projectID)
+	fmt.Printf("Project: %s\n", projectID)
 	fmt.Printf("Server: %s\n\n", serverURL)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

@@ -46,7 +46,7 @@
     }
     // "kb": {
     //   "type": "http",
-    //   "url": "${KB_MCP_URL:-https://admin.dev.emergent-company.ai/api/mcp/rpc}",
+    //   "url": "${KB_MCP_URL:-https://admin.example.com/api/mcp/rpc}",
     //   "headers": {
     //     "Authorization": "Bearer ${KB_MCP_TOKEN:-data-read-token}",
     //     "Content-Type": "application/json",

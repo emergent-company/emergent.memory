@@ -117,9 +117,8 @@ export async function readOneTimeSecret(page: Page): Promise<string> {
   return secret;
 }
 
-/** Memory API origin. The gateway talks to it via MEMORY_URL; dev default below. */
-export const MEMORY_API_URL =
-  process.env.E2E_MEMORY_API_URL || 'https://api.dev.emergent-company.ai';
+/** Memory API origin. Required by the live config (see playwright.config.ts). */
+export const MEMORY_API_URL = process.env.E2E_MEMORY_API_URL ?? '';
 
 /**
  * Assert the memory API rejects `token` as unauthenticated. Revoked/rotated

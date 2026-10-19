@@ -6,6 +6,14 @@ import { BASE_URL, STORAGE_STATE } from './constants/storage';
 // Load the gitignored test-user credentials before config reads them.
 loadEnv({ path: path.join(__dirname, '.env.e2e') });
 
+// The live suite targets a real deployment, so there is no baked-in host.
+// Fail at config load instead of letting a relative URL silently hit the gateway.
+if (!process.env.E2E_MEMORY_API_URL) {
+  throw new Error(
+    'E2E_MEMORY_API_URL is required (there is no deployment default); set it in .env.e2e or the environment',
+  );
+}
+
 export default defineConfig({
   testDir: './',
   fullyParallel: true,

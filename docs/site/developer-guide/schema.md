@@ -29,7 +29,7 @@ draft → published → (deprecated)
 ### Create a schema
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas \
+curl -X POST https://api.example.com/api/schemas \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -81,14 +81,14 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas \
 ### Get a schema
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/<schemaId> \
+curl https://api.example.com/api/schemas/<schemaId> \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Update a schema
 
 ```bash
-curl -X PUT https://api.dev.emergent-company.ai/api/schemas/<schemaId> \
+curl -X PUT https://api.example.com/api/schemas/<schemaId> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"version": "1.0.1", "description": "Updated description"}'
@@ -97,7 +97,7 @@ curl -X PUT https://api.dev.emergent-company.ai/api/schemas/<schemaId> \
 ### Delete a schema
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/schemas/<schemaId> \
+curl -X DELETE https://api.example.com/api/schemas/<schemaId> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -135,21 +135,21 @@ curl -X DELETE https://api.dev.emergent-company.ai/api/schemas/<schemaId> \
 ### Browse available schemas
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/available \
+curl https://api.example.com/api/schemas/projects/<projectId>/available \
   -H "Authorization: Bearer <token>"
 ```
 
 ### List installed schemas
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/installed \
+curl https://api.example.com/api/schemas/projects/<projectId>/installed \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Assign a schema
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/assign \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/assign \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"schemaId": "<schemaId>"}'
@@ -160,7 +160,7 @@ This creates an assignment with `active: true` by default.
 ### Enable / disable an assignment
 
 ```bash
-curl -X PATCH https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/assignments/<assignmentId> \
+curl -X PATCH https://api.example.com/api/schemas/projects/<projectId>/assignments/<assignmentId> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"active": false}'
@@ -171,7 +171,7 @@ Inactive assignments do not contribute types to the compiled registry.
 ### Remove an assignment
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/assignments/<assignmentId> \
+curl -X DELETE https://api.example.com/api/schemas/projects/<projectId>/assignments/<assignmentId> \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -182,7 +182,7 @@ curl -X DELETE https://api.dev.emergent-company.ai/api/schemas/projects/<project
 The compiled types endpoint merges all **active** schema assignments for a project into a single flat type map. Later-assigned schemas override earlier ones for the same type name.
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/compiled-types \
+curl https://api.example.com/api/schemas/projects/<projectId>/compiled-types \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -195,7 +195,7 @@ This is the schema registry the extraction pipeline uses. Types registered here 
 The history endpoint returns **all** schema assignments for a project including ones that have been uninstalled (soft-deleted). Useful for auditing which schemas were used over time.
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/history \
+curl https://api.example.com/api/schemas/projects/<projectId>/history \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -208,7 +208,7 @@ Each item includes `status: "installed"` or `status: "uninstalled"` and an optio
 Returns compiled schema packs claimed by at least one **applied** blueprint (`status = "applied"`). Packs claimed only by unapplied or superseded blueprints are omitted. An empty result is `[]`.
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/pack-claims \
+curl https://api.example.com/api/schemas/projects/<projectId>/pack-claims \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -295,7 +295,7 @@ migrations:
 The original migrate endpoint performs direct SQL renames on graph data without schema-version tracking. Use this for quick, low-risk renames when you don't have schema version metadata:
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/migrate \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -316,7 +316,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId
 Runs migration logic on all matching objects in dry-run mode and returns aggregated risk results without making any changes.
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate/preview \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/migrate/preview \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"from_schema_id": "<fromId>", "to_schema_id": "<toId>"}'
@@ -325,7 +325,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId
 #### Execute a migration
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate/execute \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/migrate/execute \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -347,7 +347,7 @@ not the version to roll back to. The objects are restored to that archive's
 a 404.
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate/rollback \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/migrate/rollback \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"to_version": "2.0.0", "restore_type_registry": false}'
@@ -358,7 +358,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId
 Strips archive entries up to and including `through_version` from all project objects, freeing storage.
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migrate/commit \
+curl -X POST https://api.example.com/api/schemas/projects/<projectId>/migrate/commit \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"through_version": "1.0.0"}'
@@ -367,7 +367,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/schemas/projects/<projectId
 #### Get migration job status
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schemas/projects/<projectId>/migration-jobs/<jobId> \
+curl https://api.example.com/api/schemas/projects/<projectId>/migration-jobs/<jobId> \
   -H "Authorization: Bearer <token>"
 ```
 

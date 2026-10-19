@@ -222,10 +222,10 @@ func TestGlobalAgentCardHandler_InterfaceURLNonEmpty(t *testing.T) {
 }
 
 func TestResolveInterfaceOrigin_ConfiguredOriginWins(t *testing.T) {
-	h := &A2AHandler{a2aOrigin: "https://api.dev.emergent-company.ai"} // constructor trims trailing slash
+	h := &A2AHandler{a2aOrigin: "https://api.example.com"} // constructor trims trailing slash
 	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/")
 
-	assert.Equal(t, "https://api.dev.emergent-company.ai", h.resolveInterfaceOrigin(c))
+	assert.Equal(t, "https://api.example.com", h.resolveInterfaceOrigin(c))
 }
 
 func TestResolveInterfaceOrigin_DerivedFromRequest(t *testing.T) {
@@ -251,10 +251,10 @@ func TestResolveInterfaceOrigin_AppURLWinsOverForwardedHeader(t *testing.T) {
 }
 
 func TestResolveInterfaceOrigin_A2AOriginWinsOverAppURL(t *testing.T) {
-	h := &A2AHandler{a2aOrigin: "https://api.dev.emergent-company.ai", appURL: "https://app.emergent-company.ai"}
+	h := &A2AHandler{a2aOrigin: "https://api.example.com", appURL: "https://app.emergent-company.ai"}
 	c, _ := newA2AEchoContextNoAuth(http.MethodGet, "/")
 
-	assert.Equal(t, "https://api.dev.emergent-company.ai", h.resolveInterfaceOrigin(c))
+	assert.Equal(t, "https://api.example.com", h.resolveInterfaceOrigin(c))
 }
 
 func TestResolveInterfaceOrigin_ForwardedHeaderLastResort(t *testing.T) {

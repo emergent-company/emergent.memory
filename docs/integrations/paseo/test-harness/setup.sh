@@ -35,7 +35,7 @@ if [ ! -f "$TEST_HOME/memory-acp.env" ]; then
   cat > "$TEST_HOME/memory-acp.env" <<'EOF'
 # Isolated test credentials for the ACP test daemon. Fill these in, then chmod 600.
 # Do NOT commit this file and do NOT paste a real token into config.json.
-MEMORY_SERVER_URL=https://api.dev.emergent-company.ai
+MEMORY_SERVER_URL=https://api.example.com
 MEMORY_PROJECT_TOKEN=emt_REPLACE_ME_WITH_A_REAL_PROJECT_TOKEN
 MEMORY_PROJECT_ID=REPLACE_ME_WITH_PROJECT_UUID
 MEMORY_AGENT=acp-probe-external

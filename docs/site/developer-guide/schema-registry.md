@@ -27,21 +27,21 @@ The schema registry defines the schema of objects that can live in your project'
 ### List types
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId> \
+curl https://api.example.com/api/schema-registry/projects/<projectId> \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Get a specific type
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types/Person \
+curl https://api.example.com/api/schema-registry/projects/<projectId>/types/Person \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Get type version history
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types/Person/versions \
+curl https://api.example.com/api/schema-registry/projects/<projectId>/types/Person/versions \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -73,7 +73,7 @@ Returns the persisted version history for a type, newest first. Each `schema_ver
 ### Get type stats
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/stats \
+curl https://api.example.com/api/schema-registry/projects/<projectId>/stats \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -82,7 +82,7 @@ Returns counts of total / enabled / by-source types.
 ### Create a custom type
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types \
+curl -X POST https://api.example.com/api/schema-registry/projects/<projectId>/types \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -114,7 +114,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/schema-registry/projects/<p
 ### Update a type
 
 ```bash
-curl -X PUT https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types/Company \
+curl -X PUT https://api.example.com/api/schema-registry/projects/<projectId>/types/Company \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -126,7 +126,7 @@ curl -X PUT https://api.dev.emergent-company.ai/api/schema-registry/projects/<pr
 ### Delete a type
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/schema-registry/projects/<projectId>/types/Company \
+curl -X DELETE https://api.example.com/api/schema-registry/projects/<projectId>/types/Company \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -166,14 +166,14 @@ Embedding policies control which objects receive vector embeddings. Each policy 
 ### List policies
 
 ```bash
-curl https://api.dev.emergent-company.ai/api/graph/embedding-policies \
+curl https://api.example.com/api/graph/embedding-policies \
   -H "Authorization: Bearer <token>"
 ```
 
 ### Create a policy
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/graph/embedding-policies \
+curl -X POST https://api.example.com/api/graph/embedding-policies \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -190,7 +190,7 @@ curl -X POST https://api.dev.emergent-company.ai/api/graph/embedding-policies \
 ### Update a policy (PATCH — all fields optional)
 
 ```bash
-curl -X PATCH https://api.dev.emergent-company.ai/api/graph/embedding-policies/<policyId> \
+curl -X PATCH https://api.example.com/api/graph/embedding-policies/<policyId> \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"enabled": false}'
@@ -199,7 +199,7 @@ curl -X PATCH https://api.dev.emergent-company.ai/api/graph/embedding-policies/<
 ### Delete a policy
 
 ```bash
-curl -X DELETE https://api.dev.emergent-company.ai/api/graph/embedding-policies/<policyId> \
+curl -X DELETE https://api.example.com/api/graph/embedding-policies/<policyId> \
   -H "Authorization: Bearer <token>"
 ```
 

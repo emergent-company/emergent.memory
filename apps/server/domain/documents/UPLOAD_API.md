@@ -60,7 +60,7 @@ though they appear as `application/zip` from magic bytes.
 #### Example (cURL)
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/documents/upload \
+curl -X POST https://api.example.com/api/documents/upload \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Project-ID: $PROJECT_ID" \
   -F "file=@/path/to/document.pdf" \
@@ -115,7 +115,7 @@ results — individual file failures do not abort the batch.
 #### Example (cURL)
 
 ```bash
-curl -X POST https://api.dev.emergent-company.ai/api/documents/upload/batch \
+curl -X POST https://api.example.com/api/documents/upload/batch \
   -H "Authorization: Bearer $TOKEN" \
   -H "X-Project-ID: $PROJECT_ID" \
   -F "files=@doc1.pdf" \
