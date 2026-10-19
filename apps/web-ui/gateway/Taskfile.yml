@@ -7,9 +7,10 @@ version: "3"
 # package (main + webui).
 
 vars:
-  # Tailwind v4 + daisyUI 5 live in go-daisy's node_modules (this repo has no
-  # JS toolchain of its own). Symlinked into the gateway so bare @import /
-  # @plugin specifiers in webui/css/app.css resolve.
+  # Tailwind v4 + daisyUI 5 are installed from this module's own package.json /
+  # package-lock.json (see the `css` task's `npm ci` step) into node_modules/,
+  # so bare @import / @plugin specifiers in webui/css/app.css resolve without
+  # any external checkout.
   TAILWIND_BIN: node_modules/.bin/tailwindcss
   CSS_IN: webui/css/app.css
   CSS_OUT: webui/static/css/app.css
@@ -18,7 +19,9 @@ tasks:
   css:
     desc: Compile Memory's Tailwind CSS (Tailwind v4 + daisyUI 5.5.19)
     cmds:
-      - test -e node_modules || ln -s /root/go-daisy/node_modules node_modules
+      # Install this module's pinned Tailwind/daisyUI deps (package.json +
+      # package-lock.json) — self-sufficient, no external checkout required.
+      - test -e node_modules || npm ci
       # vendor go-daisy (and the blank-imported css package) so webui/css/app.css
       # can @source its components and @import its co-located custom.css from the
       # stable ./vendor path (see gateway/godaisy_css.go).
