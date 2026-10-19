@@ -952,6 +952,7 @@ func (r *Repository) CreateVersion(ctx context.Context, tx bun.Tx, prevHead *Gra
 	newVersion.Version = prevHead.Version + 1
 	newVersion.ProjectID = prevHead.ProjectID
 	newVersion.BranchID = prevHead.BranchID
+	newVersion.Namespace = prevHead.Namespace
 	// Callers that already know the content is unchanged (assignee-only writes,
 	// branch fast-forwards) pre-set ContentHash to the previous HEAD's hash to
 	// avoid a full re-marshal of the properties JSONB. Otherwise compute it.
@@ -1063,6 +1064,7 @@ func (r *Repository) SoftDeleteOnBranch(ctx context.Context, tx bun.Tx, mainHead
 		Type:            mainHead.Type,
 		Key:             mainHead.Key,
 		Status:          mainHead.Status,
+		Namespace:       mainHead.Namespace,
 		Properties:      mainHead.Properties,
 		Labels:          mainHead.Labels,
 		DeletedAt:       &now,
