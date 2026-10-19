@@ -2,7 +2,8 @@
 # Memory deploy pipeline.
 #
 #   1. Gateway  -> deploy the Go gateway (+ supervisor + web UI + Python bridge)
-#                 via docker-compose on the gateway host (see docker-compose.yml).
+#                 via docker-compose to $GATEWAY_DIR (default /opt/memory,
+#                 local; set GATEWAY_HOST to deploy over ssh).
 #   2. iOS      -> Mac: rsync apps/ios/ + xcodebuild (VoiceAgent, iOS Simulator)
 #
 # The legacy Python backends (agent/admin.py, agent/api FastAPI, agent.worker
@@ -18,18 +19,42 @@
 #     ./deploy.sh
 set -euo pipefail
 
-GATEWAY_HOST="home2"          # gateway host (SSH alias in ~/.ssh/config)
+GATEWAY_HOST="${GATEWAY_HOST:-}"          # gateway host (SSH alias in ~/.ssh/config); empty = local
+GATEWAY_DIR="${GATEWAY_DIR:-/opt/memory}" # gateway deploy directory
 SRC_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 step() { printf '\n==> %s\n' "$*"; }
 
 # --- 1. gateway ------------------------------------------------------------
-step "1/3 deploy gateway -> $GATEWAY_HOST (docker compose up --build)"
+if [ -n "$GATEWAY_HOST" ]; then
+  target="$GATEWAY_HOST"
+else
+  target="localhost"
+fi
+step "1/3 deploy gateway -> $target (docker compose up --build)"
 # Sync the gateway module + bridge + compose files, then rebuild/restart the
-# container on the gateway host.
-tar -C "$SRC_ROOT" -czf - gateway memory_bridge docker-compose.yml Dockerfile .env \
-  | ssh "$GATEWAY_HOST" "tar -C /root/emergent.memory/apps/web-ui -xzf -"
-ssh "$GATEWAY_HOST" "cd /root/emergent.memory/apps/web-ui && docker compose up -d --build"
+# container in $GATEWAY_DIR (local, or on $GATEWAY_HOST over ssh). The checkout's
+# .env is never shipped (secrets): the local path copies it once only if
+# $GATEWAY_DIR/.env is absent, and the remote path expects an existing .env.
+files="gateway memory_bridge docker-compose.yml Dockerfile"
+if [ -n "$GATEWAY_HOST" ]; then
+  ssh "$GATEWAY_HOST" "mkdir -p $GATEWAY_DIR"
+  tar -C "$SRC_ROOT" -czf - $files \
+    | ssh "$GATEWAY_HOST" "tar -C $GATEWAY_DIR -xzf -"
+  if ! ssh "$GATEWAY_HOST" "test -f $GATEWAY_DIR/.env"; then
+    printf 'warning: %s/.env is missing on %s; create it before the container starts\n' "$GATEWAY_DIR" "$GATEWAY_HOST" >&2
+  fi
+  ssh "$GATEWAY_HOST" "cd $GATEWAY_DIR && docker compose up -d --build"
+else
+  mkdir -p "$GATEWAY_DIR"
+  tar -C "$SRC_ROOT" -czf - $files \
+    | tar -C "$GATEWAY_DIR" -xzf -
+  if [ ! -f "$GATEWAY_DIR/.env" ] && [ -f "$SRC_ROOT/.env" ]; then
+    cp "$SRC_ROOT/.env" "$GATEWAY_DIR/.env"
+    printf 'warning: seeded %s/.env from the checkout .env (first deploy)\n' "$GATEWAY_DIR" >&2
+  fi
+  cd "$GATEWAY_DIR" && docker compose up -d --build
+fi
 
 # --- 2. iOS source -> Mac, and 3. build on the Mac -------------------------
 # Delegated to the shared iOS build script so the host/path resolution, the

@@ -24,10 +24,10 @@ extension Notification.Name {
 /// | Property                 | UserDefaults key                 | Default                            |
 /// |--------------------------|----------------------------------|------------------------------------|
 /// | `serverURL`              | `alfred.serverURL`               | `ws://100.69.175.118:7880`         |
-/// | `agentName`              | `alfred.agentName`               | `memory-google-rt`                 |
-/// | `tokenEndpoint`          | `alfred.tokenEndpoint`           | `http://100.69.175.118:8080/api/token` |
+/// | `agentName`              | `alfred.agentName`               | `alfred`                           |
+/// | `tokenEndpoint`          | `alfred.tokenEndpoint`           | `http://100.91.139.28:8095/api/token` |
 /// | `apiKey`                 | `alfred.apiKey`                  | `""`                               |
-/// | `apiBaseURL`             | `alfred.apiBaseURL`              | `http://100.69.175.118:8080`       |
+/// | `apiBaseURL`             | `alfred.apiBaseURL`              | `http://100.91.139.28:8095`        |
 /// | `exitKeywords`           | `alfred.exitKeywords`            | `["goodbye"]`                      |
 /// | `agentConnectTimeout`    | `alfred.agentConnectTimeout`     | `20` (seconds)                     |
 /// | `chimeSoundID`           | `alfred.chimeSoundID`            | `1057` (system sound "Tink")       |
@@ -43,13 +43,13 @@ struct MemoryConfig: Sendable, Equatable {
 
     /// `ws://` URL of the self-hosted LiveKit server.
     static let serverURLKey = "alfred.serverURL"
-    /// Name of the agent worker to dispatch (`memory-google-rt`).
+    /// Name of the agent worker to dispatch (`alfred`).
     static let agentNameKey = "alfred.agentName"
     /// HTTP(S) URL of the Memory token endpoint (`POST /api/token`).
     static let tokenEndpointKey = "alfred.tokenEndpoint"
-    /// Shared secret sent as the `X-API-Key` header to the token endpoint.
+    /// Scoped `emt_` device credential sent as the `X-API-Key` header to the token endpoint.
     static let apiKeyKey = "alfred.apiKey"
-    /// Base URL of the Memory gateway (`/api/agents` CRUD, port 8080).
+    /// Base URL of the Memory gateway (`/api/agents` CRUD, port 8095).
     static let apiBaseURLKey = "alfred.apiBaseURL"
     /// User-transcript phrases that end the session (case-insensitive substring match).
     static let exitKeywordsKey = "alfred.exitKeywords"
@@ -71,10 +71,10 @@ struct MemoryConfig: Sendable, Equatable {
     // MARK: - Build-time defaults
 
     static let defaultServerURL = "ws://100.69.175.118:7880"
-    static let defaultAgentName = "memory-google-rt"
-    static let defaultTokenEndpoint = "http://100.69.175.118:8080/api/token"
+    static let defaultAgentName = "alfred"
+    static let defaultTokenEndpoint = "http://100.91.139.28:8095/api/token"
     static let defaultAPIKey = ""
-    static let defaultAPIBaseURL = "http://100.69.175.118:8080"
+    static let defaultAPIBaseURL = "http://100.91.139.28:8095"
     static let defaultExitKeywords = ["goodbye"]
     static let defaultAgentConnectTimeout: TimeInterval = 20
     static let defaultChimeSoundID: UInt32 = 1057
@@ -83,6 +83,16 @@ struct MemoryConfig: Sendable, Equatable {
     static let defaultProjectID = ""
     static let defaultOrgID = ""
     static let defaultProjectName = ""
+
+    // MARK: - Retired defaults (migrated away)
+
+    /// Persisted values that exactly match these retired defaults are ignored
+    /// and cleared on load, so installs that stored the old agent name / dead
+    /// admin API (port 8080) re-resolve to the current build-time defaults.
+    /// Any other user-set value is preserved untouched.
+    private static let retiredAgentNames: Set<String> = ["memory-google-rt"]
+    private static let retiredTokenEndpoints: Set<String> = ["http://100.69.175.118:8080/api/token"]
+    private static let retiredAPIBaseURLs: Set<String> = ["http://100.69.175.118:8080"]
 
     // MARK: - Values
 
@@ -110,10 +120,10 @@ struct MemoryConfig: Sendable, Equatable {
     /// build-time defaults for unset keys.
     init(defaults: UserDefaults = .standard) {
         serverURL = defaults.string(forKey: Self.serverURLKey) ?? Self.defaultServerURL
-        agentName = defaults.string(forKey: Self.agentNameKey) ?? Self.defaultAgentName
-        tokenEndpoint = defaults.string(forKey: Self.tokenEndpointKey) ?? Self.defaultTokenEndpoint
+        agentName = Self.read(defaults, key: Self.agentNameKey, retired: Self.retiredAgentNames, fallback: Self.defaultAgentName)
+        tokenEndpoint = Self.read(defaults, key: Self.tokenEndpointKey, retired: Self.retiredTokenEndpoints, fallback: Self.defaultTokenEndpoint)
         apiKey = defaults.string(forKey: Self.apiKeyKey) ?? Self.defaultAPIKey
-        apiBaseURL = defaults.string(forKey: Self.apiBaseURLKey) ?? Self.defaultAPIBaseURL
+        apiBaseURL = Self.read(defaults, key: Self.apiBaseURLKey, retired: Self.retiredAPIBaseURLs, fallback: Self.defaultAPIBaseURL)
         exitKeywords = defaults.stringArray(forKey: Self.exitKeywordsKey) ?? Self.defaultExitKeywords
         let storedTimeout = defaults.double(forKey: Self.agentConnectTimeoutKey)
         agentConnectTimeout = storedTimeout > 0 ? storedTimeout : Self.defaultAgentConnectTimeout
@@ -130,6 +140,23 @@ struct MemoryConfig: Sendable, Equatable {
             participantIdentity = "memory-ios-\(UUID().uuidString)"
             defaults.set(participantIdentity, forKey: Self.participantIdentityKey)
         }
+    }
+
+    /// Reads a string key, ignoring (and clearing) values that match a retired
+    /// default so pre-migration installs re-resolve to the current build-time
+    /// defaults. Any other user-set value is returned as-is.
+    private static func read(
+        _ defaults: UserDefaults,
+        key: String,
+        retired: Set<String>,
+        fallback: String
+    ) -> String {
+        guard let stored = defaults.string(forKey: key) else { return fallback }
+        if retired.contains(stored) {
+            defaults.removeObject(forKey: key)
+            return fallback
+        }
+        return stored
     }
 
     /// Persists the current values to `UserDefaults`.

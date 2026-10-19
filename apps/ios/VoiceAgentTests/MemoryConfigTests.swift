@@ -70,4 +70,34 @@ struct MemoryConfigTests {
 
         #expect(MemoryConfig(defaults: defaults).apiBaseURL == MemoryConfig.defaultAPIBaseURL)
     }
+
+    @Test func legacyDefaultsFallBackToCurrentDefaults() throws {
+        let suite = "MemoryConfigTests.legacy.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set("memory-google-rt", forKey: MemoryConfig.agentNameKey)
+        defaults.set("http://100.69.175.118:8080/api/token", forKey: MemoryConfig.tokenEndpointKey)
+        defaults.set("http://100.69.175.118:8080", forKey: MemoryConfig.apiBaseURLKey)
+
+        let config = MemoryConfig(defaults: defaults)
+        #expect(config.agentName == MemoryConfig.defaultAgentName)
+        #expect(config.tokenEndpoint == MemoryConfig.defaultTokenEndpoint)
+        #expect(config.apiBaseURL == MemoryConfig.defaultAPIBaseURL)
+    }
+
+    @Test func customValuesArePreserved() throws {
+        let suite = "MemoryConfigTests.custom.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set("coder", forKey: MemoryConfig.agentNameKey)
+        defaults.set("http://10.0.0.9:9000/api/token", forKey: MemoryConfig.tokenEndpointKey)
+        defaults.set("http://10.0.0.9:9000", forKey: MemoryConfig.apiBaseURLKey)
+
+        let config = MemoryConfig(defaults: defaults)
+        #expect(config.agentName == "coder")
+        #expect(config.tokenEndpoint == "http://10.0.0.9:9000/api/token")
+        #expect(config.apiBaseURL == "http://10.0.0.9:9000")
+    }
 }

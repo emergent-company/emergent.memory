@@ -59,7 +59,7 @@ RUN pip install --no-cache-dir \
     python-dotenv>=1.0.0
 
 ENV BRIDGE_BIN=python \
-    BRIDGE_ARGS="-m memory_bridge" \
+    BRIDGE_ARGS="-m memory_bridge start" \
     BRIDGE_WORKDIR=/app
 
 EXPOSE 8080

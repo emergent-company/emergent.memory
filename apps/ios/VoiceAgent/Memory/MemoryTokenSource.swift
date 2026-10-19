@@ -6,7 +6,7 @@ import LiveKit
 /// The endpoint contract (see `agent/admin.py`, `_post_token`) is:
 /// - `POST` with a JSON body `{ "identity": ..., "agent": ..., "client": ... }`
 ///   (the server owns room creation and assigns the room)
-/// - an `X-API-Key` header (shared secret, checked server-side)
+/// - an `X-API-Key` header (a scoped `emt_` device credential, checked server-side)
 /// - a JSON response `{ "server_url": ..., "participant_token": ... }`
 ///   matching the SDK's ``TokenSourceResponse``.
 ///
@@ -25,7 +25,7 @@ struct MemoryTokenSource: EndpointTokenSource {
     let config: MemoryConfig
 
     /// The token endpoint URL (Memory's admin server), e.g.
-    /// `http://100.69.175.118:8080/api/token`.
+    /// `http://100.91.139.28:8095/api/token`.
     ///
     /// Non-failable to satisfy the SDK's `EndpointTokenSource` contract; a
     /// malformed endpoint surfaces as a clean error from `makeRequest`.

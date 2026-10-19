@@ -180,11 +180,12 @@ struct ToolCall: Codable, Equatable, Sendable {
 /// Talks to the session log (`agent/admin.py`): session list and per-room
 /// timeline.
 ///
-/// The session log lives on the same host:port as the token endpoint (port
-/// 8080), NOT the control plane. The base URL is derived from
-/// `config.tokenEndpoint` by stripping the `/api/token` path suffix, e.g.
-/// `http://host:8080/api/token` → `http://host:8080`. Read-only, same
-/// `X-API-Key` header as the token endpoint.
+/// The session log lives on the same host:port as the token endpoint (the
+/// gateway, e.g. `http://100.91.139.28:8095`), NOT the control plane. The base
+/// URL is derived from `config.tokenEndpoint` by stripping the `/api/token`
+/// path suffix, e.g. `http://100.91.139.28:8095/api/token` →
+/// `http://100.91.139.28:8095`. Read-only, same `X-API-Key` header as the
+/// token endpoint.
 ///
 /// Endpoints:
 /// - `GET /api/sessions`            → `{"sessions": [SessionSummary]}`

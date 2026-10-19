@@ -18,6 +18,8 @@ services:
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-}
+      LIVEKIT_AGENT_NAME: ${LIVEKIT_AGENT_NAME:-alfred}
+      WORKER_IDLE_TTL: ${WORKER_IDLE_TTL:-10m}
       # STT / TTS (cloud)
       DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY}
       DEEPGRAM_LANG: ${DEEPGRAM_LANG:-multi}
@@ -39,8 +41,9 @@ services:
       SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE: ${SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE:-}
       # dev-gated component gallery (default off)
       MEMORY_COMPONENT_GALLERY: ${MEMORY_COMPONENT_GALLERY:-off}
-      # prod stays on 8080; app default is 8095 (local dev)
+      # container listens on 8080; published host port defaults to 8095
+      # (prod must set MEMORY_PUBLISHED_PORT=8080 explicitly)
       MEMORY_PORT: 8080
     ports:
-      - "8080:8080"
+      - "${MEMORY_PUBLISHED_PORT:-8095}:8080"
     restart: unless-stopped

@@ -1,6 +1,6 @@
 # Memory iOS Client
 
-Native iOS voice client for talking to **Memory** (`memory-google-rt`) over the
+Native iOS voice client for talking to **Memory** (`alfred`) over the
 self-hosted LiveKit infrastructure. Voice only: no camera, no screen share, no
 text chat UI.
 
@@ -44,9 +44,9 @@ Stable, public API the settings screen binds to. All keys live in
 | Property | UserDefaults key | Default |
 |---|---|---|
 | `serverURL` | `alfred.serverURL` | `ws://100.69.175.118:7880` |
-| `agentName` | `alfred.agentName` | `memory-google-rt` |
-| `tokenEndpoint` | `alfred.tokenEndpoint` | `http://100.69.175.118:8080/api/token` |
-| `apiKey` | `alfred.apiKey` | `""` (must be set to match server `TOKEN_API_KEY`) |
+| `agentName` | `alfred.agentName` | `alfred` |
+| `tokenEndpoint` | `alfred.tokenEndpoint` | `http://100.91.139.28:8095/api/token` |
+| `apiKey` | `alfred.apiKey` | `""` (a scoped `emt_` device credential, sent as `X-API-Key`) |
 | `exitKeywords` | `alfred.exitKeywords` | `["goodbye"]` |
 | `agentConnectTimeout` | `alfred.agentConnectTimeout` | `20` (seconds) |
 | `chimeSoundID` | `alfred.chimeSoundID` | `1057` |
@@ -62,7 +62,7 @@ recreate the controller (or relaunch the app) after saving changes.
 `POST {tokenEndpoint}` with header `X-API-Key: {apiKey}` and body:
 
 ```json
-{ "identity": "...", "agent": "memory-google-rt" }
+{ "identity": "...", "agent": "alfred" }
 ```
 
 `room` is optional: when omitted the server derives a fresh per-token room
@@ -111,9 +111,9 @@ Do these once in Xcode (or by editing `VoiceAgent.xcconfig`):
    scheme, and run on a physical iPhone (voice needs a real mic + Tailscale on
    the device; see below).
 
-Before talking to Memory, set the API key in the app (settings screen or
-`MemoryConfig`) to match the server's `TOKEN_API_KEY`, and confirm the token
-endpoint is reachable from the device.
+Before talking to Memory, set the `emt_` device credential in the app (settings
+screen or `MemoryConfig`), and confirm the token endpoint is reachable from the
+device.
 
 ## Build on your own Mac
 
