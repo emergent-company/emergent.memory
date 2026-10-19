@@ -129,6 +129,7 @@ func buildGraph(dir string) (*graph, error) {
 		return nil, err
 	}
 	g := newGraph()
+	colliding := collidingDaisyNames(defs)
 	for _, d := range defs {
 		if d.body == nil {
 			continue
@@ -142,7 +143,7 @@ func buildGraph(dir string) (*graph, error) {
 			if !ok || sel.Sel.Name != "Render" {
 				return true
 			}
-			g.resolveRender(d, sel.X, defs)
+			g.resolveRender(d, sel.X, defs, colliding)
 			return true
 		})
 	}
@@ -252,10 +253,21 @@ func collectImports(f *ast.File) map[string]string {
 
 // resolveRender classifies a `.Render(...)` receiver found in caller's body and
 // records the corresponding edges.
-func (g *graph) resolveRender(caller *componentDef, receiver ast.Expr, defs map[string]*componentDef) {
+func (g *graph) resolveRender(caller *componentDef, receiver ast.Expr, defs map[string]*componentDef, colliding map[string]bool) {
 	switch rec := receiver.(type) {
 	case *ast.CallExpr:
 		// X(...).Render(...) — a component invocation is the receiver.
+		if importPath, name, ok := daisyRef(caller, rec); ok {
+			key := name
+			if colliding[name] {
+				key = daisyKey(importPath, name)
+			}
+			g.add(caller.name, "uses", key)
+			g.add(key, "usedBy", caller.name)
+			g.add(caller.name, "daisyComponents", key)
+			g.add(caller.name, "daisyPackages", importPath)
+			return
+		}
 		switch fun := rec.Fun.(type) {
 		case *ast.SelectorExpr:
 			// pkg.Func(...).Render(...)
@@ -268,13 +280,7 @@ func (g *graph) resolveRender(caller *componentDef, receiver ast.Expr, defs map[
 				return // unresolved alias — skip rather than fabricate an edge
 			}
 			name := fun.Sel.Name
-			switch {
-			case strings.HasPrefix(importPath, daisyPrefix):
-				g.add(caller.name, "uses", name)
-				g.add(name, "usedBy", caller.name)
-				g.add(caller.name, "daisyComponents", name)
-				g.add(caller.name, "daisyPackages", importPath)
-			case importPath == gatewayComponentsPath:
+			if importPath == gatewayComponentsPath {
 				g.add(caller.name, "uses", name)
 				g.add(name, "usedBy", caller.name)
 			}
@@ -305,6 +311,107 @@ func (g *graph) resolveRender(caller *componentDef, receiver ast.Expr, defs map[
 	}
 }
 
+// daisyRef extracts the go-daisy import path and component name from a render
+// call receiver of the form pkg.Func(...), reporting ok=false when the receiver
+// is not a go-daisy component invocation (an unresolved alias, a gateway-local
+// components-package call, a same-package callee, or a non-selector receiver).
+func daisyRef(caller *componentDef, receiver ast.Expr) (importPath, name string, ok bool) {
+	rec, ok := receiver.(*ast.CallExpr)
+	if !ok {
+		return "", "", false
+	}
+	fun, ok := rec.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", "", false
+	}
+	pkgID, ok := fun.X.(*ast.Ident)
+	if !ok {
+		return "", "", false
+	}
+	importPath = caller.imports[pkgID.Name]
+	if importPath == "" || !strings.HasPrefix(importPath, daisyPrefix) {
+		return "", "", false
+	}
+	return importPath, fun.Sel.Name, true
+}
+
+// daisyKey returns the package-qualified key for a go-daisy component: the bare
+// name prefixed by "go-daisy/<pkg>#" where <pkg> is the import path's package
+// name (e.g. "go-daisy/alpine#Tag" vs "go-daisy/behaviors#Tag").
+func daisyKey(importPath, name string) string {
+	return "go-daisy/" + filepath.Base(importPath) + "#" + name
+}
+
+// daisyRefsByName returns the go-daisy bare component names in defs mapped to
+// the set of import paths that reference each name.
+func daisyRefsByName(defs map[string]*componentDef) map[string]map[string]bool {
+	refs := map[string]map[string]bool{}
+	for _, d := range defs {
+		if d.body == nil {
+			continue
+		}
+		ast.Inspect(d.body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Render" {
+				return true
+			}
+			importPath, name, ok := daisyRef(d, sel.X)
+			if !ok {
+				return true
+			}
+			if refs[name] == nil {
+				refs[name] = map[string]bool{}
+			}
+			refs[name][importPath] = true
+			return true
+		})
+	}
+	return refs
+}
+
+// collidingDaisyNames returns the go-daisy bare component names that are
+// referenced from more than one go-daisy import path. These names are qualified
+// by package (go-daisy/<pkg>#<Name>) so distinct components never merge into a
+// single node.
+func collidingDaisyNames(defs map[string]*componentDef) map[string]bool {
+	colliding := map[string]bool{}
+	for name, paths := range daisyRefsByName(defs) {
+		if len(paths) > 1 {
+			colliding[name] = true
+		}
+	}
+	return colliding
+}
+
+// daisyBareNameCollisions scans dir and returns the go-daisy bare component
+// names imported from more than one package, mapped to their sorted import
+// paths. It powers the collision ratchet: the scanner qualifies these names by
+// package rather than merging them, so any new collision surfaces here to be
+// declared and re-qualified instead of silently collapsing two components.
+func daisyBareNameCollisions(dir string) (map[string][]string, error) {
+	_, defs, err := scan(dir)
+	if err != nil {
+		return nil, err
+	}
+	collisions := map[string][]string{}
+	for name, paths := range daisyRefsByName(defs) {
+		if len(paths) <= 1 {
+			continue
+		}
+		sorted := make([]string, 0, len(paths))
+		for p := range paths {
+			sorted = append(sorted, p)
+		}
+		sort.Strings(sorted)
+		collisions[name] = sorted
+	}
+	return collisions, nil
+}
+
 // add records value under key in the graph map named kind.
 func (g *graph) add(key, kind, value string) {
 	var m map[string]map[string]bool
@@ -333,8 +440,10 @@ func renderSource(g *graph) []byte {
 	b.WriteString("//go:generate go run ./cmd/componentgraph\n\n")
 	b.WriteString("// Generated dependency graph for the component gallery. Canonical id =\n")
 	b.WriteString("// the Go identifier as written (e.g. \"PanelCard\", \"Button\"). go-daisy\n")
-	b.WriteString("// components are keyed by their exported name (no package qualifier),\n")
-	b.WriteString("// resolved per file from import aliases. An unresolved same-package callee\n")
+	b.WriteString("// components are keyed by their exported name, resolved per file from\n")
+	b.WriteString("// import aliases, except a name imported from more than one go-daisy\n")
+	b.WriteString("// package, which is package-qualified (\"go-daisy/<pkg>#<Name>\") so distinct\n")
+	b.WriteString("// components never merge into one node. An unresolved same-package callee\n")
 	b.WriteString("// is recorded as a package-granularity leaf using the bare package name\n")
 	b.WriteString("// (\"main\", \"components\").\n")
 	b.WriteString("package main\n\n")

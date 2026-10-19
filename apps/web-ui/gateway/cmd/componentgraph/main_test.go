@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -184,6 +186,41 @@ func tableCardFixture() templ.Component {
 	return dir
 }
 
+// writeCollisionFixtureDir creates a gateway-shaped source tree with two
+// go-daisy packages exporting the same bare component name (Tag), rendered by a
+// single caller. The generator must qualify the keys by package so the two
+// components stay distinct instead of merging into one node.
+func writeCollisionFixtureDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	mainSrc := `package main
+
+import (
+	"context"
+	"io"
+
+	"github.com/a-h/templ"
+	alpine "github.com/emergent-company/go-daisy/components/alpine"
+	behaviors "github.com/emergent-company/go-daisy/components/behaviors"
+)
+
+// Shell renders the same bare component name from two go-daisy packages.
+func Shell() templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		alpine.Tag().Render(ctx, w)
+		behaviors.Tag().Render(ctx, w)
+		return nil
+	})
+}
+`
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	return dir
+}
+
 // contains reports whether set contains want.
 func contains(set map[string]bool, want string) bool {
 	return set[want]
@@ -292,4 +329,83 @@ func count(set map[string]bool, want string) int {
 		return 1
 	}
 	return 0
+}
+
+func TestGenerateGraphQualifiesCollidingDaisyNames(t *testing.T) {
+	dir := writeCollisionFixtureDir(t)
+	g, err := buildGraph(dir)
+	if err != nil {
+		t.Fatalf("buildGraph: %v", err)
+	}
+
+	// The two Tag components must stay distinct, qualified nodes.
+	for _, want := range []string{"go-daisy/alpine#Tag", "go-daisy/behaviors#Tag"} {
+		if !contains(g.uses["Shell"], want) {
+			t.Errorf("graphUses[Shell] = %v, missing %q", g.uses["Shell"], want)
+		}
+	}
+	if contains(g.uses["Shell"], "Tag") {
+		t.Errorf("graphUses[Shell] = %v, must not contain bare Tag", g.uses["Shell"])
+	}
+
+	// Each qualified node carries its own used-by edge.
+	if !contains(g.usedBy["go-daisy/alpine#Tag"], "Shell") {
+		t.Errorf("graphUsedBy[go-daisy/alpine#Tag] = %v, missing Shell", g.usedBy["go-daisy/alpine#Tag"])
+	}
+	if !contains(g.usedBy["go-daisy/behaviors#Tag"], "Shell") {
+		t.Errorf("graphUsedBy[go-daisy/behaviors#Tag] = %v, missing Shell", g.usedBy["go-daisy/behaviors#Tag"])
+	}
+	if _, ok := g.usedBy["Tag"]; ok {
+		t.Errorf("graphUsedBy has a bare %q key; the collision must be qualified", "Tag")
+	}
+
+	// daisyComponents records the qualified names too.
+	if !contains(g.daisyComponents["Shell"], "go-daisy/alpine#Tag") || !contains(g.daisyComponents["Shell"], "go-daisy/behaviors#Tag") {
+		t.Errorf("graphDaisyComponents[Shell] = %v, missing qualified Tag nodes", g.daisyComponents["Shell"])
+	}
+}
+
+func TestDaisyBareNameCollisions(t *testing.T) {
+	dir := writeCollisionFixtureDir(t)
+	got, err := daisyBareNameCollisions(dir)
+	if err != nil {
+		t.Fatalf("daisyBareNameCollisions: %v", err)
+	}
+	want := map[string][]string{
+		"Tag": {
+			"github.com/emergent-company/go-daisy/components/alpine",
+			"github.com/emergent-company/go-daisy/components/behaviors",
+		},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("daisyBareNameCollisions = %v, want %v", got, want)
+	}
+}
+
+// TestDaisyBareNameCollisionRatchet is the scanner-side collision assertion,
+// mirroring the canonical ratchet's gateway-local name-collision check: the set
+// of go-daisy bare names imported from more than one package must stay declared.
+// A new same-name import across go-daisy packages surfaces here (and fails)
+// rather than silently merging two components into one graph node.
+func TestDaisyBareNameCollisionRatchet(t *testing.T) {
+	// This test lives in cmd/componentgraph, so the gateway root is two levels
+	// up. Resolve it to an absolute path — filepath.Glob does not expand a ".."
+	// prefix, so scan("..") would silently see nothing.
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve gateway root: %v", err)
+	}
+	got, err := daisyBareNameCollisions(root)
+	if err != nil {
+		t.Fatalf("daisyBareNameCollisions: %v", err)
+	}
+	want := map[string][]string{
+		"Tag": {
+			"github.com/emergent-company/go-daisy/components/alpine",
+			"github.com/emergent-company/go-daisy/components/behaviors",
+		},
+	}
+	if !maps.EqualFunc(got, want, slices.Equal) {
+		t.Errorf("go-daisy bare-name collisions = %v, want %v — declare the new collision and ensure the scanner qualifies it, rather than merging the nodes", got, want)
+	}
 }

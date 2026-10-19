@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/a-h/templ"
 	alpine "github.com/emergent-company/go-daisy/components/alpine"
+	behaviors "github.com/emergent-company/go-daisy/components/behaviors"
 	form "github.com/emergent-company/go-daisy/components/form"
 	layout "github.com/emergent-company/go-daisy/components/layout"
 	nav "github.com/emergent-company/go-daisy/components/nav"
@@ -374,11 +375,18 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 		Description: "A DaisyUI table with a canonical wrapper; the table family, shown in its composed context.",
 		Render:      galleryTableFixture,
 	},
-	"Tag": {
-		PropsType:   "label string, removeHref string",
-		Description: "A removable tag chip.",
+	"go-daisy/alpine#Tag": {
+		PropsType:   "—",
+		Description: "The Alpine.js runtime script tag, included in the page head.",
 		Render: func() templ.Component {
-			return ui.Tag("production", "#")
+			return alpine.Tag()
+		},
+	},
+	"go-daisy/behaviors#Tag": {
+		PropsType:   "—",
+		Description: "The go-daisy behaviour-init runtime script tag, included in the page head before component scripts.",
+		Render: func() templ.Component {
+			return behaviors.Tag()
 		},
 	},
 	"TagList": {

@@ -129,10 +129,11 @@ func filterToCatalog(uses []string, catalog map[string]bool) []string {
 // un-curated primitive is flagged "needs fixture" rather than silently showing
 // a blank preview.
 func daisyEntry(id string) GalleryEntry {
+	name, slug := daisyDisplay(id)
 	e := GalleryEntry{
 		ID:          id,
-		Slug:        slugify(id),
-		Name:        id,
+		Slug:        slug,
+		Name:        name,
 		Layer:       LayerDaisy,
 		Category:    "go-daisy",
 		Subcategory: "primitive",
@@ -150,6 +151,19 @@ func daisyEntry(id string) GalleryEntry {
 		e.Stories = spec.Stories
 	}
 	return e
+}
+
+// daisyDisplay derives the human-readable name and URL-safe slug for a go-daisy
+// id. A package-qualified id ("go-daisy/<pkg>#<Name>", used when a bare name
+// collides across packages) displays as "<pkg>.<Name>" with slug "<pkg>-<name>";
+// a bare id passes through unchanged.
+func daisyDisplay(id string) (name, slug string) {
+	if rest, ok := strings.CutPrefix(id, "go-daisy/"); ok {
+		if pkg, n, ok := strings.Cut(rest, "#"); ok {
+			return pkg + "." + n, slugify(pkg) + "-" + slugify(n)
+		}
+	}
+	return id, slugify(id)
 }
 
 // galleryEntryBySlug finds a catalog entry by slug, for the preview route.
