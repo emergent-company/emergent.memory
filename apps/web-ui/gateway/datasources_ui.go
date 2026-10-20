@@ -26,6 +26,8 @@ type dsConfigField struct {
 	Description string
 	Type        string // "string", "array", "boolean"
 	Required    bool
+	Value       string // prefilled text value (string/array); blank for the connect form
+	Checked     bool   // prefilled checkbox state
 }
 
 // dsConfigFieldOrder fixes the render order of the known google_drive config
@@ -37,8 +39,11 @@ var dsConfigFieldOrder = []string{
 }
 
 // dsConfigFields splits a provider schema into config fields and credential
-// fields (the write-only OAuth2 material), in a stable order.
-func dsConfigFields(schema *DSProviderSchema) (configFields, credentialFields []dsConfigField) {
+// fields (the write-only OAuth2 material), in a stable order. cfg carries a
+// source's non-secret config values (nil for the connect form); non-credential
+// fields are prefilled from it so an edit round-trips the persisted settings
+// without exposing credential material.
+func dsConfigFields(schema *DSProviderSchema, cfg map[string]any) (configFields, credentialFields []dsConfigField) {
 	if schema == nil || len(schema.Properties) == 0 {
 		return nil, nil
 	}
@@ -62,6 +67,18 @@ func dsConfigFields(schema *DSProviderSchema) (configFields, credentialFields []
 		if dsIsCredentialKey(key) {
 			credentialFields = append(credentialFields, f)
 		} else {
+			if cfg != nil {
+				switch f.Type {
+				case "boolean":
+					if b, ok := cfg[key].(bool); ok {
+						f.Checked = b
+					}
+				case "array":
+					f.Value = dsConfigArrayText(cfg, key)
+				default:
+					f.Value = dsConfigString(cfg, key)
+				}
+			}
 			configFields = append(configFields, f)
 		}
 	}
@@ -83,6 +100,25 @@ func dsConfigFields(schema *DSProviderSchema) (configFields, credentialFields []
 		appendField(key)
 	}
 	return configFields, credentialFields
+}
+
+// dsConfigArrayText renders an array config value as newline-joined text for a
+// textarea prefill.
+func dsConfigArrayText(cfg map[string]any, key string) string {
+	switch v := cfg[key].(type) {
+	case []string:
+		return strings.Join(v, "\n")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "\n")
+	default:
+		return ""
+	}
 }
 
 // dsIsCredentialKey reports whether a config key carries write-only credential
@@ -329,7 +365,7 @@ func (s *Server) uiDataSourceNew(c echo.Context) error {
 		if serr != nil {
 			schemaErr = userFacingError(serr)
 		}
-		configFields, credentialFields = dsConfigFields(schema)
+		configFields, credentialFields = dsConfigFields(schema, nil)
 	}
 	if err == nil {
 		err = schemaErr
@@ -515,7 +551,15 @@ func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
 	if !ok {
 		return redirectWithError(c, back, fmt.Errorf("resource selection is not supported for provider %s", src.ProviderType))
 	}
-	if _, err := s.memory.SaveDSResource(ctx, id, map[string]any{key: resourceID}); err != nil {
+	// Merge the picked resource over the source's stored config so an update
+	// preserves any other persisted non-secret keys (mime_types, recursive, ...)
+	// instead of replacing the whole config with the single resource key.
+	cfg := make(map[string]any, len(src.Config)+1)
+	for k, v := range src.Config {
+		cfg[k] = v
+	}
+	cfg[key] = resourceID
+	if _, err := s.memory.SaveDSResource(ctx, id, cfg); err != nil {
 		return redirectWithError(c, back, err)
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(id)+"?updated=1")
@@ -533,6 +577,36 @@ func dsResourceConfigKey(providerType string) (string, bool) {
 		return "repo", true
 	default:
 		return "", false
+	}
+}
+
+// dsResourcePrompt is the detail-page banner shown when a source's config is
+// missing its sync target (folder_id/repo), linking to the resource-selection
+// step so the user can finish connecting the source.
+type dsResourcePrompt struct {
+	Title       string
+	Description string
+	Href        string
+}
+
+// dsResourcePromptFor builds a resource prompt for a source whose config is
+// missing its sync target, or nil when the source is complete or the provider
+// has no resource step.
+func dsResourcePromptFor(src *DSIntegration) *dsResourcePrompt {
+	if src == nil {
+		return nil
+	}
+	key, ok := dsResourceConfigKey(src.ProviderType)
+	if !ok {
+		return nil
+	}
+	if strings.TrimSpace(dsConfigString(src.Config, key)) != "" {
+		return nil
+	}
+	return &dsResourcePrompt{
+		Title:       dsResourceStepTitle(*src),
+		Description: dsResourceStepDescription(*src),
+		Href:        "/data-sources/" + url.PathEscape(src.ID) + "/resources",
 	}
 }
 
@@ -1092,7 +1166,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), nil, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -1108,8 +1182,9 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	}
 	var configFields, credentialFields []dsConfigField
 	if schema, serr := s.memory.GetDSProviderSchema(ctx, src.ProviderType); serr == nil {
-		configFields, credentialFields = dsConfigFields(schema)
+		configFields, credentialFields = dsConfigFields(schema, src.Config)
 	}
+	resourcePrompt := dsResourcePromptFor(src)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},
 		{key: "updated", msg: "Data source updated."},
@@ -1118,7 +1193,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(dsSourceName(*src)),
-		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, flashMsg, flashErr))
+		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, resourcePrompt, flashMsg, flashErr))
 }
 
 // uiDataSourceUpdate handles the settings form (PRG).

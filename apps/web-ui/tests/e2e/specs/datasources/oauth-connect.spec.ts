@@ -72,6 +72,20 @@ test.describe('provider-generic OAuth data-source connect', () => {
     }
   });
 
+  test('OAuth-connected source prompts for its sync target, then reaches the resource step', async ({ page }) => {
+    // The seeded OAuth source (s1) is connected but has no folder selected, so
+    // its detail page prompts to finish connecting and links to the resource step.
+    await page.goto('/data-sources/s1');
+    await expect(page.getByTestId('ds-resource-needed')).toBeVisible();
+    await page.getByTestId('ds-resource-needed-link').click();
+    await page.waitForURL('**/data-sources/s1/resources');
+    await expect(page.getByTestId('ds-resource-step')).toBeVisible();
+    // The mock has no folder listing, so the step renders its retry-able empty
+    // state rather than the legacy "connector lands" placeholder.
+    await expect(page.getByTestId('ds-resource-empty')).toBeVisible();
+    await expect(page.getByTestId('ds-resource-retry')).toBeVisible();
+  });
+
   test('org OAuth-client settings keep the secret write-only', async ({ page }) => {
     await page.goto('/orgs/org-1/settings/oauth-clients');
 

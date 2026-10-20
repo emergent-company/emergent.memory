@@ -254,8 +254,10 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if !ok {
 		return nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
 	}
-	if err := p.ValidateConfig(req.Config); err != nil {
-		return nil, err
+	if !req.AllowIncompleteConfig {
+		if err := p.ValidateConfig(req.Config); err != nil {
+			return nil, err
+		}
 	}
 	creds, err := p.ExtractCredentials(req.Config)
 	if err != nil {
@@ -414,6 +416,21 @@ func stripCredentialKeys(cfg map[string]any, keys []string) map[string]any {
 	return out
 }
 
+// publicConfig returns the source's config with credential keys removed, ready
+// to serialise on an Integration. The persisted config is already stripped at
+// write time, but this re-strips defensively in case a provider changed its
+// credential key set since the source was stored. Unknown providers fall back to
+// the raw stored config (already stripped at write time).
+func (s *Service) publicConfig(src *Source) map[string]any {
+	if src.Config == nil {
+		return nil
+	}
+	if p, ok := s.providers.Get(src.Provider); ok {
+		return stripCredentialKeys(src.Config, p.CredentialKeys())
+	}
+	return src.Config
+}
+
 // toIntegration maps a persisted source to the SDK integration shape. It never
 // includes credential material, and derives the source type from the provider
 // catalog so it stays provider-agnostic.
@@ -430,6 +447,7 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		SourceType:          sourceType,
 		SyncMode:            src.SyncPolicy,
 		SyncIntervalMinutes: src.SyncIntervalMinutes,
+		Config:              s.publicConfig(src),
 		LastSyncedAt:        src.LastSyncedAt,
 		Status:              src.Status,
 		ErrorMessage:        src.LastError,

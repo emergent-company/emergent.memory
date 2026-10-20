@@ -29,7 +29,7 @@ func testDSSchema() *DSProviderSchema {
 }
 
 func TestDSConfigFieldsSplitsCredentials(t *testing.T) {
-	config, creds := dsConfigFields(testDSSchema())
+	config, creds := dsConfigFields(testDSSchema(), nil)
 	if len(config) != 4 {
 		t.Fatalf("config fields = %+v", config)
 	}
@@ -44,6 +44,36 @@ func TestDSConfigFieldsSplitsCredentials(t *testing.T) {
 	}
 	if creds[0].Key != "client_id" || creds[1].Key != "client_secret" || creds[2].Key != "refresh_token" {
 		t.Errorf("credential order = %+v", creds)
+	}
+}
+
+// TestDSConfigFieldsPrefillsNonCredential asserts an edit round-trip: a source's
+// non-secret config values bind onto the config fields (string → Value, array →
+// newline-joined Value, boolean → Checked) while credential fields stay blank.
+func TestDSConfigFieldsPrefillsNonCredential(t *testing.T) {
+	cfg := map[string]any{
+		"folder_id":     "f1",
+		"mime_types":    []any{"application/pdf", "text/plain"},
+		"recursive":     true,
+		"refresh_token": "must-not-leak",
+	}
+	config, creds := dsConfigFields(testDSSchema(), cfg)
+	if len(config) != 4 || len(creds) != 3 {
+		t.Fatalf("config=%+v creds=%+v", config, creds)
+	}
+	if config[0].Value != "f1" {
+		t.Errorf("folder_id value = %q", config[0].Value)
+	}
+	if config[2].Value != "application/pdf\ntext/plain" {
+		t.Errorf("mime_types value = %q", config[2].Value)
+	}
+	if !config[3].Checked {
+		t.Error("recursive should be checked")
+	}
+	for _, c := range creds {
+		if c.Value != "" || c.Checked {
+			t.Errorf("credential field %q must stay blank: %+v", c.Key, c)
+		}
 	}
 }
 
@@ -141,7 +171,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 	}
 
 	// A credentials provider renders the write-only form from the schema.
-	config, credFields := dsConfigFields(testDSSchema())
+	config, credFields := dsConfigFields(testDSSchema(), nil)
 	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
@@ -196,8 +226,11 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
 		t.Error("resource empty state missing")
 	}
-	if !strings.Contains(empty, "will be available") {
+	if !strings.Contains(empty, "No resources were returned for Google Drive") {
 		t.Error("resource empty copy missing")
+	}
+	if !strings.Contains(empty, `data-testid="ds-resource-retry"`) {
+		t.Error("resource retry link missing")
 	}
 
 	// A non-Drive provider gets the generic copy and a generic action label.
@@ -344,9 +377,9 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	src.SyncIntervalMinutes = &interval
 	phase := "enumerating"
 	job := DSSyncJob{ID: "j1", IntegrationID: "s1", Status: "processing", TotalItems: 10, ProcessedItems: 4, SuccessfulItems: 3, FailedItems: 1, CurrentPhase: &phase, TriggerType: "manual", CreatedAt: "2026-09-01T10:00:00Z"}
-	config, creds := dsConfigFields(testDSSchema())
+	config, creds := dsConfigFields(testDSSchema(), nil)
 
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, []DSSyncJob{job}, nil, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, []DSSyncJob{job}, nil, nil, "", nil))
 	for _, want := range []string{
 		"Team Drive", "Google Drive",
 		`hx-post="/data-sources/s1/test-connection"`,
@@ -367,15 +400,40 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	}
 
 	// No jobs renders the explanatory note, not a broken section.
-	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, "", nil))
+	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, "", nil))
 	if !strings.Contains(noJobs, "No syncs yet") {
 		t.Error("empty sync history missing")
 	}
 
 	// A nil source renders the load-error state.
-	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, nil, errTest, "", nil))
+	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, nil, errTest, nil, "", nil))
 	if !strings.Contains(errPage, "Data source unavailable") {
 		t.Error("load-error state missing")
+	}
+}
+
+// TestRenderDataSourceDetailPageResourceBanner asserts a source whose config is
+// missing its sync target shows the "finish connecting" banner linking to the
+// resource step, and a complete source does not.
+func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
+	config, creds := dsConfigFields(testDSSchema(), nil)
+
+	incomplete := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(incomplete), "", nil))
+	if !strings.Contains(html, `data-testid="ds-resource-needed"`) {
+		t.Error("resource-needed banner missing")
+	}
+	if !strings.Contains(html, `data-testid="ds-resource-needed-link"`) {
+		t.Error("resource-needed link missing")
+	}
+	if !strings.Contains(html, "/data-sources/s1/resources") {
+		t.Error("resource-needed link href missing")
+	}
+
+	complete := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}
+	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(complete), "", nil))
+	if strings.Contains(html, `data-testid="ds-resource-needed"`) {
+		t.Error("resource-needed banner must not render for a complete source")
 	}
 }
 
@@ -816,6 +874,33 @@ func TestUIDataSourceResourceSave(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
 		t.Errorf("failure location = %q", loc)
+	}
+}
+
+// TestUIDataSourceResourceSaveMergesStoredConfig asserts picking a resource
+// merges it over the source's existing non-secret config instead of replacing
+// it, so other persisted keys (mime_types, recursive) survive the update.
+func TestUIDataSourceResourceSaveMergesStoredConfig(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{
+		ID: "s1", Name: "Team Drive", ProviderType: "google_drive",
+		Config: map[string]any{"mime_types": []any{"application/pdf"}, "recursive": true},
+	}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsSavedResourceCfg["folder_id"] != "f1" {
+		t.Fatalf("folder_id missing from saved cfg: %+v", f.dsSavedResourceCfg)
+	}
+	if _, ok := f.dsSavedResourceCfg["mime_types"]; !ok {
+		t.Errorf("stored mime_types lost in merge: %+v", f.dsSavedResourceCfg)
+	}
+	if v, ok := f.dsSavedResourceCfg["recursive"].(bool); !ok || !v {
+		t.Errorf("stored recursive lost in merge: %+v", f.dsSavedResourceCfg)
 	}
 }
 

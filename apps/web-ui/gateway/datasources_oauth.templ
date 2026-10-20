@@ -42,13 +42,23 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 						</div>
 					</div>
 					if loadErr != nil || len(resources) == 0 {
-						<div class="mt-4" data-testid="ds-resource-empty">
+						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
 							@ui.Alert(ui.AlertProps{
-								Type:    ui.AlertInfo,
+								Type:    ui.AlertWarning,
 								Style:   ui.AlertStyleSoft,
-								Icon:    "lucide--construction",
-								Message: "Resource selection will be available when the " + providerName + " connector lands.",
+								Icon:    "lucide--alert-triangle",
+								Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
 							})
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeLink,
+								Href:    "/data-sources/" + url.PathEscape(src.ID) + "/resources",
+								Variant: ui.ButtonOutline,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--refresh-cw",
+								Attrs:   templ.Attributes{"data-testid": "ds-resource-retry"},
+							}) {
+								Try again
+							}
 						</div>
 					} else {
 						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">

@@ -151,9 +151,10 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	}
 
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
-		Name:         name,
-		ProviderType: pending.Provider,
-		Config:       cfg,
+		Name:                  name,
+		ProviderType:          pending.Provider,
+		Config:                cfg,
+		AllowIncompleteConfig: true,
 	})
 	if err != nil {
 		// The token exchange succeeded but the source could not be stored: still

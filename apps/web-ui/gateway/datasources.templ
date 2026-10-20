@@ -459,12 +459,14 @@ templ dsConfigFieldInputs(fields []dsConfigField) {
 }
 
 // dsConfigFieldInput renders one config field by its schema type: a text input,
-// a textarea for arrays, or a checkbox for booleans.
+// a textarea for arrays, or a checkbox for booleans. Non-credential fields are
+// prefilled from the source's stored config (Value/Checked); the connect form
+// passes zero values.
 templ dsConfigFieldInput(f dsConfigField) {
 	if f.Type == "boolean" {
 		<div class="flex flex-col gap-1">
 			<label class="flex cursor-pointer items-center gap-3">
-				<input type="checkbox" id={ f.Key } name={ f.Key } class="toggle" data-testid={ "ds-field-" + f.Key }/>
+				<input type="checkbox" id={ f.Key } name={ f.Key } class="toggle" data-testid={ "ds-field-" + f.Key } checked?={ f.Checked }/>
 				<span class="text-sm font-medium">{ f.Label }</span>
 			</label>
 			if f.Description != "" {
@@ -482,9 +484,9 @@ templ dsConfigFieldInput(f dsConfigField) {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
 			}
 			if f.Type == "array" {
-				<textarea id={ f.Key } name={ f.Key } rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid={ "ds-field-" + f.Key } placeholder="One MIME type per line"></textarea>
+				<textarea id={ f.Key } name={ f.Key } rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid={ "ds-field-" + f.Key } placeholder="One MIME type per line">{ f.Value }</textarea>
 			} else {
-				<input id={ f.Key } name={ f.Key } type="text" class="input input-bordered w-full" data-testid={ "ds-field-" + f.Key }/>
+				<input id={ f.Key } name={ f.Key } type="text" class="input input-bordered w-full" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
 			}
 		</div>
 	}
@@ -540,18 +542,48 @@ templ DSTestResultPartial(resp *DSTestConnectionResponse, err error) {
 
 // DataSourceDetailPage renders a source's detail and edit surface: connection
 // test, settings, and sync-job history. A nil src renders the load-error state.
-templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, jobs []DSSyncJob, loadErr error, flashMsg string, flashErr error) {
+// resourcePrompt, when non-nil, is the banner prompting the user to finish
+// connecting by choosing a sync target (folder/repo).
+templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, jobs []DSSyncJob, loadErr error, resourcePrompt *dsResourcePrompt, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
 		} else {
 			@dataSourceDetailHeader(src, providerName)
 			@flashToasts(flashMsg, flashErr)
+			if resourcePrompt != nil {
+				@dsResourceNeededBanner(*resourcePrompt)
+			}
 			@dsConnectionCard(src)
 			@dsEditCard(src, configFields, credentialFields)
 			@dsSyncHistory(src.ID, jobs)
 		}
 	}
+}
+
+// dsResourceNeededBanner prompts the user to finish a source whose config is
+// missing its sync target, linking to the resource-selection step.
+templ dsResourceNeededBanner(p dsResourcePrompt) {
+	<div class="mb-4" data-testid="ds-resource-needed">
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertWarning,
+			Style:   ui.AlertStyleSoft,
+			Icon:    "lucide--folder-tree",
+			Message: p.Description,
+		})
+		<div class="mt-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    p.Href,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--folder-search",
+				Attrs:   templ.Attributes{"data-testid": "ds-resource-needed-link"},
+			}) {
+				{ p.Title }
+			}
+		</div>
+	</div>
 }
 
 templ dataSourceDetailHeader(src *DSIntegration, providerName string) {
@@ -627,7 +659,7 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold">Folder scope</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Config values are write-only and are not returned by the API. Re-enter the folder and options to change them; leave every config field blank to keep the current config. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Your stored folder and options are shown below. Credential fields are write-only and never shown. }
 				<div class="mt-3">
 					@dsConfigFieldInputs(configFields)
 				</div>

@@ -114,21 +114,26 @@ type ProviderSchema struct {
 // Integration mirrors pkg/sdk/datasources.Integration — the read/write shape of
 // a data-source integration. It carries no credential material.
 type Integration struct {
-	ID                  string     `json:"id"`
-	ProjectID           string     `json:"projectId"`
-	Name                string     `json:"name"`
-	Description         *string    `json:"description,omitempty"`
-	ProviderType        string     `json:"providerType"`
-	SourceType          string     `json:"sourceType"`
-	SyncMode            string     `json:"syncMode"`
-	SyncIntervalMinutes *int       `json:"syncIntervalMinutes,omitempty"`
-	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
-	NextSyncAt          *time.Time `json:"nextSyncAt,omitempty"`
-	Status              string     `json:"status"`
-	ErrorMessage        *string    `json:"errorMessage,omitempty"`
-	ErrorCount          int        `json:"errorCount"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string  `json:"id"`
+	ProjectID           string  `json:"projectId"`
+	Name                string  `json:"name"`
+	Description         *string `json:"description,omitempty"`
+	ProviderType        string  `json:"providerType"`
+	SourceType          string  `json:"sourceType"`
+	SyncMode            string  `json:"syncMode"`
+	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// Config carries the non-secret config values (credential keys stripped) so
+	// the connect/edit UI can round-trip a source's persisted settings without
+	// exposing write-only credential fields. Credential material never appears
+	// here (design D2).
+	Config       map[string]any `json:"config,omitempty"`
+	LastSyncedAt *time.Time     `json:"lastSyncedAt,omitempty"`
+	NextSyncAt   *time.Time     `json:"nextSyncAt,omitempty"`
+	Status       string         `json:"status"`
+	ErrorMessage *string        `json:"errorMessage,omitempty"`
+	ErrorCount   int            `json:"errorCount"`
+	CreatedAt    time.Time      `json:"createdAt"`
+	UpdatedAt    time.Time      `json:"updatedAt"`
 }
 
 // SourceType mirrors pkg/sdk/datasources.SourceType — document counts grouped
@@ -155,6 +160,11 @@ type CreateIntegrationRequest struct {
 	Config              map[string]any `json:"config"`
 	SyncMode            *string        `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
+	// AllowIncompleteConfig lets a caller (the OAuth callback) create a source
+	// whose config is missing its sync target (folder_id/repo). The target is
+	// selected after consent and applied via a later update, so config
+	// validation is skipped for the create. Never serialised.
+	AllowIncompleteConfig bool `json:"-"`
 }
 
 // UpdateIntegrationRequest mirrors pkg/sdk/datasources.UpdateIntegrationRequest.

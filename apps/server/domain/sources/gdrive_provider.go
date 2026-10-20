@@ -11,8 +11,12 @@ import (
 
 // credentialKeyNames are the config keys that carry provider credential
 // material. They are write-only: stripped from the persisted config and never
-// returned.
-var credentialKeyNames = []string{"client_id", "client_secret", "refresh_token"}
+// returned. access_token is included defensively — the OAuth callback only
+// copies CredentialKeys() into the config, and Drive's connect schema has no
+// access-token field, so it is unreachable today, but the strip-on-read /
+// strip-on-write defence must still treat it as credential material if a legacy
+// row or API caller ever stored one.
+var credentialKeyNames = []string{"client_id", "client_secret", "refresh_token", "access_token"}
 
 // DriveTransport is the Drive transport surface the connector needs. It is the
 // subset of *gdrive.Client used for enumeration, content fetch, connection
@@ -115,7 +119,7 @@ func (p *googleDriveProvider) ScopesForStrategy(strategy string) ([]string, bool
 }
 
 // CredentialKeys returns the write-only Drive credential keys (client id/secret
-// + refresh token).
+// + refresh token, plus access_token defensively).
 func (p *googleDriveProvider) CredentialKeys() []string { return credentialKeyNames }
 
 // ListResources lists the Drive folders a user may pick as a sync target.

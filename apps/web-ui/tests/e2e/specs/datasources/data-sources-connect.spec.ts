@@ -54,6 +54,28 @@ test.describe('Connect a data source', () => {
       await expect(page.getByTestId('ds-sync-history')).toBeVisible();
       await expect(page.getByTestId('ds-sync-empty')).toBeVisible();
       await expect(page.getByRole('heading', { name: src.name })).toBeVisible();
+      // The edit form prefills the stored folder (config round-trip), while the
+      // write-only refresh token stays blank.
+      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
+      await expect(page.getByTestId('ds-field-refresh_token')).toHaveValue('');
+    } finally {
+      await deleteDriveSource(page, src.id);
+    }
+  });
+
+  test('edit form preserves stored config and blank credentials on save', async ({ page }) => {
+    const src = await createDriveSource(page, {
+      name: `e2e-drive-${Date.now()}`,
+      folder: 'folder-ok',
+    });
+    try {
+      // Change only the name; the prefilled folder is resubmitted untouched.
+      await page.getByTestId('ds-field-name').fill(`${src.name}-renamed`);
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.waitForURL(/updated=1/);
+      await expect(page.getByRole('heading', { name: `${src.name}-renamed` })).toBeVisible();
+      // The folder survives the round-trip (no data loss).
+      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
     } finally {
       await deleteDriveSource(page, src.id);
     }

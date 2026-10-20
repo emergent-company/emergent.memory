@@ -489,9 +489,10 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 `specs/gdrive-live/gdrive-datasource-live.spec.ts` (the `gdrive-live` project)
 proves the **real** Drive path end-to-end against a live deployment — the
 hermetic `datasources` suite above mocks the upstream, while this one exercises
-it: a project-scoped Google OAuth app → OAuth-connect a real folder → first sync
-creates document v1 → the fixture edits the file → re-sync produces v2 sharing
-the same `canonicalId` → the fixture trashes the file → re-sync marks the head
+it: a project-scoped Google OAuth app → OAuth-connect with no sync target →
+pick a real folder on the resource-selection step → first sync creates document
+v1 → the fixture edits the file → re-sync produces v2 sharing the same
+`canonicalId` → the fixture trashes the file → re-sync marks the head
 `deleted_from_source`.
 
 It is opt-in and **never runs in CI** (no workflow fires it): it needs a real
@@ -537,13 +538,17 @@ is printed: the OAuth state expires in ~10 minutes and the test still asserts
 three syncs afterwards, so a slow consent can push the whole run past its
 timeout.
 
-The connect is started against the memory API's authorize endpoint
-(`GET /api/data-source-integrations/providers/google_drive/oauth/authorize`) with
-`config.folder_id` in the body, not through the gateway's
-`/data-sources/oauth/start` route: that route forwards no config, while the
-source-create path validates `config.folder_id`, so a UI-initiated Drive connect
-fails at the callback with `config.folder_id is required`. The OAuth *client*
-under test is still the project-scoped one configured through the settings UI.
+The connect is started from the real UI connect surface
+(`/data-sources/new?providerType=google_drive` → the panel's Connect control,
+which drives `/data-sources/oauth/start`) with no config pinned, so the
+callback-created source lands with no sync target — exercising the shipped
+round-trip fix. The test intercepts that route's 303 redirect to print + attach
+the Google authorize URL (it never navigates the test browser to Google). After
+the human finishes consent and the source appears, the test walks the detail
+page's "choose a sync target" prompt onto the resource-selection step, selects
+the scratch folder, and asserts the edit form prefills the folder before the
+three syncs run. The OAuth *client* under test is the project-scoped one
+configured through the settings UI.
 
 ### Live-LLM scenarios (scheduled, not PR-gated)
 

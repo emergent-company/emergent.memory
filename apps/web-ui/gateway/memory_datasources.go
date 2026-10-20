@@ -71,13 +71,16 @@ type DSIntegration struct {
 	SourceType          string  `json:"sourceType"`
 	SyncMode            string  `json:"syncMode"`
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
-	LastSyncedAt        *string `json:"lastSyncedAt,omitempty"`
-	NextSyncAt          *string `json:"nextSyncAt,omitempty"`
-	Status              string  `json:"status"`
-	ErrorMessage        *string `json:"errorMessage,omitempty"`
-	ErrorCount          int     `json:"errorCount"`
-	CreatedAt           string  `json:"createdAt"`
-	UpdatedAt           string  `json:"updatedAt"`
+	// Config carries the non-secret config values (credential keys stripped) so
+	// the edit UI can round-trip a source's persisted settings.
+	Config       map[string]any `json:"config,omitempty"`
+	LastSyncedAt *string        `json:"lastSyncedAt,omitempty"`
+	NextSyncAt   *string        `json:"nextSyncAt,omitempty"`
+	Status       string         `json:"status"`
+	ErrorMessage *string        `json:"errorMessage,omitempty"`
+	ErrorCount   int            `json:"errorCount"`
+	CreatedAt    string         `json:"createdAt"`
+	UpdatedAt    string         `json:"updatedAt"`
 }
 
 // DSSyncJob is one sync job of a source. It mirrors the SDK SyncJob shape so the

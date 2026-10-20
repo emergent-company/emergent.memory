@@ -133,21 +133,24 @@ type SetOAuthClientRequest struct {
 
 // Integration represents a data source integration.
 type Integration struct {
-	ID                  string     `json:"id"`
-	ProjectID           string     `json:"projectId"`
-	Name                string     `json:"name"`
-	Description         *string    `json:"description,omitempty"`
-	ProviderType        string     `json:"providerType"`
-	SourceType          string     `json:"sourceType"`
-	SyncMode            string     `json:"syncMode"`
-	SyncIntervalMinutes *int       `json:"syncIntervalMinutes,omitempty"`
-	LastSyncedAt        *time.Time `json:"lastSyncedAt,omitempty"`
-	NextSyncAt          *time.Time `json:"nextSyncAt,omitempty"`
-	Status              string     `json:"status"`
-	ErrorMessage        *string    `json:"errorMessage,omitempty"`
-	ErrorCount          int        `json:"errorCount"`
-	CreatedAt           time.Time  `json:"createdAt"`
-	UpdatedAt           time.Time  `json:"updatedAt"`
+	ID                  string  `json:"id"`
+	ProjectID           string  `json:"projectId"`
+	Name                string  `json:"name"`
+	Description         *string `json:"description,omitempty"`
+	ProviderType        string  `json:"providerType"`
+	SourceType          string  `json:"sourceType"`
+	SyncMode            string  `json:"syncMode"`
+	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
+	// Config carries the non-secret config values (credential keys stripped) so
+	// the connect/edit UI can round-trip a source's persisted settings.
+	Config       map[string]interface{} `json:"config,omitempty"`
+	LastSyncedAt *time.Time             `json:"lastSyncedAt,omitempty"`
+	NextSyncAt   *time.Time             `json:"nextSyncAt,omitempty"`
+	Status       string                 `json:"status"`
+	ErrorMessage *string                `json:"errorMessage,omitempty"`
+	ErrorCount   int                    `json:"errorCount"`
+	CreatedAt    time.Time              `json:"createdAt"`
+	UpdatedAt    time.Time              `json:"updatedAt"`
 }
 
 // SyncJob represents a data source sync job.

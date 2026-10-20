@@ -38470,6 +38470,11 @@ const docTemplate = `{
         "domain_sources.Integration": {
             "type": "object",
             "properties": {
+                "config": {
+                    "description": "Config carries the non-secret config values (credential keys stripped) so\nthe connect/edit UI can round-trip a source's persisted settings without\nexposing write-only credential fields. Credential material never appears\nhere (design D9).",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "createdAt": {
                     "type": "string"
                 },

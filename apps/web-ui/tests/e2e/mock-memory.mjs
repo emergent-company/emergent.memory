@@ -359,13 +359,21 @@ let dsSources = [
     },
     config: {},
   },
-]; // [{ row, config }] — config is server-side only.
+]; // [{ row, config }] — the full config (incl. credentials) is server-side only; dsIntegration returns a stripped copy.
 let dsJobsBySource = {}; // sourceId -> [job], newest first.
 let dsCounter = 1;
 let dsJobCounter = 1;
 
-// dsIntegration projects the stored row; config/credentials never leave here.
-const dsIntegration = (row) => ({ ...row });
+// dsIntegration projects a stored source: the row plus its non-secret config
+// (credential keys stripped). Credentials never leave here.
+const dsCredentialKeys = ["client_id", "client_secret", "refresh_token"];
+const dsIntegration = (src) => {
+  const config = {};
+  for (const [k, v] of Object.entries(src.config || {})) {
+    if (!dsCredentialKeys.includes(k)) config[k] = v;
+  }
+  return { ...src.row, config };
+};
 
 // dsNewSyncJob prepends a job to a source's history.
 function dsNewSyncJob(sourceID, status, extra) {
@@ -953,7 +961,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (path === "/api/data-source-integrations" && req.method === "GET") {
-    return json(res, dsSources.map((s) => dsIntegration(s.row)));
+    return json(res, dsSources.map(dsIntegration));
   }
 
   if (path === "/api/data-source-integrations" && req.method === "POST") {
@@ -974,9 +982,10 @@ const server = http.createServer((req, res) => {
         createdAt: now,
         updatedAt: now,
       };
-      dsSources.push({ row, config: payload.config || {} });
+      const src = { row, config: payload.config || {} };
+      dsSources.push(src);
       res.statusCode = 201;
-      return json(res, dsIntegration(row));
+      return json(res, dsIntegration(src));
     });
   }
 
@@ -1074,7 +1083,7 @@ const server = http.createServer((req, res) => {
       res.statusCode = 404;
       return json(res, { error: { code: "not_found", message: "source not found" } });
     }
-    return json(res, dsIntegration(src.row));
+    return json(res, dsIntegration(src));
   }
 
   if (dsItemMatch && req.method === "PATCH") {
@@ -1089,7 +1098,7 @@ const server = http.createServer((req, res) => {
       if (payload.syncIntervalMinutes != null) src.row.syncIntervalMinutes = payload.syncIntervalMinutes;
       if (payload.config) src.config = { ...src.config, ...payload.config };
       src.row.updatedAt = nowISO();
-      return json(res, dsIntegration(src.row));
+      return json(res, dsIntegration(src));
     });
   }
 

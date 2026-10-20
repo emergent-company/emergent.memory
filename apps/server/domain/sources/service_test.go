@@ -143,10 +143,11 @@ func TestStripCredentialKeys_RemovesSecrets(t *testing.T) {
 		"client_id":     "cid",
 		"client_secret": "cs",
 		"refresh_token": "rt",
+		"access_token":  "at",
 		"recursive":     true,
 	}
 	out := stripCredentialKeys(in, credentialKeyNames)
-	for _, k := range []string{"client_id", "client_secret", "refresh_token"} {
+	for _, k := range []string{"client_id", "client_secret", "refresh_token", "access_token"} {
 		if _, ok := out[k]; ok {
 			t.Errorf("stripCredentialKeys() left secret key %q", k)
 		}
@@ -165,7 +166,7 @@ func TestToIntegration_NoSecrets(t *testing.T) {
 		ProjectID:            projectID,
 		Provider:             ProviderTypeGoogleDrive,
 		DisplayName:          "My Drive",
-		Config:               map[string]any{"folder_id": "f"},
+		Config:               map[string]any{"folder_id": "f", "refresh_token": "rt", "access_token": "at"},
 		EncryptedCredentials: []byte("ciphertext"),
 		SyncPolicy:           "manual",
 		SyncIntervalMinutes:  &interval,
@@ -187,9 +188,18 @@ func TestToIntegration_NoSecrets(t *testing.T) {
 	if it.Status != "active" {
 		t.Errorf("integration Status = %q, want active", it.Status)
 	}
+	// Config carries the non-secret values (folder_id), credential keys stripped.
+	if it.Config["folder_id"] != "f" {
+		t.Errorf("integration Config = %+v, want folder_id preserved", it.Config)
+	}
+	for _, k := range credentialKeyNames {
+		if _, ok := it.Config[k]; ok {
+			t.Errorf("integration Config leaks credential key %q: %+v", k, it.Config)
+		}
+	}
 	// The integration shape must never carry credential material.
 	b, _ := json.Marshal(it)
-	if strings.Contains(string(b), "client_secret") || strings.Contains(string(b), "refresh_token") || strings.Contains(string(b), "ciphertext") {
+	if strings.Contains(string(b), "client_secret") || strings.Contains(string(b), "refresh_token") || strings.Contains(string(b), "access_token") || strings.Contains(string(b), "ciphertext") {
 		t.Errorf("integration JSON leaks credential material: %s", b)
 	}
 }
@@ -217,5 +227,21 @@ func TestCreate_RejectsMissingRefreshToken(t *testing.T) {
 	var appErr *apperror.Error
 	if !errors.As(err, &appErr) {
 		t.Fatalf("Create() error type = %T, want *apperror.Error", err)
+	}
+}
+
+// TestCreate_RejectsMissingFolderID asserts Create enforces the folder_id
+// contract when AllowIncompleteConfig is unset (the credentials connect path).
+func TestCreate_RejectsMissingFolderID(t *testing.T) {
+	svc := newTestService(make([]byte, 32))
+	_, err := svc.Create(context.Background(), uuid.New(), &CreateIntegrationRequest{
+		ProviderType: ProviderTypeGoogleDrive,
+		Config:       map[string]any{"refresh_token": "rt"},
+	})
+	if err == nil {
+		t.Fatal("Create() with no folder_id = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "folder_id") {
+		t.Errorf("Create() error = %q, want folder_id validation error", err)
 	}
 }

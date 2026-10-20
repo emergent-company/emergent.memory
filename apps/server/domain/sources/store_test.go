@@ -214,3 +214,59 @@ func TestSourceStore_Update_PreservesCredentials(t *testing.T) {
 		t.Error("Update with credentials did not rotate the encrypted blob")
 	}
 }
+
+// TestSourceStore_Create_IncompleteConfig verifies the OAuth callback path:
+// AllowIncompleteConfig skips config validation so a source can be created
+// before its sync target is chosen, the refresh_token is still extracted and
+// encrypted, and the persisted config carries no credential keys.
+func TestSourceStore_Create_IncompleteConfig(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "sourcesincomplete")
+	t.Cleanup(tdb.Close)
+	db := tdb.DB
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	key := make([]byte, 32)
+	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
+	repo := NewRepository(db, log)
+	svc := NewService(repo, cfg, log, NewDefaultRegistry())
+
+	projectID := uuid.New()
+	created, err := svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name:                  "Drive (awaiting folder)",
+		ProviderType:          ProviderTypeGoogleDrive,
+		Config:                map[string]any{"refresh_token": "refresh-oauth"},
+		AllowIncompleteConfig: true,
+	})
+	if err != nil {
+		t.Fatalf("Create(incomplete) error = %v", err)
+	}
+	if created.ID == "" {
+		t.Fatal("Create(incomplete) returned empty id")
+	}
+
+	// Read back: config has no sync target yet, and no credential keys leak.
+	got, err := svc.Get(ctx, projectID, uuid.MustParse(created.ID))
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if _, ok := got.Config["folder_id"]; ok {
+		t.Errorf("incomplete source should have no folder_id yet: %+v", got.Config)
+	}
+	b, _ := json.Marshal(got)
+	if strings.Contains(string(b), "refresh-oauth") || strings.Contains(string(b), "refresh_token") {
+		t.Errorf("incomplete source response leaked credential material: %s", b)
+	}
+
+	// The credential blob is still encrypted at rest.
+	var blob []byte
+	if err := db.NewSelect().TableExpr("kb.sources").Column("encrypted_credentials").Where("id = ?", created.ID).Scan(ctx, &blob); err != nil {
+		t.Fatalf("select encrypted_credentials: %v", err)
+	}
+	if len(blob) == 0 || strings.Contains(string(blob), "refresh-oauth") {
+		t.Error("encrypted_credentials not stored encrypted")
+	}
+}
