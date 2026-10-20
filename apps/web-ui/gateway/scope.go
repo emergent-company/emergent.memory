@@ -65,6 +65,10 @@ func globalScopePath(p string) bool {
 		"/o/", "/api/", "/auth/", "/share/", "/static/", "/assets/",
 		"/webhooks/", "/internal/", "/dev/", "/members", "/invites",
 		"/profile", "/partial/invite-user-search",
+		// OAuth callback landing (oauth_landing.go): the API server redirects
+		// here without a scope prefix, and the route resolves the caller's
+		// project itself.
+		"/oauth/",
 	} {
 		if strings.HasPrefix(p, pre) {
 			return true
@@ -256,6 +260,8 @@ var globalLinkPrefixes = []string{
 	// Dev-gated component-gallery previews/nav are global paths (see
 	// globalScopePath); their src must never be scoped.
 	"/dev/",
+	// OAuth callback landing (see oauth_landing.go): global by design.
+	"/oauth/",
 }
 
 // Note: /invites is deliberately absent from globalLinkPrefixes. The

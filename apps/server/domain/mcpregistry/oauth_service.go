@@ -66,9 +66,12 @@ type OAuthConfig struct {
 	// https://api.example.com. The registered redirect URI is
 	// <RedirectBaseURL>/api/mcp-servers/oauth/callback. Empty disables the flow.
 	RedirectBaseURL string
-	// LandingURL is the browser-facing URL the callback redirects to, e.g.
-	// https://admin.example.com/settings/mcp-servers. Empty falls
-	// back to <RedirectBaseURL>/settings/mcp-servers (single-origin setups).
+	// LandingURL is the browser-facing URL the callback redirects to. It should
+	// be the gateway's scope-agnostic landing route, e.g.
+	// https://admin.example.com/oauth/landing/mcp-servers: this API server has no
+	// org/project scope, so a scoped UI path cannot be configured here. Empty
+	// falls back to <RedirectBaseURL>/oauth/landing/mcp-servers (single-origin
+	// setups).
 	LandingURL string
 	// ClientName is the client_name presented at dynamic client registration.
 	ClientName string
@@ -85,15 +88,25 @@ func (c OAuthConfig) redirectURI() string {
 	return base + "/api/mcp-servers/oauth/callback"
 }
 
+// scopeProjectParam names the untrusted project hint carried on the
+// post-callback landing URL. The web UI (a separate Go module) validates it
+// against the caller's access tree and ignores it when it does not resolve — it
+// is never an authorization input. Keep the name in sync with
+// apps/web-ui/gateway/oauth_landing.go.
+const scopeProjectParam = "scope_project"
+
 // landingURL builds the post-callback UI URL with a one-shot outcome parameter.
-func (c OAuthConfig) landingURL(outcome string) string {
+// projectID is the flow's project when it is known (the state was consumed); it
+// is forwarded as an untrusted hint so the UI can land the caller back in that
+// scope. An empty projectID omits the hint.
+func (c OAuthConfig) landingURL(outcome, projectID string) string {
 	raw := strings.TrimSpace(c.LandingURL)
 	if raw == "" {
 		base := strings.TrimRight(strings.TrimSpace(c.RedirectBaseURL), "/")
 		if base == "" {
 			return ""
 		}
-		raw = base + "/settings/mcp-servers"
+		raw = base + "/oauth/landing/mcp-servers"
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -101,6 +114,9 @@ func (c OAuthConfig) landingURL(outcome string) string {
 	}
 	q := u.Query()
 	q.Set("mcp_oauth", outcome)
+	if pid := strings.TrimSpace(projectID); pid != "" {
+		q.Set(scopeProjectParam, pid)
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }
@@ -319,11 +335,13 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 	if pending == nil || pending.Provider != oauthProviderMCP {
 		return "", "", ErrOAuthStateInvalid
 	}
+	// The state was consumed: from here the flow's project is known, so every
+	// failure below still lands the browser back in that scope.
+	projectID = pending.ProjectID
 	serverID, _ = pending.Config["serverId"].(string)
 	if serverID == "" {
-		return "", "", ErrOAuthStateInvalid
+		return "", projectID, ErrOAuthStateInvalid
 	}
-	projectID = pending.ProjectID
 	userID := ""
 	if pending.UserID != nil {
 		userID = *pending.UserID
@@ -331,22 +349,22 @@ func (s *Service) CompleteMCPOAuth(ctx context.Context, state, code string) (ser
 
 	server, err := s.repo.FindServerByID(ctx, serverID, &projectID)
 	if err != nil {
-		return "", "", fmt.Errorf("loading MCP server: %w", err)
+		return serverID, projectID, fmt.Errorf("loading MCP server: %w", err)
 	}
 	if server == nil {
-		return "", "", ErrServerNotFound
+		return serverID, projectID, ErrServerNotFound
 	}
 	row, err := s.repo.FindOAuthForUser(ctx, serverID, userID)
 	if err != nil {
-		return "", "", fmt.Errorf("loading MCP server authorization: %w", err)
+		return serverID, projectID, fmt.Errorf("loading MCP server authorization: %w", err)
 	}
 	if row == nil {
-		return "", "", ErrOAuthStateInvalid
+		return serverID, projectID, ErrOAuthStateInvalid
 	}
 
 	clientSecret, err := decryptSecretValue(s.encryptor, row.ClientSecret)
 	if err != nil {
-		return "", "", err
+		return serverID, projectID, err
 	}
 	identity := &oauthClientIdentity{ClientID: row.ClientID, ClientSecret: clientSecret}
 	req := &authRequirement{

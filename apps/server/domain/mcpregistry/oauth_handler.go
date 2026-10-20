@@ -180,21 +180,24 @@ func (h *Handler) CompleteMCPOAuth(c echo.Context) error {
 	ctx := c.Request().Context()
 	if provErr := c.QueryParam("error"); provErr != "" {
 		h.svc.log.Warn("MCP OAuth authorization was denied", slog.String("error", provErr))
-		return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("denied"))
+		// The authorization server rejected before the state was consumed, so
+		// the flow's project is unknown; the UI falls back to the caller's scope.
+		return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("denied", ""))
 	}
 
 	serverID, projectID, err := h.svc.CompleteMCPOAuth(ctx, c.QueryParam("state"), c.QueryParam("code"))
 	if err != nil {
 		// Browser-facing: log the detail, land on a generic error so no internal
-		// detail (or any part of the code/verifier) reaches the redirect.
+		// detail (or any part of the code/verifier) reaches the redirect. The
+		// project is forwarded as a hint so the UI returns to that scope.
 		h.svc.log.Warn("MCP OAuth callback failed",
 			slog.String("project_id", projectID),
 			slog.String("server_id", serverID),
 			slog.String("error", err.Error()),
 		)
-		return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("error"))
+		return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("error", projectID))
 	}
-	return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("connected"))
+	return c.Redirect(http.StatusSeeOther, h.svc.oauthCfg.landingURL("connected", projectID))
 }
 
 // mcpOAuthError maps the OAuth connect flow's sentinel errors onto HTTP

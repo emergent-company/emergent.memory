@@ -1,11 +1,13 @@
 package sources
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -55,6 +57,26 @@ func (h *Handler) StartOAuth(c echo.Context) error {
 	return c.JSON(http.StatusOK, resp)
 }
 
+// oauthScopeProjectParam names the untrusted project hint carried on the
+// post-callback landing URL. The web UI (a separate Go module) validates it
+// against the caller's access tree and ignores it when it does not resolve —
+// it is never an authorization input. Keep the name in sync with
+// apps/web-ui/gateway/oauth_landing.go.
+const oauthScopeProjectParam = "scope_project"
+
+// oauthLandingQuery builds the landing query string for one callback outcome:
+// the one-shot outcome parameter plus, when the flow reached the point of
+// knowing it, the project it started from so the UI can land the caller back in
+// that scope. An empty projectID means "unknown" (the state was never read).
+func oauthLandingQuery(key, value, projectID string) string {
+	q := url.Values{}
+	q.Set(key, value)
+	if projectID != "" {
+		q.Set(oauthScopeProjectParam, projectID)
+	}
+	return "?" + q.Encode()
+}
+
 // CompleteOAuth handles GET /api/data-source-integrations/oauth/:providerType/callback.
 // It is intentionally unauthenticated (the browser arrives cross-site from the
 // provider); the single-use, short-lived, unguessable state is the trust anchor.
@@ -70,14 +92,24 @@ func (h *Handler) StartOAuth(c echo.Context) error {
 func (h *Handler) CompleteOAuth(c echo.Context) error {
 	providerType := c.Param("providerType")
 	if provErr := c.QueryParam("error"); provErr != "" {
-		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL("?oauth_error="+url.QueryEscape(provErr)))
+		// The provider rejected before the state was consumed, so the flow's
+		// project is unknown; the UI falls back to the caller's active scope.
+		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("oauth_error", provErr, "")))
 	}
 	integration, err := h.svc.CompleteOAuth(c.Request().Context(), providerType, c.QueryParam("state"), c.QueryParam("code"))
 	if err != nil {
-		// Browser-facing: log the detail, land on a generic error.
+		// Browser-facing: log the detail, land on a generic error scoped to the
+		// project the flow started from (when the state was consumed).
+		projectID := ""
+		var connectErr *OAuthConnectError
+		if errors.As(err, &connectErr) && connectErr.ProjectID != uuid.Nil {
+			projectID = connectErr.ProjectID.String()
+		}
 		h.svc.log.Warn("oauth callback failed",
-			slog.String("provider", providerType), slog.String("error", err.Error()))
-		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL("?oauth_error=connect_failed"))
+			slog.String("provider", providerType),
+			slog.String("project_id", projectID),
+			slog.String("error", err.Error()))
+		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("oauth_error", "connect_failed", projectID)))
 	}
-	return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL("?connected="+url.QueryEscape(integration.ID)))
+	return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("connected", integration.ID, integration.ProjectID)))
 }

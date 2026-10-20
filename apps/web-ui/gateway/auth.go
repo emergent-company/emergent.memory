@@ -665,6 +665,11 @@ func projectScopePath(p string) bool {
 		return false
 	case p == "/profile", strings.HasPrefix(p, "/profile/"), strings.HasPrefix(p, "/partial/invite-user-search"):
 		return false
+	// OAuth callback landing resolves its own scope (oauth_landing.go); never
+	// auto-select a project for it, or a callback would activate an unrelated
+	// project as a side effect.
+	case strings.HasPrefix(p, "/oauth/landing/"):
+		return false
 	case p == "/dev", strings.HasPrefix(p, "/dev/"):
 		return false // dev-gated tools (component gallery) are not project-scoped
 	default:

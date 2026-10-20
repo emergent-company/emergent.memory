@@ -80,6 +80,19 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 	return &StartOAuthResponse{AuthorizeURL: authorizeURL}, nil
 }
 
+// OAuthConnectError is a callback failure raised after the pending state was
+// consumed. It carries the project the flow started from so the browser-facing
+// landing can return the caller to that scope even though no source exists.
+// Failures before the state is read (missing, expired, or already consumed)
+// carry no project: the landing then falls back to the caller's active scope.
+type OAuthConnectError struct {
+	ProjectID uuid.UUID
+	Err       error
+}
+
+func (e *OAuthConnectError) Error() string { return e.Err.Error() }
+func (e *OAuthConnectError) Unwrap() error { return e.Err }
+
 // CompleteOAuth consumes a pending state, exchanges the authorization code for
 // credentials, and creates the source. A state that is missing, expired, or
 // already consumed resolves to not-found, so a callback can never be replayed.
@@ -91,24 +104,29 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	if err != nil {
 		return nil, err
 	}
+	// Every failure from here on knows the flow's project; wrap it so the
+	// handler can scope the browser landing (see OAuthConnectError).
+	fail := func(err error) error {
+		return &OAuthConnectError{ProjectID: pending.ProjectID, Err: err}
+	}
 	if pending.Provider != providerType {
-		return nil, apperror.NewValidation("provider mismatch for oauth state")
+		return nil, fail(apperror.NewValidation("provider mismatch for oauth state"))
 	}
 	p, ok := s.providers.Get(pending.Provider)
 	if !ok {
-		return nil, apperror.NewValidation("unsupported providerType: " + pending.Provider)
+		return nil, fail(apperror.NewValidation("unsupported providerType: " + pending.Provider))
 	}
 	strategy, ok := p.OAuth()
 	if !ok {
-		return nil, apperror.NewValidation("provider does not support OAuth connect: " + pending.Provider)
+		return nil, fail(apperror.NewValidation("provider does not support OAuth connect: " + pending.Provider))
 	}
 	client, err := s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider)
 	if err != nil {
-		return nil, err
+		return nil, fail(err)
 	}
 	creds, err := strategy.Exchange(ctx, s.oauthHTTP, client, code, pending.CodeVerifier, pending.RedirectURI)
 	if err != nil {
-		return nil, apperror.NewValidation("oauth token exchange failed: " + err.Error())
+		return nil, fail(apperror.NewValidation("oauth token exchange failed: " + err.Error()))
 	}
 
 	// Merge the deployment client material into the stored credential so the
@@ -132,11 +150,17 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		}
 	}
 
-	return s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
+	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
 		Name:         name,
 		ProviderType: pending.Provider,
 		Config:       cfg,
 	})
+	if err != nil {
+		// The token exchange succeeded but the source could not be stored: still
+		// a post-consume failure, so the landing keeps the flow's project.
+		return nil, fail(err)
+	}
+	return integration, nil
 }
 
 // oauthRedirectURI builds the provider callback URL from the configured base.
@@ -151,23 +175,42 @@ func (s *Service) oauthRedirectURI(providerType string) (string, error) {
 // OAuthLandingURL builds the browser landing URL after a callback (success or
 // error), carrying the given query string. It uses the configured landing URL
 // (SOURCES_OAUTH_LANDING_URL) when set, else falls back to
-// <RedirectBaseURL>/data-sources, else a relative /data-sources path.
+// <RedirectBaseURL>/oauth/landing/data-sources, else a relative
+// /oauth/landing/data-sources path.
 func (s *Service) OAuthLandingURL(query string) string {
 	return s.oauthLandingBase() + query
 }
 
 // oauthLandingBase returns the browser landing base URL (no query) after a
-// callback: the configured landing URL, else <RedirectBaseURL>/data-sources,
-// else the relative /data-sources path.
+// callback: the configured landing URL, else
+// <RedirectBaseURL>/oauth/landing/data-sources, else the relative
+// /oauth/landing/data-sources path. The landing path is deliberately
+// scope-agnostic: the gateway resolves the caller's org/project from the
+// scope_project hint this server forwards (see oauthLandingQuery), so a single
+// deployment-wide value works for every user and project.
 func (s *Service) oauthLandingBase() string {
 	if l := strings.TrimSpace(s.oauthCfg.LandingURL); l != "" {
-		return strings.TrimRight(l, "/")
+		// Drop the query/fragment first, then the trailing slash: the outcome
+		// query is appended directly, and ".../landing/?connected=..." matches
+		// no route.
+		return strings.TrimRight(stripLandingQuery(l), "/")
 	}
 	base := strings.TrimRight(s.oauthCfg.RedirectBaseURL, "/")
 	if base == "" {
-		return "/data-sources"
+		return "/oauth/landing/data-sources"
 	}
-	return base + "/data-sources"
+	return base + "/oauth/landing/data-sources"
+}
+
+// stripLandingQuery drops the configured landing URL's own query and fragment:
+// OAuthLandingURL appends the callback query verbatim, so a value that already
+// carried one would yield "...?a=1?connected=..." (or hide the outcome inside a
+// fragment). The landing's query is always ours.
+func stripLandingQuery(raw string) string {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		return raw[:i]
+	}
+	return raw
 }
 
 // oauthJavascriptOrigin returns the scheme://host[:port] origin of the browser

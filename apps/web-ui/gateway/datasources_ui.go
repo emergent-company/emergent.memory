@@ -442,13 +442,25 @@ func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string)
 	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, err, nil, oauthErr))
 }
 
+// dsOAuthErrorMessage renders a callback outcome as an actionable message.
+// connect_failed covers every server-side failure after the provider redirect
+// (a wrong client secret, an expired or replayed state, a failed exchange), so
+// it names the one thing the user can check; any other value is the provider's
+// own error code, passed through as-is.
+func dsOAuthErrorMessage(code string) string {
+	if code == "connect_failed" {
+		return "Authorization could not be completed. Check this project's OAuth client configuration and try again."
+	}
+	return "Authorization failed: " + code
+}
+
 // uiDataSourceOAuthCallback is the memory OAuth callback's landing handler: it
 // surfaces an authorization failure, redirects to the freshly connected source,
 // or falls back to the list. Registered both on /data-sources/oauth/callback and
 // as the delegate for /data-sources?connected=... (the server's OAuthLandingURL).
 func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
 	if oauthErr := c.QueryParam("oauth_error"); oauthErr != "" {
-		return redirectWithError(c, "/data-sources", errors.New("Authorization failed: "+oauthErr))
+		return redirectWithError(c, "/data-sources", errors.New(dsOAuthErrorMessage(oauthErr)))
 	}
 	if connected := c.QueryParam("connected"); connected != "" {
 		render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(connected)+"?created=1")

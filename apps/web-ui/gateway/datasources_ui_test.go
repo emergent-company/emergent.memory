@@ -713,6 +713,13 @@ func TestUIDataSourceOAuthCallback(t *testing.T) {
 		t.Errorf("oauth_error location = %q", loc)
 	}
 
+	// connect_failed → actionable message naming the OAuth client config.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?oauth_error=connect_failed", nil))
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "OAuth+client") {
+		t.Errorf("connect_failed location = %q, want actionable OAuth client message", loc)
+	}
+
 	// Neither param → plain redirect to the list.
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback", nil))

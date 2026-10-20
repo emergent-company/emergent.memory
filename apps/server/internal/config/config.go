@@ -855,9 +855,14 @@ type MCPRegistryConfig struct {
 	// disables the MCP OAuth connect flow with an actionable error.
 	OAuthRedirectBaseURL string `env:"MCP_REGISTRY_OAUTH_REDIRECT_BASE_URL" envDefault:""`
 	// OAuthLandingURL is the browser URL the OAuth callback redirects to after
-	// the flow, e.g. https://admin.example.com/settings/mcp-servers.
-	// Empty falls back to <OAuthRedirectBaseURL>/settings/mcp-servers, which is
-	// only correct when the API and UI share an origin.
+	// the flow. It should be the gateway's scope-agnostic landing route,
+	// e.g. https://admin.example.com/oauth/landing/mcp-servers: the callback is
+	// issued by this API server, which has no org/project scope, so a scoped UI
+	// path cannot be hardcoded here. The callback appends mcp_oauth=<outcome>
+	// and, when the flow reached the point of knowing it, scope_project=<id> as
+	// an untrusted hint the gateway validates against the caller's access tree.
+	// Empty falls back to <OAuthRedirectBaseURL>/oauth/landing/mcp-servers,
+	// which is only correct when the API and UI share an origin.
 	OAuthLandingURL string `env:"MCP_REGISTRY_OAUTH_LANDING_URL" envDefault:""`
 	// OAuthClientName is the client_name presented at dynamic client
 	// registration. Empty defaults to "Emergent Memory".
@@ -876,9 +881,15 @@ type SourceOAuthConfig struct {
 	RedirectBaseURL string `env:"SOURCES_OAUTH_REDIRECT_BASE_URL" envDefault:""`
 
 	// LandingURL is the browser URL the OAuth callback redirects to after the
-	// flow, e.g. https://admin.example.com/data-sources. Empty falls
-	// back to <RedirectBaseURL>/data-sources, which is only correct when the API
-	// and UI share an origin.
+	// flow. It should be the gateway's scope-agnostic landing route,
+	// e.g. https://admin.example.com/oauth/landing/data-sources: the callback is
+	// issued by this API server, which has no org/project scope, so a scoped UI
+	// path cannot be hardcoded here. The callback appends connected=<id> or
+	// oauth_error=<code> and, when the flow reached the point of knowing it,
+	// scope_project=<id> as an untrusted hint the gateway validates against the
+	// caller's access tree. Empty falls back to
+	// <RedirectBaseURL>/oauth/landing/data-sources, which is only correct when
+	// the API and UI share an origin.
 	LandingURL string `env:"SOURCES_OAUTH_LANDING_URL" envDefault:""`
 
 	// GoogleClientID/GoogleClientSecret are the deployment-default Google OAuth
