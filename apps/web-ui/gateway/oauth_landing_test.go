@@ -123,8 +123,8 @@ func TestOAuthLandingMCPServers_ResolvesScope(t *testing.T) {
 }
 
 // TestOAuthLandingFallbacks covers the non-hint resolutions: the caller's
-// recent-project list (stale entries skipped) and the static project that exists
-// only in dev / API-key mode.
+// recent-project list (stale entries skipped) and the configured static
+// project, which is used whenever it is set.
 func TestOAuthLandingFallbacks(t *testing.T) {
 	tree := &fakeMemory{orgsAndProjects: oauthLandingTestTree()}
 

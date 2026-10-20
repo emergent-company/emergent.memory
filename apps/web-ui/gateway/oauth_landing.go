@@ -19,8 +19,9 @@ import (
 //
 //   - the API forwards the flow's project as an untrusted scope_project hint;
 //   - the gateway validates the hint against the caller's access tree;
-//   - an unusable hint falls back to the caller's active project, then the UI
-//     root — a landing never 404s.
+//   - an unusable hint falls back to the caller's active project, then recent
+//     projects, then the configured default project when there is one — a
+//     landing never 404s.
 //
 // The scoped page it lands on owns the outcome: uiDataSources delegates to
 // uiDataSourceOAuthCallback (?connected/?oauth_error), and the MCP settings page
@@ -80,7 +81,8 @@ func (s *Server) oauthLanding(c echo.Context, path string, outcomeParams ...stri
 //  1. the scope_project hint, when it resolves within the caller's tree;
 //  2. the session's active project;
 //  3. the caller's recent-project list (most recent first);
-//  4. the configured static project (dev / API-key mode).
+//  4. the configured static project (dev / standalone wiring — a deployment
+//     default, tried whether or not the caller has a session).
 //
 // Every candidate is validated against the access tree; an inaccessible or
 // stale value is skipped, never surfaced as an error.
@@ -108,7 +110,11 @@ func (s *Server) oauthLandingScope(c echo.Context) (string, bool) {
 
 // oauthLandingFallbackProjects lists the project ids to try when the callback
 // carries no usable hint, in preference order. The static MemoryProjectID is
-// last: it only exists in dev / API-key mode, where there is no session.
+// last, and it is used whenever it is configured — not only in API-key mode:
+// dev/standalone wiring sets MEMORY_PROJECT_ID alongside AUTH_MODE=session, so
+// a session caller with no active or recent project still lands in the
+// deployment's static project. That is a deployment default, not a per-caller
+// preference; dropping the value would also change other default-project paths.
 func (s *Server) oauthLandingFallbackProjects(c echo.Context) []string {
 	ids := make([]string, 0, 4)
 	sc, hasSession := sessionContextFrom(c.Request().Context())
