@@ -3,6 +3,8 @@ package sources
 import (
 	"context"
 	"time"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
 )
 
 // AuthMethod classifies how a provider authenticates a source.
@@ -50,8 +52,11 @@ type Connector interface {
 	Enumerate(ctx context.Context, cfg map[string]any) ([]SourceItem, error)
 	// Fetch returns the text content and effective MIME type of one item.
 	Fetch(ctx context.Context, item SourceItem) (content, mimeType string, err error)
-	// TestConnection performs a bounded provider call to validate credentials.
-	TestConnection(ctx context.Context) error
+	// TestConnection performs a bounded provider call to validate credentials
+	// and the source config's target (repository/ref, folder, ...). cfg is the
+	// stored source config so a provider can validate the actual sync target, not
+	// just that the credentials parse.
+	TestConnection(ctx context.Context, cfg map[string]any) error
 }
 
 // Resource is a provider-neutral selectable sync target (a Drive folder, a
@@ -135,10 +140,24 @@ func NewRegistry(providers ...SourceProvider) *Registry {
 	return r
 }
 
-// NewDefaultRegistry builds the registry of providers shipped with this build.
-// It is the fx provider injected into Service (and, transitively, the worker).
+// NewDefaultRegistry builds the registry of providers shipped with this build
+// using default deployment settings (api.github.com). Package-level callers and
+// tests use it; fx wires NewConfiguredRegistry instead.
 func NewDefaultRegistry() *Registry {
-	return NewRegistry(defaultProviders()...)
+	return NewRegistry(defaultProviders("")...)
+}
+
+// NewConfiguredRegistry builds the registry of providers shipped with this
+// build, applying deployment-level settings. Today that is the GitHub API
+// origin (GITHUB_API_BASE_URL), which lets an operator point the connector at
+// GitHub Enterprise or a hermetic test wrapper without letting a source config
+// choose an endpoint.
+func NewConfiguredRegistry(cfg *config.Config) *Registry {
+	baseURL := ""
+	if cfg != nil {
+		baseURL = cfg.GitHubSource.APIBaseURL
+	}
+	return NewRegistry(defaultProviders(baseURL)...)
 }
 
 // Register adds or replaces a provider by its catalog type, preserving insertion
@@ -166,12 +185,8 @@ func (r *Registry) List() []SourceProvider {
 	return out
 }
 
-// defaultRegistry is the process-wide registry of providers shipped with this
-// build. It is the fallback used by package-level helpers (e.g. source-type
-// derivation) that have no Service handle.
-var defaultRegistry = NewRegistry(newGoogleDriveProvider(), newGitHubProvider())
-
-// defaultProviders returns the providers registered for this build.
-func defaultProviders() []SourceProvider {
-	return defaultRegistry.List()
+// defaultProviders returns the providers registered for this build. githubBaseURL
+// is the deployment's GitHub API origin ("" means api.github.com).
+func defaultProviders(githubBaseURL string) []SourceProvider {
+	return []SourceProvider{newGoogleDriveProvider(), newGitHubProvider(githubBaseURL)}
 }

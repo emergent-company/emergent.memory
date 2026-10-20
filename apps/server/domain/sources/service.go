@@ -77,8 +77,8 @@ func WithProjectOAuthClientStore(store ProjectOAuthClientStore) ServiceOption {
 // derived from config.Config.LLMProvider.EncryptionKey — the same config-sourced
 // key the provider domain uses — so provider credentials and source credentials
 // share one operator-managed secret (LLM_ENCRYPTION_KEY). The provider registry
-// is injected (fx supplies NewDefaultRegistry); a nil registry falls back to the
-// default set.
+// is injected (fx supplies NewConfiguredRegistry); a nil registry falls back to
+// the default set.
 func NewService(repo *Repository, cfg *config.Config, log *slog.Logger, registry *Registry, opts ...ServiceOption) *Service {
 	if registry == nil {
 		registry = NewDefaultRegistry()
@@ -174,7 +174,7 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 	if err != nil {
 		return nil, err
 	}
-	return s.testProviderConnection(ctx, p, creds)
+	return s.testProviderConnection(ctx, p, creds, req.Config)
 }
 
 // TestConnection tests an existing source's connection by decrypting its stored
@@ -192,15 +192,15 @@ func (s *Service) TestConnection(ctx context.Context, projectID, id uuid.UUID) (
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
-	return s.testProviderConnection(ctx, p, creds)
+	return s.testProviderConnection(ctx, p, creds, src.Config)
 }
 
-func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials) (*TestConnectionResponse, error) {
+func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials, cfg map[string]any) (*TestConnectionResponse, error) {
 	connector, err := p.NewConnector(ctx, creds, ConnectorDeps{})
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: "failed to initialize connector: " + err.Error()}, nil
 	}
-	if err := connector.TestConnection(ctx); err != nil {
+	if err := connector.TestConnection(ctx, cfg); err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
 	return &TestConnectionResponse{Success: true, Message: "connection successful"}, nil

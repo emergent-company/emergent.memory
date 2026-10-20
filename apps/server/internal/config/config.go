@@ -109,6 +109,9 @@ type Config struct {
 	// data-source connect flow when an org has no client of its own.
 	SourceOAuth SourceOAuthConfig
 
+	// GitHubSource configures the first-class GitHub data-source connector.
+	GitHubSource GitHubSourceConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -883,6 +886,17 @@ type SourceOAuthConfig struct {
 	// project-level client.
 	GoogleClientID     string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_ID" envDefault:""`
 	GoogleClientSecret string `env:"SOURCES_OAUTH_GOOGLE_CLIENT_SECRET" envDefault:""`
+}
+
+// GitHubSourceConfig holds the deployment-level settings for the GitHub
+// data-source connector.
+type GitHubSourceConfig struct {
+	// APIBaseURL overrides the GitHub REST API origin. Empty means
+	// https://api.github.com. Set it for GitHub Enterprise
+	// (https://<host>/api/v3) or a hermetic test wrapper. This is a deployment
+	// setting only: source configs can never override it, so a source cannot
+	// point the server at an arbitrary host.
+	APIBaseURL string `env:"GITHUB_API_BASE_URL" envDefault:""`
 }
 
 // OAuthClientDefaults is the deployment-default OAuth client material for one

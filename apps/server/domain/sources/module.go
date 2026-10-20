@@ -12,7 +12,7 @@ import (
 var Module = fx.Module("sources",
 	fx.Provide(
 		NewRepository,
-		NewDefaultRegistry,
+		NewConfiguredRegistry,
 		NewService,
 		NewHandler,
 		NewDiscoveryStarter,

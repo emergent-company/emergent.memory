@@ -97,6 +97,29 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Stub GitHub API — impersonates a *private* GitHub repository over the REST
+  # v3 contract (tree + blob endpoints) so the GitHub data-source connector can
+  # be exercised end to end without a real repo, token, or egress. The server's
+  # GITHUB_API_BASE_URL points here; host-run API tests seed and mutate the
+  # repository through the stub's /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  github-stub:
+    build:
+      context: ./stubs/github
+    environment:
+      GITHUB_STUB_TOKEN: "e2e-github-token"
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port github-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Mailpit — SMTP capture box (1025) + HTTP API/UI (8025). The server sends
   # real email here via EMAIL_TRANSPORT=smtp; e2e tests read it back over the
   # HTTP API. No healthcheck (the image has no shell).
@@ -149,6 +172,8 @@ services:
         condition: service_completed_successfully
       test-mcp-registry:
         condition: service_healthy
+      github-stub:
+        condition: service_healthy
       mailpit:
         condition: service_started
     environment:
@@ -185,6 +210,18 @@ services:
       # Point the MCP registry client at the local stub instead of the live
       # official registry (registry.modelcontextprotocol.io) for hermetic e2e.
       MCP_REGISTRY_BASE_URL: "http://test-mcp-registry:8080"
+
+      # Point the GitHub data-source connector at the local private-repo stub.
+      # The API origin is a deployment setting (never per source), so this is
+      # what lets the connector target the stub instead of api.github.com.
+      GITHUB_API_BASE_URL: "http://github-stub:8080"
+
+      # Data-source credentials are AES-256 encrypted at rest with the same
+      # operator-managed key as provider credentials. Without it every source
+      # create/test fails with "sources: encryption key is empty". The value is
+      # deliberately low-entropy and fake (32 bytes, hex) so secret scanners do
+      # not flag this hermetic test fixture.
+      LLM_ENCRYPTION_KEY: "e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0e2e0"
 
       # Disable optional features that need external services
       ENABLE_AGENT_WORKSPACES: "false"
@@ -241,6 +278,10 @@ services:
       # Only set in the Mailgun-transport run; empty by default so the
       # Mailgun invite-email test skips when the stack runs in SMTP mode.
       MAILGUN_STUB_URL: "${E2E_MAILGUN_STUB_URL:-}"
+      # The GitHub data-source test seeds/mutates the private-repo stub through
+      # its /_control routes; empty outside the api job so the test skips.
+      GITHUB_STUB_URL: "${E2E_GITHUB_STUB_URL:-}"
+      GITHUB_STUB_TOKEN: "e2e-github-token"
       # The image ships e2e/go.work (the module's own workspace). Run the suite
       # in module mode, exactly as before that file existed — the module's own
       # dependency graph, never the repo root's build list.

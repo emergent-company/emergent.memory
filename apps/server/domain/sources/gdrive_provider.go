@@ -221,7 +221,7 @@ func (c *googleDriveConnector) Fetch(ctx context.Context, item SourceItem) (cont
 	return string(data), item.MimeType, nil
 }
 
-func (c *googleDriveConnector) TestConnection(ctx context.Context) error {
+func (c *googleDriveConnector) TestConnection(ctx context.Context, _ map[string]any) error {
 	return c.client.TestConnection(ctx)
 }
 

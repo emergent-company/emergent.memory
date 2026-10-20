@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/internal/github"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -13,21 +14,46 @@ import (
 // there is no refresh token.
 var githubCredentialKeyNames = []string{"access_token", "client_id", "client_secret"}
 
-// githubProvider implements SourceProvider for the github provider. It is a
-// readiness stub in this iteration: the catalog, config schema, credential
-// handling, and OAuth flow are wired, while resource listing and the connector
-// (repo → markdown/docs enumeration + sync) ship in a follow-up change (§7.3).
-type githubProvider struct{}
+// GitHubTransport is the subset of the GitHub client the connector needs. It
+// is an interface so tests can substitute a fake without HTTP.
+type GitHubTransport interface {
+	GetRepo(ctx context.Context, repo string) (*github.Repo, error)
+	ListRepos(ctx context.Context) ([]github.Repo, error)
+	ListTree(ctx context.Context, repo, ref string) ([]github.Blob, error)
+	FetchBlob(ctx context.Context, repo, sha string) ([]byte, error)
+	TestConnection(ctx context.Context, repo, ref string) error
+}
 
-func newGitHubProvider() *githubProvider {
-	return &githubProvider{}
+// githubProvider implements SourceProvider for the github provider: it syncs
+// markdown documentation from a (usually private) repository. Credentials are
+// a personal access token or OAuth access token; the API origin is the
+// deployment's GITHUB_API_BASE_URL, never a per-source value.
+type githubProvider struct {
+	newClient func(ctx context.Context, creds github.Credentials) (GitHubTransport, error)
+}
+
+// newGitHubProvider builds the provider against an explicit API base URL (empty
+// means https://api.github.com). It is what the configured registry wires in.
+func newGitHubProvider(baseURL string) *githubProvider {
+	return &githubProvider{
+		newClient: func(ctx context.Context, creds github.Credentials) (GitHubTransport, error) {
+			return github.NewWithConfig(creds, github.Config{BaseURL: baseURL})
+		},
+	}
+}
+
+// NewGitHubProvider builds the GitHub provider with an injectable transport
+// constructor. It exists so tests can exercise the real connector against a fake
+// (or an httptest server) without live GitHub calls.
+func NewGitHubProvider(newClient func(ctx context.Context, creds github.Credentials) (GitHubTransport, error)) SourceProvider {
+	return &githubProvider{newClient: newClient}
 }
 
 func (p *githubProvider) Catalog() Provider {
 	return Provider{
 		Type:        ProviderTypeGitHub,
 		Name:        "GitHub",
-		Description: "Sync documentation from a GitHub repository.",
+		Description: "Sync markdown documentation from a GitHub repository.",
 		SourceType:  SourceTypeRepo,
 		Available:   true,
 	}
@@ -41,13 +67,19 @@ func (p *githubProvider) ConfigSchema() ProviderSchema {
 				"type":        "string",
 				"description": "The GitHub repository to sync from (owner/name).",
 			},
-			"paths": map[string]any{
-				"type":  "array",
-				"items": map[string]any{"type": "string"},
-			},
 			"ref": map[string]any{
 				"type":        "string",
-				"description": "The branch, tag, or commit SHA to sync from.",
+				"description": "The branch, tag, or commit SHA to sync from. Empty syncs the repository's default branch.",
+			},
+			"paths": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Optional path globs (docs/**, **/*.md). Empty syncs every documentation file in the repository.",
+			},
+			"extensions": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Optional documentation file extensions. Default: .md, .markdown, .mdx.",
 			},
 		},
 		Required: []string{"repo"},
@@ -71,17 +103,27 @@ func (p *githubProvider) OAuth() (OAuthStrategy, bool) {
 // CredentialKeys returns the write-only GitHub credential keys.
 func (p *githubProvider) CredentialKeys() []string { return githubCredentialKeyNames }
 
-// ListResources is a documented readiness stub: GitHub resource listing (repo
-// selection) is not yet implemented.
+// ListResources lists the repositories the token can see so the connect flow can
+// offer a repository picker. Private repositories are included.
 func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any) ([]Resource, error) {
-	return nil, apperror.NewValidation("github: resource listing is not yet implemented")
+	token, _ := creds["access_token"].(string)
+	client, err := p.newClient(ctx, github.Credentials{Token: token})
+	if err != nil {
+		return nil, err
+	}
+	repos, err := client.ListRepos(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Resource, len(repos))
+	for i, repo := range repos {
+		out[i] = Resource{ID: repo.FullName, Name: repo.FullName, Type: "repo"}
+	}
+	return out, nil
 }
 
 func (p *githubProvider) ValidateConfig(cfg map[string]any) error {
-	if repo, _ := cfg["repo"].(string); strings.TrimSpace(repo) == "" {
-		return apperror.NewValidation("config.repo is required")
-	}
-	return nil
+	return validateGitHubConfig(cfg)
 }
 
 func (p *githubProvider) ExtractCredentials(cfg map[string]any) (Credentials, error) {
@@ -97,6 +139,11 @@ func (p *githubProvider) ExtractCredentials(cfg map[string]any) (Credentials, er
 	return creds, nil
 }
 
-func (p *githubProvider) NewConnector(ctx context.Context, creds Credentials, deps ConnectorDeps) (Connector, error) {
-	return &githubConnector{}, nil
+func (p *githubProvider) NewConnector(ctx context.Context, creds Credentials, _ ConnectorDeps) (Connector, error) {
+	token, _ := creds["access_token"].(string)
+	client, err := p.newClient(ctx, github.Credentials{Token: token})
+	if err != nil {
+		return nil, err
+	}
+	return &githubConnector{client: client}, nil
 }
