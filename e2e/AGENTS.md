@@ -187,6 +187,40 @@ MEMORY_TEST_ENV=mcj-emergent go test -v ./...   # against shared test server
 MEMORY_TEST_ENV=localhost     go test -v ./...   # against local standalone server
 ```
 
+### GitHub live data-source test (opt-in)
+
+`TestGitHubDataSource_LiveSyncAndVersion` runs the GitHub connector against the
+real GitHub API: private-repo auth, a branch ref containing `/`, and a contents
+commit that must produce document version 2 while the unchanged file is skipped.
+It is skipped unless the repo and read token are set, and is never run in CI.
+
+| Variable | Required | Description |
+|---|---|---|
+| `E2E_GITHUB_LIVE_REPO` | yes | Private fixture repository, `owner/name` |
+| `E2E_GITHUB_LIVE_TOKEN` | yes | Token with `Contents: read` on that repo, used by the source |
+| `E2E_GITHUB_LIVE_WRITE_TOKEN` | no | Token with `Contents: read and write` for the fixture branch and commits; defaults to `E2E_GITHUB_LIVE_TOKEN` |
+| `E2E_GITHUB_LIVE_API_URL` | no | GitHub API origin, default `https://api.github.com` (GitHub Enterprise) |
+
+The test creates a throwaway branch `e2e/<run>` with two markdown files under
+`e2e/<run>/`, syncs it, commits a new `guide.md`, re-syncs, and asserts version 2
+plus the unchanged file's revision skip. The branch is deleted on cleanup; the
+fixture repo must allow branch creation and content writes (no protection rule
+covering `e2e/**`).
+
+Run it against a server configured for real GitHub. Do **not** point it at the
+compose stack: that server sets `GITHUB_API_BASE_URL` to the hermetic stub, so
+the connection test fails. For GitHub Enterprise, set `GITHUB_API_BASE_URL` on
+the server under test as well as `E2E_GITHUB_LIVE_API_URL` here — the fixture
+setup and the connector must hit the same origin.
+
+```bash
+MEMORY_TEST_ENV=mcj-emergent \
+E2E_GITHUB_LIVE_REPO=acme/private-docs \
+E2E_GITHUB_LIVE_TOKEN=ghp_... \
+E2E_GITHUB_LIVE_WRITE_TOKEN=ghp_... \
+go test -run TestGitHubDataSource_LiveSyncAndVersion ./tests/api/
+```
+
 ## Key Environment Variables
 
 | Variable | Default | Description |
