@@ -1,0 +1,321 @@
+name: Issue claims
+
+# Enforces the agent claim protocol: an issue that a session is working on must
+# be visibly claimed before code changes, because a peer session that scans the
+# board otherwise sees it as free and starts the same work.
+#
+# A claim is three signals on the issue:
+#   * assignee                — someone owns it (native)
+#   * `status: in-progress`   — claimed, work active
+#   * `manager: <name>`       — which session owns it (every session shares one
+#                               GitHub identity, so the assignee cannot say)
+# `status: blocked` means still owned: a parked issue keeps its assignee.
+#
+# Two jobs, one file because they share the rules:
+#
+#   guard  — pull_request: an open PR that references an issue nobody claimed is
+#            invisible work. Annotate it so the next session sees the collision
+#            before it duplicates the branch. Warn-only by default: several open
+#            PRs predate the rule and a hard gate would block them all on day
+#            one. Set the repository variable ISSUE_CLAIM_STRICT=true to fail.
+#
+#   audit  — schedule + dispatch: classify the open board, release claims that
+#            have gone stale (no open PR links them), and keep exactly one
+#            `process` tracking issue in sync with the findings.
+#
+# The audit does NOT fail on findings: parked issues stay parked for weeks and a
+# permanently red scheduled workflow gets ignored. The tracking issue is the
+# durable signal.
+#
+# This workflow is deliberately self-contained (bash + jq + gh, no repository
+# secrets, no external checkout) and is the product-side copy of the rig's
+# claim tooling. Keep the classifier in step when the flags change.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [closed]
+  schedule:
+    # Hourly, off the :00 mark to avoid runner congestion.
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: issue-claims-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CLAIM_MAX_AGE_DAYS: ${{ vars.CLAIM_MAX_AGE_DAYS || '21' }}
+
+jobs:
+  guard:
+    name: guard
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the linked issue is claimed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.head_ref }}
+          BODY: ${{ github.event.pull_request.body }}
+          STRICT: ${{ vars.ISSUE_CLAIM_STRICT || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # `Closes #1`, `Fixes #2`, `Refs #3` — the convention for referencing an
+          # issue from a PR body. Cross-repo refs are ignored (only plain #N is
+          # parsed, and unknown numbers are skipped below).
+          refs="$(printf '%s\n' "$BODY" \
+            | grep -oiE '(^|[^[:alnum:]_])(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?)[[:space:]]*#[0-9]+' \
+            | grep -oE '[0-9]+' | sort -un || true)"
+
+          if [[ -z "$refs" ]]; then
+            echo "No issue reference in the PR body — nothing to verify." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          unclaimed=""
+          while read -r n; do
+            [[ -n "$n" ]] || continue
+            info="$(gh api "repos/$REPO/issues/$n" \
+              --jq '{state: .state, labels: [.labels[].name]}' 2>/dev/null || true)"
+            if [[ -z "$info" ]]; then
+              echo "- #$n: not found in $REPO — skipped"
+              continue
+            fi
+            if [[ "$(jq -r .state <<<"$info")" != "open" ]]; then
+              echo "- #$n: already closed — skipped"
+              continue
+            fi
+            if jq -e '.labels | index("status: in-progress") != null' <<<"$info" >/dev/null; then
+              echo "- #$n: claimed"
+            else
+              echo "- #$n: referenced but NOT claimed"
+              unclaimed="${unclaimed}#$n "
+            fi
+          done <<<"$refs"
+
+          if [[ -z "$unclaimed" ]]; then
+            echo "All referenced issues are claimed." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## Unclaimed issue references"
+            echo
+            echo "This PR references ${unclaimed}— but those issues carry no \`status: in-progress\` label,"
+            echo "so peer sessions scanning the board still see them as free work."
+            echo
+            echo "Claim before continuing: assign yourself and add \`status: in-progress\` (plus a"
+            echo "\`manager: <name>\` label naming your session) on the issue, in the branch:"
+            echo
+            echo '```'
+            echo "$BRANCH"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [[ "$STRICT" == "true" ]]; then
+            for n in $unclaimed; do
+              echo "::error::${n} is referenced by this PR but is not claimed (no status: in-progress label)."
+            done
+            echo "Failing because ISSUE_CLAIM_STRICT=true." >&2
+            exit 1
+          fi
+
+          for n in $unclaimed; do
+            echo "::warning::${n} is referenced by this PR but is not claimed — peer sessions still see it as free work."
+          done
+
+  audit:
+    name: audit
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Classify the open board
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MAX_AGE_DAYS: ${{ vars.CLAIM_MAX_AGE_DAYS || '21' }}
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          gh issue list --repo "$REPO" --state open --limit 300 \
+            --json number,title,assignees,labels,updatedAt >"$tmp/issues.json"
+          gh pr list --repo "$REPO" --state open --limit 300 \
+            --json number,body >"$tmp/prs.json"
+
+          jq -n \
+            --slurpfile issues "$tmp/issues.json" \
+            --slurpfile prs "$tmp/prs.json" \
+            --arg repo "$REPO" \
+            --argjson maxage "$MAX_AGE_DAYS" '
+            ($prs[0] // []) as $PRS
+            | {
+                repo: $repo,
+                maxAgeDays: $maxage,
+                issues: [
+                  ($issues[0] // [])[]
+                  | . as $i
+                  | ([.labels[].name]) as $labels
+                  | ([.assignees[].login]) as $assignees
+                  | (if ($labels | index("status: blocked")) then "blocked"
+                     elif ($labels | index("status: in-progress")) then "in-progress"
+                     else "open" end) as $status
+                  | ([ $PRS[]
+                       | select((.body // "")
+                           | test("(?i)(?:^|[^[:alnum:]_])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|refs?)[[:space:]]*#"
+                                  + ($i.number | tostring) + "(?![0-9])"))
+                       | .number ]) as $prs
+                  | ((now - (.updatedAt | fromdateiso8601)) / 86400 | floor) as $age
+                  | ([
+                      (if ($prs | length) > 0 and $status != "in-progress"
+                         then "pr-without-claim" else empty end),
+                      (if $status == "in-progress" and ($assignees | length) == 0
+                         then "claimed-unassigned" else empty end),
+                      (if $status == "blocked" and ($assignees | length) == 0
+                         then "blocked-unassigned" else empty end),
+                      (if $status == "in-progress" and ($prs | length) == 0 and $age >= $maxage
+                         then "stale-claim" else empty end)
+                    ]) as $flags
+                  | {
+                      number: .number,
+                      title: .title,
+                      status: $status,
+                      assignees: .assignees | map(.login),
+                      managerLabels: [$labels[] | select(startswith("manager: "))],
+                      openPrs: $prs,
+                      ageDays: $age,
+                      flags: $flags
+                    }
+                ]
+              }
+            | .problems = ([.issues[] | select((.flags | length) > 0)] | length)
+          ' >"$tmp/report.json"
+          cp "$tmp/report.json" report.json
+          jq . report.json
+
+      - name: Release stale claims
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A claim with no open PR linking it, past the stale threshold, is
+          # holding an issue hostage. Release it so the board stays truthful.
+          stale="$(jq -r '.issues[] | select(.flags | index("stale-claim")) | .number' report.json)"
+          if [[ -z "$stale" ]]; then
+            echo "No stale claims."
+            exit 0
+          fi
+          while read -r n; do
+            [[ -n "$n" ]] || continue
+            managers="$(jq -r --argjson n "$n" '.issues[] | select(.number == $n) | .managerLabels | join(", ")' report.json)"
+            echo "Releasing stale claim on #$n (previous owner: ${managers:-unknown})"
+            gh issue comment "$n" --repo "$REPO" --body \
+              "Releasing this claim automatically: it carried \`status: in-progress\` past the ${CLAIM_MAX_AGE_DAYS}-day stale threshold with no open PR linking it. Previous owner: ${managers:-unknown}. It is free to pick up again — re-claim it before starting work."
+            gh issue edit "$n" --repo "$REPO" --remove-label "status: in-progress" || true
+            while read -r label; do
+              [[ -n "$label" ]] || continue
+              gh issue edit "$n" --repo "$REPO" --remove-label "$label" || true
+            done < <(jq -r --argjson n "$n" '.issues[] | select(.number == $n) | .managerLabels[]' report.json)
+            # `--remove-assignee @me` would target the Actions identity, not the
+            # claimant, leaving the stale owner in place while the labels vanish.
+            # Remove the logins recorded in the report instead.
+            while read -r login; do
+              [[ -n "$login" ]] || continue
+              gh issue edit "$n" --repo "$REPO" --remove-assignee "$login" || true
+            done < <(jq -r --argjson n "$n" '.issues[] | select(.number == $n) | .assignees[]' report.json)
+          done <<<"$stale"
+
+      - name: Summarize findings
+        run: |
+          set -euo pipefail
+          {
+            echo "## Issue claim audit — \`${GITHUB_REPOSITORY}\`"
+            echo
+            echo "Stale threshold: ${CLAIM_MAX_AGE_DAYS} days."
+            echo
+            echo "| Issue | Flags | Status | Assignees | Age (d) | Linked PRs |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.issues[] | select((.flags | length) > 0)
+              | "| #\(.number) | \(.flags | join(", ")) | \(.status) | \(.assignees | if length == 0 then "—" else join(", ") end) | \(.ageDays) | \(.openPrs | if length == 0 then "—" else map("#" + tostring) | join(", ") end) |"' report.json
+            echo
+            if [[ "$(jq -r '.problems' report.json)" == "0" ]]; then
+              echo "**No problems found.**"
+            else
+              echo "**$(jq -r '.problems' report.json) issue(s) need attention.**"
+              echo
+              echo '- `pr-without-claim`: an open PR references an unclaimed issue.'
+              echo '- `stale-claim`: claimed past the threshold with no open PR (auto-released above).'
+              echo '- `blocked-unassigned`: parked but unassigned — looks free, so it gets double-picked.'
+              echo '- `claimed-unassigned`: `status: in-progress` with no assignee.'
+            fi
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          problems="$(jq -r '.problems' report.json)"
+          if [[ "$problems" == "0" ]]; then
+            echo "No problems — leaving any existing tracking issue for a human to close."
+            exit 0
+          fi
+
+          existing="$(gh issue list --repo "$REPO" --state open --label process --limit 100 \
+            --json number,title \
+            --jq '[.[] | select(.title | startswith("Issue claims:"))][0].number // empty')"
+
+          {
+            echo "Automated report from the [Issue claims]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/issue-claim.yml) workflow."
+            echo
+            echo "Stale threshold: ${CLAIM_MAX_AGE_DAYS} days."
+            echo
+            echo "| Issue | Flags | Status | Assignees | Age (d) | Linked PRs |"
+            echo "|---|---|---|---|---|---|"
+            jq -r '.issues[] | select((.flags | length) > 0)
+              | "| #\(.number) | \(.flags | join(", ")) | \(.status) | \(.assignees | if length == 0 then "—" else join(", ") end) | \(.ageDays) | \(.openPrs | if length == 0 then "—" else map("#" + tostring) | join(", ") end) |"' report.json
+            echo
+            echo "_Updated automatically; close once every row is resolved._"
+          } >issue-body.md
+
+          title="Issue claims: ${problems} issue(s) need attention in this repo"
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --repo "$REPO" --title "$title" --body-file issue-body.md
+            echo "Updated tracking issue #$existing"
+          else
+            gh issue create --repo "$REPO" --title "$title" --label process --body-file issue-body.md
+          fi
+
+  close:
+    name: close
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Clear the claim labels
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          N: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          # Closing does not clear labels on its own, and a merged PR closing the
+          # issue would leave the board claiming work that is finished.
+          gh issue edit "$N" --repo "$REPO" --remove-label "status: in-progress" || true
+          gh issue edit "$N" --repo "$REPO" --remove-label "status: blocked" || true
+          while read -r label; do
+            [[ -n "$label" ]] || continue
+            gh issue edit "$N" --repo "$REPO" --remove-label "$label" || true
+          done < <(gh api "repos/$REPO/issues/$N" --jq '.labels[].name | select(startswith("manager: "))')
+          echo "Cleared the claim labels on #$N; assignment is kept as history."
