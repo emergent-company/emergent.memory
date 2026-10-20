@@ -484,6 +484,58 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 (`specs/datasources/**`), so a local full-suite run never schedules it behind
 `setup`.
 
+### Live Google Drive gate (manual, never CI)
+
+`specs/gdrive-live/gdrive-datasource-live.spec.ts` (the `gdrive-live` project)
+proves the **real** Drive path end-to-end against a live deployment — the
+hermetic `datasources` suite above mocks the upstream, while this one exercises
+it: a project-scoped Google OAuth app → OAuth-connect a real folder → first sync
+creates document v1 → the fixture edits the file → re-sync produces v2 sharing
+the same `canonicalId` → the fixture trashes the file → re-sync marks the head
+`deleted_from_source`.
+
+It is opt-in and **never runs in CI** (no workflow fires it): it needs a real
+Google OAuth app and a human to finish the Google consent screen mid-test.
+
+**Prereq — provision the fixture refresh token once** (no dependencies):
+
+```bash
+cd tests/e2e
+node scripts/gdrive-fixture-token.mjs --client <clientId> --secret <clientSecret>
+```
+
+This prints a Google consent URL; open it and sign in with the fixture account.
+It listens on `http://127.0.0.1:8787` for the redirect, exchanges the code, and
+prints the refresh token exactly once. The OAuth client must allow that redirect
+URI (a "Desktop app" client does by default). The refresh token is granted the
+full `drive` scope so the fixture can create/edit/trash files; the **same**
+Google account must later complete the in-test consent or the source (which uses
+the restricted `drive.readonly` strategy) cannot see the fixture folder.
+
+**Run** (against the live session-mode gateway + dev memory backend, same
+`E2E_TEST_USER_*` + `E2E_MEMORY_API_URL` as the other live suites):
+
+```bash
+cd tests/e2e
+npx playwright test --project=gdrive-live
+```
+
+Env (see `.env.e2e.example`):
+
+| Var | Meaning |
+|---|---|
+| `E2E_GDRIVE_LIVE=1` | gate — the spec skips unless set |
+| `E2E_GDRIVE_CLIENT_ID` / `E2E_GDRIVE_CLIENT_SECRET` | Google OAuth app (used by the project OAuth client the spec configures, and by the fixture to refresh its token) |
+| `E2E_GDRIVE_FIXTURE_REFRESH_TOKEN` | fixture refresh token from the script above |
+| `E2E_GDRIVE_FOLDER_ID` | optional — reuse a pre-made folder; otherwise a scratch folder is created and deleted |
+
+The test prints (and attaches) the Google authorize URL, then polls for up to
+the OAuth state TTL (~10 min) for the callback-created source — open the printed
+URL and finish consent in that window. Complete consent promptly after the URL
+is printed: the OAuth state expires in ~10 minutes and the test still asserts
+three syncs afterwards, so a slow consent can push the whole run past its
+timeout.
+
 ### Live-LLM scenarios (scheduled, not PR-gated)
 
 The `scenarios` + `chat` projects (live-LLM, env-gated on
