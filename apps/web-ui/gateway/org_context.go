@@ -264,6 +264,25 @@ func (s *Server) projectAdminForCaller(c echo.Context, projectID string) bool {
 	return false
 }
 
+// strictProjectAdminForCaller reports whether the caller is project_admin of
+// projectID itself, without widening to org_admin of the owning org. The memory
+// service requires an exact project_admin membership for project OAuth-client
+// reads and writes (auth.CanAdministerProject); using projectAdminForCaller here
+// would show an editor that every save rejects. Best-effort and UI-only, like
+// projectAdminForCaller.
+func (s *Server) strictProjectAdminForCaller(c echo.Context, projectID string) bool {
+	tree, err := s.orgAccessTree(c)
+	captureError(err)
+	for _, o := range tree {
+		for _, p := range o.Projects {
+			if p.ID == projectID && p.Role == "project_admin" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // transferState derives the org-landing transfer affordance for the acting user
 // from their org access tree: the candidate destination orgs (their orgs minus
 // the source) and whether the per-project Transfer action is available — they

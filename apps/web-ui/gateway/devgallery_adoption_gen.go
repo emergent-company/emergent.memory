@@ -33,7 +33,7 @@ var adoptionSignatures = map[string][]string{
 
 var adoptionFindings = []AdoptionFinding{
 	{File: "chat.templ", Line: 821, Marker: "class:alert", Owners: []string{"Alert"}},
-	{File: "datasources.templ", Line: 439, Marker: "class:toggle", Owners: []string{"ToggleField", "ToggleInput"}},
+	{File: "datasources.templ", Line: 467, Marker: "class:toggle", Owners: []string{"ToggleField", "ToggleInput"}},
 	{File: "inbox.templ", Line: 142, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "notifications_bell.templ", Line: 39, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},
 	{File: "runs.templ", Line: 94, Marker: "class:badge", Owners: []string{"Badge", "StatusBadge"}},

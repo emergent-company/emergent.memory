@@ -192,7 +192,7 @@ templ ProjectMembersPage(data membersPageData, providersMissing bool, isProjectA
 			}
 		}
 		@flashToasts(data.FlashMsg, data.FlashErr)
-		@layout.Rail(settingsSubNav("members", providersMissing, isProjectAdmin), nil) {
+		@layout.Rail(settingsSubNav("members", providersMissing), nil) {
 			@membersBody(data)
 		}
 	}

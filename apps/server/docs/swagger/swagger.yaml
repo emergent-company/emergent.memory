@@ -745,6 +745,9 @@ definitions:
         type: string
       id:
         type: string
+      input:
+        additionalProperties: {}
+        type: object
       interactionType:
         $ref: '#/definitions/domain_agents.AgentQuestionInteractionType'
       maxLength:
@@ -780,6 +783,12 @@ definitions:
         type: string
       status:
         $ref: '#/definitions/domain_agents.AgentQuestionStatus'
+      tool:
+        description: |-
+          Tool / Input carry the tool-policy confirmation's tool name + args when the
+          question is a tool-policy approval (from the AgentToolApproval audit row
+          joined by question_id). Empty for plain ask_user questions.
+        type: string
       updatedAt:
         type: string
     type: object
@@ -5572,9 +5581,13 @@ definitions:
         type: array
       serverId:
         type: string
+      shared:
+        type: boolean
       tokenEndpoint:
         type: string
       updatedAt:
+        type: string
+      userId:
         type: string
     type: object
   domain_mcpregistry.MCPServerOAuthSummaryDTO:
@@ -5588,6 +5601,10 @@ definitions:
       expiresAt:
         type: string
       scope:
+        type: string
+      shared:
+        type: boolean
+      userId:
         type: string
     type: object
   domain_mcpregistry.MCPServerTarget:
@@ -8727,7 +8744,8 @@ definitions:
         description: drop results scoring below this fused score (0-1)
         type: number
       namespace:
-        description: filter graph results by namespace
+        description: 'filter both legs by namespace: graph objects by their namespace
+          field, chunks through kb.object_chunks → kb.graph_objects (#1902)'
         type: string
       query:
         maxLength: 800
@@ -9105,6 +9123,28 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_sources.OAuthCredentialDescription:
+    properties:
+      deployment:
+        $ref: '#/definitions/domain_sources.OAuthCredentialSource'
+      organization:
+        $ref: '#/definitions/domain_sources.OAuthCredentialSource'
+      project:
+        $ref: '#/definitions/domain_sources.OAuthCredentialSource'
+      providerType:
+        type: string
+      resolvedScope:
+        type: string
+    type: object
+  domain_sources.OAuthCredentialSource:
+    properties:
+      clientId:
+        type: string
+      configured:
+        type: boolean
+      updatedAt:
+        type: string
+    type: object
   domain_sources.Provider:
     properties:
       authMethods:
@@ -9129,6 +9169,16 @@ definitions:
           type: string
         type: array
       type:
+        type: string
+      vendor:
+        description: |-
+          Vendor is the stable vendor/app identity behind the provider (e.g.
+          "google", "github"). An OAuth app configured for a provider is a
+          vendor-level app: the same Google Cloud client can later back several
+          Google-backed providers, so the credentials UI labels it by VendorName
+          and shows the data source (Name) separately.
+        type: string
+      vendorName:
         type: string
     type: object
   domain_sources.ProviderSchema:
@@ -10028,6 +10078,22 @@ definitions:
         additionalProperties:
           type: string
         type: object
+      git_token:
+        description: |-
+          GitToken is a legacy plaintext git token backfilled out of env_vars by
+          migration 00244. It is retained only so pre-existing rows keep cloning until
+          the operator rotates the credential to a server-side secret referenced by
+          GitTokenSecretRef (issue #1844). It is server-managed: read endpoints redact
+          it, and the write path never accepts a new value.
+        type: string
+      git_token_secret_ref:
+        description: |-
+          GitTokenSecretRef names a server-side git credential. It is a reference, not
+          a secret value: the token is resolved from the server environment at
+          provision time (see ResolveGitTokenSecretRef), so the database never stores a
+          plaintext token on new writes. Only the allowlisted name
+          (GitTokenSecretRefEnv) may be referenced (issue #1844).
+        type: string
       provider:
         description: 'Explicit provider: "firecracker", "gvisor", "e2b", or "" (auto)'
         type: string
@@ -25524,6 +25590,34 @@ paths:
       security:
       - bearerAuth: []
       summary: Test a stored source connection
+      tags:
+      - data-source-integrations
+  /data-source-integrations/credentials:
+    get:
+      description: Returns the OAuth apps available to the project (project, organization,
+        deployment), one entry per provider. Secrets are never returned.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Credential descriptions
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/domain_sources.OAuthCredentialDescription'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List data-source credentials
       tags:
       - data-source-integrations
   /data-source-integrations/oauth/{providerType}/callback:

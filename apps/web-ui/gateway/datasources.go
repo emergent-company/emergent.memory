@@ -74,6 +74,20 @@ func (s *Server) listDSProviders(c echo.Context) error {
 	return c.JSON(http.StatusOK, providers)
 }
 
+// listDSCredentials implements GET /api/data-source-integrations/credentials.
+// It returns the OAuth apps available to the active project across scopes, with
+// no secret material.
+func (s *Server) listDSCredentials(c echo.Context) error {
+	items, err := s.memory.ListDSCredentials(c.Request().Context())
+	if err != nil {
+		return dsError(c, err)
+	}
+	if items == nil {
+		items = []DSOAuthCredentialDescription{}
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
 // getDSProviderSchema implements GET /api/data-source-integrations/providers/:providerType/schema.
 func (s *Server) getDSProviderSchema(c echo.Context) error {
 	schema, err := s.memory.GetDSProviderSchema(c.Request().Context(), c.Param("providerType"))

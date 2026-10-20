@@ -52,10 +52,16 @@ func (c *Client) SetContext(orgID, projectID string) {
 
 // Provider represents an available data source provider.
 type Provider struct {
-	Type        string   `json:"type"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	SourceType  string   `json:"sourceType"`
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SourceType  string `json:"sourceType"`
+	// Vendor is the stable vendor/app identity behind the provider (e.g.
+	// "google", "github"); VendorName is its display form. OAuth apps are
+	// vendor-level, so the credentials UI labels them by vendor and shows the
+	// data source (Name) separately.
+	Vendor      string   `json:"vendor"`
+	VendorName  string   `json:"vendorName"`
 	IconURL     string   `json:"iconUrl,omitempty"`
 	Available   bool     `json:"available"`
 	AuthMethods []string `json:"authMethods,omitempty"`
@@ -94,6 +100,25 @@ type OAuthClientConfig struct {
 	CreatedAt        time.Time              `json:"createdAt"`
 	UpdatedAt        time.Time              `json:"updatedAt"`
 	Config           map[string]interface{} `json:"config,omitempty"`
+}
+
+// OAuthCredentialSource describes one scope's OAuth app for a provider. ClientID
+// is not a secret; the client secret is never returned.
+type OAuthCredentialSource struct {
+	Configured bool       `json:"configured"`
+	ClientID   string     `json:"clientId,omitempty"`
+	UpdatedAt  *time.Time `json:"updatedAt,omitempty"`
+}
+
+// OAuthCredentialDescription is the member-readable credential card for one
+// OAuth-capable provider: the apps configured at each scope and the scope that
+// wins resolution.
+type OAuthCredentialDescription struct {
+	ProviderType  string                `json:"providerType"`
+	Project       OAuthCredentialSource `json:"project"`
+	Organization  OAuthCredentialSource `json:"organization"`
+	Deployment    OAuthCredentialSource `json:"deployment"`
+	ResolvedScope string                `json:"resolvedScope"`
 }
 
 // SetOAuthClientRequest is the write shape for an org OAuth client config.
@@ -276,6 +301,40 @@ func (c *Client) ListProviders(ctx context.Context) ([]Provider, error) {
 	}
 
 	return result, nil
+}
+
+// ListCredentials returns the OAuth apps available to the project, one entry
+// per OAuth-capable provider, across the project, organization, and deployment
+// scopes. Secrets are never returned.
+// GET /api/data-source-integrations/credentials
+func (c *Client) ListCredentials(ctx context.Context) ([]OAuthCredentialDescription, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/data-source-integrations/credentials", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result struct {
+		Items []OAuthCredentialDescription `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return result.Items, nil
 }
 
 // GetProviderSchema returns the configuration schema for a provider type.

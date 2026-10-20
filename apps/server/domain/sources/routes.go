@@ -27,6 +27,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.Use(authMiddleware.RequireAPITokenScopes("documents:read"))
 	readGroup.GET("/providers", h.ListProviders)
 	readGroup.GET("/providers/:providerType/schema", h.GetProviderSchema)
+	readGroup.GET("/credentials", h.ListCredentials)
 	readGroup.GET("/source-types", h.ListSourceTypes)
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.Get)

@@ -50,48 +50,47 @@ func TestDSConfigFieldsSplitsCredentials(t *testing.T) {
 func TestRenderDataSourcesPage(t *testing.T) {
 	lastSynced := "2026-09-01T10:00:00Z"
 	items := []DSIntegration{
-		{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", LastSyncedAt: &lastSynced},
-		{ID: "s2", Name: "Archive", ProviderType: "google_drive", Status: "paused"},
+		{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", SyncMode: "scheduled", LastSyncedAt: &lastSynced},
+		{ID: "s2", Name: "Archive", ProviderType: "google_drive", Status: "paused", SyncMode: "manual"},
 	}
-	html := renderHTML(t, DataSourcesPage(items, map[string]string{"google_drive": "Google Drive"}, nil, "", nil, false))
+	html := renderHTML(t, DataSourcesPage(items, map[string]string{"google_drive": "Google Drive"}, nil, "", nil))
 	for _, want := range []string{
 		"Data Sources", "Team Drive", "Archive", "Google Drive", "Active", "Paused",
-		`href="/data-sources/s1"`, `data-testid="ds-source-row"`, `href="/data-sources/new"`,
+		"Scheduled", "Manual",
+		`href="/data-sources/s1"`, `data-testid="ds-source-row"`, `data-testid="ds-source-table"`,
+		`href="/data-sources/new"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("data sources page missing %q", want)
 		}
 	}
 
-	empty := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, false))
+	empty := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil))
 	if !strings.Contains(empty, "No data sources connected") {
 		t.Error("empty state missing")
 	}
 
-	errHTML := renderHTML(t, DataSourcesPage(nil, nil, errTest, "", nil, false))
+	errHTML := renderHTML(t, DataSourcesPage(nil, nil, errTest, "", nil))
 	if !strings.Contains(errHTML, "Failed to load data sources") {
 		t.Error("error state missing")
 	}
 
-	flash := renderHTML(t, DataSourcesPage(nil, nil, nil, "Data source connected.", nil, false))
+	flash := renderHTML(t, DataSourcesPage(nil, nil, nil, "Data source connected.", nil))
 	if !strings.Contains(flash, "Data source connected.") {
 		t.Error("flash missing")
 	}
 }
 
-// TestRenderDataSourcesOAuthClientsLink asserts the header's "OAuth clients"
-// shortcut renders for project admins only.
-func TestRenderDataSourcesOAuthClientsLink(t *testing.T) {
-	admin := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, true))
-	for _, want := range []string{`data-testid="ds-oauth-clients-link"`, `href="/settings/oauth-clients"`} {
-		if !strings.Contains(admin, want) {
-			t.Errorf("admin data sources page missing %q", want)
+// TestRenderDataSourcesPageHasNoCredentialShortcut asserts credential
+// configuration does not leak onto the connections table: the page is a plain
+// data-source table with an add CTA, and the old OAuth-clients header shortcut
+// is gone.
+func TestRenderDataSourcesPageHasNoCredentialShortcut(t *testing.T) {
+	html := renderHTML(t, DataSourcesPage([]DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}}, map[string]string{"google_drive": "Google Drive"}, nil, "", nil))
+	for _, unwanted := range []string{`data-testid="ds-oauth-clients-link"`, `href="/settings/oauth-clients"`, `href="/settings/credentials"`} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("data sources page must not show credential configuration (%q)", unwanted)
 		}
-	}
-
-	nonAdmin := renderHTML(t, DataSourcesPage(nil, nil, nil, "", nil, false))
-	if strings.Contains(nonAdmin, `data-testid="ds-oauth-clients-link"`) {
-		t.Error("non-admin data sources page must not show the OAuth clients link")
 	}
 }
 
@@ -429,9 +428,11 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/orgs/:id/settings/oauth-clients", s.uiOrgOAuthClients)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
-	e.GET("/settings/oauth-clients", s.uiProjectOAuthClients)
-	e.POST("/settings/oauth-clients/:providerType", s.uiProjectOAuthClientUpsert)
-	e.POST("/settings/oauth-clients/:providerType/delete", s.uiProjectOAuthClientDelete)
+	e.GET("/settings/credentials", s.uiProjectCredentials)
+	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
+	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
+	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
+	e.GET("/settings/oauth-clients", s.uiProjectOAuthClientsRedirect)
 	e.GET("/documents/:id/versions", s.uiDocumentVersions)
 	return e
 }
@@ -622,9 +623,9 @@ func TestUIDataSourceOAuthStartMissingClientRendersInline(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`data-testid="ds-oauth-client-missing"`,
-		"No OAuth client is configured for GitHub",
+		"No OAuth app is configured for GitHub",
 		"project or organization admin",
-		"Data source OAuth clients",
+		"Settings → Credentials",
 		`data-testid="ds-oauth-client-settings-link"`,
 		"org-1/settings/oauth-clients",
 	} {
@@ -930,118 +931,350 @@ func TestUIOrgOAuthClientDelete(t *testing.T) {
 	}
 }
 
-// --- project OAuth clients (project-admin only) ---
-func projectOAuthAdminFake() *fakeMemory {
+// --- project credentials (member-readable table, admin-only editor) ---
+func projectCredentialsAdminFake() *fakeMemory {
 	return &fakeMemory{
 		project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
 		orgsAndProjects: []OrgWithProjectsDto{{
 			ID: "o1", Name: "Acme", Role: "org_member",
 			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_admin"}},
 		}},
-		dsProviders: []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsProviders: []DSProvider{
+			{Type: "google_drive", Name: "Google Drive", Vendor: "google", VendorName: "Google", AuthMethods: []string{"oauth"}},
+			{Type: "github", Name: "GitHub", Vendor: "github", VendorName: "GitHub", AuthMethods: []string{"oauth", "credentials"}},
+		},
+		dsCredentials: []DSOAuthCredentialDescription{
+			{
+				ProviderType:  "google_drive",
+				Project:       DSOAuthCredentialSource{Configured: true, ClientID: "pcid", UpdatedAt: "2026-09-01T10:00:00Z"},
+				Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
+				ResolvedScope: dsCredentialScopeProject,
+			},
+			{ProviderType: "github", ResolvedScope: "none"},
+		},
 		dsProjectOAuthClients: []DSOAuthClientConfig{
 			{ProviderType: "google_drive", ClientID: "pcid", RedirectURI: "https://api.example/api/data-source-integrations/oauth/google_drive/callback", JavascriptOrigin: "https://admin.example", Configured: true},
 		},
 	}
 }
 
-func TestRenderProjectOAuthClientsPage(t *testing.T) {
-	providers := []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}}
-	clients := map[string]DSOAuthClientConfig{
-		"google_drive": {
-			ProviderType:     "google_drive",
-			ClientID:         "pcid",
-			RedirectURI:      "https://api.example/api/data-source-integrations/oauth/google_drive/callback",
-			JavascriptOrigin: "https://admin.example",
-			Configured:       true,
+func TestRenderCredentialsPage(t *testing.T) {
+	providers := []DSProvider{
+		{Type: "google_drive", Name: "Google Drive", Vendor: "google", VendorName: "Google", AuthMethods: []string{"oauth"}},
+		{Type: "github", Name: "GitHub", Vendor: "github", VendorName: "GitHub", AuthMethods: []string{"oauth", "credentials"}},
+	}
+	creds := []DSOAuthCredentialDescription{
+		{
+			ProviderType:  "google_drive",
+			Project:       DSOAuthCredentialSource{Configured: true, ClientID: "pcid", UpdatedAt: "2026-09-01T10:00:00Z"},
+			Organization:  DSOAuthCredentialSource{Configured: true, ClientID: "ocid"},
+			ResolvedScope: dsCredentialScopeProject,
 		},
 	}
-	html := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home", providers, clients, nil, "", nil))
+	rows, note := dsCredentialRows(providers, creds, true, false, "o1")
+	html := renderHTML(t, CredentialsPage(dsCredentialsPageData{
+		Nav:         settingsNavCommon{IsProjectAdmin: true},
+		ProjectName: "Home",
+		OrgName:     "Acme",
+		Rows:        rows,
+	}))
+	if note != "" {
+		t.Errorf("deployment note = %q, want empty", note)
+	}
 	for _, want := range []string{
-		"Data source OAuth clients",
+		"Credentials",
+		"Google OAuth app",
+		"GitHub OAuth app",
+		"Google Drive",
+		"Project",
+		"Organization",
+		"pcid",
+		"ocid",
+		"In use",
+		`data-testid="ds-credentials-table"`,
+		`data-testid="ds-credential-row"`,
+		`href="/settings/credentials/google_drive"`,
+		"Managed by org admins",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("credentials page missing %q", want)
+		}
+	}
+	// The project app wins, so only the project-scope row is "In use".
+	if strings.Count(html, "In use") != 1 {
+		t.Errorf("expected exactly one In use row, got %d", strings.Count(html, "In use"))
+	}
+
+	// A non-admin sees the same table read-only.
+	memberRows, _ := dsCredentialRows(providers, creds, false, false, "o1")
+	member := renderHTML(t, CredentialsPage(dsCredentialsPageData{
+		Nav:         settingsNavCommon{},
+		ProjectName: "Home",
+		OrgName:     "Acme",
+		Rows:        memberRows,
+	}))
+	if !strings.Contains(member, "Google OAuth app") || !strings.Contains(member, "Managed by project admins") {
+		t.Error("member credentials table should be visible and read-only")
+	}
+	if strings.Contains(member, `href="/settings/credentials/google_drive"`) {
+		t.Error("member credentials table must not link to the admin editor")
+	}
+}
+
+func TestRenderCredentialsPageDeploymentNote(t *testing.T) {
+	providers := []DSProvider{{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}}
+	creds := []DSOAuthCredentialDescription{{
+		ProviderType:  "google_drive",
+		Deployment:    DSOAuthCredentialSource{Configured: true, ClientID: "dcid"},
+		ResolvedScope: dsCredentialScopeDeployment,
+	}}
+	rows, note := dsCredentialRows(providers, creds, true, false, "o1")
+	if !strings.Contains(note, "Google Drive") || !strings.Contains(note, "deployment") {
+		t.Errorf("deployment note = %q", note)
+	}
+	html := renderHTML(t, CredentialsPage(dsCredentialsPageData{Nav: settingsNavCommon{IsProjectAdmin: true}, Rows: rows, DeploymentNote: note}))
+	if !strings.Contains(html, "built-in OAuth app") {
+		t.Error("deployment note missing from the page")
+	}
+}
+
+func TestRenderCredentialDetailPage(t *testing.T) {
+	provider := DSProvider{Type: "google_drive", Name: "Google Drive", Vendor: "google", VendorName: "Google", AuthMethods: []string{"oauth"}}
+	cfg := DSOAuthClientConfig{
+		ProviderType:     "google_drive",
+		ClientID:         "pcid",
+		RedirectURI:      "https://api.example/api/data-source-integrations/oauth/google_drive/callback",
+		JavascriptOrigin: "https://admin.example",
+		Configured:       true,
+	}
+	html := renderHTML(t, CredentialDetailPage(dsCredentialDetailData{
+		Nav:           settingsNavCommon{IsProjectAdmin: true},
+		Provider:      provider,
+		Config:        cfg,
+		OrgConfigured: true,
+		OrgManageHref: "/orgs/o1/settings/oauth-clients#google_drive",
+	}))
+	for _, want := range []string{
+		"Google OAuth app",
 		"Google Drive",
 		"pcid",
-		`data-testid="ds-oauth-clients"`,
-		`action="/settings/oauth-clients/google_drive"`,
+		`action="/settings/credentials/google_drive"`,
 		`data-testid="ds-oauth-console-guide"`,
 		`data-testid="ds-oauth-redirect-uri"`,
 		"https://api.example/api/data-source-integrations/oauth/google_drive/callback",
 		`data-testid="ds-oauth-js-origin"`,
 		"https://admin.example",
 		"Google Cloud Console",
+		"overrides the organization-wide app",
+		`data-testid="ds-credential-org-link"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("project page missing %q", want)
+			t.Errorf("credential detail page missing %q", want)
 		}
 	}
-	// Without resolved callback values the console guide is omitted entirely.
-	bare := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home",
-		[]DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}}, nil, nil, "", nil))
+
+	// No project app: the inheritance note explains the org fallback.
+	bare := renderHTML(t, CredentialDetailPage(dsCredentialDetailData{
+		Nav:           settingsNavCommon{IsProjectAdmin: true},
+		Provider:      provider,
+		OrgConfigured: true,
+	}))
+	if !strings.Contains(bare, "uses the organization-wide app") {
+		t.Error("org fallback note missing")
+	}
 	if strings.Contains(bare, `data-testid="ds-oauth-console-guide"`) {
 		t.Error("console guide must not render without resolved callback values")
 	}
 }
 
-// TestRenderProjectOAuthClientsPageActiveRail asserts the page renders inside
-// the settings rail with the "Data source OAuth clients" entry active (and the
-// rail entry only present because the caller is a project admin).
-func TestRenderProjectOAuthClientsPageActiveRail(t *testing.T) {
-	html := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{IsProjectAdmin: true}, "Home", nil, nil, nil, "", nil))
-	if !strings.Contains(html, `href="/settings/oauth-clients"`) {
-		t.Error("settings rail missing the oauth-clients entry")
+// TestRenderSettingsRailCredentials asserts the Credentials entry is visible to
+// every project member (the table is member-readable), not just admins.
+func TestRenderSettingsRailCredentials(t *testing.T) {
+	html := renderHTML(t, settingsSubNav("credentials", true))
+	if !strings.Contains(html, `href="/settings/credentials"`) {
+		t.Error("settings rail missing the Credentials entry")
+	}
+	if !strings.Contains(html, "Credentials") {
+		t.Error("settings rail missing the Credentials label")
 	}
 	if !strings.Contains(html, `aria-current="page"`) {
-		t.Error("oauth-clients rail entry should be active")
-	}
-
-	// A non-admin nav payload hides the entry; the page body still renders
-	// (reachability is enforced at the handler, not the template).
-	nonAdmin := renderHTML(t, ProjectOAuthClientsPage(settingsNavCommon{}, "Home", nil, nil, nil, "", nil))
-	if strings.Contains(nonAdmin, `href="/settings/oauth-clients"`) {
-		t.Error("non-admin rail must not render the oauth-clients entry")
+		t.Error("Credentials rail entry should be active")
 	}
 }
 
-func TestUIProjectOAuthClientsPageAdminAndNonAdmin(t *testing.T) {
-	// Project admin sees the page.
-	e := newDSUIServer(projectOAuthAdminFake())
+func TestUIProjectCredentialsPageAdminAndMember(t *testing.T) {
+	// Project admin sees the table with editor links.
+	e := newDSUIServer(projectCredentialsAdminFake())
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/oauth-clients", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if body := rec.Body.String(); !strings.Contains(body, "Google Drive") || !strings.Contains(body, "pcid") {
+	if body := rec.Body.String(); !strings.Contains(body, "Google OAuth app") || !strings.Contains(body, "pcid") {
 		t.Errorf("admin body = %s", body)
 	}
 
-	// A non-admin of the project gets a 404 (hide, fail closed).
+	// A project member gets the read-only table, NOT a 404.
 	e = newDSUIServer(&fakeMemory{
 		project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
 		orgsAndProjects: []OrgWithProjectsDto{{
 			ID: "o1", Name: "Acme", Role: "org_member",
 			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_user"}},
 		}},
+		dsProviders: []DSProvider{{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}},
+		dsCredentials: []DSOAuthCredentialDescription{{
+			ProviderType: "google_drive",
+			Project:      DSOAuthCredentialSource{Configured: true, ClientID: "pcid"},
+		}},
 	})
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/oauth-clients", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("member status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Managed by project admins") {
+		t.Error("member table should be read-only")
+	}
+	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+		t.Error("member table must not link to the admin editor")
+	}
+
+	// The per-provider editor stays project-admin only.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
 	if rec.Code != http.StatusNotFound {
-		t.Fatalf("non-admin status = %d, want 404", rec.Code)
+		t.Fatalf("member editor status = %d, want 404", rec.Code)
+	}
+
+	// Admin editor resolves the provider from the catalog.
+	e = newDSUIServer(projectCredentialsAdminFake())
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("admin editor status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Google OAuth app") {
+		t.Errorf("editor body missing the vendor label: %s", body)
+	}
+
+	// Unknown provider is a 404, not an empty editor.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown provider status = %d, want 404", rec.Code)
+	}
+
+	// The retired URL redirects to the credentials table.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/oauth-clients", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("legacy redirect status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials" {
+		t.Errorf("legacy redirect location = %q", loc)
+	}
+}
+
+// TestUIProjectCredentialsOrgAdminCannotManageProjectApps asserts the project
+// credential surfaces follow the memory service's exact project_admin rule: an
+// org_admin who is only project_user can read the table and manage the org-wide
+// app, but gets no project editor link and a 404 from the project editor.
+func TestUIProjectCredentialsOrgAdminCannotManageProjectApps(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home", OrgID: "o1"},
+		orgsAndProjects: []OrgWithProjectsDto{{
+			ID: "o1", Name: "Acme", Role: "org_admin",
+			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_user"}},
+		}},
+		dsProviders: []DSProvider{{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}},
+		dsCredentials: []DSOAuthCredentialDescription{{
+			ProviderType:  "google_drive",
+			Project:       DSOAuthCredentialSource{Configured: true, ClientID: "pcid"},
+			ResolvedScope: dsCredentialScopeProject,
+		}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("org admin credentials status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `href="/settings/credentials/google_drive"`) {
+		t.Error("org_admin/project_user must not get the project editor link")
+	}
+	if !strings.Contains(body, "Managed by project admins") {
+		t.Error("org_admin/project_user should see the project row as read-only")
+	}
+	// The org-wide app stays manageable by the org admin.
+	if !strings.Contains(body, `/o/o1/settings/oauth-clients#google_drive`) {
+		t.Error("org_admin should still get the organization editor link")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings/credentials/google_drive", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("org_admin/project_user editor status = %d, want 404", rec.Code)
+	}
+
+	for _, tc := range []struct{ path, body string }{
+		{"/settings/credentials/google_drive", "client_id=pcid&client_secret=sec"},
+		{"/settings/credentials/google_drive/delete", ""},
+	} {
+		rec = httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("POST %s status = %d, want 404", tc.path, rec.Code)
+		}
+	}
+	if f.dsUpsertedProjectOAuthID != "" || f.dsDeletedProjectOAuthID != "" {
+		t.Error("memory must not be called for a non-project-admin")
+	}
+
+	// The missing-client alert falls back to the org settings page, matching
+	// the editor link the caller can actually open.
+	missing := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "no OAuth client configured for provider github",
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{
+			ID: "o1", Name: "Acme", Role: "org_admin",
+			Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1", Role: "project_user"}},
+		}},
+	}
+	e = newDSUIServer(missing)
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/oauth/start?providerType=github", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{OrgID: "o1", ProjectID: "p1"}))
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("missing-client status = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "/o/o1/settings/oauth-clients") || strings.Contains(body, `href="/settings/credentials/github"`) {
+		t.Errorf("missing-client link should target the org page for an org_admin/project_user: %s", body)
 	}
 }
 
 func TestUIProjectOAuthClientUpsertAndDelete(t *testing.T) {
-	f := projectOAuthAdminFake()
+	f := projectCredentialsAdminFake()
 	e := newDSUIServer(f)
 
 	// Missing client id → 303 back with an error, memory untouched.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive", strings.NewReader("client_secret=sec"))
+	req := httptest.NewRequest(http.MethodPost, "/settings/credentials/google_drive", strings.NewReader("client_secret=sec"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("validation status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/settings/oauth-clients?err=") {
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/settings/credentials/google_drive?err=") {
 		t.Errorf("validation location = %q", loc)
 	}
 	if f.dsUpsertedProjectOAuthID != "" {
@@ -1050,13 +1283,13 @@ func TestUIProjectOAuthClientUpsertAndDelete(t *testing.T) {
 
 	// Success → 303 with the saved flash, targeting the active project.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive", strings.NewReader("client_id=pcid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file"))
+	req = httptest.NewRequest(http.MethodPost, "/settings/credentials/google_drive", strings.NewReader("client_id=pcid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("success status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if loc := rec.Header().Get("Location"); loc != "/settings/oauth-clients?saved=1" {
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/google_drive?saved=1" {
 		t.Errorf("success location = %q", loc)
 	}
 	if got := f.dsUpsertedProjectOAuthReq; got == nil || got.ClientID != "pcid" || got.ClientSecret != "sec" || got.Strategy != "drive.file" {
@@ -1068,13 +1301,13 @@ func TestUIProjectOAuthClientUpsertAndDelete(t *testing.T) {
 
 	// Delete → 303 with the deleted flash.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/settings/oauth-clients/google_drive/delete", nil)
+	req = httptest.NewRequest(http.MethodPost, "/settings/credentials/google_drive/delete", nil)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("delete status = %d", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/settings/oauth-clients?deleted=1" {
+	if loc := rec.Header().Get("Location"); loc != "/settings/credentials/google_drive?deleted=1" {
 		t.Errorf("delete location = %q", loc)
 	}
 	if f.dsDeletedProjectOAuthID != "p1" || f.dsDeletedProjectOAuthProv != "google_drive" {
@@ -1111,8 +1344,8 @@ func TestUIDataSourceOAuthStartMissingClientLinksProjectSettings(t *testing.T) {
 	if !strings.Contains(body, `data-testid="ds-oauth-client-settings-link"`) {
 		t.Fatalf("settings link missing: %s", body)
 	}
-	if !strings.Contains(body, `href="/settings/oauth-clients"`) {
-		t.Errorf("project-scoped settings link missing: %s", body)
+	if !strings.Contains(body, `href="/settings/credentials/github"`) {
+		t.Errorf("project-scoped credentials link missing: %s", body)
 	}
 	if strings.Contains(body, "/orgs/o1/settings/oauth-clients") {
 		t.Errorf("org settings link must not be used when the caller administers the project: %s", body)

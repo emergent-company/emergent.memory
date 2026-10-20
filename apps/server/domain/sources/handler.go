@@ -55,6 +55,28 @@ func (h *Handler) GetProviderSchema(c echo.Context) error {
 	return c.JSON(http.StatusOK, schema)
 }
 
+// ListCredentials handles GET /api/data-source-integrations/credentials.
+// @Summary      List data-source credentials
+// @Description  Returns the OAuth apps available to the project (project, organization, deployment), one entry per provider. Secrets are never returned.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Success      200 {object} map[string][]OAuthCredentialDescription "Credential descriptions"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/credentials [get]
+// @Security     bearerAuth
+func (h *Handler) ListCredentials(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	items, err := h.svc.DescribeOAuthCredentials(c.Request().Context(), projectID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
 // ListSourceTypes handles GET /api/data-source-integrations/source-types.
 // @Summary      List source types
 // @Description  Returns document counts grouped by source type for the project

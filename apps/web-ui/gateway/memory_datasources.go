@@ -16,8 +16,13 @@ type DSProvider struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	SourceType  string `json:"sourceType"`
-	IconURL     string `json:"iconUrl,omitempty"`
-	Available   bool   `json:"available"`
+	// Vendor/VendorName identify the app vendor behind the provider (e.g.
+	// "google"/"Google"). OAuth apps are vendor-level, so the credentials UI
+	// labels them by vendor and shows the provider's Name as the data source.
+	Vendor     string `json:"vendor"`
+	VendorName string `json:"vendorName"`
+	IconURL    string `json:"iconUrl,omitempty"`
+	Available  bool   `json:"available"`
 	// AuthMethods is the provider's advertised connect methods ("oauth" and/or
 	// "credentials"). The chooser renders from it rather than a hard-coded list.
 	AuthMethods []string `json:"authMethods,omitempty"`
@@ -194,6 +199,37 @@ type DSSetOAuthClientRequest struct {
 	// Config carries non-secret provider settings (e.g. the Google Picker
 	// developer key and app id). Never secret material.
 	Config map[string]any `json:"config,omitempty"`
+}
+
+// DSOAuthCredentialSource describes one scope's OAuth app for a provider. The
+// client id is not a secret; the client secret is never returned.
+type DSOAuthCredentialSource struct {
+	Configured bool   `json:"configured"`
+	ClientID   string `json:"clientId,omitempty"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
+}
+
+// DSOAuthCredentialDescription is the member-readable credential card for one
+// OAuth-capable provider: the apps at each scope and the scope that wins.
+type DSOAuthCredentialDescription struct {
+	ProviderType  string                  `json:"providerType"`
+	Project       DSOAuthCredentialSource `json:"project"`
+	Organization  DSOAuthCredentialSource `json:"organization"`
+	Deployment    DSOAuthCredentialSource `json:"deployment"`
+	ResolvedScope string                  `json:"resolvedScope"`
+}
+
+// ListDSCredentials lists the OAuth apps available to the active project across
+// the project, organization, and deployment scopes (GET
+// /api/data-source-integrations/credentials). Secrets are never returned.
+func (m *MemoryClient) ListDSCredentials(ctx context.Context) ([]DSOAuthCredentialDescription, error) {
+	var out struct {
+		Items []DSOAuthCredentialDescription `json:"items"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/data-source-integrations/credentials", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
 }
 
 // DSResource is a selectable sync target for a source (a Drive folder or a

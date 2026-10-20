@@ -52,6 +52,8 @@ func (p *googleDriveProvider) Catalog() Provider {
 		Name:        "Google Drive",
 		Description: "Sync documents from a Google Drive folder into your knowledge base.",
 		SourceType:  SourceTypeDrive,
+		Vendor:      "google",
+		VendorName:  "Google",
 		Available:   true,
 	}
 }

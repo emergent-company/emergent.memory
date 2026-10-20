@@ -117,6 +117,9 @@ type MemoryBackend interface {
 	// write-only: no read method ever returns them.
 	ListDSProviders(ctx context.Context) ([]DSProvider, error)
 	GetDSProviderSchema(ctx context.Context, providerType string) (*DSProviderSchema, error)
+	// ListDSCredentials returns the member-readable OAuth credential
+	// descriptions (configured flags, non-secret client ids, resolved scope).
+	ListDSCredentials(ctx context.Context) ([]DSOAuthCredentialDescription, error)
 	ListDSSourceTypes(ctx context.Context) ([]DSSourceType, error)
 	TestDSConfig(ctx context.Context, req *DSTestConfigRequest) (*DSTestConnectionResponse, error)
 	TestDSConnection(ctx context.Context, id string) (*DSTestConnectionResponse, error)

@@ -22823,6 +22823,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/data-source-integrations/credentials": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the OAuth apps available to the project (project, organization, deployment), one entry per provider. Secrets are never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List data-source credentials",
+                "responses": {
+                    "200": {
+                        "description": "Credential descriptions",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/domain_sources.OAuthCredentialDescription"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/data-source-integrations/oauth/{providerType}/callback": {
             "get": {
                 "description": "Consumes the pending state, exchanges the code, creates the source, and redirects to the UI",
@@ -26519,6 +26562,10 @@ const docTemplate = `{
                 "id": {
                     "type": "string"
                 },
+                "input": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
                 "interactionType": {
                     "$ref": "#/definitions/domain_agents.AgentQuestionInteractionType"
                 },
@@ -26566,6 +26613,10 @@ const docTemplate = `{
                 },
                 "status": {
                     "$ref": "#/definitions/domain_agents.AgentQuestionStatus"
+                },
+                "tool": {
+                    "description": "Tool / Input carry the tool-policy confirmation's tool name + args when the\nquestion is a tool-policy approval (from the AgentToolApproval audit row\njoined by question_id). Empty for plain ask_user questions.",
+                    "type": "string"
                 },
                 "updatedAt": {
                     "type": "string"
@@ -33406,10 +33457,16 @@ const docTemplate = `{
                 "serverId": {
                     "type": "string"
                 },
+                "shared": {
+                    "type": "boolean"
+                },
                 "tokenEndpoint": {
                     "type": "string"
                 },
                 "updatedAt": {
+                    "type": "string"
+                },
+                "userId": {
                     "type": "string"
                 }
             }
@@ -33430,6 +33487,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "scope": {
+                    "type": "string"
+                },
+                "shared": {
+                    "type": "boolean"
+                },
+                "userId": {
                     "type": "string"
                 }
             }
@@ -37957,7 +38020,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "namespace": {
-                    "description": "filter graph results by namespace",
+                    "description": "filter both legs by namespace: graph objects by their namespace field, chunks through kb.object_chunks → kb.graph_objects (#1902)",
                     "type": "string"
                 },
                 "query": {
@@ -38508,6 +38571,40 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_sources.OAuthCredentialDescription": {
+            "type": "object",
+            "properties": {
+                "deployment": {
+                    "$ref": "#/definitions/domain_sources.OAuthCredentialSource"
+                },
+                "organization": {
+                    "$ref": "#/definitions/domain_sources.OAuthCredentialSource"
+                },
+                "project": {
+                    "$ref": "#/definitions/domain_sources.OAuthCredentialSource"
+                },
+                "providerType": {
+                    "type": "string"
+                },
+                "resolvedScope": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.OAuthCredentialSource": {
+            "type": "object",
+            "properties": {
+                "clientId": {
+                    "type": "string"
+                },
+                "configured": {
+                    "type": "boolean"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.Provider": {
             "type": "object",
             "properties": {
@@ -38540,6 +38637,13 @@ const docTemplate = `{
                     }
                 },
                 "type": {
+                    "type": "string"
+                },
+                "vendor": {
+                    "description": "Vendor is the stable vendor/app identity behind the provider (e.g.\n\"google\", \"github\"). An OAuth app configured for a provider is a\nvendor-level app: the same Google Cloud client can later back several\nGoogle-backed providers, so the credentials UI labels it by VendorName\nand shows the data source (Name) separately.",
+                    "type": "string"
+                },
+                "vendorName": {
                     "type": "string"
                 }
             }
@@ -39906,6 +40010,14 @@ const docTemplate = `{
                     "additionalProperties": {
                         "type": "string"
                     }
+                },
+                "git_token": {
+                    "description": "GitToken is a legacy plaintext git token backfilled out of env_vars by\nmigration 00244. It is retained only so pre-existing rows keep cloning until\nthe operator rotates the credential to a server-side secret referenced by\nGitTokenSecretRef (issue #1844). It is server-managed: read endpoints redact\nit, and the write path never accepts a new value.",
+                    "type": "string"
+                },
+                "git_token_secret_ref": {
+                    "description": "GitTokenSecretRef names a server-side git credential. It is a reference, not\na secret value: the token is resolved from the server environment at\nprovision time (see ResolveGitTokenSecretRef), so the database never stores a\nplaintext token on new writes. Only the allowlisted name\n(GitTokenSecretRefEnv) may be referenced (issue #1844).",
+                    "type": "string"
                 },
                 "provider": {
                     "description": "Explicit provider: \"firecracker\", \"gvisor\", \"e2b\", or \"\" (auto)",

@@ -214,6 +214,7 @@ func main() {
 	// pkg/sdk/datasources (see datasources.go).
 	api.GET("/data-source-integrations/providers", s.listDSProviders)
 	api.GET("/data-source-integrations/providers/:providerType/schema", s.getDSProviderSchema)
+	api.GET("/data-source-integrations/credentials", s.listDSCredentials)
 	api.GET("/data-source-integrations/source-types", s.listDSSourceTypes)
 	api.POST("/data-source-integrations/test-config", s.testDSConfig)
 	api.GET("/data-source-integrations", s.listDSIntegrations)
@@ -479,9 +480,12 @@ func main() {
 	// Project-level OAuth clients for data-source providers (project-admin only;
 	// the handler 404s for anyone else). Context-addressed like the rest of the
 	// project settings hub.
-	e.GET("/settings/oauth-clients", s.uiProjectOAuthClients)
-	e.POST("/settings/oauth-clients/:providerType", s.uiProjectOAuthClientUpsert)
-	e.POST("/settings/oauth-clients/:providerType/delete", s.uiProjectOAuthClientDelete)
+	e.GET("/settings/credentials", s.uiProjectCredentials)
+	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
+	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
+	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
+	// Retired URL: the project OAuth-client page became the Credentials table.
+	e.GET("/settings/oauth-clients", s.uiProjectOAuthClientsRedirect)
 	e.GET("/settings/approvals", s.uiApprovals)
 	e.GET("/settings/mcp-nodes", s.uiMCPNodesRedirect)
 	e.POST("/settings/mcp-nodes/remove", s.uiMCPNodesRemove)

@@ -9,6 +9,7 @@ Data sources let you connect external systems to Emergent Memory and automatical
 | `imap` | `email` | Email inbox via IMAP |
 | `gmail_oauth` | `email` | Gmail via OAuth |
 | `google_drive` | `drive` | Google Drive files and folders |
+| `github` | `repo` | GitHub repositories (OAuth or a personal access token) |
 | `clickup` | `clickup-document` | ClickUp documents and spaces |
 
 !!! note "Google Drive is OAuth-only"
@@ -18,61 +19,90 @@ Data sources let you connect external systems to Emergent Memory and automatical
 
 ---
 
-## Configuring a Google OAuth app
+## Credentials (OAuth apps)
 
-Google Drive connects require an OAuth 2.0 client (an "app") that Memory uses to obtain Drive
-access. The app can be configured at three levels, resolved in this order when a connection starts:
+OAuth-based providers (Google Drive, GitHub) need an OAuth 2.0 **app** — a client that Memory uses
+to obtain access. Credentials are keyed by **vendor**, not by data source: one **Google OAuth app**
+can back Google Drive, and one **GitHub OAuth app** backs GitHub. The **Data source** column tells
+you which connection type the app backs.
 
-1. **Project** — a project-level client, managed by a `project_admin` on the project's
-   **Data source OAuth clients** page. It overrides everything else for that project.
-2. **Organization** — an org-level client, managed by an `org_admin` under
+The app can be configured at three levels, resolved in this order when a connection starts:
+
+1. **Project** — a project-level app, managed by a `project_admin` on the project's
+   **Settings → Credentials** page. It overrides everything else for that project.
+2. **Organization** — an org-level app, managed by an `org_admin` under
    **Organization Settings → Data source OAuth clients**.
 3. **Deployment default** — a centrally configured app set via `SOURCES_OAUTH_GOOGLE_CLIENT_ID` /
    `SOURCES_OAUTH_GOOGLE_CLIENT_SECRET` (no setup needed by users).
 
-If none is configured, connecting fails with an actionable message telling you where to add one.
+If none is configured, connecting fails with an actionable message linking to the credentials page.
 
-The project page is reachable three ways: from the **Data source OAuth clients** entry in
-**Project Settings**, from the **OAuth clients** shortcut on the **Data Sources** page, or from the
-"no OAuth client configured" prompt shown when a connect fails.
+### The Credentials table
 
-### Create the app in Google Cloud Console
+**Project Settings → Credentials** lists every OAuth-capable vendor as a table. Each provider has one
+row per scope, project first, then organization:
+
+| Column | Meaning |
+|---|---|
+| App | The vendor-level app label, e.g. **Google OAuth app** |
+| Data source | The connection type the app backs, e.g. **Google Drive** |
+| Scope | **Project** or **Organization** |
+| Client ID | The non-secret client id (secrets are never displayed) |
+| Status | **In use** for the scope that wins resolution, **Configured** when it exists but is overridden, otherwise **Not configured** |
+| Updated | When the app was last changed |
+| Actions | **Manage** / **Set up** for admins; a role note for everyone else |
+
+Every project member can view the table and see which app is in use. Only a `project_admin` can open
+the per-provider editor and change the project app; organization-wide apps are managed by org admins.
+Opening a per-provider editor as a non-admin returns 404.
+
+When no project or organization app exists and the deployment does not provide one, the page carries
+a note naming the providers that fall back to the deployment default.
+
+The **Data Sources** page is a plain connections table (name, provider, status, sync mode, last sync)
+with a **New data source** action. It never asks you to configure credentials.
+
+### Create the app in the vendor console
+
+For Google Drive:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) and create or select a project.
 2. Enable the **Google Drive API**.
 3. Configure the **OAuth consent screen** (External or Internal; for Workspace-internal apps use
    Internal).
 4. Under **Credentials → Create credentials → OAuth client ID**, choose **Web application**.
-5. Under **Authorized redirect URIs**, add the **Redirect URI** shown on the OAuth client settings
-   page (it points at the Memory API callback, e.g.
+5. Under **Authorized redirect URIs**, add the **Redirect URI** shown on the credentials editor
+   (it points at the Memory API callback, e.g.
    `https://<api-host>/api/data-source-integrations/oauth/google_drive/callback`).
 6. Under **Authorized JavaScript origins**, add the **JavaScript origin** shown on the same page
    (the Memory UI origin).
 7. Copy the **Client ID** and **Client secret**.
 
-### Enter the client
+### Enter the app
 
 === "Project-level"
-    A `project_admin` opens the project's **Data source OAuth clients** page (from
-    **Project Settings → Data source OAuth clients**, the **OAuth clients** shortcut on the Data
-    Sources page, or the failed-connect prompt), chooses Google Drive, and enters the Client ID,
-    Client secret, scopes, and strategy from the console. This client is used only for that
-    project.
+    A `project_admin` opens **Project Settings → Credentials**, finds the **Google OAuth app** row,
+    and chooses **Manage** (or **Set up** when it is not configured). The editor shows the Redirect
+    URI and JavaScript origin to register in the vendor console, then takes the Client ID, Client
+    secret, scopes, and strategy. This app is used only for that project.
 
 === "Organization-level"
-    An `org_admin` opens **Organization Settings → Data source OAuth clients**, chooses Google
-    Drive, and enters the Client ID, Client secret, scopes, and strategy. This client is used for
-    every project in the org that has not configured its own.
+    An `org_admin` opens **Organization Settings → Data source OAuth clients**, chooses Google Drive,
+    and enters the Client ID, Client secret, scopes, and strategy. This app is used for every project
+    in the org that has not configured its own.
 
 The Client secret is stored encrypted and is never shown again after saving — leave the secret field
 blank when updating other settings to keep the stored secret.
+
+GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
+token entered when connecting the source; a token connection does not need an OAuth app.
 
 ---
 
 ## Setting Up a Data Source
 
 === "Admin UI"
-    Go to **Project Settings → Data Sources → Add Data Source** and select your provider.
+    Go to **Data Sources → New data source** and select your provider.
 
 === "API"
     ```http
@@ -112,7 +142,7 @@ POST /api/data-source-integrations/test-config
 | Field | Description |
 |---|---|
 | `name` | Display name for this integration |
-| `providerType` | The provider: `imap`, `gmail_oauth`, `google_drive`, `clickup` |
+| `providerType` | The provider: `imap`, `gmail_oauth`, `google_drive`, `github`, `clickup` |
 | `sourceType` | Category of content: `email`, `drive`, `clickup-document` |
 | `syncMode` | `manual` (trigger explicitly) or `recurring` (automatic on interval) |
 | `syncIntervalMinutes` | Minutes between automatic syncs (for `recurring` mode) |

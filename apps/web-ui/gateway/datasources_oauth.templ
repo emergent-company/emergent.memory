@@ -91,18 +91,13 @@ templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients
 	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), "Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
 }
 
-// ProjectOAuthClientsPage renders the PROJECT's OAuth client configuration. A
-// client configured here overrides the org-wide client for this project only.
-templ ProjectOAuthClientsPage(nav settingsNavCommon, projectName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
-	@dsOAuthClientsPage(settingsSubNav("oauth-clients", nav.ProvidersMissing, nav.IsProjectAdmin), "Project", "Data source OAuth clients", dsProjectOAuthClientsSubtitle(projectName), "/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
-}
+// ProjectOAuthClientsPage was replaced by the project Credentials table
+// (CredentialsPage at /settings/credentials); the org page remains the
+// organization-wide editor.
 
-// dsOAuthClientsPage is the scope-agnostic OAuth-client settings page shared by
-// the org and project scopes. The two differ only in the settings rail rendered
-// beside the body, the eyebrow/title copy, and the actionBase the card's forms
-// post to (an org path or the scoped project path); everything else — the
-// per-provider cards, the write-only secret, the console setup guide — is
-// identical.
+// dsOAuthClientsPage is the org-scoped OAuth-client settings page. It renders
+// one card per provider that advertises the oauth method, with the write-only
+// secret and the provider's console setup guide.
 templ dsOAuthClientsPage(rail templ.Component, eyebrow, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@pageHeader(eyebrow, title, subtitle)
@@ -131,13 +126,13 @@ templ dsOAuthClientsPage(rail templ.Component, eyebrow, title, subtitle, actionB
 // id/secret. The values are provider-driven (rendered only when present), never
 // hard-coded.
 templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig) {
-	@components.PanelCard("", nil) {
+	@components.PanelCard("", templ.Attributes{"id": p.Type, "data-testid": "ds-oauth-client-card"}) {
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-3">
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
 				<div>
-					<h2 class="text-base font-semibold">{ p.Name }</h2>
-					@ui.EmptyNote() { OAuth client used when connecting { p.Name }. }
+					<h2 class="text-base font-semibold">{ dsCredentialAppLabel(p) }</h2>
+					@ui.EmptyNote() { OAuth app used when connecting { p.Name }. }
 				</div>
 			</div>
 			if cfg.Configured {

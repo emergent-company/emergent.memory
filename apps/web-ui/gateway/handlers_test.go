@@ -151,6 +151,7 @@ type fakeMemory struct {
 	dsSchema          *DSProviderSchema
 	dsSourceTypes     []DSSourceType
 	dsIntegrations    []DSIntegration
+	dsCredentials     []DSOAuthCredentialDescription
 	dsErr             error // failure for any DS read/list method
 	dsCreateErr       error
 	dsUpdateErr       error
@@ -4132,6 +4133,13 @@ func (f *fakeMemory) ListDSProviders(ctx context.Context) ([]DSProvider, error) 
 		return []DSProvider{{Type: dsProviderTypeGoogleDrive, Name: "Google Drive", SourceType: "drive", Available: true}}, nil
 	}
 	return f.dsProviders, nil
+}
+
+func (f *fakeMemory) ListDSCredentials(ctx context.Context) ([]DSOAuthCredentialDescription, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	return f.dsCredentials, nil
 }
 
 func (f *fakeMemory) GetDSProviderSchema(ctx context.Context, providerType string) (*DSProviderSchema, error) {

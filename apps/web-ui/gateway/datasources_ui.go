@@ -305,7 +305,7 @@ func (s *Server) uiDataSources(c echo.Context) error {
 		{key: "deleted", msg: "Data source deleted."},
 	})
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("Data Sources"), DataSourcesPage(items, names, err, flashMsg, flashErr, s.projectAdminForCaller(c, activeProjectIDFromContext(ctx, s.cfg.MemoryProjectID))))
+	return s.page(c, pageTitle("Data Sources"), DataSourcesPage(items, names, err, flashMsg, flashErr))
 }
 
 // uiDataSourceNew renders the provider chooser, or the connect surface for a
@@ -371,6 +371,7 @@ func dsSelectProvider(providers []DSProvider, providerType, method string) *DSPr
 // scope is known.
 type dsOAuthClientError struct {
 	ProviderName string
+	ProviderType string
 	SettingsURL  string
 }
 
@@ -430,13 +431,14 @@ func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string)
 	}
 	oauthErr := &dsOAuthClientError{
 		ProviderName: dsProviderLabel(dsProviderNameMap(providers), providerType),
+		ProviderType: providerType,
 	}
 	if sc, ok := sessionContextFrom(ctx); ok {
 		switch {
-		case sc.ProjectID != "" && s.projectAdminForCaller(c, sc.ProjectID):
-			oauthErr.SettingsURL = "/settings/oauth-clients"
+		case sc.ProjectID != "" && s.strictProjectAdminForCaller(c, sc.ProjectID):
+			oauthErr.SettingsURL = dsCredentialAppHref(providerType)
 		case sc.OrgID != "":
-			oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients"
+			oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients#" + url.PathEscape(providerType)
 		}
 	}
 	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, err, nil, oauthErr))
@@ -644,49 +646,278 @@ func (s *Server) uiOrgOAuthClientDelete(c echo.Context) error {
 	return nil
 }
 
-// --- project-scoped OAuth clients (project-admin only) ---
+// --- project credentials (project settings) ---
 //
-// The project settings page mirrors the org page: a project may bring its own
-// OAuth client, which overrides the org-wide one for that project only (server
-// resolution: project → org → deployment env → error). The project page is
-// context-addressed (`/settings/oauth-clients`, scoped by page()).
+// Credentials are OAuth apps, resolved project → organization → deployment.
+// The table is member-readable (every project member sees which apps exist,
+// which scope wins, and the non-secret client id). The per-provider editor and
+// the write paths stay project-admin only. The org-wide app remains managed from
+// the org settings page (/orgs/:id/settings/oauth-clients).
 
-// uiProjectOAuthClients renders the active project's OAuth client settings page
-// (project-admin only; hidden and 404 for anyone else).
-func (s *Server) uiProjectOAuthClients(c echo.Context) error {
+// dsCredentialScope* mirror the server's resolved credential scopes.
+const (
+	dsCredentialScopeProject      = "project"
+	dsCredentialScopeOrganization = "organization"
+	dsCredentialScopeDeployment   = "deployment"
+)
+
+// dsCredentialRow is one credential instance: a provider at one scope.
+type dsCredentialRow struct {
+	ProviderType string
+	ScopeKey     string
+	App          string
+	DataSource   string
+	ScopeIcon    string
+	ScopeLabel   string
+	Configured   bool
+	ClientID     string
+	UpdatedAt    string
+	Resolved     bool
+	ManageHref   string
+	ManageLabel  string
+	ManagedNote  string
+}
+
+// dsCredentialsPageData is the project credentials table page payload.
+type dsCredentialsPageData struct {
+	Nav            settingsNavCommon
+	ProjectName    string
+	OrgName        string
+	Rows           []dsCredentialRow
+	DeploymentNote string
+	LoadErr        error
+	FlashMsg       string
+	FlashErr       error
+}
+
+// dsCredentialDetailData is the per-provider project editor payload.
+type dsCredentialDetailData struct {
+	Nav           settingsNavCommon
+	Provider      DSProvider
+	Config        DSOAuthClientConfig
+	OrgConfigured bool
+	OrgManageHref string
+	LoadErr       error
+	FlashMsg      string
+	FlashErr      error
+}
+
+// dsCredentialAppLabel is the vendor-level credential label ("Google OAuth app")
+// shown in the table and editor card. The data source keeps its own name so a
+// Google app is never mislabelled as a Drive-only credential.
+func dsCredentialAppLabel(p DSProvider) string {
+	vendor := strings.TrimSpace(p.VendorName)
+	if vendor == "" {
+		vendor = strings.TrimSpace(p.Name)
+	}
+	if vendor == "" {
+		vendor = p.Type
+	}
+	return vendor + " OAuth app"
+}
+
+// dsCredentialRows builds the table rows: project then organization per OAuth
+// provider, in catalog order. It also collects the providers that currently
+// resolve to the deployment default, so the page can explain that no
+// user-managed app is in play. Actions depend on the caller's roles: project
+// admins manage project rows, org admins manage organization rows, and everyone
+// else sees a read-only note.
+func dsCredentialRows(providers []DSProvider, creds []DSOAuthCredentialDescription, isProjectAdmin, isOrgAdmin bool, orgID string) ([]dsCredentialRow, string) {
+	byType := make(map[string]DSOAuthCredentialDescription, len(creds))
+	for _, c := range creds {
+		byType[c.ProviderType] = c
+	}
+	var rows []dsCredentialRow
+	var deployment []string
+	for _, p := range providers {
+		if !p.DSProviderSupportsOAuth() {
+			continue
+		}
+		desc, ok := byType[p.Type]
+		if !ok {
+			desc = DSOAuthCredentialDescription{ProviderType: p.Type}
+		}
+		app := dsCredentialAppLabel(p)
+
+		projectRow := dsCredentialRow{
+			ProviderType: p.Type,
+			ScopeKey:     "project",
+			App:          app,
+			DataSource:   p.Name,
+			ScopeIcon:    "lucide--folder",
+			ScopeLabel:   "Project",
+			Configured:   desc.Project.Configured,
+			ClientID:     desc.Project.ClientID,
+			UpdatedAt:    desc.Project.UpdatedAt,
+			Resolved:     desc.ResolvedScope == dsCredentialScopeProject,
+		}
+		if isProjectAdmin {
+			projectRow.ManageHref = dsCredentialAppHref(p.Type)
+			projectRow.ManageLabel = "Manage"
+			if !projectRow.Configured {
+				projectRow.ManageLabel = "Set up"
+			}
+		} else {
+			projectRow.ManagedNote = "Managed by project admins"
+		}
+		rows = append(rows, projectRow)
+
+		orgRow := dsCredentialRow{
+			ProviderType: p.Type,
+			ScopeKey:     "organization",
+			App:          app,
+			DataSource:   p.Name,
+			ScopeIcon:    "lucide--building-2",
+			ScopeLabel:   "Organization",
+			Configured:   desc.Organization.Configured,
+			ClientID:     desc.Organization.ClientID,
+			UpdatedAt:    desc.Organization.UpdatedAt,
+			Resolved:     desc.ResolvedScope == dsCredentialScopeOrganization,
+		}
+		switch {
+		case isOrgAdmin && orgID != "":
+			orgRow.ManageHref = "/orgs/" + url.PathEscape(orgID) + "/settings/oauth-clients#" + url.PathEscape(p.Type)
+			orgRow.ManageLabel = "Manage"
+		case orgRow.Configured:
+			orgRow.ManagedNote = "Managed by org admins"
+		}
+		rows = append(rows, orgRow)
+
+		if desc.ResolvedScope == dsCredentialScopeDeployment {
+			deployment = append(deployment, p.Name)
+		}
+	}
+
+	note := ""
+	if len(deployment) > 0 {
+		note = strings.Join(deployment, ", ") + " currently use the deployment's built-in OAuth app. Add a project or organization app to override it."
+	}
+	return rows, note
+}
+
+// uiProjectCredentials renders the project's credentials table. Every project
+// member can view it; the data comes from the member-safe credentials endpoint,
+// which never returns secrets.
+func (s *Server) uiProjectCredentials(c echo.Context) error {
 	ctx := c.Request().Context()
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(settingsNavCommon{}, "", nil, nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Credentials"), CredentialsPage(dsCredentialsPageData{Nav: settingsNavCommon{}, LoadErr: userFacingError(err)}))
 	}
 	if project == nil {
 		// No active project: land on the picker rather than rendering an empty
 		// page (the same degrade as uiProjectSettings).
 		return c.Redirect(http.StatusSeeOther, "/orgs")
 	}
-	if !s.projectAdminForCaller(c, project.ID) {
-		return c.NoContent(http.StatusNotFound)
-	}
+	nav := s.settingsNavPayload(c, ctx)
 	providers, perr := s.memory.ListDSProviders(ctx)
 	if perr != nil {
 		perr = userFacingError(perr)
 	}
-	clients, cerr := s.memory.ListProjectDSOAuthClients(ctx, project.ID)
+	creds, cerr := s.memory.ListDSCredentials(ctx)
 	if cerr != nil {
 		cerr = userFacingError(cerr)
 	}
-	byType := make(map[string]DSOAuthClientConfig, len(clients))
-	for _, cl := range clients {
-		byType[cl.ProviderType] = cl
+	loadErr := perr
+	if loadErr == nil {
+		loadErr = cerr
 	}
-	if perr == nil {
-		perr = cerr
+	orgName := ""
+	if project.OrgID != "" {
+		if org, oerr := s.memory.GetOrg(ctx, project.OrgID); oerr == nil && org != nil {
+			orgName = org.Name
+		} else if oerr != nil {
+			captureError(oerr)
+		}
+	}
+	rows, deploymentNote := dsCredentialRows(providers, creds, s.strictProjectAdminForCaller(c, project.ID), s.orgAdminForCaller(c, project.OrgID), project.OrgID)
+	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "saved", msg: "OAuth app saved."},
+		{key: "deleted", msg: "Project OAuth app removed."},
+	})
+	return s.page(c, pageTitle("Credentials"), CredentialsPage(dsCredentialsPageData{
+		Nav:            nav,
+		ProjectName:    project.Name,
+		OrgName:        orgName,
+		Rows:           rows,
+		DeploymentNote: deploymentNote,
+		LoadErr:        loadErr,
+		FlashMsg:       flashMsg,
+		FlashErr:       flashError(c),
+	}))
+}
+
+// uiProjectCredential renders the per-provider project OAuth app editor
+// (project-admin only; hidden and 404 for everyone else). The org-wide app's
+// configured flag comes from the member-safe endpoint so a project admin who is
+// not an org admin still sees the inheritance state without the org secret or
+// client id leaking beyond what the table already shows.
+func (s *Server) uiProjectCredential(c echo.Context) error {
+	ctx := c.Request().Context()
+	project, err := s.memory.GetCurrentProject(ctx)
+	if err != nil || project == nil {
+		return redirectWithError(c, "/settings/credentials", errors.New("no active project"))
+	}
+	if !s.strictProjectAdminForCaller(c, project.ID) {
+		return c.NoContent(http.StatusNotFound)
+	}
+	providerType := strings.TrimSpace(c.Param("providerType"))
+	providers, perr := s.memory.ListDSProviders(ctx)
+	if perr != nil {
+		return redirectWithError(c, "/settings/credentials", perr)
+	}
+	var provider *DSProvider
+	for i := range providers {
+		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() {
+			provider = &providers[i]
+			break
+		}
+	}
+	if provider == nil {
+		return c.NoContent(http.StatusNotFound)
+	}
+	cfg, cerr := s.memory.GetProjectDSOAuthClient(ctx, project.ID, providerType)
+	if cerr != nil {
+		cerr = userFacingError(cerr)
+	}
+	orgConfigured := false
+	if creds, lerr := s.memory.ListDSCredentials(ctx); lerr == nil {
+		for _, d := range creds {
+			if d.ProviderType == providerType {
+				orgConfigured = d.Organization.Configured
+				break
+			}
+		}
+	} else {
+		captureError(lerr)
+	}
+	orgManageHref := ""
+	if project.OrgID != "" && s.orgAdminForCaller(c, project.OrgID) {
+		orgManageHref = "/orgs/" + url.PathEscape(project.OrgID) + "/settings/oauth-clients#" + url.PathEscape(providerType)
+	}
+	var config DSOAuthClientConfig
+	if cfg != nil {
+		config = *cfg
 	}
 	flashMsg := flashFromQuery(c, []flashParam{
-		{key: "saved", msg: "OAuth client saved."},
-		{key: "deleted", msg: "OAuth client removed."},
+		{key: "saved", msg: "OAuth app saved."},
+		{key: "deleted", msg: "Project OAuth app removed."},
 	})
-	return s.page(c, pageTitle("OAuth clients"), ProjectOAuthClientsPage(s.settingsNavPayload(c, ctx), project.Name, providers, byType, perr, flashMsg, flashError(c)))
+	return s.page(c, pageTitle(dsCredentialAppLabel(*provider)), CredentialDetailPage(dsCredentialDetailData{
+		Nav:           s.settingsNavPayload(c, ctx),
+		Provider:      *provider,
+		Config:        config,
+		OrgConfigured: orgConfigured,
+		OrgManageHref: orgManageHref,
+		LoadErr:       cerr,
+		FlashMsg:      flashMsg,
+		FlashErr:      flashError(c),
+	}))
+}
+
+// uiProjectOAuthClientsRedirect retires the old project OAuth-client URL.
+func (s *Server) uiProjectOAuthClientsRedirect(c echo.Context) error {
+	return c.Redirect(http.StatusSeeOther, "/settings/credentials")
 }
 
 // uiProjectOAuthClientUpsert saves the project's OAuth client for a provider
@@ -695,12 +926,12 @@ func (s *Server) uiProjectOAuthClients(c echo.Context) error {
 // Config, preserving stored keys the form does not manage.
 func (s *Server) uiProjectOAuthClientUpsert(c echo.Context) error {
 	ctx := c.Request().Context()
-	back := "/settings/oauth-clients"
+	back := dsCredentialAppHref(c.Param("providerType"))
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil || project == nil {
 		return redirectWithError(c, back, errors.New("no active project"))
 	}
-	if !s.projectAdminForCaller(c, project.ID) {
+	if !s.strictProjectAdminForCaller(c, project.ID) {
 		return c.NoContent(http.StatusNotFound)
 	}
 	clientID := strings.TrimSpace(c.FormValue("client_id"))
@@ -727,12 +958,12 @@ func (s *Server) uiProjectOAuthClientUpsert(c echo.Context) error {
 // (project-admin only), restoring the org-wide client as the resolved one.
 func (s *Server) uiProjectOAuthClientDelete(c echo.Context) error {
 	ctx := c.Request().Context()
-	back := "/settings/oauth-clients"
+	back := dsCredentialAppHref(c.Param("providerType"))
 	project, err := s.memory.GetCurrentProject(ctx)
 	if err != nil || project == nil {
 		return redirectWithError(c, back, errors.New("no active project"))
 	}
-	if !s.projectAdminForCaller(c, project.ID) {
+	if !s.strictProjectAdminForCaller(c, project.ID) {
 		return c.NoContent(http.StatusNotFound)
 	}
 	if err := s.memory.DeleteProjectDSOAuthClient(ctx, project.ID, c.Param("providerType")); err != nil {
@@ -765,15 +996,6 @@ func dsOAuthClientsSubtitle(orgName string) string {
 		return "OAuth client credentials for " + orgName + ", used when connecting providers with OAuth. A project client overrides these for that project only."
 	}
 	return "OAuth client credentials, used when connecting providers with OAuth. A project client overrides these for that project only."
-}
-
-// dsProjectOAuthClientsSubtitle builds the project clients page subtitle from
-// the project name.
-func dsProjectOAuthClientsSubtitle(projectName string) string {
-	if projectName != "" {
-		return "OAuth client credentials for " + projectName + ", used when connecting providers with OAuth. These override the organization's client for this project only."
-	}
-	return "OAuth client credentials, used when connecting providers with OAuth. These override the organization's client for this project only."
 }
 
 // dsResourceStepTitle is the provider-driven heading for the resource step.

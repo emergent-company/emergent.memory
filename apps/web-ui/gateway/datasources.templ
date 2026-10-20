@@ -13,12 +13,15 @@ import (
 
 // --- Data Sources ---
 
-// DataSourcesPage renders the Data Sources list: every connected source with
-// its provider, lifecycle status, and last-sync time, plus an empty state. A
-// failed list fetch renders the whole-page error state.
-templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error, isProjectAdmin bool) {
+// DataSourcesPage renders the Data Sources list as the standard table: every
+// connected source with its provider, lifecycle status, sync mode, and
+// last-sync time, plus an empty state. Credential configuration deliberately
+// lives on its own Settings → Credentials page, so this surface never asks the
+// user to manage OAuth apps. A failed list fetch renders the whole-page error
+// state.
+templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@dataSourcesHeader(len(integrations), loadErr == nil, isProjectAdmin)
+		@dataSourcesHeader(len(integrations), loadErr == nil)
 		if loadErr != nil {
 			@pageError("Failed to load data sources", loadErr)
 		} else {
@@ -26,33 +29,37 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 			if len(integrations) == 0 {
 				@dataSourcesEmpty()
 			} else {
-				@cardList("", cardListProps{}) {
-					for _, src := range integrations {
-						@dataSourceRow(src, providerNames)
-					}
+				@components.TableCard(nil) {
+					<div class="overflow-x-auto">
+						<table class="table table-sm" data-testid="ds-source-table">
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>Provider</th>
+									<th>Status</th>
+									<th>Sync</th>
+									<th>Last sync</th>
+									<th class="text-right">Actions</th>
+								</tr>
+							</thead>
+							<tbody>
+								for _, src := range integrations {
+									@dataSourceRow(src, providerNames)
+								}
+							</tbody>
+						</table>
+					</div>
 				}
 			}
 		}
 	}
 }
 
-templ dataSourcesHeader(count int, ok bool, isProjectAdmin bool) {
-	@pageHeader("Integrations", "Data Sources", "Connect external systems and sync their documents into this project.") {
+templ dataSourcesHeader(count int, ok bool) {
+	@pageHeader("Integrations", "Data Sources", "Connect external systems and sync their documents into this project. OAuth apps are managed under Settings → Credentials.") {
 		<div class="flex flex-wrap items-center gap-2">
 			if ok {
 				@countBadgeLabel(countLabel(count, "source", "sources"), "lucide--cloud")
-			}
-			if isProjectAdmin {
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    "/settings/oauth-clients",
-					Variant: ui.ButtonOutline,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--key-round",
-					Attrs:   templ.Attributes{"data-testid": "ds-oauth-clients-link"},
-				}) {
-					OAuth clients
-				}
 			}
 			@ui.Button(ui.ButtonProps{
 				Type:    ui.ButtonTypeLink,
@@ -82,23 +89,44 @@ templ dataSourcesEmpty() {
 }
 
 templ dataSourceRow(src DSIntegration, providerNames map[string]string) {
-	<div class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50" data-testid="ds-source-row">
-		<a class="flex min-w-0 grow items-center gap-3" href={ templ.URL("/data-sources/" + url.PathEscape(src.ID)) }>
-			@ui.IconSpan("lucide--cloud", "size-4 shrink-0 text-muted-faint")
-			<div class="min-w-0 grow">
-				<p class="truncate text-sm font-medium">{ dsSourceName(src) }</p>
-				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { { dsProviderLabel(providerNames, src.ProviderType) } }
-			</div>
-			@ui.Badge(ui.BadgeProps{
-				Label:   dsLastSyncLabel(src),
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeXS,
-				Icon:    "lucide--refresh-cw",
-			})
-			@dsStatusBadge(src.Status)
-			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-		</a>
-	</div>
+	<tr data-testid="ds-source-row">
+		<td>
+			<a class="flex min-w-0 items-center gap-2 font-medium hover:underline" href={ templ.URL("/data-sources/" + url.PathEscape(src.ID)) }>
+				@ui.IconSpan("lucide--cloud", "size-4 shrink-0 text-muted-faint")
+				<span class="truncate">{ dsSourceName(src) }</span>
+			</a>
+		</td>
+		<td>{ dsProviderLabel(providerNames, src.ProviderType) }</td>
+		<td>@dsStatusBadge(src.Status)</td>
+		<td>{ dsSyncModeLabel(src.SyncMode) }</td>
+		<td class="whitespace-nowrap">{ dsLastSyncLabel(src) }</td>
+		<td class="text-right">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/data-sources/" + url.PathEscape(src.ID),
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--arrow-right",
+				Attrs:   templ.Attributes{"data-testid": "ds-source-open"},
+			}) {
+				Open
+			}
+		</td>
+	</tr>
+}
+
+// dsSyncModeLabel renders a source's sync mode as human copy.
+func dsSyncModeLabel(mode string) string {
+	switch mode {
+	case "scheduled":
+		return "Scheduled"
+	case "manual":
+		return "Manual"
+	case "":
+		return "—"
+	default:
+		return mode
+	}
 }
 
 // dsStatusBadge renders a source status as a labelled status badge.
@@ -249,12 +277,12 @@ templ dsProviderChoice(p DSProvider) {
 // to that scope's OAuth client settings (project or org) so the user has a
 // direct remediation path instead of a transient toast.
 templ dsOAuthClientMissingAlert(e dsOAuthClientError) {
-	<div class="flex flex-col gap-2" data-testid="ds-oauth-client-missing">
+	<div class="flex flex-col gap-2" data-testid="ds-oauth-client-missing" data-provider={ e.ProviderType }>
 		@ui.Alert(ui.AlertProps{
 			Type:    ui.AlertError,
 			Style:   ui.AlertStyleSoft,
 			Icon:    "lucide--alert-triangle",
-			Message: "No OAuth client is configured for " + e.ProviderName + ". A project or organization admin must add one under Data source OAuth clients settings before connecting with OAuth.",
+			Message: "No OAuth app is configured for " + e.ProviderName + ". A project or organization admin must add one under Settings → Credentials before connecting with OAuth.",
 		})
 		if e.SettingsURL != "" {
 			<div>
@@ -266,7 +294,7 @@ templ dsOAuthClientMissingAlert(e dsOAuthClientError) {
 					Icon:    "lucide--settings",
 					Attrs:   templ.Attributes{"data-testid": "ds-oauth-client-settings-link"},
 				}) {
-					Configure OAuth clients
+					Configure credentials
 				}
 			</div>
 		}

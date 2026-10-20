@@ -29,8 +29,8 @@ test.describe('Data Sources list', () => {
       await expect(row.getByText('Active', { exact: true })).toBeVisible();
       await expect(row.getByText('Never synced')).toBeVisible();
 
-      // The row links into the source's detail page.
-      await row.getByRole('link').click();
+      // The row links into the source's detail page via the name link.
+      await row.getByRole('link', { name: src.name }).click();
       await expect(page).toHaveURL(new RegExp(`/data-sources/${src.id}`));
       await expect(page.getByTestId('ds-trigger-sync')).toBeVisible();
     } finally {

@@ -55,6 +55,8 @@ func (p *githubProvider) Catalog() Provider {
 		Name:        "GitHub",
 		Description: "Sync markdown documentation from a GitHub repository.",
 		SourceType:  SourceTypeRepo,
+		Vendor:      "github",
+		VendorName:  "GitHub",
 		Available:   true,
 	}
 }

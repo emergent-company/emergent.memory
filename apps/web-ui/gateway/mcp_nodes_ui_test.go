@@ -16,7 +16,7 @@ import (
 // single "Connected devices" entry linking /settings/devices — the former
 // "Devices" and "MCP nodes" entries are folded into it.
 func TestSettingsSubNavConnectedDevicesEntry(t *testing.T) {
-	html := renderHTML(t, settingsSubNav("devices", false, false))
+	html := renderHTML(t, settingsSubNav("devices", false))
 	if !strings.Contains(html, `href="/settings/devices"`) || !strings.Contains(html, "Connected devices") {
 		t.Error("settings rail missing the Connected devices entry")
 	}

@@ -246,6 +246,8 @@ const dsProviders = [
     name: "Google Drive",
     description: "Sync documents from a Google Drive folder.",
     sourceType: "drive",
+    vendor: "google",
+    vendorName: "Google",
     available: true,
     authMethods: ["oauth", "credentials"],
     strategies: ["drive.file", "drive.readonly"],
@@ -255,6 +257,8 @@ const dsProviders = [
     name: "GitHub",
     description: "Sync documentation from a GitHub repository.",
     sourceType: "repo",
+    vendor: "github",
+    vendorName: "GitHub",
     available: true,
     authMethods: ["oauth", "credentials"],
   },
@@ -289,6 +293,49 @@ const dsSchemas = {
 };
 
 const dsSourceTypes = [{ sourceType: "drive", documentCount: 3 }];
+
+// Per-scope OAuth-client state for the credentials pages. Secrets are never
+// stored here (the write-only contract is asserted by the specs).
+const dsOAuthState = {
+  org: new Map(),
+  project: new Map(),
+};
+
+function dsStoreOAuthClient(payload, providerType) {
+  return {
+    providerType,
+    clientId: String(payload.clientId || ""),
+    scopes: Array.isArray(payload.scopes) ? payload.scopes : [],
+    strategy: String(payload.strategy || ""),
+    config: payload.config || {},
+    configured: true,
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  };
+}
+
+// dsStoredOAuthClient renders a stored client in the redacted DTO shape. The
+// deployment callback/origin values are always present so the console guide
+// renders on the editor pages.
+function dsStoredOAuthClient(stored) {
+  return {
+    ...stored,
+    redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${stored.providerType}/callback`,
+    javascriptOrigin: GATEWAY_ORIGIN,
+  };
+}
+
+// dsOAuthClientView renders one provider's client, defaulting to unconfigured.
+function dsOAuthClientView(stored, providerType) {
+  if (stored) return dsStoredOAuthClient(stored);
+  return {
+    providerType,
+    clientId: "",
+    configured: false,
+    redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${providerType}/callback`,
+    javascriptOrigin: GATEWAY_ORIGIN,
+  };
+}
 
 // Seeded with the source the OAuth bounce-back lands on (`connected=s1`), so the
 // OAuth callback → detail flow resolves. Specs that create their own sources are
@@ -731,30 +778,29 @@ const server = http.createServer((req, res) => {
   }
 
   // --- org OAuth-client config (org-admin only; write-only secret) -----------
+  //
+  // State is in-memory so the credentials table reflects a save made during a
+  // spec run; secrets are never stored or echoed.
 
   const dsOrgClientsList = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-clients$/);
   if (dsOrgClientsList && req.method === "GET") {
-    return json(res, []);
+    return json(res, [...dsOAuthState.org.values()].map((c) => dsStoredOAuthClient(c)));
   }
 
   const dsOrgClientMatch = path.match(/^\/api\/orgs\/([^/]+)\/data-source-integrations\/oauth-clients\/([^/]+)$/);
   if (dsOrgClientMatch && req.method === "GET") {
-    return json(res, { providerType: dsOrgClientMatch[2], clientId: "", configured: false });
+    return json(res, dsOAuthClientView(dsOAuthState.org.get(dsOrgClientMatch[2]), dsOrgClientMatch[2]));
   }
   if (dsOrgClientMatch && req.method === "PUT") {
     return readBody(req, (payload) => {
       // Echo the saved client WITHOUT the secret (write-only, never returned).
-      return json(res, {
-        providerType: dsOrgClientMatch[2],
-        clientId: String(payload.clientId || ""),
-        strategy: String(payload.strategy || ""),
-        configured: true,
-        createdAt: "2026-09-01T00:00:00Z",
-        updatedAt: "2026-09-01T00:00:00Z",
-      });
+      const stored = dsStoreOAuthClient(payload, dsOrgClientMatch[2]);
+      dsOAuthState.org.set(dsOrgClientMatch[2], stored);
+      return json(res, dsStoredOAuthClient(stored));
     });
   }
   if (dsOrgClientMatch && req.method === "DELETE") {
+    dsOAuthState.org.delete(dsOrgClientMatch[2]);
     res.statusCode = 204;
     return res.end();
   }
@@ -763,32 +809,22 @@ const server = http.createServer((req, res) => {
 
   const dsProjectClientsList = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-clients$/);
   if (dsProjectClientsList && req.method === "GET") {
-    return json(res, []);
+    return json(res, [...dsOAuthState.project.values()].map((c) => dsStoredOAuthClient(c)));
   }
 
   const dsProjectClientMatch = path.match(/^\/api\/projects\/([^/]+)\/data-source-integrations\/oauth-clients\/([^/]+)$/);
   if (dsProjectClientMatch && req.method === "GET") {
-    return json(res, {
-      providerType: dsProjectClientMatch[2],
-      clientId: "",
-      redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
-      javascriptOrigin: GATEWAY_ORIGIN,
-      configured: false,
-    });
+    return json(res, dsOAuthClientView(dsOAuthState.project.get(dsProjectClientMatch[2]), dsProjectClientMatch[2]));
   }
   if (dsProjectClientMatch && req.method === "PUT") {
-    return readBody(req, (payload) => json(res, {
-      providerType: dsProjectClientMatch[2],
-      clientId: String(payload.clientId || ""),
-      strategy: String(payload.strategy || ""),
-      redirectUri: `${GATEWAY_ORIGIN}/api/data-source-integrations/oauth/${dsProjectClientMatch[2]}/callback`,
-      javascriptOrigin: GATEWAY_ORIGIN,
-      configured: true,
-      createdAt: "2026-09-01T00:00:00Z",
-      updatedAt: "2026-09-01T00:00:00Z",
-    }));
+    return readBody(req, (payload) => {
+      const stored = dsStoreOAuthClient(payload, dsProjectClientMatch[2]);
+      dsOAuthState.project.set(dsProjectClientMatch[2], stored);
+      return json(res, dsStoredOAuthClient(stored));
+    });
   }
   if (dsProjectClientMatch && req.method === "DELETE") {
+    dsOAuthState.project.delete(dsProjectClientMatch[2]);
     res.statusCode = 204;
     return res.end();
   }
@@ -872,6 +908,24 @@ const server = http.createServer((req, res) => {
 
   if (path === "/api/data-source-integrations/providers" && req.method === "GET") {
     return json(res, dsProviders);
+  }
+
+  // Member-safe credential descriptions: configured flags + non-secret client
+  // ids + the resolved scope. Secrets never appear here.
+  if (path === "/api/data-source-integrations/credentials" && req.method === "GET") {
+    const items = dsProviders.map((p) => {
+      const project = dsOAuthState.project.get(p.type);
+      const org = dsOAuthState.org.get(p.type);
+      const resolvedScope = project ? "project" : org ? "organization" : "none";
+      return {
+        providerType: p.type,
+        project: { configured: !!project, clientId: project ? project.clientId : "" },
+        organization: { configured: !!org, clientId: org ? org.clientId : "" },
+        deployment: { configured: false },
+        resolvedScope,
+      };
+    });
+    return json(res, { items });
   }
 
   const dsSchemaMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/schema$/);

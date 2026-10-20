@@ -85,10 +85,17 @@ type Source struct {
 
 // Provider mirrors pkg/sdk/datasources.Provider — the provider-catalog entry.
 type Provider struct {
-	Type        string   `json:"type"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	SourceType  string   `json:"sourceType"`
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	SourceType  string `json:"sourceType"`
+	// Vendor is the stable vendor/app identity behind the provider (e.g.
+	// "google", "github"). An OAuth app configured for a provider is a
+	// vendor-level app: the same Google Cloud client can later back several
+	// Google-backed providers, so the credentials UI labels it by VendorName
+	// and shows the data source (Name) separately.
+	Vendor      string   `json:"vendor"`
+	VendorName  string   `json:"vendorName"`
 	IconURL     string   `json:"iconUrl,omitempty"`
 	Available   bool     `json:"available"`
 	AuthMethods []string `json:"authMethods,omitempty"`
