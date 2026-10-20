@@ -16,17 +16,25 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      # Self-change so a runner/build migration is exercised by its own PR and
+      # by the merge, instead of silently waiting for the next docs edit (#184).
+      - '.github/workflows/docs.yml'
     tags:
       - 'v*'
   pull_request:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
 
 jobs:
   build:
     name: Build docs
-    runs-on: ubuntu-latest
+    # Self-hosted (#184): mkdocs + mike are pure-Python and a docs build is
+    # PR-triggered on every docs/** change — one of the largest recurring
+    # hosted-minute consumers. Fork guard as everywhere else.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     permissions:
       contents: read
     steps:
@@ -34,20 +42,35 @@ jobs:
         with:
           fetch-depth: 0  # mike needs full history
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # The pool is heterogeneous: actions/setup-python resolves no version on
+      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
+      # provisions its own interpreter, so docs build identically on every
+      # runner in the pool (#184, #233).
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          python-version: '3.x'
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -r docs/requirements.txt
+        run: uv pip install -r docs/requirements.txt
 
       - name: Build docs (strict)
         run: mkdocs build --strict
 
   deploy-latest:
     name: Deploy latest (main)
-    runs-on: ubuntu-latest
+    # Self-hosted (#184): push-to-main only (never a fork PR), so no guard is
+    # needed. The gh-pages-deploy concurrency group still serialises it against
+    # the appcast publishers.
+    runs-on: [self-hosted, linux, x64, memory]
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
@@ -57,13 +80,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # The pool is heterogeneous: actions/setup-python resolves no version on
+      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
+      # provisions its own interpreter, so docs build identically on every
+      # runner in the pool (#184, #233).
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          python-version: '3.x'
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -r docs/requirements.txt
+        run: uv pip install -r docs/requirements.txt
 
       - name: Configure git
         run: |
@@ -105,7 +140,7 @@ jobs:
 
   deploy-version:
     name: Deploy versioned release
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, memory]
     needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -115,13 +150,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # The pool is heterogeneous: actions/setup-python resolves no version on
+      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
+      # provisions its own interpreter, so docs build identically on every
+      # runner in the pool (#184, #233).
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
-          python-version: '3.x'
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-docs"
+          echo "$RUNNER_TEMP/venv-docs/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-docs" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -r docs/requirements.txt
+        run: uv pip install -r docs/requirements.txt
 
       - name: Configure git
         run: |
