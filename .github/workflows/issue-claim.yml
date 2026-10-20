@@ -135,7 +135,10 @@ jobs:
 
   audit:
     name: audit
-    if: github.event_name != 'pull_request'
+    # Only the board-wide triggers. `issues: closed` also fires this workflow, and
+    # a full audit on every close would scan for nothing and could churn the
+    # tracking issue.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
