@@ -241,7 +241,11 @@ jobs:
           # are ephemeral, so they cannot be hard-coded).
           MEMORY_TEST_TOKEN: e2e-test-user
           MEMORY_AUTH_MODE: standalone
-        run: go test -v ./tests/api/... -timeout 15m
+        # A clean run is ~13m on the self-hosted runner, so a 15m budget failed
+        # PRs on elapsed time alone when the runner was slow (issue #1971). Keep
+        # this in step with the `test:e2e` Taskfile target, and leave the job's
+        # 30m timeout as the outer bound.
+        run: go test -v ./tests/api/... -timeout 25m
 
       - name: Show server logs on failure
         if: failure()

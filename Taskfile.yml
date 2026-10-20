@@ -27,7 +27,9 @@ tasks:
   test:e2e:
     desc: Run API e2e suites (e2e/tests/api, runlog)
     cmds:
-      - cd e2e && GOWORK=off go test ./tests/api/... -v -count=1 {{.CLI_ARGS}}
+      # Match the CI budget (.github/workflows/e2e.yml `api` job). Without an
+      # explicit -timeout this inherits Go's 10m default and fails sooner than CI.
+      - cd e2e && GOWORK=off go test ./tests/api/... -v -count=1 -timeout 25m {{.CLI_ARGS}}
 
   test:integration:
     desc: Run backend integration tests
