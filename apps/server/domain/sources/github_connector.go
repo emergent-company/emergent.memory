@@ -50,7 +50,8 @@ func (c *githubSyncConfig) includes(path string) bool {
 // `**` crosses segments, `?` matches one non-separator character, and a plain
 // path ending in `/` matches the whole subtree. A trailing slash is ignored on
 // wildcard patterns, so `docs/**/` behaves like `docs/**` rather than becoming
-// a literal that matches nothing.
+// a literal that matches nothing. Patterns are compiled rune-wise, so
+// non-ASCII path segments work.
 type githubPathMatcher struct {
 	pattern string
 	re      *regexp.Regexp
@@ -103,8 +104,12 @@ func newGitHubPathMatcher(pattern string) (*githubPathMatcher, error) {
 				b.WriteString("[^/]")
 				i++
 			default:
-				b.WriteString(regexp.QuoteMeta(string(trimmed[i])))
-				i++
+				// Decode a full rune: taking one byte at a time would turn
+				// non-ASCII segment names into a sequence of U+00xx runes and
+				// compile a pattern that matches nothing.
+				r, size := utf8.DecodeRuneInString(trimmed[i:])
+				b.WriteString(regexp.QuoteMeta(string(r)))
+				i += size
 			}
 		}
 		b.WriteString("$")
