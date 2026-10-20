@@ -528,6 +528,7 @@ Env (see `.env.e2e.example`):
 | `E2E_GDRIVE_CLIENT_ID` / `E2E_GDRIVE_CLIENT_SECRET` | Google OAuth app (used by the project OAuth client the spec configures, and by the fixture to refresh its token) |
 | `E2E_GDRIVE_FIXTURE_REFRESH_TOKEN` | fixture refresh token from the script above |
 | `E2E_GDRIVE_FOLDER_ID` | optional — reuse a pre-made folder; otherwise a scratch folder is created and deleted |
+| `E2E_MEMORY_API_URL` | memory API origin — set it to the deployment under test (the same host that serves `/api/health`; your local `.env.e2e` already carries the value used by the other API specs). The spec reads documents/versions/content directly from it, while the UI and API actions go through the gateway |
 
 The test prints (and attaches) the Google authorize URL, then polls for up to
 the OAuth state TTL (~10 min) for the callback-created source — open the printed

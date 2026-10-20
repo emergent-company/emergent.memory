@@ -50,6 +50,10 @@ function missingEnv(): string[] {
   if (!CLIENT_ID) missing.push('E2E_GDRIVE_CLIENT_ID');
   if (!CLIENT_SECRET) missing.push('E2E_GDRIVE_CLIENT_SECRET');
   if (!FIXTURE_REFRESH_TOKEN) missing.push('E2E_GDRIVE_FIXTURE_REFRESH_TOKEN');
+  // Document/version/content assertions hit the memory API directly; without it
+  // MEMORY_API_URL is '' and the calls silently become relative /api/documents
+  // against the gateway (no such route) — so it is part of the live gate.
+  if (!MEMORY_API_URL) missing.push('E2E_MEMORY_API_URL');
   return missing;
 }
 
