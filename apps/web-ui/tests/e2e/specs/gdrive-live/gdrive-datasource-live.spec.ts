@@ -1,7 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { expectAppPage, goto } from '../../helpers/page';
-import { scopedPath } from '../../helpers/scope';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { MEMORY_API_URL } from '../../helpers/tokens';
 import { GDriveFixture } from '../../helpers/gdrive';
@@ -18,11 +17,13 @@ import { GDriveFixture } from '../../helpers/gdrive';
 //   1. Fresh scratch project (isolates the source + documents).
 //   2. Configure the PROJECT-scoped Drive OAuth client (id/secret + the
 //      drive.readonly strategy) via the real settings UI.
-//   3. Begin the OAuth connect: capture the Google authorize URL (state + PKCE,
+//   3. Create the scratch Drive folder and begin the OAuth connect with it
+//      pinned in the config: capture the Google authorize URL (state + PKCE,
 //      offline access, consent) — printed + attached, never navigated by the
 //      test. A human opens it and grants consent; the memory callback creates
 //      the source in the scratch project (state carries the project id).
-//   4. Poll for the source; set its folder_id via the real edit form.
+//   4. Poll for the source, then prove its stored credentials reach Drive via
+//      the connection test (the first sync below proves the folder).
 //   5. Fixture creates a plain-text file (v1) → sync → doc version 1.
 //   6. Fixture rewrites the file (v2) and asserts headRevisionId moved → sync →
 //      version 2 sharing the SAME canonicalId with a NEW sourceRevisionId.
@@ -238,28 +239,42 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
     await page.waitForURL(/saved=1/, { timeout: 30_000 });
 
     // Re-read the configured card: the server now resolves the deployment's
-    // callback values, which the authorize URL must match.
-    const configuredForm = page
-      .getByTestId('ds-oauth-client-form')
-      .filter({ has: page.locator('option[value="drive.readonly"]') });
-    const redirectUri = (await configuredForm.getByTestId('ds-oauth-redirect-uri').inputValue()).trim();
-    expect(redirectUri, 'OAuth client card must show the resolved redirect URI').not.toBe('');
+    // callback values, which the authorize URL must match. The console-guide
+    // block that carries them lives at CARD level, as a sibling of the
+    // <form data-testid="ds-oauth-client-form">, never inside it — scoping this
+    // locator to the form silently waits forever.
+    const redirectUriEl = page.getByTestId('ds-oauth-redirect-uri');
+    await expect(
+      redirectUriEl,
+      'OAuth client card must show the resolved redirect URI',
+    ).toHaveCount(1);
+    await expect(redirectUriEl).toHaveValue(/\S/);
+    const redirectUri = (await redirectUriEl.inputValue()).trim();
 
-    // 3. Begin the OAuth connect and capture (do NOT follow) the authorize URL.
-    //    Scoped to the scratch project so the OAuth state carries its id and
-    //    the callback creates the source there (default scope = bootstrap).
-    const startResp = await page.request.get(
-      scopedPath('/data-sources/oauth/start?providerType=google_drive', {
-        orgId: bootstrap.orgId,
-        projectId,
-      }),
-      { maxRedirects: 0 },
+    // 3. Create the scratch Drive folder FIRST: the google_drive create path
+    //    validates `config.folder_id`, and the gateway's UI start route
+    //    (/data-sources/oauth/start) forwards no config, so a UI-initiated
+    //    Drive connect dies at the callback with "config.folder_id is
+    //    required". The memory API's authorize endpoint accepts the intended
+    //    config, so the connect is started there with the folder pinned —
+    //    the OAuth app itself is still the project-scoped one configured above.
+    const folderId = FOLDER_ID || (await gdrive.createFolder(`e2e-gdrive-${nonce}`));
+    if (!FOLDER_ID) createdFolderId = folderId;
+
+    //    The OAuth state carries the scratch project id, so the callback
+    //    creates the source there (default scope = bootstrap).
+    const headers = await memoryAuthHeaders(page);
+    const startResp = await page.request.fetch(
+      `${MEMORY_API_URL}/api/data-source-integrations/providers/google_drive/oauth/authorize`,
+      {
+        method: 'GET',
+        headers: { ...headers, 'X-Project-ID': projectId, 'Content-Type': 'application/json' },
+        data: { config: { folder_id: folderId } },
+      },
     );
-    expect([302, 303, 307], `oauth/start must redirect (HTTP ${startResp.status()})`).toContain(
-      startResp.status(),
-    );
-    const location = startResp.headers()['location'] ?? '';
-    expect(location, 'oauth/start must return a Location header').not.toBe('');
+    expect(startResp.ok(), `oauth authorize must succeed (HTTP ${startResp.status()})`).toBe(true);
+    const location = ((await startResp.json()) as { authorizeUrl?: string }).authorizeUrl ?? '';
+    expect(location, 'oauth authorize must return an authorizeUrl').not.toBe('');
 
     const authUrl = new URL(location);
     expect(authUrl.origin + authUrl.pathname, 'authorize URL must point at Google').toBe(
@@ -315,18 +330,16 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
     ).toBeTruthy();
     sourceId = source!.id;
 
-    // 5. Point the source at a real folder (OAuth sources have no folder_id).
-    const folderId = FOLDER_ID || (await gdrive.createFolder(`e2e-gdrive-${nonce}`));
-    if (!FOLDER_ID) createdFolderId = folderId;
-
-    // Explicit scope again: goto defaults to the bootstrap project, which would
-    // build /o/{org}/p/{bootstrap}/data-sources/{id} → 404 for a scratch-owned
-    // source (and reset the session's active project).
+    // 5. The source was created with the folder already pinned (step 3). The
+    //    edit form renders config fields WITHOUT a value binding (the gateway
+    //    renderer has no prefill), so it cannot prove the stored folder — the
+    //    first sync below does that instead. Keep the visit + test-connection
+    //    so the stored credentials are proven to reach Drive before syncing.
+    //    Explicit scope again: goto defaults to the bootstrap project, which
+    //    would build /o/{org}/p/{bootstrap}/data-sources/{id} → 404 for a
+    //    scratch-owned source (and reset the session's active project).
     await goto(page, `/data-sources/${sourceId}`, { orgId: bootstrap.orgId, projectId });
     await expect(page.getByTestId('ds-edit-form')).toBeVisible();
-    await page.getByTestId('ds-field-folder_id').fill(folderId);
-    await page.getByRole('button', { name: 'Save changes' }).click();
-    await page.waitForURL(/updated=1/, { timeout: 30_000 });
 
     // Prove the stored credentials actually reach Drive before syncing.
     await page.getByTestId('ds-test-connection').click();

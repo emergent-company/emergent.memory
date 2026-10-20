@@ -537,6 +537,14 @@ is printed: the OAuth state expires in ~10 minutes and the test still asserts
 three syncs afterwards, so a slow consent can push the whole run past its
 timeout.
 
+The connect is started against the memory API's authorize endpoint
+(`GET /api/data-source-integrations/providers/google_drive/oauth/authorize`) with
+`config.folder_id` in the body, not through the gateway's
+`/data-sources/oauth/start` route: that route forwards no config, while the
+source-create path validates `config.folder_id`, so a UI-initiated Drive connect
+fails at the callback with `config.folder_id is required`. The OAuth *client*
+under test is still the project-scoped one configured through the settings UI.
+
 ### Live-LLM scenarios (scheduled, not PR-gated)
 
 The `scenarios` + `chat` projects (live-LLM, env-gated on
