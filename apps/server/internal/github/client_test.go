@@ -256,6 +256,13 @@ func TestListRepos_Paginates(t *testing.T) {
 // honouring per_page/page so the cap probe can be exercised.
 func newRepoListServer(t *testing.T, total int) (*httptest.Server, *int) {
 	t.Helper()
+	return newRepoListServerWithProbe(t, total, http.StatusOK)
+}
+
+// newRepoListServerWithProbe is newRepoListServer with an explicit status for
+// the out-of-range cap probe page (GitHub normally answers 200 []).
+func newRepoListServerWithProbe(t *testing.T, total, probeStatus int) (*httptest.Server, *int) {
+	t.Helper()
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requireAuth(t, r)
@@ -267,6 +274,11 @@ func newRepoListServer(t *testing.T, total int) (*httptest.Server, *int) {
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 		if page <= 0 {
 			page = 1
+		}
+		if probeStatus != http.StatusOK && page > maxRepoPages {
+			w.WriteHeader(probeStatus)
+			_, _ = w.Write([]byte(`{"message":"out of range"}`))
+			return
 		}
 		start := (page - 1) * perPage
 		count := 0
@@ -310,6 +322,38 @@ func TestListRepos_OverCapFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "more than") {
 		t.Errorf("ListRepos() error = %v, want it to mention the cap", err)
+	}
+}
+
+// TestListRepos_ProbeOutOfRangeIsEndOfList covers deployments that answer the
+// page past the cap with 404/422 instead of GitHub's 200 []: a token that sees
+// exactly the cap must still list successfully.
+func TestListRepos_ProbeOutOfRangeIsEndOfList(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusUnprocessableEntity} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv, requests := newRepoListServerWithProbe(t, maxRepoPages*reposPerPage, status)
+
+			repos, err := newTestClient(t, srv.URL, Config{}).ListRepos(context.Background())
+			if err != nil {
+				t.Fatalf("ListRepos() error = %v, want an end-of-list probe", err)
+			}
+			if want := maxRepoPages * reposPerPage; len(repos) != want {
+				t.Fatalf("ListRepos() returned %d repos, want %d", len(repos), want)
+			}
+			if want := maxRepoPages + 1; *requests != want {
+				t.Errorf("server saw %d requests, want %d (full pages + probe)", *requests, want)
+			}
+		})
+	}
+}
+
+// TestListRepos_ProbeFailureStillFails keeps a failed probe (bad credentials or
+// rate limit) from being mistaken for the end of the listing.
+func TestListRepos_ProbeFailureStillFails(t *testing.T) {
+	srv, _ := newRepoListServerWithProbe(t, maxRepoPages*reposPerPage, http.StatusForbidden)
+
+	if _, err := newTestClient(t, srv.URL, Config{}).ListRepos(context.Background()); err == nil {
+		t.Fatal("ListRepos() = nil error, want the probe failure")
 	}
 }
 

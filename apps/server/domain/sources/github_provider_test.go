@@ -331,6 +331,55 @@ func TestGitHubConnector_TestConnectionUsesConfig(t *testing.T) {
 	}
 }
 
+func TestGitHubPathMatcher_RejectsInvalidUTF8(t *testing.T) {
+	if _, err := newGitHubPathMatcher("docs/\xff/**"); err == nil {
+		t.Fatal("newGitHubPathMatcher() accepted a pattern that is not valid UTF-8")
+	}
+}
+
+func TestGitHubPathMatcher_TrailingSlashOnWildcardIsIgnored(t *testing.T) {
+	// Documents the reading the matcher comment states: a slash on a wildcard
+	// pattern does not make it directory-only.
+	cases := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"docs/x*/", "docs/x", true},
+		{"docs/x*/", "docs/x1/guide.md", false},
+		{"docs/x*/**", "docs/x1/guide.md", true},
+	}
+	for _, tc := range cases {
+		m, err := newGitHubPathMatcher(tc.pattern)
+		if err != nil {
+			t.Fatalf("newGitHubPathMatcher(%q) error = %v", tc.pattern, err)
+		}
+		if got := m.match(tc.path); got != tc.want {
+			t.Errorf("match(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestGitHubPathMatcher_UnicodeNormalizationIsExact(t *testing.T) {
+	// NFC "café" (U+00E9) versus NFD "café" (e + U+0301): matching is by exact
+	// code point, so the two forms are different patterns.
+	const nfc = "docs/caf\u00e9/**"
+	const nfd = "docs/cafe\u0301/**"
+	m, err := newGitHubPathMatcher(nfc)
+	if err != nil {
+		t.Fatalf("newGitHubPathMatcher(%q) error = %v", nfc, err)
+	}
+	if !m.match("docs/caf\u00e9/guide.md") {
+		t.Error("NFC pattern must match the NFC path")
+	}
+	if m.match("docs/cafe\u0301/guide.md") {
+		t.Error("NFC pattern must not match the NFD path")
+	}
+	if _, err := newGitHubPathMatcher(nfd); err != nil {
+		t.Fatalf("newGitHubPathMatcher(%q) error = %v", nfd, err)
+	}
+}
+
 func TestGitHubPathMatcher(t *testing.T) {
 	cases := []struct {
 		pattern string

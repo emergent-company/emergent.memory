@@ -190,6 +190,16 @@ func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
 	var probe []Repo
 	probePath := fmt.Sprintf("/user/repos?per_page=1&sort=updated&page=%d", maxRepoPages*reposPerPage+1)
 	if err := c.getJSON(ctx, probePath, &probe); err != nil {
+		// GitHub answers a page past the end with 200 [], but some deployments
+		// (and proxies in front of them) answer 404 or 422 instead. Treat those
+		// as end-of-list — they mean this page does not exist, not that the
+		// token sees extra repositories. 401/403 still propagate: they report a
+		// failed probe (bad credentials, rate limit), not an oversized listing.
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) &&
+			(httpErr.StatusCode == http.StatusNotFound || httpErr.StatusCode == http.StatusUnprocessableEntity) {
+			return out, nil
+		}
 		return nil, err
 	}
 	if len(probe) > 0 {

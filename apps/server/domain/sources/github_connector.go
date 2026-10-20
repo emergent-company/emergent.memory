@@ -49,9 +49,15 @@ func (c *githubSyncConfig) includes(path string) bool {
 // githubPathMatcher is one compiled `paths` glob. `*` matches within a segment,
 // `**` crosses segments, `?` matches one non-separator character, and a plain
 // path ending in `/` matches the whole subtree. A trailing slash is ignored on
-// wildcard patterns, so `docs/**/` behaves like `docs/**` rather than becoming
-// a literal that matches nothing. Patterns are compiled rune-wise, so
-// non-ASCII path segments work.
+// wildcard patterns, so it does not make the match directory-only: `docs/**/`
+// behaves like `docs/**`, and `docs/x*/` behaves like `docs/x*` — it matches the
+// direct entry `docs/x` but not `docs/x1/file.md` (use `docs/x*/**` for that).
+// Patterns are compiled rune-wise, so non-ASCII path segments work.
+//
+// Matching is exact by code point: neither the pattern nor the repository path
+// is Unicode-normalized, so an NFD pattern (`cafe` + U+0301) does not match an
+// NFC path (`café` with U+00E9) and vice versa. Submit patterns in the same
+// normalization form as the repository's paths (NFC, GitHub's usual form).
 type githubPathMatcher struct {
 	pattern string
 	re      *regexp.Regexp
@@ -59,6 +65,12 @@ type githubPathMatcher struct {
 
 func newGitHubPathMatcher(pattern string) (*githubPathMatcher, error) {
 	p := strings.TrimSpace(pattern)
+	if !utf8.ValidString(p) {
+		// Decoding a rune from invalid bytes yields U+FFFD, so such a pattern
+		// would compile to a literal that silently matches nothing. Reject it
+		// instead of accepting a filter that cannot work.
+		return nil, apperror.NewValidation("config.paths entries must be valid UTF-8")
+	}
 	p = strings.TrimPrefix(p, "./")
 	p = strings.TrimPrefix(p, "/")
 	if p == "" {
@@ -177,7 +189,7 @@ func (c *githubConnector) Fetch(ctx context.Context, item SourceItem) (content, 
 	if err != nil {
 		return "", "", err
 	}
-	// Posts are text; invalid UTF-8 would otherwise fail later as an opaque
+	// Blobs are text; invalid UTF-8 would otherwise fail later as an opaque
 	// Postgres encoding error for this item. Fail here with a clear reason so
 	// the worker isolates it like any other per-item fetch error.
 	if !utf8.Valid(data) {
