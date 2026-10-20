@@ -1,11 +1,10 @@
 # UI / htmx / Alpine — patterns & unification
 
 Authoritative reference for the web-ui gateway's rendering, interactivity, and
-testing conventions. Complements `gateway/AGENTS.md` (Go/templ style + the
-component-layer rules in `openspec/specs/web-ui-component-conventions/spec.md`).
-Everything here is grounded in shipped code; paths are relative to
-`apps/web-ui/gateway/` unless stated. Verify before asserting — line numbers
-drift.
+testing conventions. Complements the Go/templ style enforced in the gateway
+package and the component-layer rules in §4. Everything here is grounded in
+shipped code; paths are relative to `apps/web-ui/gateway/` unless stated. Verify
+before asserting — line numbers drift.
 
 To **choose** a layout or editing affordance (inline auto-save vs form+Save vs
 modal, list/detail/settings layouts) use the named-pattern catalog in
@@ -133,7 +132,7 @@ full reload (`settings_handlers.go:534-541`, `settings_providers.go:418-422`).
 
 ## 3. htmx ownership in components
 
-From `gateway/AGENTS.md:75-78` (verbatim policy):
+Policy:
 
 > The page/integration site owns `hx-target`, `hx-swap`, `hx-trigger`,
 > `hx-include` — pass them through `Attrs`. A component may own only
@@ -160,7 +159,14 @@ Consequences:
 
 ## 4. Interactive-widget inventory
 
-Legend: L0 = go-daisy primitive, L3 = page-local helper (see `gateway/AGENTS.md:46-52`).
+Component layers — imports flow down only: **L0** go-daisy primitive, **L1**
+domain adapter (domain → intent, no extra markup), **L2** app composite (markup
+only; no domain, routes, or config), **L3** page-local helper (private to one
+page; promote on reuse), **L4** page. A new component earns extraction when it
+has ≥2 call sites or encapsulates an invariant (ids, `data-testid`, `aria-*`,
+htmx wiring); otherwise inline it.
+
+Legend: L0 = go-daisy primitive, L3 = page-local helper.
 
 | Widget | Implementation | Layer | Open/closed state rendering |
 |---|---|---|---|
@@ -314,10 +320,9 @@ new chat-surface work as an opportunity to move shared markup/behaviour into
 
 - **Render/unit tests assert the contract — not class strings.** ids,
   `data-testid`, `aria-*`, `hx-*`, `data-copy-target`, `data-dialog-autoopen` —
-  and omission where it matters (`gateway/AGENTS.md:84-89`). Class order is not
-  the contract; a theme tweak must not fail a unit test. The few exceptions
-  (tool-group disclosure bases, confirm-dialog icon circle) are documented in
-  the component-conventions spec.
+  and omission where it matters. Class order is not the contract; a theme tweak
+  must not fail a unit test. The few exceptions (tool-group disclosure bases,
+  confirm-dialog icon circle) are deliberate.
 - **Hermetic js-dom gate** — `apps/web-ui/tests/e2e/js-dom.config.ts` targets
   only `specs/js/`, starts no server, and loads the shipped
   `chat-components.js` verbatim into a bare page via `page.addScriptTag`
@@ -331,3 +336,20 @@ new chat-surface work as an opportunity to move shared markup/behaviour into
   mutations, live-LLM scenarios. Not CI-runnable; `tests/e2e/README.md` documents
   the coverage, the `data-testid` convention (`page-<slug>` anchor), and the
   gaps tracked in `openspec/changes/web-ui-e2e-coverage/`.
+
+---
+
+## 9. Role gating & untrusted content
+
+- **Hide, don't disable.** A control the caller's role cannot use must not render
+  at all — not render `disabled`. Derive the role once from the caller's org
+  access tree (`orgRoleFor`/`isOrgAdmin` in `org_context.go`) and gate the render
+  on it; never re-derive the role locally. Sidebar entries are appended only when
+  the role holds (`sidebarGroups`/`orgSidebarGroups`, `ui.go`). Hide nav entries
+  entirely for wholly admin-only pages: landing a non-admin on a page that
+  degrades to a 403 is worse than not showing the link.
+- **Never `innerHTML` agent-produced content.** Agent/LLM output is untrusted.
+  Render markdown through `renderMarkdown` (`markdown.go` — goldmark +
+  `bluemonday.UGCPolicy`, raw HTML escaped, dangerous link schemes stripped) and
+  then `templ.Raw`; for a plain string use `textContent`, never `innerHTML`. Do
+  not feed unsanitized agent output straight into `templ.Raw`.

@@ -2656,8 +2656,7 @@ func TestApprovalsPageRendersQuestionProposal(t *testing.T) {
 
 // TestApprovalsPageEscapesHostileProposal guards the untrusted-agent-payload
 // boundary: a proposal carrying markup must be escaped by the sanitized render
-// path, never emitted as live HTML. agent/LLM output is untrusted
-// (gateway/AGENTS.md).
+// path, never emitted as live HTML.
 func TestApprovalsPageEscapesHostileProposal(t *testing.T) {
 	const hostile = `<script>alert(1)</script>`
 	raw := `{"kind":"skill","summary":"` + hostile + `","body":{"name":"` + hostile + `"}}`

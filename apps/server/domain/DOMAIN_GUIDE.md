@@ -3,9 +3,13 @@
 This guide documents all server domain packages under `apps/server/domain/`. It covers HTTP routes, key entities, enums/constants, and service/subsystem notes for each domain.
 
 **Related references (not duplicated here):**
-- `apps/server/AGENT.md` — framework patterns (fx, Echo, Bun ORM, job queues, test commands)
 - `apps/server/domain/mcp/README.md` — full MCP tools, resources, and prompts reference
 - `apps/server/domain/documents/UPLOAD_API.md` — document upload API
+
+Package conventions (fx modules, Echo handlers, Bun repositories, job queues, test
+commands) are documented by the code and its tests; the server packages carry no
+contributor guide of their own. (Other apps do: `e2e/AGENTS.md` and
+`apps/connector.mac/AGENTS.md`.)
 
 ---
 
@@ -852,4 +856,4 @@ Tasks are registered by calling `scheduler.AddFunc(cronExpr, task.Run)`. Each ta
 
 ---
 
-*This document was generated from source code in `apps/server/domain/`. For framework patterns, see `apps/server/AGENT.md`. For MCP tools/resources/prompts detail, see `apps/server/domain/mcp/README.md`.*
+*This document was generated from source code in `apps/server/domain/`. Package conventions are documented by the code itself; for MCP tools/resources/prompts detail, see `apps/server/domain/mcp/README.md`.*

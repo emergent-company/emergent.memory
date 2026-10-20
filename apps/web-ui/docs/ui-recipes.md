@@ -11,7 +11,6 @@ Companion docs (read those for the *why*, this one for the *which*):
 | Doc | Covers |
 |---|---|
 | `apps/web-ui/docs/ui-patterns.md` | page shell, PRG, htmx ownership, widget inventory, Alpine vs `data-*` |
-| `apps/web-ui/gateway/AGENTS.md` | Go/templ style, component layers L0–L4, props, role gating |
 | `openspec/specs/web-ui-component-conventions/spec.md` | component-contract law |
 | `openspec/specs/inline-form-saving/spec.md` | auto-save behaviour requirements |
 | `apps/web-ui/tests/e2e/README.md:119` | `page-<slug>` `data-testid` convention |
@@ -166,8 +165,8 @@ group, trailing warning badge) that `SubNavItem` cannot express
 (`components/nav.templ:16`).
 
 **Contract:** one `RailItem` per section; `active` matches `Key`;
-role-gated entries are **omitted**, not disabled (see Role gating in
-`AGENTS.md`).
+role-gated entries are **omitted**, not disabled (see Role gating & untrusted
+content in `ui-patterns.md` §9).
 
 **Source:** `project_settings.templ:35` (`settingsSubNav`),
 `project_settings.templ:82` (usage), `agent.templ:39` (`agentSubNav`),
@@ -530,13 +529,13 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 | Rule | Where |
 |---|---|
 | PRG contract (`post → 303/HX-Redirect → flagged GET → flashToasts`) | `ui-patterns.md` §2 |
-| htmx ownership in components | `ui-patterns.md` §3, `AGENTS.md` |
-| Component layers L0–L4 + when a component earns extraction | `AGENTS.md` "UI components" |
-| Hide, don't disable (role gating) | `AGENTS.md` "Role gating" |
+| htmx ownership in components | `ui-patterns.md` §3 |
+| Component layers L0–L4 + when a component earns extraction | `ui-patterns.md` §4 |
+| Hide, don't disable (role gating) | `ui-patterns.md` §9 |
 | Alpine vs `data-*` vs go-daisy policy | `ui-patterns.md` §5 |
 | htmx v4 + Alpine same-id restore trap | `ui-patterns.md` §6 |
-| Never `innerHTML` untrusted content | `AGENTS.md` "Role gating" |
-| Test the contract (ids/`data-testid`/`aria-*`/`hx-*`), not class strings | `AGENTS.md`, `ui-patterns.md` §8 |
+| Never `innerHTML` untrusted content | `ui-patterns.md` §9 |
+| Test the contract (ids/`data-testid`/`aria-*`/`hx-*`), not class strings | `ui-patterns.md` §8 |
 | Toast severity (persistent errors + close button) | `ui-patterns.md` §2, `feedback.toast` |
 
 ---
