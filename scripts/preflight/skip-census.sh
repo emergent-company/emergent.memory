@@ -24,7 +24,6 @@
 # Excluded (helper *definitions*, which merely propagate a skip):
 #   - apps/server/internal/testdb/gate.go         SkipOrFatal
 #   - apps/server/internal/testutil/suite.go      SkipInExternalMode, SkipIfExternalServer
-#   - tools/opencode-test-suite/internal/harness  SkipIfServerDown
 #   - every `skipIf*` / `require*` / `skipWithout*` helper in *_test.go files
 #   These bodies contain a `t.Skipf`/`t.Skip` but are not themselves a test; the
 #   skip decision happens at their call site, so counting the body would double

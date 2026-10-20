@@ -24,5 +24,4 @@ use (
 	./blueprints/code-memory-blueprint/tools/service-exposes-seed
 	./blueprints/code-memory-blueprint/tools/test-coverage
 	./blueprints/code-memory-blueprint/tools/uml-gen
-	./tools/opencode-test-suite
 )

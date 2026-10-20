@@ -74,6 +74,8 @@ nav:
     - Security Scopes: developer-guide/security-scopes.md
     - Background Scheduler: developer-guide/scheduler.md
     - CLI Reference: developer-guide/cli-reference.md
+    - CLI Authentication: developer-guide/cli-auth.md
+    - Service Accounts: developer-guide/service-accounts.md
     - Sandbox: developer-guide/sandbox.md
     - MCP Relay: developer-guide/mcp-relay.md
     - Schema: developer-guide/schema.md
