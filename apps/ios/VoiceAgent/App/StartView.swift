@@ -13,6 +13,8 @@ struct StartView: View {
     @Environment(AgentStore.self) private var agentStore
 
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Namespace private var button
 
     @State private var audioOptionsPresented = false
@@ -28,7 +30,7 @@ struct StartView: View {
                 connectButton()
                 audioOptionsButton()
             }
-            .animation(.default, value: agentStore.selectedAgentName)
+            .animation(reduceMotion ? nil : .default, value: agentStore.selectedAgentName)
             .padding(.horizontal, horizontalSizeClass == .regular ? 32 * .grid : 16 * .grid)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -67,23 +69,25 @@ struct StartView: View {
             TraceLog.log("connect_tapped")
             await controller.start()
         } label: {
-            HStack {
-                Spacer()
-                Text("connect.start")
-                    .matchedGeometryEffect(id: "connect", in: button)
-                Spacer()
+            connectButtonSizing {
+                HStack {
+                    Spacer()
+                    Text("connect.start")
+                        .matchedGeometryEffect(id: "connect", in: button)
+                    Spacer()
+                }
             }
-            .frame(width: 58 * .grid, height: 11 * .grid)
         } busyLabel: {
-            HStack(spacing: 4 * .grid) {
-                Spacer()
-                Spinner(tint: .white)
-                    .transition(.scale.combined(with: .opacity))
-                Text("connect.connecting")
-                    .matchedGeometryEffect(id: "connect", in: button)
-                Spacer()
+            connectButtonSizing {
+                HStack(spacing: 4 * .grid) {
+                    Spacer()
+                    Spinner(tint: .white)
+                        .transition(reduceMotion ? .opacity : .scale.combined(with: .opacity))
+                    Text("connect.connecting")
+                        .matchedGeometryEffect(id: "connect", in: button)
+                    Spacer()
+                }
             }
-            .frame(width: 58 * .grid, height: 11 * .grid)
         }
         #if os(visionOS)
         .buttonStyle(.borderedProminent)
@@ -91,6 +95,16 @@ struct StartView: View {
         #else
         .buttonStyle(ProminentButtonStyle())
         #endif
+    }
+
+    /// The connect CTA's footprint: a 58×11-grid pill at default text sizes.
+    /// At accessibility sizes the width becomes flexible so the label can use
+    /// the whole row, and the height is only a minimum so the label grows the
+    /// button instead of being clipped by a fixed box (#1948).
+    private func connectButtonSizing(@ViewBuilder _ label: () -> some View) -> some View {
+        label()
+            .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 58 * .grid)
+            .frame(minHeight: 11 * .grid)
     }
 
     private func audioOptionsButton() -> some View {

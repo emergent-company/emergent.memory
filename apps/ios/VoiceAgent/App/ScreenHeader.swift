@@ -17,6 +17,8 @@ struct ScreenHeader: View {
     var subtitleFont: Font = MemoryFont.meta
     let onBack: () -> Void
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
         HStack(spacing: 2 * .grid) {
             Button(action: onBack) {
@@ -34,7 +36,10 @@ struct ScreenHeader: View {
                 title
                     .font(MemoryFont.screenTitle)
                     .foregroundStyle(.fg0)
-                    .lineLimit(1)
+                    // One line reads best at default sizes, but at accessibility
+                    // sizes a truncated title is the only cue for which screen is
+                    // showing (titles can carry runtime agent names) (#1948).
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
                 if let subtitle {
                     subtitle
                         .font(subtitleFont)

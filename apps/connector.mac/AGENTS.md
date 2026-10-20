@@ -13,7 +13,7 @@ build/test tooling shells out to it over ssh; there are **no repo defaults** —
 ```
 MemoryConnector/
   Sources/          app code (SwiftUI)
-  Tests/            hosted unit tests (MemoryConnectorTests, 424 tests)
+  Tests/            hosted unit tests (MemoryConnectorTests: XCTest + Swift Testing)
   UITests/          XCUITest smoke suite (MemoryConnectorUITests, 3 tests)
   Resources/        app resources
   Scripts/          build-engine.sh (embed the Go engine); NOT the host tooling
@@ -28,7 +28,7 @@ Three suites. **None run in CI** — manual / on-demand by design.
 
 | Suite | Covers | Command (task) | Host | ~Time | Green looks like |
 |---|---|---|---|---|---|
-| Hosted unit | Swift app logic, 424 tests | `task connector-mac:test` (`mac-build.sh --test`) | Mac over ssh, no GUI | a few min | `** TEST SUCCEEDED **`, `Executed 424 tests` |
+| Hosted unit | Swift app logic (XCTest + Swift Testing) | `task connector-mac:test` (`mac-build.sh --test`) | Mac over ssh, no GUI | a few min | `** TEST SUCCEEDED **` |
 | UI smoke | XCUITest: app launches + core UI renders, 3 tests | `task connector-mac:uitest:run` | Mac GUI session (via `gui/<uid>` LaunchAgent) | a few min (build + run) | exits 0, run-log shows 3 passed / 0 failed |
 | Darwin engine e2e | real `memory-connector` binary vs in-process fake hub; asserts Apple tool registration | `task connector-mac:test:darwin` (or raw `go test -count=1 ./e2e/...` from `apps/connector.linux`) | Mac (darwin only) | seconds | `ok  .../apps/connector.linux/e2e` |
 
