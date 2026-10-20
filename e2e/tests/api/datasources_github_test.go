@@ -45,6 +45,10 @@ func skipWithoutGitHubStub(t *testing.T) string {
 // Stub control client
 // ─────────────────────────────────────────────────────────────────────────────
 
+// githubStubHTTPClient bounds stub-control requests so a wedged stub fails the
+// test instead of hanging until the package timeout.
+var githubStubHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
 // githubStubCall performs one request against the stub and fails the test on a
 // transport error or an unexpected status. The body is returned as a string.
 func githubStubCall(t *testing.T, method, url string, payload any) string {
@@ -64,7 +68,7 @@ func githubStubCall(t *testing.T, method, url string, payload any) string {
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := githubStubHTTPClient.Do(req)
 	if err != nil {
 		t.Fatalf("stub request %s %s: %v", method, url, err)
 	}

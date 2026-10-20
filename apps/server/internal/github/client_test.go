@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -248,6 +249,67 @@ func TestListRepos_Paginates(t *testing.T) {
 	}
 	if page != 2 {
 		t.Fatalf("server saw %d pages, want 2", page)
+	}
+}
+
+// newRepoListServer serves a token's repository listing with total entries,
+// honouring per_page/page so the cap probe can be exercised.
+func newRepoListServer(t *testing.T, total int) (*httptest.Server, *int) {
+	t.Helper()
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuth(t, r)
+		requests++
+		perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+		if perPage <= 0 {
+			perPage = reposPerPage
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		if page <= 0 {
+			page = 1
+		}
+		start := (page - 1) * perPage
+		count := 0
+		if start < total {
+			count = total - start
+			if count > perPage {
+				count = perPage
+			}
+		}
+		repos := make([]Repo, count)
+		for i := range repos {
+			repos[i] = Repo{FullName: fmt.Sprintf("acme/repo-%d", start+i)}
+		}
+		_ = json.NewEncoder(w).Encode(repos)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &requests
+}
+
+func TestListRepos_ExactlyAtCapIsNotTruncated(t *testing.T) {
+	srv, requests := newRepoListServer(t, maxRepoPages*reposPerPage)
+
+	repos, err := newTestClient(t, srv.URL, Config{}).ListRepos(context.Background())
+	if err != nil {
+		t.Fatalf("ListRepos() error = %v", err)
+	}
+	if want := maxRepoPages * reposPerPage; len(repos) != want {
+		t.Fatalf("ListRepos() returned %d repos, want %d", len(repos), want)
+	}
+	if want := maxRepoPages + 1; *requests != want {
+		t.Errorf("server saw %d requests, want %d (full pages + empty probe)", *requests, want)
+	}
+}
+
+func TestListRepos_OverCapFails(t *testing.T) {
+	srv, _ := newRepoListServer(t, maxRepoPages*reposPerPage+1)
+
+	_, err := newTestClient(t, srv.URL, Config{}).ListRepos(context.Background())
+	if err == nil {
+		t.Fatal("ListRepos() = nil error, want a truncation error")
+	}
+	if !strings.Contains(err.Error(), "more than") {
+		t.Errorf("ListRepos() error = %v, want it to mention the cap", err)
 	}
 }
 

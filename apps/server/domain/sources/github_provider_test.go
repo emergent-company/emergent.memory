@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/internal/github"
@@ -99,7 +100,9 @@ func TestGitHubProvider_ValidateConfig(t *testing.T) {
 	valid := []map[string]any{
 		{"repo": "owner/name"},
 		{"repo": "owner/name", "ref": "release/1.x"},
+		{"repo": "owner/name", "ref": "release/1.x@2"},
 		{"repo": "owner/name", "paths": []any{"docs/**", "README.md"}},
+		{"repo": "owner/name", "paths": []any{"docs/**/", "**/"}},
 		{"repo": "owner/name", "extensions": []any{".md", "txt"}},
 	}
 	for _, cfg := range valid {
@@ -117,6 +120,7 @@ func TestGitHubProvider_ValidateConfig(t *testing.T) {
 		{"repo": "owner/name", "ref": "bad ref!"},
 		{"repo": "owner/name", "paths": []any{"../../etc/passwd"}},
 		{"repo": "owner/name", "extensions": []any{"bad/ext"}},
+		{"repo": "owner/name", "extensions": []any{"*.md"}},
 		// The API origin is deployment-configured, never per source (SSRF).
 		{"repo": "owner/name", "api_base_url": "http://169.254.169.254"},
 		{"repo": "owner/name", "base_url": "http://example.invalid"},
@@ -276,6 +280,30 @@ func TestGitHubConnector_Fetch(t *testing.T) {
 	}
 }
 
+func TestGitHubConnector_FetchRejectsNonUTF8(t *testing.T) {
+	fake := &fakeGitHubTransport{
+		blobs:    []github.Blob{{Path: "docs/binary.md", SHA: "sha-bin"}},
+		contents: map[string]string{"sha-bin": string([]byte{0xff, 0xfe, 'x'})},
+	}
+	p := newFakeGitHubProvider(fake)
+	connector, err := p.NewConnector(context.Background(), Credentials{"access_token": "at"}, ConnectorDeps{})
+	if err != nil {
+		t.Fatalf("NewConnector() error = %v", err)
+	}
+	items, err := connector.Enumerate(context.Background(), map[string]any{"repo": "acme/private-docs"})
+	if err != nil {
+		t.Fatalf("Enumerate() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("Enumerate() returned %d items, want 1", len(items))
+	}
+	if _, _, err := connector.Fetch(context.Background(), items[0]); err == nil {
+		t.Fatal("Fetch() = nil error, want a not-UTF-8 error")
+	} else if !strings.Contains(err.Error(), "UTF-8") {
+		t.Errorf("Fetch() error = %v, want it to mention UTF-8", err)
+	}
+}
+
 func TestGitHubConnector_EnumeratePropagatesTreeError(t *testing.T) {
 	fake := &fakeGitHubTransport{treeErr: errors.New("boom")}
 	p := newFakeGitHubProvider(fake)
@@ -320,6 +348,14 @@ func TestGitHubPathMatcher(t *testing.T) {
 		{"docs", "docs", true},
 		{"docs", "docsx/guide.md", false},
 		{"docs/", "docs/guide.md", true},
+		{"docs/**/", "docs/guide.md", true},
+		{"docs/**/", "docs/nested/api.md", true},
+		{"docs/**/", "docsx/guide.md", false},
+		{"docs/*/", "docs/guide.md", true},
+		{"docs/*/", "docs/nested/api.md", false},
+		{"**/", "README.md", true},
+		{"**/", "docs/nested/api.md", true},
+		{"docs//", "docs/guide.md", true},
 		{"docs/*.md", "docs/guide.md", true},
 		{"docs/*.md", "docs/nested/api.md", false},
 		{"docs/?.md", "docs/a.md", true},

@@ -281,7 +281,6 @@ services:
       # The GitHub data-source test seeds/mutates the private-repo stub through
       # its /_control routes; empty outside the api job so the test skips.
       GITHUB_STUB_URL: "${E2E_GITHUB_STUB_URL:-}"
-      GITHUB_STUB_TOKEN: "e2e-github-token"
       # The image ships e2e/go.work (the module's own workspace). Run the suite
       # in module mode, exactly as before that file existed — the module's own
       # dependency graph, never the repo root's build list.

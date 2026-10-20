@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/emergent-company/emergent.memory/internal/github"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -46,8 +47,10 @@ func (c *githubSyncConfig) includes(path string) bool {
 }
 
 // githubPathMatcher is one compiled `paths` glob. `*` matches within a segment,
-// `**` crosses segments, `?` matches one non-separator character, and a pattern
-// ending in `/` (or a plain directory name) matches the whole subtree.
+// `**` crosses segments, `?` matches one non-separator character, and a plain
+// path ending in `/` matches the whole subtree. A trailing slash is ignored on
+// wildcard patterns, so `docs/**/` behaves like `docs/**` rather than becoming
+// a literal that matches nothing.
 type githubPathMatcher struct {
 	pattern string
 	re      *regexp.Regexp
@@ -64,32 +67,43 @@ func newGitHubPathMatcher(pattern string) (*githubPathMatcher, error) {
 		return nil, apperror.NewValidation("config.paths entries must not contain '..'")
 	}
 
+	// Strip the trailing slash *before* deciding how to compile: treating it
+	// first would regexp.QuoteMeta the glob characters, turning `docs/**/`
+	// into the literal `docs/**/` and silently matching nothing.
+	dirOnly := strings.HasSuffix(p, "/")
+	trimmed := strings.TrimRight(p, "/")
+	if trimmed == "" {
+		return nil, apperror.NewValidation("config.paths entries must name a path")
+	}
+	globbed := strings.ContainsAny(trimmed, "*?")
+
 	var expr string
-	if strings.HasSuffix(p, "/") {
-		expr = "^" + regexp.QuoteMeta(strings.TrimSuffix(p, "/")) + "/"
-	} else if !strings.ContainsAny(p, "*?") {
+	switch {
+	case dirOnly && !globbed:
+		expr = "^" + regexp.QuoteMeta(trimmed) + "/"
+	case !globbed:
 		// A plain path selects that file and, when it names a directory, the
 		// directory's whole subtree.
-		expr = "^" + regexp.QuoteMeta(p) + "(?:$|/.*)"
-	} else {
+		expr = "^" + regexp.QuoteMeta(trimmed) + "(?:$|/.*)"
+	default:
 		var b strings.Builder
 		b.WriteString("^")
-		for i := 0; i < len(p); {
+		for i := 0; i < len(trimmed); {
 			switch {
-			case strings.HasPrefix(p[i:], "**/"):
+			case strings.HasPrefix(trimmed[i:], "**/"):
 				b.WriteString("(?:.*/)?")
 				i += 3
-			case strings.HasPrefix(p[i:], "**"):
+			case strings.HasPrefix(trimmed[i:], "**"):
 				b.WriteString(".*")
 				i += 2
-			case p[i] == '*':
+			case trimmed[i] == '*':
 				b.WriteString("[^/]*")
 				i++
-			case p[i] == '?':
+			case trimmed[i] == '?':
 				b.WriteString("[^/]")
 				i++
 			default:
-				b.WriteString(regexp.QuoteMeta(string(p[i])))
+				b.WriteString(regexp.QuoteMeta(string(trimmed[i])))
 				i++
 			}
 		}
@@ -157,6 +171,12 @@ func (c *githubConnector) Fetch(ctx context.Context, item SourceItem) (content, 
 	data, err := c.client.FetchBlob(ctx, c.repo, item.RevisionID)
 	if err != nil {
 		return "", "", err
+	}
+	// Posts are text; invalid UTF-8 would otherwise fail later as an opaque
+	// Postgres encoding error for this item. Fail here with a clear reason so
+	// the worker isolates it like any other per-item fetch error.
+	if !utf8.Valid(data) {
+		return "", "", fmt.Errorf("github: %s is not valid UTF-8 text", item.ID)
 	}
 	if item.MimeType == "" {
 		return string(data), githubMimeType(item.ID), nil
@@ -235,6 +255,9 @@ func validateGitHubConfig(cfg map[string]any) error {
 		if strings.ContainsAny(ext, "/\\ \t") || strings.EqualFold(ext, ".") {
 			return apperror.NewValidation("config.extensions must be file extensions such as .md")
 		}
+		if strings.ContainsAny(ext, "*?") {
+			return apperror.NewValidation("config.extensions must be literal extensions, not globs such as *.md")
+		}
 	}
 	return nil
 }
@@ -264,14 +287,15 @@ func validGitHubRepo(repo string) bool {
 	return true
 }
 
-// validGitHubRef accepts a branch, tag, or SHA; slashes are allowed (feature/x).
+// validGitHubRef accepts a branch, tag, or SHA; slashes are allowed (feature/x)
+// and so is `@`, which git permits inside a ref name.
 func validGitHubRef(ref string) bool {
 	for _, r := range ref {
 		switch {
 		case r >= 'a' && r <= 'z':
 		case r >= 'A' && r <= 'Z':
 		case r >= '0' && r <= '9':
-		case r == '.' || r == '_' || r == '/' || r == '+' || r == '-':
+		case r == '.' || r == '_' || r == '/' || r == '+' || r == '-' || r == '@':
 		default:
 			return false
 		}

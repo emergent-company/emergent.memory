@@ -170,6 +170,8 @@ func (c *Client) GetRepo(ctx context.Context, repo string) (*Repo, error) {
 
 // ListRepos returns the repositories the token can see, newest activity first.
 // Private repositories are included when the token is authorized for them.
+// It fails rather than silently truncating when the token sees more than
+// maxRepoPages*reposPerPage repositories.
 func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
 	out := make([]Repo, 0, reposPerPage)
 	for page := 1; page <= maxRepoPages; page++ {
@@ -180,8 +182,18 @@ func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
 		}
 		out = append(out, batch...)
 		if len(batch) < reposPerPage {
-			break
+			return out, nil
 		}
+	}
+	// Every page was full: probe past the cap so a token that sees exactly
+	// maxRepoPages*reposPerPage repositories is not rejected as truncated.
+	var probe []Repo
+	probePath := fmt.Sprintf("/user/repos?per_page=1&sort=updated&page=%d", maxRepoPages*reposPerPage+1)
+	if err := c.getJSON(ctx, probePath, &probe); err != nil {
+		return nil, err
+	}
+	if len(probe) > 0 {
+		return nil, fmt.Errorf("github: token sees more than %d repositories; narrow the token scope", maxRepoPages*reposPerPage)
 	}
 	return out, nil
 }
