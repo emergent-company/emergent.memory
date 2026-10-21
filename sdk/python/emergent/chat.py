@@ -13,9 +13,11 @@ POST   /api/chat/stream           (SSE)
 POST   /api/projects/:id/ask      (SSE)
 POST   /api/projects/:id/query    (SSE)
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, Generator, Iterator, List, Optional
+from collections.abc import Generator
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from ._base import BaseClient
@@ -85,9 +87,7 @@ class ChatClient(BaseClient):
     # Conversations
     # ------------------------------------------------------------------
 
-    def list_conversations(
-        self, limit: int = 50, offset: int = 0
-    ) -> Dict[str, Any]:
+    def list_conversations(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         """
         List conversations for the current project context.
 
@@ -169,9 +169,7 @@ class ChatClient(BaseClient):
         body: Dict[str, Any] = {"role": role, "content": content}
         if retrieval_context is not None:
             body["retrievalContext"] = retrieval_context
-        data = self._post(
-            f"/api/chat/{quote(conversation_id, safe='')}/messages", json=body
-        )
+        data = self._post(f"/api/chat/{quote(conversation_id, safe='')}/messages", json=body)
         return Message(data)
 
     # ------------------------------------------------------------------

@@ -1,6 +1,7 @@
 """
 Exceptions raised by the Emergent SDK.
 """
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -59,7 +60,7 @@ class APIError(EmergentError):
         return self.status_code == 400
 
     @classmethod
-    def from_response(cls, status_code: int, body: bytes) -> "APIError":
+    def from_response(cls, status_code: int, body: bytes) -> APIError:
         """Parse an HTTP error body into an APIError."""
         import json
 

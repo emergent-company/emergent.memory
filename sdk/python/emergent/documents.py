@@ -16,6 +16,7 @@ POST   /api/documents/deletion-impact       — bulk deletion impact
 GET    /api/documents/:id/extraction-summary — get extraction summary
 GET    /api/documents/source-types          — list source types
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -215,9 +216,7 @@ class DocumentsClient(BaseClient):
 
         GET /api/documents/:id/deletion-impact
         """
-        return self._get(
-            f"/api/documents/{quote(document_id, safe='')}/deletion-impact"
-        )
+        return self._get(f"/api/documents/{quote(document_id, safe='')}/deletion-impact")
 
     def bulk_deletion_impact(self, ids: List[str]) -> Dict[str, Any]:
         """
@@ -237,9 +236,7 @@ class DocumentsClient(BaseClient):
 
         GET /api/documents/:id/extraction-summary
         """
-        return self._get(
-            f"/api/documents/{quote(document_id, safe='')}/extraction-summary"
-        )
+        return self._get(f"/api/documents/{quote(document_id, safe='')}/extraction-summary")
 
     def get_source_types(self) -> List[Dict[str, Any]]:
         """

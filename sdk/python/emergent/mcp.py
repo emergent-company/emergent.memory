@@ -19,12 +19,12 @@ resources/read      — read a resource by URI
 prompts/list        — list available prompts
 prompts/get         — get a prompt with arguments
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
 from ._base import BaseClient
-from .exceptions import APIError
 
 
 class MCPClient(BaseClient):
@@ -80,9 +80,7 @@ class MCPClient(BaseClient):
 
         if data and data.get("error"):
             err = data["error"]
-            raise RuntimeError(
-                f"JSON-RPC error {err.get('code')}: {err.get('message')}"
-            )
+            raise RuntimeError(f"JSON-RPC error {err.get('code')}: {err.get('message')}")
         return data.get("result") if data else None
 
     # ------------------------------------------------------------------

@@ -15,6 +15,7 @@ Account-scoped:
   GET    /api/tokens/:tokenId                        — get account token
   DELETE /api/tokens/:tokenId                        — revoke account token
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -61,9 +62,7 @@ class APITokenClient(BaseClient):
         """
         return self._post(self._project_path(project_id), json=payload)
 
-    def list_project_tokens(
-        self, project_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    def list_project_tokens(self, project_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         List all tokens for a project.
 
@@ -74,29 +73,21 @@ class APITokenClient(BaseClient):
             return data
         return data.get("tokens", data.get("items", data))
 
-    def get_project_token(
-        self, token_id: str, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def get_project_token(self, token_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Get a project token by ID.
 
         GET /api/projects/:projectId/tokens/:tokenId
         """
-        return self._get(
-            f"{self._project_path(project_id)}/{quote(token_id, safe='')}"
-        )
+        return self._get(f"{self._project_path(project_id)}/{quote(token_id, safe='')}")
 
-    def revoke_project_token(
-        self, token_id: str, project_id: Optional[str] = None
-    ) -> None:
+    def revoke_project_token(self, token_id: str, project_id: Optional[str] = None) -> None:
         """
         Revoke (delete) a project token.
 
         DELETE /api/projects/:projectId/tokens/:tokenId
         """
-        self._delete(
-            f"{self._project_path(project_id)}/{quote(token_id, safe='')}"
-        )
+        self._delete(f"{self._project_path(project_id)}/{quote(token_id, safe='')}")
 
     # ------------------------------------------------------------------
     # Account-scoped tokens

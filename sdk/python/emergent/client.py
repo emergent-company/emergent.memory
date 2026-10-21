@@ -37,12 +37,13 @@ Typical usage
 
     client.close()
 """
+
 from __future__ import annotations
 
 import os
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 import httpx
 
@@ -106,7 +107,7 @@ def _parse_dotenv(path: str) -> Dict[str, str]:
 def _load_memory_yaml(path: str) -> Dict[str, str]:
     """Load ~/.memory/config.yaml. Returns relevant fields as strings."""
     try:
-        import yaml  # type: ignore[import]
+        import yaml
 
         with open(path) as f:
             data = yaml.safe_load(f) or {}
@@ -207,9 +208,17 @@ def _apply_env_key(cfg: Dict[str, str], key: str, value: str) -> None:
         # New canonical names take priority over deprecated aliases:
         # skip MEMORY_API_KEY if MEMORY_ACCOUNT_API_KEY already set it,
         # skip MEMORY_PROJECT_TOKEN if MEMORY_PROJECT_API_KEY already set it.
-        if key == "MEMORY_API_KEY" and cfg.get("api_key") and os.environ.get("MEMORY_ACCOUNT_API_KEY"):
+        if (
+            key == "MEMORY_API_KEY"
+            and cfg.get("api_key")
+            and os.environ.get("MEMORY_ACCOUNT_API_KEY")
+        ):
             return
-        if key == "MEMORY_PROJECT_TOKEN" and cfg.get("project_token") and os.environ.get("MEMORY_PROJECT_API_KEY"):
+        if (
+            key == "MEMORY_PROJECT_TOKEN"
+            and cfg.get("project_token")
+            and os.environ.get("MEMORY_PROJECT_API_KEY")
+        ):
             return
         cfg[mapping[key]] = value
 
@@ -292,9 +301,7 @@ class Client:
 
         # Shared HTTP client — we own it if none was supplied.
         self._owns_http = config.http_client is None
-        self._http: httpx.Client = config.http_client or httpx.Client(
-            timeout=_DEFAULT_TIMEOUT
-        )
+        self._http: httpx.Client = config.http_client or httpx.Client(timeout=_DEFAULT_TIMEOUT)
 
         self._base = config.server_url.rstrip("/")
         self._mu = threading.RLock()
@@ -308,7 +315,7 @@ class Client:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_env(cls) -> "Client":
+    def from_env(cls) -> Client:
         """
         Build a Client by auto-discovering configuration.
 
@@ -345,13 +352,13 @@ class Client:
         api_key = discovered.get("project_token") or discovered.get("api_key", "")
 
         if not server_url:
-            raise EnvironmentError(
+            raise OSError(
                 "No server URL found. Set MEMORY_SERVER_URL, add it to "
                 "~/.memory/config.yaml, or create a .env.local file with "
                 "MEMORY_SERVER_URL=http://localhost:3012"
             )
         if not api_key:
-            raise EnvironmentError(
+            raise OSError(
                 "No API key found. Set MEMORY_ACCOUNT_API_KEY (or MEMORY_PROJECT_API_KEY), "
                 "add api_key to ~/.memory/config.yaml, or create a .env.local file."
             )
@@ -374,7 +381,7 @@ class Client:
         *,
         org_id: str = "",
         project_id: str = "",
-    ) -> "Client":
+    ) -> Client:
         """
         Shorthand constructor for API-key / API-token auth.
 
@@ -403,7 +410,7 @@ class Client:
         *,
         org_id: str = "",
         project_id: str = "",
-    ) -> "Client":
+    ) -> Client:
         """
         Shorthand constructor for OAuth Bearer token auth.
 
@@ -544,10 +551,10 @@ class Client:
         if self._owns_http:
             self._http.close()
 
-    def __enter__(self) -> "Client":
+    def __enter__(self) -> Client:
         return self
 
-    def __exit__(self, *_: Any) -> None:
+    def __exit__(self, *_: object) -> None:
         self.close()
 
     def __repr__(self) -> str:

@@ -18,12 +18,13 @@ Event type hierarchy
 ``DoneEvent``     — final event; stream is complete.
 ``UnknownEvent``  — catch-all for future event types.
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generator, Iterator, List, Optional
-
+from typing import Any, Dict, List, Optional
 
 # ---------------------------------------------------------------------------
 # Typed event models
@@ -49,7 +50,7 @@ class TokenEvent:
 class MCPToolEvent:
     type: str = "mcp_tool"
     tool: str = ""
-    status: str = ""          # "started" | "completed" | "error"
+    status: str = ""  # "started" | "completed" | "error"
     result: Optional[Any] = None
     error: str = ""
 

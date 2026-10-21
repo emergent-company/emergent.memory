@@ -9,11 +9,13 @@ Every sub-client inherits :class:`BaseClient`, which provides:
   decoding in one place.
 * ``_stream`` context manager for SSE streaming requests.
 """
+
 from __future__ import annotations
 
 import threading
+from collections.abc import Generator, Iterator
 from contextlib import contextmanager
-from typing import Any, Dict, Generator, Iterator, Optional, Type, TypeVar
+from typing import Any, Dict, Optional, TypeVar
 
 import httpx
 

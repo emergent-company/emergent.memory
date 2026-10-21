@@ -5,6 +5,7 @@ Endpoints covered
 -----------------
 POST /api/search/unified
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

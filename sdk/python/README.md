@@ -16,7 +16,7 @@ pip install emergent-memory-sdk        # when published to PyPI
 pip install -e sdk/python
 ```
 
-**Runtime requirements:** `httpx >= 0.24`
+**Runtime requirements:** Python >= 3.10, `httpx >= 0.24`
 
 ---
 
@@ -69,12 +69,15 @@ client = Client.from_oauth_token("https://api.emergent-company.ai", access_token
 
 # --- Full config ---
 from emergent import Config
-client = Client(Config(
-    server_url="https://api.emergent-company.ai",
-    api_key="emt_abc123",
-    org_id="org_1",
-    project_id="proj_1",
-))
+
+client = Client(
+    Config(
+        server_url="https://api.emergent-company.ai",
+        api_key="emt_abc123",
+        org_id="org_1",
+        project_id="proj_1",
+    )
+)
 
 # --- Context manager (auto-closes) ---
 with Client.from_api_key("http://localhost:3012", "key") as client:
@@ -100,9 +103,9 @@ client.set_context(org_id="org_abc", project_id="proj_xyz")
 
 ```python
 projects = client.projects.list()
-project  = client.projects.get("proj_1")
-orgs     = client.orgs.list()
-org      = client.orgs.get("org_1")
+project = client.projects.get("proj_1")
+orgs = client.orgs.list()
+org = client.orgs.get("org_1")
 
 # Create / delete orgs
 new_org = client.orgs.create({"name": "My Org"})
@@ -136,7 +139,7 @@ print("citations:", result["citations"])
 
 ```python
 agents = client.agents.list()
-agent  = client.agents.get("agent_id")
+agent = client.agents.get("agent_id")
 
 # Trigger an agent run
 run = client.agents.trigger("agent_id", {"input": "analyse latest data"})
@@ -153,23 +156,27 @@ client.agents.respond_to_question("question_id", {"response": "yes"})
 
 ```python
 # Create / upsert objects
-obj = client.graph.create_object({
-    "name": "Alice",
-    "type": "Person",
-    "properties": {"role": "engineer"},
-})
+obj = client.graph.create_object(
+    {
+        "name": "Alice",
+        "type": "Person",
+        "properties": {"role": "engineer"},
+    }
+)
 
 # Upsert (create-or-update by external id)
-client.graph.upsert_object({
-    "externalId": "user-alice",
-    "name": "Alice",
-    "type": "Person",
-})
+client.graph.upsert_object(
+    {
+        "externalId": "user-alice",
+        "name": "Alice",
+        "type": "Person",
+    }
+)
 
 # Fetch and search
-obj      = client.graph.get_object("obj_id")
-results  = client.graph.fts_search("Alice")
-similar  = client.graph.similar("obj_id", limit=10)
+obj = client.graph.get_object("obj_id")
+results = client.graph.fts_search("Alice")
+similar = client.graph.similar("obj_id", limit=10)
 
 # Hybrid search with neighbours
 res = client.graph.search_with_neighbors("machine learning", limit=5)
@@ -183,7 +190,7 @@ client.graph.move_object("obj_id", target_branch_id="branch_2")
 # Relationship history & restore
 history = client.graph.get_relationship_history("rel_id")
 client.graph.restore_relationship("rel_id")
-count   = client.graph.count_relationships(type="KNOWS")
+count = client.graph.count_relationships(type="KNOWS")
 
 # Bulk update objects
 client.graph.bulk_update([{"id": "obj_1", "name": "Updated"}])
@@ -199,8 +206,8 @@ client.graph.upsert_relationship({"src_id": "a", "dst_id": "b", "type": "LINKS_T
 
 ```python
 branches = client.branches.list()
-branch   = client.branches.get("branch_id")
-new      = client.branches.create({"name": "feature-x", "parentBranchId": "main"})
+branch = client.branches.get("branch_id")
+new = client.branches.create({"name": "feature-x", "parentBranchId": "main"})
 client.branches.update("branch_id", {"name": "renamed"})
 client.branches.delete("branch_id")
 
@@ -212,7 +219,7 @@ forked = client.branches.fork("branch_id", {"name": "experiment-fork"})
 
 ```python
 docs = client.documents.list()
-doc  = client.documents.get("doc_id")
+doc = client.documents.get("doc_id")
 
 # Upload a file
 doc = client.documents.upload("/path/to/file.pdf", auto_extract=True)
@@ -226,7 +233,7 @@ impact = client.documents.bulk_deletion_impact(["doc_1", "doc_2"])
 
 # Extraction info
 summary = client.documents.get_extraction_summary("doc_id")
-types   = client.documents.get_source_types()
+types = client.documents.get_source_types()
 ```
 
 ### API Tokens
@@ -248,11 +255,11 @@ client.api_tokens.revoke_account_token("token_id")
 
 ```python
 # Project tasks (uses current project context)
-tasks  = client.tasks.list(status="pending", limit=20)
+tasks = client.tasks.list(status="pending", limit=20)
 counts = client.tasks.counts()
 
 # Cross-project tasks
-all_tasks  = client.tasks.list_all(status="running")
+all_tasks = client.tasks.list_all(status="running")
 all_counts = client.tasks.counts_all()
 
 # Single task operations
@@ -288,14 +295,14 @@ results = client.search.graph_search("AI research", limit=5)
 client.set_context("org_1", "proj_1")
 available = client.schemas.list_available()
 installed = client.schemas.list_installed()
-types     = client.schemas.get_compiled_types()
+types = client.schemas.get_compiled_types()
 
 # Assign a schema pack to the project
 client.schemas.assign({"packId": "pack_id"})
 
 # Skills (project-scoped)
 skills = client.skills.list()
-skill  = client.skills.create({"name": "Summarise", "prompt": "..."})
+skill = client.skills.create({"name": "Summarise", "prompt": "..."})
 client.skills.update("skill_id", {"name": "Summarise v2"})
 client.skills.delete("skill_id")
 ```
@@ -304,11 +311,13 @@ client.skills.delete("skill_id")
 
 ```python
 defs = client.agent_definitions.list()
-defn = client.agent_definitions.create({
-    "name": "ResearchAgent",
-    "description": "Searches and summarises documents",
-    "skills": ["skill_id_1"],
-})
+defn = client.agent_definitions.create(
+    {
+        "name": "ResearchAgent",
+        "description": "Searches and summarises documents",
+        "skills": ["skill_id_1"],
+    }
+)
 ```
 
 ---
@@ -372,7 +381,7 @@ except APIError as e:
 ## Closing the client
 
 ```python
-client.close()          # releases connection pool
+client.close()  # releases connection pool
 
 # Or use the context manager:
 with Client.from_api_key(url, key) as client:
@@ -395,12 +404,13 @@ pip install -e '.[dev]'
 ```bash
 pytest                          # run all tests
 pytest -v --tb=short            # verbose with short tracebacks
-pytest --cov=emergent           # with coverage report
-pytest tests/test_graph.py      # run a single test file
-pytest -k "test_create_object"  # run tests matching a pattern
+pytest --cov=emergent           # with coverage report (floor: 50%)
+pytest tests/test_chat.py       # run a single test file
+pytest -k "ask_collect"         # run tests matching a pattern
 ```
 
-Tests use [respx](https://lundberg.github.io/respx/) for HTTP mocking -- no live server required.
+Tests use `httpx.MockTransport` (`tests/conftest.py`) -- no live server and no
+network access required.
 
 ### Linting & Type checking
 
@@ -408,7 +418,7 @@ Tests use [respx](https://lundberg.github.io/respx/) for HTTP mocking -- no live
 ruff check .                    # lint
 ruff format --check .           # format check
 ruff format .                   # auto-format
-mypy emergent/                  # type check
+mypy .                          # type check (library, tests and pyrunner)
 ```
 
 ### Releasing

@@ -4,6 +4,13 @@
 
 ### BREAKING CHANGES
 
+**Python SDK requires Python 3.10+** (2026-10-21)
+
+`sdk/python` (`emergent-memory`) drops Python 3.9, which reached end of life in
+October 2025 and is no longer supported by the type-checking toolchain.
+`requires-python` is now `>=3.10`, so the next `python-sdk/v*` release will
+refuse to install on 3.9; pin the previous tag if you still need it.
+
 **The duplicate OIDC scope authority is removed** (2026-09-30)
 
 `MEMORY_OIDC_TRUST_TOKEN_SCOPES` and `MEMORY_USERINFO_GRANT_ALL_SCOPES` are removed, along with

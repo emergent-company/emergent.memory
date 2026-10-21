@@ -47,6 +47,7 @@ Analytics:
   GET    /api/graph/analytics/most-accessed
   GET    /api/graph/analytics/unused
 """
+
 from __future__ import annotations
 
 import json
@@ -196,9 +197,7 @@ class GraphClient(BaseClient):
             params["labelsAny"] = ",".join(labels_any)
         return self._get(f"/api/graph/objects/{quote(object_id, safe='')}/similar", params=params)
 
-    def move_object(
-        self, object_id: str, target_branch_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def move_object(self, object_id: str, target_branch_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Move an object (and its relationships) to another branch.
 
@@ -379,9 +378,7 @@ class GraphClient(BaseClient):
         """
         return self._post("/api/graph/objects/bulk", json={"items": items})
 
-    def bulk_update_status(
-        self, ids: List[str], status: str
-    ) -> Dict[str, Any]:
+    def bulk_update_status(self, ids: List[str], status: str) -> Dict[str, Any]:
         """
         Update the status of multiple objects at once.
 
@@ -411,9 +408,7 @@ class GraphClient(BaseClient):
         """Get a relationship by ID."""
         return self._get(f"/api/graph/relationships/{quote(relationship_id, safe='')}")
 
-    def update_relationship(
-        self, relationship_id: str, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def update_relationship(self, relationship_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Patch a relationship."""
         return self._patch(
             f"/api/graph/relationships/{quote(relationship_id, safe='')}", json=payload
@@ -455,9 +450,7 @@ class GraphClient(BaseClient):
             params["cursor"] = cursor
         return self._get("/api/graph/relationships/search", params=params)
 
-    def bulk_create_relationships(
-        self, items: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def bulk_create_relationships(self, items: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Bulk-create relationships (max 100). POST /api/graph/relationships/bulk"""
         return self._post("/api/graph/relationships/bulk", json={"items": items})
 
@@ -467,9 +460,7 @@ class GraphClient(BaseClient):
 
         POST /api/graph/relationships/:id/restore
         """
-        return self._post(
-            f"/api/graph/relationships/{quote(relationship_id, safe='')}/restore"
-        )
+        return self._post(f"/api/graph/relationships/{quote(relationship_id, safe='')}/restore")
 
     def get_relationship_history(self, relationship_id: str) -> List[Dict[str, Any]]:
         """
@@ -477,9 +468,7 @@ class GraphClient(BaseClient):
 
         GET /api/graph/relationships/:id/history
         """
-        return self._get(
-            f"/api/graph/relationships/{quote(relationship_id, safe='')}/history"
-        )
+        return self._get(f"/api/graph/relationships/{quote(relationship_id, safe='')}/history")
 
     def count_relationships(
         self,
@@ -602,9 +591,7 @@ class GraphClient(BaseClient):
     # Branch merge
     # ------------------------------------------------------------------
 
-    def merge_branch(
-        self, target_branch_id: str, payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def merge_branch(self, target_branch_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Preview or execute a branch merge.
 

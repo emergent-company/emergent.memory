@@ -11,6 +11,7 @@ GET    /api/tasks/:id              — get a task by ID
 POST   /api/tasks/:id/resolve     — resolve a task (accept/reject)
 POST   /api/tasks/:id/cancel      — cancel a task
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, Optional

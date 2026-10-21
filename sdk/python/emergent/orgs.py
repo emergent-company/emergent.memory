@@ -8,6 +8,7 @@ GET    /api/orgs/:id      — get an organisation by ID
 POST   /api/orgs          — create an organisation
 DELETE /api/orgs/:id      — delete an organisation
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List

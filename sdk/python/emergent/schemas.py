@@ -10,6 +10,7 @@ POST   /api/schemas/projects/:projectId/assign            — assign a pack
 PATCH  /api/schemas/projects/:projectId/assignments/:id   — update assignment
 DELETE /api/schemas/projects/:projectId/assignments/:id   — delete assignment
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional

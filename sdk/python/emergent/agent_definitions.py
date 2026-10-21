@@ -9,6 +9,7 @@ GET    /api/projects/:projectId/agent-definitions/:id
 PATCH  /api/projects/:projectId/agent-definitions/:id
 DELETE /api/projects/:projectId/agent-definitions/:id
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -61,9 +62,7 @@ class AgentDefinitionsClient(BaseClient):
         )
         return data.get("data", data)
 
-    def create(
-        self, payload: Dict[str, Any], project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def create(self, payload: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Create a new agent definition.
 

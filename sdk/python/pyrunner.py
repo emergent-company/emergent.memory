@@ -13,13 +13,13 @@ Stdout/stderr of the child are captured via pipes and included in the
 FIFO response so the Go layer can return them to the agent caller.
 """
 
-import io
 import json
 import os
 import signal
 import sys
 import time
 import traceback
+from typing import Any
 
 FIFO_IN = "/tmp/pyrunner.in"
 FIFO_OUT = "/tmp/pyrunner.out"
@@ -29,7 +29,7 @@ MAX_OUTPUT = 50 * 1024  # 50KB — matches Go-side maxOutputBytes
 # Pre-import the emergent SDK so it is warm in memory before any fork.
 # ---------------------------------------------------------------------------
 try:
-    import emergent          # noqa: F401 — warm the import cache
+    import emergent  # noqa: F401 — warm the import cache
 except ImportError:
     pass  # SDK not installed; daemon still works, scripts just import normally
 
@@ -43,8 +43,7 @@ def _make_fifo(path: str) -> None:
     os.mkfifo(path)
 
 
-def _run_child(script_path: str, env_vars: dict,
-               stdout_fd: int, stderr_fd: int) -> None:
+def _run_child(script_path: str, env_vars: dict[str, str], stdout_fd: int, stderr_fd: int) -> None:
     """Execute *script_path* inside the **child** process.
 
     Redirects stdout/stderr to the provided file descriptors (pipe write
@@ -120,20 +119,28 @@ def _daemon_loop() -> None:
         try:
             req = json.loads(line)
         except json.JSONDecodeError:
-            _write_response({
-                "exit_code": 1, "duration_ms": 0,
-                "stdout": "", "stderr": "pyrunner: invalid JSON request\n",
-            })
+            _write_response(
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "stdout": "",
+                    "stderr": "pyrunner: invalid JSON request\n",
+                }
+            )
             continue
 
         script_path = req.get("script", "")
         env_vars = req.get("env", {})
 
         if not script_path or not os.path.isfile(script_path):
-            _write_response({
-                "exit_code": 1, "duration_ms": 0,
-                "stdout": "", "stderr": f"pyrunner: script not found: {script_path}\n",
-            })
+            _write_response(
+                {
+                    "exit_code": 1,
+                    "duration_ms": 0,
+                    "stdout": "",
+                    "stderr": f"pyrunner: script not found: {script_path}\n",
+                }
+            )
             continue
 
         # Create pipes for stdout/stderr capture
@@ -171,15 +178,17 @@ def _daemon_loop() -> None:
             else:
                 exit_code = 1
 
-            _write_response({
-                "exit_code": exit_code,
-                "duration_ms": duration_ms,
-                "stdout": stdout_data,
-                "stderr": stderr_data,
-            })
+            _write_response(
+                {
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                    "stdout": stdout_data,
+                    "stderr": stderr_data,
+                }
+            )
 
 
-def _write_response(resp: dict) -> None:
+def _write_response(resp: dict[str, Any]) -> None:
     """Write a single JSON line to the output FIFO."""
     with open(FIFO_OUT, "w") as fout:
         fout.write(json.dumps(resp) + "\n")

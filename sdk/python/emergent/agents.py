@@ -25,6 +25,7 @@ DELETE /api/projects/:projectId/agents/:id/hooks/:hookId
 GET    /api/projects/:projectId/adk-sessions
 GET    /api/projects/:projectId/adk-sessions/:sessionId
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -61,14 +62,10 @@ class AgentsClient(BaseClient):
 
     def get(self, agent_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """Get a single agent by ID."""
-        data = self._get(
-            f"{self._project_path(project_id)}/agents/{quote(agent_id, safe='')}"
-        )
+        data = self._get(f"{self._project_path(project_id)}/agents/{quote(agent_id, safe='')}")
         return data.get("data", data)
 
-    def create(
-        self, payload: Dict[str, Any], project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def create(self, payload: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new agent. POST /api/projects/:id/agents"""
         data = self._post(f"{self._project_path(project_id)}/agents", json=payload)
         return data.get("data", data)
@@ -88,17 +85,13 @@ class AgentsClient(BaseClient):
 
     def delete(self, agent_id: str, project_id: Optional[str] = None) -> None:
         """Delete an agent."""
-        self._delete(
-            f"{self._project_path(project_id)}/agents/{quote(agent_id, safe='')}"
-        )
+        self._delete(f"{self._project_path(project_id)}/agents/{quote(agent_id, safe='')}")
 
     # ------------------------------------------------------------------
     # Triggers
     # ------------------------------------------------------------------
 
-    def trigger(
-        self, agent_id: str, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def trigger(self, agent_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Trigger an immediate run of an agent.
 
@@ -166,18 +159,12 @@ class AgentsClient(BaseClient):
             },
         )
 
-    def get_project_run(
-        self, run_id: str, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def get_project_run(self, run_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """Get a specific run by ID (includes token usage)."""
-        data = self._get(
-            f"{self._project_path(project_id)}/agent-runs/{quote(run_id, safe='')}"
-        )
+        data = self._get(f"{self._project_path(project_id)}/agent-runs/{quote(run_id, safe='')}")
         return data.get("data", data)
 
-    def cancel_run(
-        self, agent_id: str, run_id: str, project_id: Optional[str] = None
-    ) -> None:
+    def cancel_run(self, agent_id: str, run_id: str, project_id: Optional[str] = None) -> None:
         """Cancel a running agent run."""
         self._post(
             f"{self._project_path(project_id)}/agents/{quote(agent_id, safe='')}"
@@ -313,9 +300,7 @@ class AgentsClient(BaseClient):
         data = self._get(f"{self._project_path(project_id)}/adk-sessions")
         return data.get("items", data)
 
-    def get_adk_session(
-        self, session_id: str, project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def get_adk_session(self, session_id: str, project_id: Optional[str] = None) -> Dict[str, Any]:
         """Get a specific ADK session and its events."""
         data = self._get(
             f"{self._project_path(project_id)}/adk-sessions/{quote(session_id, safe='')}"

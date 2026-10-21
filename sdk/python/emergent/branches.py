@@ -10,6 +10,7 @@ PATCH  /api/graph/branches/:id       — update a branch
 POST   /api/graph/branches/:id/fork  — fork a branch
 DELETE /api/graph/branches/:id       — delete a branch
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -79,9 +80,7 @@ class BranchesClient(BaseClient):
         payload:
             Fields to update, e.g. ``{"name": "new-name", "description": "..."}``.
         """
-        return self._patch(
-            f"/api/graph/branches/{quote(branch_id, safe='')}", json=payload
-        )
+        return self._patch(f"/api/graph/branches/{quote(branch_id, safe='')}", json=payload)
 
     def delete(self, branch_id: str) -> None:
         """

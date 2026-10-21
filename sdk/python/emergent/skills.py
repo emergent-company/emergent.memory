@@ -8,6 +8,7 @@ POST   /api/projects/:projectId/skills
 PATCH  /api/projects/:projectId/skills/:id
 DELETE /api/projects/:projectId/skills/:id
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -32,9 +33,7 @@ class SkillsClient(BaseClient):
             return data
         return data.get("skills", data.get("items", data))
 
-    def create(
-        self, payload: Dict[str, Any], project_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def create(self, payload: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
         """POST /api/projects/:id/skills"""
         return self._post(f"{self._project_path(project_id)}/skills", json=payload)
 
@@ -52,6 +51,4 @@ class SkillsClient(BaseClient):
 
     def delete(self, skill_id: str, project_id: Optional[str] = None) -> None:
         """DELETE /api/projects/:id/skills/:skillId"""
-        self._delete(
-            f"{self._project_path(project_id)}/skills/{quote(skill_id, safe='')}"
-        )
+        self._delete(f"{self._project_path(project_id)}/skills/{quote(skill_id, safe='')}")

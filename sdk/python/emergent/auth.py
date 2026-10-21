@@ -10,6 +10,7 @@ Three modes are supported:
                   Callers are responsible for obtaining and refreshing the
                   access token (device-flow helper not yet implemented).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -23,7 +24,7 @@ class AuthProvider(ABC):
     def headers(self) -> Dict[str, str]:
         """Return HTTP headers that carry the credentials."""
 
-    def refresh(self) -> None:  # noqa: B027
+    def refresh(self) -> None:
         """
         Refresh credentials if they are expiring.
         The default implementation is a no-op (used by static-key providers).
@@ -137,6 +138,4 @@ def make_provider(mode: str, api_key: str = "", access_token: str = "") -> AuthP
             raise ValueError("access_token is required for 'oauth' mode")
         return OAuthProvider(access_token)
     else:
-        raise ValueError(
-            f"Invalid auth mode: {mode!r}. Must be 'apikey', 'apitoken', or 'oauth'."
-        )
+        raise ValueError(f"Invalid auth mode: {mode!r}. Must be 'apikey', 'apitoken', or 'oauth'.")
