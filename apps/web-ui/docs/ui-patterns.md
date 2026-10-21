@@ -335,7 +335,7 @@ new chat-surface work as an opportunity to move shared markup/behaviour into
   real gateway + Zitadel + memory API) owns visual/interaction coverage: navigation,
   mutations, live-LLM scenarios. Not CI-runnable; `tests/e2e/README.md` documents
   the coverage, the `data-testid` convention (`page-<slug>` anchor), and the
-  gaps tracked in `openspec/changes/web-ui-e2e-coverage/`.
+  gaps tracked in the infra repo's `openspec/changes/web-ui-e2e-coverage/`.
 
 ---
 

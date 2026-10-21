@@ -7,7 +7,7 @@ an MCP server (`laya`) plus a subagent (`~/.config/opencode/agents/laya.md`). Th
 records a direct evaluation of that deployed engine against the decisions the operator
 process needs, to answer whether it can gate decision-making today.
 
-Related: `JEV_LAYA.md` (model research), `openspec/changes/add-agent-decision-routing/`
+Related: `JEV_LAYA.md` (model research), the infra repo's `openspec/changes/add-agent-decision-routing/`
 (routing layer spec), `openspec/changes/add-decision-model-tools/` (decision-tier spec).
 
 ## Method

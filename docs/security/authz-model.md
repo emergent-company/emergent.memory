@@ -9,7 +9,7 @@ identity, missing membership, child ownership, and MCP bypassing HTTP gates) —
 
 Two adjacent references, always read with this one:
 
-- **`openspec/specs/scope-authority/spec.md`** — the normative spec for scope resolution and the
+- **`openspec/specs/scope-authority/spec.md`** (in the infra repo) — the normative spec for scope resolution and the
   tier grants. The `## Requirements` there are the contract; this file is the map of where the
   contract lives in code and how to extend it without re-opening a closed class.
 - **`apps/server/pkg/auth/`** — the middleware and helpers. Every guard below is named here.
@@ -18,7 +18,7 @@ A note on vocabulary: `pkg/authz` **exists** and holds the transport-neutral, fa
 per-tool decision point `AuthorizeTool` (ToolAuthority/Principal), merged with the MCP in-process
 enforcement via #1130. It is only the *tool-level* seam; the typed
 `RequireAuthority(resource, level)` / `DerivePrincipal` / `Authorize` route-registry abstraction
-from PR #991 (`openspec/changes/authz-abstraction/`) is still a design. For route/domain
+from PR #991 (the infra repo's `openspec/changes/authz-abstraction/`) is still a design. For route/domain
 authorization today you use the helpers below.
 
 ---
