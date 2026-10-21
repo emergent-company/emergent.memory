@@ -158,9 +158,9 @@ Browser
 ## Testing
 
 ### Verify Full Objects in Logs
-1. Start services: `npm run workspace:start`
+1. Start the server: `task dev`
 2. Ask about "Agata" in browser chat
-3. Check logs: `npm run workspace:logs -- | grep -A 30 "First object (full)"`
+3. Check logs: `grep -A 30 "First object (full)" logs/server/server.log`
 4. **Expected**: See complete JSON object with all properties
 
 ### Verify in Browser DevTools

@@ -170,7 +170,7 @@ After the code changes:
 
 ```bash
 # 1. Verify code compiles
-npx nx run server:build
+task build
 
 # 2. Check database accepts new values
 docker exec emergent-memory-db-1 psql -U spec -d spec -c "

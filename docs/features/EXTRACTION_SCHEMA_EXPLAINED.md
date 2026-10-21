@@ -225,7 +225,7 @@ To see the full schemas in action:
 
 1. **Check server logs** after running extraction:
    ```bash
-   npm run workspace:logs -- --lines 100 | grep -A 50 "Prompt preview"
+   tail -n 100 logs/server/server.log | grep -A 50 "Prompt preview"
    ```
 
 2. **Look for the detailed prompt** showing:

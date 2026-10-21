@@ -153,7 +153,7 @@ EXTRACTION_CHUNK_OVERLAP=2000     # Overlap between chunks (default: 2k)
 
 1. Start the server:
    ```bash
-   npm run workspace:start
+   task dev
    ```
 
 2. Upload a large document (>100k characters)

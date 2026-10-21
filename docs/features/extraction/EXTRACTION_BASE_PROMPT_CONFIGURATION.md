@@ -166,8 +166,8 @@ John Smith, CEO of Acme Corp, announced...
 ### Via Logs
 
 ```bash
-# Monitor extraction worker logs
-npm run workspace:logs -- server
+# Monitor extraction worker logs (from the product repo root)
+tail -f logs/server/server.log
 
 # Look for:
 # "Using extraction base prompt from database settings"

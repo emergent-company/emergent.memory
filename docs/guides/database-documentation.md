@@ -192,7 +192,7 @@ These are used to construct the connection string: `postgresql://spec:spec@local
 
 If `db:docs:generate` fails to connect:
 
-1. Check database is running: `npm run workspace:deps:start`
+1. Check the database is running: `docker compose -f docker-compose.dev.yml up -d` (from the infra checkout)
 2. Verify `.env` credentials match your PostgreSQL setup
 3. Test connection manually: `psql -h localhost -p 5437 -U spec -d spec`
 

@@ -1,5 +1,10 @@
 # Chat Object Cards - Visual Examples & Integration
 
+> **Historical.** This page documents the chat rendering of the React admin UI,
+> which was extracted to its own repository. The current chat surface lives in
+> `apps/web-ui` (Go templ + HTMX), so the component and Storybook details below
+> no longer correspond to code in this repo.
+
 ## 🎨 Chat UX Examples
 
 ### Example 1: Query Response with Object Cards
@@ -449,19 +454,11 @@ This shows the full details view that opens when clicking object cards.
 ## 🚀 Deployment
 
 ### Build & Test
-```bash
-# 1. Build admin
-nx run admin:build
 
-# 2. Run Storybook (verify components)
-nx run admin:storybook
-
-# 3. Run unit tests
-nx run admin:test
-
-# 4. Run E2E tests (if applicable)
-E2E_FORCE_TOKEN=1 nx run admin:e2e
-```
+The React admin app and its Storybook workflow were extracted to a separate
+repository, so those commands do not exist here. Work on the current chat surface
+in `apps/web-ui`, where `task dev` runs templ, Tailwind and the gateway with hot
+reload.
 
 ### Deployment Checklist
 - [ ] All unit tests passing

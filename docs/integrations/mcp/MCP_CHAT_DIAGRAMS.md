@@ -1,6 +1,11 @@
 # MCP Chat Integration - Visual Diagrams
 
-This document provides visual diagrams to help understand the MCP chat integration architecture.
+> **Historical.** This guide was written for the React admin chat (`apps/admin`,
+> port 5175), which was extracted to its own repository. The current chat surface
+> is the `apps/web-ui` gateway (`task dev` in `apps/web-ui`,
+> `http://localhost:8095/chat`). Ports quoted in the body (API 3001, admin 5175), the
+> snake_case tool names (`schema_version`, `type_info`) and the UI badges all
+> reflect that stack; treat the scenarios as a record, not a current test plan.
 
 ## System Overview
 
@@ -635,18 +640,18 @@ Before starting manual tests, ensure:
 
 ```bash
 # 1. Check services are running
-npm run workspace:status
+task status
 
 # 2. Verify MCP is enabled (should see CHAT_ENABLE_MCP=1)
 grep CHAT_ENABLE_MCP apps/server/.env
 
 # 3. Check logs for any startup errors
-npm run workspace:logs -- --follow
+tail -f logs/server/server.log
 ```
 
 **Expected Output:**
 - ✅ API service: Running (port 3001)
-- ✅ Admin service: Running (port 5175)
+- ✅ Web UI gateway: Running (default port 8095)
 - ✅ Database: Healthy
 - ✅ MCP integration: Initialized successfully
 
@@ -657,7 +662,7 @@ npm run workspace:logs -- --follow
 **Objective:** Verify automatic detection and real-time database query
 
 **Steps:**
-1. Open chat: http://localhost:5175/admin/apps/chat/c/new
+1. Open chat: http://localhost:8095/chat
 2. Type: **"What is the current schema version?"**
 3. Press Send
 
@@ -680,7 +685,7 @@ npm run workspace:logs -- --follow
 **Debug Commands:**
 ```bash
 # Check server logs for MCP activity
-npm run workspace:logs -- --follow | grep -i "mcp"
+tail -f logs/server/server.log | grep -i "mcp"
 
 # Verify database has schema version data
 # (Use Postgres MCP tool or query directly)
@@ -794,12 +799,14 @@ npm run workspace:logs -- --follow | grep -i "mcp"
 **Steps:**
 1. Stop MCP server (it's embedded in API, so stop API temporarily):
    ```bash
-   npm run workspace:stop
+   task stop
    ```
-2. Start only admin:
+2. Start only the web UI gateway:
    ```bash
-   # In terminal 1: Start just frontend
-   cd apps/admin && npm run dev
+   # In terminal 1, from the product checkout root: start only the web UI
+   # gateway (it proxies API calls, so the chat page still renders while the
+   # API is down)
+   task -d apps/web-ui dev
    ```
 3. Try schema query: "What is the current schema version?"
 
@@ -813,7 +820,7 @@ npm run workspace:logs -- --follow | grep -i "mcp"
 **Recovery Test:**
 ```bash
 # Restart services
-npm run workspace:start
+task start
 
 # Verify chat works again
 # Retry: "What is the current schema version?"
@@ -907,13 +914,13 @@ Test in multiple browsers (if possible):
 for i in {1..10}; do
   curl -X POST http://localhost:3001/api/chat/stream \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer YOUR_TOKEN" \
+    -H "Authorization: Bearer $MEMORY_TOKEN" \
     -d '{"message":"What is the schema version?","conversationId":"test-'$i'"}' &
 done
 
 # Wait and check
 wait
-npm run workspace:logs | grep -i "mcp" | tail -20
+cat logs/server/server.log | grep -i "mcp" | tail -20
 ```
 
 **What to Check:**
@@ -929,13 +936,13 @@ npm run workspace:logs | grep -i "mcp" | tail -20
 **Check Logs for Key Events:**
 ```bash
 # Schema version query
-npm run workspace:logs | grep "schema_version"
+cat logs/server/server.log | grep "schema_version"
 
 # Tool detection
-npm run workspace:logs | grep "MCP tool detected"
+cat logs/server/server.log | grep "MCP tool detected"
 
 # Errors (should be zero)
-npm run workspace:logs | grep -i "error" | grep -i "mcp"
+cat logs/server/server.log | grep -i "error" | grep -i "mcp"
 ```
 
 **Expected Log Sequence:**
@@ -977,7 +984,7 @@ If you find bugs during testing, use this template:
 **Browser/Environment:**
 - Browser: [Chrome 120]
 - OS: [macOS 14.1]
-- Frontend: [localhost:5175]
+- Frontend: [localhost:8095]
 - API: [localhost:3001]
 
 **Console Errors:**
@@ -1014,14 +1021,15 @@ Before marking testing complete, verify:
 ### Quick Start Testing Commands
 
 ```bash
-# 1. Start everything
-npm run workspace:start
+# 1. Start the API (product root) and the web UI gateway (second terminal)
+task start
+task -d apps/web-ui dev
 
-# 2. Open admin in browser
-open http://localhost:5175/admin/apps/chat/c/new
+# 2. Open the chat page
+open http://localhost:8095/chat
 
 # 3. Monitor logs in terminal
-npm run workspace:logs -- --follow | grep -E "(MCP|chat)"
+tail -f logs/server/server.log | grep -E "(MCP|chat)"
 
 # 4. Test queries (copy-paste these):
 # - "What is the current schema version?"
@@ -1030,7 +1038,7 @@ npm run workspace:logs -- --follow | grep -E "(MCP|chat)"
 # - "How do I upload files?" (control - no MCP)
 
 # 5. Check for errors
-npm run workspace:logs | grep -i error | tail -20
+cat logs/server/server.log | grep -i error | tail -20
 ```
 
 ---

@@ -47,7 +47,6 @@ docs/archive/sessions/auto-schema-discovery-tests.md:generic-api-key:101
 docs/features/extraction/EXTRACTION_DUPLICATE_KEY_HANDLING.md:generic-api-key:192
 docs/fixes/config/ENV_FALLBACK_AUDIT.md:generic-api-key:423
 docs/guides/ENVIRONMENT_VARIABLE_MIGRATION.md:generic-api-key:206
-docs/integrations/mcp/MCP_CHAT_DIAGRAMS.md:curl-auth-header:908
 docs/integrations/mcp/MCP_INSPECTOR_QUICKSTART.md:curl-auth-header:239
 docs/integrations/zitadel/AUTH_SCOPES_FIX.md:curl-auth-header:159
 docs/integrations/zitadel/SCOPES_DISABLED_MODE.md:curl-auth-header:59

@@ -171,9 +171,9 @@ VITE_ZITADEL_SCOPES='openid profile email org:read project:read documents:read c
 VITE_ZITADEL_SCOPES='openid profile email'
 ```
 
-Restart admin:
+Restart the server stack:
 ```bash
-npm run workspace:restart
+task stop && task start
 ```
 
 ### Issue 2: Missing `code_verifier`

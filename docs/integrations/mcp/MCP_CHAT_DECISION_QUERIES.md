@@ -1,5 +1,12 @@
 # MCP Chat - Decision Object Queries
 
+> **Historical.** This note describes the React admin chat (`apps/admin`, port
+> 5175) and the `type_info` tool from the snake_case MCP catalog. The admin app
+> was extracted to its own repository; the current chat surface is the
+> `apps/web-ui` gateway (`http://localhost:8095/chat`) and the tool is now
+> `schema-get` / `entity-type-list`. The trigger patterns below are a record of
+> the original design.
+
 ## Overview
 
 Queries about **Decision objects** will trigger the MCP `type_info` tool, which provides information about entity types in the schema.
@@ -111,10 +118,10 @@ Enable debug logging:
 E2E_DEBUG_CHAT=1
 
 # Restart
-npm run workspace:restart
+ task stop && task start
 
 # Watch logs
-npm run workspace:logs -- --follow | grep -E "(MCP|type_info|Detecting)"
+tail -f logs/server/server.log | grep -E "(MCP|type_info|Detecting)"
 ```
 
 Expected logs when MCP triggers:
@@ -169,7 +176,7 @@ Expected:
 
 ## 🎯 Complete Test Flow
 
-1. **Open Chat**: http://localhost:5175/admin/apps/chat/c/new
+1. **Open Chat**: http://localhost:8095/chat
 
 2. **Test MCP Detection**: 
    ```
@@ -206,7 +213,7 @@ Expected:
 
 **Check**:
 1. Vertex AI authentication: `gcloud auth application-default print-access-token`
-2. Server logs: `npm run workspace:logs -- --follow`
+2. Server logs: `tail -f logs/server/server.log`
 3. SSE stream for errors
 
 ### Want MCP for Data Queries (Not Just Metadata)

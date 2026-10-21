@@ -1,5 +1,11 @@
 # Quick Start: Adding "Show me recent decisions" to MCP Chat
 
+> **Historical.** This design note was written against the React admin chat
+> (`apps/admin`, port 5175) and the snake_case MCP tool catalog. The admin app
+> was extracted to its own repository and the server now exposes kebab-case tools
+> (`schema-version`, `entity-query`, `search-hybrid`, …). The current chat
+> surface is the `apps/web-ui` gateway (`http://localhost:8095/chat`).
+
 ## The Problem
 
 **Currently**: MCP only handles **metadata** queries
@@ -185,7 +191,7 @@ curl -X POST http://localhost:3001/chat/stream \
 
 ### Test 3: Frontend Test
 ```
-1. Open: http://localhost:5175/admin/apps/chat/c/new
+1. Open: http://localhost:8095/chat
 2. Type: "What entities can I query?"
 3. Expected: Badge "Loading entity types..." → Response with list
 4. Type: "Show me recent decisions"

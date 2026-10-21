@@ -719,7 +719,7 @@ func TestGraphSuite(t *testing.T) {
 | **Memory Usage**       | High (Python + LLM models)           | Low (Go + external AI services) |
 | **Hot Reload**         | Manual restart or `uvicorn --reload` | Built-in (`air` or inotify)     |
 | **Observability**      | Not documented                       | LangFuse, structured logs       |
-| **Process Management** | Manual (systemd, Docker, etc.)       | workspace-cli (PID-based)       |
+| **Process Management** | Manual (systemd, Docker, etc.)       | task targets (PID-based)        |
 
 ---
 

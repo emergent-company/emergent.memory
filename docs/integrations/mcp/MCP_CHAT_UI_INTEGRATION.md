@@ -1,5 +1,12 @@
 # MCP Chat UI Integration - Complete
 
+> **Historical.** This is the completion record for the admin chat UI
+> (`apps/admin`), which was extracted to its own repository
+> (`emergent.memory.ui`). The current chat surface is the `apps/web-ui` gateway
+> (Go templ + HTMX, `http://localhost:8095/chat`), so the React file paths, the
+> build command and the MCP indicators described here do not correspond to code
+> in this repo.
+
 ## Overview
 
 Successfully integrated MCP (Model Context Protocol) tool status display into the admin chat interface. Users now see real-time feedback when the system is querying schema information or other MCP tools.
@@ -8,7 +15,7 @@ Successfully integrated MCP (Model Context Protocol) tool status display into th
 
 ### 1. Type System Updates
 
-**File**: `apps/admin/src/types/chat.ts`
+**File** (historical path; the app now lives in `emergent.memory.ui`): `apps/admin/src/types/chat.ts`
 
 Added MCP tool event support to the `ChatChunk` interface:
 
@@ -34,7 +41,7 @@ export interface ChatChunk {
 
 ### 2. Chat Hook Enhancement
 
-**File**: `apps/admin/src/hooks/use-chat.ts`
+**File** (historical path; the app now lives in `emergent.memory.ui`): `apps/admin/src/hooks/use-chat.ts`
 
 #### State Management
 
@@ -102,7 +109,7 @@ return {
 
 ### 3. UI Component
 
-**File**: `apps/admin/src/pages/admin/chat/conversation/index.tsx`
+**File** (historical path; the app now lives in `emergent.memory.ui`): `apps/admin/src/pages/admin/chat/conversation/index.tsx`
 
 #### Hook Integration
 
@@ -215,8 +222,10 @@ The system is designed to degrade gracefully - if MCP tools fail, the chat conti
 
 1. **Start services**:
    ```bash
-   nx run workspace-cli:workspace:deps:start
-   nx run workspace-cli:workspace:start
+   # from the infra checkout
+   docker compose -f docker-compose.dev.yml up -d
+   # from the product repo root
+   task dev
    ```
 
 2. **Test schema version query**:
@@ -241,13 +250,14 @@ The system is designed to degrade gracefully - if MCP tools fail, the chat conti
 
 ## Build Verification
 
-✅ **Admin build successful**:
+At the time of this change the admin app built successfully:
 ```bash
 npm --prefix apps/admin run build
 # ✓ built in 2.33s
 ```
 
-All TypeScript compilation passed with no errors.
+That app is no longer in this repo. The web UI gateway is built with
+`task -d apps/web-ui/gateway build`.
 
 ---
 
