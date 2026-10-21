@@ -489,14 +489,26 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 `specs/gdrive-live/gdrive-datasource-live.spec.ts` (the `gdrive-live` project)
 proves the **real** Drive path end-to-end against a live deployment — the
 hermetic `datasources` suite above mocks the upstream, while this one exercises
-it: a project-scoped Google OAuth app → OAuth-connect with no sync target →
-pick a real folder on the resource-selection step → first sync creates document
+it: a source seeded from the stored refresh token → the resource step on a large
+account (the bounded listing reports truncation, name search narrows to the
+scratch folder) → folder save with the edit form prefill → first sync creates document
 v1 → the fixture edits the file → re-sync produces v2 sharing the same
-`canonicalId` → the fixture trashes the file → re-sync marks the head
-`deleted_from_source`.
+`canonicalId` with a distinct `sourceRevisionId` (v1 still readable) → the
+fixture trashes the file → re-sync marks the head `deleted_from_source`.
 
-It is opt-in and **never runs in CI** (no workflow fires it): it needs a real
-Google OAuth app and a human to finish the Google consent screen mid-test.
+It is opt-in and **never runs in CI** (no workflow fires it). There is **no
+human step and no consent screen** on the default path: a Drive source stores
+its `client_id`/`client_secret`/`refresh_token` in the source `config` and the
+scheduled sync refreshes from that token, so the spec seeds the source through
+the public API with the fixture token and then drives the real UI. The seeding
+call is made from Node (`fetch`), not through Playwright's request context, so
+the stored credentials never enter a trace or attachment.
+
+The OAuth **consent** handoff is still covered — the authorize URL, the
+project-scoped client id, the `drive.readonly` scope with offline access, and
+the callback-created source — as a **separate opt-in test** behind
+`E2E_GDRIVE_LIVE_CONSENT=1`. That one does need a human to finish Google's
+consent UI, and it is skipped unless the flag is set.
 
 **Prereq — provision the fixture refresh token once** (no dependencies):
 
@@ -509,9 +521,12 @@ This prints a Google consent URL; open it and sign in with the fixture account.
 It listens on `http://127.0.0.1:8787` for the redirect, exchanges the code, and
 prints the refresh token exactly once. The OAuth client must allow that redirect
 URI (a "Desktop app" client does by default). The refresh token is granted the
-full `drive` scope so the fixture can create/edit/trash files; the **same**
-Google account must later complete the in-test consent or the source (which uses
-the restricted `drive.readonly` strategy) cannot see the fixture folder.
+full `drive` scope so the fixture can create/edit/trash files. The seeded source
+stores only `client_id`/`client_secret`/`refresh_token` (no `scope`), so it
+refreshes with whatever that token already grants — full `drive` here — and sees
+exactly what the fixture account sees: the account must own (or be given) the
+folder the spec works in. The restricted `drive.readonly` strategy is what the
+**opt-in consent test** configures, not the seeded path.
 
 **Run** (against the live session-mode gateway + dev memory backend, same
 `E2E_TEST_USER_*` + `E2E_MEMORY_API_URL` as the other live suites):
@@ -521,6 +536,13 @@ cd tests/e2e
 npx playwright test --project=gdrive-live
 ```
 
+The `gdrive-live` project depends on the shared `setup` project (org/project
+bootstrap), so a full run of the command above also runs `setup`. If `setup`
+itself is unhealthy on the target deployment, run the gate with a pre-existing
+signed-in state: `npx playwright test --project=gdrive-live --no-deps`
+(`setup` on dev was crashing in a login/scope bug at the time of writing — see
+product issue #1998).
+
 Env (see `.env.e2e.example`):
 
 | Var | Meaning |
@@ -529,7 +551,13 @@ Env (see `.env.e2e.example`):
 | `E2E_GDRIVE_CLIENT_ID` / `E2E_GDRIVE_CLIENT_SECRET` | Google OAuth app (used by the project OAuth client the spec configures, and by the fixture to refresh its token) |
 | `E2E_GDRIVE_FIXTURE_REFRESH_TOKEN` | fixture refresh token from the script above |
 | `E2E_GDRIVE_FOLDER_ID` | optional — reuse a pre-made folder; otherwise a scratch folder is created and deleted |
+| `E2E_GDRIVE_LIVE_CONSENT=1` | optional — also run the opt-in consent test (needs a human to finish Google's consent UI) |
 | `E2E_MEMORY_API_URL` | memory API origin — set it to the deployment under test (the same host that serves `/api/health`; your local `.env.e2e` already carries the value used by the other API specs). The spec reads documents/versions/content directly from it, while the UI and API actions go through the gateway |
+
+#### Consent check (opt-in)
+
+`E2E_GDRIVE_LIVE_CONSENT=1 npx playwright test --project=gdrive-live` also runs
+the consent handoff, which is the only part that needs a human:
 
 The test prints (and attaches) the Google authorize URL, then polls for up to
 the OAuth state TTL (~10 min) for the callback-created source — open the printed

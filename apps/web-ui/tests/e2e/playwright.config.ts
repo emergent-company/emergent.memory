@@ -69,9 +69,9 @@ export default defineConfig({
         // server that the live memory backend cannot produce, so it runs under
         // its own hermetic mock harness (`mcp-inspect.config.ts`).
         /specs\/mcp\/.*\.spec\.ts/,
-        // Live Google Drive gate (`gdrive-live`). Opt-in — real Google OAuth
-        // creds plus a human to finish the consent screen — so it runs under
-        // its own project, never behind `setup` or the default full run.
+        // Live Google Drive gate (`gdrive-live`). Opt-in — real Google creds,
+        // never part of the default full run — so it runs under its own project.
+        // The project still depends on `setup` for the org/project bootstrap.
         /specs\/gdrive-live\/.*\.spec\.ts/,
       ],
       use: { ...devices['Desktop Chrome'], storageState: STORAGE_STATE },
@@ -125,11 +125,12 @@ export default defineConfig({
     },
     {
       // Live Google Drive gate (`specs/gdrive-live/`). Opt-in and NEVER in CI:
-      // it configures a project-scoped Google OAuth app, connects a REAL Drive
-      // folder, and needs a human to finish the Google consent screen mid-test
-      // (the test prints + attaches the authorize URL, then polls for the
-      // callback-created source). Serial (single worker) and long (OAuth TTL +
-      // three syncs) with no retries.
+      // the source is seeded from the stored refresh token (no consent, no human
+      // step) and the spec drives a REAL Drive folder — bounded listing +
+      // truncation, name search, folder save, then three syncs. The consent
+      // handoff is a separate test behind E2E_GDRIVE_LIVE_CONSENT=1, which prints
+      // + attaches the authorize URL and polls for the callback-created source.
+      // Serial (single worker) and long (OAuth TTL + three syncs), no retries.
       name: 'gdrive-live',
       testMatch: /specs\/gdrive-live\/.*\.spec\.ts/,
       use: {
