@@ -22,19 +22,17 @@ const dsProviderTypeGoogleDrive = "google_drive"
 // responses that predate it.
 var dsCredentialKeys = []string{"client_id", "client_secret", "refresh_token", "access_token"}
 
-// dsError maps a memory backend error onto a gateway response. Validation and
-// not-found pass through with their real status; everything else is a 502.
+// dsError maps a memory backend error onto a gateway response. Client errors
+// (bad request, not found, conflict, validation) pass through with their real
+// status and the backend's own message — a missing field must not look like a
+// backend outage. Everything else (5xx, transport failure) is a 502.
 func dsError(c echo.Context, err error) error {
-	msg := err.Error()
-	switch memoryStatus(err) {
-	case http.StatusBadRequest:
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": msg})
-	case http.StatusNotFound:
-		return c.JSON(http.StatusNotFound, map[string]string{"error": msg})
-	case http.StatusConflict:
-		return c.JSON(http.StatusConflict, map[string]string{"error": msg})
+	switch status := memoryStatus(err); status {
+	case http.StatusBadRequest, http.StatusNotFound,
+		http.StatusConflict, http.StatusUnprocessableEntity:
+		return c.JSON(status, map[string]string{"error": dsFormError(err).Error()})
 	default:
-		return c.JSON(http.StatusBadGateway, map[string]string{"error": msg})
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": err.Error()})
 	}
 }
 

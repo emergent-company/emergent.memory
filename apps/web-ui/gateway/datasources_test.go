@@ -313,3 +313,70 @@ func TestDeleteDSOAuthClientHandler(t *testing.T) {
 		t.Errorf("delete target = %q/%q", f.dsDeletedOAuthOrg, f.dsDeletedOAuthProv)
 	}
 }
+
+// TestDSErrorForwardsClientStatuses guards #2007: a memory validation error is
+// a 422 (apperror.NewValidation), which the old whitelist turned into a 502.
+func TestDSErrorForwardsClientStatuses(t *testing.T) {
+	e := echo.New()
+	cases := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "422 validation",
+			err:        &memoryHTTPError{Status: http.StatusUnprocessableEntity, Code: "validation_error", Message: "config.refresh_token is required"},
+			wantStatus: http.StatusUnprocessableEntity,
+			wantBody:   "config.refresh_token is required",
+		},
+		{
+			name:       "400 bad request",
+			err:        &memoryHTTPError{Status: http.StatusBadRequest, Code: "bad_request", Message: "name is required"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "name is required",
+		},
+		{
+			name:       "404 not found",
+			err:        &memoryHTTPError{Status: http.StatusNotFound, Code: "not_found", Message: "no such source"},
+			wantStatus: http.StatusNotFound,
+			wantBody:   "no such source",
+		},
+		{
+			name:       "409 conflict",
+			err:        &memoryHTTPError{Status: http.StatusConflict, Code: "conflict", Message: "already exists"},
+			wantStatus: http.StatusConflict,
+			wantBody:   "already exists",
+		},
+		{
+			name:       "upstream 500",
+			err:        &memoryHTTPError{Status: http.StatusInternalServerError, Code: "internal", Message: "boom"},
+			wantStatus: http.StatusBadGateway,
+		},
+		{
+			name:       "transport failure",
+			err:        errors.New("dial tcp 127.0.0.1:3002: connect: connection refused"),
+			wantStatus: http.StatusBadGateway,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c := e.NewContext(httptest.NewRequest(http.MethodPost, "/api/data-source-integrations", nil), rec)
+
+			if err := dsError(c, tc.err); err != nil {
+				t.Fatalf("dsError returned %v", err)
+			}
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantBody != "" && !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("body = %s, want it to contain %q", rec.Body.String(), tc.wantBody)
+			}
+			if rec.Code < http.StatusInternalServerError && strings.Contains(rec.Body.String(), "memory 4") {
+				t.Errorf("client error body leaks the internal prefix: %s", rec.Body.String())
+			}
+		})
+	}
+}
