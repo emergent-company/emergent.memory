@@ -65,27 +65,46 @@ func (s *Server) createProject(c echo.Context) error {
 }
 
 // activateProject switches the active project for the session
-// (POST /api/projects/:id/activate), preserving the session's tokens.
+// (POST /api/projects/:id/activate), preserving the session's tokens. The
+// target is validated against the caller's access tree before the session
+// claims are written: a project outside the caller's access fails closed with
+// 403 and writes nothing (#1998).
 func (s *Server) activateProject(c echo.Context) error {
 	id := c.Param("id")
 	if id == "" {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "project id required"})
 	}
-	claims, err := s.currentSession(c)
-	if err != nil {
-		// No session to update (API-key caller): the switch is meaningless but
-		// not an error — the key path is always bound to its static project.
+	// No session context at all (API-key / programmatic caller): the switch is
+	// meaningless but not an error — the key path is always bound to its static
+	// project.
+	if _, hasSession := sessionContextFrom(c.Request().Context()); !hasSession {
 		return c.JSON(http.StatusOK, map[string]string{"ok": "true", "activeProjectId": id})
 	}
-	claims.ActiveProjectID = id
-	claims.OrgID = ""
-	// Recover the project's org so org-scoped routes resolve after the switch;
-	// best-effort — an unresolved org leaves it empty (no stale X-Org-ID).
-	if orgID, oerr := s.projectOrgID(c.Request().Context(), id); oerr == nil {
-		claims.OrgID = orgID
+	claims, err := s.currentSession(c)
+	if err != nil {
+		// A session context is attached but its claims cannot be loaded (e.g. an
+		// expired cookie): fail closed rather than reporting a silent success.
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 	}
+	// Validate the target against the caller's access tree — the same source
+	// applyScope uses. ListProjects alone is insufficient: it filters on
+	// project_memberships without requiring an org membership, so an out-of-tree
+	// project would otherwise be accepted here and then 404/403 every scoped
+	// request. The org is recovered from the tree (authoritative), not the
+	// tenancy listing.
+	tree, err := s.orgAccessTree(c)
+	if err != nil {
+		captureError(err)
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "scope unavailable"})
+	}
+	orgID, projectID, ok := resolveProjectRefAnyOrg(tree, id)
+	if !ok {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": "scope not permitted"})
+	}
+	claims.ActiveProjectID = projectID
+	claims.OrgID = orgID
 	s.setSessionCookie(c, *claims)
-	return c.JSON(http.StatusOK, map[string]string{"ok": "true", "activeProjectId": id})
+	return c.JSON(http.StatusOK, map[string]string{"ok": "true", "activeProjectId": projectID})
 }
 
 // activateProjectInSession re-issues the session cookie with a new active

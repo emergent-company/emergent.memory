@@ -22,7 +22,7 @@ func TestGetCurrentProject(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	p, err := m.GetCurrentProject(sessCtx("tok123"))
+	p, err := m.GetCurrentProject(sessProjCtx("tok123", "proj"))
 	if err != nil {
 		t.Fatal(err)
 	}

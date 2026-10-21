@@ -120,10 +120,11 @@ func (s *Server) githubWebhook(c echo.Context) error {
 		defer cancel()
 		// The webhook is session-less, so it authenticates the trigger with the
 		// scoped webhook trigger credential (a `webhook:trigger`-marked emt_*
-		// bearer). The session context carries no project id, so project scope
-		// keeps coming from the MemoryClient (the project travels in the URL and
-		// X-Project-ID stays empty).
-		ctx = withSessionContext(ctx, &sessionContext{Token: s.cfg.AgentTriggerToken})
+		// bearer). A session-less token carries no project/org identity: project
+		// scope keeps coming from the MemoryClient's static project id (which
+		// equals the token's bound project) via the URL, and X-Project-ID stays
+		// empty so the server derives the project from the token binding (#1998).
+		ctx = withSessionlessToken(ctx, s.cfg.AgentTriggerToken)
 		if _, err := s.memory.TriggerAgent(ctx, agentID, prompt, ctxValues); err != nil {
 			log.Printf("github webhook: trigger agent %s for %s#%d failed: %v", agentID, repoFullName, payload.pullNumber(), err)
 		}

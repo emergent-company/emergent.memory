@@ -45,22 +45,27 @@ func NewMemoryClient(baseURL, projectID string) *MemoryClient {
 	}
 }
 
-// tokenFor resolves the bearer token for one request from the session context.
-// There is no process-global fallback: a session-less caller sends an empty
-// bearer token and the upstream rejects it with 401, which surfaces the mistake
-// loudly instead of silently acting as a shared service account.
+// tokenFor resolves the bearer token for one request: the session credential
+// when a session context is attached, else a session-less token (a scoped
+// programmatic credential such as the GitHub webhook trigger token). There is
+// no process-global fallback: a session-less caller without an explicit token
+// sends an empty bearer and the upstream rejects it with 401, surfacing the
+// mistake loudly instead of silently acting as a shared service account.
 func (m *MemoryClient) tokenFor(ctx context.Context) string {
 	if sc, ok := sessionContextFrom(ctx); ok {
 		return sc.Token
 	}
-	return ""
+	return sessionlessTokenFrom(ctx)
 }
 
 // projectIDFor resolves the active project for one request: the session's
 // active project when a session context is attached, else the static
-// server-side project id.
+// server-side project id (API-key / programmatic callers only). A session with
+// no active project yields "" — the static id is a deployment default, never a
+// per-session fallback, so a session can never silently act against a project
+// the caller is not a member of (#1998).
 func (m *MemoryClient) projectIDFor(ctx context.Context) string {
-	if sc, ok := sessionContextFrom(ctx); ok && sc.ProjectID != "" {
+	if sc, ok := sessionContextFrom(ctx); ok {
 		return sc.ProjectID
 	}
 	return m.projectID

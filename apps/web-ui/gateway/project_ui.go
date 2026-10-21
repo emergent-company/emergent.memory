@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/emergent-company/go-daisy/render"
@@ -34,10 +33,11 @@ func (s *Server) uiCreateProject(c echo.Context) error {
 }
 
 // uiActivateProject handles the project-switcher activate form (POST
-// /projects/activate; form field projectId). It re-issues the session with the
-// new active project and redirects back to the page the switch happened on
-// (PRG), falling back to the org list when no Referer is present or the
-// project's org cannot be resolved.
+// /projects/activate; form field projectId). It validates the target against
+// the caller's access tree (the same source applyScope uses) before re-issuing
+// the session with the new active project — an out-of-tree project is refused
+// with an error flash and no session/recent write (#1998) — then lands on the
+// target project's scoped URL.
 func (s *Server) uiActivateProject(c echo.Context) error {
 	id := strings.TrimSpace(c.FormValue("projectId"))
 	if id == "" {
@@ -45,35 +45,23 @@ func (s *Server) uiActivateProject(c echo.Context) error {
 		// than the now-cut unscoped /agents.
 		return redirectWithError(c, "/orgs", fmt.Errorf("project id is required"))
 	}
-	// Recover the project's org so org-scoped routes (backups, X-Org-ID) resolve
-	// after the switch; best-effort — an unresolved org leaves it empty.
-	orgID, _ := s.projectOrgID(c.Request().Context(), id)
-	s.activateProjectInSession(c, id, orgID)
+	// Validate against the caller's access tree; fail closed on an out-of-tree
+	// project (a project membership without an org membership is invisible to
+	// the tree and must not be activatable). The org is recovered from the tree,
+	// so it is authoritative here.
+	tree, err := s.orgAccessTree(c)
+	if err != nil {
+		captureError(err)
+		return redirectWithError(c, "/orgs", fmt.Errorf("scope unavailable"))
+	}
+	orgID, projectID, ok := resolveProjectRefAnyOrg(tree, id)
+	if !ok {
+		return redirectWithError(c, "/orgs", fmt.Errorf("scope not permitted"))
+	}
+	s.activateProjectInSession(c, projectID, orgID)
 	// Land on the target project's scoped URL so the switch is reflected in the
 	// address bar (an org-context page must not bounce back to the org page,
 	// whose resolveOrg re-activates the org).
-	if orgID != "" {
-		render.RedirectAfterMutation(c.Response().Writer, c.Request(), projectScopeURL(orgID, id)+"/agents")
-		return nil
-	}
-	back := c.Request().Header.Get("Referer")
-	if back == "" || isOrgContextPath(back) {
-		back = "/orgs"
-	}
-	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back)
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), projectScopeURL(orgID, projectID)+"/agents")
 	return nil
-}
-
-// isOrgContextPath reports whether a Referer URL points at an org-scoped page:
-// the org listing (/orgs) or an org-context page (/orgs/:id...). The latter
-// re-activate the org on load, so a project switch from them must redirect to
-// the project landing, not back to the org page. The org listing is included
-// so clicking a project row there opens the project (lands on /agents) rather
-// than bouncing back to /orgs.
-func isOrgContextPath(referer string) bool {
-	u, err := url.Parse(referer)
-	if err != nil {
-		return false
-	}
-	return u.Path == "/orgs" || strings.HasPrefix(u.Path, "/orgs/")
 }

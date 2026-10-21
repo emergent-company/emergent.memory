@@ -98,9 +98,14 @@ func TestCreateProjectWithAPIKeyRejected(t *testing.T) {
 
 // TestActivateProjectReissuesSessionCookie asserts POST
 // /api/projects/:id/activate flips ActiveProjectID in the session cookie,
-// recovers the project's org, and preserves tokens.
+// recovers the project's org from the access tree, and preserves tokens.
 func TestActivateProjectReissuesSessionCookie(t *testing.T) {
-	f := &fakeMemory{projects: []ProjectRef{{ID: "proj-new", Name: "New", OrgID: "org-new"}}}
+	f := &fakeMemory{
+		projects: []ProjectRef{{ID: "proj-new", Name: "New", OrgID: "org-new"}},
+		orgsAndProjects: []OrgWithProjectsDto{
+			{ID: "org-new", Name: "New Org", Projects: []ProjectAccessDto{{ID: "proj-new", Name: "New", OrgID: "org-new"}}},
+		},
+	}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := sessionServer(s)
 
@@ -129,7 +134,7 @@ func TestActivateProjectReissuesSessionCookie(t *testing.T) {
 	if claims.ActiveProjectID != "proj-new" {
 		t.Errorf("ActiveProjectID = %q, want proj-new", claims.ActiveProjectID)
 	}
-	// Org is recovered from the project record (not left stale/empty).
+	// Org is recovered from the access tree (not left stale/empty).
 	if claims.OrgID != "org-new" {
 		t.Errorf("OrgID = %q, want org-new after switch", claims.OrgID)
 	}
@@ -138,11 +143,16 @@ func TestActivateProjectReissuesSessionCookie(t *testing.T) {
 	}
 }
 
-// TestActivateProjectUnknownOrg asserts that switching to a project not present
-// in the tenancy listing leaves the org empty (no stale X-Org-ID) rather than
-// erroring.
-func TestActivateProjectUnknownOrg(t *testing.T) {
-	f := &fakeMemory{projects: []ProjectRef{{ID: "other", Name: "Other", OrgID: "org-other"}}}
+// TestActivateProjectOutOfTreeRefused asserts switching to a project outside
+// the caller's access tree is refused with 403 and leaves the session (and its
+// recent-project cookie) untouched (#1998).
+func TestActivateProjectOutOfTreeRefused(t *testing.T) {
+	f := &fakeMemory{
+		projects: []ProjectRef{{ID: "proj-ghost", Name: "Ghost", OrgID: "org-other"}},
+		orgsAndProjects: []OrgWithProjectsDto{
+			{ID: "org-old", Name: "Old", Projects: []ProjectAccessDto{{ID: "proj-old", Name: "Old", OrgID: "org-old"}}},
+		},
+	}
 	s := &Server{cfg: sessionCfg(), memory: f}
 	e := sessionServer(s)
 
@@ -154,19 +164,14 @@ func TestActivateProjectUnknownOrg(t *testing.T) {
 	})
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (%s)", rec.Code, rec.Body.String())
 	}
-	ck := findCookie(rec, sessionCookieName)
-	if ck == nil {
-		t.Fatal("session cookie not re-issued")
+	if ck := findCookie(rec, sessionCookieName); ck != nil {
+		t.Errorf("session cookie must not be re-issued on refusal: %+v", ck)
 	}
-	claims, err := verifySession("test-secret", ck.Value, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if claims.OrgID != "" {
-		t.Errorf("OrgID = %q, want empty for unknown project", claims.OrgID)
+	if ck := findCookie(rec, recentProjectsCookieName); ck != nil {
+		t.Errorf("recent-projects cookie must not be written on refusal: %+v", ck)
 	}
 }
 

@@ -651,15 +651,20 @@ func (s *Server) uiRoot(c echo.Context) error {
 		candidates = append(candidates, sc.ProjectID)
 	}
 	if len(candidates) > 0 {
-		if projects, err := s.memory.ListProjects(c.Request().Context()); err == nil {
+		// Validate each candidate against the caller's org→project access tree —
+		// the same source applyScope uses — never ListProjects alone. ListProjects
+		// filters on kb.project_memberships without requiring an org membership, so
+		// a project membership whose org is absent from the tree would otherwise
+		// be accepted here and then 404/403 every scoped request (#1998).
+		if tree, err := s.orgAccessTree(c); err == nil {
 			for _, id := range candidates {
-				for _, p := range projects {
-					if p.ID == id {
-						s.activateProjectInSession(c, p.ID, p.OrgID)
-						return c.Redirect(http.StatusFound, projectScopeURL(p.OrgID, p.ID)+"/agents")
-					}
+				if orgID, projectID, ok := resolveProjectRefAnyOrg(tree, id); ok {
+					s.activateProjectInSession(c, projectID, orgID)
+					return c.Redirect(http.StatusFound, projectScopeURL(orgID, projectID)+"/agents")
 				}
 			}
+		} else {
+			captureError(err)
 		}
 	}
 	// Resolve the caller's orgs once and validate the remembered org against

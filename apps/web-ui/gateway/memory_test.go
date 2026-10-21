@@ -364,6 +364,13 @@ func sessCtx(token string) context.Context {
 	return withSessionContext(context.Background(), &sessionContext{Token: token})
 }
 
+// sessProjCtx returns a context carrying a session bearer token and an active
+// project. projectIDFor no longer falls back to the static project id when a
+// session exists, so project-scoped client tests attach the project explicitly.
+func sessProjCtx(token, projectID string) context.Context {
+	return withSessionContext(context.Background(), &sessionContext{Token: token, ProjectID: projectID})
+}
+
 // TestSessionContextFromCoversAbsence asserts sessionContextFrom reports
 // absence on a plain context and round-trips the attached value.
 func TestSessionContextFromCoversAbsence(t *testing.T) {
@@ -1229,7 +1236,7 @@ func TestUpdateObject(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	obj, err := m.UpdateObject(sessCtx("tok123"), "obj-v1", &UpdateObjectRequest{
+	obj, err := m.UpdateObject(sessProjCtx("tok123", "proj"), "obj-v1", &UpdateObjectRequest{
 		Key:        &key,
 		Status:     &status,
 		Labels:     []string{"contact", "colleague"},
@@ -1352,7 +1359,7 @@ func TestCreateObject(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	obj, err := m.CreateObject(sessCtx("tok123"), &CreateObjectRequest{
+	obj, err := m.CreateObject(sessProjCtx("tok123", "proj"), &CreateObjectRequest{
 		Type:       "person",
 		Key:        &key,
 		Status:     &status,

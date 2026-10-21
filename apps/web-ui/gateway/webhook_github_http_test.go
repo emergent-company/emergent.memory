@@ -138,9 +138,11 @@ func TestGitHubWebhookHTTPEndToEnd(t *testing.T) {
 		if got.Auth != "Bearer mem-token" {
 			t.Errorf("Authorization = %q, want %q", got.Auth, "Bearer mem-token")
 		}
-		// The webhook attaches a session context carrying only the static
-		// AGENT_TRIGGER_TOKEN (no project id), so the project is carried in the
-		// URL and X-Project-ID stays empty.
+		// The webhook is session-less: it carries only the scoped
+		// AGENT_TRIGGER_TOKEN (no project/org identity), so the project is
+		// carried in the URL (the MemoryClient's static project id) and
+		// X-Project-ID stays empty — the server derives the project from the
+		// token binding.
 		if got.ProjectID != "" {
 			t.Errorf("X-Project-ID = %q, want empty (project is in the URL)", got.ProjectID)
 		}

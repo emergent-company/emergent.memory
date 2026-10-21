@@ -77,7 +77,7 @@ func TestListBackups(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj-1")
-	backups, total, err := m.ListBackups(sessCtx("tok"), "org-1")
+	backups, total, err := m.ListBackups(sessProjCtx("tok", "proj-1"), "org-1")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -309,7 +309,7 @@ func TestCancelAgentRunClient(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "static-proj")
-	cancelled, err := m.CancelAgentRun(sessCtx("static-token"), "a1", "r1")
+	cancelled, err := m.CancelAgentRun(sessProjCtx("static-token", "static-proj"), "a1", "r1")
 	if err != nil {
 		t.Fatalf("CancelAgentRun: %v", err)
 	}

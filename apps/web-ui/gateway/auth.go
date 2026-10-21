@@ -712,11 +712,23 @@ func (s *Server) resolveDefaultProject(next echo.HandlerFunc) echo.HandlerFunc {
 			// No project to auto-select: send to the org list to create one.
 			return c.Redirect(http.StatusFound, "/orgs")
 		}
-		s.activateProjectInSession(c, projects[0].ID, projects[0].OrgID)
+		// Validate the first project against the caller's access tree — the same
+		// source applyScope uses — so a project membership without an org
+		// membership (ListProjects filters project_memberships alone) can never
+		// become the default scope (#1998). An out-of-tree first project falls
+		// through to the org list rather than binding a scope the caller cannot
+		// use.
+		tree, err := s.orgAccessTree(c)
+		captureError(err)
+		orgID, projectID, ok := resolveProjectRefAnyOrg(tree, projects[0].ID)
+		if !ok {
+			return c.Redirect(http.StatusFound, "/orgs")
+		}
+		s.activateProjectInSession(c, projectID, orgID)
 		// activateProjectInSession only re-issues the cookie; mirror the choice
 		// into the request context so this render is already project-scoped.
-		sc.ProjectID = projects[0].ID
-		sc.OrgID = projects[0].OrgID
+		sc.ProjectID = projectID
+		sc.OrgID = orgID
 		return next(c)
 	}
 }

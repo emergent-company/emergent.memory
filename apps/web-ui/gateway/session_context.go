@@ -43,3 +43,24 @@ func sessionContextFrom(ctx context.Context) (*sessionContext, bool) {
 	sc, ok := ctx.Value(sessionContextKey{}).(*sessionContext)
 	return sc, ok
 }
+
+// sessionlessTokenKey carries a session-less bearer token (a scoped programmatic
+// credential, e.g. the GitHub webhook trigger token) through a request context.
+// A session-less token carries no project/org identity: unlike a web session, the
+// MemoryClient leaves project scope to its static project id (the deployment
+// default, which equals the token's own bound project) and sends no
+// X-Project-ID/X-Org-ID headers — the server derives the project from the
+// token's binding, never from a client header (#1998).
+type sessionlessTokenKey struct{}
+
+// withSessionlessToken returns a context carrying a session-less bearer token.
+func withSessionlessToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, sessionlessTokenKey{}, token)
+}
+
+// sessionlessTokenFrom returns the session-less bearer token, or "" when none
+// is attached.
+func sessionlessTokenFrom(ctx context.Context) string {
+	t, _ := ctx.Value(sessionlessTokenKey{}).(string)
+	return t
+}

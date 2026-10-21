@@ -361,6 +361,9 @@ func TestResolveDefaultProjectAutoPicks(t *testing.T) {
 	f := &fakeMemory{
 		projects: []ProjectRef{{ID: "p1", Name: "Main", OrgID: "o1"}},
 		orgs:     []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{
+			{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Main", OrgID: "o1"}}},
+		},
 	}
 	s := &Server{cfg: Config{AuthMode: "session", SessionSecret: "test-secret"}, memory: f}
 	e := sessionServer(s)

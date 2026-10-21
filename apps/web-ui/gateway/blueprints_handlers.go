@@ -101,11 +101,17 @@ func (s *Server) unapplyBlueprint(c echo.Context) error {
 }
 
 // blueprintMemoryError maps memory API errors onto gateway status codes:
-// unknown ids (404/not_found) are 404, everything else is 502.
+// unknown ids (404/not_found) are 404, an upstream 403 (the caller is forbidden
+// by the backend) is surfaced as 403 rather than masked as a gateway failure,
+// and everything else is 502. Note: this mapper is shared with schema.go's JSON
+// handlers; the 403 passthrough is unambiguously the forbidden case there too.
 func blueprintMemoryError(c echo.Context, err error) error {
 	msg := err.Error()
 	if isMemoryNotFound(err) {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": msg})
+	}
+	if isMemoryStatus(err, http.StatusForbidden) {
+		return c.JSON(http.StatusForbidden, map[string]string{"error": msg})
 	}
 	return c.JSON(http.StatusBadGateway, map[string]string{"error": msg})
 }

@@ -84,7 +84,12 @@ func TestUIRootRedirect(t *testing.T) {
 	})
 
 	t.Run("session project wins", func(t *testing.T) {
-		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
 		e := orgContextUIServer(s)
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
@@ -545,12 +550,24 @@ func TestTenancyLoadFailureRedactedSiblings(t *testing.T) {
 	})
 
 	t.Run("project settings current project", func(t *testing.T) {
-		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projectErr: transport("/api/projects/current"), projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projectErr: transport("/api/projects/current"),
+			projects:   []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
 		check(t, get(t, s, "/settings"), "Project settings unavailable")
 	})
 
 	t.Run("budget settings current project", func(t *testing.T) {
-		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{projectErr: transport("/api/projects/current"), projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}}}}
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projectErr: transport("/api/projects/current"),
+			projects:   []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
 		check(t, get(t, s, "/settings/budget"), "Budget settings unavailable")
 	})
 }
@@ -852,35 +869,13 @@ func TestUIDeleteOrg(t *testing.T) {
 	})
 }
 
-// TestIsOrgContextPath covers the Referer-path classifier used to avoid
-// bouncing a project switch back onto an org-context page.
-func TestIsOrgContextPath(t *testing.T) {
-	for _, c := range []struct {
-		in   string
-		want bool
-	}{
-		{"http://localhost:8095/orgs/o1", true},
-		{"http://localhost:8095/orgs/o1/members", true},
-		{"http://localhost:8095/orgs/o1/settings", true},
-		{"http://localhost:8095/orgs/o1/settings/danger-zone", true},
-		{"http://localhost:8095/orgs/new", true},
-		{"http://localhost:8095/orgs", true},
-		{"http://localhost:8095/agents", false},
-		{"http://localhost:8095/settings", false},
-		{"", false},
-		{"not a url", false},
-	} {
-		if got := isOrgContextPath(c.in); got != c.want {
-			t.Errorf("isOrgContextPath(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
 // TestUIActivateProjectFromOrgContext asserts a project switch from the org
-// context lands on the project page (not back on the org page, which would
-// re-activate the org and undo the switch).
+// context lands on the project's scoped page (not back on the org page, which
+// would re-activate the org and undo the switch), regardless of the Referer.
 func TestUIActivateProjectFromOrgContext(t *testing.T) {
-	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}}},
+	}}
 	e := echo.New()
 	e.Use(s.authDispatch)
 	e.POST("/projects/activate", s.uiActivateProject)
@@ -901,14 +896,10 @@ func TestUIActivateProjectFromOrgContext(t *testing.T) {
 		return rec
 	}
 
-	if rec := post("http://localhost:8095/orgs/o1"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs" {
-		t.Errorf("activate from org = %d %q, want 303 /orgs", rec.Code, rec.Header().Get("Location"))
-	}
-	if rec := post("http://localhost:8095/settings"); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "http://localhost:8095/settings" {
-		t.Errorf("activate from settings = %d %q, want 303 back to settings", rec.Code, rec.Header().Get("Location"))
-	}
-	if rec := post(""); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs" {
-		t.Errorf("activate without referer = %d %q, want 303 /orgs", rec.Code, rec.Header().Get("Location"))
+	for _, referer := range []string{"http://localhost:8095/orgs/o1", "http://localhost:8095/settings", ""} {
+		if rec := post(referer); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1/p/p1/agents" {
+			t.Errorf("activate (referer %q) = %d %q, want 303 /o/o1/p/p1/agents", referer, rec.Code, rec.Header().Get("Location"))
+		}
 	}
 }
 
