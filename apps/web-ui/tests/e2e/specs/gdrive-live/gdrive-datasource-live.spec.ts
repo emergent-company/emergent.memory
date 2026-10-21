@@ -1,39 +1,44 @@
 import { test, expect, type Page } from '@playwright/test';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
-import { expectAppPage, goto } from '../../helpers/page';
+import { goto } from '../../helpers/page';
 import { memoryAuthHeaders } from '../../helpers/objects';
 import { MEMORY_API_URL } from '../../helpers/tokens';
 import { GDriveFixture } from '../../helpers/gdrive';
 
-// Live (non-mocked) Google Drive end-to-end: a project-scoped Google OAuth app
-// connects a REAL Drive folder, and the memory backend's source-sync worker
-// ingests a real file through the full version lifecycle.
+// Live (non-mocked) Google Drive end-to-end. By default the gate is SELF-SEEDING
+// and needs NO human interaction: it creates a scratch Drive folder through the
+// Drive REST API (an access token minted from E2E_GDRIVE_FIXTURE_REFRESH_TOKEN),
+// then seeds a project-scoped Drive source through the public API
+// (POST /api/data-source-integrations) with the stored-credential config the
+// product actually syncs from — client_id / client_secret / refresh_token live
+// INSIDE the source `config` (see apps/server/domain/sources/gdrive_provider.go
+// and entity.go CreateIntegrationRequest.Config). No browser ever visits Google.
 //
-// This is opt-in and NEVER runs in CI: it needs a real Google OAuth app plus a
-// human to complete the Google consent screen mid-test. See the e2e README
-// ("Live Google Drive gate") for the env contract and run instructions.
+// The human-consent OAuth flow (configure the project OAuth app → intercept the
+// authorize URL → poll for the callback-created source) is retained ONLY behind
+// the explicit opt-in E2E_GDRIVE_LIVE_CONSENT=1 flag, in a separate test below,
+// so a manual consent check stays possible but never runs unattended.
 //
-// Flow:
+// This project is opt-in and NEVER runs in CI. Env contract (see .env.e2e.example):
+//   E2E_GDRIVE_LIVE=1                      gate — the spec skips unless set
+//   E2E_GDRIVE_CLIENT_ID / _SECRET          OAuth client (also used to mint the
+//                                           fixture access token)
+//   E2E_GDRIVE_FIXTURE_REFRESH_TOKEN        refresh token (full drive scope) the
+//                                           fixture exchanges to create/edit/trash
+//   E2E_GDRIVE_FOLDER_ID                    optional: reuse a pre-made folder
+//   E2E_MEMORY_API_URL                      memory API origin (documents/versions)
+//   E2E_GDRIVE_LIVE_CONSENT=1               opt-in: run the manual consent test
+//
+// Flow (seeded, default):
 //   1. Fresh scratch project (isolates the source + documents).
-//   2. Configure the PROJECT-scoped Drive OAuth client (id/secret + the
-//      drive.readonly strategy) via the real settings UI.
-//   3. Create the scratch Drive folder (the post-consent resource step's sync
-//      target) and start the OAuth connect from the UI connect surface
-//      (/data-sources/new?providerType=google_drive → the panel's Connect
-//      control, which drives /data-sources/oauth/start). The test intercepts
-//      that route's 303 redirect to capture the Google authorize URL (state +
-//      PKCE, offline access, consent) — printed + attached, never navigated by
-//      the test. A human opens it and grants consent; the memory callback
-//      creates the source in the scratch project (state carries the project id)
-//      with NO sync target pinned — exercising the shipped #1988 fix.
-//   4. Poll for the source, assert the detail page prompts for a sync target
-//      (ds-resource-needed), then select the scratch folder on the resource
-//      step → the edit form prefills the folder (config round-trip).
-//   5. Prove stored credentials reach Drive via the connection test, then the
-//      fixture creates a plain-text file (v1) → sync → doc version 1.
-//   6. Fixture rewrites the file (v2) and asserts headRevisionId moved → sync →
-//      version 2 sharing the SAME canonicalId with a NEW sourceRevisionId.
-//   7. Fixture trashes the file → sync → head marked deleted_from_source.
+//   2. Create the scratch Drive folder + seed the source via the public API.
+//   3. Detail page prefills the stored folder (config round-trip).
+//   4. Resource step: the unfiltered listing of this huge account must report
+//      truncation (ds-resource-truncated) and return well inside the budget;
+//      searching the scratch folder's name lists it and nothing stale.
+//   5. Save the picked folder → edit form prefills the stored folder (round-trip).
+//   6. Prove stored credentials reach Drive (connection test), then v1 → sync →
+//      v2 → sync (v1 retained) → trash → sync → deleted_from_source.
 // Cleanup is best-effort: delete source, delete scratch folder/project.
 
 const CLIENT_ID = process.env.E2E_GDRIVE_CLIENT_ID ?? '';
@@ -41,12 +46,20 @@ const CLIENT_SECRET = process.env.E2E_GDRIVE_CLIENT_SECRET ?? '';
 const FIXTURE_REFRESH_TOKEN = process.env.E2E_GDRIVE_FIXTURE_REFRESH_TOKEN ?? '';
 // Optional: reuse a pre-provisioned folder; created fresh when unset.
 const FOLDER_ID = process.env.E2E_GDRIVE_FOLDER_ID ?? '';
+// Opt-in manual consent path (never runs unattended).
+const CONSENT = process.env.E2E_GDRIVE_LIVE_CONSENT === '1';
 
 // The memory OAuth state is short-lived (server TTL); give the human the full
-// window to open the printed URL and finish consent.
+// window to open the printed URL and finish consent. Only the consent test uses
+// this.
 const OAUTH_WAIT_MS = 10 * 60_000;
 const SYNC_WAIT_MS = 5 * 60_000;
 const POLL_MS = 3_000;
+// The resource picker caps the unfiltered walk at 5×1000 folders (#1993), so the
+// unbounded-listing page must render in a handful of seconds. This budget is far
+// looser than that while still distinguishing a bounded listing from the old
+// page-through-every-folder behaviour.
+const RESOURCE_LISTING_BUDGET_MS = 30_000;
 
 const CONTENT_V1 = '# gdrive-live fixture\n\nversion one\n';
 const CONTENT_V2 = '# gdrive-live fixture\n\nversion two (edited)\n';
@@ -186,7 +199,156 @@ async function triggerAndWait(page: Page, sourceId: string, label: string): Prom
   return job!;
 }
 
-test('project OAuth app → live Drive folder → sync → edit → v2 → trash → deleted_from_source', async ({
+/**
+ * Seed a project-scoped Drive source through the public API, carrying the
+ * stored-credential config the scheduled sync actually uses (client_id /
+ * client_secret / refresh_token + folder_id). The gateway resolves the project
+ * from the session, so the caller must have activated the scratch project first
+ * (createProject does). Returns the created integration (id + non-secret config).
+ */
+async function seedSource(
+  page: Page,
+  projectId: string,
+  folderId: string,
+  name: string,
+): Promise<{ id: string; config: Record<string, unknown> }> {
+  // Node `fetch`, not `page.request`: the body carries the stored credentials and
+  // Playwright records request post-data into the trace archive (this project
+  // runs trace: 'retain-on-failure'), which would persist a refresh token in a
+  // failed run's artifacts. Same reason helpers/gdrive.ts talks to Drive from
+  // Node. The endpoint is addressed directly with the session's bearer token and
+  // an explicit X-Project-ID, so the seed does not depend on the session's active
+  // project either.
+  const auth = await memoryAuthHeaders(page);
+  const resp = await fetch(`${MEMORY_API_URL}/api/data-source-integrations`, {
+    method: 'POST',
+    headers: { ...auth, 'X-Project-ID': projectId, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      name,
+      providerType: 'google_drive',
+      sourceType: 'google_drive',
+      config: {
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        refresh_token: FIXTURE_REFRESH_TOKEN,
+        folder_id: folderId,
+      },
+    }),
+  });
+  const bodyText = await resp.text();
+  expect(
+    resp.ok,
+    `seed source failed (HTTP ${resp.status}): ${redactCredentials(bodyText)}`,
+  ).toBeTruthy();
+  return JSON.parse(bodyText) as { id: string; config: Record<string, unknown> };
+}
+
+/** Strip credential material from a response before it can reach a report. */
+function redactCredentials(text: string): string {
+  return text.replace(
+    /"(client_secret|refresh_token|access_token)"\s*:\s*"[^"]*"/g,
+    '"$1":"[redacted]"',
+  );
+}
+
+/** Drive-side evidence the file lifecycle produced, for the run report. */
+interface SyncEvidence {
+  createdFileId: string;
+  docId: string;
+  canonicalId: string;
+  rev1: string;
+  rev2: string;
+  v1VersionId: string;
+  v2VersionId: string;
+}
+
+/**
+ * Drive the full source-file lifecycle against a connected source and assert the
+ * version contract: v1 document → rewrite → v2 (v1 retained, same canonicalId,
+ * new sourceRevisionId) → trash → head marked deleted_from_source.
+ */
+async function exerciseSyncLifecycle(
+  page: Page,
+  gdrive: GDriveFixture,
+  projectId: string,
+  sourceId: string,
+  folderId: string,
+  filename: string,
+): Promise<SyncEvidence> {
+  // 1. v1: create the file, sync, assert document version 1.
+  const created = await gdrive.uploadTextFile(folderId, filename, CONTENT_V1);
+  await triggerAndWait(page, sourceId, 'first sync');
+
+  let docs = await listDocs(page, projectId, false);
+  let doc = docs.find((d) => d.filename === filename);
+  expect(doc, `first sync must create a document named "${filename}"`).toBeTruthy();
+  expect(doc!.version).toBe(1);
+  expect(doc!.sourceStatus).toBe('active');
+  const rev1 = doc!.sourceRevisionId ?? '';
+  expect(rev1, 'v1 must carry a source revision').not.toBe('');
+  expect(rev1).toBe(created.headRevisionId ?? '');
+  const canonicalId = doc!.canonicalId;
+  expect(canonicalId).not.toBe('');
+
+  // 2. v2: rewrite the file, prove the revision moved BEFORE re-sync (the worker
+  //    skips unchanged head revisions), then sync to a new version.
+  const updated = await gdrive.updateFileContent(created.id, CONTENT_V2);
+  const rev2 = updated.headRevisionId ?? '';
+  expect(rev2, 'edited file must carry a headRevisionId').not.toBe('');
+  expect(rev2, 'edit must advance the Drive head revision').not.toBe(rev1);
+
+  await triggerAndWait(page, sourceId, 'second sync');
+
+  docs = await listDocs(page, projectId, false);
+  doc = docs.find((d) => d.filename === filename);
+  expect(doc, `re-sync must keep a head document named "${filename}"`).toBeTruthy();
+  expect(doc!.version).toBe(2);
+  expect(doc!.sourceStatus).toBe('active');
+  expect(doc!.canonicalId, 'v2 must share the v1 canonicalId').toBe(canonicalId);
+  expect(doc!.sourceRevisionId ?? '').toBe(rev2);
+
+  let versions = await listVersions(page, projectId, doc!.id);
+  expect(versions, 'version history must list v1 and v2').toHaveLength(2);
+  expect(versions.map((v) => v.version)).toEqual([1, 2]);
+  expect(versions.map((v) => v.canonicalId)).toEqual([canonicalId, canonicalId]);
+  expect(versions.map((v) => v.sourceRevisionId)).toEqual([rev1, rev2]);
+
+  // The point of the v2 check is content RETENTION, not just metadata: the v1
+  // body must survive as an immutable earlier version, and the head must carry
+  // the v2 body. versions[] is oldest-first, so [0] is v1.
+  const v1Content = await getContent(page, projectId, versions[0].id);
+  expect(v1Content, 'v1 version must retain the v1 body').toContain('version one');
+  expect(v1Content, 'v1 version must not contain the v2 body').not.toContain('version two');
+  const headContent = await getContent(page, projectId, doc!.id);
+  expect(headContent, 'head document must carry the v2 body').toContain('version two');
+
+  // 3. Trash the file → sync → the head is marked deleted_from_source (and the
+  //    default document listing drops it).
+  await gdrive.trashFile(created.id);
+  await triggerAndWait(page, sourceId, 'trash sync');
+
+  docs = await listDocs(page, projectId, true);
+  doc = docs.find((d) => d.filename === filename);
+  expect(doc, 'deleted-from-source head must remain in the include-deleted listing').toBeTruthy();
+  expect(doc!.sourceStatus).toBe('deleted_from_source');
+
+  versions = await listVersions(page, projectId, doc!.id);
+  expect(versions).toHaveLength(2);
+  const head = versions[versions.length - 1];
+  expect(head.sourceStatus).toBe('deleted_from_source');
+
+  return {
+    createdFileId: created.id,
+    docId: doc!.id,
+    canonicalId,
+    rev1,
+    rev2,
+    v1VersionId: versions[0].id,
+    v2VersionId: versions[1].id,
+  };
+}
+
+test('seeded source → resource step (truncation + search) → sync → edit → v2 → trash → deleted_from_source', async ({
   page,
 }) => {
   const missing = missingEnv();
@@ -201,7 +363,8 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
   const bootstrap = requireBootstrap();
   const gdrive = new GDriveFixture(CLIENT_ID, CLIENT_SECRET, FIXTURE_REFRESH_TOKEN);
   const nonce = Date.now().toString(36);
-  const filename = `e2e-gdrive-${nonce}.txt`;
+  const folderName = `e2e-gdrive-${nonce}`;
+  const filename = `${folderName}.txt`;
   let projectId = '';
   let sourceId = '';
   let createdFolderId = '';
@@ -211,9 +374,8 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
     // 1. Fresh project isolates the source + documents.
     projectId = await createProject(page, bootstrap.orgId, `E2E gdrive live ${nonce}`);
 
-    // Pre-flight the fixture token BEFORE the human consents, so a stale or
-    // invalid refresh token fails now instead of burning the ~10-minute OAuth
-    // consent window. getFile never logs or returns the token.
+    // Pre-flight the fixture token so a stale/invalid refresh token fails now
+    // instead of after the source is seeded. getFile never logs/returns the token.
     try {
       await gdrive.getFile('root');
     } catch (e) {
@@ -224,199 +386,52 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
       );
     }
 
-    // 2. Configure the PROJECT-scoped Drive OAuth client via the settings UI.
-    //    The scope is EXPLICIT: goto defaults to the bootstrap project, which
-    //    would (a) configure the wrong project and (b) silently move the
-    //    session's active project back to bootstrap — breaking the source poll
-    //    and every scratch-project API call below.
-    //
-    //    Since #1967 the project settings surface is the Credentials table
-    //    (/settings/credentials) with one editor page per provider; the former
-    //    /settings/oauth-clients URL only redirects there.
-    await goto(page, '/settings/credentials', { orgId: bootstrap.orgId, projectId });
-    await expectAppPage(page, /Credentials/);
-    await expect(page.getByTestId('ds-credentials')).toBeVisible();
-    // Two rows exist for google_drive (the project app and the inherited
-    // organization app); edit the project-scoped one.
-    await page
-      .locator(
-        '[data-testid="ds-credential-row"][data-provider="google_drive"][data-scope="project"]',
-      )
-      .getByTestId('ds-credential-manage')
-      .click();
-    // The editor page is scoped to one provider, so the form on it is
-    // unambiguously the Drive client's.
-    await expectAppPage(page, /OAuth app/);
-    await expect(page.getByTestId('ds-credential-detail')).toBeVisible();
-    const driveForm = page.getByTestId('ds-oauth-client-form');
-    await expect(driveForm, 'Drive OAuth client card must render').toHaveCount(1);
-    await driveForm.getByTestId('ds-field-client_id').fill(CLIENT_ID);
-    await driveForm.getByTestId('ds-field-client_secret').fill(CLIENT_SECRET);
-    await driveForm.getByTestId('ds-field-strategy').selectOption('drive.readonly');
-    await driveForm.getByRole('button', { name: 'Save', exact: true }).click();
-    await page.waitForURL(/saved=1/, { timeout: 30_000 });
-
-    // Re-read the configured card: the server now resolves the deployment's
-    // callback values, which the authorize URL must match. The console-guide
-    // block that carries them lives at CARD level, as a sibling of the
-    // <form data-testid="ds-oauth-client-form">, never inside it — scoping this
-    // locator to the form silently waits forever.
-    const redirectUriEl = page.getByTestId('ds-oauth-redirect-uri');
-    await expect(
-      redirectUriEl,
-      'OAuth client card must show the resolved redirect URI',
-    ).toHaveCount(1);
-    await expect(redirectUriEl).toHaveValue(/\S/);
-    const redirectUri = (await redirectUriEl.inputValue()).trim();
-
-    // 3. Create the scratch Drive folder up front so it exists for the
-    //    post-consent resource step, then start the connect from the REAL UI
-    //    connect surface (/data-sources/new?providerType=google_drive → the
-    //    panel's Connect control, which drives /data-sources/oauth/start). The
-    //    UI route builds the Google authorize URL server-side (state + PKCE,
-    //    bound to the scratch project) and answers with a 303 redirect; the
-    //    test intercepts that redirect to capture the URL for the human WITHOUT
-    //    following it — the test browser never navigates to Google, and no
-    //    config is pinned, so the callback-created source lands with an empty
-    //    sync target (the shipped #1988 fix).
-    const folderId = FOLDER_ID || (await gdrive.createFolder(`e2e-gdrive-${nonce}`));
+    // 2. Create the scratch Drive folder, then seed the source through the public
+    //    API — no browser, no consent, the exact config the scheduled sync uses.
+    const folderId = FOLDER_ID || (await gdrive.createFolder(folderName));
     if (!FOLDER_ID) createdFolderId = folderId;
 
-    let location = '';
-    await page.route('**/data-sources/oauth/start*', async (route) => {
-      // maxRedirects: 0 captures the 303 (Location = Google authorize URL)
-      // instead of following it; fulfill with a stub so the test browser stays
-      // on the connect surface rather than navigating to Google.
-      const resp = await route.fetch({ maxRedirects: 0 });
-      location = (resp.headers()['location'] ?? '').trim();
-      await route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<html><body>OAuth start intercepted</body></html>',
-      });
-    });
-
-    await goto(page, '/data-sources/new?providerType=google_drive', {
-      orgId: bootstrap.orgId,
-      projectId,
-    });
-    await expect(page.getByTestId('ds-oauth-connect')).toBeVisible();
-    await page.getByTestId('ds-oauth-connect').click();
-    await expect.poll(() => location, { timeout: 30_000 }).not.toBe('');
-    await page.unroute('**/data-sources/oauth/start*');
-    expect(location, 'UI OAuth start must redirect to a Google authorize URL').not.toBe('');
-
-    const authUrl = new URL(location);
-    expect(authUrl.origin + authUrl.pathname, 'authorize URL must point at Google').toBe(
-      'https://accounts.google.com/o/oauth2/v2/auth',
-    );
-    expect(authUrl.searchParams.get('client_id')).toBe(CLIENT_ID);
-    expect(authUrl.searchParams.get('redirect_uri')).toBe(redirectUri);
-    expect(authUrl.searchParams.get('scope') ?? '').toContain('drive.readonly');
-    expect(authUrl.searchParams.get('access_type')).toBe('offline');
-    expect(authUrl.searchParams.get('prompt')).toBe('consent');
-    expect(authUrl.searchParams.get('response_type')).toBe('code');
-    expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(authUrl.searchParams.get('state') ?? '').not.toBe('');
-    expect(authUrl.searchParams.get('code_challenge') ?? '').not.toBe('');
-
-    await test.info().attach('google-oauth-authorize-url', {
-      body: location,
-      contentType: 'text/uri-list',
-    });
-    // Clear marker so the human can find the URL in the log.
-    console.log(
-      '[gdrive-live] ⚠️ AUTHORIZE URL (open in a browser, grant consent for the fixture account):\n' +
-        location,
-    );
-
-    // 4. Poll for the source the memory OAuth callback creates (state carries
-    //    the scratch project). The human completes consent in their own browser.
-    const deadline = Date.now() + OAUTH_WAIT_MS;
-    let source: DsIntegration | null = null;
-    while (Date.now() < deadline) {
-      const listResp = await page.request.get('/api/data-source-integrations');
-      if (listResp.ok()) {
-        const items = (await listResp.json().catch(() => [])) as DsIntegration[];
-        const found = items.find(
-          (s) =>
-            s.providerType === 'google_drive' &&
-            // The integration JSON carries projectId (gateway DSIntegration);
-            // require it to avoid adopting a source owned by another project.
-            (s.projectId === undefined || s.projectId === projectId),
-        );
-        if (found) {
-          source = found;
-          break;
-        }
-      }
-      await page.waitForTimeout(5_000);
-    }
+    const seeded = await seedSource(page, projectId, folderId, `E2E gdrive live ${nonce}`);
+    sourceId = seeded.id;
+    expect(sourceId, 'seed must return the source id').not.toBe('');
     expect(
-      source,
-      `no google_drive source appeared within ${OAUTH_WAIT_MS}ms. Open the printed ` +
-        'AUTHORIZE URL and finish consent; if Google landed elsewhere, check the ' +
-        'server SOURCES_OAUTH_LANDING_URL config. The OAuth state expires in ~10 min.',
-    ).toBeTruthy();
-    sourceId = source!.id;
+      seeded.config['folder_id'],
+      'seeded source config must round-trip the stored folder_id',
+    ).toBe(folderId);
 
-    // The browser-visible landing after consent must resolve. The callback and
-    // create paths emit the SCOPED source URL; an unscoped hit is re-scoped by
-    // the gateway instead of 404ing (a real connect landed on the unscoped
-    // path and dead-ended).
-    const landing = await page.request.get(`/data-sources/${sourceId}?created=1`, {
-      maxRedirects: 0,
-    });
-    expect(landing.status(), 'unscoped /data-sources must redirect, not 404').toBe(303);
-    expect(landing.headers()['location'] ?? '').toContain(
-      `/o/${bootstrap.orgId}/p/${projectId}/data-sources/${sourceId}`,
-    );
-
-    // 5. The callback created the source with NO sync target (the connect sent
-    //    no config — the shipped #1988 fix). The detail page must therefore
-    //    prompt for a folder: assert the ds-resource-needed banner + link, walk
-    //    the resource step, and select the scratch folder. After the save the
-    //    edit form prefills the stored folder (config round-trip). Explicit
-    //    scope again: goto defaults to the bootstrap project, which would build
-    //    /o/{org}/p/{bootstrap}/data-sources/{id} → 404 for a scratch-owned
-    //    source (and reset the session's active project).
-    await goto(page, `/data-sources/${sourceId}?created=1`, {
-      orgId: bootstrap.orgId,
-      projectId,
-    });
+    // 3. Detail page prefills the stored folder (config round-trip).
+    await goto(page, `/data-sources/${sourceId}`, { orgId: bootstrap.orgId, projectId });
     await expect(page.getByTestId('ds-edit-form')).toBeVisible();
-    await expect(
-      page.getByTestId('ds-resource-needed'),
-      'detail page must prompt for a sync target when none is selected',
-    ).toBeVisible();
-    await expect(
-      page.getByTestId('ds-resource-needed-link'),
-      'resource prompt must link to the resource step',
-    ).toBeVisible();
+    await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
 
-    await expect(page.getByTestId('ds-resource-needed-link')).toHaveAttribute(
-      'href',
-      new RegExp(`/data-sources/${sourceId}/resources$`),
-    );
-
-    // Navigate directly instead of clicking the banner: the app shell boosts
-    // every anchor with htmx (hx-boost + #main-content swap) and the boosted
-    // navigation intermittently no-ops in this live environment (no request, no
-    // swap), which would make this gate flaky without saying anything about the
-    // resource step. The banner and its href are asserted above.
+    // 4. Resource step: the unfiltered listing of this huge account must report
+    //    truncation and return well inside the budget (the bounded walk, #1993).
+    const t0 = Date.now();
     await goto(page, `/data-sources/${sourceId}/resources`, {
       orgId: bootstrap.orgId,
       projectId,
     });
     await expect(page.getByTestId('ds-resource-step'), 'resource step must render').toBeVisible();
+    await expect(
+      page.getByTestId('ds-resource-truncated'),
+      'unfiltered listing must report truncation (ds-resource-truncated)',
+    ).toBeVisible({ timeout: 60_000 });
+    const unfilteredMs = Date.now() - t0;
+    console.log(`[gdrive-live] unfiltered resource listing rendered in ${unfilteredMs}ms`);
+    await test.info().attach('resource-listing-timing', {
+      body: `unfiltered=${unfilteredMs}ms`,
+      contentType: 'text/plain',
+    });
+    expect(
+      unfilteredMs,
+      `unfiltered listing must return well inside the ${RESOURCE_LISTING_BUDGET_MS}ms budget`,
+    ).toBeLessThan(RESOURCE_LISTING_BUDGET_MS);
 
-    // The resource step is searchable: filter by the scratch folder's name. The
-    // GET form round-trips through ?q= and the folder row survives the filter.
-    await page.getByTestId('ds-resource-search').fill(`e2e-gdrive-${nonce}`);
+    // Search by the scratch folder's name; only it (nothing stale) survives.
+    await page.getByTestId('ds-resource-search').fill(folderName);
     await page.getByTestId('ds-resource-search-submit').click();
     await page.waitForURL(/[?&]q=/, { timeout: 15_000 });
-    expect(page.url()).toContain(`e2e-gdrive-${nonce}`);
-
+    expect(page.url(), 'search URL must carry the folder name').toContain(folderName);
     const folderRow = page
       .getByTestId('ds-resource-row')
       .filter({ has: page.locator(`input[name="resource_id"][value="${folderId}"]`) });
@@ -424,9 +439,14 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
       folderRow,
       `resource step must list the scratch folder ${folderId}`,
     ).toHaveCount(1);
+    await expect(
+      page.getByTestId('ds-resource-row'),
+      'search must list the scratch folder and nothing stale',
+    ).toHaveCount(1);
+
+    // 5. Save the picked folder → edit form prefills the stored folder (round-trip).
     await folderRow.getByTestId('ds-resource-select').click();
     await page.waitForURL(/\?updated=1/, { timeout: 30_000 });
-
     await expect(page.getByTestId('ds-edit-form')).toBeVisible();
     await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
 
@@ -436,68 +456,19 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
       timeout: 30_000,
     });
 
-    // 6. v1: create the file, sync, assert document version 1.
-    const created = await gdrive.uploadTextFile(folderId, filename, CONTENT_V1);
-    createdFileId = created.id;
-    await triggerAndWait(page, sourceId, 'first sync');
-
-    let docs = await listDocs(page, projectId, false);
-    let doc = docs.find((d) => d.filename === filename);
-    expect(doc, `first sync must create a document named "${filename}"`).toBeTruthy();
-    expect(doc!.version).toBe(1);
-    expect(doc!.sourceStatus).toBe('active');
-    const rev1 = doc!.sourceRevisionId ?? '';
-    expect(rev1, 'v1 must carry a source revision').not.toBe('');
-    expect(rev1).toBe(created.headRevisionId ?? '');
-    const canonicalId = doc!.canonicalId;
-    expect(canonicalId).not.toBe('');
-
-    // 7. v2: rewrite the file, prove the revision moved BEFORE re-sync (the
-    //    worker skips unchanged head revisions), then sync to a new version.
-    const updated = await gdrive.updateFileContent(created.id, CONTENT_V2);
-    const rev2 = updated.headRevisionId ?? '';
-    expect(rev2, 'edited file must carry a headRevisionId').not.toBe('');
-    expect(rev2, 'edit must advance the Drive head revision').not.toBe(rev1);
-
-    await triggerAndWait(page, sourceId, 'second sync');
-
-    docs = await listDocs(page, projectId, false);
-    doc = docs.find((d) => d.filename === filename);
-    expect(doc, `re-sync must keep a head document named "${filename}"`).toBeTruthy();
-    expect(doc!.version).toBe(2);
-    expect(doc!.sourceStatus).toBe('active');
-    expect(doc!.canonicalId, 'v2 must share the v1 canonicalId').toBe(canonicalId);
-    expect(doc!.sourceRevisionId ?? '').toBe(rev2);
-
-    let versions = await listVersions(page, projectId, doc!.id);
-    expect(versions, 'version history must list v1 and v2').toHaveLength(2);
-    expect(versions.map((v) => v.version)).toEqual([1, 2]);
-    expect(versions.map((v) => v.canonicalId)).toEqual([canonicalId, canonicalId]);
-    expect(versions.map((v) => v.sourceRevisionId)).toEqual([rev1, rev2]);
-
-    // The point of the v2 check is content RETENTION, not just metadata: the
-    // v1 body must survive as an immutable earlier version, and the head must
-    // carry the v2 body. versions[] is oldest-first, so [0] is v1.
-    const v1Content = await getContent(page, projectId, versions[0].id);
-    expect(v1Content, 'v1 version must retain the v1 body').toContain('version one');
-    expect(v1Content, 'v1 version must not contain the v2 body').not.toContain('version two');
-    const headContent = await getContent(page, projectId, doc!.id);
-    expect(headContent, 'head document must carry the v2 body').toContain('version two');
-
-    // 8. Trash the file → sync → the head is marked deleted_from_source (and
-    //    the default document listing drops it).
-    await gdrive.trashFile(created.id);
-    await triggerAndWait(page, sourceId, 'trash sync');
-
-    docs = await listDocs(page, projectId, true);
-    doc = docs.find((d) => d.filename === filename);
-    expect(doc, 'deleted-from-source head must remain in the include-deleted listing').toBeTruthy();
-    expect(doc!.sourceStatus).toBe('deleted_from_source');
-
-    versions = await listVersions(page, projectId, doc!.id);
-    expect(versions).toHaveLength(2);
-    const head = versions[versions.length - 1];
-    expect(head.sourceStatus).toBe('deleted_from_source');
+    // 6. Full version lifecycle against the seeded source.
+    const ev = await exerciseSyncLifecycle(page, gdrive, projectId, sourceId, folderId, filename);
+    createdFileId = ev.createdFileId;
+    console.log(
+      `[gdrive-live] sync evidence: doc=${ev.docId} v1=${ev.v1VersionId} (rev ${ev.rev1}) ` +
+        `v2=${ev.v2VersionId} (rev ${ev.rev2}) canonical=${ev.canonicalId}`,
+    );
+    await test.info().attach('sync-evidence', {
+      body:
+        `doc=${ev.docId}\ncanonical=${ev.canonicalId}\n` +
+        `v1=${ev.v1VersionId} rev1=${ev.rev1}\nv2=${ev.v2VersionId} rev2=${ev.rev2}\n`,
+      contentType: 'text/plain',
+    });
   } finally {
     // Best-effort cleanup, idempotent across repeated runs / skips / failures.
     if (sourceId) {
@@ -520,4 +491,231 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
         .catch(() => {});
     }
   }
+});
+
+// The human-consent OAuth path, retained ONLY for a manual consent check. It is
+// skipped unless E2E_GDRIVE_LIVE_CONSENT=1 so it never runs unattended (and never
+// in CI). It configures the project OAuth app, intercepts the authorize URL for
+// a human to open, and polls for the callback-created source — the exact flow the
+// seeded test above replaces by default.
+test.describe('manual OAuth consent connect (opt-in)', () => {
+  test.skip(
+    !CONSENT,
+    'E2E_GDRIVE_LIVE_CONSENT=1 required: the consent path needs a human to finish Google OAuth.',
+  );
+
+  test('project OAuth app → consent → live Drive folder → sync → edit → v2 → trash → deleted_from_source', async ({
+    page,
+  }) => {
+    const missing = missingEnv();
+    test.skip(
+      missing.length > 0,
+      'Google Drive live gate is opt-in and needs real Google credentials. Missing: ' +
+        missing.join(', ') +
+        '. See tests/e2e/.env.e2e.example and README ("Live Google Drive gate").',
+    );
+    test.setTimeout(12 * 60_000);
+
+    const bootstrap = requireBootstrap();
+    const gdrive = new GDriveFixture(CLIENT_ID, CLIENT_SECRET, FIXTURE_REFRESH_TOKEN);
+    const nonce = Date.now().toString(36);
+    const folderName = `e2e-gdrive-${nonce}`;
+    const filename = `${folderName}.txt`;
+    let projectId = '';
+    let sourceId = '';
+    let createdFolderId = '';
+    let createdFileId = '';
+
+    try {
+      projectId = await createProject(page, bootstrap.orgId, `E2E gdrive live ${nonce}`);
+
+      try {
+        await gdrive.getFile('root');
+      } catch (e) {
+        throw new Error(
+          'Google Drive fixture pre-flight failed: check E2E_GDRIVE_FIXTURE_REFRESH_TOKEN ' +
+            '(re-issue via scripts/gdrive-fixture-token.mjs) and the client id/secret. ' +
+            `Underlying error: ${(e as Error).message}`,
+        );
+      }
+
+      // Configure the PROJECT-scoped Drive OAuth client via the Credentials table.
+      // Explicit scope: goto defaults to the bootstrap project, which would
+      // configure the wrong project and reset the session's active project.
+      await goto(page, '/settings/credentials', { orgId: bootstrap.orgId, projectId });
+      await expect(page.getByTestId('ds-credentials')).toBeVisible();
+      await page
+        .locator(
+          '[data-testid="ds-credential-row"][data-provider="google_drive"][data-scope="project"]',
+        )
+        .getByTestId('ds-credential-manage')
+        .click();
+      await expect(page.getByTestId('ds-credential-detail')).toBeVisible();
+      const driveForm = page.getByTestId('ds-oauth-client-form');
+      await expect(driveForm, 'Drive OAuth client card must render').toHaveCount(1);
+      await driveForm.getByTestId('ds-field-client_id').fill(CLIENT_ID);
+      await driveForm.getByTestId('ds-field-client_secret').fill(CLIENT_SECRET);
+      await driveForm.getByTestId('ds-field-strategy').selectOption('drive.readonly');
+      await driveForm.getByRole('button', { name: 'Save', exact: true }).click();
+      await page.waitForURL(/saved=1/, { timeout: 30_000 });
+
+      const redirectUriEl = page.getByTestId('ds-oauth-redirect-uri');
+      await expect(redirectUriEl, 'OAuth client card must show the resolved redirect URI').toHaveCount(1);
+      await expect(redirectUriEl).toHaveValue(/\S/);
+      const redirectUri = (await redirectUriEl.inputValue()).trim();
+
+      // Create the scratch Drive folder up front, then start the connect from the
+      // real UI connect surface and intercept the authorize URL for the human.
+      const folderId = FOLDER_ID || (await gdrive.createFolder(folderName));
+      if (!FOLDER_ID) createdFolderId = folderId;
+
+      let location = '';
+      await page.route('**/data-sources/oauth/start*', async (route) => {
+        const resp = await route.fetch({ maxRedirects: 0 });
+        location = (resp.headers()['location'] ?? '').trim();
+        await route.fulfill({
+          status: 200,
+          contentType: 'text/html',
+          body: '<html><body>OAuth start intercepted</body></html>',
+        });
+      });
+
+      await goto(page, '/data-sources/new?providerType=google_drive', {
+        orgId: bootstrap.orgId,
+        projectId,
+      });
+      await expect(page.getByTestId('ds-oauth-connect')).toBeVisible();
+      await page.getByTestId('ds-oauth-connect').click();
+      await expect.poll(() => location, { timeout: 30_000 }).not.toBe('');
+      await page.unroute('**/data-sources/oauth/start*');
+      expect(location, 'UI OAuth start must redirect to a Google authorize URL').not.toBe('');
+
+      const authUrl = new URL(location);
+      expect(authUrl.origin + authUrl.pathname, 'authorize URL must point at Google').toBe(
+        'https://accounts.google.com/o/oauth2/v2/auth',
+      );
+      expect(authUrl.searchParams.get('client_id')).toBe(CLIENT_ID);
+      expect(authUrl.searchParams.get('redirect_uri')).toBe(redirectUri);
+      expect(authUrl.searchParams.get('scope') ?? '').toContain('drive.readonly');
+      expect(authUrl.searchParams.get('access_type')).toBe('offline');
+      expect(authUrl.searchParams.get('prompt')).toBe('consent');
+      expect(authUrl.searchParams.get('response_type')).toBe('code');
+      expect(authUrl.searchParams.get('code_challenge_method')).toBe('S256');
+      expect(authUrl.searchParams.get('state') ?? '').not.toBe('');
+      expect(authUrl.searchParams.get('code_challenge') ?? '').not.toBe('');
+
+      await test.info().attach('google-oauth-authorize-url', {
+        body: location,
+        contentType: 'text/uri-list',
+      });
+      console.log(
+        '[gdrive-live] ⚠️ AUTHORIZE URL (open in a browser, grant consent for the fixture account):\n' +
+          location,
+      );
+
+      // Poll for the source the memory OAuth callback creates.
+      const deadline = Date.now() + OAUTH_WAIT_MS;
+      let source: DsIntegration | null = null;
+      while (Date.now() < deadline) {
+        const listResp = await page.request.get('/api/data-source-integrations');
+        if (listResp.ok()) {
+          const items = (await listResp.json().catch(() => [])) as DsIntegration[];
+          const found = items.find(
+            (s) =>
+              s.providerType === 'google_drive' &&
+              (s.projectId === undefined || s.projectId === projectId),
+          );
+          if (found) {
+            source = found;
+            break;
+          }
+        }
+        await page.waitForTimeout(5_000);
+      }
+      expect(
+        source,
+        `no google_drive source appeared within ${OAUTH_WAIT_MS}ms. Open the printed ` +
+          'AUTHORIZE URL and finish consent; if Google landed elsewhere, check the ' +
+          'server SOURCES_OAUTH_LANDING_URL config. The OAuth state expires in ~10 min.',
+      ).toBeTruthy();
+      sourceId = source!.id;
+
+      // The browser-visible landing after consent must resolve.
+      const landing = await page.request.get(`/data-sources/${sourceId}?created=1`, {
+        maxRedirects: 0,
+      });
+      expect(landing.status(), 'unscoped /data-sources must redirect, not 404').toBe(303);
+      expect(landing.headers()['location'] ?? '').toContain(
+        `/o/${bootstrap.orgId}/p/${projectId}/data-sources/${sourceId}`,
+      );
+
+      // The callback created the source with NO sync target — assert the
+      // ds-resource-needed banner + link, then walk the resource step.
+      await goto(page, `/data-sources/${sourceId}?created=1`, {
+        orgId: bootstrap.orgId,
+        projectId,
+      });
+      await expect(page.getByTestId('ds-edit-form')).toBeVisible();
+      await expect(
+        page.getByTestId('ds-resource-needed'),
+        'detail page must prompt for a sync target when none is selected',
+      ).toBeVisible();
+      await expect(
+        page.getByTestId('ds-resource-needed-link'),
+        'resource prompt must link to the resource step',
+      ).toBeVisible();
+      await expect(page.getByTestId('ds-resource-needed-link')).toHaveAttribute(
+        'href',
+        new RegExp(`/data-sources/${sourceId}/resources$`),
+      );
+
+      // Navigate directly (the app shell's htmx boost intermittently no-ops live).
+      await goto(page, `/data-sources/${sourceId}/resources`, {
+        orgId: bootstrap.orgId,
+        projectId,
+      });
+      await expect(page.getByTestId('ds-resource-step'), 'resource step must render').toBeVisible();
+
+      await page.getByTestId('ds-resource-search').fill(folderName);
+      await page.getByTestId('ds-resource-search-submit').click();
+      await page.waitForURL(/[?&]q=/, { timeout: 15_000 });
+      expect(page.url()).toContain(folderName);
+
+      const folderRow = page
+        .getByTestId('ds-resource-row')
+        .filter({ has: page.locator(`input[name="resource_id"][value="${folderId}"]`) });
+      await expect(folderRow, `resource step must list the scratch folder ${folderId}`).toHaveCount(1);
+      await folderRow.getByTestId('ds-resource-select').click();
+      await page.waitForURL(/\?updated=1/, { timeout: 30_000 });
+
+      await expect(page.getByTestId('ds-edit-form')).toBeVisible();
+      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
+
+      await page.getByTestId('ds-test-connection').click();
+      await expect(page.getByTestId('ds-test-result')).toContainText(/connection successful/i, {
+        timeout: 30_000,
+      });
+
+      const ev = await exerciseSyncLifecycle(page, gdrive, projectId, sourceId, folderId, filename);
+      createdFileId = ev.createdFileId;
+    } finally {
+      if (sourceId) {
+        await page.request.delete(`/api/data-source-integrations/${sourceId}`).catch(() => {});
+      }
+      if (createdFileId) {
+        await gdrive.deleteFile(createdFileId).catch(() => {});
+      }
+      if (createdFolderId) {
+        await gdrive.deleteFolder(createdFolderId).catch(() => {});
+      }
+      if (bootstrap.projectId) {
+        await page.request.post(`/api/projects/${bootstrap.projectId}/activate`).catch(() => {});
+      }
+      if (projectId && bootstrap.orgId) {
+        await page.request
+          .post(`/projects/delete?projectId=${projectId}&orgId=${bootstrap.orgId}`)
+          .catch(() => {});
+      }
+    }
+  });
 });
