@@ -54,7 +54,7 @@ func (s *Server) uiOAuthLandingMCPServers(c echo.Context) error {
 // the target is always built from this server's own scope base, so nothing
 // here can be turned into an open redirect.
 func (s *Server) oauthLanding(c echo.Context, path string, outcomeParams ...string) error {
-	base, ok := s.oauthLandingScope(c)
+	orgID, projectID, ok := s.oauthLandingScope(c)
 	if !ok {
 		// No project resolved (e.g. the state expired and the session carries no
 		// project): the global root picks a landing from the live account and
@@ -62,6 +62,16 @@ func (s *Server) oauthLanding(c echo.Context, path string, outcomeParams ...stri
 		// user did not come from.
 		return c.Redirect(http.StatusSeeOther, "/")
 	}
+	// A landing places the user in project X: persist X as the session's active
+	// project so the follow-up GET/POST from the scoped page resolves to X, not
+	// the previously active project. Without this, an unscoped form action on
+	// the landed page (e.g. the resource-step save) is silently retargeted to
+	// the cookie's still-active project and the just-connected source 404s.
+	// activateProjectInSession re-issues the cookie preserving tokens/expiry,
+	// records the project in recent-projects, and no-ops when there is no
+	// session (dev/API-key) or it has expired.
+	s.activateProjectInSession(c, projectID, orgID)
+	base := projectScopeURL(orgID, projectID)
 	q := url.Values{}
 	for _, p := range outcomeParams {
 		if v := c.QueryParam(p); v != "" {
@@ -75,8 +85,8 @@ func (s *Server) oauthLanding(c echo.Context, path string, outcomeParams ...stri
 	return c.Redirect(http.StatusSeeOther, target)
 }
 
-// oauthLandingScope resolves the scope a callback should land in, as a
-// (/o/{org}/p/{project}) base. Preference order:
+// oauthLandingScope resolves the scope a callback should land in, returning the
+// concrete org/project ids. Preference order:
 //
 //  1. the scope_project hint, when it resolves within the caller's tree;
 //  2. the session's active project;
@@ -86,15 +96,15 @@ func (s *Server) oauthLanding(c echo.Context, path string, outcomeParams ...stri
 //
 // Every candidate is validated against the access tree; an inaccessible or
 // stale value is skipped, never surfaced as an error.
-func (s *Server) oauthLandingScope(c echo.Context) (string, bool) {
+func (s *Server) oauthLandingScope(c echo.Context) (orgID, projectID string, ok bool) {
 	tree, err := s.orgAccessTree(c)
 	if err != nil {
 		captureError(err)
-		return "", false
+		return "", "", false
 	}
 	if ref := strings.TrimSpace(c.QueryParam(oauthScopeProjectParam)); ref != "" {
 		if orgID, projectID, ok := resolveProjectRefAnyOrg(tree, ref); ok {
-			return projectScopeURL(orgID, projectID), true
+			return orgID, projectID, true
 		}
 	}
 	for _, id := range s.oauthLandingFallbackProjects(c) {
@@ -102,10 +112,10 @@ func (s *Server) oauthLandingScope(c echo.Context) (string, bool) {
 			continue
 		}
 		if orgID, projectID, ok := resolveProjectRefAnyOrg(tree, id); ok {
-			return projectScopeURL(orgID, projectID), true
+			return orgID, projectID, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 // oauthLandingFallbackProjects lists the project ids to try when the callback
