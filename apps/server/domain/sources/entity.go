@@ -104,7 +104,9 @@ type Provider struct {
 	Strategies []string `json:"strategies,omitempty"`
 }
 
-// ProviderSchema mirrors pkg/sdk/datasources.ProviderSchema.
+// ProviderSchema mirrors pkg/sdk/datasources.ProviderSchema. Properties includes
+// both the non-secret config fields and the provider's write-only credential
+// fields (marked writeOnly), so a form can be rendered from one schema.
 type ProviderSchema struct {
 	Type       string         `json:"type"`
 	Properties map[string]any `json:"properties"`
@@ -179,6 +181,13 @@ type UpdateIntegrationRequest struct {
 
 // TestConfigRequest mirrors pkg/sdk/datasources.TestConfigRequest.
 type TestConfigRequest struct {
+	ProviderType string         `json:"providerType"`
+	Config       map[string]any `json:"config"`
+}
+
+// ProviderListRequest mirrors TestConfigRequest for a credential-scoped listing
+// (repositories, refs) of an unsaved provider config. Nothing is persisted.
+type ProviderListRequest struct {
 	ProviderType string         `json:"providerType"`
 	Config       map[string]any `json:"config"`
 }

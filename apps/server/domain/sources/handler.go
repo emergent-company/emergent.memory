@@ -187,6 +187,64 @@ func (h *Handler) ListResources(c echo.Context) error {
 	return c.JSON(http.StatusOK, resources)
 }
 
+// ListProviderResources handles POST /api/data-source-integrations/resources.
+// @Summary      List a provider's resources from unsaved credentials
+// @Description  Lists the selectable sync targets (Drive folders, GitHub repositories) for an unsaved provider config. Nothing is persisted.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        request body ProviderListRequest true "Provider config carrying credentials"
+// @Success      200 {array} Resource "Selectable resources"
+// @Header       200 {string} X-Resources-Truncated "true when the provider returned only a page"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/resources [post]
+// @Security     bearerAuth
+func (h *Handler) ListProviderResources(c echo.Context) error {
+	var req ProviderListRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	resources, truncated, err := h.svc.ListProviderResources(c.Request().Context(), &req)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		c.Response().Header().Set("X-Resources-Truncated", "true")
+	}
+	return c.JSON(http.StatusOK, resources)
+}
+
+// ListProviderRefs handles POST /api/data-source-integrations/refs.
+// @Summary      List a resource's refs from unsaved credentials
+// @Description  Lists the branches and tags of the resource named in an unsaved provider config (a GitHub repository). Nothing is persisted.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        request body ProviderListRequest true "Provider config carrying credentials and the repository"
+// @Success      200 {array} Resource "Selectable refs"
+// @Header       200 {string} X-Resources-Truncated "true when the provider returned only a page"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/refs [post]
+// @Security     bearerAuth
+func (h *Handler) ListProviderRefs(c echo.Context) error {
+	var req ProviderListRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	refs, truncated, err := h.svc.ListProviderRefs(c.Request().Context(), &req)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		c.Response().Header().Set("X-Resources-Truncated", "true")
+	}
+	return c.JSON(http.StatusOK, refs)
+}
+
 // List handles GET /api/data-source-integrations.
 // @Summary      List data-source integrations
 // @Description  Returns the project's data-source integrations

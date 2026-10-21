@@ -143,6 +143,9 @@ type MemoryBackend interface {
 	UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)
 	DeleteProjectDSOAuthClient(ctx context.Context, projectID, providerType string) error
 	ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error)
+	// Credential-scoped listing for unsaved configs (connect-form pickers).
+	ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error)
+	ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error)
 	SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error)
 	GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error)
 	GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error)

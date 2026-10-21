@@ -9,8 +9,8 @@ import (
 
 // --- data-source integrations (JSON surface) ---
 
-// dsProviderTypeGoogleDrive is the only provider this iteration supports; the
-// connect form and the handler-side validation both key off it.
+// dsProviderTypeGoogleDrive names the Google Drive provider. The UI is
+// provider-driven; this constant is the catalog/test default.
 const dsProviderTypeGoogleDrive = "google_drive"
 
 // dsCredentialKeys are the config keys that carry OAuth2 credential material.
@@ -20,7 +20,7 @@ const dsProviderTypeGoogleDrive = "google_drive"
 // OAuth-only; the client is configured at project/org level), so the Drive form
 // renders no credential inputs — this list stays as the shared, provider-neutral
 // classification for any provider that still declares such a key.
-var dsCredentialKeys = []string{"client_id", "client_secret", "refresh_token"}
+var dsCredentialKeys = []string{"client_id", "client_secret", "refresh_token", "access_token"}
 
 // dsError maps a memory backend error onto a gateway response. Validation and
 // not-found pass through with their real status; everything else is a 502.
@@ -36,30 +36,6 @@ func dsError(c echo.Context, err error) error {
 	default:
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": msg})
 	}
-}
-
-// validateDSConfig enforces the google_drive config contract before a request
-// reaches memory: folder_id is required. Credentials are no longer part of the
-// per-integration config — OAuth client credentials are configured at the
-// project or org level, and the access token is obtained via the OAuth flow.
-func validateDSConfig(cfg map[string]any) string {
-	if cfg == nil {
-		return "config.folder_id is required"
-	}
-	if folderID, _ := cfg["folder_id"].(string); strings.TrimSpace(folderID) == "" {
-		return "config.folder_id is required"
-	}
-	return ""
-}
-
-// dsHasCredentialKeys reports whether any OAuth2 credential key is present.
-func dsHasCredentialKeys(cfg map[string]any) bool {
-	for _, k := range dsCredentialKeys {
-		if _, ok := cfg[k]; ok {
-			return true
-		}
-	}
-	return false
 }
 
 // listDSProviders implements GET /api/data-source-integrations/providers.
@@ -115,12 +91,6 @@ func (s *Server) testDSConfig(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	if req.ProviderType != dsProviderTypeGoogleDrive {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "providerType must be google_drive"})
-	}
-	if msg := validateDSConfig(req.Config); msg != "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": msg})
-	}
 	resp, err := s.memory.TestDSConfig(c.Request().Context(), &req)
 	if err != nil {
 		return dsError(c, err)
@@ -164,12 +134,6 @@ func (s *Server) createDSIntegration(c echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
-	if req.ProviderType != dsProviderTypeGoogleDrive {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "providerType must be google_drive"})
-	}
-	if msg := validateDSConfig(req.Config); msg != "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": msg})
-	}
 	item, err := s.memory.CreateDSIntegration(c.Request().Context(), &req)
 	if err != nil {
 		return dsError(c, err)
@@ -182,11 +146,6 @@ func (s *Server) updateDSIntegration(c echo.Context) error {
 	var req DSUpdateIntegrationRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-	}
-	if req.Config != nil {
-		if folderID, _ := req.Config["folder_id"].(string); strings.TrimSpace(folderID) == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "config.folder_id is required"})
-		}
 	}
 	item, err := s.memory.UpdateDSIntegration(c.Request().Context(), c.Param("id"), &req)
 	if err != nil {

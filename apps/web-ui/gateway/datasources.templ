@@ -361,21 +361,21 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 					<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
 							<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
-							<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder="Team Drive"/>
+							<input id="name" name="name" type="text" class="input input-bordered w-full" data-testid="ds-field-name" placeholder={ "e.g. " + p.Name + " docs" }/>
 						</div>
 						@dsSyncModeSelect("manual", nil)
 					</div>
 				}
 				@components.PanelCard("", nil) {
-					<h2 class="text-base font-semibold">Folder scope</h2>
-					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { The folder to sync, plus optional filters. }
+					<h2 class="text-base font-semibold">Sync scope</h2>
+					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { The repository or folder to sync, plus optional filters. }
 					<div class="mt-3">
 						@dsConfigFieldInputs(configFields)
 					</div>
 				}
 				@components.PanelCard("", nil) {
 					<h2 class="text-base font-semibold">Credentials</h2>
-					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { OAuth2 credentials are stored encrypted and are never shown again. }
+					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Credentials are stored encrypted and are never shown again. }
 					<div class="mt-3">
 						@dsCredentialFieldInputs(credentialFields)
 					</div>
@@ -459,9 +459,10 @@ templ dsConfigFieldInputs(fields []dsConfigField) {
 }
 
 // dsConfigFieldInput renders one config field by its schema type: a text input,
-// a textarea for arrays, or a checkbox for booleans. Non-credential fields are
-// prefilled from the source's stored config (Value/Checked); the connect form
-// passes zero values.
+// a textarea for arrays, or a checkbox for booleans. A field whose schema
+// declares x-ui-widget="resource"|"ref" also gets a load button that fills a
+// datalist from the provider's credential-scoped listing; the text input stays
+// authoritative so a manual value is always submittable.
 templ dsConfigFieldInput(f dsConfigField) {
 	if f.Type == "boolean" {
 		<div class="flex flex-col gap-1">
@@ -472,6 +473,37 @@ templ dsConfigFieldInput(f dsConfigField) {
 			if f.Description != "" {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
 			}
+		</div>
+	} else if f.dsIsPicker() {
+		<div class="flex flex-col gap-1 sm:col-span-2">
+			<label class="text-sm font-medium" for={ f.Key }>{ f.Label }
+				if f.Required {
+					<span class="text-error" aria-hidden="true">*</span>
+				}
+			</label>
+			if f.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
+			}
+			<div class="flex flex-col gap-2 sm:flex-row">
+				<input id={ f.Key } name={ f.Key } type="text" list={ f.dsOptionsListID() } class="input w-full" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--list",
+					Attrs: templ.Attributes{
+						"data-testid": f.dsLoadTestID(),
+						"hx-post":     f.dsLoadPath(),
+						"hx-include":  "closest form",
+						"hx-target":   "#" + f.dsPickerID(),
+						"hx-swap":     "innerHTML",
+						"class":       "shrink-0",
+					},
+				}) {
+					{ f.dsLoadLabel() }
+				}
+			</div>
+			<div id={ f.dsPickerID() } data-testid={ f.dsPickerID() }></div>
 		</div>
 	} else {
 		<div class={ "flex flex-col gap-1", templ.KV("sm:col-span-2", f.Type == "array") }>
@@ -489,6 +521,22 @@ templ dsConfigFieldInput(f dsConfigField) {
 				<input id={ f.Key } name={ f.Key } type="text" class="input input-bordered w-full" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
 			}
 		</div>
+	}
+}
+
+// DSOptionsPartial is the HTMX swap result for a suggestion picker: a datalist
+// for the field's input plus a status line. A listing failure renders an inline
+// message and leaves the text input usable, so the form never gets stuck.
+templ DSOptionsPartial(fieldKey string, items []DSResource, truncated bool, err error) {
+	if err != nil {
+		<div class="text-sm text-error" data-testid="ds-options-error">{ err.Error() }</div>
+	} else {
+		<datalist id={ "ds-options-" + fieldKey }>
+			for _, item := range items {
+				<option value={ item.ID }>{ dsOptionLabel(item) }</option>
+			}
+		</datalist>
+		<div class="text-xs opacity-70" data-testid="ds-options-status">{ dsOptionsStatus(len(items), truncated) }</div>
 	}
 }
 
@@ -624,7 +672,7 @@ templ dsConnectionCard(src *DSIntegration) {
 				@ui.IconTile("lucide--plug-zap", ui.IconTileProps{Tone: "info"})
 				<div>
 					<h2 class="text-base font-semibold">Connection</h2>
-					@ui.EmptyNote() { Test the stored credentials against Google Drive. }
+					@ui.EmptyNote() { Test the stored credentials and scope against the provider. }
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{
@@ -650,6 +698,7 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 	@components.PanelCard("", nil) {
 		<h2 class="text-base font-semibold">Settings</h2>
 		<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/update") } data-testid="ds-edit-form" class="mt-3 flex flex-col gap-4">
+			<input type="hidden" name="providerType" value={ src.ProviderType }/>
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div class="flex flex-col gap-1">
 					<label class="text-sm font-medium" for="name">Name</label>
@@ -658,15 +707,15 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 				@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
 			</div>
 			<div>
-				<h3 class="text-sm font-semibold">Folder scope</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Your stored folder and options are shown below. Credential fields are write-only and never shown. }
+				<h3 class="text-sm font-semibold">Sync scope</h3>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Your stored scope and options are shown below. Credential fields are write-only and never shown. }
 				<div class="mt-3">
 					@dsConfigFieldInputs(configFields)
 				</div>
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold">Credentials</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Stored credentials are never returned. Leave blank to keep the current credentials; fill all three to replace them. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Stored credentials are never returned. Leave the credential fields blank to keep the current credentials; fill them all to replace them. }
 				<div class="mt-3">
 					@dsCredentialFieldInputs(credentialFields)
 				</div>
@@ -694,7 +743,7 @@ templ dsSyncHistory(sourceID string, jobs []DSSyncJob) {
 				@countBadgeLabel(strconv.Itoa(len(jobs))+" job"+plural(len(jobs)), "lucide--list")
 			</div>
 			if len(jobs) == 0 {
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-sync-empty"}}) { No syncs yet. Trigger a sync to ingest the configured folder. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-sync-empty"}}) { No syncs yet. Trigger a sync to ingest the configured scope. }
 			} else {
 				<div class="mt-3 flex flex-col gap-3">
 					for _, job := range jobs {

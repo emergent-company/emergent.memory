@@ -89,6 +89,47 @@ func (s *SourcesHandlerSuite) TestSourceTypesEmpty() {
 	s.Require().NoError(resp.JSON(&out))
 }
 
+// TestProviderListingValidation verifies the credential-scoped listing
+// endpoints reject unknown providers, missing credentials, a missing repository,
+// and providers without ref support — all before any provider call.
+func (s *SourcesHandlerSuite) TestProviderListingValidation() {
+	cases := []struct {
+		name string
+		path string
+		body map[string]any
+	}{
+		{
+			name: "unknown provider",
+			path: "/api/data-source-integrations/resources",
+			body: map[string]any{"providerType": "imap", "config": map[string]any{}},
+		},
+		{
+			name: "missing token",
+			path: "/api/data-source-integrations/resources",
+			body: map[string]any{"providerType": "github", "config": map[string]any{}},
+		},
+		{
+			name: "refs without a repository",
+			path: "/api/data-source-integrations/refs",
+			body: map[string]any{"providerType": "github", "config": map[string]any{"access_token": "at"}},
+		},
+		{
+			name: "provider without ref support",
+			path: "/api/data-source-integrations/refs",
+			body: map[string]any{"providerType": "google_drive", "config": map[string]any{"refresh_token": "rt"}},
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			resp := s.Client.POST(tc.path,
+				testutil.WithAuth("e2e-test-user"),
+				testutil.WithProjectID(s.ProjectID),
+				testutil.WithJSONBody(tc.body))
+			s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode, resp.String())
+		})
+	}
+}
+
 // TestCreateValidation verifies missing folder_id and missing refresh_token are
 // rejected before any persistence.
 func (s *SourcesHandlerSuite) TestCreateValidation() {

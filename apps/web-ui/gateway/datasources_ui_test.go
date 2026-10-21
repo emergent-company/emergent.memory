@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -501,6 +502,8 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.POST("/data-sources/new", s.uiDataSourceCreate)
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
+	e.POST("/data-sources/repos", s.uiDataSourceRepos)
+	e.POST("/data-sources/refs", s.uiDataSourceRefs)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
@@ -590,7 +593,7 @@ func TestUIDataSourceTestConfigPartial(t *testing.T) {
 	f := &fakeMemory{dsTestConfigResp: &DSTestConnectionResponse{Success: true, Message: "connection successful"}}
 	e := newDSUIServer(f)
 
-	form := strings.NewReader("folder_id=f1&refresh_token=tok")
+	form := strings.NewReader("providerType=google_drive&folder_id=f1")
 	req := httptest.NewRequest(http.MethodPost, "/data-sources/test-config", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -611,7 +614,7 @@ func TestUIDataSourceTestConfigFailurePartial(t *testing.T) {
 	f := &fakeMemory{dsTestConfigResp: &DSTestConnectionResponse{Success: false, Message: "invalid credentials"}}
 	e := newDSUIServer(f)
 
-	form := strings.NewReader("folder_id=f1&refresh_token=tok")
+	form := strings.NewReader("providerType=google_drive&folder_id=f1")
 	req := httptest.NewRequest(http.MethodPost, "/data-sources/test-config", form)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -620,6 +623,257 @@ func TestUIDataSourceTestConfigFailurePartial(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "invalid credentials") {
 		t.Errorf("failure partial = %s", rec.Body.String())
 	}
+}
+
+// githubSchema is the connect form's GitHub contract as the server now serves it:
+// config fields plus the write-only access token, with the two picker hints.
+func githubSchema() *DSProviderSchema {
+	return &DSProviderSchema{
+		Type: "github",
+		Properties: map[string]any{
+			"repo":         map[string]any{"type": "string", "x-ui-widget": "resource"},
+			"ref":          map[string]any{"type": "string", "x-ui-widget": "ref"},
+			"paths":        map[string]any{"type": "array"},
+			"extensions":   map[string]any{"type": "array"},
+			"access_token": map[string]any{"type": "string", "writeOnly": true, "label": "Personal access token"},
+		},
+		Required: []string{"repo", "access_token"},
+	}
+}
+
+func TestRenderGitHubConnectFormPickers(t *testing.T) {
+	p := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}
+	configFields, credentialFields := dsConfigFields(githubSchema(), nil)
+	form := renderHTML(t, DataSourceNewPage([]DSProvider{*p}, p, configFields, credentialFields, nil, nil, nil))
+
+	for _, want := range []string{
+		`name="providerType" value="github"`,
+		`data-testid="ds-field-repo"`,
+		`list="ds-options-repo"`,
+		`data-testid="ds-load-repos"`,
+		`hx-post="/data-sources/repos"`,
+		`data-testid="ds-field-ref"`,
+		`list="ds-options-ref"`,
+		`data-testid="ds-load-refs"`,
+		`hx-post="/data-sources/refs"`,
+		`data-testid="ds-field-access_token"`,
+		`type="password"`,
+		"Personal access token",
+		"Sync scope",
+	} {
+		if !strings.Contains(form, want) {
+			t.Errorf("GitHub connect form missing %q", want)
+		}
+	}
+	if strings.Contains(form, `name="access_token" value`) {
+		t.Error("access_token must never be prefilled")
+	}
+}
+
+func TestUIDataSourceCreateUsesSelectedProvider(t *testing.T) {
+	f := &fakeMemory{dsSchema: githubSchema()}
+	e := newDSUIServer(f)
+
+	form := url.Values{
+		"providerType": {"github"},
+		"name":         {"Docs"},
+		"sync_mode":    {"manual"},
+		"repo":         {"acme/private-docs"},
+		"ref":          {"main"},
+		"access_token": {"ghp_test"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/ds-new?created=1" {
+		t.Errorf("create location = %q", loc)
+	}
+	if f.dsCreatedReq == nil {
+		t.Fatal("CreateDSIntegration was not called")
+	}
+	if f.dsCreatedReq.ProviderType != "github" {
+		t.Errorf("providerType = %q, want github (no Drive hardcode)", f.dsCreatedReq.ProviderType)
+	}
+	if f.dsCreatedReq.Config["repo"] != "acme/private-docs" || f.dsCreatedReq.Config["ref"] != "main" {
+		t.Errorf("config = %v, want the submitted repository and ref", f.dsCreatedReq.Config)
+	}
+	if f.dsCreatedReq.Config["access_token"] != "ghp_test" {
+		t.Errorf("config = %v, want the submitted token forwarded for encryption", f.dsCreatedReq.Config)
+	}
+	if _, ok := f.dsCreatedReq.Config["folder_id"]; ok {
+		t.Errorf("config = %v, must not carry a Drive folder_id", f.dsCreatedReq.Config)
+	}
+}
+
+func TestUIDataSourceCreateErrorRedirectsToSelectedProvider(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema:    githubSchema(),
+		dsCreateErr: &memoryHTTPError{Status: http.StatusUnprocessableEntity, Code: "validation_error", Message: "config.repo is required"},
+	}
+	e := newDSUIServer(f)
+
+	form := url.Values{"providerType": {"github"}, "name": {"Docs"}, "access_token": {"ghp_test"}}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: status=%d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/new?providerType=github&method=credentials") {
+		t.Errorf("error redirect = %q, want the same provider's connect form", loc)
+	}
+	if !strings.Contains(loc, "err=config.repo+is+required") {
+		t.Errorf("error redirect = %q, want the server's message without the memory prefix", loc)
+	}
+	if strings.Contains(loc, "memory+422") || strings.Contains(loc, "validation_error") {
+		t.Errorf("error redirect = %q, must not leak the transport prefix", loc)
+	}
+}
+
+func TestUIDataSourceTestConfigUsesSelectedProvider(t *testing.T) {
+	f := &fakeMemory{dsSchema: githubSchema()}
+	e := newDSUIServer(f)
+
+	form := strings.NewReader("providerType=github&repo=acme/private-docs&access_token=ghp_test")
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/test-config", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if f.dsLastTestConfig == nil || f.dsLastTestConfig.ProviderType != "github" {
+		t.Fatalf("test config = %+v, want the form's provider (github)", f.dsLastTestConfig)
+	}
+	if f.dsLastTestConfig.Config["repo"] != "acme/private-docs" || f.dsLastTestConfig.Config["access_token"] != "ghp_test" {
+		t.Errorf("test config config = %v, want repo and token", f.dsLastTestConfig.Config)
+	}
+}
+
+func TestUIDataSourceReposPartial(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema: githubSchema(),
+		dsProviderResources: []DSResource{
+			{ID: "acme/private-docs", Name: "acme/private-docs", Type: "repo"},
+			{ID: "acme/public-docs", Name: "acme/public-docs", Type: "repo"},
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := postDSUIForm(e, "/data-sources/repos", "providerType=github&access_token=ghp_test")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<datalist id="ds-options-repo">`,
+		`<option value="acme/private-docs">`,
+		`<option value="acme/public-docs">`,
+		`data-testid="ds-options-status"`,
+		"Showing 2 suggestions.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repo options missing %q in %s", want, body)
+		}
+	}
+	if f.dsListedProviderType != "github" || f.dsListedConfig["access_token"] != "ghp_test" {
+		t.Errorf("listing call = %q %v, want github with the unsaved token", f.dsListedProviderType, f.dsListedConfig)
+	}
+}
+
+func TestUIDataSourceRefsPartialReportsTruncation(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema: githubSchema(),
+		dsProviderRefs: []DSResource{
+			{ID: "main", Name: "main", Type: "branch"},
+			{ID: "v1.0.0", Name: "v1.0.0", Type: "tag"},
+		},
+		dsProviderRefsTrunc: true,
+	}
+	e := newDSUIServer(f)
+
+	rec := postDSUIForm(e, "/data-sources/refs", "providerType=github&repo=acme/private-docs&access_token=ghp_test")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`<datalist id="ds-options-ref">`,
+		"main (branch)",
+		"v1.0.0 (tag)",
+		"Showing the first 2 suggestions",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ref options missing %q in %s", want, body)
+		}
+	}
+}
+
+func TestUIDataSourceOptionsFailureIsInline(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema:               githubSchema(),
+		dsProviderResourcesErr: &memoryHTTPError{Status: http.StatusUnprocessableEntity, Code: "validation_error", Message: "Bad credentials"},
+	}
+	e := newDSUIServer(f)
+
+	rec := postDSUIForm(e, "/data-sources/repos", "providerType=github&access_token=bad")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with an inline error", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `data-testid="ds-options-error"`) || !strings.Contains(body, "Bad credentials") {
+		t.Errorf("inline error missing in %s", body)
+	}
+}
+
+func TestUIDataSourceUpdateUsesProviderSchema(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema:       githubSchema(),
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Docs", ProviderType: "github", Status: "active"}},
+	}
+	e := newDSUIServer(f)
+
+	form := url.Values{
+		"providerType": {"github"},
+		"name":         {"Docs"},
+		"repo":         {"acme/private-docs"},
+		"ref":          {"release/1.x"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/update", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("update: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsUpdatedReq == nil || f.dsUpdatedReq.Config == nil {
+		t.Fatal("update was not forwarded with a config")
+	}
+	if f.dsUpdatedReq.Config["repo"] != "acme/private-docs" || f.dsUpdatedReq.Config["ref"] != "release/1.x" {
+		t.Errorf("update config = %v, want the GitHub scope round-tripped", f.dsUpdatedReq.Config)
+	}
+	if _, ok := f.dsUpdatedReq.Config["access_token"]; ok {
+		t.Error("a blank credential input must not send access_token (it would replace the stored credential)")
+	}
+}
+
+// postDSUIForm posts an urlencoded form to the DS UI server and returns the
+// recorder.
+func postDSUIForm(e *echo.Echo, path, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	return rec
 }
 
 // --- OAuth connect (§5.1/5.2) ---

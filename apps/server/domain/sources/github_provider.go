@@ -19,6 +19,7 @@ var githubCredentialKeyNames = []string{"access_token", "client_id", "client_sec
 type GitHubTransport interface {
 	GetRepo(ctx context.Context, repo string) (*github.Repo, error)
 	ListRepos(ctx context.Context) ([]github.Repo, error)
+	ListRefs(ctx context.Context, repo string) ([]github.Ref, bool, error)
 	ListTree(ctx context.Context, repo, ref string) ([]github.Blob, error)
 	FetchBlob(ctx context.Context, repo, sha string) ([]byte, error)
 	TestConnection(ctx context.Context, repo, ref string) error
@@ -68,10 +69,12 @@ func (p *githubProvider) ConfigSchema() ProviderSchema {
 			"repo": map[string]any{
 				"type":        "string",
 				"description": "The GitHub repository to sync from (owner/name).",
+				"x-ui-widget": "resource",
 			},
 			"ref": map[string]any{
 				"type":        "string",
 				"description": "The branch, tag, or commit SHA to sync from. Empty syncs the repository's default branch.",
+				"x-ui-widget": "ref",
 			},
 			"paths": map[string]any{
 				"type":        "array",
@@ -127,6 +130,34 @@ func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, c
 
 func (p *githubProvider) ValidateConfig(cfg map[string]any) error {
 	return validateGitHubConfig(cfg)
+}
+
+// ListRefs lists the branches and tags of the repository named in cfg so the
+// connect form can suggest a ref. It is bounded to one page per kind; callers
+// keep accepting a typed ref (including a commit SHA).
+func (p *githubProvider) ListRefs(ctx context.Context, creds Credentials, cfg map[string]any) ([]Resource, bool, error) {
+	repo, _ := cfg["repo"].(string)
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return nil, false, apperror.NewValidation("config.repo is required to list branches")
+	}
+	if !validGitHubRepo(repo) {
+		return nil, false, apperror.NewValidation("config.repo must be a repository in owner/name form")
+	}
+	token, _ := creds["access_token"].(string)
+	client, err := p.newClient(ctx, github.Credentials{Token: token})
+	if err != nil {
+		return nil, false, err
+	}
+	refs, truncated, err := client.ListRefs(ctx, repo)
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]Resource, len(refs))
+	for i, ref := range refs {
+		out[i] = Resource{ID: ref.Name, Name: ref.Name, Type: ref.Type}
+	}
+	return out, truncated, nil
 }
 
 func (p *githubProvider) ExtractCredentials(cfg map[string]any) (Credentials, error) {

@@ -284,11 +284,13 @@ const dsSchemas = {
   github: {
     type: "github",
     properties: {
-      repo: { type: "string" },
+      repo: { type: "string", "x-ui-widget": "resource", description: "The GitHub repository to sync from (owner/name)." },
+      ref: { type: "string", "x-ui-widget": "ref", description: "The branch, tag, or commit SHA to sync from." },
       paths: { type: "array" },
-      ref: { type: "string" },
+      extensions: { type: "array" },
+      access_token: { type: "string", writeOnly: true, label: "Personal access token" },
     },
-    required: ["repo"],
+    required: ["repo", "access_token"],
   },
 };
 
@@ -366,7 +368,7 @@ let dsJobCounter = 1;
 
 // dsIntegration projects a stored source: the row plus its non-secret config
 // (credential keys stripped). Credentials never leave here.
-const dsCredentialKeys = ["client_id", "client_secret", "refresh_token"];
+const dsCredentialKeys = ["client_id", "client_secret", "refresh_token", "access_token"];
 const dsIntegration = (src) => {
   const config = {};
   for (const [k, v] of Object.entries(src.config || {})) {
@@ -952,11 +954,50 @@ const server = http.createServer((req, res) => {
 
   if (path === "/api/data-source-integrations/test-config" && req.method === "POST") {
     return readBody(req, (payload) => {
-      const folder = String((payload.config || {}).folder_id || "");
+      const config = payload.config || {};
+      if (payload.providerType === "github") {
+        if (!String(config.access_token || "")) {
+          return json(res, { success: false, message: "GitHub token is required." });
+        }
+        return json(res, { success: true, message: "Connected to GitHub." });
+      }
+      const folder = String(config.folder_id || "");
       if (folder === "folder-fail") {
         return json(res, { success: false, message: "Drive folder not found." });
       }
       return json(res, { success: true, message: "Connected to Google Drive." });
+    });
+  }
+
+  // Credential-scoped listing for the connect form's repo picker. The token is
+  // in the body and is never stored; only identifiers come back.
+  if (path === "/api/data-source-integrations/resources" && req.method === "POST") {
+    return readBody(req, (payload) => {
+      if (payload.providerType !== "github") {
+        return json(res, []);
+      }
+      return json(res, [
+        { id: "acme/private-docs", name: "acme/private-docs", type: "repo" },
+        { id: "acme/public-docs", name: "acme/public-docs", type: "repo" },
+      ]);
+    });
+  }
+
+  // Credential-scoped ref listing for the connect form's ref picker.
+  if (path === "/api/data-source-integrations/refs" && req.method === "POST") {
+    return readBody(req, (payload) => {
+      const repo = String((payload.config || {}).repo || "");
+      if (repo !== "acme/private-docs") {
+        res.statusCode = 422;
+        return json(res, {
+          error: { code: "validation_error", message: `repository ${repo || "(none)"} not found` },
+        });
+      }
+      return json(res, [
+        { id: "main", name: "main", type: "branch" },
+        { id: "release/1.x", name: "release/1.x", type: "branch" },
+        { id: "v1.0.0", name: "v1.0.0", type: "tag" },
+      ]);
     });
   }
 
@@ -966,13 +1007,29 @@ const server = http.createServer((req, res) => {
 
   if (path === "/api/data-source-integrations" && req.method === "POST") {
     return readBody(req, (payload) => {
+      const config = payload.config || {};
+      // Mirror the server's provider validation: the gateway no longer applies
+      // Drive-only rules, so an incomplete config must still fail here.
+      if (payload.providerType === "github") {
+        if (!String(config.repo || "")) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.repo is required" } });
+        }
+        if (!String(config.access_token || "")) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.access_token is required" } });
+        }
+      } else if (!String(config.folder_id || "")) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "config.folder_id is required" } });
+      }
       const now = nowISO();
       const row = {
         id: `ds-${dsCounter++}`,
         projectId: "p1",
         name: String(payload.name || "Data source"),
         providerType: payload.providerType || "google_drive",
-        sourceType: payload.sourceType || "drive",
+        sourceType: payload.sourceType || (payload.providerType === "github" ? "repo" : "drive"),
         syncMode: payload.syncMode || "manual",
         syncIntervalMinutes: payload.syncIntervalMinutes,
         lastSyncedAt: null,

@@ -9189,6 +9189,14 @@ definitions:
       vendorName:
         type: string
     type: object
+  domain_sources.ProviderListRequest:
+    properties:
+      config:
+        additionalProperties: {}
+        type: object
+      providerType:
+        type: string
+    type: object
   domain_sources.ProviderSchema:
     properties:
       properties:
@@ -25772,6 +25780,92 @@ paths:
       security:
       - bearerAuth: []
       summary: Get provider config schema
+      tags:
+      - data-source-integrations
+  /data-source-integrations/refs:
+    post:
+      consumes:
+      - application/json
+      description: Lists the branches and tags of the resource named in an unsaved
+        provider config (a GitHub repository). Nothing is persisted.
+      parameters:
+      - description: Provider config carrying credentials and the repository
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.ProviderListRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Selectable refs
+          headers:
+            X-Resources-Truncated:
+              description: true when the provider returned only a page
+              type: string
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.Resource'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List a resource's refs from unsaved credentials
+      tags:
+      - data-source-integrations
+  /data-source-integrations/resources:
+    post:
+      consumes:
+      - application/json
+      description: Lists the selectable sync targets (Drive folders, GitHub repositories)
+        for an unsaved provider config. Nothing is persisted.
+      parameters:
+      - description: Provider config carrying credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.ProviderListRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Selectable resources
+          headers:
+            X-Resources-Truncated:
+              description: true when the provider returned only a page
+              type: string
+          schema:
+            items:
+              $ref: '#/definitions/domain_sources.Resource'
+            type: array
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List a provider's resources from unsaved credentials
       tags:
       - data-source-integrations
   /data-source-integrations/source-types:

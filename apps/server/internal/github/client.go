@@ -208,6 +208,86 @@ func (c *Client) ListRepos(ctx context.Context) ([]Repo, error) {
 	return out, nil
 }
 
+// Ref is a branch or tag selectable as a sync ref.
+type Ref struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // "branch" or "tag"
+}
+
+// Ref listing bounds: one page per kind. A ref picker only needs suggestions,
+// so there is no walk; truncated reports whether either kind had a next page.
+const refsPerPage = 100
+
+// ListRefs returns the repository's branches and tags, branches first. It reads
+// one page of each listing and reports truncated=true when either response
+// advertises a next page, so callers can say the suggestions are partial. A
+// commit SHA is a legal ref but is not a branch or tag, hence callers must keep
+// accepting free-text refs.
+func (c *Client) ListRefs(ctx context.Context, repo string) ([]Ref, bool, error) {
+	repoPath, err := repoAPIPath(repo)
+	if err != nil {
+		return nil, false, err
+	}
+	branches, branchesMore, err := c.listRefNames(ctx, repoPath+"/branches")
+	if err != nil {
+		return nil, false, err
+	}
+	tags, tagsMore, err := c.listRefNames(ctx, repoPath+"/tags")
+	if err != nil {
+		return nil, false, err
+	}
+	refs := make([]Ref, 0, len(branches)+len(tags))
+	for _, name := range branches {
+		refs = append(refs, Ref{Name: name, Type: "branch"})
+	}
+	for _, name := range tags {
+		refs = append(refs, Ref{Name: name, Type: "tag"})
+	}
+	return refs, branchesMore || tagsMore, nil
+}
+
+// listRefNames fetches one page of a branch or tag listing and reports whether
+// a next page exists.
+func (c *Client) listRefNames(ctx context.Context, path string) ([]string, bool, error) {
+	resp, cancel, err := c.open(ctx, fmt.Sprintf("%s?per_page=%d", path, refsPerPage))
+	if err != nil {
+		return nil, false, err
+	}
+	defer cancel()
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxJSONBytes+1))
+	if err != nil {
+		return nil, false, fmt.Errorf("github: read refs response: %w", err)
+	}
+	if int64(len(body)) > maxJSONBytes {
+		return nil, false, errors.New("github: refs response exceeds the metadata size limit")
+	}
+	var items []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, false, fmt.Errorf("github: decode refs response: %w", err)
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		if name := strings.TrimSpace(item.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, linkHasNext(resp.Header.Get("Link")), nil
+}
+
+// linkHasNext reports whether a GitHub Link header advertises a next page.
+func linkHasNext(link string) bool {
+	for _, part := range strings.Split(link, ",") {
+		if strings.Contains(part, `rel="next"`) {
+			return true
+		}
+	}
+	return false
+}
+
 // ListTree returns the blobs in a repository at ref. An empty ref resolves the
 // repository's default branch. Directories and submodules are excluded.
 func (c *Client) ListTree(ctx context.Context, repo, ref string) ([]Blob, error) {

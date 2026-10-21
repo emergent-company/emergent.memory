@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,14 +27,16 @@ type dsConfigField struct {
 	Description string
 	Type        string // "string", "array", "boolean"
 	Required    bool
+	Widget      string // "resource" | "ref" | "" (plain text) from x-ui-widget
 	Value       string // prefilled text value (string/array); blank for the connect form
 	Checked     bool   // prefilled checkbox state
 }
 
-// dsConfigFieldOrder fixes the render order of the known google_drive config
-// keys; any schema property outside this list is appended afterwards, sorted, so
-// a forward-compatible schema addition still surfaces in the form.
+// dsConfigFieldOrder fixes the render order of the known config keys; any
+// schema property outside this list is appended afterwards, sorted, so a
+// forward-compatible schema addition still surfaces in the form.
 var dsConfigFieldOrder = []string{
+	"repo", "ref", "paths", "extensions",
 	"folder_id", "shared_drive_id", "mime_types", "recursive",
 	"client_id", "client_secret", "refresh_token",
 }
@@ -61,10 +64,19 @@ func dsConfigFields(schema *DSProviderSchema, cfg map[string]any) (configFields,
 		if t, ok := prop["type"].(string); ok && t != "" {
 			f.Type = t
 		}
+		if label, ok := prop["label"].(string); ok && label != "" {
+			f.Label = label
+		}
 		if d, ok := prop["description"].(string); ok {
 			f.Description = d
 		}
-		if dsIsCredentialKey(key) {
+		if w, ok := prop["x-ui-widget"].(string); ok {
+			f.Widget = w
+		}
+		// The server merges credential fields into the schema marked
+		// writeOnly; the shared key list is the fallback for older schemas.
+		writeOnly, _ := prop["writeOnly"].(bool)
+		if writeOnly || dsIsCredentialKey(key) {
 			credentialFields = append(credentialFields, f)
 		} else {
 			if cfg != nil {
@@ -144,6 +156,16 @@ func dsFieldLabel(key string) string {
 		return "OAuth2 client secret"
 	case "refresh_token":
 		return "OAuth2 refresh token"
+	case "access_token":
+		return "Personal access token"
+	case "repo":
+		return "Repository"
+	case "ref":
+		return "Ref"
+	case "paths":
+		return "Paths"
+	case "extensions":
+		return "Extensions"
 	default:
 		words := strings.Split(key, "_")
 		for i, w := range words {
@@ -156,31 +178,126 @@ func dsFieldLabel(key string) string {
 	}
 }
 
-// dsConfigFromForm builds a config map from the connect/edit form values.
-// Optional string fields are omitted when blank, mime_types is split on
-// newlines/commas, and recursive is included only when checked.
-func dsConfigFromForm(c echo.Context) map[string]any {
+// dsConfigFromFields builds a config map from the submitted form using the
+// provider schema's fields. Credential fields are included (the server strips
+// and encrypts them); blank strings are omitted so an update keeps stored
+// credentials, arrays accept newlines or commas, and booleans are present only
+// when checked.
+func dsConfigFromFields(c echo.Context, fields []dsConfigField) map[string]any {
 	cfg := map[string]any{}
-	for _, key := range []string{"folder_id", "shared_drive_id", "client_id", "client_secret", "refresh_token"} {
-		if v := strings.TrimSpace(c.FormValue(key)); v != "" {
-			cfg[key] = v
-		}
-	}
-	if raw := strings.TrimSpace(c.FormValue("mime_types")); raw != "" {
-		var types []string
-		for _, line := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' }) {
-			if s := strings.TrimSpace(line); s != "" {
-				types = append(types, s)
+	for _, f := range fields {
+		switch f.Type {
+		case "boolean":
+			if c.FormValue(f.Key) != "" {
+				cfg[f.Key] = true
+			}
+		case "array":
+			if values := dsConfigList(c.FormValue(f.Key)); len(values) > 0 {
+				cfg[f.Key] = values
+			}
+		default:
+			if v := strings.TrimSpace(c.FormValue(f.Key)); v != "" {
+				cfg[f.Key] = v
 			}
 		}
-		if len(types) > 0 {
-			cfg["mime_types"] = types
-		}
-	}
-	if c.FormValue("recursive") != "" {
-		cfg["recursive"] = true
 	}
 	return cfg
+}
+
+// dsConfigList splits a textarea/input into list items on newlines or commas.
+func dsConfigList(raw string) []string {
+	var items []string
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == '\n' || r == '\r' }) {
+		if s := strings.TrimSpace(part); s != "" {
+			items = append(items, s)
+		}
+	}
+	return items
+}
+
+// dsProviderFields fetches a provider's schema and splits it into the config and
+// write-only credential form fields. The schema is the form's single source of
+// truth, so create/test/list all read the same field set.
+func (s *Server) dsProviderFields(ctx context.Context, providerType string) (configFields, credentialFields []dsConfigField, err error) {
+	schema, err := s.memory.GetDSProviderSchema(ctx, providerType)
+	if err != nil {
+		return nil, nil, userFacingError(err)
+	}
+	configFields, credentialFields = dsConfigFields(schema, nil)
+	return configFields, credentialFields, nil
+}
+
+// dsFormConfig extracts the submitted config for a provider: every field the
+// schema declares, config and credential alike.
+func (s *Server) dsFormConfig(ctx context.Context, c echo.Context, providerType string) (map[string]any, error) {
+	configFields, credentialFields, err := s.dsProviderFields(ctx, providerType)
+	if err != nil {
+		return nil, err
+	}
+	fields := make([]dsConfigField, 0, len(configFields)+len(credentialFields))
+	fields = append(fields, configFields...)
+	fields = append(fields, credentialFields...)
+	return dsConfigFromFields(c, fields), nil
+}
+
+// dsConfigFieldInputGeometry helpers
+
+// dsIsPicker reports whether the field offers provider-listing suggestions.
+func (f dsConfigField) dsIsPicker() bool {
+	return f.Widget == "resource" || f.Widget == "ref"
+}
+
+// dsOptionsListID is the datalist id the field's suggestions are written to.
+func (f dsConfigField) dsOptionsListID() string { return "ds-options-" + f.Key }
+
+// dsPickerID is the swap target for the field's load button.
+func (f dsConfigField) dsPickerID() string { return "ds-picker-" + f.Key }
+
+// dsLoadPath is the gateway endpoint that lists the field's suggestions.
+func (f dsConfigField) dsLoadPath() string {
+	if f.Widget == "ref" {
+		return "/data-sources/refs"
+	}
+	return "/data-sources/repos"
+}
+
+// dsLoadLabel is the load button's copy.
+func (f dsConfigField) dsLoadLabel() string {
+	if f.Widget == "ref" {
+		return "Load branches and tags"
+	}
+	return "Load repositories"
+}
+
+// dsLoadTestID is the load button's stable test id.
+func (f dsConfigField) dsLoadTestID() string {
+	if f.Widget == "ref" {
+		return "ds-load-refs"
+	}
+	return "ds-load-repos"
+}
+
+// dsOptionLabel renders a suggestion's option text: refs carry their kind so a
+// branch and a tag with the same name stay distinguishable.
+func dsOptionLabel(r DSResource) string {
+	switch r.Type {
+	case "branch", "tag":
+		return r.Name + " (" + r.Type + ")"
+	default:
+		return r.Name
+	}
+}
+
+// dsOptionsStatus is the line under a suggestion picker.
+func dsOptionsStatus(count int, truncated bool) string {
+	switch {
+	case count == 0:
+		return "No suggestions found. You can still type a value."
+	case truncated:
+		return "Showing the first " + strconv.Itoa(count) + " suggestions; type any value."
+	default:
+		return "Showing " + strconv.Itoa(count) + " suggestions."
+	}
 }
 
 // dsIntervalFromForm parses a positive sync interval; ok is false when unset or
@@ -526,8 +643,8 @@ func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
 
 // uiDataSourceResources renders the resource-selection step for a source. It
 // lists the provider's real resources and renders each as a select-and-save
-// form. Providers without a listing (e.g. github today) get a graceful
-// placeholder.
+// form. The credentials connect form offers the same listing inline, so this
+// step mainly serves the post-OAuth path.
 func (s *Server) uiDataSourceResources(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -1133,48 +1250,129 @@ func dsConfigString(cfg map[string]any, key string) string {
 	return ""
 }
 
-// uiDataSourceTestConfig tests an unsaved config from the connect form and
-// swaps the result into the form's result region.
+// uiDataSourceTestConfig tests the unsaved config from the connect form, using
+// the form's selected provider, and swaps the result into the form's result
+// region.
 func (s *Server) uiDataSourceTestConfig(c echo.Context) error {
-	req := &DSTestConfigRequest{ProviderType: dsProviderTypeGoogleDrive, Config: dsConfigFromForm(c)}
-	resp, err := s.memory.TestDSConfig(c.Request().Context(), req)
-	renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(resp, err))
+	ctx := c.Request().Context()
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	if providerType == "" {
+		renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(nil, errors.New("providerType is required")))
+		return nil
+	}
+	cfg, err := s.dsFormConfig(ctx, c, providerType)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(nil, err))
+		return nil
+	}
+	resp, terr := s.memory.TestDSConfig(ctx, &DSTestConfigRequest{ProviderType: providerType, Config: cfg})
+	renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(resp, dsFormError(terr)))
 	return nil
 }
 
-// dsConnectFormPath is the google_drive credentials connect form. The chooser at
-// /data-sources/new now precedes it, so a form validation error bounces back
-// here (with ?err=) rather than to the chooser the user just came from.
-const dsConnectFormPath = "/data-sources/new?providerType=" + dsProviderTypeGoogleDrive + "&method=credentials"
+// dsConnectFormPath is a provider's credentials connect form. The chooser at
+// /data-sources/new precedes it, so a form error bounces back here (with ?err=)
+// rather than to the chooser the user just came from.
+func dsConnectFormPath(providerType string) string {
+	return "/data-sources/new?providerType=" + url.QueryEscape(providerType) + "&method=credentials"
+}
 
-// uiDataSourceCreate handles the connect form (PRG): it creates the source and
-// redirects to its detail page, or back to the form with ?err=.
+// uiDataSourceCreate handles the connect form (PRG): it creates the source from
+// the selected provider's schema-driven config and redirects to its detail page,
+// or back to the same provider's form with ?err=. Validation is the server's
+// (provider ValidateConfig); the gateway does not apply another provider's rules.
 func (s *Server) uiDataSourceCreate(c echo.Context) error {
-	cfg := dsConfigFromForm(c)
-	if msg := validateDSConfig(cfg); msg != "" {
-		return redirectWithError(c, dsConnectFormPath, errors.New(msg))
+	ctx := c.Request().Context()
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	if providerType == "" {
+		return redirectWithError(c, "/data-sources/new", errors.New("providerType is required"))
+	}
+	back := dsConnectFormPath(providerType)
+	cfg, err := s.dsFormConfig(ctx, c, providerType)
+	if err != nil {
+		return redirectWithError(c, back, err)
 	}
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
-		return redirectWithError(c, dsConnectFormPath, errors.New("name is required"))
+		return redirectWithError(c, back, errors.New("name is required"))
 	}
 	mode := cmp.Or(c.FormValue("sync_mode"), "manual")
 	req := &DSCreateIntegrationRequest{
 		Name:         name,
-		ProviderType: dsProviderTypeGoogleDrive,
-		SourceType:   "drive",
+		ProviderType: providerType,
 		Config:       cfg,
 		SyncMode:     &mode,
 	}
 	if interval, ok := dsIntervalFromForm(c); ok {
 		req.SyncIntervalMinutes = interval
 	}
-	item, err := s.memory.CreateDSIntegration(c.Request().Context(), req)
+	item, err := s.memory.CreateDSIntegration(ctx, req)
 	if err != nil {
-		return redirectWithError(c, dsConnectFormPath, err)
+		return redirectWithError(c, back, dsFormError(err))
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), s.dsScoped("/data-sources/"+url.PathEscape(item.ID)+"?created=1", c))
 	return nil
+}
+
+// uiDataSourceRepos lists the repositories visible to the token currently in the
+// connect form and renders them as suggestions for the repo field. The token is
+// used for this call only; the memory endpoint never persists it.
+func (s *Server) uiDataSourceRepos(c echo.Context) error {
+	return s.uiDataSourceOptions(c, "repo", func(ctx context.Context, providerType string, cfg map[string]any) ([]DSResource, bool, error) {
+		return s.memory.ListDSProviderResources(ctx, providerType, cfg)
+	})
+}
+
+// uiDataSourceRefs lists the branches and tags of the repository currently in
+// the connect form, as suggestions for the ref field.
+func (s *Server) uiDataSourceRefs(c echo.Context) error {
+	return s.uiDataSourceOptions(c, "ref", func(ctx context.Context, providerType string, cfg map[string]any) ([]DSResource, bool, error) {
+		return s.memory.ListDSProviderRefs(ctx, providerType, cfg)
+	})
+}
+
+// uiDataSourceOptions renders a field's suggestion list for the connect form.
+// Listing failures are inline and never block submission: the input keeps its
+// typed value and stays editable.
+func (s *Server) uiDataSourceOptions(c echo.Context, fieldKey string, list func(context.Context, string, map[string]any) ([]DSResource, bool, error)) error {
+	ctx := c.Request().Context()
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	var (
+		items     []DSResource
+		truncated bool
+		err       error
+	)
+	if providerType == "" {
+		err = errors.New("providerType is required")
+	} else {
+		var cfg map[string]any
+		cfg, err = s.dsFormConfig(ctx, c, providerType)
+		if err == nil {
+			items, truncated, err = list(ctx, providerType, cfg)
+			if err != nil {
+				err = dsFormError(err)
+			}
+		}
+	}
+	renderPartial(c.Response().Writer, c.Request(), DSOptionsPartial(fieldKey, items, truncated, err))
+	return nil
+}
+
+// dsFormError is the message a connect/edit form shows for a failed backend
+// call: the server's own 4xx message when there is one (already user-facing),
+// otherwise the redacted backend error. Locally authored errors pass through
+// unchanged. It never exposes the transport detail or the "memory <status>:"
+// prefix.
+func dsFormError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if status := memoryStatus(err); status > 0 && status < http.StatusInternalServerError {
+		if msg := memoryHTTPErrorMessage(err); msg != "" {
+			return errors.New(msg)
+		}
+	}
+	return redactBackendError(err)
 }
 
 // uiDataSourceDetail renders a source's detail/edit page: connection test,
@@ -1214,8 +1412,11 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, resourcePrompt, flashMsg, flashErr))
 }
 
-// uiDataSourceUpdate handles the settings form (PRG).
+// uiDataSourceUpdate handles the settings form (PRG). The config is rebuilt from
+// the provider schema's fields; credential fields are only sent when filled, so
+// a blank credential input keeps the stored credential.
 func (s *Server) uiDataSourceUpdate(c echo.Context) error {
+	ctx := c.Request().Context()
 	id := c.Param("id")
 	detailPath := "/data-sources/" + url.PathEscape(id)
 	req := &DSUpdateIntegrationRequest{}
@@ -1228,20 +1429,25 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	if interval, ok := dsIntervalFromForm(c); ok {
 		req.SyncIntervalMinutes = interval
 	}
-	cfg := dsConfigFromForm(c)
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	if providerType == "" {
+		// Older forms did not carry providerType; resolve it from the source.
+		if src, err := s.memory.GetDSIntegration(ctx, id); err == nil {
+			providerType = src.ProviderType
+		}
+	}
+	if providerType == "" {
+		return redirectWithError(c, detailPath, errors.New("providerType is required"))
+	}
+	cfg, err := s.dsFormConfig(ctx, c, providerType)
+	if err != nil {
+		return redirectWithError(c, detailPath, err)
+	}
 	if len(cfg) > 0 {
-		if folderID, _ := cfg["folder_id"].(string); strings.TrimSpace(folderID) == "" {
-			return redirectWithError(c, detailPath, errors.New("folder_id is required to change config"))
-		}
-		if dsHasCredentialKeys(cfg) {
-			if token, _ := cfg["refresh_token"].(string); strings.TrimSpace(token) == "" {
-				return redirectWithError(c, detailPath, errors.New("refresh_token is required when updating credentials"))
-			}
-		}
 		req.Config = cfg
 	}
-	if _, err := s.memory.UpdateDSIntegration(c.Request().Context(), id, req); err != nil {
-		return redirectWithError(c, detailPath, err)
+	if _, err := s.memory.UpdateDSIntegration(ctx, id, req); err != nil {
+		return redirectWithError(c, detailPath, dsFormError(err))
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), detailPath+"?updated=1")
 	return nil

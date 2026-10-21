@@ -23074,6 +23074,138 @@
                 }
             }
         },
+        "/data-source-integrations/refs": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Lists the branches and tags of the resource named in an unsaved provider config (a GitHub repository). Nothing is persisted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List a resource's refs from unsaved credentials",
+                "parameters": [
+                    {
+                        "description": "Provider config carrying credentials and the repository",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.ProviderListRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Selectable refs",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.Resource"
+                            }
+                        },
+                        "headers": {
+                            "X-Resources-Truncated": {
+                                "type": "string",
+                                "description": "true when the provider returned only a page"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/data-source-integrations/resources": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Lists the selectable sync targets (Drive folders, GitHub repositories) for an unsaved provider config. Nothing is persisted.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List a provider's resources from unsaved credentials",
+                "parameters": [
+                    {
+                        "description": "Provider config carrying credentials",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.ProviderListRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Selectable resources",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/domain_sources.Resource"
+                            }
+                        },
+                        "headers": {
+                            "X-Resources-Truncated": {
+                                "type": "string",
+                                "description": "true when the provider returned only a page"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/data-source-integrations/source-types": {
             "get": {
                 "security": [
@@ -38659,6 +38791,18 @@
                     "type": "string"
                 },
                 "vendorName": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.ProviderListRequest": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "providerType": {
                     "type": "string"
                 }
             }

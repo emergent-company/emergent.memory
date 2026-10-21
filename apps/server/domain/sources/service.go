@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -150,6 +151,32 @@ func (s *Service) GetProviderSchema(ctx context.Context, providerType string) (*
 		return nil, apperror.ErrNotFound
 	}
 	schema := p.ConfigSchema()
+	// Credential fields are form fields too: merge them into the schema as
+	// write-only properties so the connect form renders one schema-driven
+	// surface for every provider. Only the shape travels here; values never do.
+	for _, f := range p.CredentialFields() {
+		if schema.Properties == nil {
+			schema.Properties = map[string]any{}
+		}
+		if _, exists := schema.Properties[f.Key]; exists {
+			continue
+		}
+		typ := f.Type
+		if typ == "" {
+			typ = "string"
+		}
+		prop := map[string]any{"type": typ, "writeOnly": true}
+		if f.Label != "" {
+			prop["label"] = f.Label
+		}
+		if f.Description != "" {
+			prop["description"] = f.Description
+		}
+		schema.Properties[f.Key] = prop
+		if f.Required {
+			schema.Required = append(schema.Required, f.Key)
+		}
+	}
 	return &schema, nil
 }
 
@@ -175,6 +202,74 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 		return nil, err
 	}
 	return s.testProviderConnection(ctx, p, creds, req.Config)
+}
+
+// ListProviderResources lists a provider's selectable sync targets (repositories,
+// folders) from an unsaved config. It never persists the config or credentials,
+// and it does not require the full sync config: only credentials are needed.
+func (s *Service) ListProviderResources(ctx context.Context, req *ProviderListRequest) ([]Resource, bool, error) {
+	p, creds, err := s.unsavedProviderCredentials(req)
+	if err != nil {
+		return nil, false, err
+	}
+	// The connect form filters suggestions client-side, so no name query is
+	// needed here; truncated is still reported for providers that cap.
+	resources, truncated, err := p.ListResources(ctx, creds, req.Config, "")
+	if err != nil {
+		return nil, false, providerListError("list resources failed", err)
+	}
+	if resources == nil {
+		resources = []Resource{}
+	}
+	return resources, truncated, nil
+}
+
+// ListProviderRefs lists the refs of the resource named in an unsaved config (a
+// GitHub repository's branches and tags). Providers without ref support return a
+// validation error. truncated reports that the provider returned only a page.
+func (s *Service) ListProviderRefs(ctx context.Context, req *ProviderListRequest) ([]Resource, bool, error) {
+	p, creds, err := s.unsavedProviderCredentials(req)
+	if err != nil {
+		return nil, false, err
+	}
+	lister, ok := p.(ResourceRefLister)
+	if !ok {
+		return nil, false, apperror.NewValidation("provider " + req.ProviderType + " does not support ref listing")
+	}
+	refs, truncated, err := lister.ListRefs(ctx, creds, req.Config)
+	if err != nil {
+		return nil, false, providerListError("list refs failed", err)
+	}
+	if refs == nil {
+		refs = []Resource{}
+	}
+	return refs, truncated, nil
+}
+
+// providerListError turns a provider listing failure into a validation error
+// with a stable prefix. An error that already carries a user-facing apperror
+// message (an invalid repository, for example) passes through unchanged so the
+// message is not double-prefixed.
+func providerListError(prefix string, err error) error {
+	var ae *apperror.Error
+	if errors.As(err, &ae) {
+		return err
+	}
+	return apperror.NewValidation(prefix + ": " + err.Error())
+}
+
+// unsavedProviderCredentials resolves a provider and extracts its credentials
+// from an unsaved config, without validating the rest of the config.
+func (s *Service) unsavedProviderCredentials(req *ProviderListRequest) (SourceProvider, Credentials, error) {
+	p, ok := s.providers.Get(req.ProviderType)
+	if !ok {
+		return nil, nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
+	}
+	creds, err := p.ExtractCredentials(req.Config)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, creds, nil
 }
 
 // TestConnection tests an existing source's connection by decrypting its stored

@@ -453,6 +453,14 @@ routes:
       path: /api/data-source-integrations/providers/:providerType/schema
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/refs
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: POST
+      path: /api/data-source-integrations/resources
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
     - method: GET
       path: /api/data-source-integrations/source-types
       level: project-member

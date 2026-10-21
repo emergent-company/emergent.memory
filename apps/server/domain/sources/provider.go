@@ -117,6 +117,16 @@ type SourceProvider interface {
 	NewConnector(ctx context.Context, creds Credentials, deps ConnectorDeps) (Connector, error)
 }
 
+// ResourceRefLister is implemented by providers whose selected resource has a
+// second-level selector (a GitHub repository's branches and tags). It backs the
+// connect form's ref picker and is optional: providers that do not implement it
+// simply offer no ref suggestions.
+type ResourceRefLister interface {
+	// ListRefs lists refs for the resource named in cfg. truncated reports that
+	// the provider has more refs than it returned.
+	ListRefs(ctx context.Context, creds Credentials, cfg map[string]any) (items []Resource, truncated bool, err error)
+}
+
 // ProviderField describes one config or credential field in a provider schema.
 type ProviderField struct {
 	Key         string `json:"key"`

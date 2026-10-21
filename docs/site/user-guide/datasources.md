@@ -97,6 +97,35 @@ blank when updating other settings to keep the stored secret.
 GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
 token entered when connecting the source; a token connection does not need an OAuth app.
 
+### Connect GitHub with a personal access token
+
+Select **GitHub** on **Data Sources → New data source**, choose **Connect with credentials**, and
+paste a token. The token is used to load the suggestions below and is then stored encrypted and
+write-only — it is never shown again.
+
+| Field | How to fill it |
+|---|---|
+| **Repository** | Press **Load repositories** to pick from the repositories the token can see (private ones included), or type `owner/name` directly. |
+| **Ref** | Once a repository is set, press **Load branches and tags** to pick a branch or tag, or type any ref. An empty ref syncs the repository's default branch. Commit SHAs are valid refs but are not listed. |
+| **Paths** / **Extensions** | Optional filters limiting which files sync. |
+
+Press **Test connection** to validate the token and repository before saving.
+
+The suggestion lists are best-effort. If a list cannot be loaded — an expired token, a rate limit, a
+fine-grained token without repository-list permission — the field shows an inline message and keeps
+the value you typed, so you can still connect. Picking from a list is never required: typing
+`owner/name` and a ref always works, including for GitHub Enterprise Server (whose API endpoint is
+configured for the whole deployment, not per source).
+
+### GitHub token scopes
+
+- **Classic token**: the `repo` scope to read private repositories and their contents
+  (`public_repo` is enough for public repositories).
+- **Fine-grained token**: **Repository metadata: Read** to list the repositories the token can see,
+  and **Contents: Read** on the target repository to list branches and tags and sync its files.
+
+Reading branches and tags needs no permission beyond contents access.
+
 ---
 
 ## Setting Up a Data Source
@@ -143,7 +172,7 @@ POST /api/data-source-integrations/test-config
 |---|---|
 | `name` | Display name for this integration |
 | `providerType` | The provider: `imap`, `gmail_oauth`, `google_drive`, `github`, `clickup` |
-| `sourceType` | Category of content: `email`, `drive`, `clickup-document` |
+| `sourceType` | Category of content: `email`, `drive`, `repo`, `clickup-document` |
 | `syncMode` | `manual` (trigger explicitly) or `recurring` (automatic on interval) |
 | `syncIntervalMinutes` | Minutes between automatic syncs (for `recurring` mode) |
 | `status` | `active` · `error` · `disabled` |

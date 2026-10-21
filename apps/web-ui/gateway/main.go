@@ -397,6 +397,8 @@ func main() {
 	e.GET("/data-sources/new", s.uiDataSourceNew)
 	e.POST("/data-sources/new", s.uiDataSourceCreate)
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
+	e.POST("/data-sources/repos", s.uiDataSourceRepos)
+	e.POST("/data-sources/refs", s.uiDataSourceRefs)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)

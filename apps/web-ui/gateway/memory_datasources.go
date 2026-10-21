@@ -243,6 +243,32 @@ type DSResource struct {
 	Type string `json:"type,omitempty"`
 }
 
+// ListDSProviderResources lists a provider's selectable sync targets from an
+// unsaved config (POST /api/data-source-integrations/resources). The credential
+// travels inside config and is never persisted. truncated mirrors the backend's
+// X-Resources-Truncated header, the same convention as ListDSResources.
+func (m *MemoryClient) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+	var out []DSResource
+	body := map[string]any{"providerType": providerType, "config": config}
+	hdr, err := m.doHResp(ctx, http.MethodPost, "/api/data-source-integrations/resources", body, m.documentHeaders(ctx), &out)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, hdr.Get("X-Resources-Truncated") == "true", nil
+}
+
+// ListDSProviderRefs lists the refs (branches and tags) of the resource named in
+// an unsaved config (POST /api/data-source-integrations/refs).
+func (m *MemoryClient) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+	var out []DSResource
+	body := map[string]any{"providerType": providerType, "config": config}
+	hdr, err := m.doHResp(ctx, http.MethodPost, "/api/data-source-integrations/refs", body, m.documentHeaders(ctx), &out)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, hdr.Get("X-Resources-Truncated") == "true", nil
+}
+
 // ListDSProviders returns the available data-source providers.
 func (m *MemoryClient) ListDSProviders(ctx context.Context) ([]DSProvider, error) {
 	var out []DSProvider

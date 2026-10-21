@@ -13,10 +13,15 @@ import (
 // fakeGitHubTransport implements GitHubTransport without HTTP.
 type fakeGitHubTransport struct {
 	repos    []github.Repo
+	refs     []github.Ref
 	blobs    []github.Blob
 	contents map[string]string
 	treeErr  error
 	fetchErr error
+	refsErr  error
+
+	refsTruncated bool
+	refsRepo      string
 
 	fetched   []string
 	testRepo  string
@@ -30,6 +35,14 @@ func (f *fakeGitHubTransport) GetRepo(context.Context, string) (*github.Repo, er
 
 func (f *fakeGitHubTransport) ListRepos(context.Context) ([]github.Repo, error) {
 	return f.repos, nil
+}
+
+func (f *fakeGitHubTransport) ListRefs(_ context.Context, repo string) ([]github.Ref, bool, error) {
+	f.refsRepo = repo
+	if f.refsErr != nil {
+		return nil, false, f.refsErr
+	}
+	return f.refs, f.refsTruncated, nil
 }
 
 func (f *fakeGitHubTransport) ListTree(_ context.Context, repo, ref string) ([]github.Blob, error) {
@@ -182,6 +195,56 @@ func TestGitHubProvider_ListResources(t *testing.T) {
 	}
 	if len(resources) != 2 || resources[0].ID != "acme/private-docs" || resources[1].Type != "repo" {
 		t.Fatalf("ListResources() = %+v, want the two repositories", resources)
+	}
+}
+
+func TestGitHubProvider_ListRefs(t *testing.T) {
+	fake := &fakeGitHubTransport{
+		refs: []github.Ref{
+			{Name: "main", Type: "branch"},
+			{Name: "v1.0.0", Type: "tag"},
+		},
+		refsTruncated: true,
+	}
+	p := newFakeGitHubProvider(fake)
+	refs, truncated, err := p.(ResourceRefLister).ListRefs(context.Background(),
+		Credentials{"access_token": "at"}, map[string]any{"repo": "acme/private-docs"})
+	if err != nil {
+		t.Fatalf("ListRefs() error = %v", err)
+	}
+	if fake.refsRepo != "acme/private-docs" {
+		t.Errorf("ListRefs() repo = %q, want acme/private-docs", fake.refsRepo)
+	}
+	if !truncated {
+		t.Error("ListRefs() truncated = false, want true")
+	}
+	want := []Resource{{ID: "main", Name: "main", Type: "branch"}, {ID: "v1.0.0", Name: "v1.0.0", Type: "tag"}}
+	if !slices.Equal(refs, want) {
+		t.Fatalf("ListRefs() = %+v, want %+v", refs, want)
+	}
+}
+
+func TestGitHubProvider_ListRefsRequiresRepo(t *testing.T) {
+	fake := &fakeGitHubTransport{}
+	p := newFakeGitHubProvider(fake)
+	for _, cfg := range []map[string]any{{}, {"repo": "owner"}, {"repo": "owner/../name"}} {
+		if _, _, err := p.(ResourceRefLister).ListRefs(context.Background(),
+			Credentials{"access_token": "at"}, cfg); err == nil {
+			t.Errorf("ListRefs(%v) = nil error, want validation error", cfg)
+		}
+	}
+	if fake.refsRepo != "" {
+		t.Errorf("ListRefs() called the API for an invalid repo (%q)", fake.refsRepo)
+	}
+}
+
+func TestGitHubProvider_ConfigSchemaWidgetHints(t *testing.T) {
+	schema := newGitHubProvider("").ConfigSchema()
+	for key, want := range map[string]string{"repo": "resource", "ref": "ref"} {
+		prop, _ := schema.Properties[key].(map[string]any)
+		if got, _ := prop["x-ui-widget"].(string); got != want {
+			t.Errorf("schema property %q x-ui-widget = %q, want %q", key, got, want)
+		}
 	}
 }
 

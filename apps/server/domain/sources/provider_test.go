@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -55,6 +56,36 @@ func TestRegistry_RegisterResolveList(t *testing.T) {
 	reg.Register(&stubProvider{catalog: Provider{Type: "github", Name: "GitHub v2", SourceType: "repo", Available: true}})
 	if list := reg.List(); len(list) != 1 || list[0].Catalog().Name != "GitHub v2" {
 		t.Fatalf("List() after replace = %v, want single GitHub v2", list)
+	}
+}
+
+func TestService_GetProviderSchemaMergesCredentialFields(t *testing.T) {
+	svc := NewService(nil, &config.Config{}, discardLog(), NewDefaultRegistry())
+
+	schema, err := svc.GetProviderSchema(context.Background(), "github")
+	if err != nil {
+		t.Fatalf("GetProviderSchema(github) error = %v", err)
+	}
+	prop, ok := schema.Properties["access_token"].(map[string]any)
+	if !ok {
+		t.Fatal("github schema is missing the access_token credential field")
+	}
+	if prop["writeOnly"] != true {
+		t.Errorf("access_token writeOnly = %v, want true", prop["writeOnly"])
+	}
+	if !slices.Contains(schema.Required, "access_token") {
+		t.Errorf("Required = %v, want access_token", schema.Required)
+	}
+
+	// Drive is OAuth-only: its connect form must not grow credential inputs.
+	drive, err := svc.GetProviderSchema(context.Background(), "google_drive")
+	if err != nil {
+		t.Fatalf("GetProviderSchema(google_drive) error = %v", err)
+	}
+	for _, key := range []string{"refresh_token", "client_secret"} {
+		if _, ok := drive.Properties[key]; ok {
+			t.Errorf("drive schema unexpectedly exposes %q", key)
+		}
 	}
 }
 

@@ -114,27 +114,36 @@ func TestCreateDSIntegrationHandler(t *testing.T) {
 	}
 }
 
-func TestCreateDSIntegrationHandlerValidation(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"missing folder_id", `{"name":"x","providerType":"google_drive","config":{"refresh_token":"tok"}}`},
-		{"blank folder_id", `{"name":"x","providerType":"google_drive","config":{"folder_id":"   "}}`},
-		{"wrong provider", `{"name":"x","providerType":"dropbox","config":{"folder_id":"f1","refresh_token":"tok"}}`},
+// TestCreateDSIntegrationForwardsProviderAndConfig pins that the gateway does
+// not re-apply a Drive-only contract: provider validation belongs to memory, so
+// a GitHub config reaches it intact.
+func TestCreateDSIntegrationForwardsProviderAndConfig(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newDSAPIServer(f, "")
+	body := `{"name":"Docs","providerType":"github","sourceType":"repo","config":{"repo":"acme/docs","access_token":"at"}}`
+	rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations", body, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			f := &fakeMemory{}
-			_, e := newDSAPIServer(f, "")
-			rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations", tc.body, nil)
-			if rec.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
-			}
-			if f.dsCreatedReq != nil {
-				t.Fatalf("memory must not be called on validation failure: %+v", f.dsCreatedReq)
-			}
-		})
+	if f.dsCreatedReq == nil || f.dsCreatedReq.ProviderType != "github" {
+		t.Fatalf("created req = %+v, want the github provider forwarded", f.dsCreatedReq)
+	}
+	if f.dsCreatedReq.Config["repo"] != "acme/docs" || f.dsCreatedReq.Config["access_token"] != "at" {
+		t.Errorf("config = %v, want the submitted config forwarded for server validation", f.dsCreatedReq.Config)
+	}
+}
+
+// TestUpdateDSIntegrationForwardsConfig pins the same delegation on update: a
+// non-Drive config must not be rejected for lacking folder_id.
+func TestUpdateDSIntegrationForwardsConfig(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "github", Status: "active"}}}
+	_, e := newDSAPIServer(f, "")
+	rec := dsJSONReq(e, http.MethodPatch, "/api/data-source-integrations/s1", `{"config":{"repo":"acme/docs","ref":"main"}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsUpdatedReq == nil || f.dsUpdatedReq.Config["repo"] != "acme/docs" {
+		t.Fatalf("updated req = %+v, want the github config forwarded", f.dsUpdatedReq)
 	}
 }
 
@@ -156,15 +165,17 @@ func TestGetDSIntegrationHandlerNotFound(t *testing.T) {
 	}
 }
 
-func TestTestDSConfigHandlerValidation(t *testing.T) {
+// TestTestDSConfigForwardsSelectedProvider pins that testing an unsaved config
+// uses the provider the caller selected; memory owns the validation verdict.
+func TestTestDSConfigForwardsSelectedProvider(t *testing.T) {
 	f := &fakeMemory{}
 	_, e := newDSAPIServer(f, "")
-	rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations/test-config", `{"providerType":"google_drive","config":{}}`, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	rec := dsJSONReq(e, http.MethodPost, "/api/data-source-integrations/test-config", `{"providerType":"github","config":{"repo":"acme/docs","access_token":"at"}}`, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if f.dsLastTestConfig != nil {
-		t.Fatalf("memory must not be called on validation failure")
+	if f.dsLastTestConfig == nil || f.dsLastTestConfig.ProviderType != "github" {
+		t.Fatalf("test config = %+v, want the github provider forwarded", f.dsLastTestConfig)
 	}
 }
 

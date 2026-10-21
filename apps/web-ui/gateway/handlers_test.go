@@ -198,6 +198,14 @@ type fakeMemory struct {
 	dsResourcesTruncated       bool                       // truncated flag returned by ListDSResources
 	dsResourcesErr             error                      // ListDSResources failure
 	dsResourcesQuery           string                     // last query passed to ListDSResources
+	dsProviderResources        []DSResource               // returned by ListDSProviderResources
+	dsProviderResourcesTrunc   bool                       // truncated flag for ListDSProviderResources
+	dsProviderResourcesErr     error                      // ListDSProviderResources failure
+	dsProviderRefs             []DSResource               // returned by ListDSProviderRefs
+	dsProviderRefsTrunc        bool                       // truncated flag for ListDSProviderRefs
+	dsProviderRefsErr          error                      // ListDSProviderRefs failure
+	dsListedProviderType       string                     // last provider type passed to the listing methods
+	dsListedConfig             map[string]any             // last config passed to the listing methods
 	dsSavedResourceID          string                     // last id passed to SaveDSResource
 	dsSavedResourceCfg         map[string]any             // last cfg passed to SaveDSResource
 	mergeReadiness             *MergeReadiness            // returned by GetMergeReadiness
@@ -4153,7 +4161,12 @@ func (f *fakeMemory) GetDSProviderSchema(ctx context.Context, providerType strin
 	if providerType != dsProviderTypeGoogleDrive {
 		return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "provider not found"}
 	}
-	return &DSProviderSchema{Type: providerType, Required: []string{"folder_id"}}, nil
+	return &DSProviderSchema{Type: providerType, Required: []string{"folder_id"}, Properties: map[string]any{
+		"folder_id":       map[string]any{"type": "string"},
+		"shared_drive_id": map[string]any{"type": "string"},
+		"mime_types":      map[string]any{"type": "array"},
+		"recursive":       map[string]any{"type": "boolean"},
+	}}, nil
 }
 
 func (f *fakeMemory) ListDSSourceTypes(ctx context.Context) ([]DSSourceType, error) {
@@ -4419,6 +4432,24 @@ func (f *fakeMemory) ListDSResources(ctx context.Context, id, query string) ([]D
 		return nil, false, f.dsResourcesErr
 	}
 	return f.dsResources, f.dsResourcesTruncated, nil
+}
+
+func (f *fakeMemory) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+	f.dsListedProviderType = providerType
+	f.dsListedConfig = config
+	if f.dsProviderResourcesErr != nil {
+		return nil, false, f.dsProviderResourcesErr
+	}
+	return f.dsProviderResources, f.dsProviderResourcesTrunc, nil
+}
+
+func (f *fakeMemory) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+	f.dsListedProviderType = providerType
+	f.dsListedConfig = config
+	if f.dsProviderRefsErr != nil {
+		return nil, false, f.dsProviderRefsErr
+	}
+	return f.dsProviderRefs, f.dsProviderRefsTrunc, nil
 }
 
 func (f *fakeMemory) SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error) {

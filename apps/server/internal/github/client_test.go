@@ -392,3 +392,97 @@ func TestTestConnection(t *testing.T) {
 		t.Fatalf("TestConnection() error = %v", err)
 	}
 }
+
+func TestListRefs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuth(t, r)
+		if r.URL.Query().Get("per_page") != "100" {
+			t.Errorf("per_page = %q, want 100", r.URL.Query().Get("per_page"))
+		}
+		switch r.URL.Path {
+		case "/repos/acme/private-docs/branches":
+			_ = json.NewEncoder(w).Encode([]map[string]any{
+				{"name": "main"},
+				{"name": "release/1.x"},
+			})
+		case "/repos/acme/private-docs/tags":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "v1.0.0"}})
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	refs, truncated, err := newTestClient(t, srv.URL, Config{}).ListRefs(context.Background(), "acme/private-docs")
+	if err != nil {
+		t.Fatalf("ListRefs() error = %v", err)
+	}
+	if truncated {
+		t.Error("ListRefs() truncated = true, want false")
+	}
+	want := []Ref{
+		{Name: "main", Type: "branch"},
+		{Name: "release/1.x", Type: "branch"},
+		{Name: "v1.0.0", Type: "tag"},
+	}
+	if len(refs) != len(want) {
+		t.Fatalf("ListRefs() = %+v, want %+v", refs, want)
+	}
+	for i := range want {
+		if refs[i] != want[i] {
+			t.Errorf("refs[%d] = %+v, want %+v", i, refs[i], want[i])
+		}
+	}
+}
+
+func TestListRefs_ReportsTruncation(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/private-docs/branches":
+			w.Header().Set("Link", `<https://api.github.com/repos/acme/private-docs/branches?per_page=100&page=2>; rel="next"`)
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"name": "main"}})
+		case "/repos/acme/private-docs/tags":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	_, truncated, err := newTestClient(t, srv.URL, Config{}).ListRefs(context.Background(), "acme/private-docs")
+	if err != nil {
+		t.Fatalf("ListRefs() error = %v", err)
+	}
+	if !truncated {
+		t.Error("ListRefs() truncated = false, want true when a next page exists")
+	}
+}
+
+func TestListRefs_RejectsInvalidRepo(t *testing.T) {
+	called := false
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	defer srv.Close()
+
+	if _, _, err := newTestClient(t, srv.URL, Config{}).ListRefs(context.Background(), "owner/../name"); err == nil {
+		t.Fatal("ListRefs(invalid repo) = nil error, want validation error")
+	}
+	if called {
+		t.Error("ListRefs() reached the API for an invalid repo")
+	}
+}
+
+func TestListRefs_DoesNotLeakTokenOnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"message":"Bad credentials"}`))
+	}))
+	defer srv.Close()
+
+	_, _, err := newTestClient(t, srv.URL, Config{}).ListRefs(context.Background(), "acme/private-docs")
+	if err == nil {
+		t.Fatal("ListRefs() = nil error, want the HTTP error")
+	}
+	if strings.Contains(err.Error(), "test-token") {
+		t.Errorf("error %q leaks the token", err)
+	}
+}
