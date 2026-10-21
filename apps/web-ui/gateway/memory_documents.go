@@ -245,22 +245,45 @@ func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io
 // timestamp fields are RFC3339 strings (empty when the server omitted a
 // nullable time).
 type ExtractionJob struct {
-	ID              string   `json:"id"`
-	ProjectID       string   `json:"project_id"`
-	SourceType      string   `json:"source_type"`
-	SourceID        string   `json:"source_id"`
-	Status          string   `json:"status"`
-	TotalItems      int      `json:"total_items"`
-	ProcessedItems  int      `json:"processed_items"`
-	SuccessfulItems int      `json:"successful_items"`
-	FailedItems     int      `json:"failed_items"`
-	DiscoveredTypes []string `json:"discovered_types"`
-	CreatedObjects  []string `json:"created_objects"`
-	ErrorMessage    *string  `json:"error_message"`
-	StartedAt       string   `json:"started_at"`
-	CompletedAt     string   `json:"completed_at"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ID               string   `json:"id"`
+	ProjectID        string   `json:"project_id"`
+	SourceType       string   `json:"source_type"`
+	SourceID         string   `json:"source_id"`
+	Status           string   `json:"status"`
+	TotalItems       int      `json:"total_items"`
+	ProcessedItems   int      `json:"processed_items"`
+	SuccessfulItems  int      `json:"successful_items"`
+	FailedItems      int      `json:"failed_items"`
+	DiscoveredTypes  []string `json:"discovered_types"`
+	CreatedObjects   []string `json:"created_objects"`
+	ObjectsCreated   int      `json:"objects_created"`
+	CreatedObjectIDs []string `json:"created_object_ids"`
+	StagingBranchID  string   `json:"staging_branch_id"`
+	ErrorMessage     *string  `json:"error_message"`
+	StartedAt        string   `json:"started_at"`
+	CompletedAt      string   `json:"completed_at"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+}
+
+// ObjectIDs returns the object ids this job created, preferring the modern
+// created_object_ids column and falling back to the legacy created_objects
+// jsonb column for pre-migration jobs (which the worker never wrote).
+func (j ExtractionJob) ObjectIDs() []string {
+	if len(j.CreatedObjectIDs) > 0 {
+		return j.CreatedObjectIDs
+	}
+	return j.CreatedObjects
+}
+
+// ObjectCount returns the number of objects this job created: the id-backed
+// columns when present, else the reported objects_created count. Used by the
+// extraction-history row badge.
+func (j ExtractionJob) ObjectCount() int {
+	if n := len(j.ObjectIDs()); n > 0 {
+		return n
+	}
+	return j.ObjectsCreated
 }
 
 // ListExtractionJobs lists the extraction jobs for one document, newest first

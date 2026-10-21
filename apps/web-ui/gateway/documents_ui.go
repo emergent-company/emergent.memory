@@ -144,19 +144,43 @@ func (s *Server) findExtractionJob(ctx context.Context, documentID, jobID string
 	return &jobs[i], nil
 }
 
-// extractionJobBranchID derives the staging branch a job wrote to from its
-// first created object. ok is false when the job produced nothing or the object
-// can no longer be resolved.
-func (s *Server) extractionJobBranchID(ctx context.Context, job *ExtractionJob) (string, bool) {
-	if len(job.CreatedObjects) == 0 {
-		return "", false
+// extractionJobBranch resolves the staging branch a job wrote to. ok is false
+// when the job produced nothing or the branch can no longer be resolved. The
+// branch record is attached whenever the id is still listed, so the detail can
+// render its name, readiness, and merge action.
+func (s *Server) extractionJobBranch(ctx context.Context, job *ExtractionJob) (string, *Branch, bool) {
+	// ListBranches is fetched at most once per resolution and reused by both
+	// the modern (staging_branch_id) and legacy (first created object) paths.
+	var branches []Branch
+	if list, err := s.memory.ListBranches(ctx); err != nil {
+		captureError(err)
+	} else {
+		branches = list
 	}
-	obj, err := s.memory.GetGraphObject(ctx, job.CreatedObjects[0])
+	branchByID := func(id string) *Branch {
+		if i := slices.IndexFunc(branches, func(b Branch) bool { return b.ID == id }); i >= 0 {
+			return &branches[i]
+		}
+		return nil
+	}
+
+	if job.StagingBranchID != "" {
+		if b := branchByID(job.StagingBranchID); b != nil {
+			return b.ID, b, true
+		}
+		// The staging branch no longer exists (deleted on merge); fall through
+		// to the legacy object fallback.
+	}
+	ids := job.ObjectIDs()
+	if len(ids) == 0 {
+		return "", nil, false
+	}
+	obj, err := s.memory.GetGraphObject(ctx, ids[0])
 	if err != nil || obj == nil || obj.BranchID == "" {
 		captureError(err)
-		return "", false
+		return "", nil, false
 	}
-	return obj.BranchID, true
+	return obj.BranchID, branchByID(obj.BranchID), true
 }
 
 // loadExtractionJobDetail assembles the per-job detail. Every step degrades
@@ -171,17 +195,18 @@ func (s *Server) loadExtractionJobDetail(ctx context.Context, documentID, jobID 
 	}
 	d.Job = *job
 
-	branchID, ok := s.extractionJobBranchID(ctx, job)
+	ids := job.ObjectIDs()
+	branchID, branch, ok := s.extractionJobBranch(ctx, job)
 	if !ok {
 		// The staging branch can no longer be resolved (it produced no objects,
 		// or was deleted on merge). Fall back to listing the job's created
 		// objects on the main branch so the object/relationship counts survive
 		// a merge instead of showing 0.
 		d.NoBranch = true
-		if len(job.CreatedObjects) == 0 {
+		if len(ids) == 0 {
 			return d
 		}
-		objects, err := s.memory.ListGraphObjects(ctx, "", "", job.CreatedObjects)
+		objects, err := s.memory.ListGraphObjects(ctx, "", "", ids)
 		if err != nil {
 			captureError(err)
 			return d
@@ -191,8 +216,14 @@ func (s *Server) loadExtractionJobDetail(ctx context.Context, documentID, jobID 
 		return d
 	}
 	d.BranchID = branchID
+	d.Branch = branch
 
-	objects, err := s.memory.ListGraphObjects(ctx, branchID, "", job.CreatedObjects)
+	// Guard the empty id set: ListGraphObjects with no ids would list the whole
+	// branch, showing objects this job never created.
+	if len(ids) == 0 {
+		return d
+	}
+	objects, err := s.memory.ListGraphObjects(ctx, branchID, "", ids)
 	if err != nil {
 		d.Err = err
 		return d
@@ -200,11 +231,6 @@ func (s *Server) loadExtractionJobDetail(ctx context.Context, documentID, jobID 
 	d.Objects = objects
 	d.Relationships = s.collectExtractionRelationships(ctx, branchID, objects)
 
-	if branches, err := s.memory.ListBranches(ctx); err != nil {
-		captureError(err)
-	} else if i := slices.IndexFunc(branches, func(b Branch) bool { return b.ID == branchID }); i >= 0 {
-		d.Branch = &branches[i]
-	}
 	if readiness, err := s.memory.GetMergeReadiness(ctx, branchID); err != nil {
 		captureError(err)
 	} else {
@@ -334,7 +360,7 @@ func (s *Server) uiDocumentMerge(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, historyPath, err)
 	}
-	branchID, ok := s.extractionJobBranchID(ctx, job)
+	branchID, _, ok := s.extractionJobBranch(ctx, job)
 	if !ok {
 		return redirectWithError(c, historyPath, fmt.Errorf("merge: this extraction has no staging branch to merge"))
 	}

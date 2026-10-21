@@ -44,6 +44,9 @@ type ExtractionJobDTO struct {
 	FailedItems      int                    `json:"failed_items"`
 	DiscoveredTypes  []string               `json:"discovered_types"`
 	CreatedObjects   []string               `json:"created_objects"`
+	ObjectsCreated   int                    `json:"objects_created"`
+	CreatedObjectIDs []string               `json:"created_object_ids"`
+	StagingBranchID  *string                `json:"staging_branch_id,omitempty"`
 	ErrorMessage     *string                `json:"error_message,omitempty"`
 	ErrorDetails     map[string]interface{} `json:"error_details,omitempty"`
 	DebugInfo        map[string]interface{} `json:"debug_info,omitempty"`
@@ -276,6 +279,13 @@ func (j *ObjectExtractionJob) ToDTO() *ExtractionJobDTO {
 		}
 	}
 
+	// created_object_ids is a typed array column; always expose a non-nil slice
+	// so the JSON field serialises as [] rather than null when empty.
+	createdObjectIDs := make([]string, 0)
+	if j.CreatedObjectIDs != nil {
+		createdObjectIDs = append(createdObjectIDs, j.CreatedObjectIDs...)
+	}
+
 	// Convert error details
 	var errorDetails map[string]interface{}
 	if j.ErrorDetails != nil {
@@ -319,6 +329,9 @@ func (j *ObjectExtractionJob) ToDTO() *ExtractionJobDTO {
 		FailedItems:      j.FailedItems,
 		DiscoveredTypes:  discoveredTypes,
 		CreatedObjects:   createdObjects,
+		ObjectsCreated:   j.ObjectsCreated,
+		CreatedObjectIDs: createdObjectIDs,
+		StagingBranchID:  j.StagingBranchID,
 		ErrorMessage:     j.ErrorMessage,
 		ErrorDetails:     errorDetails,
 		DebugInfo:        debugInfo,

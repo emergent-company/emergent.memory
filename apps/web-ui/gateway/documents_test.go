@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1227,7 +1228,7 @@ func TestLoadExtractionJobDetail(t *testing.T) {
 
 	t.Run("with branch", func(t *testing.T) {
 		f := &fakeMemory{
-			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjects: []string{"o1", "o2"}}},
+			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjectIDs: []string{"o1", "o2"}, StagingBranchID: "br1"}},
 			objects: []GraphObject{
 				{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"},
 				{ID: "o2", CanonicalID: "c2", BranchID: "br1", Type: "task", Key: "call dentist"},
@@ -1301,6 +1302,178 @@ func TestLoadExtractionJobDetail(t *testing.T) {
 	})
 }
 
+// TestLoadExtractionJobDetailStagingBranch pins the fix for the "0 objects"
+// regression: a modern job carries only created_object_ids / staging_branch_id
+// (created_objects jsonb is NULL), so the detail must resolve its staging
+// branch by id and list the id-backed objects — not collapse to "no staging
+// branch".
+func TestLoadExtractionJobDetailStagingBranch(t *testing.T) {
+	f := &fakeMemory{
+		extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjectIDs: []string{"o1", "o2"}, ObjectsCreated: 2, StagingBranchID: "br1"}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"},
+			{ID: "o2", CanonicalID: "c2", BranchID: "br1", Type: "task", Key: "call dentist"},
+		},
+		relns:          []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}},
+		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+		mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 2},
+	}
+	s := &Server{memory: f}
+	d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+	if d.Err != nil {
+		t.Fatalf("err = %v", d.Err)
+	}
+	if d.NoBranch || d.BranchID != "br1" || d.Branch == nil || d.Branch.Name != "extract-1" {
+		t.Fatalf("staging branch resolution = %+v", d)
+	}
+	if len(d.Objects) != 2 {
+		t.Fatalf("objects = %d, want 2", len(d.Objects))
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
+	for _, want := range []string{
+		"2 objects",
+		`data-testid="extraction-merge-form"`,
+		`data-testid="extraction-open-browser"`,
+		`href="/objects?branch=br1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("staging-branch detail missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestLoadExtractionJobDetailStagingBranchMerged covers a job whose staging
+// branch was deleted on merge: ListBranches no longer contains it, its objects
+// now live on main, so the detail degrades to the main-graph fallback without a
+// merge form.
+func TestLoadExtractionJobDetailStagingBranchMerged(t *testing.T) {
+	f := &fakeMemory{
+		extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjectIDs: []string{"o1", "o2"}, StagingBranchID: "br-gone"}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "c1", BranchID: "", Type: "person", Key: "sam"},
+			{ID: "o2", CanonicalID: "c2", BranchID: "", Type: "task", Key: "call dentist"},
+		},
+		relns:    []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}},
+		branches: []Branch{{ID: "br-other", Name: "extract-9"}},
+	}
+	s := &Server{memory: f}
+	d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+	if d.Err != nil {
+		t.Fatalf("err = %v", d.Err)
+	}
+	if !d.NoBranch || d.BranchID != "" {
+		t.Fatalf("want NoBranch=true with empty branch id, got %+v", d)
+	}
+	if len(d.Objects) != 2 {
+		t.Fatalf("objects = %d, want 2 (fallen back to main)", len(d.Objects))
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
+	if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+		t.Error("merged staging branch must not render the merge form")
+	}
+	if !strings.Contains(html, `data-testid="extraction-detail-nobranch"`) {
+		t.Errorf("merged staging branch must render the no-branch note:\n%s", html)
+	}
+}
+
+// TestLoadExtractionJobDetailEmptyIDsNeverListsBranch asserts a job that has a
+// live staging branch but no recorded object ids does not fall through to an
+// unfiltered branch listing (which would show objects the job never created).
+func TestLoadExtractionJobDetailEmptyIDsNeverListsBranch(t *testing.T) {
+	f := &fakeMemory{
+		extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", StagingBranchID: "br1"}},
+		objects:        []GraphObject{{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "other job's object"}},
+		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+	}
+	s := &Server{memory: f}
+	d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+	if d.Err != nil {
+		t.Fatalf("err = %v", d.Err)
+	}
+	if d.NoBranch || d.BranchID != "br1" {
+		t.Fatalf("branch resolution = %+v", d)
+	}
+	if len(d.Objects) != 0 {
+		t.Fatalf("objects = %d, want 0: an empty id set must not list the branch", len(d.Objects))
+	}
+}
+
+// TestLoadExtractionJobDetailLegacyCreatedObjects guards the legacy fallback: a
+// pre-migration job with only created_objects (no staging_branch_id /
+// created_object_ids) still resolves its branch from the first object.
+func TestLoadExtractionJobDetailLegacyCreatedObjects(t *testing.T) {
+	f := &fakeMemory{
+		extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", CreatedObjects: []string{"o1", "o2"}}},
+		objects: []GraphObject{
+			{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"},
+			{ID: "o2", CanonicalID: "c2", BranchID: "br1", Type: "task", Key: "call dentist"},
+		},
+		relns:    []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}},
+		branches: []Branch{{ID: "br1", Name: "extract-1"}},
+	}
+	s := &Server{memory: f}
+	d := s.loadExtractionJobDetail(context.Background(), "d1", "job1")
+	if d.Err != nil {
+		t.Fatalf("err = %v", d.Err)
+	}
+	if d.NoBranch || d.BranchID != "br1" {
+		t.Fatalf("legacy fallback resolution = %+v", d)
+	}
+	if len(d.Objects) != 2 {
+		t.Fatalf("objects = %d, want 2", len(d.Objects))
+	}
+	// The legacy path resolves the same branch record, so the merge action and
+	// branch-name badge still render for pre-migration jobs.
+	if d.Branch == nil || d.Branch.Name != "extract-1" {
+		t.Fatalf("legacy branch record = %+v, want extract-1", d.Branch)
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
+	if !strings.Contains(html, `data-testid="extraction-merge-form"`) {
+		t.Errorf("legacy job with a live branch must render the merge form:\n%s", html)
+	}
+}
+
+// TestExtractionJobObjectIDs pins the id preference: modern created_object_ids
+// wins over the legacy created_objects jsonb column.
+func TestExtractionJobObjectIDs(t *testing.T) {
+	j := ExtractionJob{
+		CreatedObjectIDs: []string{"a", "b"},
+		CreatedObjects:   []string{"legacy"},
+	}
+	if ids := j.ObjectIDs(); !slices.Equal(ids, []string{"a", "b"}) {
+		t.Fatalf("ObjectIDs() = %v, want [a b]", ids)
+	}
+	legacy := ExtractionJob{CreatedObjects: []string{"x"}}
+	if ids := legacy.ObjectIDs(); !slices.Equal(ids, []string{"x"}) {
+		t.Fatalf("legacy ObjectIDs() = %v, want [x]", ids)
+	}
+	if j.ObjectCount() != 2 {
+		t.Fatalf("ObjectCount() = %d, want 2", j.ObjectCount())
+	}
+	if count := (ExtractionJob{ObjectsCreated: 31}).ObjectCount(); count != 31 {
+		t.Fatalf("ObjectCount() fallback = %d, want 31", count)
+	}
+}
+
+// TestRenderExtractionJobRowBadgeCount asserts the history-row badge reports the
+// id-backed object count, not the stale created_objects column.
+func TestRenderExtractionJobRowBadgeCount(t *testing.T) {
+	job := ExtractionJob{
+		ID:               "job1",
+		Status:           "completed",
+		CreatedAt:        "2026-08-26T10:00:00Z",
+		CreatedObjectIDs: []string{"o1", "o2", "o3"},
+		ObjectsCreated:   31,
+	}
+	html := renderHTML(t, extractionJobRow("d1", job))
+	if !strings.Contains(html, "3 objects") {
+		t.Errorf("row badge missing id count:\n%s", html)
+	}
+	if strings.Contains(html, "31 objects") {
+		t.Errorf("row badge fell back to objects_created instead of ids:\n%s", html)
+	}
+}
+
 // TestDocumentSubPageRoutes exercises the chunks/extractions sub-pages, the
 // lazy per-job detail partial, the binary file proxy, and the merge PRG flow
 // against the fake backend.
@@ -1309,7 +1482,7 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 		documents: []Document{{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown", Chunks: 1}},
 		chunks:    []Chunk{{ID: "c1", Index: 0, Size: 5, Text: "hello chunk"}},
 		extractionJobs: []ExtractionJob{
-			{ID: "job1", Status: "completed", CreatedAt: "2026-08-26T10:00:00Z", CreatedObjects: []string{"o1"}},
+			{ID: "job1", Status: "completed", CreatedAt: "2026-08-26T10:00:00Z", CreatedObjectIDs: []string{"o1"}, StagingBranchID: "br1"},
 		},
 		objects:        []GraphObject{{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"}},
 		relns:          []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c1", DstID: "c1"}},

@@ -403,7 +403,7 @@ templ extractionJobRow(documentID string, job ExtractionJob) {
 			</div>
 			@documentStatusBadge(job.Status)
 			@ui.Badge(ui.BadgeProps{
-				Label:   strconv.Itoa(len(job.CreatedObjects)) + " object" + plural(len(job.CreatedObjects)),
+				Label:   strconv.Itoa(job.ObjectCount()) + " object" + plural(job.ObjectCount()),
 				Variant: ui.BadgeInfo,
 				Size:    ui.BadgeSizeXS,
 				Icon:    "lucide--box",
