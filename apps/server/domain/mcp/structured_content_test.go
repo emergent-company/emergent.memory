@@ -109,6 +109,48 @@ func TestToolsListDeclaresOutputSchema(t *testing.T) {
 	}
 }
 
+// TestToolsListSerializesNoNullProperties guards #2006: MCP clients validate
+// tools/list against JSON Schema, where `properties` must be an object when
+// present. Go serialized a nil map as `"properties": null` on every tool whose
+// output (or input) schema has no declared properties, and strict clients
+// (OpenCode/@modelcontextprotocol/sdk) rejected the whole tools/list response.
+func TestToolsListSerializesNoNullProperties(t *testing.T) {
+	svc := &Service{}
+	tools := svc.GetToolDefinitions()
+
+	for _, tool := range tools {
+		raw, err := json.Marshal(tool)
+		require.NoErrorf(t, err, "tool %q must marshal", tool.Name)
+		require.NotContainsf(t, string(raw), `"properties":null`,
+			"tool %q must not serialize null properties: %s", tool.Name, raw)
+
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(raw, &m))
+		for _, key := range []string{"inputSchema", "outputSchema"} {
+			schema, ok := m[key].(map[string]any)
+			if !ok {
+				continue // outputSchema is legitimately absent for prose-only tools
+			}
+			if props, present := schema["properties"]; present {
+				_, isObject := props.(map[string]any)
+				assert.Truef(t, isObject, "tool %q %s.properties must be an object when present, got %T", tool.Name, key, props)
+			}
+		}
+	}
+
+	// A tool with declared properties must keep them (omitempty only drops nil).
+	var query *ToolDefinition
+	for i := range tools {
+		if tools[i].Name == "entity-query" {
+			query = &tools[i]
+			break
+		}
+	}
+	require.NotNil(t, query, "entity-query must be registered")
+	require.NotEmpty(t, query.InputSchema.Properties, "entity-query must keep its input properties")
+	assert.Contains(t, query.InputSchema.Properties, "limit")
+}
+
 // TestToolsCallSerializesStructuredContent checks that a tool result with
 // structuredContent serializes it alongside the required content block.
 func TestToolsCallSerializesStructuredContent(t *testing.T) {
