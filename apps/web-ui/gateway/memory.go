@@ -358,6 +358,14 @@ func (m *MemoryClient) do(ctx context.Context, method, path string, body any, ou
 // endpoint needs). It retries transient failures under the default policy; see
 // doWithPolicy.
 func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) error {
+	_, err := m.doWithPolicy(ctx, method, path, body, hdrs, out, memoryRetryDefault)
+	return err
+}
+
+// doHResp is doH that also returns the final response headers, so a caller can
+// read transport-level hints (e.g. X-Resources-Truncated) without disturbing the
+// shared retry machinery. The headers come from the last attempt.
+func (m *MemoryClient) doHResp(ctx context.Context, method, path string, body any, hdrs map[string]string, out any) (http.Header, error) {
 	return m.doWithPolicy(ctx, method, path, body, hdrs, out, memoryRetryDefault)
 }
 
@@ -366,7 +374,8 @@ func (m *MemoryClient) doH(ctx context.Context, method, path string, body any, h
 // upstream is slow or hanging — the official MCP registry — where a 502 is not
 // a transient blip worth replaying and a retry only multiplies page latency.
 func (m *MemoryClient) doNoRetry(ctx context.Context, method, path string, body any, out any) error {
-	return m.doWithPolicy(ctx, method, path, body, nil, out, memoryRetryNone)
+	_, err := m.doWithPolicy(ctx, method, path, body, nil, out, memoryRetryNone)
+	return err
 }
 
 // doWithPolicy performs one or more attempts of a memory request and unmarshals
@@ -379,7 +388,7 @@ func (m *MemoryClient) doNoRetry(ctx context.Context, method, path string, body 
 // classes are retried; memoryRetryNone retries neither, so a request is made
 // exactly once. The returned error is wrapped in memoryAttemptError so callers
 // can report how many attempts were made.
-func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, body any, hdrs map[string]string, out any, policy memoryRetryPolicy) error {
+func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, body any, hdrs map[string]string, out any, policy memoryRetryPolicy) (http.Header, error) {
 	// Marshal the body once; a fresh reader is rebuilt per attempt in doOnce so
 	// a *bytes.Reader consumed by an earlier attempt can never be replayed
 	// empty.
@@ -387,7 +396,7 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		rdBuf = b
 	}
@@ -401,11 +410,12 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 		raw      []byte
 		lastErr  error
 		attempts int
+		hdr      http.Header
 	)
 	for attempt := range maxMemoryAttempts {
 		attempts = attempt + 1
 		var retryAfter time.Duration
-		status, raw, retryAfter, lastErr = m.doOnce(ctx, method, path, rdBuf, body != nil, hdrs)
+		status, raw, retryAfter, hdr, lastErr = m.doOnce(ctx, method, path, rdBuf, body != nil, hdrs)
 		if lastErr != nil {
 			// A transport error is transient: retry it for an idempotent
 			// request on the same terms as a 5xx status, but fail fast for
@@ -439,7 +449,7 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 	}
 	attemptErr := func(err error) error { return &memoryAttemptError{err: err, attempts: attempts} }
 	if lastErr != nil {
-		return attemptErr(lastErr)
+		return hdr, attemptErr(lastErr)
 	}
 	if status >= 400 {
 		err := parseMemoryError(status, raw)
@@ -456,12 +466,12 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 			log.Printf("memory API error: %s %s -> %d: %s", method, path, status, truncateString(string(raw), 2048))
 			captureMemoryError(method, path, status, attemptErr(err))
 		}
-		return attemptErr(err)
+		return hdr, attemptErr(err)
 	}
 	if out == nil {
-		return nil
+		return hdr, nil
 	}
-	return json.Unmarshal(raw, out)
+	return hdr, json.Unmarshal(raw, out)
 }
 
 // doOnce performs one HTTP attempt and returns the response status, body and
@@ -471,14 +481,14 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 // body is the already-marshalled request payload (nil when the request has
 // none); a fresh bytes.Reader is built here for every call, so each retry
 // attempt sends the complete payload rather than a consumed one.
-func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []byte, hasBody bool, hdrs map[string]string) (status int, raw []byte, retryAfter time.Duration, err error) {
+func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []byte, hasBody bool, hdrs map[string]string) (status int, raw []byte, retryAfter time.Duration, hdr http.Header, err error) {
 	var rd io.Reader
 	if hasBody {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, m.baseURL+path, rd)
 	if err != nil {
-		return 0, nil, 0, err
+		return 0, nil, 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+m.tokenFor(ctx))
 	if hasBody {
@@ -494,18 +504,18 @@ func (m *MemoryClient) doOnce(ctx context.Context, method, path string, body []b
 	resp, err := m.http.Do(req)
 	span.Finish()
 	if err != nil {
-		return 0, nil, 0, err
+		return 0, nil, 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	raw, err = io.ReadAll(io.LimitReader(resp.Body, maxMemoryResponseBytes+1))
 	if err != nil {
-		return resp.StatusCode, nil, 0, err
+		return resp.StatusCode, nil, 0, resp.Header, err
 	}
 	if len(raw) > maxMemoryResponseBytes {
-		return resp.StatusCode, nil, 0, fmt.Errorf("memory response exceeds %d bytes", maxMemoryResponseBytes)
+		return resp.StatusCode, nil, 0, resp.Header, fmt.Errorf("memory response exceeds %d bytes", maxMemoryResponseBytes)
 	}
-	return resp.StatusCode, raw, retryAfterDelay(resp.Header.Get("Retry-After")), nil
+	return resp.StatusCode, raw, retryAfterDelay(resp.Header.Get("Retry-After")), resp.Header, nil
 }
 
 // --- agent definitions ---

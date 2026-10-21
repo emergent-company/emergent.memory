@@ -15,7 +15,7 @@ import (
 // the provider-driven prompt plus the provider's selectable resources, each a
 // select-and-save form. Providers without a listing (e.g. github today) get a
 // graceful placeholder instead.
-templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, loadErr error, flashMsg string, flashErr error) {
+templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		<div data-testid="ds-resource-step">
 			if src == nil {
@@ -41,6 +41,30 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 							@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { { dsResourceStepDescription(*src) } }
 						</div>
 					</div>
+					{{/* Native GET navigation: the app shell boosts forms, and a boosted
+					     submit makes the filtered view depend on a swap landing (the
+					     boosted banner link intermittently no-ops live). No action
+					     attribute, so the request stays on the scoped resource URL. */}}
+					<form method="get" class="mt-4 flex items-center gap-2" hx-boost="false">
+						<input type="search" name="q" value={ query } placeholder="Search folders by name…" class="input w-full" autocomplete="off" data-testid="ds-resource-search"/>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--search",
+							Attrs:   templ.Attributes{"data-testid": "ds-resource-search-submit"},
+						}) {
+							Search
+						}
+					</form>
+					if truncated {
+						@ui.EmptyNote(ui.EmptyNoteProps{
+							Class: "mt-2",
+							Attrs: templ.Attributes{"data-testid": "ds-resource-truncated"},
+						}) {
+							Only the first 5,000 folders are shown — search by name to narrow the list.
+						}
+					}
 					if loadErr != nil || len(resources) == 0 {
 						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
 							@ui.Alert(ui.AlertProps{

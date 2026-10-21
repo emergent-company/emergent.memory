@@ -155,11 +155,13 @@ func (h *Handler) TestConnection(c echo.Context) error {
 
 // ListResources handles GET /api/data-source-integrations/:id/resources.
 // @Summary      List a source's selectable resources
-// @Description  Lists the sync targets (Drive folders / GitHub repositories) for a source
+// @Description  Lists the sync targets (Drive folders / GitHub repositories) for a source, optionally filtered by name
 // @Tags         data-source-integrations
 // @Produce      json
 // @Param        id path string true "Source ID (UUID)"
+// @Param        q query string false "Name filter (Drive folders whose name contains this text)"
 // @Success      200 {array} Resource "Selectable resources"
+// @Header       200 {string} X-Resources-Truncated "Present (value: true) when the listing was capped; absent for a complete listing"
 // @Failure      400 {object} apperror.Error "Bad request"
 // @Failure      401 {object} apperror.Error "Unauthorized"
 // @Failure      404 {object} apperror.Error "Source not found"
@@ -175,9 +177,12 @@ func (h *Handler) ListResources(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	resources, err := h.svc.ListResources(c.Request().Context(), projectID, id)
+	resources, truncated, err := h.svc.ListResources(c.Request().Context(), projectID, id, c.QueryParam("q"))
 	if err != nil {
 		return err
+	}
+	if truncated {
+		c.Response().Header().Set("X-Resources-Truncated", "true")
 	}
 	return c.JSON(http.StatusOK, resources)
 }

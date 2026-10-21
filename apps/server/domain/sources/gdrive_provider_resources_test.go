@@ -15,8 +15,8 @@ type fakeDriveTransport struct {
 func (f *fakeDriveTransport) ListFolderItems(context.Context, string, []string, bool, string) ([]gdrive.Item, error) {
 	return nil, nil
 }
-func (f *fakeDriveTransport) ListFolders(context.Context, string) ([]gdrive.Item, error) {
-	return f.folders, nil
+func (f *fakeDriveTransport) ListFolders(context.Context, string, string) ([]gdrive.Item, bool, error) {
+	return f.folders, false, nil
 }
 func (f *fakeDriveTransport) ExportText(context.Context, string, string) ([]byte, error) {
 	return nil, nil
@@ -28,9 +28,12 @@ func TestGoogleDriveProvider_ListResources(t *testing.T) {
 	p := NewGoogleDriveProvider(func(context.Context, gdrive.Credentials) (DriveTransport, error) {
 		return &fakeDriveTransport{folders: []gdrive.Item{{ID: "f1", Name: "Docs"}, {ID: "f2", Name: "Archive"}}}, nil
 	})
-	resources, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil)
+	resources, truncated, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
+	}
+	if truncated {
+		t.Fatalf("ListResources() truncated = true, want false")
 	}
 	if len(resources) != 2 || resources[0].ID != "f1" || resources[0].Name != "Docs" || resources[0].Type != "folder" {
 		t.Fatalf("ListResources() = %+v, want two folders", resources)

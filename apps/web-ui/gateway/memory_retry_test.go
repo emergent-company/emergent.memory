@@ -370,7 +370,7 @@ func TestDoOnceFreshReaderPerAttempt(t *testing.T) {
 	body := []byte(`{"a":"b"}`)
 	// Two attempts' worth of doOnce calls must each send the full payload.
 	for range 2 {
-		if _, _, _, err := mc.doOnce(t.Context(), http.MethodPut, "/api/x", body, true, nil); err != nil {
+		if _, _, _, _, err := mc.doOnce(t.Context(), http.MethodPut, "/api/x", body, true, nil); err != nil {
 			t.Fatalf("doOnce: %v", err)
 		}
 	}

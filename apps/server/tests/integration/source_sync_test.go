@@ -156,7 +156,9 @@ func (f *fakeDrive) fetched() []string {
 
 func (f *fakeDrive) TestConnection(_ context.Context) error { return nil }
 
-func (f *fakeDrive) ListFolders(_ context.Context, _ string) ([]gdrive.Item, error) { return nil, nil }
+func (f *fakeDrive) ListFolders(_ context.Context, _, _ string) ([]gdrive.Item, bool, error) {
+	return nil, false, nil
+}
 
 func (s *SourceSyncSuite) newWorker(fake *fakeDrive) *sources.SyncWorker {
 	provider := sources.NewGoogleDriveProvider(func(_ context.Context, _ gdrive.Credentials) (sources.DriveTransport, error) {

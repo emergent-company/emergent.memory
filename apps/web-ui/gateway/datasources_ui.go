@@ -492,19 +492,36 @@ func dsOAuthErrorMessage(code string) string {
 	return "Authorization failed: " + code
 }
 
+// dsScoped returns path prefixed with the caller's active project scope when a
+// web session with a project is active, or path unchanged otherwise. It backs
+// the OAuth connect flow, whose post-callback redirects arrive unscoped (the
+// API server has no scope prefix) but must land inside the active project to
+// satisfy scopeRewrite's hard cut; scopeLocation no-ops on an unscoped request,
+// so the target is made scoped here. When the request is already scoped the
+// result starts with /o/ and scopeLocation leaves it untouched (no double
+// prefix).
+func (s *Server) dsScoped(path string, c echo.Context) string {
+	if sc, ok := sessionContextFrom(c.Request().Context()); ok && !sc.Device && sc.ProjectID != "" {
+		if base := projectScopeURL(sc.OrgID, sc.ProjectID); base != "" {
+			return base + path
+		}
+	}
+	return path
+}
+
 // uiDataSourceOAuthCallback is the memory OAuth callback's landing handler: it
 // surfaces an authorization failure, redirects to the freshly connected source,
 // or falls back to the list. Registered both on /data-sources/oauth/callback and
 // as the delegate for /data-sources?connected=... (the server's OAuthLandingURL).
 func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
 	if oauthErr := c.QueryParam("oauth_error"); oauthErr != "" {
-		return redirectWithError(c, "/data-sources", errors.New(dsOAuthErrorMessage(oauthErr)))
+		return redirectWithError(c, s.dsScoped("/data-sources", c), errors.New(dsOAuthErrorMessage(oauthErr)))
 	}
 	if connected := c.QueryParam("connected"); connected != "" {
-		render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(connected)+"?created=1")
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), s.dsScoped("/data-sources/"+url.PathEscape(connected)+"?created=1", c))
 		return nil
 	}
-	return c.Redirect(http.StatusSeeOther, "/data-sources")
+	return c.Redirect(http.StatusSeeOther, s.dsScoped("/data-sources", c))
 }
 
 // uiDataSourceResources renders the resource-selection step for a source. It
@@ -516,7 +533,7 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, false, "", userFacingError(err), "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -524,11 +541,12 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	} else {
 		captureError(perr)
 	}
-	resources, rerr := s.memory.ListDSResources(ctx, id)
+	query := c.QueryParam("q")
+	resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
 	if rerr != nil {
 		rerr = userFacingError(rerr)
 	}
-	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, rerr, "", nil))
+	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, truncated, query, rerr, "", nil))
 }
 
 // uiDataSourceResourceSave saves the chosen resource onto a source's config
@@ -1155,7 +1173,7 @@ func (s *Server) uiDataSourceCreate(c echo.Context) error {
 	if err != nil {
 		return redirectWithError(c, dsConnectFormPath, err)
 	}
-	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(item.ID)+"?created=1")
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), s.dsScoped("/data-sources/"+url.PathEscape(item.ID)+"?created=1", c))
 	return nil
 }
 

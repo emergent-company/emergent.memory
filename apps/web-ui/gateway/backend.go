@@ -142,7 +142,7 @@ type MemoryBackend interface {
 	GetProjectDSOAuthClient(ctx context.Context, projectID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertProjectDSOAuthClient(ctx context.Context, projectID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)
 	DeleteProjectDSOAuthClient(ctx context.Context, projectID, providerType string) error
-	ListDSResources(ctx context.Context, id string) ([]DSResource, error)
+	ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error)
 	SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error)
 	GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error)
 	GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error)

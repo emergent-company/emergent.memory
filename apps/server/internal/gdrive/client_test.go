@@ -219,6 +219,91 @@ func TestTestConnectionFailure(t *testing.T) {
 	require.Contains(t, err.Error(), "connection test failed")
 }
 
+func TestListFoldersNameFilterEscapesQuery(t *testing.T) {
+	var queries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/files" {
+			http.NotFound(w, r)
+			return
+		}
+		queries = append(queries, r.URL.Query().Get("q"))
+		require.Equal(t, "1000", r.URL.Query().Get("pageSize"))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"files":[`+fileJSON("f1", "Budget Q3", folderMimeType, "")+`]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWithHTTPClient(srv.Client(), option.WithEndpoint(srv.URL))
+	require.NoError(t, err)
+
+	items, truncated, err := c.ListFolders(context.Background(), "", "Budget O'Brien")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Len(t, items, 1)
+	require.Equal(t, "f1", items[0].ID)
+
+	require.Len(t, queries, 1)
+	require.Contains(t, queries[0], "mimeType = '"+folderMimeType+"'")
+	require.Contains(t, queries[0], "trashed = false")
+	require.Contains(t, queries[0], `name contains 'Budget O\'Brien'`)
+}
+
+func TestEscapeDriveQueryValue(t *testing.T) {
+	// Drive's q clause quotes values with single quotes and escapes with
+	// backslashes; a backslash in the name must be doubled too, or the clause
+	// ends up malformed.
+	for in, want := range map[string]string{
+		"Reports":        "Reports",
+		`Budget O'Brien`: `Budget O\'Brien`,
+		`back\slash`:     `back\\slash`,
+		`both'and\mixed`: `both\'and\\mixed`,
+	} {
+		require.Equal(t, want, escapeDriveQueryValue(in), "input %q", in)
+	}
+}
+
+func TestListFoldersCompleteListingNotTruncated(t *testing.T) {
+	// Exactly maxListFolderPages pages, the last one carrying no next-page
+	// token, is a complete listing: truncated must be false.
+	var pages int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		w.Header().Set("Content-Type", "application/json")
+		if pages < maxListFolderPages {
+			fmt.Fprint(w, `{"nextPageToken":"tok","files":[`+fileJSON("f", "Folder", folderMimeType, "")+`]}`)
+			return
+		}
+		fmt.Fprint(w, `{"files":[`+fileJSON("f", "Folder", folderMimeType, "")+`]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWithHTTPClient(srv.Client(), option.WithEndpoint(srv.URL))
+	require.NoError(t, err)
+
+	items, truncated, err := c.ListFolders(context.Background(), "", "")
+	require.NoError(t, err)
+	require.False(t, truncated)
+	require.Len(t, items, maxListFolderPages)
+}
+
+func TestListFoldersCappedTruncated(t *testing.T) {
+	// Always return a next-page token: the walk hits the page cap and must
+	// report truncated.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"nextPageToken":"more","files":[`+fileJSON("f", "Folder", folderMimeType, "")+`]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWithHTTPClient(srv.Client(), option.WithEndpoint(srv.URL))
+	require.NoError(t, err)
+
+	items, truncated, err := c.ListFolders(context.Background(), "", "")
+	require.NoError(t, err)
+	require.True(t, truncated)
+	require.Len(t, items, maxListFolderPages)
+}
+
 func TestEncryptDecryptRoundTrip(t *testing.T) {
 	key := bytes.Repeat([]byte{0xAB}, 32)
 

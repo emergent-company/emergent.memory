@@ -23,7 +23,7 @@ var credentialKeyNames = []string{"client_id", "client_secret", "refresh_token",
 // testing, and resource listing; a fake satisfies it in tests.
 type DriveTransport interface {
 	ListFolderItems(ctx context.Context, folderID string, mimeTypes []string, recursive bool, sharedDriveID string) ([]gdrive.Item, error)
-	ListFolders(ctx context.Context, parentID string) ([]gdrive.Item, error)
+	ListFolders(ctx context.Context, parentID, nameQuery string) ([]gdrive.Item, bool, error)
 	ExportText(ctx context.Context, fileID, mimeType string) ([]byte, error)
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 	TestConnection(ctx context.Context) error
@@ -123,20 +123,21 @@ func (p *googleDriveProvider) ScopesForStrategy(strategy string) ([]string, bool
 func (p *googleDriveProvider) CredentialKeys() []string { return credentialKeyNames }
 
 // ListResources lists the Drive folders a user may pick as a sync target.
-func (p *googleDriveProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any) ([]Resource, error) {
+// query (a non-empty name filter) is threaded into the Drive listing.
+func (p *googleDriveProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string) ([]Resource, bool, error) {
 	client, err := p.newClient(ctx, driveCredentials(creds))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	items, err := client.ListFolders(ctx, "")
+	items, truncated, err := client.ListFolders(ctx, "", query)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]Resource, len(items))
 	for i, it := range items {
 		out[i] = Resource{ID: it.ID, Name: it.Name, Type: "folder"}
 	}
-	return out, nil
+	return out, truncated, nil
 }
 
 func (p *googleDriveProvider) ValidateConfig(cfg map[string]any) error {

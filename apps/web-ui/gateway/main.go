@@ -112,6 +112,9 @@ func main() {
 	// Redirect scoping: rewrite Location/HX-Redirect targets of a scoped
 	// request so PRG redirects stay in the active org/project context.
 	e.Use(s.scopeLocation)
+	// Unscoped OAuth landing: re-scope /data-sources requests (exempt from the
+	// hard cut in strictScopedPath) onto the caller's active project.
+	e.Use(s.dataSourcesScopeRedirect)
 	// Scope rewrite: strip the /o/... prefix before routing so the flat route
 	// table below is reused unchanged (Pre middlewares run before routing).
 	e.Pre(s.scopeRewrite)

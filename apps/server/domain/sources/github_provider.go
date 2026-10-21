@@ -106,22 +106,23 @@ func (p *githubProvider) OAuth() (OAuthStrategy, bool) {
 func (p *githubProvider) CredentialKeys() []string { return githubCredentialKeyNames }
 
 // ListResources lists the repositories the token can see so the connect flow can
-// offer a repository picker. Private repositories are included.
-func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any) ([]Resource, error) {
+// offer a repository picker. Private repositories are included. GitHub ignores
+// the name filter and never truncates.
+func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, _ string) ([]Resource, bool, error) {
 	token, _ := creds["access_token"].(string)
 	client, err := p.newClient(ctx, github.Credentials{Token: token})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	repos, err := client.ListRepos(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]Resource, len(repos))
 	for i, repo := range repos {
 		out[i] = Resource{ID: repo.FullName, Name: repo.FullName, Type: "repo"}
 	}
-	return out, nil
+	return out, false, nil
 }
 
 func (p *githubProvider) ValidateConfig(cfg map[string]any) error {

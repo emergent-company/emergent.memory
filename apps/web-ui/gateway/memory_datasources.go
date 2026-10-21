@@ -350,14 +350,21 @@ func (m *MemoryClient) DeleteProjectDSOAuthClient(ctx context.Context, projectID
 
 // ListDSResources lists a source's selectable sync resources (folders /
 // repositories). Providers without a listing (e.g. github today) surface an
-// error the UI renders as "selection unavailable".
-func (m *MemoryClient) ListDSResources(ctx context.Context, id string) ([]DSResource, error) {
+// error the UI renders as "selection unavailable". query is an optional name
+// filter threaded to the backend as the `q` parameter; truncated mirrors the
+// backend's X-Resources-Truncated header and is true only when the listing was
+// capped.
+func (m *MemoryClient) ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error) {
 	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/resources"
-	var out []DSResource
-	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
-		return nil, err
+	if query != "" {
+		path += "?q=" + url.QueryEscape(query)
 	}
-	return out, nil
+	var out []DSResource
+	hdr, err := m.doHResp(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out)
+	if err != nil {
+		return nil, false, err
+	}
+	return out, hdr.Get("X-Resources-Truncated") == "true", nil
 }
 
 // GetDSProviderSchema returns a provider's config schema.

@@ -29,6 +29,13 @@ const (
 	// folderMimeType identifies a Drive folder item.
 	folderMimeType = "application/vnd.google-apps.folder"
 
+	// maxListFolderPages caps the folder-listing walk at 5 pages (× 1000
+	// items each) so an unfiltered listing on a huge account always returns in
+	// seconds rather than paging through every folder and exhausting the
+	// request budget. The caller learns the listing was cut via ListFolders'
+	// truncated return value.
+	maxListFolderPages = 5
+
 	// driveReadonlyScope is the OAuth2 scope requested for the client when the
 	// stored credential carries no scope (legacy pasted-credential sources).
 	driveReadonlyScope = "https://www.googleapis.com/auth/drive.readonly"
@@ -184,8 +191,12 @@ func (c *Client) ListFolderItems(ctx context.Context, folderID string, mimeTypes
 }
 
 // ListFolders lists Drive folders (optionally under parentID — empty lists all
-// accessible non-trashed folders) for the resource-selection step.
-func (c *Client) ListFolders(ctx context.Context, parentID string) ([]Item, error) {
+// accessible non-trashed folders) for the resource-selection step. A non-empty
+// name query limits the listing to folders whose name contains that text. The
+// walk is bounded to maxListFolderPages pages of 1000 items; truncated is true
+// only when the cap cut the walk short while Drive still returned more pages
+// (a complete listing — even one that fills the cap exactly — is false).
+func (c *Client) ListFolders(ctx context.Context, parentID, nameQuery string) ([]Item, bool, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
@@ -193,31 +204,36 @@ func (c *Client) ListFolders(ctx context.Context, parentID string) ([]Item, erro
 	if strings.TrimSpace(parentID) != "" {
 		q = "'" + escapeDriveQueryValue(parentID) + "' in parents and " + q
 	}
+	if name := strings.TrimSpace(nameQuery); name != "" {
+		q += " and name contains '" + escapeDriveQueryValue(name) + "'"
+	}
 
 	var out []Item
 	pageToken := ""
-	for {
+	for page := 0; page < maxListFolderPages; page++ {
 		call := c.svc.Files.List().
 			Q(q).
 			SupportsAllDrives(true).
 			IncludeItemsFromAllDrives(true).
+			PageSize(1000).
 			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,trashed,modifiedTime)")
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
 		fileList, err := call.Context(ctx).Do()
 		if err != nil {
-			return nil, fmt.Errorf("google drive: list folders: %w", err)
+			return nil, false, fmt.Errorf("google drive: list folders: %w", err)
 		}
 		for _, f := range fileList.Files {
 			out = append(out, toItem(f))
 		}
 		if fileList.NextPageToken == "" {
-			break
+			return out, false, nil
 		}
 		pageToken = fileList.NextPageToken
 	}
-	return out, nil
+	// The cap was reached while Drive still returned a next-page token.
+	return out, true, nil
 }
 
 // listChildren lists one page (all pages) of children of a single folder,

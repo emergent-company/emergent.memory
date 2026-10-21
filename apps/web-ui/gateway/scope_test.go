@@ -138,8 +138,11 @@ func TestStrictScopedPath(t *testing.T) {
 		{http.MethodGet, "/webhooks/github", false},
 		{http.MethodGet, "/dev/components", false},
 		{http.MethodGet, "/partial/invite-user-search", false},
-		{http.MethodPost, "/objects", false},          // mutations keep the cookie fallback
-		{http.MethodGet, "/o/o1/p/p1/objects", false}, // scoped paths are handled earlier
+		{http.MethodGet, "/data-sources", false},                // OAuth landing re-scoped by dataSourcesScopeRedirect
+		{http.MethodGet, "/data-sources/oauth/callback", false}, // OAuth callback lands unscoped
+		{http.MethodGet, "/data-sources/new", false},            // OAuth landing re-scoped by dataSourcesScopeRedirect
+		{http.MethodPost, "/objects", false},                    // mutations keep the cookie fallback
+		{http.MethodGet, "/o/o1/p/p1/objects", false},           // scoped paths are handled earlier
 	}
 	for _, tc := range cases {
 		if got := strictScopedPath(tc.method, tc.path); got != tc.want {
@@ -178,6 +181,78 @@ func TestScopeRewriteHardCut(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("session scoped /objects = %d, want 200", rec.Code)
 	}
+}
+
+// TestDataSourcesScopeRedirect verifies the unscoped OAuth-landing re-scope
+// middleware: an unscoped /data-sources GET with an active project redirects to
+// the scoped URL (preserving the query), while one with no project keeps the
+// hard cut's 404 and a scoped request passes through untouched.
+func TestDataSourcesScopeRedirect(t *testing.T) {
+	newServer := func(sess *sessionContext) *echo.Echo {
+		s := &Server{cfg: sessionCfg()}
+		e := echo.New()
+		e.Pre(s.scopeRewrite)
+		e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+			return func(c echo.Context) error {
+				if sess != nil {
+					ctx := withSessionContext(c.Request().Context(), sess)
+					c.SetRequest(c.Request().WithContext(ctx))
+				}
+				return next(c)
+			}
+		})
+		e.Use(s.dataSourcesScopeRedirect)
+		e.GET("/data-sources", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+		return e
+	}
+
+	t.Run("unscoped with active project redirects scoped", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newServer(&sessionContext{Sub: "u1", OrgID: "o1", ProjectID: "p1"}).
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources", nil))
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/o/o1/p/p1/data-sources" {
+			t.Errorf("location = %q, want /o/o1/p/p1/data-sources", loc)
+		}
+	})
+
+	t.Run("query string preserved", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newServer(&sessionContext{Sub: "u1", OrgID: "o1", ProjectID: "p1"}).
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources?connected=s1", nil))
+		if loc := rec.Header().Get("Location"); loc != "/o/o1/p/p1/data-sources?connected=s1" {
+			t.Errorf("location = %q, want /o/o1/p/p1/data-sources?connected=s1", loc)
+		}
+	})
+
+	t.Run("no project keeps 404", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newServer(&sessionContext{Sub: "u1"}).
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("no session keeps 404", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newServer(nil).
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources", nil))
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("scoped request passes through", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		newServer(&sessionContext{Sub: "u1", OrgID: "o1", ProjectID: "p1"}).
+			ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/o/o1/p/p1/data-sources", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	})
 }
 
 // TestApplyScopeIsPerRequestPath is the multi-tab guarantee at the resolver

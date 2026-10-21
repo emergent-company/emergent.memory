@@ -109,8 +109,10 @@ type SourceProvider interface {
 	CredentialKeys() []string
 	// ListResources lists the selectable sync targets for the given decrypted
 	// credentials (a Drive folder, a GitHub repository). It backs the
-	// post-consent resource-selection step.
-	ListResources(ctx context.Context, creds Credentials, cfg map[string]any) ([]Resource, error)
+	// post-consent resource-selection step. query is an optional name filter
+	// (a provider may ignore it); truncated reports that the provider capped
+	// the listing (more matches exist than were returned).
+	ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string) ([]Resource, bool, error)
 	// NewConnector builds a connector for the given decrypted credentials.
 	NewConnector(ctx context.Context, creds Credentials, deps ConnectorDeps) (Connector, error)
 }

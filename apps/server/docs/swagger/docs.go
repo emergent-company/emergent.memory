@@ -23356,7 +23356,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "Lists the sync targets (Drive folders / GitHub repositories) for a source",
+                "description": "Lists the sync targets (Drive folders / GitHub repositories) for a source, optionally filtered by name",
                 "produces": [
                     "application/json"
                 ],
@@ -23371,6 +23371,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Name filter (Drive folders whose name contains this text)",
+                        "name": "q",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -23380,6 +23386,12 @@ const docTemplate = `{
                             "type": "array",
                             "items": {
                                 "$ref": "#/definitions/domain_sources.Resource"
+                            }
+                        },
+                        "headers": {
+                            "X-Resources-Truncated": {
+                                "type": "string",
+                                "description": "Present (value: true) when the listing was capped; absent for a complete listing"
                             }
                         }
                     },
@@ -38471,7 +38483,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "config": {
-                    "description": "Config carries the non-secret config values (credential keys stripped) so\nthe connect/edit UI can round-trip a source's persisted settings without\nexposing write-only credential fields. Credential material never appears\nhere (design D9).",
+                    "description": "Config carries the non-secret config values (credential keys stripped) so\nthe connect/edit UI can round-trip a source's persisted settings without\nexposing write-only credential fields. Credential material never appears\nhere (design D2).",
                     "type": "object",
                     "additionalProperties": {}
                 },

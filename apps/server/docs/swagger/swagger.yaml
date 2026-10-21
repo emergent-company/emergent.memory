@@ -9060,7 +9060,7 @@ definitions:
           Config carries the non-secret config values (credential keys stripped) so
           the connect/edit UI can round-trip a source's persisted settings without
           exposing write-only credential fields. Credential material never appears
-          here (design D9).
+          here (design D2).
         type: object
       createdAt:
         type: string
@@ -25324,18 +25324,27 @@ paths:
   /data-source-integrations/{id}/resources:
     get:
       description: Lists the sync targets (Drive folders / GitHub repositories) for
-        a source
+        a source, optionally filtered by name
       parameters:
       - description: Source ID (UUID)
         in: path
         name: id
         required: true
         type: string
+      - description: Name filter (Drive folders whose name contains this text)
+        in: query
+        name: q
+        type: string
       produces:
       - application/json
       responses:
         "200":
           description: Selectable resources
+          headers:
+            X-Resources-Truncated:
+              description: 'Present (value: true) when the listing was capped; absent
+                for a complete listing'
+              type: string
           schema:
             items:
               $ref: '#/definitions/domain_sources.Resource'

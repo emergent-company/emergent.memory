@@ -30,8 +30,8 @@ func (p *stubProvider) ExtractCredentials(map[string]any) (Credentials, error) {
 	return Credentials{}, nil
 }
 func (p *stubProvider) CredentialKeys() []string { return nil }
-func (p *stubProvider) ListResources(context.Context, Credentials, map[string]any) ([]Resource, error) {
-	return nil, nil
+func (p *stubProvider) ListResources(context.Context, Credentials, map[string]any, string) ([]Resource, bool, error) {
+	return nil, false, nil
 }
 func (p *stubProvider) NewConnector(context.Context, Credentials, ConnectorDeps) (Connector, error) {
 	return nil, nil

@@ -38,6 +38,51 @@ func TestListDSIntegrations(t *testing.T) {
 	}
 }
 
+func TestListDSResources(t *testing.T) {
+	t.Run("query and truncated header", func(t *testing.T) {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.RequestURI()
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Resources-Truncated", "true")
+			_, _ = io.WriteString(w, `[{"id":"f1","name":"Reports","type":"folder"}]`)
+		}))
+		defer srv.Close()
+
+		m := NewMemoryClient(srv.URL, "proj-1")
+		items, truncated, err := m.ListDSResources(context.Background(), "s1", "rep")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if gotPath != "/api/data-source-integrations/s1/resources?q=rep" {
+			t.Errorf("path = %q", gotPath)
+		}
+		if !truncated {
+			t.Errorf("truncated = false, want true (header present)")
+		}
+		if len(items) != 1 || items[0].Name != "Reports" {
+			t.Fatalf("items = %+v", items)
+		}
+	})
+
+	t.Run("absent header means complete", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `[{"id":"f1","name":"Reports","type":"folder"}]`)
+		}))
+		defer srv.Close()
+
+		m := NewMemoryClient(srv.URL, "proj-1")
+		_, truncated, err := m.ListDSResources(context.Background(), "s1", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if truncated {
+			t.Errorf("truncated = true, want false (header absent)")
+		}
+	})
+}
+
 func TestGetDSIntegrationNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

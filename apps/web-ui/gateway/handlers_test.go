@@ -195,7 +195,9 @@ type fakeMemory struct {
 	dsDeletedProjectOAuthID    string                     // last project id passed to DeleteProjectDSOAuthClient
 	dsDeletedProjectOAuthProv  string                     // last provider passed to DeleteProjectDSOAuthClient
 	dsResources                []DSResource               // returned by ListDSResources
+	dsResourcesTruncated       bool                       // truncated flag returned by ListDSResources
 	dsResourcesErr             error                      // ListDSResources failure
+	dsResourcesQuery           string                     // last query passed to ListDSResources
 	dsSavedResourceID          string                     // last id passed to SaveDSResource
 	dsSavedResourceCfg         map[string]any             // last cfg passed to SaveDSResource
 	mergeReadiness             *MergeReadiness            // returned by GetMergeReadiness
@@ -4411,11 +4413,12 @@ func (f *fakeMemory) DeleteProjectDSOAuthClient(ctx context.Context, projectID, 
 	return f.dsProjectOAuthClientErr
 }
 
-func (f *fakeMemory) ListDSResources(ctx context.Context, id string) ([]DSResource, error) {
+func (f *fakeMemory) ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error) {
+	f.dsResourcesQuery = query
 	if f.dsResourcesErr != nil {
-		return nil, f.dsResourcesErr
+		return nil, false, f.dsResourcesErr
 	}
-	return f.dsResources, nil
+	return f.dsResources, f.dsResourcesTruncated, nil
 }
 
 func (f *fakeMemory) SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error) {

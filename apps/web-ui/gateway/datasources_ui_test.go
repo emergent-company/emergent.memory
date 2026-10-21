@@ -205,7 +205,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
 	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
 
-	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, nil, "", nil))
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "", nil, "", nil))
 	for _, want := range []string{
 		`data-testid="ds-resource-step"`,
 		"Choose a Drive folder",
@@ -216,13 +216,41 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 		`data-testid="ds-resource-select"`,
 		"Use this folder",
 		`href="/data-sources/s1"`,
+		`data-testid="ds-resource-search"`,
+		`data-testid="ds-resource-search-submit"`,
+		// Native GET navigation, not a boosted form submit (see the templ),
+		// and no action attribute so the scoped path is preserved.
+		`<form method="get" class="mt-4 flex items-center gap-2" hx-boost="false">`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("resource step missing %q", want)
 		}
 	}
+	if strings.Contains(html, `data-testid="ds-resource-truncated"`) {
+		t.Error("truncation note rendered for a complete (non-truncated) listing")
+	}
 
-	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, nil, "", nil))
+	// The typed filter is echoed back into the search field so the reload keeps
+	// it visible.
+	filtered := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "Reports", nil, "", nil))
+	if !strings.Contains(filtered, `name="q" value="Reports"`) {
+		t.Error("search field does not echo the applied filter")
+	}
+	if strings.Contains(filtered, `name="q" value=""`) {
+		t.Error("search field lost the applied filter")
+	}
+
+	// A truncated listing renders the note; the flag — not the item count —
+	// controls it.
+	truncated := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, true, "", nil, "", nil))
+	if !strings.Contains(truncated, `data-testid="ds-resource-truncated"`) {
+		t.Error("truncation note missing for a truncated listing")
+	}
+	if !strings.Contains(truncated, "search by name") {
+		t.Error("truncation note missing its search-by-name hint")
+	}
+
+	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, "", nil))
 	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
 		t.Error("resource empty state missing")
 	}
@@ -234,17 +262,17 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	}
 
 	// A non-Drive provider gets the generic copy and a generic action label.
-	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, nil, "", nil))
+	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, false, "", nil, "", nil))
 	if !strings.Contains(generic, "Choose a resource (repository or folder)") {
 		t.Error("generic provider copy missing")
 	}
-	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, nil, "", nil))
+	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, "", nil))
 	if !strings.Contains(genericList, "Use this resource") {
 		t.Error("generic resource action label missing")
 	}
 
 	// A failed listing renders the empty/error state, not a broken list.
-	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, errTest, "", nil))
+	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", errTest, "", nil))
 	if !strings.Contains(errored, `data-testid="ds-resource-empty"`) {
 		t.Error("resource error state missing")
 	}
@@ -794,6 +822,35 @@ func TestUIDataSourceOAuthCallback(t *testing.T) {
 	}
 }
 
+// TestUIDataSourceOAuthCallbackScoped verifies the OAuth landing redirects onto
+// the caller's active project scope when a session carries one, so the redirect
+// target never trips scopeRewrite's hard cut. The unscoped fallback is covered
+// by TestUIDataSourceOAuthCallback (no session attached).
+func TestUIDataSourceOAuthCallbackScoped(t *testing.T) {
+	e := newDSUIServer(&fakeMemory{})
+
+	// connected → the scoped detail URL with the created flash.
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?connected=s1", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{OrgID: "o1", ProjectID: "p1"}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("connected status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/o/o1/p/p1/data-sources/s1?created=1" {
+		t.Errorf("connected location = %q, want scoped", loc)
+	}
+
+	// oauth_error → the scoped list with the error flash.
+	req = httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?oauth_error=denied", nil)
+	req = req.WithContext(withSessionContext(req.Context(), &sessionContext{OrgID: "o1", ProjectID: "p1"}))
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/o/o1/p/p1/data-sources?err=") {
+		t.Errorf("oauth_error location = %q, want scoped list", loc)
+	}
+}
+
 func TestUIDataSourceResourcesRoute(t *testing.T) {
 	f := &fakeMemory{
 		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
@@ -813,6 +870,31 @@ func TestUIDataSourceResourcesRoute(t *testing.T) {
 	}
 	if !strings.Contains(body, "Reports") {
 		t.Errorf("resource row missing: %s", body)
+	}
+}
+
+// TestUIDataSourceResourcesQuery verifies the ?q= search parameter is threaded
+// from the request into the backend listing call and back into the rendered
+// search input.
+func TestUIDataSourceResourcesQuery(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources?q=rep", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsResourcesQuery != "rep" {
+		t.Errorf("ListDSResources query = %q, want %q", f.dsResourcesQuery, "rep")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="rep"`) {
+		t.Errorf("search input not pre-filled: %s", body)
 	}
 }
 

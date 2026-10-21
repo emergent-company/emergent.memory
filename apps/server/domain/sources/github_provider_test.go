@@ -173,9 +173,12 @@ func TestGitHubProvider_ListResources(t *testing.T) {
 		{FullName: "acme/private-docs", Private: true},
 		{FullName: "acme/public-docs"},
 	}})
-	resources, err := p.ListResources(context.Background(), Credentials{"access_token": "at"}, nil)
+	resources, truncated, err := p.ListResources(context.Background(), Credentials{"access_token": "at"}, nil, "")
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
+	}
+	if truncated {
+		t.Fatalf("ListResources() truncated = true, want false")
 	}
 	if len(resources) != 2 || resources[0].ID != "acme/private-docs" || resources[1].Type != "repo" {
 		t.Fatalf("ListResources() = %+v, want the two repositories", resources)

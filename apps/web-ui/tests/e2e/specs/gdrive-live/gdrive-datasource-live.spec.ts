@@ -229,14 +229,26 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
     //    would (a) configure the wrong project and (b) silently move the
     //    session's active project back to bootstrap — breaking the source poll
     //    and every scratch-project API call below.
-    await goto(page, '/settings/oauth-clients', { orgId: bootstrap.orgId, projectId });
-    await expectAppPage(page, /OAuth clients/);
-    await expect(page.getByTestId('ds-oauth-clients')).toBeVisible();
-    // Two providers (google_drive + github) both render a client form; only the
-    // Drive card offers the drive.readonly strategy option.
-    const driveForm = page
-      .getByTestId('ds-oauth-client-form')
-      .filter({ has: page.locator('option[value="drive.readonly"]') });
+    //
+    //    Since #1967 the project settings surface is the Credentials table
+    //    (/settings/credentials) with one editor page per provider; the former
+    //    /settings/oauth-clients URL only redirects there.
+    await goto(page, '/settings/credentials', { orgId: bootstrap.orgId, projectId });
+    await expectAppPage(page, /Credentials/);
+    await expect(page.getByTestId('ds-credentials')).toBeVisible();
+    // Two rows exist for google_drive (the project app and the inherited
+    // organization app); edit the project-scoped one.
+    await page
+      .locator(
+        '[data-testid="ds-credential-row"][data-provider="google_drive"][data-scope="project"]',
+      )
+      .getByTestId('ds-credential-manage')
+      .click();
+    // The editor page is scoped to one provider, so the form on it is
+    // unambiguously the Drive client's.
+    await expectAppPage(page, /OAuth app/);
+    await expect(page.getByTestId('ds-credential-detail')).toBeVisible();
+    const driveForm = page.getByTestId('ds-oauth-client-form');
     await expect(driveForm, 'Drive OAuth client card must render').toHaveCount(1);
     await driveForm.getByTestId('ds-field-client_id').fill(CLIENT_ID);
     await driveForm.getByTestId('ds-field-client_secret').fill(CLIENT_SECRET);
@@ -348,6 +360,18 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
     ).toBeTruthy();
     sourceId = source!.id;
 
+    // The browser-visible landing after consent must resolve. The callback and
+    // create paths emit the SCOPED source URL; an unscoped hit is re-scoped by
+    // the gateway instead of 404ing (a real connect landed on the unscoped
+    // path and dead-ended).
+    const landing = await page.request.get(`/data-sources/${sourceId}?created=1`, {
+      maxRedirects: 0,
+    });
+    expect(landing.status(), 'unscoped /data-sources must redirect, not 404').toBe(303);
+    expect(landing.headers()['location'] ?? '').toContain(
+      `/o/${bootstrap.orgId}/p/${projectId}/data-sources/${sourceId}`,
+    );
+
     // 5. The callback created the source with NO sync target (the connect sent
     //    no config — the shipped #1988 fix). The detail page must therefore
     //    prompt for a folder: assert the ds-resource-needed banner + link, walk
@@ -370,8 +394,29 @@ test('project OAuth app → live Drive folder → sync → edit → v2 → trash
       'resource prompt must link to the resource step',
     ).toBeVisible();
 
-    await page.getByTestId('ds-resource-needed-link').click();
+    await expect(page.getByTestId('ds-resource-needed-link')).toHaveAttribute(
+      'href',
+      new RegExp(`/data-sources/${sourceId}/resources$`),
+    );
+
+    // Navigate directly instead of clicking the banner: the app shell boosts
+    // every anchor with htmx (hx-boost + #main-content swap) and the boosted
+    // navigation intermittently no-ops in this live environment (no request, no
+    // swap), which would make this gate flaky without saying anything about the
+    // resource step. The banner and its href are asserted above.
+    await goto(page, `/data-sources/${sourceId}/resources`, {
+      orgId: bootstrap.orgId,
+      projectId,
+    });
     await expect(page.getByTestId('ds-resource-step'), 'resource step must render').toBeVisible();
+
+    // The resource step is searchable: filter by the scratch folder's name. The
+    // GET form round-trips through ?q= and the folder row survives the filter.
+    await page.getByTestId('ds-resource-search').fill(`e2e-gdrive-${nonce}`);
+    await page.getByTestId('ds-resource-search-submit').click();
+    await page.waitForURL(/[?&]q=/, { timeout: 15_000 });
+    expect(page.url()).toContain(`e2e-gdrive-${nonce}`);
+
     const folderRow = page
       .getByTestId('ds-resource-row')
       .filter({ has: page.locator(`input[name="resource_id"][value="${folderId}"]`) });

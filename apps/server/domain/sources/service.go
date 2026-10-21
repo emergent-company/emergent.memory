@@ -208,28 +208,30 @@ func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, 
 
 // ListResources lists the selectable sync targets for an existing source (a
 // Drive folder, a GitHub repository) by decrypting its stored credentials and
-// asking its provider. Backs the post-consent resource-selection step.
-func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID) ([]Resource, error) {
+// asking its provider. query is an optional name filter passed through to the
+// provider; truncated reports that the provider capped its listing. Backs the
+// post-consent resource-selection step.
+func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID, query string) ([]Resource, bool, error) {
 	src, err := s.repo.GetByIDWithCredentials(ctx, id, projectID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	p, ok := s.providers.Get(src.Provider)
 	if !ok {
-		return nil, apperror.NewValidation("unsupported providerType: " + src.Provider)
+		return nil, false, apperror.NewValidation("unsupported providerType: " + src.Provider)
 	}
 	creds, err := s.decryptCredentials(src.EncryptedCredentials)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	resources, err := p.ListResources(ctx, creds, src.Config)
+	resources, truncated, err := p.ListResources(ctx, creds, src.Config, query)
 	if err != nil {
-		return nil, apperror.NewValidation("list resources failed: " + err.Error())
+		return nil, false, apperror.NewValidation("list resources failed: " + err.Error())
 	}
 	if resources == nil {
 		resources = []Resource{}
 	}
-	return resources, nil
+	return resources, truncated, nil
 }
 
 // ---- CRUD ----

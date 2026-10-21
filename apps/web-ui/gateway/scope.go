@@ -87,6 +87,14 @@ func strictScopedPath(method, path string) bool {
 	if method != http.MethodGet && method != http.MethodHead {
 		return false
 	}
+	// /data-sources and its sub-paths are exempt from the hard cut: the API
+	// server's OAuth connect flow redirects there without a scope prefix (it has
+	// no notion of the /o/{org}/p/{project} scope). dataSourcesScopeRedirect
+	// re-scopes them onto the caller's active project after the session is
+	// resolved, keeping a 404 for requests with no project.
+	if strings.HasPrefix(path, "/data-sources") {
+		return false
+	}
 	return !globalScopePath(path)
 }
 
@@ -204,6 +212,44 @@ func (reqScope *requestScope) base() string {
 // requests before the shell data is loaded.
 func (s *Server) scopeNotFound(c echo.Context) error {
 	return echo.NewHTTPError(http.StatusNotFound, "organization or project not found")
+}
+
+// dataSourcesScopeRedirect re-scopes unscoped /data-sources GET/HEAD requests
+// onto the caller's active project. The API server's OAuth connect flow lands
+// on /data-sources and its sub-paths without a scope prefix; strictScopedPath
+// exempts them from the hard cut so this middleware (which runs after the
+// session and default project are resolved) can 303 them onto the scoped URL.
+// With no active project — or no session — there is nothing to resolve, so the
+// request keeps the hard cut's 404. Scoped requests pass through untouched.
+func (s *Server) dataSourcesScopeRedirect(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		if s.cfg.AuthMode != "session" {
+			return next(c)
+		}
+		if c.Request().Method != http.MethodGet && c.Request().Method != http.MethodHead {
+			return next(c)
+		}
+		path := c.Request().URL.Path
+		if !strings.HasPrefix(path, "/data-sources") {
+			return next(c)
+		}
+		if _, ok := scopeFromContext(c.Request().Context()); ok {
+			return next(c) // already scoped
+		}
+		sc, ok := sessionContextFrom(c.Request().Context())
+		if !ok || sc.Device || sc.ProjectID == "" {
+			return echo.NewHTTPError(http.StatusNotFound, "not found")
+		}
+		base := projectScopeURL(sc.OrgID, sc.ProjectID)
+		if base == "" {
+			return echo.NewHTTPError(http.StatusNotFound, "not found")
+		}
+		target := base + path
+		if q := c.Request().URL.RawQuery; q != "" {
+			target += "?" + q
+		}
+		return c.Redirect(http.StatusSeeOther, target)
+	}
 }
 
 // scopeLocation rewrites redirect targets (Location and htmx's HX-Redirect) on
