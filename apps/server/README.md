@@ -296,9 +296,13 @@ See `migrations/README.md` for detailed documentation.
 | `ZITADEL_CLIENT_SECRET` | OAuth client secret     | (required)        |
 | `VERTEX_PROJECT_ID`     | Google Cloud project    | (required for AI) |
 | `VERTEX_LOCATION`       | Vertex AI region        | us-central1       |
-| `MINIO_ENDPOINT`        | MinIO/S3 endpoint       | localhost:9000    |
-| `MINIO_ACCESS_KEY`      | MinIO access key        | (required)        |
-| `MINIO_SECRET_KEY`      | MinIO secret key        | (required)        |
+| `STORAGE_ENDPOINT`      | S3-compatible endpoint  | (dev: localhost:9000) |
+| `STORAGE_ACCESS_KEY`    | Object-store access key | (required for storage) |
+| `STORAGE_SECRET_KEY`    | Object-store secret key | (required for storage) |
+| `STORAGE_PROVIDER`      | `seaweedfs` / `s3` / `minio` | unset (generic S3) |
+| `STORAGE_BUCKET_DOCUMENTS` | Documents bucket     | documents         |
+| `STORAGE_BUCKET_TEMP`   | Temporary-upload bucket | document-temp     |
+| `STORAGE_REGION`        | Signing region          | us-east-1         |
 
 ### LLM provider environment variables
 
