@@ -128,14 +128,19 @@ type Integration struct {
 	// the connect/edit UI can round-trip a source's persisted settings without
 	// exposing write-only credential fields. Credential material never appears
 	// here (design D2).
-	Config       map[string]any `json:"config,omitempty"`
-	LastSyncedAt *time.Time     `json:"lastSyncedAt,omitempty"`
-	NextSyncAt   *time.Time     `json:"nextSyncAt,omitempty"`
-	Status       string         `json:"status"`
-	ErrorMessage *string        `json:"errorMessage,omitempty"`
-	ErrorCount   int            `json:"errorCount"`
-	CreatedAt    time.Time      `json:"createdAt"`
-	UpdatedAt    time.Time      `json:"updatedAt"`
+	Config map[string]any `json:"config,omitempty"`
+	// OAuthStrategy names the scope strategy this source effectively uses
+	// (resolved project → org → provider default). It is filled on the
+	// single-source read only, and only for OAuth providers; empty means the
+	// provider default applies.
+	OAuthStrategy string     `json:"oauthStrategy,omitempty"`
+	LastSyncedAt  *time.Time `json:"lastSyncedAt,omitempty"`
+	NextSyncAt    *time.Time `json:"nextSyncAt,omitempty"`
+	Status        string     `json:"status"`
+	ErrorMessage  *string    `json:"errorMessage,omitempty"`
+	ErrorCount    int        `json:"errorCount"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
 // SourceType mirrors pkg/sdk/datasources.SourceType — document counts grouped

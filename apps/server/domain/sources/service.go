@@ -397,7 +397,16 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 	if err != nil {
 		return nil, err
 	}
-	return s.toIntegration(src), nil
+	out := s.toIntegration(src)
+	// Report the effective scope strategy so the UI can explain an empty
+	// resource listing caused by a scope that cannot list (drive.file without
+	// the Google Picker) instead of re-deriving the resolution itself.
+	if p, ok := s.providers.Get(src.Provider); ok {
+		if _, oauth := p.OAuth(); oauth {
+			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+		}
+	}
+	return out, nil
 }
 
 // Update applies a partial update. When the request config carries credential

@@ -206,7 +206,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
 	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
 
-	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "", nil, "", nil))
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "", nil, false, "", nil))
 	for _, want := range []string{
 		`data-testid="ds-resource-step"`,
 		"Choose a Drive folder",
@@ -233,7 +233,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 
 	// The typed filter is echoed back into the search field so the reload keeps
 	// it visible.
-	filtered := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "Reports", nil, "", nil))
+	filtered := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "Reports", nil, false, "", nil))
 	if !strings.Contains(filtered, `name="q" value="Reports"`) {
 		t.Error("search field does not echo the applied filter")
 	}
@@ -243,7 +243,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 
 	// A truncated listing renders the note; the flag — not the item count —
 	// controls it.
-	truncated := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, true, "", nil, "", nil))
+	truncated := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, true, "", nil, false, "", nil))
 	if !strings.Contains(truncated, `data-testid="ds-resource-truncated"`) {
 		t.Error("truncation note missing for a truncated listing")
 	}
@@ -251,7 +251,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 		t.Error("truncation note missing its search-by-name hint")
 	}
 
-	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, "", nil))
+	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, false, "", nil))
 	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
 		t.Error("resource empty state missing")
 	}
@@ -263,19 +263,84 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	}
 
 	// A non-Drive provider gets the generic copy and a generic action label.
-	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, false, "", nil, "", nil))
+	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, false, "", nil, false, "", nil))
 	if !strings.Contains(generic, "Choose a resource (repository or folder)") {
 		t.Error("generic provider copy missing")
 	}
-	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, "", nil))
+	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, false, "", nil))
 	if !strings.Contains(genericList, "Use this resource") {
 		t.Error("generic resource action label missing")
 	}
 
 	// A failed listing renders the empty/error state, not a broken list.
-	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", errTest, "", nil))
+	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", errTest, false, "", nil))
 	if !strings.Contains(errored, `data-testid="ds-resource-empty"`) {
 		t.Error("resource error state missing")
+	}
+}
+
+func TestRenderDataSourceResourceSelectPageDriveFileEmpty(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, true, "", nil))
+	for _, want := range []string{
+		`data-testid="ds-resource-drivefile"`,
+		"drive.file scope",
+		"Google Picker support is not available yet",
+		`href="/settings/credentials"`,
+		`data-testid="ds-resource-drivefile-credentials"`,
+		"drive.readonly",
+		"Settings → Credentials (project)",
+		"Organization Settings",
+		"reconnect this source",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("drive.file empty state missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="ds-resource-empty"`) {
+		t.Error("drive.file empty state must not render the bare ds-resource-empty state")
+	}
+}
+
+func TestRenderDataSourceResourceSelectPageNonDriveFileEmpty(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, false, "", nil))
+	if !strings.Contains(html, `data-testid="ds-resource-empty"`) {
+		t.Error("non-drive.file empty listing must keep the plain empty state")
+	}
+	if strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
+		t.Error("non-drive.file empty listing must not render the drive.file notice")
+	}
+}
+
+func TestDSDriveFileScope(t *testing.T) {
+	// The strategy is resolved server-side and carried on the single-source
+	// read, so this helper only interprets the field.
+	driveFile := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.file"}
+	if !dsDriveFileScope(driveFile) {
+		t.Error("drive.file strategy should be reported as drive.file scope")
+	}
+
+	// Empty strategy → not drive.file (the provider default can list).
+	inheritedDefault := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive"}
+	if dsDriveFileScope(inheritedDefault) {
+		t.Error("empty strategy should not be reported as drive.file scope")
+	}
+
+	// drive.readonly → not drive.file.
+	readonly := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.readonly"}
+	if dsDriveFileScope(readonly) {
+		t.Error("drive.readonly should not be reported as drive.file scope")
+	}
+
+	// Non-drive provider → not drive.file.
+	if dsDriveFileScope(&DSIntegration{ID: "s2", ProjectID: "p1", ProviderType: "github", OAuthStrategy: "drive.file"}) {
+		t.Error("github source should not be reported as drive.file scope")
+	}
+
+	// A nil source is not drive.file.
+	if dsDriveFileScope(nil) {
+		t.Error("nil source should not be reported as drive.file scope")
 	}
 }
 
@@ -458,6 +523,13 @@ func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
 	if !strings.Contains(html, "/data-sources/s1/resources") {
 		t.Error("resource-needed link href missing")
 	}
+	// The trigger-sync form must not be offered while the sync target is missing.
+	if strings.Contains(html, `data-testid="ds-trigger-sync"`) {
+		t.Error("trigger-sync form must not render for an incomplete source")
+	}
+	if strings.Contains(html, `action="/data-sources/s1/sync"`) {
+		t.Error("sync action must not render for an incomplete source")
+	}
 
 	complete := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}
 	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(complete), "", nil))
@@ -528,7 +600,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 
 func TestUIDataSourceRoutes(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", Config: map[string]any{"folder_id": "f1"}}},
 		dsSyncJobs:     map[string][]DSSyncJob{"s1": {{ID: "j1", Status: "processing", TotalItems: 5, ProcessedItems: 2}}},
 		documents:      []Document{{ID: "d1", Filename: "Spec.md"}},
 		documentVersions: []DocumentVersion{
@@ -586,6 +658,25 @@ func TestUIDataSourceRoutes(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/versions", nil))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "v1") {
 		t.Fatalf("versions: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestUIDataSourceTriggerSyncIncomplete(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/data-sources/s1/sync", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sync (incomplete): status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "/data-sources/s1?err=") {
+		t.Errorf("sync (incomplete) location = %q, want detail page with error flash", loc)
+	}
+	if f.dsLastTriggerID != "" {
+		t.Errorf("TriggerDSSync called for an incomplete source, id = %q", f.dsLastTriggerID)
 	}
 }
 

@@ -277,6 +277,13 @@ func (s *Service) DeleteProjectOAuthClient(ctx context.Context, projectID uuid.U
 // resolveOAuthClient resolves the OAuth client for a provider for a project:
 // project config → org config → deployment-default env → actionable error
 // (design D3).
+//
+// Scope-strategy resolution order (design D6), per client:
+//  1. explicit scopes (stored on the winning row) win outright;
+//  2. an explicit strategy on the winning row wins;
+//  3. an empty project-row strategy inherits the org row's strategy for the
+//     same provider (only the strategy is inherited — project credentials win);
+//  4. when neither supplies a strategy, the provider default applies.
 func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, providerType string) (OAuthClient, error) {
 	// Project override wins; it is keyed by projectID directly (no org
 	// resolution).
@@ -288,7 +295,14 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 			if derr != nil {
 				return OAuthClient{}, derr
 			}
-			return s.applyOrgStrategy(providerType, client, row.Strategy), nil
+			// An empty project strategy (with no explicit scopes) inherits the
+			// org strategy for the same provider before falling back to the
+			// provider default.
+			inherited := ""
+			if strings.TrimSpace(row.Strategy) == "" && len(client.Scopes) == 0 {
+				inherited = s.orgStrategyForProject(ctx, projectID, providerType)
+			}
+			return s.applyOrgStrategy(providerType, client, row.Strategy, inherited), nil
 		case !errors.Is(perr, apperror.ErrNotFound):
 			return OAuthClient{}, perr
 		}
@@ -305,7 +319,7 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 				if derr != nil {
 					return OAuthClient{}, derr
 				}
-				return s.applyOrgStrategy(providerType, client, row.Strategy), nil
+				return s.applyOrgStrategy(providerType, client, row.Strategy, ""), nil
 			}
 			if !errors.Is(gerr, apperror.ErrNotFound) {
 				return OAuthClient{}, gerr
@@ -337,12 +351,21 @@ func (s *Service) missingOAuthClientError(providerType string) error {
 	return apperror.NewValidation(msg)
 }
 
-// applyOrgStrategy folds an org-selected scope strategy (design D6) into the
-// resolved client: explicit scopes win, otherwise the provider maps the named
-// strategy to its scope set. A provider without strategy support (or an unknown
-// strategy) is left unchanged, falling back to its declared default.
-func (s *Service) applyOrgStrategy(providerType string, client OAuthClient, strategy string) OAuthClient {
-	if len(client.Scopes) > 0 || strings.TrimSpace(strategy) == "" {
+// applyOrgStrategy folds a scope strategy into the resolved client (design D6):
+// explicit scopes win outright; otherwise the provider maps the named strategy to
+// its scope set. An empty strategy falls through to inherited (the org row's
+// strategy for a project-scoped client) before giving up; a provider without
+// strategy support (or an unknown strategy) is left unchanged, falling back to
+// its declared default.
+func (s *Service) applyOrgStrategy(providerType string, client OAuthClient, strategy, inherited string) OAuthClient {
+	if len(client.Scopes) > 0 {
+		return client
+	}
+	strategy = strings.TrimSpace(strategy)
+	if strategy == "" {
+		strategy = strings.TrimSpace(inherited)
+	}
+	if strategy == "" {
 		return client
 	}
 	p, ok := s.providers.Get(providerType)
@@ -355,8 +378,56 @@ func (s *Service) applyOrgStrategy(providerType string, client OAuthClient, stra
 	}
 	if scopes, ok := ss.ScopesForStrategy(strategy); ok {
 		client.Scopes = scopes
+		client.Strategy = strategy
 	}
 	return client
+}
+
+// orgStrategyForProject returns the org-level strategy for a provider, used when
+// a project-scoped row has no explicit strategy and no explicit scopes so the
+// empty project strategy inherits the org strategy (design D6). It resolves the
+// project's org and reads the org's client config; any failure (no org, no org
+// row) yields "" so the provider default applies.
+func (s *Service) orgStrategyForProject(ctx context.Context, projectID uuid.UUID, providerType string) string {
+	if s.orgOAuth == nil {
+		return ""
+	}
+	orgID, err := s.orgOAuth.ResolveOrgID(ctx, projectID)
+	if err != nil {
+		return ""
+	}
+	row, err := s.orgOAuth.GetOAuthClientConfig(ctx, orgID, providerType)
+	if err != nil {
+		return ""
+	}
+	return row.Strategy
+}
+
+// effectiveOAuthStrategy reports the strategy a project's source effectively
+// uses for a provider: the resolved client's explicit strategy, otherwise the
+// strategy whose scopes the client carries, otherwise "" (the provider default
+// applies). It never fails — a missing or unreadable OAuth client means the
+// deployment default, which is what the authorize request would use too.
+func (s *Service) effectiveOAuthStrategy(ctx context.Context, projectID uuid.UUID, providerType string) string {
+	client, err := s.resolveOAuthClient(ctx, projectID, providerType)
+	if err != nil {
+		return ""
+	}
+	if strategy := strings.TrimSpace(client.Strategy); strategy != "" {
+		return strategy
+	}
+	if len(client.Scopes) == 0 {
+		return ""
+	}
+	p, ok := s.providers.Get(providerType)
+	if !ok {
+		return ""
+	}
+	ss, ok := p.(ScopeStrategies)
+	if !ok {
+		return ""
+	}
+	return ss.StrategyForScopes(client.Scopes)
 }
 
 // requireOrgAdmin enforces org-admin authority, failing closed. An empty user

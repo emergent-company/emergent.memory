@@ -80,6 +80,11 @@ type ScopeStrategies interface {
 	// ScopesForStrategy returns the scope set for a strategy. ok is false when
 	// the strategy is not recognised (the caller then falls back to the default).
 	ScopesForStrategy(strategy string) ([]string, bool)
+	// StrategyForScopes names the advertised strategy that produced these
+	// scopes, or "" when they match none of them (explicit, unrecognised
+	// scopes). It lets a caller report which strategy a source effectively
+	// uses without re-deriving it from the stored row.
+	StrategyForScopes(scopes []string) string
 }
 
 // SourceProvider is the extension point for a data-source provider. The CRUD,

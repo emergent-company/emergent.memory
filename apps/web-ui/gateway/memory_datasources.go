@@ -73,14 +73,18 @@ type DSIntegration struct {
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the edit UI can round-trip a source's persisted settings.
-	Config       map[string]any `json:"config,omitempty"`
-	LastSyncedAt *string        `json:"lastSyncedAt,omitempty"`
-	NextSyncAt   *string        `json:"nextSyncAt,omitempty"`
-	Status       string         `json:"status"`
-	ErrorMessage *string        `json:"errorMessage,omitempty"`
-	ErrorCount   int            `json:"errorCount"`
-	CreatedAt    string         `json:"createdAt"`
-	UpdatedAt    string         `json:"updatedAt"`
+	Config map[string]any `json:"config,omitempty"`
+	// OAuthStrategy is the effective scope strategy the server resolved for this
+	// source (project → org → provider default). Present on the single-source
+	// read only; empty means the provider default applies.
+	OAuthStrategy string  `json:"oauthStrategy,omitempty"`
+	LastSyncedAt  *string `json:"lastSyncedAt,omitempty"`
+	NextSyncAt    *string `json:"nextSyncAt,omitempty"`
+	Status        string  `json:"status"`
+	ErrorMessage  *string `json:"errorMessage,omitempty"`
+	ErrorCount    int     `json:"errorCount"`
+	CreatedAt     string  `json:"createdAt"`
+	UpdatedAt     string  `json:"updatedAt"`
 }
 
 // DSSyncJob is one sync job of a source. It mirrors the SDK SyncJob shape so the

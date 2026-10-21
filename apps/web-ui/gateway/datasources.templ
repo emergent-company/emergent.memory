@@ -599,7 +599,7 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
 		} else {
-			@dataSourceDetailHeader(src, providerName)
+			@dataSourceDetailHeader(src, providerName, resourcePrompt == nil)
 			@flashToasts(flashMsg, flashErr)
 			if resourcePrompt != nil {
 				@dsResourceNeededBanner(*resourcePrompt)
@@ -636,21 +636,23 @@ templ dsResourceNeededBanner(p dsResourcePrompt) {
 	</div>
 }
 
-templ dataSourceDetailHeader(src *DSIntegration, providerName string) {
+templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bool) {
 	@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsSourceName(*src), providerName) {
 		<div class="flex flex-wrap items-center gap-2">
 			@dsStatusBadge(src.Status)
-			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/sync") }>
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--refresh-cw",
-					Attrs:   templ.Attributes{"data-testid": "ds-trigger-sync"},
-				}) {
-					Trigger sync
-				}
-			</form>
+			if canSync {
+				<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/sync") }>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--refresh-cw",
+						Attrs:   templ.Attributes{"data-testid": "ds-trigger-sync"},
+					}) {
+						Trigger sync
+					}
+				</form>
+			}
 			<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/delete") } hx-confirm="Delete this data source? Synced documents are kept, but the source and its sync history are removed.">
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeSubmit,

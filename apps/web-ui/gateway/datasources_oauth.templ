@@ -15,7 +15,7 @@ import (
 // the provider-driven prompt plus the provider's selectable resources, each a
 // select-and-save form. Providers without a listing (e.g. github today) get a
 // graceful placeholder instead.
-templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, flashMsg string, flashErr error) {
+templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, driveFileScope bool, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		<div data-testid="ds-resource-step">
 			if src == nil {
@@ -66,24 +66,48 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 						}
 					}
 					if loadErr != nil || len(resources) == 0 {
-						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
-							@ui.Alert(ui.AlertProps{
-								Type:    ui.AlertWarning,
-								Style:   ui.AlertStyleSoft,
-								Icon:    "lucide--alert-triangle",
-								Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
-							})
-							@ui.Button(ui.ButtonProps{
-								Type:    ui.ButtonTypeLink,
-								Href:    "/data-sources/" + url.PathEscape(src.ID) + "/resources",
-								Variant: ui.ButtonOutline,
-								Size:    ui.ButtonSM,
-								Icon:    "lucide--refresh-cw",
-								Attrs:   templ.Attributes{"data-testid": "ds-resource-retry"},
-							}) {
-								Try again
-							}
-						</div>
+						if driveFileScope {
+							<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-drivefile">
+								@ui.Alert(ui.AlertProps{
+									Type:    ui.AlertWarning,
+									Style:   ui.AlertStyleSoft,
+									Icon:    "lucide--alert-triangle",
+									Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. Google Picker support is not available yet, so no folders can be listed here.",
+								})
+								<div class="flex flex-wrap items-center gap-2">
+									@ui.Button(ui.ButtonProps{
+										Type:    ui.ButtonTypeLink,
+										Href:    "/settings/credentials",
+										Variant: ui.ButtonPrimary,
+										Size:    ui.ButtonSM,
+										Icon:    "lucide--settings",
+										Attrs:   templ.Attributes{"data-testid": "ds-resource-drivefile-credentials"},
+									}) {
+										Settings → Credentials
+									}
+									<span class="text-sm text-muted">Set the OAuth app strategy to drive.readonly in Settings → Credentials (project) or Organization Settings → Data source OAuth clients (organization), then reconnect this source.</span>
+								</div>
+							</div>
+						} else {
+							<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
+								@ui.Alert(ui.AlertProps{
+									Type:    ui.AlertWarning,
+									Style:   ui.AlertStyleSoft,
+									Icon:    "lucide--alert-triangle",
+									Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
+								})
+								@ui.Button(ui.ButtonProps{
+									Type:    ui.ButtonTypeLink,
+									Href:    "/data-sources/" + url.PathEscape(src.ID) + "/resources",
+									Variant: ui.ButtonOutline,
+									Size:    ui.ButtonSM,
+									Icon:    "lucide--refresh-cw",
+									Attrs:   templ.Attributes{"data-testid": "ds-resource-retry"},
+								}) {
+									Try again
+								}
+							</div>
+						}
 					} else {
 						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
 							for _, r := range resources {

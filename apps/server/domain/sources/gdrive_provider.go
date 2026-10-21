@@ -118,6 +118,21 @@ func (p *googleDriveProvider) ScopesForStrategy(strategy string) ([]string, bool
 	return newGoogleOAuthStrategy().ScopesForStrategy(strategy)
 }
 
+// StrategyForScopes names the Drive strategy that produced these scopes, or ""
+// for explicit scopes matching neither advertised strategy.
+func (p *googleDriveProvider) StrategyForScopes(scopes []string) string {
+	if len(scopes) != 1 {
+		return ""
+	}
+	switch scopes[0] {
+	case googleDriveFile:
+		return string(ScopeStrategyDriveFile)
+	case googleDriveReadonly:
+		return string(ScopeStrategyDriveReadonly)
+	}
+	return ""
+}
+
 // CredentialKeys returns the write-only Drive credential keys (client id/secret
 // + refresh token, plus access_token defensively).
 func (p *googleDriveProvider) CredentialKeys() []string { return credentialKeyNames }

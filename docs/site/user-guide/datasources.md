@@ -94,6 +94,24 @@ For Google Drive:
 The Client secret is stored encrypted and is never shown again after saving — leave the secret field
 blank when updating other settings to keep the stored secret.
 
+### Drive scope strategy
+
+Google Drive has two selectable strategies, and they decide what the folder picker can see:
+
+- **`drive.readonly`** (default) — the app can list and read every file the connecting Google
+  account can see, so the folder picker shows the whole drive. This is a restricted scope: a
+  widely distributed app may need Google verification.
+- **`drive.file`** — the app sees only files it created or the user picked through the Google
+  Picker. Picker support is not available yet, so on this strategy the folder list is empty by
+  design and the resource step says so.
+
+The strategy resolves project first, then organization, then the provider default. Leaving the
+project strategy blank inherits the organization's strategy; it does not reset to the default.
+
+Changing the strategy applies to the next consent, not to sources that are already connected — a
+source keeps the scope its token was granted with. Delete the source and connect the provider again
+after switching to `drive.readonly`.
+
 GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
 token entered when connecting the source; a token connection does not need an OAuth app.
 

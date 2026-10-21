@@ -332,7 +332,7 @@ func TestGoogleScopesForStrategy(t *testing.T) {
 		want     string
 		ok       bool
 	}{
-		{"", googleDriveFile, true},
+		{"", googleDriveReadonly, true},
 		{"drive.file", googleDriveFile, true},
 		{"drive.readonly", googleDriveReadonly, true},
 		{"bogus", "", false},
@@ -386,7 +386,9 @@ func TestListProviders_AdvertisesStrategies(t *testing.T) {
 		t.Fatalf("ListProviders() = %v, want a %q entry", providers, ProviderTypeGoogleDrive)
 	}
 	got := p.Strategies
-	want := []string{string(ScopeStrategyDriveFile), string(ScopeStrategyDriveReadonly)}
+	// Display order is default-first: drive.readonly is the provider default, so
+	// a client with no stored strategy selects it in the form.
+	want := []string{string(ScopeStrategyDriveReadonly), string(ScopeStrategyDriveFile)}
 	if len(got) != len(want) {
 		t.Fatalf("Strategies = %v, want %v", got, want)
 	}
@@ -590,6 +592,82 @@ func TestResolveOAuthClient_ProjectStoreErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestResolveOAuthClient_ProjectEmptyStrategyInheritsOrgStrategy(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)] = mustEncryptOrgClient(t, svc, orgID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
+	})
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveFile)
+
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+	})
+	// Project strategy left empty → inherits the org drive.file strategy.
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if got.ClientID != "proj-id" || got.ClientSecret != "proj-secret" {
+		t.Fatalf("resolveOAuthClient() = %+v, want the project client (credentials win)", got)
+	}
+	if len(got.Scopes) != 1 || got.Scopes[0] != googleDriveFile {
+		t.Fatalf("scopes = %v, want [%s] (inherited org drive.file)", got.Scopes, googleDriveFile)
+	}
+}
+
+func TestResolveOAuthClient_ProjectExplicitStrategyOverridesOrg(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)] = mustEncryptOrgClient(t, svc, orgID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
+	})
+	orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveFile)
+
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+	})
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveReadonly)
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if len(got.Scopes) != 1 || got.Scopes[0] != googleDriveReadonly {
+		t.Fatalf("scopes = %v, want [%s] (explicit project strategy wins)", got.Scopes, googleDriveReadonly)
+	}
+}
+
+func TestResolveOAuthClient_ProjectEmptyStrategyNoOrgFallsBackToDefault(t *testing.T) {
+	projectID := uuid.New()
+	orgID := uuid.New()
+	orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+	svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+	projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+		oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+	})
+	// No org row and no project strategy → provider default (drive.readonly).
+
+	got, err := svc.resolveOAuthClient(context.Background(), projectID, ProviderTypeGoogleDrive)
+	if err != nil {
+		t.Fatalf("resolveOAuthClient() error = %v", err)
+	}
+	if len(got.Scopes) != 0 {
+		t.Fatalf("scopes = %v, want empty (provider default applies at authorize time)", got.Scopes)
+	}
+}
+
 func TestListProjectOAuthClients_RequiresProjectAdmin(t *testing.T) {
 	svc := newProjectClientService(&fakeProjectOAuthStore{admin: false}, config.SourceOAuthConfig{})
 	_, err := svc.ListProjectOAuthClients(context.Background(), uuid.New(), "user-1")
@@ -695,4 +773,57 @@ func TestGoogleDriveProvider_OAuthOnly(t *testing.T) {
 	if fields := p.CredentialFields(); len(fields) != 0 {
 		t.Fatalf("CredentialFields() = %v, want empty (OAuth-only)", fields)
 	}
+}
+
+// TestEffectiveOAuthStrategy covers the strategy value the single-source read
+// publishes (Integration.OAuthStrategy), which the web UI uses to explain an
+// empty listing under a scope that cannot list the drive.
+func TestEffectiveOAuthStrategy(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("inherits the org drive.file strategy", func(t *testing.T) {
+		projectID, orgID := uuid.New(), uuid.New()
+		orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+		orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)] = mustEncryptOrgClient(t, svc, orgID, ProviderTypeGoogleDrive, Credentials{
+			oauthClientIDKey: "org-id", oauthClientSecretKey: "org-secret",
+		})
+		orgStore.clients[orgClientKey(orgID, ProviderTypeGoogleDrive)].Strategy = string(ScopeStrategyDriveFile)
+		projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+			oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+		})
+
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != string(ScopeStrategyDriveFile) {
+			t.Fatalf("effectiveOAuthStrategy() = %q, want %q", got, ScopeStrategyDriveFile)
+		}
+	})
+
+	t.Run("explicit scopes name their strategy", func(t *testing.T) {
+		projectID, orgID := uuid.New(), uuid.New()
+		orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+		projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)] = mustEncryptProjectClient(t, svc, projectID, ProviderTypeGoogleDrive, Credentials{
+			oauthClientIDKey: "proj-id", oauthClientSecretKey: "proj-secret",
+		})
+		projStore.clients[projectClientKey(projectID, ProviderTypeGoogleDrive)].Scopes = []string{googleDriveReadonly}
+
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != string(ScopeStrategyDriveReadonly) {
+			t.Fatalf("effectiveOAuthStrategy() = %q, want %q", got, ScopeStrategyDriveReadonly)
+		}
+	})
+
+	t.Run("no configured client means the provider default", func(t *testing.T) {
+		projectID, orgID := uuid.New(), uuid.New()
+		orgStore := &fakeOrgOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		projStore := &fakeProjectOAuthStore{orgID: orgID, clients: map[string]*OAuthClientConfig{}}
+		svc := newOrgAndProjectClientService(orgStore, projStore, config.SourceOAuthConfig{})
+
+		if got := svc.effectiveOAuthStrategy(ctx, projectID, ProviderTypeGoogleDrive); got != "" {
+			t.Fatalf("effectiveOAuthStrategy() = %q, want the empty (default) strategy", got)
+		}
+	})
 }

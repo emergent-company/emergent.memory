@@ -14,8 +14,27 @@ import (
 // non-success TriggerSyncResponse (no error) — the SDK reads success=false and
 // the jobId rather than an HTTP error.
 func (s *Service) TriggerSync(ctx context.Context, projectID, sourceID uuid.UUID) (*TriggerSyncResponse, error) {
-	if _, err := s.repo.GetByID(ctx, sourceID, projectID); err != nil {
+	src, err := s.repo.GetByID(ctx, sourceID, projectID)
+	if err != nil {
 		return nil, err
+	}
+
+	// Refuse a source whose config does not pass the provider's ValidateConfig —
+	// e.g. a Drive source created by the OAuth callback before a sync target was
+	// chosen. Such a job can only fail at enumeration, so it is rejected here
+	// with an actionable lead. Unknown providers keep the previous behaviour.
+	if p, ok := s.providers.Get(src.Provider); ok {
+		if verr := p.ValidateConfig(src.Config); verr != nil {
+			// Take the provider's message, not its rendered error: an
+			// *apperror.Error renders as "<code>: <message>", and nesting that
+			// inside another validation error reads as a doubled code.
+			detail := verr.Error()
+			var appErr *apperror.Error
+			if errors.As(verr, &appErr) {
+				detail = appErr.Message
+			}
+			return nil, apperror.NewValidation("choose a sync target before syncing: " + detail)
+		}
 	}
 
 	// Fast path: return the active job without attempting an insert. This keeps

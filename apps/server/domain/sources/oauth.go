@@ -22,6 +22,10 @@ type OAuthClient struct {
 	ClientSecret string
 	// Scopes override the provider default when non-empty.
 	Scopes []string
+	// Strategy is the resolved scope strategy name (the project row's, an
+	// inherited org strategy, or "" when the provider default applies). It is
+	// informational: Scopes is what the authorize request uses.
+	Strategy string
 	// AuthURL/TokenURL override the provider defaults (used by tests).
 	AuthURL  string
 	TokenURL string
@@ -78,40 +82,48 @@ const (
 	googleAuthURL   = "https://accounts.google.com/o/oauth2/v2/auth"
 	googleTokenURL  = "https://oauth2.googleapis.com/token"
 	googleDriveFile = "https://www.googleapis.com/auth/drive.file"
-	// googleDriveReadonly is the restricted scope used when an org selects the
-	// drive.readonly strategy (design D6); it may require Google verification for
-	// a shared app.
+	// googleDriveReadonly is the provider default scope. It lets the app list the
+	// user's full drive; it may require Google verification for a shared app.
 	googleDriveReadonly = "https://www.googleapis.com/auth/drive.readonly"
 )
 
-// Org-selectable Drive scope strategies (design D6). drive.file is the default
-// and is paired with the Google Picker so the app sees only picked files.
+// Org-selectable Drive scope strategies (design D6). drive.readonly is the
+// default because it is the only strategy that can list the drive: under
+// drive.file, Google's files.list returns only files the app created or the user
+// picked, and the Google Picker — the intended companion to drive.file — does not
+// exist yet. drive.file stays selectable for deployments that will add Picker
+// support.
 const (
 	ScopeStrategyDriveFile     ScopeStrategy = "drive.file"
 	ScopeStrategyDriveReadonly ScopeStrategy = "drive.readonly"
 )
 
-// driveScopeStrategies lists the Drive strategies in display order.
-var driveScopeStrategies = []ScopeStrategy{ScopeStrategyDriveFile, ScopeStrategyDriveReadonly}
+// driveScopeStrategies lists the Drive strategies in display order: the default
+// (drive.readonly) first, so a client with no stored strategy selects the
+// default in the form rather than the scope that cannot list the drive. Both
+// stay advertised.
+var driveScopeStrategies = []ScopeStrategy{ScopeStrategyDriveReadonly, ScopeStrategyDriveFile}
 
 // googleOAuthStrategy implements OAuthStrategy for google_drive.
 type googleOAuthStrategy struct {
-	// scope is the default requested Drive scope; defaults to drive.file.
+	// scope is the default requested Drive scope; defaults to drive.readonly.
 	scope string
 }
 
 func newGoogleOAuthStrategy() *googleOAuthStrategy {
-	return &googleOAuthStrategy{scope: googleDriveFile}
+	return &googleOAuthStrategy{scope: googleDriveReadonly}
 }
 
 func (s *googleOAuthStrategy) DefaultScopes() []string { return []string{s.scope} }
 
-// ScopesForStrategy maps an org-selected Drive strategy to its scope set.
+// ScopesForStrategy maps an org-selected Drive strategy to its scope set. The
+// empty strategy resolves to the provider default (drive.readonly), not
+// drive.file, so a client with no strategy can still list the drive.
 func (s *googleOAuthStrategy) ScopesForStrategy(strategy string) ([]string, bool) {
 	switch strategy {
-	case string(ScopeStrategyDriveReadonly):
+	case string(ScopeStrategyDriveReadonly), "":
 		return []string{googleDriveReadonly}, true
-	case "", string(ScopeStrategyDriveFile):
+	case string(ScopeStrategyDriveFile):
 		return []string{googleDriveFile}, true
 	default:
 		return nil, false

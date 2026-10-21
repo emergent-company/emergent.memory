@@ -13,6 +13,11 @@ import (
 // provider-driven; this constant is the catalog/test default.
 const dsProviderTypeGoogleDrive = "google_drive"
 
+// dsDriveFileStrategy is the Google Drive drive.file scope strategy name. It is
+// the one strategy that cannot list the drive without the (unimplemented) Google
+// Picker, so an empty resource listing under it gets an actionable notice.
+const dsDriveFileStrategy = "drive.file"
+
 // dsCredentialKeys are the config keys that can carry write-only credential
 // material (OAuth2 client/refresh tokens and personal access tokens). They are
 // write-only: the server strips them before persistence and never returns them,

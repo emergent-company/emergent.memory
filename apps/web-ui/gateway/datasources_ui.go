@@ -651,7 +651,7 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, false, "", userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, false, "", userFacingError(err), false, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -664,7 +664,21 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	if rerr != nil {
 		rerr = userFacingError(rerr)
 	}
-	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, truncated, query, rerr, "", nil))
+	// An empty drive listing under the drive.file strategy is a dead end (the
+	// Google Picker is not implemented), so surface an actionable notice rather
+	// than the bare empty state.
+	driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
+	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, truncated, query, rerr, driveFileScope, "", nil))
+}
+
+// dsDriveFileScope reports whether a source's effective Drive scope strategy is
+// the explicit drive.file strategy — the one scope that cannot list the drive
+// without the Google Picker. The strategy is resolved server-side (project row →
+// inherited org strategy → provider default) and carried on the single-source
+// read, so the gateway never re-derives it; an empty value means the default,
+// which can list.
+func dsDriveFileScope(src *DSIntegration) bool {
+	return src != nil && src.ProviderType == dsProviderTypeGoogleDrive && src.OAuthStrategy == dsDriveFileStrategy
 }
 
 // uiDataSourceResourceSave saves the chosen resource onto a source's config
@@ -1487,6 +1501,16 @@ func (s *Server) uiDataSourceTestConnection(c echo.Context) error {
 func (s *Server) uiDataSourceTriggerSync(c echo.Context) error {
 	id := c.Param("id")
 	detailPath := "/data-sources/" + url.PathEscape(id)
+	src, err := s.memory.GetDSIntegration(c.Request().Context(), id)
+	if err != nil {
+		return redirectWithError(c, detailPath, err)
+	}
+	// A source still missing its sync target (folder/repo) can only fail at
+	// enumeration; bounce back to the detail page's resource banner instead of
+	// admitting a doomed job.
+	if dsResourcePromptFor(src) != nil {
+		return redirectWithError(c, detailPath, errors.New("choose a folder before syncing this data source"))
+	}
 	if _, err := s.memory.TriggerDSSync(c.Request().Context(), id); err != nil {
 		return redirectWithError(c, detailPath, err)
 	}

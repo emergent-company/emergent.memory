@@ -67,8 +67,16 @@ func TestGoogleAuthorizeURL_Defaults(t *testing.T) {
 			t.Errorf("param %q = %q, want %q", k, got, want)
 		}
 	}
-	if got := q.Get("scope"); !strings.Contains(got, googleDriveFile) {
-		t.Errorf("scope = %q, want to contain %q", got, googleDriveFile)
+	if got := q.Get("scope"); !strings.Contains(got, googleDriveReadonly) {
+		t.Errorf("scope = %q, want to contain %q", got, googleDriveReadonly)
+	}
+}
+
+func TestGoogleOAuthStrategyDefaultScopesReadonly(t *testing.T) {
+	s := newGoogleOAuthStrategy()
+	got := s.DefaultScopes()
+	if len(got) != 1 || got[0] != googleDriveReadonly {
+		t.Fatalf("DefaultScopes() = %v, want [%s]", got, googleDriveReadonly)
 	}
 }
 
