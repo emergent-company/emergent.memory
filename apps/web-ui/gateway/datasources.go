@@ -13,13 +13,13 @@ import (
 // provider-driven; this constant is the catalog/test default.
 const dsProviderTypeGoogleDrive = "google_drive"
 
-// dsCredentialKeys are the config keys that carry OAuth2 credential material.
-// They are write-only: the server strips them before persistence and never
-// returns them, so the UI renders them blank and only sends them when supplied.
-// Drive no longer declares these keys in its provider schema (connect is
-// OAuth-only; the client is configured at project/org level), so the Drive form
-// renders no credential inputs — this list stays as the shared, provider-neutral
-// classification for any provider that still declares such a key.
+// dsCredentialKeys are the config keys that can carry write-only credential
+// material (OAuth2 client/refresh tokens and personal access tokens). They are
+// write-only: the server strips them before persistence and never returns them,
+// so the UI renders them blank and only sends them when supplied. The provider
+// schema marks its own credential fields with writeOnly and the gateway keys off
+// that marker first; this list is the provider-neutral fallback for schema
+// responses that predate it.
 var dsCredentialKeys = []string{"client_id", "client_secret", "refresh_token", "access_token"}
 
 // dsError maps a memory backend error onto a gateway response. Validation and

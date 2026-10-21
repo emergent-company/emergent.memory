@@ -339,9 +339,10 @@ templ dsOAuthConnectPanel(p DSProvider) {
 }
 
 // dsCredentialsConnectPage renders the write-only credentials form for a
-// provider that advertises the credentials method (the pre-OAuth Google Drive
-// path). Config and credential inputs come from the provider schema; the hidden
-// providerType carries the chosen provider through the POST.
+// provider that advertises the credentials method (a GitHub personal access
+// token, for example; Drive connects via OAuth and declares no credential
+// fields). Config and credential inputs come from the provider schema; the
+// hidden providerType carries the chosen provider through the POST.
 templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
 	<div class={ pageFormChromeClass }>
 		@pageHeader("Integrations", "Connect a data source", "Sync documents from "+p.Name+" into this project.")
@@ -494,6 +495,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 					Attrs: templ.Attributes{
 						"data-testid": f.dsLoadTestID(),
 						"hx-post":     f.dsLoadPath(),
+						"hx-vals":     `{"fieldKey":"` + f.Key + `"}`,
 						"hx-include":  "closest form",
 						"hx-target":   "#" + f.dsPickerID(),
 						"hx-swap":     "innerHTML",

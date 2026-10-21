@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	ui "github.com/emergent-company/go-daisy/components/ui"
 	"github.com/emergent-company/go-daisy/render"
@@ -240,7 +241,7 @@ func (s *Server) dsFormConfig(ctx context.Context, c echo.Context, providerType 
 	return dsConfigFromFields(c, fields), nil
 }
 
-// dsConfigFieldInputGeometry helpers
+// --- picker field helpers ---
 
 // dsIsPicker reports whether the field offers provider-listing suggestions.
 func (f dsConfigField) dsIsPicker() bool {
@@ -1332,10 +1333,14 @@ func (s *Server) uiDataSourceRefs(c echo.Context) error {
 }
 
 // uiDataSourceOptions renders a field's suggestion list for the connect form.
-// Listing failures are inline and never block submission: the input keeps its
-// typed value and stays editable.
-func (s *Server) uiDataSourceOptions(c echo.Context, fieldKey string, list func(context.Context, string, map[string]any) ([]DSResource, bool, error)) error {
+// The field key comes from the button that triggered the request (hx-vals), so
+// a provider may name its widget field anything; defaultFieldKey is the
+// endpoint's fallback for a request without one. Listing failures are inline
+// and never block submission: the input keeps its typed value and stays
+// editable.
+func (s *Server) uiDataSourceOptions(c echo.Context, defaultFieldKey string, list func(context.Context, string, map[string]any) ([]DSResource, bool, error)) error {
 	ctx := c.Request().Context()
+	fieldKey := dsPickerFieldKey(c.FormValue("fieldKey"), defaultFieldKey)
 	providerType := strings.TrimSpace(c.FormValue("providerType"))
 	var (
 		items     []DSResource
@@ -1356,6 +1361,23 @@ func (s *Server) uiDataSourceOptions(c echo.Context, fieldKey string, list func(
 	}
 	renderPartial(c.Response().Writer, c.Request(), DSOptionsPartial(fieldKey, items, truncated, err))
 	return nil
+}
+
+// dsPickerFieldKey returns the field key posted by a picker's load button when
+// it is a plain identifier, so the datalist id matches the input's list
+// attribute for a provider-named field. Anything else falls back to the
+// endpoint's key.
+func dsPickerFieldKey(posted, fallback string) string {
+	posted = strings.TrimSpace(posted)
+	if posted == "" || len(posted) > 64 {
+		return fallback
+	}
+	for _, r := range posted {
+		if r != '_' && r != '-' && r != '.' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return fallback
+		}
+	}
+	return posted
 }
 
 // dsFormError is the message a connect/edit form shows for a failed backend

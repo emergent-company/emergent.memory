@@ -790,6 +790,31 @@ func TestUIDataSourceReposPartial(t *testing.T) {
 	}
 }
 
+// TestUIDataSourceReposPartialUsesPostedFieldKey pins that the suggestion list
+// follows the field the load button belongs to, so a provider may name its
+// widget field anything; the endpoint key is only the fallback, and an unsafe
+// value cannot escape into the datalist id.
+func TestUIDataSourceReposPartialUsesPostedFieldKey(t *testing.T) {
+	f := &fakeMemory{
+		dsSchema:            githubSchema(),
+		dsProviderResources: []DSResource{{ID: "acme/docs", Name: "acme/docs", Type: "repo"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := postDSUIForm(e, "/data-sources/repos", "providerType=github&access_token=ghp_test&fieldKey=repository")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `<datalist id="ds-options-repository">`) {
+		t.Errorf("options partial = %s, want the posted field key in the datalist id", body)
+	}
+
+	rec = postDSUIForm(e, "/data-sources/repos", `providerType=github&access_token=ghp_test&fieldKey=%22%3E%3Cscript%3E`)
+	if body := rec.Body.String(); !strings.Contains(body, `<datalist id="ds-options-repo">`) {
+		t.Errorf("options partial = %s, want the endpoint fallback for an unsafe field key", body)
+	}
+}
+
 func TestUIDataSourceRefsPartialReportsTruncation(t *testing.T) {
 	f := &fakeMemory{
 		dsSchema: githubSchema(),
