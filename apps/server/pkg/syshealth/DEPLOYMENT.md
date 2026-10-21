@@ -3,7 +3,7 @@
 ## Phase 1: Preparation
 - [ ] Verify `gopsutil` is compatible with production OS (Linux/Docker)
 - [ ] Ensure Prometheus is scraping `/metrics` endpoint
-- [ ] Run all tests: `nx run server-go:test`
+- [ ] Run all tests: `task test`
 
 ## Phase 2: Deployment
 - [ ] Deploy server update (adaptive scaling disabled by default)

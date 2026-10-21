@@ -46,18 +46,30 @@ air
 **Endpoints:**
 
 ```bash
-curl http://localhost:5300/health | jq '.version'
+curl http://localhost:3002/health | jq '.version'
 # → "dev"
 
-curl http://localhost:5300/openapi.json | jq '.info.version'
+curl http://localhost:3002/openapi.json | jq '.info.version'
 # → "0.4.9"
 ```
 
-### Production Build (nx run server-go:build)
+### Production Build (server image)
+
+`task build` produces the local binary: it does not run `swag init` and injects
+no version ldflags, so that binary reports `dev`. Release images come from
+`deploy/self-hosted/Dockerfile.server`, which is the file CI builds and
+publishes:
 
 ```bash
-nx run server-go:build
+docker build -f deploy/self-hosted/Dockerfile.server -t memory-server \
+  --build-arg VERSION="$(git describe --tags --always)" \
+  --build-arg GIT_COMMIT="$(git rev-parse --short HEAD)" \
+  .
 ```
+
+(`apps/server/Dockerfile` is the local-dev image — same swag step and Go build,
+but not the release path, and its version defaults to `dev` unless you pass the
+same build args.)
 
 **Build process:**
 
@@ -71,16 +83,13 @@ nx run server-go:build
    ```
 3. Binary embeds git tag at compile time
 
-**Resulting binary:**
+**Resulting image:**
 
-```bash
-./dist/server &
-curl http://localhost:5300/health | jq '.version'
-# → "v0.4.9"
-
-curl http://localhost:5300/openapi.json | jq '.info.version'
-# → "0.4.9"
-```
+The release image expects Postgres: `entrypoint.sh` waits for it, applies the
+migrations, then starts the server on port 3002.
+`deploy/self-hosted/docker-compose.yml` supplies both (`POSTGRES_HOST: db`).
+The version it reports is the `VERSION` build arg, so a tagged build returns
+`"v0.4.9"` from `/health` and the release version from `/openapi.json`.
 
 ## Version Alignment
 
@@ -121,8 +130,7 @@ any of them diverge (see "Canonical Version Source" above).
 ### Step 2: Regenerate Swagger Docs
 
 ```bash
-cd apps/server
-nx run server-go:swagger
+task swagger   # from the product repo root
 ```
 
 ### Step 3: Commit Changes
@@ -154,8 +162,8 @@ GitHub Actions automatically:
 # Check all versions match
 echo "Git Tag: $(git describe --tags --always)"
 echo "CLI Release: $(gh release view v0.5.0 --json tagName -q .tagName)"
-echo "API Health: $(curl -s http://localhost:5300/health | jq -r '.version')"
-echo "OpenAPI Spec: $(curl -s http://localhost:5300/openapi.json | jq -r '.info.version')"
+echo "API Health: $(curl -s http://localhost:3002/health | jq -r '.version')"
+echo "OpenAPI Spec: $(curl -s http://localhost:3002/openapi.json | jq -r '.info.version')"
 
 # Expected output:
 # Git Tag: v0.5.0
@@ -178,7 +186,7 @@ echo "OpenAPI Spec: $(curl -s http://localhost:5300/openapi.json | jq -r '.info.
 **Production (production builds):**
 
 - Version injected from git tag via ldflags
-- Requires full build: `nx run server-go:build`
+- Built by `deploy/self-hosted/Dockerfile.server`, not `task build`
 - Optimized binary with `-ldflags="-s -w"`
 - Version alignment automatic
 
@@ -217,11 +225,14 @@ A: The `go run` and `air` commands don't use ldflags. This is expected. Producti
 
 **Q: How do I test with a real version locally?**
 
-A: Build and run the binary:
+A: Inject the version yourself — `task build` does not set it:
 
 ```bash
-task build
-./apps/server/dist/server
+cd apps/server
+VERSION=$(git describe --tags --always)
+go build -ldflags="-X github.com/emergent-company/emergent.memory/internal/version.Version=$VERSION" \
+  -o dist/server ./cmd/server
+./dist/server
 ```
 
 **Q: Can I automate the OpenAPI version update?**
