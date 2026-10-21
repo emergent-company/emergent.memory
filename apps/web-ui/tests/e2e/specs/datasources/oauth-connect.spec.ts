@@ -13,20 +13,22 @@ import { test, expect } from '@playwright/test';
 //   /data-sources/:id                     source detail (seeded s1)
 //   /orgs/:id/settings/oauth-clients      org-admin OAuth-client settings
 
-// The two catalog providers both advertise OAuth + credentials, so the chooser
-// renders a `ds-oauth-connect` and `ds-credentials-connect` per provider card.
-// Scope every action to its provider card to disambiguate.
+// Google Drive advertises OAuth only (its card has no credentials action);
+// GitHub advertises OAuth + credentials, so its card renders both. Scope every
+// action to its provider card to disambiguate.
 const driveChoice = (page: import('@playwright/test').Page) =>
   page.getByTestId('ds-provider-choice').filter({ hasText: 'Google Drive' });
+const githubChoice = (page: import('@playwright/test').Page) =>
+  page.getByTestId('ds-provider-choice').filter({ hasText: 'GitHub' });
 
 test.describe('provider-generic OAuth data-source connect', () => {
-  test('chooser lists both providers with OAuth and credentials actions', async ({ page }) => {
+  test('chooser renders the connect actions each provider advertises', async ({ page }) => {
     await page.goto('/data-sources/new');
 
     // The catalog-driven chooser lists BOTH providers.
     await expect(page.getByTestId('ds-provider-chooser')).toBeVisible();
-    await expect(page.getByTestId('ds-provider-choice').filter({ hasText: 'Google Drive' })).toBeVisible();
-    await expect(page.getByTestId('ds-provider-choice').filter({ hasText: 'GitHub' })).toBeVisible();
+    await expect(driveChoice(page)).toBeVisible();
+    await expect(githubChoice(page)).toBeVisible();
 
     // The OAuth provider renders a "Connect with Google Drive" action that
     // starts the OAuth flow (no credentials pasted).
@@ -38,12 +40,15 @@ test.describe('provider-generic OAuth data-source connect', () => {
       '/data-sources/oauth/start?providerType=google_drive',
     );
 
-    // The credentials provider renders a credentials connect action.
-    const driveCredentials = driveChoice(page).getByTestId('ds-credentials-connect');
-    await expect(driveCredentials).toBeVisible();
-    await expect(driveCredentials).toHaveAttribute(
+    // Drive is OAuth-only: its card offers no copy-with-credentials action.
+    await expect(driveChoice(page).getByTestId('ds-credentials-connect')).toHaveCount(0);
+
+    // GitHub advertises both methods, so its card renders the credentials action.
+    const githubCredentials = githubChoice(page).getByTestId('ds-credentials-connect');
+    await expect(githubCredentials).toBeVisible();
+    await expect(githubCredentials).toHaveAttribute(
       'href',
-      '/data-sources/new?providerType=google_drive&method=credentials',
+      '/data-sources/new?providerType=github&method=credentials',
     );
   });
 
@@ -61,15 +66,12 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByRole('heading', { name: 'Team Drive' })).toBeVisible();
     await expect(page.getByText('Data source connected.')).toBeVisible();
 
-    // OAuth connects without pasted credentials: the source detail never
-    // prefills a secret. The detail edit form may render the write-only
-    // credential fields (the credentials fallback), but they are always empty.
-    for (const tid of ['ds-field-client_secret', 'ds-field-refresh_token']) {
-      const inputs = page.getByTestId(tid);
-      for (let i = 0; i < await inputs.count(); i++) {
-        await expect(inputs.nth(i)).toHaveValue('');
-      }
-    }
+    // OAuth connects without pasted credentials: Drive declares no credential
+    // fields, so the detail edit form renders no secret input at all.
+    await expect(page.getByTestId('ds-edit-form')).toBeVisible();
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    await expect(page.getByTestId('ds-field-refresh_token')).toHaveCount(0);
+    await expect(page.getByTestId('ds-field-client_secret')).toHaveCount(0);
   });
 
   test('OAuth-connected source prompts for its sync target, then reaches the resource step', async ({ page }) => {

@@ -249,7 +249,7 @@ const dsProviders = [
     vendor: "google",
     vendorName: "Google",
     available: true,
-    authMethods: ["oauth", "credentials"],
+    authMethods: ["oauth"],
     strategies: ["drive.file", "drive.readonly"],
   },
   {
@@ -264,22 +264,22 @@ const dsProviders = [
   },
 ];
 
-// Per-provider config schemas (the connect form is schema-driven). The
-// google_drive schema keeps the credentials-fallback fields so the manual
-// connect form still renders them; github carries its repo/paths/ref contract.
+// Per-provider config schemas (the connect form is schema-driven). The mock
+// mirrors each provider's UI contract: google_drive is OAuth-only and declares
+// no credential fields (its form must never render a pasted-credential
+// surface), while github carries its repo/ref contract plus the write-only
+// token. The create endpoint still requires a Drive refresh_token, like the
+// server's ExtractCredentials for legacy/API clients.
 const dsSchemas = {
   google_drive: {
     type: "google_drive",
     properties: {
       folder_id: { type: "string", description: "The Drive folder to sync." },
       shared_drive_id: { type: "string" },
-      mime_types: { type: "array" },
+      mime_types: { type: "array", items: { type: "string" } },
       recursive: { type: "boolean" },
-      client_id: { type: "string" },
-      client_secret: { type: "string" },
-      refresh_token: { type: "string" },
     },
-    required: ["folder_id", "refresh_token"],
+    required: ["folder_id"],
   },
   github: {
     type: "github",
@@ -961,7 +961,15 @@ const server = http.createServer((req, res) => {
         }
         return json(res, { success: true, message: "Connected to GitHub." });
       }
+      // ValidateConfig then ExtractCredentials, like the server: the folder is
+      // required before the stored credential.
       const folder = String(config.folder_id || "");
+      if (!folder) {
+        return json(res, { success: false, message: "config.folder_id is required" });
+      }
+      if (!String(config.refresh_token || "")) {
+        return json(res, { success: false, message: "config.refresh_token is required" });
+      }
       if (folder === "folder-fail") {
         return json(res, { success: false, message: "Drive folder not found." });
       }
@@ -1019,9 +1027,15 @@ const server = http.createServer((req, res) => {
           res.statusCode = 422;
           return json(res, { error: { code: "validation_error", message: "config.access_token is required" } });
         }
-      } else if (!String(config.folder_id || "")) {
-        res.statusCode = 422;
-        return json(res, { error: { code: "validation_error", message: "config.folder_id is required" } });
+      } else {
+        if (!String(config.folder_id || "")) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.folder_id is required" } });
+        }
+        if (!String(config.refresh_token || "")) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.refresh_token is required" } });
+        }
       }
       const now = nowISO();
       const row = {

@@ -1,49 +1,51 @@
 import { test, expect } from '@playwright/test';
 import { createDriveSource, deleteDriveSource } from '../../helpers/datasources';
 
-// Connect / configure a Drive source (gateway /data-sources/new), driven by the
-// provider's config schema. Runs against the dev-mode mock harness.
+// Drive connect is OAuth-only: the provider advertises no credentials method and
+// declares no credential fields, so its UI never renders a pasted-credential
+// surface. These specs pin that contract plus the schema-driven detail/edit
+// form; the connect flow itself lives in oauth-connect.spec.ts. Runs against the
+// dev-mode mock harness.
 
-test.describe('Connect a data source', () => {
-  test('renders the schema-driven connect form', async ({ page }) => {
+test.describe('Drive data source', () => {
+  test('is OAuth-only: the credentials method renders no pasted-credential form', async ({ page }) => {
+    // The provider does not advertise credentials, so a ?method=credentials
+    // hint changes nothing: the page shows the OAuth panel, never a form.
     await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
-    await expect(page.getByTestId('ds-connect-form')).toBeVisible();
-    await expect(page.getByTestId('ds-field-name')).toBeVisible();
-    await expect(page.getByTestId('ds-field-sync-mode')).toBeVisible();
-    await expect(page.getByTestId('ds-field-folder_id')).toBeVisible();
-    await expect(page.getByTestId('ds-field-recursive')).toBeVisible();
-    // Credentials are rendered write-only (password inputs).
-    await expect(page.getByTestId('ds-field-refresh_token')).toBeVisible();
-    await expect(page.getByTestId('ds-field-client_secret')).toBeVisible();
+    await expect(page.getByTestId('ds-oauth-connect')).toBeVisible();
+    await expect(page.getByTestId('ds-connect-form')).toHaveCount(0);
+    await expect(page.locator('input[type="password"]')).toHaveCount(0);
   });
 
-  test('tests a valid config and reports success inline', async ({ page }) => {
-    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
-    await page.getByTestId('ds-field-folder_id').fill('folder-ok');
-    await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
-    await page.getByTestId('ds-test-config').click();
-    await expect(page.getByTestId('ds-test-result')).toContainText('Connected to Google Drive.');
+  test('mirrors the provider: the Drive create API needs a folder and a credential', async ({ page }) => {
+    // The mock mirrors the server's ExtractCredentials: a folder alone is not a
+    // connectable Drive source; the connect flow (or a legacy API client)
+    // supplies the refresh-token credential. Only rejection + message are
+    // asserted: the gateway maps memory's 422 onto its own error status.
+    const folderOnly = await page.request.post('/api/data-source-integrations', {
+      data: {
+        name: `e2e-drive-${Date.now()}`,
+        providerType: 'google_drive',
+        sourceType: 'drive',
+        config: { folder_id: 'folder-ok' },
+      },
+    });
+    expect(folderOnly.ok(), await folderOnly.text()).toBe(false);
+    expect(await folderOnly.text()).toContain('config.refresh_token is required');
+
+    const folderless = await page.request.post('/api/data-source-integrations', {
+      data: {
+        name: `e2e-drive-${Date.now()}`,
+        providerType: 'google_drive',
+        sourceType: 'drive',
+        config: { refresh_token: 'e2e-refresh-token' },
+      },
+    });
+    expect(folderless.ok(), await folderless.text()).toBe(false);
+    expect(await folderless.text()).toContain('config.folder_id is required');
   });
 
-  test('reports a failed config test inline', async ({ page }) => {
-    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
-    await page.getByTestId('ds-field-folder_id').fill('folder-fail');
-    await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
-    await page.getByTestId('ds-test-config').click();
-    await expect(page.getByTestId('ds-test-result')).toContainText('Drive folder not found.');
-  });
-
-  test('rejects a config without a folder', async ({ page }) => {
-    await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
-    await page.getByTestId('ds-field-name').fill(`e2e-drive-${Date.now()}`);
-    await page.getByTestId('ds-field-refresh_token').fill('e2e-refresh-token');
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    // The gateway rejects before reaching memory and re-renders the form.
-    await expect(page).toHaveURL(/\/data-sources\/new/);
-    await expect(page.getByTestId('ds-connect-form')).toBeVisible();
-  });
-
-  test('creates a source and lands on its detail page', async ({ page }) => {
+  test('creates a source and renders its detail page', async ({ page }) => {
     const src = await createDriveSource(page, {
       name: `e2e-drive-${Date.now()}`,
       folder: 'folder-ok',
@@ -54,16 +56,22 @@ test.describe('Connect a data source', () => {
       await expect(page.getByTestId('ds-sync-history')).toBeVisible();
       await expect(page.getByTestId('ds-sync-empty')).toBeVisible();
       await expect(page.getByRole('heading', { name: src.name })).toBeVisible();
-      // The edit form prefills the stored folder (config round-trip), while the
-      // write-only refresh token stays blank.
+      // The edit form renders the provider's config contract: the stored
+      // folder round-trips and the optional scope fields are all present.
+      await expect(page.getByTestId('ds-edit-form')).toBeVisible();
+      await expect(page.getByTestId('ds-field-sync-mode')).toBeVisible();
       await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
-      await expect(page.getByTestId('ds-field-refresh_token')).toHaveValue('');
+      await expect(page.getByTestId('ds-field-shared_drive_id')).toBeVisible();
+      await expect(page.getByTestId('ds-field-mime_types')).toBeVisible();
+      await expect(page.getByTestId('ds-field-recursive')).toBeVisible();
+      // Drive has no credential fields, so there is no write-only secret input.
+      await expect(page.getByTestId('ds-field-refresh_token')).toHaveCount(0);
     } finally {
       await deleteDriveSource(page, src.id);
     }
   });
 
-  test('edit form preserves stored config and blank credentials on save', async ({ page }) => {
+  test('edit form preserves stored config on save', async ({ page }) => {
     const src = await createDriveSource(page, {
       name: `e2e-drive-${Date.now()}`,
       folder: 'folder-ok',
@@ -76,6 +84,8 @@ test.describe('Connect a data source', () => {
       await expect(page.getByRole('heading', { name: `${src.name}-renamed` })).toBeVisible();
       // The folder survives the round-trip (no data loss).
       await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
+      // The stored refresh-token blob is never re-rendered or blank-resubmitted.
+      await expect(page.getByTestId('ds-field-refresh_token')).toHaveCount(0);
     } finally {
       await deleteDriveSource(page, src.id);
     }

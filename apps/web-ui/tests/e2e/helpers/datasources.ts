@@ -6,26 +6,35 @@ export interface DriveSource {
 }
 
 /**
- * Fill and submit the connect form, returning the new source's id and name.
- * The gateway validates `folder_id` + `refresh_token`, creates the source via
- * the mock, and redirects to its detail page.
+ * Create a Drive source through the gateway's JSON API — the same surface
+ * legacy and API clients use. Drive's UI is OAuth-only, so there is no
+ * pasted-credential form to drive: this is the create shape the connect flow
+ * ends with (folder scope plus a stored refresh-token credential), which is
+ * what the server's ExtractCredentials expects. Returns after navigating to
+ * the detail page so callers start where the form flow used to leave them.
  */
 export async function createDriveSource(
   page: Page,
   opts: { name: string; folder: string; token?: string },
 ): Promise<DriveSource> {
-  // /data-sources/new is the provider chooser; the google_drive credentials form
-  // (the pre-chooser connect surface) lives behind the method query.
-  await page.goto('/data-sources/new?providerType=google_drive&method=credentials');
-  await expect(page.getByTestId('ds-connect-form')).toBeVisible();
-  await page.getByTestId('ds-field-name').fill(opts.name);
-  await page.getByTestId('ds-field-folder_id').fill(opts.folder);
-  await page.getByTestId('ds-field-refresh_token').fill(opts.token ?? 'e2e-refresh-token');
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.waitForURL(/\/data-sources\/ds-\d+/);
-  const id = page.url().match(/\/data-sources\/(ds-\d+)/)?.[1] ?? '';
-  expect(id, 'connect should redirect to the new source detail page').not.toBe('');
-  return { id, name: opts.name };
+  const resp = await page.request.post('/api/data-source-integrations', {
+    data: {
+      name: opts.name,
+      providerType: 'google_drive',
+      sourceType: 'drive',
+      config: {
+        folder_id: opts.folder,
+        refresh_token: opts.token ?? 'e2e-refresh-token',
+      },
+    },
+  });
+  if (resp.status() !== 201) {
+    throw new Error(`create Drive source failed (${resp.status()}): ${await resp.text()}`);
+  }
+  const created = (await resp.json()) as { id: string };
+  expect(created.id, 'create should return the new source id').toBeTruthy();
+  await page.goto(`/data-sources/${created.id}`);
+  return { id: created.id, name: opts.name };
 }
 
 /**

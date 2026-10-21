@@ -464,8 +464,8 @@ func (s *Server) uiDataSources(c echo.Context) error {
 
 // uiDataSourceNew renders the provider chooser, or the connect surface for a
 // chosen provider. The catalog drives the page: ?providerType selects a provider
-// (absent → chooser), and ?method narrows a dual-capability provider (Google
-// Drive advertises both oauth and credentials) to one connect path.
+// (absent → chooser), and ?method narrows a dual-capability provider (GitHub
+// advertises both oauth and credentials) to one connect path.
 func (s *Server) uiDataSourceNew(c echo.Context) error {
 	ctx := c.Request().Context()
 	providerType := strings.TrimSpace(c.QueryParam("providerType"))
