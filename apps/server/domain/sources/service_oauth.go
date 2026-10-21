@@ -14,6 +14,13 @@ import (
 // oauthPendingTTL bounds how long an authorize request may wait for the callback.
 const oauthPendingTTL = 10 * time.Minute
 
+// oauthGrantedStrategyKey is the reserved config key under which the connect
+// flow records the scope strategy the token response actually granted. It is
+// non-secret and stays visible in the source's config on read. It is deliberately
+// NOT a credential key (absent from credentialKeyNames, so it is never extracted
+// as credential material from user-submitted config); edits preserve it.
+const oauthGrantedStrategyKey = "oauth_granted_strategy"
+
 // StartOAuthRequest carries the inputs for starting an OAuth connect.
 type StartOAuthRequest struct {
 	UserID *uuid.UUID
@@ -149,6 +156,14 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 			cfg[k] = v
 		}
 	}
+	// Persist the scope strategy the token response actually granted, resolved
+	// from its raw scope string. It exists only in the token response at exchange
+	// time; the configured strategy can drift after the token was issued, and the
+	// granted strategy cannot be recovered from the stored credential later. Capture
+	// it now so the read can report it independently of the client config.
+	if granted := grantedStrategy(p, creds); granted != "" {
+		cfg[oauthGrantedStrategyKey] = granted
+	}
 
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
 		Name:                  name,
@@ -162,6 +177,24 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		return nil, fail(err)
 	}
 	return integration, nil
+}
+
+// grantedStrategy resolves the scope strategy a token response actually granted
+// from its raw scope string (creds["scope"]). It splits the space-delimited
+// scopes and maps them through the provider's ScopeStrategies.StrategyForScopes;
+// "" means no recognisable granted strategy (no scope, a non-strategy provider,
+// or explicit/custom scopes), in which case nothing should be persisted.
+func grantedStrategy(p SourceProvider, creds Credentials) string {
+	raw, _ := creds["scope"].(string)
+	scopes := strings.Fields(raw)
+	if len(scopes) == 0 {
+		return ""
+	}
+	ss, ok := p.(ScopeStrategies)
+	if !ok {
+		return ""
+	}
+	return ss.StrategyForScopes(scopes)
 }
 
 // oauthRedirectURI builds the provider callback URL from the configured base.

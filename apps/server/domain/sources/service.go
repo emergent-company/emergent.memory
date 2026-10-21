@@ -404,6 +404,9 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 	if p, ok := s.providers.Get(src.Provider); ok {
 		if _, oauth := p.OAuth(); oauth {
 			out.OAuthStrategy = s.effectiveOAuthStrategy(ctx, projectID, src.Provider)
+			if g, ok := src.Config[oauthGrantedStrategyKey].(string); ok {
+				out.OAuthGrantedStrategy = g
+			}
 		}
 	}
 	return out, nil
@@ -453,7 +456,15 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			}
 			existing.EncryptedCredentials = blob
 		}
+		// Preserve the granted strategy recorded at connect: the edit form
+		// submits only the provider's declared fields, so a replace would drop
+		// the key and the value cannot be recovered later. An explicit value in
+		// the submitted config still wins.
+		granted, hasGranted := existing.Config[oauthGrantedStrategyKey]
 		existing.Config = stripCredentialKeys(req.Config, p.CredentialKeys())
+		if _, submitted := existing.Config[oauthGrantedStrategyKey]; !submitted && hasGranted {
+			existing.Config[oauthGrantedStrategyKey] = granted
+		}
 	}
 
 	updated, err := s.repo.Update(ctx, existing)

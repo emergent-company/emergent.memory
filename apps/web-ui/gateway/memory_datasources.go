@@ -77,14 +77,19 @@ type DSIntegration struct {
 	// OAuthStrategy is the effective scope strategy the server resolved for this
 	// source (project → org → provider default). Present on the single-source
 	// read only; empty means the provider default applies.
-	OAuthStrategy string  `json:"oauthStrategy,omitempty"`
-	LastSyncedAt  *string `json:"lastSyncedAt,omitempty"`
-	NextSyncAt    *string `json:"nextSyncAt,omitempty"`
-	Status        string  `json:"status"`
-	ErrorMessage  *string `json:"errorMessage,omitempty"`
-	ErrorCount    int     `json:"errorCount"`
-	CreatedAt     string  `json:"createdAt"`
-	UpdatedAt     string  `json:"updatedAt"`
+	OAuthStrategy string `json:"oauthStrategy,omitempty"`
+	// OAuthGrantedStrategy is the scope strategy the stored token was actually
+	// granted at connect (resolved from the token response's granted scope).
+	// Present on the single-source read only; empty for older sources connected
+	// before this was persisted, or for custom/unrecognised scopes.
+	OAuthGrantedStrategy string  `json:"oauthGrantedStrategy,omitempty"`
+	LastSyncedAt         *string `json:"lastSyncedAt,omitempty"`
+	NextSyncAt           *string `json:"nextSyncAt,omitempty"`
+	Status               string  `json:"status"`
+	ErrorMessage         *string `json:"errorMessage,omitempty"`
+	ErrorCount           int     `json:"errorCount"`
+	CreatedAt            string  `json:"createdAt"`
+	UpdatedAt            string  `json:"updatedAt"`
 }
 
 // DSSyncJob is one sync job of a source. It mirrors the SDK SyncJob shape so the

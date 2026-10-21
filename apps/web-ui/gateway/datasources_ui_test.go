@@ -403,6 +403,59 @@ func TestDSDriveFileScope(t *testing.T) {
 	}
 }
 
+func TestDSDriveFileScopePrefersGranted(t *testing.T) {
+	// The granted strategy wins over the configured one: a source authorized
+	// under drive.file still cannot list the drive even after the org strategy
+	// changed to drive.readonly.
+	grantedFile := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.readonly", OAuthGrantedStrategy: "drive.file"}
+	if !dsDriveFileScope(grantedFile) {
+		t.Error("granted drive.file should win over configured drive.readonly")
+	}
+
+	// The reverse: granted drive.readonly is not drive.file even when the
+	// configured strategy drifted to drive.file.
+	grantedReadonly := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.file", OAuthGrantedStrategy: "drive.readonly"}
+	if dsDriveFileScope(grantedReadonly) {
+		t.Error("granted drive.readonly should not be reported as drive.file even when configured drive.file")
+	}
+
+	// Both empty → fall back to the configured strategy (older sources).
+	fallback := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.file"}
+	if !dsDriveFileScope(fallback) {
+		t.Error("empty granted strategy should fall back to the configured drive.file strategy")
+	}
+}
+
+func TestRenderDataSourceResourceListPrefersGrantedScope(t *testing.T) {
+	// Granted drive.file with configured drive.readonly still renders the
+	// drive.file notice (the granted scope is what the token can actually do).
+	grantedFile := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.readonly", OAuthGrantedStrategy: "drive.file"}
+	html := renderHTML(t, DataSourceResourceList(grantedFile, "Google Drive", nil, false, "", nil, dsDriveFileScope(grantedFile)))
+	if !strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
+		t.Error("granted drive.file must render the drive.file notice even when configured drive.readonly")
+	}
+	if strings.Contains(html, `data-testid="ds-resource-empty"`) {
+		t.Error("granted drive.file must not render the bare empty state")
+	}
+
+	// Granted drive.readonly with configured drive.file does not render the notice.
+	grantedReadonly := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.file", OAuthGrantedStrategy: "drive.readonly"}
+	html = renderHTML(t, DataSourceResourceList(grantedReadonly, "Google Drive", nil, false, "", nil, dsDriveFileScope(grantedReadonly)))
+	if strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
+		t.Error("granted drive.readonly must not render the drive.file notice even when configured drive.file")
+	}
+	if !strings.Contains(html, `data-testid="ds-resource-empty"`) {
+		t.Error("granted drive.readonly empty listing must keep the plain empty state")
+	}
+
+	// Both empty falls back to the configured drive.file strategy.
+	fallback := &DSIntegration{ID: "s3", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.file"}
+	html = renderHTML(t, DataSourceResourceList(fallback, "Google Drive", nil, false, "", nil, dsDriveFileScope(fallback)))
+	if !strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
+		t.Error("empty granted strategy must fall back to the configured drive.file strategy")
+	}
+}
+
 func TestRenderOrgOAuthClientsPage(t *testing.T) {
 	providers := []DSProvider{
 		{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth", "credentials"}},

@@ -133,14 +133,22 @@ type Integration struct {
 	// (resolved project → org → provider default). It is filled on the
 	// single-source read only, and only for OAuth providers; empty means the
 	// provider default applies.
-	OAuthStrategy string     `json:"oauthStrategy,omitempty"`
-	LastSyncedAt  *time.Time `json:"lastSyncedAt,omitempty"`
-	NextSyncAt    *time.Time `json:"nextSyncAt,omitempty"`
-	Status        string     `json:"status"`
-	ErrorMessage  *string    `json:"errorMessage,omitempty"`
-	ErrorCount    int        `json:"errorCount"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
+	OAuthStrategy string `json:"oauthStrategy,omitempty"`
+	// OAuthGrantedStrategy names the scope strategy the stored token was
+	// actually granted at connect, resolved from the token response's granted
+	// scope. It differs from OAuthStrategy, which reports the currently
+	// configured strategy: a source authorized under drive.file keeps its
+	// granted strategy even after the org's configured strategy changes. Empty
+	// for older sources connected before this was persisted, or when the token
+	// carried only custom/unrecognised scopes.
+	OAuthGrantedStrategy string     `json:"oauthGrantedStrategy,omitempty"`
+	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	NextSyncAt           *time.Time `json:"nextSyncAt,omitempty"`
+	Status               string     `json:"status"`
+	ErrorMessage         *string    `json:"errorMessage,omitempty"`
+	ErrorCount           int        `json:"errorCount"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }
 
 // SourceType mirrors pkg/sdk/datasources.SourceType — document counts grouped

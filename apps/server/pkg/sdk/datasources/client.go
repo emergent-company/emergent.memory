@@ -143,14 +143,19 @@ type Integration struct {
 	SyncIntervalMinutes *int    `json:"syncIntervalMinutes,omitempty"`
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the connect/edit UI can round-trip a source's persisted settings.
-	Config       map[string]interface{} `json:"config,omitempty"`
-	LastSyncedAt *time.Time             `json:"lastSyncedAt,omitempty"`
-	NextSyncAt   *time.Time             `json:"nextSyncAt,omitempty"`
-	Status       string                 `json:"status"`
-	ErrorMessage *string                `json:"errorMessage,omitempty"`
-	ErrorCount   int                    `json:"errorCount"`
-	CreatedAt    time.Time              `json:"createdAt"`
-	UpdatedAt    time.Time              `json:"updatedAt"`
+	Config map[string]interface{} `json:"config,omitempty"`
+	// OAuthGrantedStrategy is the scope strategy the stored token was actually
+	// granted at connect (resolved from the token response's granted scope).
+	// Empty for older sources connected before this was persisted, or for
+	// custom/unrecognised scopes.
+	OAuthGrantedStrategy string     `json:"oauthGrantedStrategy,omitempty"`
+	LastSyncedAt         *time.Time `json:"lastSyncedAt,omitempty"`
+	NextSyncAt           *time.Time `json:"nextSyncAt,omitempty"`
+	Status               string     `json:"status"`
+	ErrorMessage         *string    `json:"errorMessage,omitempty"`
+	ErrorCount           int        `json:"errorCount"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }
 
 // SyncJob represents a data source sync job.

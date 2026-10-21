@@ -704,14 +704,24 @@ func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	return nil
 }
 
-// dsDriveFileScope reports whether a source's effective Drive scope strategy is
-// the explicit drive.file strategy — the one scope that cannot list the drive
-// without the Google Picker. The strategy is resolved server-side (project row →
-// inherited org strategy → provider default) and carried on the single-source
-// read, so the gateway never re-derives it; an empty value means the default,
-// which can list.
+// dsDriveFileScope reports whether a source's Drive scope strategy is the
+// explicit drive.file strategy — the one scope that cannot list the drive
+// without the Google Picker. The strategy is resolved server-side and carried on
+// the single-source read, so the gateway never re-derives it; an empty value
+// means the default, which can list.
 func dsDriveFileScope(src *DSIntegration) bool {
-	return src != nil && src.ProviderType == dsProviderTypeGoogleDrive && src.OAuthStrategy == dsDriveFileStrategy
+	if src == nil || src.ProviderType != dsProviderTypeGoogleDrive {
+		return false
+	}
+	// The granted strategy wins over the configured one: the token was issued for
+	// a fixed scope set at connect, so a source authorized under drive.file still
+	// cannot list the drive even after the org's configured strategy changes.
+	// Fall back to the configured strategy only for older sources connected
+	// before the granted scope was persisted (OAuthGrantedStrategy is empty).
+	if src.OAuthGrantedStrategy != "" {
+		return src.OAuthGrantedStrategy == dsDriveFileStrategy
+	}
+	return src.OAuthStrategy == dsDriveFileStrategy
 }
 
 // dsResourceListURL builds the deferred resource-list partial URL for a source,
