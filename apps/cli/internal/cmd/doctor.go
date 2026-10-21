@@ -1157,6 +1157,38 @@ func runDockerCompose(installDir string, args ...string) error {
 	return cmd.Run()
 }
 
+// requiredMCPTools is the set of tools whose absence means the server is older
+// than this CLI expects, or the MCP endpoint is broken. It is deliberately
+// short and stable: the server's catalog grows every release, so comparing the
+// full catalog exactly reported a mismatch on every healthy install (#2005).
+// Extra tools are expected and are never treated as an error.
+var requiredMCPTools = []string{
+	"entity-create",
+	"entity-query",
+	"entity-search",
+	"forget",
+	"graph-traverse",
+	"relationship-create",
+	"remember",
+	"schema-get",
+	"schema-list",
+	"schema-version",
+	"search-hybrid",
+	"search-semantic",
+}
+
+// missingRequiredMCPTools returns the required tools the server does not
+// advertise, in declaration (sorted) order.
+func missingRequiredMCPTools(actual map[string]bool) []string {
+	missing := make([]string, 0, len(requiredMCPTools))
+	for _, name := range requiredMCPTools {
+		if !actual[name] {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
 func checkMCP(cfg *config.Config) checkResult {
 	fmt.Print("Checking MCP server... ")
 
@@ -1321,75 +1353,21 @@ func checkMCP(cfg *config.Config) checkResult {
 		}
 	}
 
-	expectedTools := map[string]bool{
-		"schema_version":             true,
-		"list_entity_types":          true,
-		"query_entities":             true,
-		"search_entities":            true,
-		"get_entity_edges":           true,
-		"list_schemas":               true,
-		"get_schema":                 true,
-		"get_available_templates":    true,
-		"get_installed_templates":    true,
-		"assign_schema":              true,
-		"update_template_assignment": true,
-		"uninstall_schema":           true,
-		"create_schema":              true,
-		"delete_schema":              true,
-		"create_entity":              true,
-		"create_relationship":        true,
-		"update_entity":              true,
-		"delete_entity":              true,
-		"hybrid_search":              true,
-		"semantic_search":            true,
-		"find_similar":               true,
-		"traverse_graph":             true,
-		"list_relationships":         true,
-		"update_relationship":        true,
-		"delete_relationship":        true,
-		"restore_entity":             true,
-		"batch_create_entities":      true,
-		"batch_create_relationships": true,
-		"list_tags":                  true,
-		"preview_schema_migration":   true,
-		"list_migration_archives":    true,
-		"get_migration_archive":      true,
-	}
-
-	actualTools := make(map[string]bool)
+	actualTools := make(map[string]bool, len(toolsResp.Result.Tools))
 	for _, tool := range toolsResp.Result.Tools {
 		actualTools[tool.Name] = true
 	}
 
-	missingTools := []string{}
-	for toolName := range expectedTools {
-		if !actualTools[toolName] {
-			missingTools = append(missingTools, toolName)
-		}
-	}
-
-	extraTools := []string{}
-	for toolName := range actualTools {
-		if !expectedTools[toolName] {
-			extraTools = append(extraTools, toolName)
-		}
-	}
-
 	toolCount := len(toolsResp.Result.Tools)
 
-	if len(missingTools) > 0 || len(extraTools) > 0 {
+	if missing := missingRequiredMCPTools(actualTools); len(missing) > 0 {
 		fmt.Println("MISMATCH")
-		msg := fmt.Sprintf("Connected with %d tools", toolCount)
-		if len(missingTools) > 0 {
-			msg += fmt.Sprintf(", missing %d expected tools: %v", len(missingTools), missingTools)
-		}
-		if len(extraTools) > 0 {
-			msg += fmt.Sprintf(", found %d unexpected tools: %v", len(extraTools), extraTools)
-		}
 		return checkResult{
-			name:    "MCP Server",
-			status:  "warn",
-			message: msg,
+			name:   "MCP Server",
+			status: "warn",
+			message: fmt.Sprintf(
+				"Connected with %d tools, missing %d required tools: %v (outdated server, or an API key without the scopes that expose them)",
+				toolCount, len(missing), missing),
 		}
 	}
 
