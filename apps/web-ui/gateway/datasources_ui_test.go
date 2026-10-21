@@ -204,46 +204,100 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 
 func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
 
-	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "", nil, false, "", nil))
+	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", "", nil, "", nil))
 	for _, want := range []string{
 		`data-testid="ds-resource-step"`,
 		"Choose a Drive folder",
-		`data-testid="ds-resource-row"`,
-		"Reports", "Contracts",
-		`name="resource_id"`,
-		`value="f1"`,
-		`data-testid="ds-resource-select"`,
-		"Use this folder",
 		`href="/data-sources/s1"`,
 		`data-testid="ds-resource-search"`,
 		`data-testid="ds-resource-search-submit"`,
 		// Native GET navigation, not a boosted form submit (see the templ),
 		// and no action attribute so the scoped path is preserved.
 		`<form method="get" class="mt-4 flex items-center gap-2" hx-boost="false">`,
+		// The list is deferred, not rendered inline: a loading placeholder that
+		// fetches the list partial after first paint.
+		`data-testid="ds-resource-loading"`,
+		`hx-get="/data-sources/s1/resources/list"`,
+		`hx-trigger="load"`,
+		`hx-target="this"`,
+		`hx-swap="outerHTML"`,
+		"Loading folders from Google Drive",
+		`href="/data-sources/s1/resources?static=1"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("resource step missing %q", want)
+			t.Errorf("resource step shell missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="ds-resource-row"`) {
+		t.Error("page shell must not render resource rows inline")
+	}
+
+	// The typed filter is echoed back into the search field so the reload keeps
+	// it visible, and threaded into the deferred list URL.
+	filtered := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", "Reports", nil, "", nil))
+	if !strings.Contains(filtered, `name="q" value="Reports"`) {
+		t.Error("search field does not echo the applied filter")
+	}
+	if !strings.Contains(filtered, `hx-get="/data-sources/s1/resources/list?q=Reports"`) {
+		t.Error("deferred list URL does not carry the filter")
+	}
+
+	// A non-Drive provider gets the generic copy.
+	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", "", nil, "", nil))
+	if !strings.Contains(generic, "Choose a resource (repository or folder)") {
+		t.Error("generic provider copy missing")
+	}
+
+	// A nil source renders the load-error state.
+	errPage := renderHTML(t, DataSourceResourceSelectPage(nil, "", "", errTest, "", nil))
+	if !strings.Contains(errPage, "Data source unavailable") {
+		t.Error("load-error state missing")
+	}
+}
+
+// TestRenderDataSourceResourceSelectPageStaticSearchKeepsMode asserts the
+// no-JS shell's GET search form carries a hidden `static` field so a filtered
+// submit stays on the server-rendered path, while the deferred (JS) shell does
+// not — the flag is threaded through dsResourceSelectShell.
+func TestRenderDataSourceResourceSelectPageStaticSearchKeepsMode(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+
+	static := renderHTML(t, DataSourceResourceSelectPageStatic(src, "Google Drive", "", nil, false, nil, false, "", nil))
+	if !strings.Contains(static, `name="static" value="1"`) {
+		t.Error("static shell search form must carry the hidden static field")
+	}
+
+	deferred := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", "", nil, "", nil))
+	if strings.Contains(deferred, `name="static" value="1"`) {
+		t.Error("deferred shell search form must not carry the hidden static field")
+	}
+}
+
+func TestRenderDataSourceResourceList(t *testing.T) {
+	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
+	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
+
+	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, false, "", nil, false))
+	for _, want := range []string{
+		`data-testid="ds-resource-row"`,
+		"Reports", "Contracts",
+		`name="resource_id"`,
+		`value="f1"`,
+		`data-testid="ds-resource-select"`,
+		"Use this folder",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("resource list missing %q", want)
 		}
 	}
 	if strings.Contains(html, `data-testid="ds-resource-truncated"`) {
 		t.Error("truncation note rendered for a complete (non-truncated) listing")
 	}
 
-	// The typed filter is echoed back into the search field so the reload keeps
-	// it visible.
-	filtered := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, false, "Reports", nil, false, "", nil))
-	if !strings.Contains(filtered, `name="q" value="Reports"`) {
-		t.Error("search field does not echo the applied filter")
-	}
-	if strings.Contains(filtered, `name="q" value=""`) {
-		t.Error("search field lost the applied filter")
-	}
-
 	// A truncated listing renders the note; the flag — not the item count —
 	// controls it.
-	truncated := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", resources, true, "", nil, false, "", nil))
+	truncated := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, true, "", nil, false))
 	if !strings.Contains(truncated, `data-testid="ds-resource-truncated"`) {
 		t.Error("truncation note missing for a truncated listing")
 	}
@@ -251,7 +305,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 		t.Error("truncation note missing its search-by-name hint")
 	}
 
-	empty := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, false, "", nil))
+	empty := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, false))
 	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
 		t.Error("resource empty state missing")
 	}
@@ -261,19 +315,24 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 	if !strings.Contains(empty, `data-testid="ds-resource-retry"`) {
 		t.Error("resource retry link missing")
 	}
-
-	// A non-Drive provider gets the generic copy and a generic action label.
-	generic := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", nil, false, "", nil, false, "", nil))
-	if !strings.Contains(generic, "Choose a resource (repository or folder)") {
-		t.Error("generic provider copy missing")
+	// The retry re-issues the list fetch client-side, not a full page reload.
+	if !strings.Contains(empty, `hx-get="/data-sources/s1/resources/list"`) || !strings.Contains(empty, `hx-target="closest #ds-resource-list-root"`) {
+		t.Errorf("retry must be an HTMX list re-fetch: %s", empty)
 	}
-	genericList := renderHTML(t, DataSourceResourceSelectPage(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, false, "", nil))
+	// It must also carry a real href: on the ?static=1 no-JS path hx-get never
+	// runs, and a bare button would be dead.
+	if !strings.Contains(empty, `href="/data-sources/s1/resources?static=1"`) {
+		t.Errorf("retry must keep an href for the no-JS path: %s", empty)
+	}
+
+	// A non-Drive provider gets a generic resource action label.
+	genericList := renderHTML(t, DataSourceResourceList(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, false))
 	if !strings.Contains(genericList, "Use this resource") {
 		t.Error("generic resource action label missing")
 	}
 
 	// A failed listing renders the empty/error state, not a broken list.
-	errored := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", errTest, false, "", nil))
+	errored := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", errTest, false))
 	if !strings.Contains(errored, `data-testid="ds-resource-empty"`) {
 		t.Error("resource error state missing")
 	}
@@ -281,7 +340,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 
 func TestRenderDataSourceResourceSelectPageDriveFileEmpty(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, true, "", nil))
+	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, true))
 	for _, want := range []string{
 		`data-testid="ds-resource-drivefile"`,
 		"drive.file scope",
@@ -304,7 +363,7 @@ func TestRenderDataSourceResourceSelectPageDriveFileEmpty(t *testing.T) {
 
 func TestRenderDataSourceResourceSelectPageNonDriveFileEmpty(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceResourceSelectPage(src, "Google Drive", nil, false, "", nil, false, "", nil))
+	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, false))
 	if !strings.Contains(html, `data-testid="ds-resource-empty"`) {
 		t.Error("non-drive.file empty listing must keep the plain empty state")
 	}
@@ -580,6 +639,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
 	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
+	e.GET("/data-sources/:id/resources/list", s.uiDataSourceResourceList)
 	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)
 	e.POST("/data-sources/:id/update", s.uiDataSourceUpdate)
 	e.POST("/data-sources/:id/test-connection", s.uiDataSourceTestConnection)
@@ -1238,14 +1298,120 @@ func TestUIDataSourceResourcesRoute(t *testing.T) {
 	if !strings.Contains(body, `data-testid="ds-resource-step"`) || !strings.Contains(body, "Choose a Drive folder") {
 		t.Errorf("resource step body = %s", body)
 	}
+	// The page must defer the list, not block on it: no resources API call and
+	// a loading placeholder that fetches the list partial.
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times on the page route, want 0 (deferred)", f.dsResourcesCallCount)
+	}
+	if !strings.Contains(body, `data-testid="ds-resource-loading"`) {
+		t.Errorf("deferred loading indicator missing: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/data-sources/s1/resources/list"`) {
+		t.Errorf("deferred list URL missing: %s", body)
+	}
+	if strings.Contains(body, "Reports") {
+		t.Errorf("page route must not render resources inline: %s", body)
+	}
+}
+
+func TestUIDataSourceResourceListRoute(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Reports") || !strings.Contains(body, `data-testid="ds-resource-row"`) {
+		t.Errorf("list partial rows missing: %s", body)
+	}
+	if f.dsResourcesCallCount != 1 {
+		t.Errorf("ListDSResources called %d times on the list route, want 1", f.dsResourcesCallCount)
+	}
+	// The partial is a bare fragment, not the page layout.
+	if strings.Contains(body, `data-testid="ds-resource-step"`) {
+		t.Errorf("list partial must not render the page shell: %s", body)
+	}
+}
+
+func TestUIDataSourceResourcesStatic(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources?static=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
 	if !strings.Contains(body, "Reports") {
-		t.Errorf("resource row missing: %s", body)
+		t.Errorf("static inline list missing: %s", body)
+	}
+	if strings.Contains(body, `data-testid="ds-resource-loading"`) {
+		t.Errorf("static render must not show the deferred loading indicator: %s", body)
+	}
+	if f.dsResourcesCallCount != 1 {
+		t.Errorf("ListDSResources called %d times on the static route, want 1", f.dsResourcesCallCount)
+	}
+}
+
+// The no-JS links must survive a search filter: the static page URL carries
+// ?static=1 plus the trimmed, escaped query, and the list fragment carries the
+// same filter for the HTMX path.
+func TestDSResourceURLsWithQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		id    string
+		query string
+		want  string
+	}{{
+		name:  "static without query",
+		id:    "s1",
+		query: "",
+		want:  "/data-sources/s1/resources?static=1",
+	}, {
+		name:  "static with query",
+		id:    "s1",
+		query: "team drive/a&b",
+		want:  "/data-sources/s1/resources?static=1&q=team+drive%2Fa%26b",
+	}, {
+		name:  "static trims blank query",
+		id:    "s1",
+		query: "   ",
+		want:  "/data-sources/s1/resources?static=1",
+	}, {
+		name:  "list with query",
+		id:    "s1",
+		query: "Reports",
+		want:  "/data-sources/s1/resources/list?q=Reports",
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			if strings.Contains(tc.want, "?static=1") {
+				got = dsResourceStaticURL(tc.id, tc.query)
+			} else {
+				got = dsResourceListURL(tc.id, tc.query)
+			}
+			if got != tc.want {
+				t.Errorf("url = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
 // TestUIDataSourceResourcesQuery verifies the ?q= search parameter is threaded
-// from the request into the backend listing call and back into the rendered
-// search input.
+// from the request into the deferred list URL (page) and the backend listing
+// call (list partial), and echoed back into the rendered search input.
 func TestUIDataSourceResourcesQuery(t *testing.T) {
 	f := &fakeMemory{
 		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
@@ -1259,12 +1425,25 @@ func TestUIDataSourceResourcesQuery(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if f.dsResourcesQuery != "rep" {
-		t.Errorf("ListDSResources query = %q, want %q", f.dsResourcesQuery, "rep")
-	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `value="rep"`) {
 		t.Errorf("search input not pre-filled: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/data-sources/s1/resources/list?q=rep"`) {
+		t.Errorf("deferred list URL must carry the filter: %s", body)
+	}
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times on the page route, want 0", f.dsResourcesCallCount)
+	}
+
+	// The list route applies the filter to the backend call.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list?q=rep", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsResourcesQuery != "rep" {
+		t.Errorf("ListDSResources query = %q, want %q", f.dsResourcesQuery, "rep")
 	}
 }
 

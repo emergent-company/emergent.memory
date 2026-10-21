@@ -198,6 +198,7 @@ type fakeMemory struct {
 	dsResourcesTruncated       bool                       // truncated flag returned by ListDSResources
 	dsResourcesErr             error                      // ListDSResources failure
 	dsResourcesQuery           string                     // last query passed to ListDSResources
+	dsResourcesCallCount       int                        // number of ListDSResources calls
 	dsProviderResources        []DSResource               // returned by ListDSProviderResources
 	dsProviderResourcesTrunc   bool                       // truncated flag for ListDSProviderResources
 	dsProviderResourcesErr     error                      // ListDSProviderResources failure
@@ -4427,6 +4428,7 @@ func (f *fakeMemory) DeleteProjectDSOAuthClient(ctx context.Context, projectID, 
 }
 
 func (f *fakeMemory) ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error) {
+	f.dsResourcesCallCount++
 	f.dsResourcesQuery = query
 	if f.dsResourcesErr != nil {
 		return nil, false, f.dsResourcesErr

@@ -642,16 +642,18 @@ func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, s.dsScoped("/data-sources", c))
 }
 
-// uiDataSourceResources renders the resource-selection step for a source. It
-// lists the provider's real resources and renders each as a select-and-save
-// form. The credentials connect form offers the same listing inline, so this
-// step mainly serves the post-OAuth path.
+// uiDataSourceResources renders the resource-selection step for a source. The
+// listing itself (which can take many seconds on a large Google Drive) is
+// deferred: the page renders immediately with a spinner, and the browser fetches
+// /data-sources/:id/resources/list after first paint. Only ?static=1 (the
+// no-JavaScript fallback) lists synchronously and server-renders the list
+// inline.
 func (s *Server) uiDataSourceResources(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", nil, false, "", userFacingError(err), false, "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", "", userFacingError(err), "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -660,15 +662,46 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 		captureError(perr)
 	}
 	query := c.QueryParam("q")
+	if c.QueryParam("static") == "1" {
+		resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
+		if rerr != nil {
+			rerr = userFacingError(rerr)
+		}
+		// An empty drive listing under the drive.file strategy is a dead end (the
+		// Google Picker is not implemented), so surface an actionable notice rather
+		// than the bare empty state.
+		driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
+		return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPageStatic(src, providerName, query, resources, truncated, rerr, driveFileScope, "", nil))
+	}
+	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, query, nil, "", nil))
+}
+
+// uiDataSourceResourceList renders the deferred resource-list fragment for a
+// source: it recomputes the source + drive.file scope and lists the provider's
+// resources, then returns the bare list partial (no page layout) for the HTMX
+// swap. Errors map through userFacingError and render inline in the partial.
+func (s *Server) uiDataSourceResourceList(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	query := c.QueryParam("q")
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), pageError("Data source unavailable", userFacingError(err)))
+		return nil
+	}
+	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
+	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
+		providerName = dsProviderLabel(dsProviderNameMap(providers), src.ProviderType)
+	} else {
+		captureError(perr)
+	}
 	resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
 	if rerr != nil {
 		rerr = userFacingError(rerr)
 	}
-	// An empty drive listing under the drive.file strategy is a dead end (the
-	// Google Picker is not implemented), so surface an actionable notice rather
-	// than the bare empty state.
 	driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
-	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, resources, truncated, query, rerr, driveFileScope, "", nil))
+	renderPartial(c.Response().Writer, c.Request(), DataSourceResourceList(src, providerName, resources, truncated, query, rerr, driveFileScope))
+	return nil
 }
 
 // dsDriveFileScope reports whether a source's effective Drive scope strategy is
@@ -679,6 +712,27 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 // which can list.
 func dsDriveFileScope(src *DSIntegration) bool {
 	return src != nil && src.ProviderType == dsProviderTypeGoogleDrive && src.OAuthStrategy == dsDriveFileStrategy
+}
+
+// dsResourceListURL builds the deferred resource-list partial URL for a source,
+// carrying the current search query so a filtered view stays filtered on first
+// load and on the client-side retry.
+func dsResourceListURL(id, query string) string {
+	u := "/data-sources/" + url.PathEscape(id) + "/resources/list"
+	if q := strings.TrimSpace(query); q != "" {
+		u += "?q=" + url.QueryEscape(q)
+	}
+	return u
+}
+
+// dsResourceStaticURL builds the no-JavaScript fallback URL for the resource
+// step: the page with ?static=1 so the list is server-rendered inline.
+func dsResourceStaticURL(id, query string) string {
+	u := "/data-sources/" + url.PathEscape(id) + "/resources?static=1"
+	if q := strings.TrimSpace(query); q != "" {
+		u += "&q=" + url.QueryEscape(q)
+	}
+	return u
 }
 
 // uiDataSourceResourceSave saves the chosen resource onto a source's config

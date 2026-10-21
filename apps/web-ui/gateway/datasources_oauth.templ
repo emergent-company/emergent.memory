@@ -11,11 +11,27 @@ import (
 
 // --- resource selection step (§5.3 scaffold) ---
 
-// DataSourceResourceSelectPage renders the resource-selection step for a source:
-// the provider-driven prompt plus the provider's selectable resources, each a
-// select-and-save form. Providers without a listing (e.g. github today) get a
-// graceful placeholder instead.
-templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, driveFileScope bool, flashMsg string, flashErr error) {
+// DataSourceResourceSelectPage renders the resource-selection step's page shell
+// for a source: the provider-driven header, description, search filter, and a
+// deferred container that loads the folder list asynchronously after first
+// paint. Listing the resources (which can take many seconds on a large Google
+// Drive) is off the critical path, so the page opens immediately with a spinner
+// instead of blocking on ListDSResources.
+templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, query string, loadErr error, flashMsg string, flashErr error) {
+	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, false, dsResourceListDeferred(src, providerName, query))
+}
+
+// DataSourceResourceSelectPageStatic is the no-JavaScript fallback: the same
+// shell with the resource list server-rendered inline instead of deferred (the
+// page handler serves it for ?static=1).
+templ DataSourceResourceSelectPageStatic(src *DSIntegration, providerName string, query string, resources []DSResource, truncated bool, loadErr error, driveFileScope bool, flashMsg string, flashErr error) {
+	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, true, DataSourceResourceList(src, providerName, resources, truncated, query, loadErr, driveFileScope))
+}
+
+// dsResourceSelectShell is the shared chrome for the resource-selection step:
+// header, description, flash, the search filter, and a list slot (deferred
+// container or inline static list).
+templ dsResourceSelectShell(src *DSIntegration, providerName string, query string, loadErr error, flashMsg string, flashErr error, static bool, list templ.Component) {
 	@layout.Container(layout.ContainerLG, nil) {
 		<div data-testid="ds-resource-step">
 			if src == nil {
@@ -46,6 +62,9 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 					     boosted banner link intermittently no-ops live). No action
 					     attribute, so the request stays on the scoped resource URL. */}}
 					<form method="get" class="mt-4 flex items-center gap-2" hx-boost="false">
+						if static {
+							<input type="hidden" name="static" value="1"/>
+						}
 						<input type="search" name="q" value={ query } placeholder="Search folders by name…" class="input w-full" autocomplete="off" data-testid="ds-resource-search"/>
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeSubmit,
@@ -57,87 +76,137 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, reso
 							Search
 						}
 					</form>
-					if truncated {
-						@ui.EmptyNote(ui.EmptyNoteProps{
-							Class: "mt-2",
-							Attrs: templ.Attributes{"data-testid": "ds-resource-truncated"},
-						}) {
-							Only the first 5,000 folders are shown — search by name to narrow the list.
-						}
-					}
-					if loadErr != nil || len(resources) == 0 {
-						if driveFileScope {
-							<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-drivefile">
-								@ui.Alert(ui.AlertProps{
-									Type:    ui.AlertWarning,
-									Style:   ui.AlertStyleSoft,
-									Icon:    "lucide--alert-triangle",
-									Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. Google Picker support is not available yet, so no folders can be listed here.",
-								})
-								<div class="flex flex-wrap items-center gap-2">
-									@ui.Button(ui.ButtonProps{
-										Type:    ui.ButtonTypeLink,
-										Href:    "/settings/credentials",
-										Variant: ui.ButtonPrimary,
-										Size:    ui.ButtonSM,
-										Icon:    "lucide--settings",
-										Attrs:   templ.Attributes{"data-testid": "ds-resource-drivefile-credentials"},
-									}) {
-										Settings → Credentials
-									}
-									<span class="text-sm text-muted">Set the OAuth app strategy to drive.readonly in Settings → Credentials (project) or Organization Settings → Data source OAuth clients (organization), then reconnect this source.</span>
-								</div>
-							</div>
-						} else {
-							<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
-								@ui.Alert(ui.AlertProps{
-									Type:    ui.AlertWarning,
-									Style:   ui.AlertStyleSoft,
-									Icon:    "lucide--alert-triangle",
-									Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
-								})
-								@ui.Button(ui.ButtonProps{
-									Type:    ui.ButtonTypeLink,
-									Href:    "/data-sources/" + url.PathEscape(src.ID) + "/resources",
-									Variant: ui.ButtonOutline,
-									Size:    ui.ButtonSM,
-									Icon:    "lucide--refresh-cw",
-									Attrs:   templ.Attributes{"data-testid": "ds-resource-retry"},
-								}) {
-									Try again
-								}
-							</div>
-						}
-					} else {
-						<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
-							for _, r := range resources {
-								<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/resources") } class="flex items-center gap-3 rounded-box border border-base-content/10 px-4 py-3" data-testid="ds-resource-row">
-									<input type="hidden" name="resource_id" value={ r.ID }/>
-									@ui.IconSpan("lucide--folder", "size-4 shrink-0 text-muted-faint")
-									<div class="min-w-0 grow">
-										<p class="truncate text-sm font-medium">{ r.Name }</p>
-										if r.Type != "" {
-											@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { r.Type } }
-										}
-									</div>
-									@ui.Button(ui.ButtonProps{
-										Type:    ui.ButtonTypeSubmit,
-										Variant: ui.ButtonPrimary,
-										Style:   ui.ButtonStyleOutline,
-										Size:    ui.ButtonSM,
-										Icon:    "lucide--check",
-										Attrs:   templ.Attributes{"data-testid": "ds-resource-select"},
-									}) {
-										{ dsResourceUseLabel(*src) }
-									}
-								</form>
-							}
-						</div>
-					}
+					@list
 				}
 			}
 		</div>
 	}
+}
+
+// dsResourceListDeferred is the first-paint placeholder for the resource list:
+// a loading indicator plus the deferred /data-sources/:id/resources/list fetch,
+// which swaps the real list in after paint. Keeping ListDSResources off the
+// critical path means a slow Drive listing can no longer freeze the page.
+//
+// hx-target="this" is required, not optional: the page shell's <main> carries
+// hx-target="#main-content" and htmx's implicit attribute inheritance
+// (implicitInheritance=true) would otherwise apply that target here, so the
+// swap would replace the whole main-content region instead of just this
+// placeholder.
+templ dsResourceListDeferred(src *DSIntegration, providerName string, query string) {
+	<div
+		id="ds-resource-list-root"
+		hx-get={ dsResourceListURL(src.ID, query) }
+		hx-trigger="load"
+		hx-target="this"
+		hx-swap="outerHTML"
+	>
+		<div class="mt-4 flex items-center gap-2" data-testid="ds-resource-loading">
+			<span class="htmx-indicator loading loading-spinner loading-sm" aria-hidden="true"></span>
+			<span class="text-muted text-sm">Loading folders from { providerName }…</span>
+		</div>
+		<noscript>
+			<p class="mt-2 text-sm">
+				<a href={ dsResourceStaticURL(src.ID, query) }>View folders without JavaScript</a>
+			</p>
+		</noscript>
+	</div>
+}
+
+// DataSourceResourceList is the HTMX fragment returned by
+// /data-sources/:id/resources/list: the truncation hint and the three listing
+// states (rows / drive.file notice / empty-with-retry), moved verbatim from the
+// former single-shot page. The retry control re-issues the list request
+// client-side instead of reloading the whole page.
+templ DataSourceResourceList(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, driveFileScope bool) {
+	<div id="ds-resource-list-root">
+		if truncated {
+			@ui.EmptyNote(ui.EmptyNoteProps{
+				Class: "mt-2",
+				Attrs: templ.Attributes{"data-testid": "ds-resource-truncated"},
+			}) {
+				Only the first 5,000 folders are shown — search by name to narrow the list.
+			}
+		}
+		if loadErr != nil || len(resources) == 0 {
+			if driveFileScope {
+				<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-drivefile">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. Google Picker support is not available yet, so no folders can be listed here.",
+					})
+					<div class="flex flex-wrap items-center gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/settings/credentials",
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--settings",
+							Attrs:   templ.Attributes{"data-testid": "ds-resource-drivefile-credentials"},
+						}) {
+							Settings → Credentials
+						}
+						<span class="text-sm text-muted">Set the OAuth app strategy to drive.readonly in Settings → Credentials (project) or Organization Settings → Data source OAuth clients (organization), then reconnect this source.</span>
+					</div>
+				</div>
+			} else {
+				<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
+					})
+					// A link, not a button: the retry must also work on the
+					// ?static=1 no-JS path, where hx-get never runs. With HTMX
+					// the hx-get below wins and only the fragment is re-requested;
+					// without it the href reloads the server-rendered static page.
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    dsResourceStaticURL(src.ID, query),
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--refresh-cw",
+						Attrs: templ.Attributes{
+							"data-testid": "ds-resource-retry",
+							"hx-get":      dsResourceListURL(src.ID, query),
+							"hx-target":   "closest #ds-resource-list-root",
+							"hx-swap":     "outerHTML",
+						},
+					}) {
+						Try again
+					}
+				</div>
+			}
+		} else {
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
+				for _, r := range resources {
+					<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/resources") } class="flex items-center gap-3 rounded-box border border-base-content/10 px-4 py-3" data-testid="ds-resource-row">
+						<input type="hidden" name="resource_id" value={ r.ID }/>
+						@ui.IconSpan("lucide--folder", "size-4 shrink-0 text-muted-faint")
+						<div class="min-w-0 grow">
+							<p class="truncate text-sm font-medium">{ r.Name }</p>
+							if r.Type != "" {
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { r.Type } }
+							}
+						</div>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--check",
+							Attrs:   templ.Attributes{"data-testid": "ds-resource-select"},
+						}) {
+							{ dsResourceUseLabel(*src) }
+						}
+					</form>
+				}
+			</div>
+		}
+	</div>
 }
 
 // --- OAuth-client settings (org- and project-scoped, §5.4) ---
