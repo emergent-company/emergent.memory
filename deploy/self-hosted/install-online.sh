@@ -466,6 +466,9 @@ services:
     image: pgvector/pgvector:pg17
     container_name: memory-db
     restart: unless-stopped
+    # Docker's default /dev/shm (64 MB) is too small for a parallel HNSW index
+    # build; migration 00164 fails with SQLSTATE 53100 without this.
+    shm_size: 1gb
     environment:
       POSTGRES_USER: \${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-changeme}

@@ -70,6 +70,27 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	}
 }
 
+// TestDockerComposeDbShmSize guards #2003: Docker's default /dev/shm is 64 MB,
+// but PostgreSQL allocates ~265 MB of shared memory when building the HNSW index
+// in migration 00164 with parallel workers, and fails with SQLSTATE 53100.
+func TestDockerComposeDbShmSize(t *testing.T) {
+	template := GetDockerComposeTemplate()
+
+	dbStart := strings.Index(template, "\n  db:\n")
+	if dbStart < 0 {
+		t.Fatal("db service not found in docker-compose template")
+	}
+	nextService := strings.Index(template[dbStart+1:], "\n\n  ")
+	if nextService < 0 {
+		t.Fatal("could not delimit the db service block")
+	}
+	block := template[dbStart : dbStart+1+nextService]
+
+	if !containsString(block, "shm_size: 1gb") {
+		t.Errorf("db service must set shm_size: 1gb for the HNSW index migration, got:\n%s", block)
+	}
+}
+
 // TestObjectStoreImageIsPinnedByDigest guards the replacement of the archived
 // MinIO images (issue #23) with a maintained, freely pullable backend. The
 // object-store image must be pinned by digest and the bucket bootstrap must run

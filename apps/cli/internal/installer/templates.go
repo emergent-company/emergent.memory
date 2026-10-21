@@ -78,6 +78,10 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     image: ` + PostgresImage + `
     container_name: memory-db
     restart: unless-stopped
+    # 64 MB (Docker's default /dev/shm) is not enough for a parallel HNSW index
+    # build: PostgreSQL allocates ~265 MB of shared memory and fails with
+    # SQLSTATE 53100 "No space left on device" on migration 00164 (#2003).
+    shm_size: 1gb
     command:
       - "postgres"
       - "-c"
