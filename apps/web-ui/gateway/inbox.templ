@@ -18,7 +18,7 @@ import (
 templ InboxPage(d inboxView) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@inboxHeader(d)
-		@flashToasts(d.FlashMsg, d.FlashErr)
+		@flashToastsWarn(d.FlashMsg, d.WarnMsg, d.FlashErr)
 		<div
 			data-inbox-page
 			data-scope={ d.Scope }
@@ -191,6 +191,7 @@ templ inboxRow(d inboxView, n Notification) {
 			}
 		</div>
 		@inboxRowControls(n)
+		@inboxReviewMergeTarget(n)
 	</div>
 }
 
@@ -224,6 +225,7 @@ templ inboxRowBody(d inboxView, n Notification) {
 // targets are owned by the row body anchor, not a duplicate control here.
 templ inboxRowControls(n Notification) {
 	<div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+		@inboxReviewMergeButton(n)
 		if n.RequiresAction {
 			for _, a := range n.Actions {
 				@inboxResolveButton(n.ID, a)
@@ -242,6 +244,38 @@ templ inboxRowControls(n Notification) {
 		}
 		@inboxIconButton("dismiss", n.ID, "Dismiss", "lucide--x")
 	</div>
+}
+
+// inboxReviewMergeButton renders the "Review merge" CTA for a review-ready
+// extraction notification. It lazily fetches the shared merge preview modal via
+// htmx into the row's target div (data-dialog-autoopen opens it on swap).
+templ inboxReviewMergeButton(n Notification) {
+	{{ documentID, jobID, ok := inboxReviewMerge(n) }}
+	if ok {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonXS,
+			Icon:    "lucide--git-merge",
+			Attrs: templ.Attributes{
+				"data-testid": "inbox-review-merge",
+				"hx-get":      inboxMergePreviewHref(documentID, jobID),
+				"hx-target":   "#inbox-merge-preview-target-" + n.ID,
+				"hx-swap":     "innerHTML",
+			},
+		}) {
+			Review merge
+		}
+	}
+}
+
+// inboxReviewMergeTarget is the per-row drop target the merge preview modal is
+// swapped into. Rendered only for review-ready notifications.
+templ inboxReviewMergeTarget(n Notification) {
+	{{ _, _, ok := inboxReviewMerge(n) }}
+	if ok {
+		<div id={ "inbox-merge-preview-target-" + n.ID }></div>
+	}
 }
 
 templ inboxResolveButton(id string, a NotificationAction) {

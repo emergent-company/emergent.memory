@@ -573,6 +573,11 @@ type DocumentVersion struct {
 	SourceRevisionID *string `json:"sourceRevisionId,omitempty"`
 	SourceDeletedAt  *string `json:"sourceDeletedAt,omitempty"`
 	CreatedAt        string  `json:"createdAt"`
+	// ExtractionJob counts + last extraction time (per-version extraction
+	// provenance). Absent for versions the server has no extraction record for.
+	ExtractionJobs   int     `json:"extractionJobs"`
+	ObjectsCreated   int     `json:"objectsCreated"`
+	LastExtractionAt *string `json:"lastExtractionAt,omitempty"`
 }
 
 // ListDocumentVersions returns a document's full version history.

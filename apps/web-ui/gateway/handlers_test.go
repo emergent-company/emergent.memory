@@ -214,6 +214,13 @@ type fakeMemory struct {
 	mergeErr                   error                      // GetMergeReadiness/MergeBranch failure
 	lastMergeBranchID          string                     // last sourceBranchID passed to MergeBranch
 	lastMergePolicy            string                     // last policy passed to MergeBranch
+	previewMergeResult         *BranchMergeResult         // returned by PreviewMergeBranch
+	previewMergeErr            error                      // PreviewMergeBranch failure
+	lastPreviewMergeBranchID   string                     // last branchID passed to PreviewMergeBranch
+	lastPreviewMergePolicy     string                     // last policy passed to PreviewMergeBranch
+	resolvedResourceType       string                     // last resourceType passed to ResolveNotificationsForResource
+	resolvedResourceID         string                     // last resourceID passed to ResolveNotificationsForResource
+	resolveResourceErr         error                      // ResolveNotificationsForResource failure
 	similar                    []SimilarObject            // returned by GetSimilarObjects
 	similarErr                 error                      // GetSimilarObjects failure
 	objectHistory              []GraphObject              // returned by GetObjectHistory
@@ -1554,6 +1561,24 @@ func (f *fakeMemory) MergeBranch(ctx context.Context, sourceBranchID, policy str
 	f.lastMergeBranchID = sourceBranchID
 	f.lastMergePolicy = policy
 	return f.mergeResult, nil
+}
+
+func (f *fakeMemory) PreviewMergeBranch(ctx context.Context, branchID, policy string) (*BranchMergeResult, error) {
+	if f.previewMergeErr != nil {
+		return nil, f.previewMergeErr
+	}
+	f.lastPreviewMergeBranchID = branchID
+	f.lastPreviewMergePolicy = policy
+	return f.previewMergeResult, nil
+}
+
+func (f *fakeMemory) ResolveNotificationsForResource(ctx context.Context, resourceType, resourceID string) error {
+	if f.resolveResourceErr != nil {
+		return f.resolveResourceErr
+	}
+	f.resolvedResourceType = resourceType
+	f.resolvedResourceID = resourceID
+	return nil
 }
 
 func (f *fakeMemory) GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error) {

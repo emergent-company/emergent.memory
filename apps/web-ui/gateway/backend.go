@@ -180,6 +180,7 @@ type MemoryBackend interface {
 	ListBranches(ctx context.Context) ([]Branch, error)
 	GetMergeReadiness(ctx context.Context, branchID string) (*MergeReadiness, error)
 	MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
+	PreviewMergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error)
 	GetCompiledTypes(ctx context.Context) (*CompiledSchemaTypes, error)
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)
 	GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error)
@@ -335,6 +336,10 @@ type MemoryBackend interface {
 	ClearNotification(ctx context.Context, id string) error
 	RestoreNotification(ctx context.Context, id string) error
 	ResolveNotification(ctx context.Context, id, action string) error
+	// ResolveNotificationsForResource resolves every notification about one
+	// resource (POST /api/notifications/resolve-resource), e.g. clearing a
+	// graph_branch's review-ready notifications once the branch is merged.
+	ResolveNotificationsForResource(ctx context.Context, resourceType, resourceID string) error
 	MarkAllNotificationsRead(ctx context.Context, scope, projectID string) error
 	// NotificationEventStream opens the session's real-time notification stream
 	// (account when projectID is empty, else that project's).

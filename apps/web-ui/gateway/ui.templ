@@ -1109,6 +1109,20 @@ templ flashToasts(flashMsg string, flashErr error) {
 	}
 }
 
+// flashToastsWarn renders PRG feedback with a warning toast between error and
+// success (e.g. "Merged N; M left for review"). Each kind is skipped when unset.
+templ flashToastsWarn(flashMsg, warnMsg string, flashErr error) {
+	if flashErr != nil {
+		@flashToast("error", flashErr.Error())
+	}
+	if warnMsg != "" {
+		@flashToast("warning", warnMsg)
+	}
+	if flashMsg != "" {
+		@flashToast("success", flashMsg)
+	}
+}
+
 // chatWelcomeHero renders the empty-state hero shared by the chat workspace and
 // the assistant sidepanel: primary-tint icon tile + title/subtitle. headingLevel
 // selects h2 (default) or h3; children hold any extra content below the copy.

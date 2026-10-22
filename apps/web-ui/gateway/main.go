@@ -389,6 +389,7 @@ func main() {
 	e.POST("/documents", s.uiUploadDocument)
 	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
 	e.POST("/documents/:id/extractions/:jobId/merge", s.uiDocumentMerge)
+	e.GET("/documents/:id/extractions/:jobId/merge-preview", s.uiDocumentMergePreview)
 	e.POST("/documents/:id/delete", s.uiDeleteDocument)
 	e.GET("/documents/:id/versions", s.uiDocumentVersions)
 	// Data Sources UI (see datasources_ui.go): list, connect, detail/edit, and
@@ -638,6 +639,8 @@ func main() {
 	e.GET("/inbox", s.uiInbox)
 	e.GET("/inbox/preferences", s.uiNotificationPreferences)
 	e.POST("/inbox/preferences", s.uiNotificationPreferencesSave)
+	e.GET("/inbox/merge-preview", s.uiInboxMergePreview)
+	e.POST("/inbox/merge", s.uiInboxMerge)
 
 	// Dev-gated component gallery. Routes are always registered; the handlers
 	// 404 when MEMORY_COMPONENT_GALLERY is off so both states are httptest-able.

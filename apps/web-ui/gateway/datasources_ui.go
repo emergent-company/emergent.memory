@@ -1676,6 +1676,10 @@ func (s *Server) uiDocumentVersions(c echo.Context) error {
 	versions, err := s.memory.ListDocumentVersions(ctx, id)
 	if err != nil {
 		err = userFacingError(err)
+	} else {
+		// Newest first: the extraction-review UI surfaces the latest version's
+		// extraction provenance at the top of the history.
+		slices.Reverse(versions)
 	}
 	return s.page(c, pageTitle(documentName(*doc), "Versions"), DocumentVersionsPage(doc, versions, err))
 }

@@ -68,8 +68,17 @@ type Notification struct {
 	SourceType     string               `json:"sourceType,omitempty"`
 	SourceID       string               `json:"sourceId,omitempty"`
 	GroupKey       string               `json:"groupKey,omitempty"`
-	CreatedAt      string               `json:"createdAt,omitempty"`
-	UpdatedAt      string               `json:"updatedAt,omitempty"`
+	// Details carries the event-specific payload. For extraction.review_ready it
+	// holds {document_id, document_version, job_id, branch_id, objects,
+	// relationships}. Absent for events that carry no payload; degrade to nil.
+	Details map[string]any `json:"details,omitempty"`
+	// RelatedResourceType/ID point at the entity the notification is about
+	// (e.g. "graph_branch" + branch uuid for extraction.review_ready). Empty for
+	// events without a related resource.
+	RelatedResourceType string `json:"relatedResourceType,omitempty"`
+	RelatedResourceID   string `json:"relatedResourceId,omitempty"`
+	CreatedAt           string `json:"createdAt,omitempty"`
+	UpdatedAt           string `json:"updatedAt,omitempty"`
 }
 
 // NotificationCounts is the per-tab count summary for one inbox scope
@@ -240,6 +249,17 @@ func (m *MemoryClient) ResolveNotification(ctx context.Context, id, action strin
 		body["status"] = action
 	}
 	return m.do(ctx, http.MethodPost, notificationPath(id)+"/resolve", body, nil)
+}
+
+// ResolveNotificationsForResource resolves every notification about one
+// resource (POST /api/notifications/resolve-resource), e.g. clearing a
+// graph_branch's review-ready notifications once the branch is merged.
+func (m *MemoryClient) ResolveNotificationsForResource(ctx context.Context, resourceType, resourceID string) error {
+	body := map[string]any{
+		"resourceType": resourceType,
+		"resourceId":   resourceID,
+	}
+	return m.do(ctx, http.MethodPost, "/api/notifications/resolve-resource", body, nil)
 }
 
 // MarkAllNotificationsRead marks every notification read within one scope.

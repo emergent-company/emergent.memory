@@ -865,13 +865,14 @@ templ longTextarea(name string, value string) {
 // as an auto-dismissing toast. typeUIByType carries the compiled types'
 // declared ui accents (icon/color) so the header chip can render the object
 // type's icon.
-templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string) {
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string) {
 	@flashToasts(flashMsg, flashErr)
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Object unavailable", loadErr)
 		} else {
-			@objectDetailHeader(obj, typeUIByType)
+			@objectDetailHeader(obj, branch, typeUIByType)
+			@objectSourceCard(sources)
 			@objectPropertiesCard(obj, propDefs, labelSuggestions, statusOptions)
 			@objectRelationships(obj, relTypes, edges, related)
 			if similar != nil {
@@ -888,7 +889,7 @@ templ ObjectDetailPage(obj *GraphObject, relTypes []CompiledType, edges []GraphR
 // and uses items-start alignment, neither of which detailHeader models (kicker is
 // a plain string, TitleLeading is inline-before-title, Actions sit on the right,
 // and the flex is hardcoded items-center/items-end).
-templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
+templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="mb-6">
 		@nav.Breadcrumbs(crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj))), nav.BreadcrumbsDividerDefault)
@@ -896,6 +897,7 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 			<div class="min-w-0">
 				<div class="mb-2 flex flex-wrap items-center gap-2">
 					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+					@objectBranchChip(branch)
 					if obj.Status != "" {
 						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
 							Size:  ui.BadgeSizeSM,
@@ -927,6 +929,76 @@ templ objectDetailHeader(obj *GraphObject, typeUIByType map[string]typeUI) {
 				Chat about object
 			}
 		</div>
+	</div>
+}
+
+// objectBranchChip renders the object's branch as an always-present chip:
+// "main" for the implicit main graph, the branch name (linking to the filtered
+// object browser) for an open branch, and "<name> · merged <reltime>" for a
+// merged branch. A branch id that fails to resolve still renders a chip labelled
+// by its short id — the header never omits the chip or fails the page.
+templ objectBranchChip(branch objectBranchRef) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   objectBranchChipLabel(branch),
+		Variant: ui.BadgeNeutral,
+		Style:   ui.BadgeStyleSoft,
+		Size:    ui.BadgeSizeSM,
+		Icon:    objectBranchChipIcon(branch),
+		Href:    objectBranchChipHref(branch),
+		Attrs:   templ.Attributes{"data-testid": "object-branch-chip"},
+	})
+}
+
+// objectSourceCard renders the object's extraction provenance (where it came
+// from): one row per `_sources` record — source document, version, extraction
+// job, and extracted-at time. Omitted when the object carries no provenance.
+templ objectSourceCard(sources []objectSource) {
+	if len(sources) > 0 {
+		@ui.Section("Source", ui.SectionProps{
+			Margin:    "mt-6",
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-2" data-testid="object-source-card">
+				for _, src := range sources {
+					@objectSourceRow(src)
+				}
+			</div>
+		}
+	}
+}
+
+// objectSourceRow is one extraction-provenance record. The source document name
+// links to its document page; the extraction job links to the document's
+// extraction history; the rest render as muted metadata.
+templ objectSourceRow(src objectSource) {
+	<div class="flex flex-wrap items-center gap-x-2 gap-y-1 py-1">
+		@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-subtle")
+		if src.DocumentID != "" {
+			<a
+				class="link link-hover text-sm font-medium"
+				href={ templ.URL("/documents/" + url.PathEscape(src.DocumentID)) }
+				title={ src.DocumentID }
+			>{ objectSourceDocumentLabel(src) }</a>
+		} else {
+			<span class="text-muted text-sm font-medium">Document</span>
+		}
+		if src.DocumentVersion != "" {
+			@ui.Badge(ui.BadgeProps{Label: "v" + src.DocumentVersion, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+		}
+		if src.JobID != "" {
+			if src.DocumentID != "" {
+				<a
+					class="link link-hover font-mono text-xs"
+					href={ templ.URL("/documents/" + url.PathEscape(src.DocumentID) + "/extractions") }
+					title={ src.JobID }
+				>job { shortID(src.JobID) }</a>
+			} else {
+				<span class="text-muted-faint font-mono text-xs">job { shortID(src.JobID) }</span>
+			}
+		}
+		if src.ExtractedAt != "" {
+			<span class="text-muted-faint text-xs">{ relTime(src.ExtractedAt) }</span>
+		}
 	</div>
 }
 

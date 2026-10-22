@@ -537,7 +537,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 	}
 	edges := []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"}}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
 		"assigned to", "call dentist", `href="/objects"`,
@@ -547,18 +547,18 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		}
 	}
 
-	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 	if !strings.Contains(htmlNoEdges, "No relationships") {
 		t.Error("no-relationships state missing")
 	}
 
-	htmlErr := renderHTML(t, ObjectDetailPage(nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil, nil))
+	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil, nil))
 	if !strings.Contains(htmlErr, "Object unavailable") {
 		t.Error("error state missing")
 	}
 
 	// flash feedback renders an auto-dismissing toast carrying the message
-	htmlFlash := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil, nil))
+	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil, nil))
 	if !strings.Contains(htmlFlash, "memory-toast") || !strings.Contains(htmlFlash, errTest.Error()) {
 		t.Error("flash toast missing")
 	}
@@ -569,7 +569,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	similar := []SimilarObject{
 		{ID: "o2", Type: "person", Key: "samuel-lee", Distance: 0.12},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, similar, nil, "", nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, similar, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{
 		"Similar objects", "samuel-lee", "88% match", "Merge", `href="/objects/o1/merge?with=o2"`,
 	} {
@@ -581,7 +581,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	// Without similar data the page defers the section to /objects/:id/similar
 	// instead of rendering it inline, so a slow /similar cannot hold the render
 	// (issue #1096).
-	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects", `hx-target="this"`} {
 		if !strings.Contains(htmlDeferred, want) {
 			t.Errorf("deferred similar placeholder missing %q", want)
@@ -610,7 +610,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 		{Name: "works_with", Label: "Works with", SourceType: "person", TargetType: "person"},
 		{Name: "located_in", Label: "Located in", SourceType: "place", TargetType: "place"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
 
 	// properties form: common fields + one input per property
 	for _, want := range []string{
@@ -655,7 +655,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// non-empty relationships still render the list rows
 	edges := []GraphRelationship{{ID: "r1", Type: "works_with", SrcID: "o1", DstID: "c2"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "person", Key: "jamie-doe"}}
-	htmlEdges := renderHTML(t, ObjectDetailPage(obj, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
+	htmlEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil, nil))
 	for _, want := range []string{"works with", "jamie-doe", "Relationships"} {
 		if !strings.Contains(htmlEdges, want) {
 			t.Errorf("relationship list missing %q", want)
@@ -718,7 +718,7 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 		{Name: "priority", Type: "string", Enum: []string{"low", "high"}},
 		{Name: "title", Type: "string"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil))
 
 	// boolean → hidden false + checked toggle (never a text input)
 	if !strings.Contains(html, `name="prop_cleared" value="false"`) {
@@ -2110,7 +2110,7 @@ func TestObjectStatusField(t *testing.T) {
 
 	renderSelect := func(current string) string {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
-		return renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, boardStatuses))
+		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, boardStatuses))
 	}
 
 	t.Run("edit page renders a select of the allowed statuses", func(t *testing.T) {
@@ -2176,7 +2176,7 @@ func TestObjectStatusField(t *testing.T) {
 		// must offer the canonical statuses, not a free-form text input.
 		objectTypes := []CompiledType{{Name: "Task"}}
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
-		html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
 		if !strings.Contains(html, `<select id="object-status" name="status"`) {
 			t.Fatalf("no-board-config type should render a status select in:\n%s", html)
 		}
@@ -2196,7 +2196,7 @@ func TestObjectStatusField(t *testing.T) {
 	t.Run("off-list stored value still preserved for no-board-config type", func(t *testing.T) {
 		objectTypes := []CompiledType{{Name: "Task"}}
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "pending"}
-		html := renderHTML(t, ObjectDetailPage(obj, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task")))
 		if !strings.Contains(html, `<option value="pending" selected>`) {
 			t.Errorf("off-list status should be kept as a selected option in:\n%s", html)
 		}
@@ -2675,5 +2675,163 @@ func TestUIObjectChat(t *testing.T) {
 	rec = get(e3, "/objects/o1/chat")
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects/o1" {
 		t.Fatalf("create err: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+func TestResolveObjectBranch(t *testing.T) {
+	branches := []Branch{
+		{ID: "b1", Name: "extract-1"},
+		{ID: "b2", Name: "extract-2", MergedAt: "2026-08-27T00:00:00Z"},
+	}
+	cases := []struct {
+		name string
+		id   string
+		want objectBranchRef
+	}{
+		{"main", "", objectBranchRef{}},
+		{"open", "b1", objectBranchRef{ID: "b1", Name: "extract-1"}},
+		{"merged", "b2", objectBranchRef{ID: "b2", Name: "extract-2", MergedAt: "2026-08-27T00:00:00Z"}},
+		{"unknown", "nope", objectBranchRef{ID: "nope"}},
+	}
+	for _, tc := range cases {
+		if got := resolveObjectBranch(branches, tc.id); got != tc.want {
+			t.Errorf("resolveObjectBranch(%q) = %+v, want %+v", tc.id, got, tc.want)
+		}
+	}
+}
+
+func TestRenderObjectBranchChip(t *testing.T) {
+	cases := []struct {
+		name   string
+		branch objectBranchRef
+		want   []string
+		absent []string
+	}{
+		{
+			name:   "main",
+			branch: objectBranchRef{},
+			want:   []string{`data-testid="object-branch-chip"`, "main"},
+			absent: []string{`href="/objects?branch=`, "lucide--git-branch"},
+		},
+		{
+			name:   "open",
+			branch: objectBranchRef{ID: "b1", Name: "extract-1"},
+			want:   []string{`data-testid="object-branch-chip"`, "extract-1", `href="/objects?branch=b1"`, "lucide--git-branch"},
+		},
+		{
+			name:   "merged",
+			branch: objectBranchRef{ID: "b2", Name: "extract-2", MergedAt: "2026-08-27T00:00:00Z"},
+			want:   []string{`data-testid="object-branch-chip"`, "extract-2", "merged", `href="/objects?branch=b2"`},
+		},
+		{
+			name:   "unknown",
+			branch: objectBranchRef{ID: "missing"},
+			want:   []string{`data-testid="object-branch-chip"`, "missing", `href="/objects?branch=missing`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			html := renderHTML(t, objectBranchChip(tc.branch))
+			for _, w := range tc.want {
+				if !strings.Contains(html, w) {
+					t.Errorf("chip missing %q:\n%s", w, html)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(html, a) {
+					t.Errorf("chip should not contain %q:\n%s", a, html)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveObjectSourceNames(t *testing.T) {
+	f := &fakeMemory{
+		documents: []Document{
+			{ID: "doc1", Filename: "Spec.md"},
+			{ID: "doc2", Filename: "Notes.md"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	sources := []objectSource{
+		{DocumentID: "doc1"},
+		{DocumentID: "doc1"}, // duplicate → cached, no extra lookup
+		{DocumentID: "doc2"},
+		{DocumentID: "gone"}, // missing → empty name, card falls back to short id
+		{DocumentID: ""},     // no id → untouched
+	}
+	s.resolveObjectSourceNames(t.Context(), sources)
+	if sources[0].DocumentName != "Spec.md" || sources[1].DocumentName != "Spec.md" {
+		t.Errorf("doc1 name not resolved/cached: %+v", sources)
+	}
+	if sources[2].DocumentName != "Notes.md" {
+		t.Errorf("doc2 name not resolved: %+v", sources)
+	}
+	if sources[3].DocumentName != "" {
+		t.Errorf("missing doc should leave an empty name: %+v", sources[3])
+	}
+
+	// Fan-out is capped: beyond objectSourceDocLookupCap distinct ids, lookups
+	// stop so a pathological _sources array cannot trigger unbounded calls.
+	t.Run("cap", func(t *testing.T) {
+		docs := make([]Document, objectSourceDocLookupCap+5)
+		for i := range docs {
+			docs[i] = Document{ID: fmt.Sprintf("d%d", i), Filename: fmt.Sprintf("F%d", i)}
+		}
+		f := &fakeMemory{documents: docs}
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		sources := make([]objectSource, objectSourceDocLookupCap+5)
+		for i := range sources {
+			sources[i] = objectSource{DocumentID: fmt.Sprintf("d%d", i)}
+		}
+		s.resolveObjectSourceNames(t.Context(), sources)
+		for i := range sources {
+			if i < objectSourceDocLookupCap && sources[i].DocumentName == "" {
+				t.Errorf("source %d within cap should resolve", i)
+			}
+			if i >= objectSourceDocLookupCap && sources[i].DocumentName != "" {
+				t.Errorf("source %d beyond cap should not resolve", i)
+			}
+		}
+	})
+}
+
+func TestRenderObjectSourceCard(t *testing.T) {
+	sources := []objectSource{
+		{
+			DocumentID:      "doc1",
+			DocumentName:    "Spec.md",
+			DocumentVersion: "3",
+			JobID:           "jobid1234567890",
+			ExtractedAt:     "2026-08-27T00:00:00Z",
+		},
+		{
+			DocumentID:      "doc2",
+			DocumentName:    "", // legacy fallback → short id
+			DocumentVersion: "1",
+			JobID:           "",
+		},
+	}
+	html := renderHTML(t, objectSourceCard(sources))
+	for _, want := range []string{
+		`data-testid="object-source-card"`,
+		"Spec.md",
+		`href="/documents/doc1"`,
+		"v3",
+		`href="/documents/doc1/extractions"`,
+		`title="jobid1234567890"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("source card missing %q:\n%s", want, html)
+		}
+	}
+	// legacy fallback: unresolved name renders the short document id
+	if !strings.Contains(html, "doc2") {
+		t.Errorf("legacy source should show the short document id:\n%s", html)
+	}
+	// no job → no job link on the legacy row
+	if strings.Contains(html, `href="/documents/doc2/extractions"`) {
+		t.Errorf("source without a job must not render a job link:\n%s", html)
 	}
 }

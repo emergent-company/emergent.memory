@@ -662,6 +662,7 @@ func TestRenderDocumentVersionsPage(t *testing.T) {
 	for _, want := range []string{
 		"Version history", "v1", "v2", "Active", "Deleted from source",
 		`data-testid="document-version-row"`, `data-testid="document-versions"`, "rev r1",
+		`data-testid="ds-version-no-revision"`, "no source revision",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("versions page missing %q", want)
@@ -676,6 +677,48 @@ func TestRenderDocumentVersionsPage(t *testing.T) {
 	empty := renderHTML(t, DocumentVersionsPage(doc, nil, nil))
 	if !strings.Contains(empty, "no recorded versions") {
 		t.Error("empty versions state missing")
+	}
+}
+
+// TestRenderDocumentVersionRow asserts the version row always renders a
+// revision slot (a muted "no source revision" when absent) and links the
+// extraction-counts line to the version's extraction history.
+func TestRenderDocumentVersionRow(t *testing.T) {
+	rev := "r1"
+	lastExtract := "2026-09-01T12:00:00Z"
+	withCounts := DocumentVersion{
+		ID:               "v9",
+		Version:          9,
+		SourceRevisionID: &rev,
+		CreatedAt:        "2026-09-01T00:00:00Z",
+		ExtractionJobs:   3,
+		ObjectsCreated:   5,
+		LastExtractionAt: &lastExtract,
+	}
+	html := renderHTML(t, dsVersionRow(withCounts))
+	for _, want := range []string{
+		"rev r1",
+		`href="/documents/v9/extractions"`,
+		`data-testid="ds-version-extractions-link"`,
+		"3 extraction jobs",
+		"5 objects",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("version row missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="ds-version-no-revision"`) {
+		t.Errorf("version with a revision must not render the no-revision slot:\n%s", html)
+	}
+
+	noRev := DocumentVersion{ID: "v10", Version: 10, CreatedAt: "2026-09-02T00:00:00Z"}
+	htmlNoRev := renderHTML(t, dsVersionRow(noRev))
+	if !strings.Contains(htmlNoRev, `data-testid="ds-version-no-revision"`) ||
+		!strings.Contains(htmlNoRev, "no source revision") {
+		t.Errorf("version without a revision should render the muted no-revision slot:\n%s", htmlNoRev)
+	}
+	if strings.Contains(htmlNoRev, "rev ") {
+		t.Errorf("version without a revision must not render a revision value:\n%s", htmlNoRev)
 	}
 }
 

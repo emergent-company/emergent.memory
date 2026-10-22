@@ -595,6 +595,72 @@ func TestInboxTabCount(t *testing.T) {
 	}
 }
 
+// TestUIInboxMergeResolvesNotificationsOnClose guards the inbox merge CTA's
+// notification lifecycle: the branch's review-ready notifications resolve only
+// when the merge actually closed the branch (nothing left for review and no
+// conflicts) — the same predicate the server uses to stamp merged_at. A partial
+// merge leaves the branch open, so the reminder must stay actionable and the
+// redirect carries the ?review=N flash for a retry.
+func TestUIInboxMergeResolvesNotificationsOnClose(t *testing.T) {
+	newServer := func(res *BranchMergeResult) (*Server, *fakeMemory) {
+		f := &fakeMemory{
+			extractionJobs: []ExtractionJob{{ID: "job1", Status: "completed", StagingBranchID: "br1"}},
+			branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+			mergeResult:    res,
+		}
+		return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}, f
+	}
+	serve := func(s *Server, path string) *httptest.ResponseRecorder {
+		e := echo.New()
+		e.POST("/inbox/merge", s.uiInboxMerge)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		return rec
+	}
+
+	t.Run("full merge resolves the reminder", func(t *testing.T) {
+		s, f := newServer(&BranchMergeResult{MergedCount: 5})
+		rec := serve(s, "/inbox/merge?document=d1&job=job1")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("full merge status = %d, want 303", rec.Code)
+		}
+		if f.resolvedResourceType != "graph_branch" || f.resolvedResourceID != "br1" {
+			t.Errorf("resolve called with (%q,%q), want (graph_branch, br1)", f.resolvedResourceType, f.resolvedResourceID)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/inbox?merged=5" {
+			t.Errorf("full merge location = %q, want /inbox?merged=5", loc)
+		}
+	})
+
+	t.Run("partial merge leaves the reminder actionable", func(t *testing.T) {
+		s, f := newServer(&BranchMergeResult{MergedCount: 3, LeftForReviewCount: 2})
+		rec := serve(s, "/inbox/merge?document=d1&job=job1")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("partial merge status = %d, want 303", rec.Code)
+		}
+		if f.resolvedResourceType != "" || f.resolvedResourceID != "" {
+			t.Errorf("partial merge must not resolve the reminder, got (%q,%q)", f.resolvedResourceType, f.resolvedResourceID)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/inbox?merged=3&review=2" {
+			t.Errorf("partial merge location = %q, want /inbox?merged=3&review=2", loc)
+		}
+	})
+
+	t.Run("conflict-only merge leaves the reminder actionable", func(t *testing.T) {
+		s, f := newServer(&BranchMergeResult{MergedCount: 1, ConflictCount: 1})
+		rec := serve(s, "/inbox/merge?document=d1&job=job1")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("conflict merge status = %d, want 303", rec.Code)
+		}
+		if f.resolvedResourceType != "" || f.resolvedResourceID != "" {
+			t.Errorf("conflict merge must not resolve the reminder, got (%q,%q)", f.resolvedResourceType, f.resolvedResourceID)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/inbox?merged=1&review=1" {
+			t.Errorf("conflict merge location = %q, want /inbox?merged=1&review=1", loc)
+		}
+	})
+}
+
 func TestBellUnreadLabel(t *testing.T) {
 	if bellUnreadLabel(0) != "0" || bellUnreadLabel(9) != "9" || bellUnreadLabel(10) != "9+" {
 		t.Errorf("bellUnreadLabel: got %q/%q/%q", bellUnreadLabel(0), bellUnreadLabel(9), bellUnreadLabel(10))

@@ -40,9 +40,22 @@ type BranchMergeResult struct {
 // /api/graph/branches/main/merge). The response is bare JSON. This is a
 // mutation, so it is never retried (POST is already non-retryable in doH).
 func (m *MemoryClient) MergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error) {
+	return m.postMerge(ctx, sourceBranchID, policy, true)
+}
+
+// PreviewMergeBranch previews a merge without executing it (POST
+// /api/graph/branches/main/merge with execute:false). The response shape is
+// identical to MergeBranch: the same counts, but nothing is written. It backs
+// the "Review merge" modal so the user sees the split (added / merged /
+// left-for-review) before confirming.
+func (m *MemoryClient) PreviewMergeBranch(ctx context.Context, sourceBranchID, policy string) (*BranchMergeResult, error) {
+	return m.postMerge(ctx, sourceBranchID, policy, false)
+}
+
+func (m *MemoryClient) postMerge(ctx context.Context, sourceBranchID, policy string, execute bool) (*BranchMergeResult, error) {
 	body := map[string]any{
 		"source_branch_id": sourceBranchID,
-		"execute":          true,
+		"execute":          execute,
 		"policy":           policy,
 	}
 	var out BranchMergeResult

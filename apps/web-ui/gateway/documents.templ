@@ -356,16 +356,18 @@ templ DocumentChunksPage(doc *Document, chunks []Chunk, loadErr error) {
 
 // DocumentExtractionsPage renders the Extraction history sub-page: every
 // extraction job for the document, newest first. A failed job-list fetch
-// degrades the whole page to the error state.
-templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error, flashMsg string, flashErr error) {
+// degrades the whole page to the error state. warnMsg surfaces a partial-merge
+// warning (e.g. "M left for review"); hint carries the merged job's leftover
+// count so its action row can render the review badge.
+templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error, flashMsg string, warnMsg string, flashErr error, hint *mergeReviewHint) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Failed to load extraction history", loadErr)
 		} else {
 			@documentDetailHeader(doc)
 			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
-				@flashToasts(flashMsg, flashErr)
-				@extractionHistory(doc.ID, jobs)
+				@flashToastsWarn(flashMsg, warnMsg, flashErr)
+				@extractionHistory(doc.ID, jobs, hint)
 			}
 		}
 	}
@@ -374,8 +376,9 @@ templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error
 // extractionHistory lists a document's extraction jobs newest-first. Each row
 // carries the run's summary and lazily loads its detail (objects,
 // relationships, branch, and merge action) over HTMX, avoiding N+1 requests on
-// page load.
-templ extractionHistory(documentID string, jobs []ExtractionJob) {
+// page load. hint threads the partial-merge leftover count into the merged
+// job's lazy-detail URL.
+templ extractionHistory(documentID string, jobs []ExtractionJob, hint *mergeReviewHint) {
 	if len(jobs) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--history",
@@ -387,13 +390,15 @@ templ extractionHistory(documentID string, jobs []ExtractionJob) {
 	} else {
 		<div class="flex flex-col gap-3" data-testid="extraction-history">
 			for _, job := range jobs {
-				@extractionJobRow(documentID, job)
+				@extractionJobRow(documentID, job, hint)
 			}
 		</div>
 	}
 }
 
-templ extractionJobRow(documentID string, job ExtractionJob) {
+templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHint) {
+	{{ detailHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) }}
+	{{ if hint != nil && hint.JobID == job.ID && hint.Left > 0 { detailHref = detailHref + "?review=" + strconv.Itoa(hint.Left) } }}
 	<div class="border border-line overflow-hidden" data-testid="extraction-job-row">
 		<div class="flex flex-wrap items-center gap-2 px-4 py-3">
 			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
@@ -430,7 +435,7 @@ templ extractionJobRow(documentID string, job ExtractionJob) {
 		<div
 			id={ "extraction-detail-" + job.ID }
 			data-testid="extraction-detail-target"
-			hx-get={ templ.URL("/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID)) }
+			hx-get={ templ.URL(detailHref) }
 			hx-trigger="load"
 			hx-target="this"
 			hx-swap="outerHTML"
@@ -507,7 +512,7 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 			}
 			if d.Branch != nil {
 				if d.Branch.MergedAt == "" {
-					@extractionMergeAction(documentID, d.Job.ID)
+					@extractionMergeAction(documentID, d.Job.ID, d.LeftForReview)
 				} else {
 					@components.StatusBadge("Merged into main", ui.BadgeSuccess, "lucide--check", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 				}
@@ -538,22 +543,118 @@ templ extractionReadiness(r *MergeReadiness) {
 	}
 }
 
-// extractionMergeAction offers merging the job's staging branch into main with
-// the fixed partial policy. It is rendered only when the branch exists and is
-// not already merged (hide, don't disable).
-templ extractionMergeAction(documentID, jobID string) {
+// extractionMergeAction offers merging the job's staging branch into main. The
+// merge opens a preview modal (fetched lazily) so the user sees the predicted
+// split before confirming. It is rendered only when the branch exists and is
+// not already merged (hide, don't disable). leftForReview is the count of
+// objects a prior partial merge left on the branch; when non-zero it renders a
+// "N left for review" badge.
+templ extractionMergeAction(documentID, jobID string, leftForReview int) {
 	<div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3" data-testid="extraction-merge">
-		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
-		<form method="post" action={ templ.URL("/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/merge") } data-testid="extraction-merge-form">
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeSubmit,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--git-merge",
-			}) {
-				Merge into main
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
+			if leftForReview > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(leftForReview) + " left for review",
+					Variant: ui.BadgeWarning,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--git-branch",
+					Attrs:   templ.Attributes{"data-testid": "extraction-merge-left"},
+				})
 			}
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--git-merge",
+			Attrs: templ.Attributes{
+				"data-testid": "extraction-merge-button",
+				"hx-get":      "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/merge-preview",
+				"hx-target":   "#merge-preview-target-" + jobID,
+				"hx-swap":     "innerHTML",
+			},
+		}) {
+			Merge into main
+		}
+	</div>
+	<div id={ "merge-preview-target-" + jobID }></div>
+}
+
+// mergePreviewModal is the confirm-before-merge dialog. actionURL is the POST
+// target for the confirm button (the document merge route or the inbox merge
+// route). preview is the server's predicted split; previewErr renders the modal
+// in its error state. The dialog auto-opens once the HTMX swap inserts it.
+templ mergePreviewModal(actionURL string, preview *BranchMergeResult, previewErr error) {
+	@ui.Dialog(ui.DialogProps{ID: "merge-preview-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "merge-preview-modal"}}) {
+		@ui.DialogTitle() { Review merge }
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Clean additions and fast-forwards merge into the main graph. Anything left over stays on this branch for review.
+		}
+		if previewErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: previewErr.Error(),
+			})
+		} else {
+			@mergePreviewSummary(preview)
+		}
+		<form method="post" action={ templ.URL(actionURL) }>
+			<div class="mt-4 flex justify-end gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				if previewErr != nil {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"formmethod": "dialog"},
+					}) {
+						Close
+					}
+				} else {
+					{{ confirmAttrs := templ.Attributes{"data-testid": "merge-preview-confirm"} }}
+					{{ if mergePreviewDisabled(preview) { confirmAttrs["disabled"] = true } }}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--git-merge",
+						Attrs:   confirmAttrs,
+					}) {
+						{ mergePreviewConfirmLabel(preview) }
+					}
+				}
+			</div>
 		</form>
+	}
+}
+
+// mergePreviewSummary renders the predicted merge split as a short list of
+// labeled counts: new objects, existing objects updated, conflicts, left for
+// review, and the branch total. Conflicts and left-for-review rows carry
+// warning styling when non-zero.
+templ mergePreviewSummary(preview *BranchMergeResult) {
+	@mergePreviewRow("lucide--plus", "New objects", strconv.Itoa(mergePreviewAdded(preview)), false)
+	@mergePreviewRow("lucide--refresh-cw", "Existing objects updated", strconv.Itoa(mergePreviewUpdated(preview)), false)
+	@mergePreviewRow("lucide--triangle-alert", "Conflicts", strconv.Itoa(mergePreviewConflicts(preview)), mergePreviewConflicts(preview) > 0)
+	@mergePreviewRow("lucide--git-branch", "Left for review", strconv.Itoa(mergePreviewLeft(preview)), mergePreviewLeft(preview) > 0)
+	@mergePreviewRow("lucide--box", "Total", mergePreviewTotal(preview), false)
+}
+
+templ mergePreviewRow(icon, label, value string, warn bool) {
+	<div class="flex items-center gap-2 py-1">
+		@ui.IconSpan(icon, "size-4 shrink-0 text-muted-subtle")
+		<span class={ "grow text-sm", templ.KV("text-muted", !warn), templ.KV("text-warning font-medium", warn) }>{ label }</span>
+		<span class={ "text-sm tabular-nums", templ.KV("font-medium", warn) }>{ value }</span>
 	</div>
 }
 

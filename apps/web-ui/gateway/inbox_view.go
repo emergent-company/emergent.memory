@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +42,8 @@ func notificationIcon(n Notification) string {
 		return "lucide--chart-column"
 	case "question", "agent_question":
 		return "lucide--bot"
+	case "extraction", "extractions", "extraction_review", "review":
+		return "lucide--git-branch"
 	}
 	if n.Scope == "project" {
 		return "lucide--activity"
@@ -201,4 +204,41 @@ func cmpOr(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// inboxReviewMerge extracts the extraction-review payload from a review-ready
+// notification: the document id and job id whose staging branch the user can
+// merge. ok is false when the notification carries no such payload, so the row
+// renders no "Review merge" action.
+func inboxReviewMerge(n Notification) (documentID, jobID string, ok bool) {
+	documentID = notificationDetailsString(n.Details, "document_id")
+	jobID = notificationDetailsString(n.Details, "job_id")
+	if documentID == "" || jobID == "" {
+		return "", "", false
+	}
+	return documentID, jobID, true
+}
+
+// notificationDetailsString reads a string out of a notification's details
+// payload, tolerating a nil map and non-string values (both degrade to "").
+func notificationDetailsString(details map[string]any, key string) string {
+	if details == nil {
+		return ""
+	}
+	if v, ok := details[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// inboxMergePreviewHref builds the lazy merge-preview URL for a review-ready
+// notification's document/job pair.
+func inboxMergePreviewHref(documentID, jobID string) string {
+	return "/inbox/merge-preview?" + url.Values{"document": {documentID}, "job": {jobID}}.Encode()
+}
+
+// inboxMergeActionURL builds the POST target for the inbox merge confirm (the
+// actionURL the shared mergePreviewModal posts to).
+func inboxMergeActionURL(documentID, jobID string) string {
+	return "/inbox/merge?" + url.Values{"document": {documentID}, "job": {jobID}}.Encode()
 }

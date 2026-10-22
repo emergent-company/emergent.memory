@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
 
@@ -92,6 +94,9 @@ type inboxView struct {
 	// not errors.
 	LoadErr  error
 	FlashMsg string
+	// WarnMsg is the optional warning toast (e.g. a partial merge that left
+	// objects on the branch for review).
+	WarnMsg  string
 	FlashErr error
 }
 
@@ -138,10 +143,12 @@ func (s *Server) uiInbox(c echo.Context) error {
 	ctx := c.Request().Context()
 	scope := notificationScope(c.QueryParam("scope"))
 	tab := inboxTabFor(c.QueryParam("tab"))
+	flashMsg, warnMsg, _ := mergeFlashFromQuery(c)
 	view := inboxView{
 		Scope:    scope,
 		Tab:      tab,
-		FlashMsg: flashFromQuery(c, nil),
+		FlashMsg: flashMsg,
+		WarnMsg:  warnMsg,
 		FlashErr: flashError(c),
 	}
 
@@ -337,4 +344,63 @@ func (s *Server) uiNotificationPreferencesSave(c echo.Context) error {
 		}
 	}
 	return c.Redirect(http.StatusSeeOther, "/inbox/preferences?saved=1")
+}
+
+// --- extraction review merge (inbox CTA, task: extraction review UI) ---
+
+// uiInboxMergePreview renders the merge preview modal for a review-ready inbox
+// notification: the server's predicted split before the user confirms. The
+// document and job ids come from the notification's details payload and travel
+// on the lazy preview URL. It shares mergePreviewModal with the document flow.
+func (s *Server) uiInboxMergePreview(c echo.Context) error {
+	ctx := c.Request().Context()
+	documentID := strings.TrimSpace(c.QueryParam("document"))
+	jobID := strings.TrimSpace(c.QueryParam("job"))
+	actionURL := inboxMergeActionURL(documentID, jobID)
+
+	job, err := s.findExtractionJob(ctx, documentID, jobID)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	branchID, _, ok := s.extractionJobBranch(ctx, job)
+	if !ok {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, fmt.Errorf("this extraction has no staging branch to merge")))
+		return nil
+	}
+	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, nil))
+	return nil
+}
+
+// uiInboxMerge merges the staging branch of a review-ready notification's
+// extraction job, resolves the branch's review-ready notifications, and
+// PRG-redirects to the inbox with the truthful result query (?merged=N, plus
+// ?review=M when the merge was partial).
+func (s *Server) uiInboxMerge(c echo.Context) error {
+	ctx := c.Request().Context()
+	documentID := strings.TrimSpace(c.QueryParam("document"))
+	jobID := strings.TrimSpace(c.QueryParam("job"))
+
+	res, branchID, err := s.mergeExtractionBranch(ctx, documentID, jobID)
+	if err != nil {
+		return redirectWithError(c, "/inbox", err)
+	}
+	// Resolve the branch's review-ready notifications only when the merge closed
+	// the branch (nothing left for review, no conflicts) — the same predicate the
+	// server uses to stamp merged_at. On a partial merge the branch stays open
+	// with objects still to review, so the reminder must stay actionable and the
+	// user retries after handling the conflicts. Best-effort: a resolve failure
+	// must not hide the merge result.
+	if res != nil && res.LeftForReviewCount == 0 && res.ConflictCount == 0 {
+		if err := s.memory.ResolveNotificationsForResource(ctx, "graph_branch", branchID); err != nil {
+			captureError(err)
+		}
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/inbox"+mergeResultQuery(res, ""))
+	return nil
 }

@@ -839,7 +839,7 @@ templ dsVersionHistory(versions []DocumentVersion) {
 			@ui.IconTile("lucide--layers", ui.IconTileProps{Tone: "neutral"})
 			<div>
 				<h2 class="text-base font-semibold">Version history</h2>
-				@ui.EmptyNote() { Every retained version, oldest first. The highest version is the current one. }
+				@ui.EmptyNote() { Every retained version, newest first. The highest version is the current one. }
 			</div>
 		</div>
 		if len(versions) == 0 {
@@ -866,10 +866,26 @@ templ dsVersionRow(v DocumentVersion) {
 			@dsSourceStatusBadge(v.SourceStatus)
 			if v.SourceRevisionID != nil && *v.SourceRevisionID != "" {
 				@monoMeta("rev "+*v.SourceRevisionID, "text-muted-faint")
+			} else {
+				<span class="text-muted-faint font-mono text-[11px]" data-testid="ds-version-no-revision">no source revision</span>
 			}
 			if v.SourceDeletedAt != nil && *v.SourceDeletedAt != "" {
 				<span class="text-muted text-xs" data-testid="ds-version-deleted-at">deleted { relTime(*v.SourceDeletedAt) }</span>
 			}
 		</div>
+		{{ hasCounts := v.ExtractionJobs > 0 || v.ObjectsCreated > 0 || (v.LastExtractionAt != nil && *v.LastExtractionAt != "") }}
+		if hasCounts {
+			<div class="text-muted mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs" data-testid="ds-version-extraction-counts">
+				if v.ExtractionJobs > 0 {
+					<a class="link link-hover" href={ templ.URL("/documents/" + url.PathEscape(v.ID) + "/extractions") } data-testid="ds-version-extractions-link">{ strconv.Itoa(v.ExtractionJobs) } extraction job{ plural(v.ExtractionJobs) }</a>
+				}
+				if v.ObjectsCreated > 0 {
+					<span>{ strconv.Itoa(v.ObjectsCreated) } object{ plural(v.ObjectsCreated) }</span>
+				}
+				if v.LastExtractionAt != nil && *v.LastExtractionAt != "" {
+					<span>last extraction { relTime(*v.LastExtractionAt) }</span>
+				}
+			</div>
+		}
 	</div>
 }

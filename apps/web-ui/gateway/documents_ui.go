@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/emergent-company/go-daisy/render"
@@ -127,7 +128,18 @@ type extractionJobDetail struct {
 	Relationships []GraphRelationship
 	Readiness     *MergeReadiness
 	NoBranch      bool
+	// LeftForReview is the count of objects left on the branch after a partial
+	// merge (carried on the lazy-detail URL as ?review=N). Zero when unknown or
+	// nothing is outstanding.
+	LeftForReview int
 	Err           error
+}
+
+// mergeReviewHint carries post-merge leftover state to the extraction history
+// page: which job still has items on its branch for review.
+type mergeReviewHint struct {
+	JobID string
+	Left  int
 }
 
 // findExtractionJob resolves one job of a document from the document's job
@@ -266,22 +278,53 @@ func (s *Server) uiDocumentChunks(c echo.Context) error {
 
 // uiDocumentExtractions renders the Extraction history sub-page: every
 // extraction job for the document, newest first, each lazily loading its
-// detail. ?merged=1 carries the merge-success flash.
+// detail. ?merged=N carries the merge-success flash; ?review=M&job=<id> carries
+// the partial-merge warning and the leftover hint for that job's action.
 func (s *Server) uiDocumentExtractions(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	doc, err := s.memory.GetDocument(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Document"), DocumentExtractionsPage(nil, nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Document"), DocumentExtractionsPage(nil, nil, userFacingError(err), "", "", nil, nil))
 	}
 	jobs, err := s.memory.ListExtractionJobs(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, nil, userFacingError(err), "", nil))
+		return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, nil, userFacingError(err), "", "", nil, nil))
 	}
 	sortExtractionJobsNewestFirst(jobs)
-	flashMsg := flashFromQuery(c, []flashParam{{key: "merged", msg: "Branch merged into main."}})
-	flashErr := flashError(c)
-	return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, jobs, nil, flashMsg, flashErr))
+	flashMsg, warnMsg, hint := mergeFlashFromQuery(c)
+	return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, jobs, nil, flashMsg, warnMsg, flashError(c), hint))
+}
+
+// mergeFlashFromQuery decodes the PRG query left by uiDocumentMerge. It returns
+// the success flash, the warning flash (partial merge), and the leftover hint
+// for the merged job's action.
+func mergeFlashFromQuery(c echo.Context) (flashMsg, warnMsg string, hint *mergeReviewHint) {
+	merged := strings.TrimSpace(c.QueryParam("merged"))
+	review := strings.TrimSpace(c.QueryParam("review"))
+	jobID := strings.TrimSpace(c.QueryParam("job"))
+	if review != "" {
+		n := merged
+		if n == "" {
+			n = "0"
+		}
+		warnMsg = fmt.Sprintf("Merged %s object(s); %s left for review — the branch stays open.", n, review)
+		hint = &mergeReviewHint{JobID: jobID, Left: atoiOrZero(review)}
+		return "", warnMsg, hint
+	}
+	if merged != "" {
+		flashMsg = fmt.Sprintf("Merged %s object(s) into main.", merged)
+	}
+	return flashMsg, "", nil
+}
+
+// atoiOrZero parses a non-negative integer, returning 0 on any failure.
+func atoiOrZero(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // uiDocumentExtractionDetail renders the HTMX partial for one extraction job:
@@ -291,6 +334,10 @@ func (s *Server) uiDocumentExtractionDetail(c echo.Context) error {
 	ctx := c.Request().Context()
 	docID := c.Param("id")
 	detail := s.loadExtractionJobDetail(ctx, docID, c.Param("jobId"))
+	// A partial merge redirects back to the history page with ?review=N&job=<id>;
+	// the lazy-detail URL threads that count here so the merged job's action can
+	// show how many objects are still left on the branch for review.
+	detail.LeftForReview = atoiOrZero(c.QueryParam("review"))
 	renderPartial(c.Response().Writer, c.Request(), ExtractionJobDetail(docID, detail))
 	return nil
 }
@@ -349,24 +396,164 @@ func (s *Server) uiDocumentFile(c echo.Context) error {
 
 // uiDocumentMerge merges the staging branch of one extraction job into main
 // with the fixed "partial" policy, then PRG-redirects to the history page with
-// a ?merged=1 flash. A job without a resolvable branch, or a merge failure,
-// redirects with the real error.
+// a truthful result query (?merged=N, plus ?review=M&job=<id> when the merge was
+// partial). A job without a resolvable branch, or a merge failure, redirects
+// with the real error.
 func (s *Server) uiDocumentMerge(c echo.Context) error {
 	ctx := c.Request().Context()
 	docID := c.Param("id")
+	jobID := c.Param("jobId")
 	historyPath := documentExtractionsPath(docID)
 
-	job, err := s.findExtractionJob(ctx, docID, c.Param("jobId"))
+	res, _, err := s.mergeExtractionBranch(ctx, docID, jobID)
 	if err != nil {
 		return redirectWithError(c, historyPath, err)
 	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), historyPath+mergeResultQuery(res, jobID))
+	return nil
+}
+
+// mergeExtractionBranch resolves the job's staging branch and merges it into
+// main with the partial policy, returning the server's truthful result counts
+// and the merged branch id (for resolving its review-ready notifications).
+// Shared by uiDocumentMerge and uiInboxMerge so both report the same split.
+func (s *Server) mergeExtractionBranch(ctx context.Context, docID, jobID string) (*BranchMergeResult, string, error) {
+	job, err := s.findExtractionJob(ctx, docID, jobID)
+	if err != nil {
+		return nil, "", err
+	}
 	branchID, _, ok := s.extractionJobBranch(ctx, job)
 	if !ok {
-		return redirectWithError(c, historyPath, fmt.Errorf("merge: this extraction has no staging branch to merge"))
+		return nil, "", fmt.Errorf("merge: this extraction has no staging branch to merge")
 	}
-	if _, err := s.memory.MergeBranch(ctx, branchID, "partial"); err != nil {
-		return redirectWithError(c, historyPath, err)
+	res, err := s.memory.MergeBranch(ctx, branchID, "partial")
+	return res, branchID, err
+}
+
+// mergeResultQuery encodes a merge result into the PRG query the history page
+// decodes: always ?merged=<mergedCount>; when the merge left anything for
+// review (?review=<left>), it also carries ?job=<id> so the merged job's action
+// can show the leftover count. left is max(left_for_review, conflict): either
+// way the branch stays open.
+func mergeResultQuery(res *BranchMergeResult, jobID string) string {
+	if res == nil {
+		return "?merged=0"
 	}
-	render.RedirectAfterMutation(c.Response().Writer, c.Request(), historyPath+"?merged=1")
+	q := url.Values{"merged": {strconv.Itoa(res.MergedCount)}}
+	left := res.LeftForReviewCount
+	if res.ConflictCount > left {
+		left = res.ConflictCount
+	}
+	if left > 0 {
+		q.Set("review", strconv.Itoa(left))
+		if jobID != "" {
+			q.Set("job", jobID)
+		}
+	}
+	return "?" + q.Encode()
+}
+
+// mergePreviewMerged returns how many objects a preview predicts will merge
+// cleanly into main (0 for a nil result).
+func mergePreviewMerged(res *BranchMergeResult) int {
+	if res == nil {
+		return 0
+	}
+	return res.MergedCount
+}
+
+// mergePreviewAdded returns how many new objects a preview predicts will be
+// added to main (0 for a nil result).
+func mergePreviewAdded(res *BranchMergeResult) int {
+	if res == nil {
+		return 0
+	}
+	return res.AddedCount
+}
+
+// mergePreviewUpdated returns how many existing objects a preview predicts will
+// be updated: the similar + fast-forward counts (0 for a nil result).
+func mergePreviewUpdated(res *BranchMergeResult) int {
+	if res == nil {
+		return 0
+	}
+	return res.SimilarCount + res.FastForwardCount
+}
+
+// mergePreviewConflicts returns how many conflicting objects a preview predicts
+// stay unresolved on the branch (0 for a nil result).
+func mergePreviewConflicts(res *BranchMergeResult) int {
+	if res == nil {
+		return 0
+	}
+	return res.ConflictCount
+}
+
+// mergePreviewLeft returns how many objects a preview predicts stay on the
+// branch for review: max(left_for_review, conflict). 0 for a nil result.
+func mergePreviewLeft(res *BranchMergeResult) int {
+	if res == nil {
+		return 0
+	}
+	left := res.LeftForReviewCount
+	if res.ConflictCount > left {
+		left = res.ConflictCount
+	}
+	return left
+}
+
+// mergePreviewTotal renders the branch's total object count for the preview
+// summary (0 for a nil result).
+func mergePreviewTotal(res *BranchMergeResult) string {
+	if res == nil {
+		return "0"
+	}
+	return strconv.Itoa(res.TotalObjects)
+}
+
+// mergePreviewDisabled reports whether the preview's confirm button should be
+// disabled: when nothing would merge cleanly there is no merge to run.
+func mergePreviewDisabled(res *BranchMergeResult) bool {
+	return mergePreviewMerged(res) <= 0
+}
+
+// mergePreviewConfirmLabel is the preview's confirm button copy, naming the
+// clean-merge count so the action reads truthfully ("Merge 3 objects into
+// main"). A zero count still shows a neutral label (the button is disabled).
+func mergePreviewConfirmLabel(res *BranchMergeResult) string {
+	n := mergePreviewMerged(res)
+	if n <= 0 {
+		return "Merge into main"
+	}
+	return "Merge " + strconv.Itoa(n) + " object" + plural(n) + " into main"
+}
+
+// uiDocumentMergePreview renders the merge preview modal for one extraction job:
+// the server's predicted split (added / merged / left-for-review) before the
+// user confirms. It is fetched lazily via HTMX and auto-opens once swapped in.
+// A job without a resolvable branch, or a preview failure, renders the modal in
+// its error state so the user still gets an actionable explanation.
+func (s *Server) uiDocumentMergePreview(c echo.Context) error {
+	ctx := c.Request().Context()
+	docID := c.Param("id")
+	jobID := c.Param("jobId")
+	actionURL := "/documents/" + url.PathEscape(docID) + "/extractions/" + url.PathEscape(jobID) + "/merge"
+
+	job, err := s.findExtractionJob(ctx, docID, jobID)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	branchID, _, ok := s.extractionJobBranch(ctx, job)
+	if !ok {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, fmt.Errorf("this extraction has no staging branch to merge")))
+		return nil
+	}
+	res, err := s.memory.PreviewMergeBranch(ctx, branchID, "partial")
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, nil, userFacingError(err)))
+		return nil
+	}
+	renderPartial(c.Response().Writer, c.Request(), mergePreviewModal(actionURL, res, nil))
 	return nil
 }

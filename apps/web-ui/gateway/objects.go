@@ -627,7 +627,7 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil))
 	}
 
 	var (
@@ -636,14 +636,19 @@ func (s *Server) uiObject(c echo.Context) error {
 		compiledErr      error
 		edges            []GraphRelationship
 		edgesErr         error
+		branches         []Branch
 	)
 	var g errgroup.Group
 	g.Go(func() error { labelSuggestions = s.objectLabelSuggestions(ctx); return nil })
 	g.Go(func() error { compiled, compiledErr = s.memory.GetCompiledTypes(ctx); return nil })
 	g.Go(func() error { edges, edgesErr = s.memory.GetObjectEdges(ctx, id); return nil })
+	g.Go(func() error { branches, _ = s.memory.ListBranches(ctx); return nil })
 	_ = g.Wait()
 	captureError(compiledErr)
 	captureError(edgesErr)
+	branchRef := resolveObjectBranch(branches, obj.BranchID)
+	sources := objectSources(*obj)
+	s.resolveObjectSourceNames(ctx, sources)
 
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
@@ -666,7 +671,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (issue #1096): it is not fetched here. The detail page renders the section
 	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
 	// never hold the page render again. nil similar triggers that deferred path.
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions))
 }
 
 // uiObjectSimilarPartial renders the "Similar objects" section as an HTMX
@@ -1419,6 +1424,170 @@ func objectEndpointLabel(obj *GraphObject, related []GraphObject, id string) str
 		return graphObjectLabel(*obj)
 	}
 	return graphObjectLabelByID(related, id)
+}
+
+// objectSource is one extraction provenance record attached to an object: which
+// document/version/job extracted it, and when. DocumentName is the resolved
+// document filename for display ("" until resolveObjectSourceNames fills it; the
+// card then falls back to the short id).
+type objectSource struct {
+	DocumentID      string
+	DocumentName    string
+	DocumentVersion string
+	JobID           string
+	ExtractedAt     string
+}
+
+// objectSources parses an object's extraction provenance. The modern shape is
+// `_sources` (an array of snake_case records); legacy objects carry the single
+// `_source_id` / `_extraction_job_id` / `_document_version` scalar props. It
+// tolerates absent fields and non-conforming values, returning nil when there
+// is nothing to show.
+func objectSources(o GraphObject) []objectSource {
+	raw, ok := o.Properties["_sources"]
+	if !ok {
+		legacy := objectSource{
+			DocumentID:      strAny(o.Properties["_source_id"]),
+			JobID:           strAny(o.Properties["_extraction_job_id"]),
+			DocumentVersion: strAny(o.Properties["_document_version"]),
+		}
+		if legacy.DocumentID == "" && legacy.JobID == "" && legacy.DocumentVersion == "" {
+			return nil
+		}
+		return []objectSource{legacy}
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]objectSource, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		src := objectSource{
+			DocumentID:      strAny(m["document_id"]),
+			DocumentVersion: strAny(m["document_version"]),
+			JobID:           strAny(m["job_id"]),
+			ExtractedAt:     strAny(m["extracted_at"]),
+		}
+		if src.DocumentID == "" && src.DocumentVersion == "" && src.JobID == "" && src.ExtractedAt == "" {
+			continue
+		}
+		out = append(out, src)
+	}
+	return out
+}
+
+// objectSourceDocLookupCap bounds how many distinct GetDocument calls the source
+// card may make per render, so a pathological _sources array cannot trigger
+// unbounded upstream fan-out.
+const objectSourceDocLookupCap = 10
+
+// resolveObjectSourceNames fills each source's DocumentName via GetDocument,
+// cached by id so a shared document is fetched once. Lookups are capped and
+// best-effort: a failure or a missing document leaves the name empty, and the
+// source card falls back to the short id.
+func (s *Server) resolveObjectSourceNames(ctx context.Context, sources []objectSource) {
+	cache := make(map[string]string, len(sources))
+	lookups := 0
+	for i := range sources {
+		id := sources[i].DocumentID
+		if id == "" {
+			continue
+		}
+		if name, ok := cache[id]; ok {
+			sources[i].DocumentName = name
+			continue
+		}
+		if lookups >= objectSourceDocLookupCap {
+			continue
+		}
+		lookups++
+		doc, err := s.memory.GetDocument(ctx, id)
+		if err != nil {
+			captureError(err)
+			cache[id] = ""
+			continue
+		}
+		if doc == nil {
+			cache[id] = ""
+			continue
+		}
+		cache[id] = doc.Filename
+		sources[i].DocumentName = doc.Filename
+	}
+}
+
+// objectBranchRef is the resolved branch context for an object's detail header
+// chip: the branch id ("" = implicit main), its display name when the id
+// resolves, and its merged-at time when the branch has been merged into main.
+type objectBranchRef struct {
+	ID       string
+	Name     string
+	MergedAt string
+}
+
+// resolveObjectBranch resolves an object's branch id to its chip context. An
+// empty id is the implicit main branch; a resolved Branch supplies its name and
+// merged-at time; an id that fails to resolve still yields a chip labelled by
+// its short id, never an empty chip or a page failure.
+func resolveObjectBranch(branches []Branch, id string) objectBranchRef {
+	if id == "" {
+		return objectBranchRef{}
+	}
+	for _, b := range branches {
+		if b.ID == id {
+			return objectBranchRef{ID: id, Name: b.Name, MergedAt: b.MergedAt}
+		}
+	}
+	return objectBranchRef{ID: id}
+}
+
+// objectBranchChipLabel renders the branch chip's label: "main" for the
+// implicit main graph, the branch name for an open branch, "<name> · merged
+// <reltime>" for a merged branch, and the short id when the id fails to resolve.
+func objectBranchChipLabel(b objectBranchRef) string {
+	if b.ID == "" {
+		return "main"
+	}
+	name := b.Name
+	if name == "" {
+		name = shortID(b.ID)
+	}
+	if b.MergedAt != "" {
+		return name + " · merged " + relTime(b.MergedAt)
+	}
+	return name
+}
+
+// objectBranchChipIcon returns the chip's leading icon: a git-branch glyph for a
+// named branch, none for the implicit main graph.
+func objectBranchChipIcon(b objectBranchRef) string {
+	if b.ID == "" {
+		return ""
+	}
+	return "lucide--git-branch"
+}
+
+// objectBranchChipHref returns the chip's link target (the object browser
+// filtered to this branch), or "" for the main graph so the chip renders as a
+// plain badge.
+func objectBranchChipHref(b objectBranchRef) string {
+	if b.ID == "" {
+		return ""
+	}
+	return "/objects?branch=" + url.QueryEscape(b.ID)
+}
+
+// objectSourceDocumentLabel renders a source record's document display label:
+// the resolved filename when available, else the short id.
+func objectSourceDocumentLabel(src objectSource) string {
+	if src.DocumentName != "" {
+		return src.DocumentName
+	}
+	return shortID(src.DocumentID)
 }
 
 // propertyKV is one key/value pair of an object's properties for display.

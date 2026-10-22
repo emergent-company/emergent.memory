@@ -815,7 +815,7 @@ func TestLoadDocumentPreview(t *testing.T) {
 // TestRenderExtractionHistoryEmpty covers the no-extractions state.
 func TestRenderExtractionHistoryEmpty(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md"}
-	html := renderHTML(t, DocumentExtractionsPage(doc, nil, nil, "", nil))
+	html := renderHTML(t, DocumentExtractionsPage(doc, nil, nil, "", "", nil, nil))
 	if !strings.Contains(html, "No extractions yet") {
 		t.Error("empty extraction history state missing")
 	}
@@ -832,7 +832,7 @@ func TestRenderExtractionHistoryRows(t *testing.T) {
 		{ID: "job1", Status: "completed", CreatedAt: "2026-08-26T10:00:00Z", CreatedObjects: []string{"o1"}, DiscoveredTypes: []string{"person"}},
 		{ID: "job2", Status: "failed", CreatedAt: "2026-08-25T10:00:00Z"},
 	}
-	html := renderHTML(t, DocumentExtractionsPage(doc, jobs, nil, "", nil))
+	html := renderHTML(t, DocumentExtractionsPage(doc, jobs, nil, "", "", nil, nil))
 	for _, want := range []string{
 		`data-testid="extraction-history"`,
 		`id="extraction-detail-job1"`,
@@ -880,8 +880,8 @@ func TestRenderExtractionJobDetailMergeForm(t *testing.T) {
 		d.Readiness = &MergeReadiness{Ready: true, TotalObjects: 1}
 		html := renderHTML(t, ExtractionJobDetail("d1", d))
 		for _, want := range []string{
-			`data-testid="extraction-merge-form"`,
-			`action="/documents/d1/extractions/job1/merge"`,
+			`data-testid="extraction-merge"`,
+			`hx-get="/documents/d1/extractions/job1/merge-preview"`,
 			"extract-1", "Ready to merge", "assigned to", "sam",
 		} {
 			if !strings.Contains(html, want) {
@@ -894,7 +894,7 @@ func TestRenderExtractionJobDetailMergeForm(t *testing.T) {
 		d := base
 		d.Branch = &Branch{ID: "b1", Name: "extract-1", MergedAt: "2026-08-27T00:00:00Z"}
 		html := renderHTML(t, ExtractionJobDetail("d1", d))
-		if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+		if strings.Contains(html, `data-testid="extraction-merge"`) {
 			t.Error("merged branch must not render the merge form")
 		}
 		if !strings.Contains(html, "Merged into main") {
@@ -906,7 +906,7 @@ func TestRenderExtractionJobDetailMergeForm(t *testing.T) {
 		d := base
 		d.NoBranch = true
 		html := renderHTML(t, ExtractionJobDetail("d1", d))
-		if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+		if strings.Contains(html, `data-testid="extraction-merge"`) {
 			t.Error("branchless job must not render the merge form")
 		}
 		if !strings.Contains(html, `data-testid="extraction-detail-nobranch"`) {
@@ -1190,7 +1190,7 @@ func TestRenderExtractionJobDetailNoBranchFallback(t *testing.T) {
 			t.Errorf("branchless detail missing %q:\n%s", want, html)
 		}
 	}
-	if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+	if strings.Contains(html, `data-testid="extraction-merge"`) {
 		t.Error("branchless job must not render the merge form")
 	}
 }
@@ -1332,7 +1332,7 @@ func TestLoadExtractionJobDetailStagingBranch(t *testing.T) {
 	html := renderHTML(t, ExtractionJobDetail("d1", d))
 	for _, want := range []string{
 		"2 objects",
-		`data-testid="extraction-merge-form"`,
+		`data-testid="extraction-merge"`,
 		`data-testid="extraction-open-browser"`,
 		`href="/objects?branch=br1"`,
 	} {
@@ -1368,7 +1368,7 @@ func TestLoadExtractionJobDetailStagingBranchMerged(t *testing.T) {
 		t.Fatalf("objects = %d, want 2 (fallen back to main)", len(d.Objects))
 	}
 	html := renderHTML(t, ExtractionJobDetail("d1", d))
-	if strings.Contains(html, `data-testid="extraction-merge-form"`) {
+	if strings.Contains(html, `data-testid="extraction-merge"`) {
 		t.Error("merged staging branch must not render the merge form")
 	}
 	if !strings.Contains(html, `data-testid="extraction-detail-nobranch"`) {
@@ -1428,7 +1428,7 @@ func TestLoadExtractionJobDetailLegacyCreatedObjects(t *testing.T) {
 		t.Fatalf("legacy branch record = %+v, want extract-1", d.Branch)
 	}
 	html := renderHTML(t, ExtractionJobDetail("d1", d))
-	if !strings.Contains(html, `data-testid="extraction-merge-form"`) {
+	if !strings.Contains(html, `data-testid="extraction-merge"`) {
 		t.Errorf("legacy job with a live branch must render the merge form:\n%s", html)
 	}
 }
@@ -1465,7 +1465,7 @@ func TestRenderExtractionJobRowBadgeCount(t *testing.T) {
 		CreatedObjectIDs: []string{"o1", "o2", "o3"},
 		ObjectsCreated:   31,
 	}
-	html := renderHTML(t, extractionJobRow("d1", job))
+	html := renderHTML(t, extractionJobRow("d1", job, nil))
 	if !strings.Contains(html, "3 objects") {
 		t.Errorf("row badge missing id count:\n%s", html)
 	}
@@ -1488,7 +1488,7 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 		relns:          []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c1", DstID: "c1"}},
 		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
 		mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 1},
-		mergeResult:    &BranchMergeResult{AddedCount: 1},
+		mergeResult:    &BranchMergeResult{AddedCount: 1, MergedCount: 1},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
@@ -1528,8 +1528,8 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 		}
 		for _, want := range []string{
 			`data-testid="extraction-job-detail"`,
-			`data-testid="extraction-merge-form"`,
-			`action="/documents/d1/extractions/job1/merge"`,
+			`data-testid="extraction-merge"`,
+			`hx-get="/documents/d1/extractions/job1/merge-preview"`,
 			"extract-1", "assigned to",
 		} {
 			if !strings.Contains(body, want) {
@@ -1624,4 +1624,41 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 			t.Errorf("MergeBranch should not be called, got branch %q", f2.lastMergeBranchID)
 		}
 	})
+}
+
+// TestRenderMergePreviewSummary asserts the confirm-before-merge breakdown lists
+// new objects, existing objects updated (similar + fast-forward), conflicts,
+// left-for-review, and the branch total, with warning styling when anything is
+// left over.
+func TestRenderMergePreviewSummary(t *testing.T) {
+	res := &BranchMergeResult{
+		TotalObjects:       10,
+		AddedCount:         4,
+		FastForwardCount:   2,
+		SimilarCount:       1,
+		ConflictCount:      1,
+		LeftForReviewCount: 2,
+		MergedCount:        7,
+	}
+	html := renderHTML(t, mergePreviewSummary(res))
+	for _, want := range []string{
+		"New objects", "Existing objects updated", "Conflicts",
+		"Left for review", "Total", "text-warning",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("merge preview summary missing %q:\n%s", want, html)
+		}
+	}
+
+	// A nil result still renders the full breakdown with zero counts and no
+	// warning styling (nothing to flag).
+	htmlNil := renderHTML(t, mergePreviewSummary(nil))
+	for _, want := range []string{"New objects", "Existing objects updated", "Conflicts", "Left for review", "Total"} {
+		if !strings.Contains(htmlNil, want) {
+			t.Errorf("nil merge preview summary missing %q", want)
+		}
+	}
+	if strings.Contains(htmlNil, "text-warning") {
+		t.Errorf("nil merge preview summary should not warn:\n%s", htmlNil)
+	}
 }
