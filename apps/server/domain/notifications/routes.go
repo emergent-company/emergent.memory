@@ -45,4 +45,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Notification preferences
 	g.GET("/preferences", h.GetPreferences)
 	g.PUT("/preferences", h.SavePreference)
+
+	// Resolve all actionable notifications for a resource (e.g. a merged branch)
+	g.POST("/resolve-resource", h.ResolveResource)
 }

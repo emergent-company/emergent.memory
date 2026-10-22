@@ -555,7 +555,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// Register notifications routes
 	notificationsRepo := notifications.NewRepository(db, log)
 	notificationsSvc := notifications.NewService(notificationsRepo, eventsSvc, log)
-	notificationsHandler := notifications.NewHandler(notificationsSvc)
+	notificationsHandler := notifications.NewHandler(notificationsSvc, authMiddleware)
 	notifications.RegisterRoutes(e, notificationsHandler, authMiddleware)
 
 	// Register schemas routes

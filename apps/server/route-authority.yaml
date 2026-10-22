@@ -1025,6 +1025,10 @@ routes:
       path: /api/notifications/preferences
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/notifications/resolve-resource
+      level: auth
+      note: RequireAuth
     - method: GET
       path: /api/notifications/stats
       level: auth

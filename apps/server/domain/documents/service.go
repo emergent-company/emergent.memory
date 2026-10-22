@@ -596,9 +596,19 @@ func (s *Service) GetVersionHistory(ctx context.Context, projectID, documentID s
 		return nil, err
 	}
 
+	// Batch-load per-version extraction metadata in one query.
+	versionIDs := make([]string, 0, len(versions))
+	for _, v := range versions {
+		versionIDs = append(versionIDs, v.ID)
+	}
+	summaries, err := s.repo.ListVersionExtractionSummaries(ctx, projectID, versionIDs)
+	if err != nil {
+		return nil, err
+	}
+
 	result := make([]DocumentVersion, 0, len(versions))
 	for _, v := range versions {
-		result = append(result, DocumentVersion{
+		dv := DocumentVersion{
 			ID:               v.ID,
 			CanonicalID:      v.CanonicalID,
 			Version:          v.Version,
@@ -607,7 +617,13 @@ func (s *Service) GetVersionHistory(ctx context.Context, projectID, documentID s
 			SourceRevisionID: v.SourceRevisionID,
 			SourceDeletedAt:  v.SourceDeletedAt,
 			CreatedAt:        v.CreatedAt,
-		})
+		}
+		if sum, ok := summaries[v.ID]; ok {
+			dv.ExtractionJobs = sum.ExtractionJobs
+			dv.ObjectsCreated = sum.ObjectsCreated
+			dv.LastExtractionAt = sum.LastExtractionAt
+		}
+		result = append(result, dv)
 	}
 	return result, nil
 }

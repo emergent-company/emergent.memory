@@ -59,6 +59,7 @@ var Registry = []Entry{
 	{Key: "agent.question", Scope: ScopeProject, Delivery: DeliveryRequired, RequiresAction: true, Category: "agents", Actionable: true},
 	{Key: "comment.reply", Scope: ScopeProject, Delivery: DeliveryOptIn, RequiresAction: false, Category: "comments"},
 	{Key: "project.agent_config.changed", Scope: ScopeProject, Delivery: DeliveryOptIn, RequiresAction: false, Category: "agents"},
+	{Key: "extraction.review_ready", Scope: ScopeProject, Delivery: DeliveryRequired, RequiresAction: true, Category: "extractions", Actionable: true},
 }
 
 // byKey is built once from Registry for O(1) lookups.

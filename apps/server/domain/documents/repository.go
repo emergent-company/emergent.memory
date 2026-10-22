@@ -356,6 +356,44 @@ func (r *Repository) ListVersionsByCanonical(ctx context.Context, projectID, can
 	return docs, nil
 }
 
+// versionExtractionSummary is the per-version extraction rollup returned by
+// ListVersionExtractionSummaries, keyed by the version row's document id.
+type versionExtractionSummary struct {
+	DocumentID       string     `bun:"document_id"`
+	ExtractionJobs   int        `bun:"extraction_jobs"`
+	ObjectsCreated   int        `bun:"objects_created"`
+	LastExtractionAt *time.Time `bun:"last_extraction_at"`
+}
+
+// ListVersionExtractionSummaries batches the extraction-job rollup for many
+// document version rows in one query: job count, total objects created, and the
+// most recent job creation timestamp per version. Returns an empty map (not an
+// error) when versionIDs is empty.
+func (r *Repository) ListVersionExtractionSummaries(ctx context.Context, projectID string, versionIDs []string) (map[string]versionExtractionSummary, error) {
+	if len(versionIDs) == 0 {
+		return nil, nil
+	}
+	var rows []versionExtractionSummary
+	err := r.db.NewSelect().
+		TableExpr("kb.object_extraction_jobs").
+		Column("document_id").
+		ColumnExpr("COUNT(*)::int AS extraction_jobs").
+		ColumnExpr("COALESCE(SUM(objects_created), 0)::int AS objects_created").
+		ColumnExpr("MAX(created_at) AS last_extraction_at").
+		Where("project_id = ?", projectID).
+		Where("document_id IN (?)", bun.In(versionIDs)).
+		Group("document_id").
+		Scan(ctx, &rows)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("list version extraction summaries: %w", err)
+	}
+	out := make(map[string]versionExtractionSummary, len(rows))
+	for _, row := range rows {
+		out[row.DocumentID] = row
+	}
+	return out, nil
+}
+
 // UpdateSourceState updates the source revision pointer, parsed-text hash, and
 // sync timestamp on a document (typically the HEAD) without creating a version.
 func (r *Repository) UpdateSourceState(ctx context.Context, documentID string, revisionID *string, textHash *string, syncedAt time.Time) error {

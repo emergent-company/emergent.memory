@@ -91,6 +91,10 @@ type Service struct {
 	branchStore          branchStoreIface
 	events               *events.Service
 
+	// branchNotificationResolver marks review-ready notifications as resolved
+	// when a staging branch is merged. Nil when not wired (no-op).
+	branchNotificationResolver BranchNotificationResolver
+
 	// bulkUpdateMaxItems caps the number of items accepted by a bulk-update
 	// request (default 100, overridden from config).
 	bulkUpdateMaxItems int
@@ -142,6 +146,13 @@ func (s *Service) WithBulkUpdateLimits(maxItems int, maxDuration time.Duration) 
 	if maxDuration > 0 {
 		s.bulkUpdateMaxDuration = maxDuration
 	}
+	return s
+}
+
+// WithBranchNotificationResolver wires the resolver that marks review-ready
+// notifications resolved after a staging-branch merge. Nil is a valid no-op.
+func (s *Service) WithBranchNotificationResolver(resolver BranchNotificationResolver) *Service {
+	s.branchNotificationResolver = resolver
 	return s
 }
 
@@ -1136,6 +1147,10 @@ func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *
 	if newProps == nil {
 		newProps = make(map[string]any)
 	}
+	// Provenance is exempt from property policy: union `_sources` with the
+	// existing object before diffing/versioning so a later source document does
+	// not clobber the ones already recorded.
+	newProps = mergeProvenanceProps(existing.Properties, newProps)
 
 	// Check if status changed
 	statusChanged := false
@@ -4230,7 +4245,7 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 	// Enumerate objects: classify each canonical_id
 	objectSummaries := make([]*BranchMergeObjectSummary, 0)
-	unchangedCount, addedCount, ffCount, conflictCount, deletedCount, mergedCount := 0, 0, 0, 0, 0, 0
+	unchangedCount, addedCount, ffCount, conflictCount, deletedCount, mergedCount, similarCount := 0, 0, 0, 0, 0, 0, 0
 
 	// Hard limit for enumeration
 	hardLimit := 2000
@@ -4247,6 +4262,10 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	for cid := range targetObjects {
 		allCanonicalIDs[cid] = true
 	}
+
+	// Normalized type|key → head index built once per merge for the exact-key
+	// same-entity path, so keys are not re-normalized per source pair.
+	sameEntityIndex := buildSameEntityTargetIndex(targetObjects)
 
 	for cid := range allCanonicalIDs {
 		sourceHead := sourceObjects[cid]
@@ -4265,6 +4284,25 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 
 		summary.Status, summary.Conflicts = classifyMergeObject(sourceHead, targetHead)
 
+		// Deterministic same-entity detection (exact key). A source object that
+		// would be "added" (new canonical ID) but shares a normalized type+key
+		// with an existing target head is the same entity extracted from a
+		// different document. Reclassify it as "similar" with a deterministic
+		// score so the existing similarity policy (and the provenance union)
+		// applies. This is independent of embeddings: it runs before and
+		// regardless of the embedding-driven similarity probe below.
+		if summary.Status == "added" {
+			if same := findSameEntityTargetInIndex(sourceHead, sameEntityIndex); same != nil {
+				summary.Status = "similar"
+				summary.SimilarityScore = 1.0
+				cid := same.CanonicalID
+				summary.SimilarTargetID = &cid
+				if name, ok := same.Properties["name"].(string); ok {
+					summary.SimilarTargetName = name
+				}
+			}
+		}
+
 		switch summary.Status {
 		case "merged":
 			mergedCount++
@@ -4276,6 +4314,8 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			ffCount++
 		case "conflict":
 			conflictCount++
+		case "similar":
+			similarCount++
 		case "deleted":
 			// For now count as fast_forward (it's a change that needs to be applied)
 			ffCount++
@@ -4380,7 +4420,6 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 	}
 
 	// ── Similarity probe for "added" objects ───────────────────────────────
-	similarCount := 0
 	if settings.SimilarityEnabled && settings.SimilarityThreshold > 0 {
 		maxDist := float32(1.0) - settings.SimilarityThreshold
 		for _, sum := range objectSummaries {
@@ -4450,7 +4489,13 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 			case "mine":
 				s.Resolution = "absorbed-mine"
 				resolvedCount++
-			case "suggest":
+			case "suggest", "":
+				// Empty action (presets "manual", "enrich_no_sim",
+				// "mine_no_sim") means "no auto-action" — exactly like
+				// "suggest": flag for review, nothing written. applyMerge
+				// treats "" identically, so the dry-run/left-for-review
+				// precompute must too, or an exact-key reclassified object
+				// is silently skipped while leftForReview stays 0.
 				s.Resolution = "suggested"
 				leftForReview++
 			}
@@ -4568,6 +4613,19 @@ func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBr
 		if s.branchStore != nil && leftForReview == 0 && relConflict == 0 {
 			if err := s.branchStore.SetMergedAt(ctx, req.SourceBranchID.String(), time.Now().UTC()); err != nil {
 				s.log.Warn("failed to stamp branch merged_at",
+					slog.String("branch_id", req.SourceBranchID.String()),
+					slog.String("error", err.Error()))
+			}
+		}
+
+		// Resolve review-ready notifications tied to this staging branch only when
+		// the merge actually closed it (nothing left for review, no relationship
+		// conflicts). A partial merge keeps the branch open, so its review-ready
+		// notification must remain visible until a follow-up merge completes.
+		// Nil resolver is a no-op; failures are logged and must not fail the merge.
+		if leftForReview == 0 && relConflict == 0 && s.branchNotificationResolver != nil {
+			if err := s.branchNotificationResolver.ResolveByBranch(ctx, projectID.String(), req.SourceBranchID.String()); err != nil {
+				s.log.Warn("failed to resolve branch notifications on merge",
 					slog.String("branch_id", req.SourceBranchID.String()),
 					slog.String("error", err.Error()))
 			}
@@ -4694,10 +4752,10 @@ func (s *Service) applyMerge(
 			if labels == nil {
 				labels = []string{}
 			}
-			props := src.Properties
-			if props == nil {
-				props = map[string]any{}
-			}
+			// Provenance is exempt from property policy: union the source's
+			// provenance with the target head's so a fast-forward never drops
+			// prior sources from other documents.
+			props := mergeProvenanceProps(prevHead.Properties, src.Properties)
 			// Preserve target status unless overwrite strategy — fast_forward may
 			// differ only in status (target has a user-set status we must not stomp).
 			targetStatus := src.Status
@@ -4760,6 +4818,10 @@ func (s *Service) applyMerge(
 					}
 				}
 			}
+			// Provenance is exempt from policy: union the target and source
+			// provenance onto the merged result so conflict resolution never
+			// drops sources from either side.
+			mergedProps = applyProvenanceUnion(mergedProps, tgt.Properties, src.Properties)
 			// Status: preserve target unless overwrite.
 			resolvedStatus := tgt.Status
 			if strategy == "overwrite" {
@@ -4848,8 +4910,14 @@ func (s *Service) applyMerge(
 			summary.EnrichedKeys = changedKeys
 			summary.Resolution = "absorbed-" + settings.SimilarityAction
 
+			// Provenance is exempt from policy: union the target and source
+			// provenance so absorbing a similar entity retains both documents'
+			// sources, and force a version write when only provenance changed.
+			provChanged := provenanceKeysChanged(existingTarget.Properties, existingTarget.Properties, src.Properties)
+			mergedProps = applyProvenanceUnion(mergedProps, existingTarget.Properties, src.Properties)
+
 			// Only write a new version if something actually changed.
-			if len(changedKeys) > 0 {
+			if len(changedKeys) > 0 || provChanged {
 				changeSummary := map[string]any{
 					"source":           "similarity-merge",
 					"similarity_score": summary.SimilarityScore,

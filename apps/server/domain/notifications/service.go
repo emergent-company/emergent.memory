@@ -307,3 +307,41 @@ func (s *Service) SavePreference(ctx context.Context, userID string, projectID *
 	}
 	return s.repo.UpsertPreference(ctx, p)
 }
+
+// CreateForProjectMembers fans a single project event out to one notification
+// per project member. A member whose preference suppresses the event (or who
+// has no member row) is silently skipped by Create. Per-member failures are
+// logged and do not abort the fan-out, so one member never blocks the rest.
+func (s *Service) CreateForProjectMembers(ctx context.Context, projectID string, in CreateInput) error {
+	members, err := s.repo.ListProjectMemberUserIDs(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	in.ProjectID = &projectID
+	in.Scope = ScopeProject
+	for _, memberID := range members {
+		in.UserID = memberID
+		if _, err := s.Create(ctx, in); err != nil {
+			s.log.Warn("failed to create notification for project member",
+				slog.String("event_key", in.EventKey),
+				slog.String("user_id", memberID),
+				logger.Error(err))
+		}
+	}
+	return nil
+}
+
+// ResolveByBranch marks review-ready notifications referencing a staging branch
+// as resolved once that branch is merged. It satisfies graph's
+// BranchNotificationResolver interface.
+func (s *Service) ResolveByBranch(ctx context.Context, projectID, branchID string) error {
+	return s.repo.ResolveByBranch(ctx, projectID, branchID)
+}
+
+// ResolveResource marks actionable notifications referencing a resource as
+// resolved, returning how many were affected. The update is scoped to the
+// project so a resolve-resource call cannot resolve another project's
+// notifications.
+func (s *Service) ResolveResource(ctx context.Context, projectID, resourceType, resourceID string) (int64, error) {
+	return s.repo.ResolveResource(ctx, projectID, resourceType, resourceID)
+}

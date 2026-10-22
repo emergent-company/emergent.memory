@@ -3,6 +3,7 @@ package extraction
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/documents"
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
 	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -89,6 +91,7 @@ type ObjectExtractionWorker struct {
 	classifier            *DocumentClassifier
 	limitResolver         adk.ModelLimitResolver // optional; nil → no truncation
 	pipelineInputModifier PipelineInputModifier  // optional; nil → no modification
+	notificationsSvc      *notifications.Service // optional; nil → no review-ready notifications
 	config                *ObjectExtractionWorkerConfig
 	log                   *slog.Logger
 	scaler                *syshealth.ConcurrencyScaler
@@ -143,6 +146,14 @@ func (w *ObjectExtractionWorker) WithLimitResolver(r adk.ModelLimitResolver) *Ob
 // TypeHints, NegativeExamples, or other fields without wiring the full classifier.
 func (w *ObjectExtractionWorker) SetPipelineInputModifier(m PipelineInputModifier) {
 	w.pipelineInputModifier = m
+}
+
+// WithNotifications sets the notifications service used to emit review-ready
+// alerts after extraction completes. Nil (the default) disables notifications,
+// so callers that never wire it — including tests — are unaffected.
+func (w *ObjectExtractionWorker) WithNotifications(svc *notifications.Service) *ObjectExtractionWorker {
+	w.notificationsSvc = svc
+	return w
 }
 
 // Start begins processing jobs in the background.
@@ -406,6 +417,11 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	// Run extraction over each batch, accumulating results.
 	// persistResults upserts by (project_id, type, name) so duplicate entities
 	// across overlapping batches are merged naturally.
+
+	// Resolve the source document's version once per job (not per batch) so the
+	// provenance stamp is consistent across all batches of this job.
+	documentVersion := w.resolveDocumentVersion(ctx, job)
+
 	var totalResult *ObjectExtractionResults
 	for i, batch := range batches {
 		if len(batches) > 1 {
@@ -432,7 +448,7 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 			return nil, fmt.Errorf("run pipeline (batch %d/%d): %w", i+1, len(batches), err)
 		}
 
-		result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID)
+		result, err := w.persistResults(ctx, job, pipelineOutput, stagingBranchID, documentVersion)
 		if err != nil {
 			w.deleteStagingBranch(ctx, job, stagingBranchID)
 			return nil, fmt.Errorf("persist results (batch %d/%d): %w", i+1, len(batches), err)
@@ -456,6 +472,10 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	if stagingBranchID != nil && w.autoMergeEnabled(ctx, job.ProjectID) {
 		w.autoMergeExtractionBranch(ctx, job, *stagingBranchID)
 	}
+
+	// Emit a review-ready notification when extraction produced objects that were
+	// NOT auto-merged: the staging branch is left for a human reviewer to merge.
+	w.emitReviewReadyNotification(ctx, job, stagingBranchID, totalResult)
 
 	return totalResult, nil
 }
@@ -721,6 +741,7 @@ func (w *ObjectExtractionWorker) persistResults(
 	job *ObjectExtractionJob,
 	output *agents.ExtractionPipelineOutput,
 	stagingBranchID *uuid.UUID,
+	documentVersion int,
 ) (*ObjectExtractionResults, error) {
 	projectID, err := uuid.Parse(job.ProjectID)
 	if err != nil {
@@ -759,8 +780,19 @@ func (w *ObjectExtractionWorker) persistResults(
 
 		// Add extraction metadata
 		properties["_extraction_job_id"] = job.ID
-		if job.SourceID != nil {
+		if isDocumentSource(job) {
+			// Provenance is only meaningful for document-sourced extractions.
+			// `_source_id` seeds the legacy scalar on merge, while `_sources`
+			// stamps this job as the initial multi-source entry (with the source
+			// document's version) so later merges union sources across documents
+			// rather than overwrite a single scalar. All three keys are gated
+			// together so a chunk/manual job never leaves a bogus scalar that a
+			// later merge would backfill into `_sources`.
 			properties["_source_id"] = *job.SourceID
+			properties["_sources"] = buildSourcesArray(job, documentVersion)
+			if documentVersion > 0 {
+				properties["_document_version"] = documentVersion
+			}
 		}
 		if job.SourceType != nil {
 			properties["_extraction_source"] = *job.SourceType
@@ -894,6 +926,153 @@ func (w *ObjectExtractionWorker) stagingBranchName(job *ObjectExtractionJob) str
 		return fmt.Sprintf("extraction/%s/%s", docShort, jobShort)
 	}
 	return fmt.Sprintf("extraction/%s", jobShort)
+}
+
+// resolveDocumentVersion returns the source document's current version for
+// provenance stamping. A nil SourceID (e.g. manual source), a nil docService,
+// or a failed lookup yields 0, which omits the version field from provenance.
+func (w *ObjectExtractionWorker) resolveDocumentVersion(ctx context.Context, job *ObjectExtractionJob) int {
+	if w.docService == nil || job.SourceID == nil {
+		return 0
+	}
+	doc, err := w.docService.GetByID(ctx, job.ProjectID, *job.SourceID)
+	if err != nil {
+		w.log.Warn("failed to resolve document version for provenance",
+			slog.String("document_id", *job.SourceID),
+			logger.Error(err))
+		return 0
+	}
+	if doc == nil {
+		return 0
+	}
+	return doc.Version
+}
+
+// isDocumentSource reports whether a job carries a document source: an explicit
+// "document" source type plus a resolved source document ID. Only these jobs
+// stamp provenance, since a chunk/manual job has no meaningful source document.
+func isDocumentSource(job *ObjectExtractionJob) bool {
+	return job != nil &&
+		job.SourceType != nil && *job.SourceType == string(SourceTypeDocument) &&
+		job.SourceID != nil
+}
+
+// buildSourcesArray builds the initial `_sources` provenance array for a graph
+// object stamped by this extraction job. It mirrors the canonical entry shape
+// read by graph.mergeProvenanceProps: {"document_id", "document_version",
+// "job_id", "extracted_at"}. `extracted_at` is the job's creation time so the
+// stamp is deterministic and monotonic rather than depending on when the worker
+// happens to persist the object.
+func buildSourcesArray(job *ObjectExtractionJob, documentVersion int) []any {
+	if job.SourceID == nil {
+		return nil
+	}
+	extractedAt := job.CreatedAt
+	if extractedAt.IsZero() {
+		extractedAt = time.Now().UTC()
+	}
+	entry := map[string]any{
+		"document_id":  *job.SourceID,
+		"job_id":       job.ID,
+		"extracted_at": extractedAt.UTC().Format(time.RFC3339),
+	}
+	if documentVersion > 0 {
+		entry["document_version"] = documentVersion
+	}
+	return []any{entry}
+}
+
+// emitReviewReadyNotification fans a review-ready notification out to project
+// members when extraction left a staging branch open for manual review: objects
+// were created and the branch was not auto-merged. It is best-effort — failures
+// are logged and never fail the extraction job.
+func (w *ObjectExtractionWorker) emitReviewReadyNotification(ctx context.Context, job *ObjectExtractionJob, stagingBranchID *uuid.UUID, result *ObjectExtractionResults) {
+	if w.notificationsSvc == nil || stagingBranchID == nil || result == nil || result.ObjectsCreated == 0 {
+		return
+	}
+
+	branchID := stagingBranchID.String()
+
+	// Skip only when the branch has actually been merged (e.g. auto-merge ran
+	// before we emitted). An open — or even not-found — branch still needs a
+	// human reviewer, so it proceeds to notify. The old `autoMergeEnabled` gate
+	// is deliberately dropped: an opted-in project whose auto-merge failed still
+	// leaves the branch open and must alert.
+	if w.branchService != nil {
+		branch, err := w.branchService.GetByID(ctx, branchID, job.ProjectID)
+		if err == nil && branch != nil && branch.MergedAt != nil {
+			return
+		}
+	}
+
+	// Resolve the source document once to derive the display filename, version,
+	// and the review action URL. Only document-sourced jobs carry a document, so
+	// a manual/chunk job notifies with no action URL and a job-id message.
+	filename := ""
+	documentVersion := 0
+	var actionURL *string
+	if job.DocumentID != nil {
+		docID := *job.DocumentID
+		u := fmt.Sprintf("/documents/%s/extractions", docID)
+		actionURL = &u
+		if w.docService != nil {
+			if doc, err := w.docService.GetByID(ctx, job.ProjectID, docID); err == nil && doc != nil {
+				if doc.Filename != nil {
+					filename = *doc.Filename
+				}
+				documentVersion = doc.Version
+			}
+		}
+	}
+
+	groupKey := "extraction.review:" + job.ID
+	actionLabel := "Review merge"
+
+	detail := map[string]any{
+		"job_id":                job.ID,
+		"branch_id":             branchID,
+		"objects":               result.ObjectsCreated,
+		"relationships":         result.RelationshipsCreated,
+		"objects_created":       result.ObjectsCreated,
+		"relationships_created": result.RelationshipsCreated,
+		"document_version":      documentVersion,
+	}
+	if job.DocumentID != nil {
+		detail["document_id"] = *job.DocumentID
+	}
+	details, _ := json.Marshal(detail)
+
+	relatedType := "graph_branch"
+	relatedID := branchID
+	sourceType := "extraction_job"
+
+	title := fmt.Sprintf("Extraction ready for review (%d objects)", result.ObjectsCreated)
+	message := fmt.Sprintf("Extraction job %s produced %d objects and %d relationships, staged on a branch awaiting your review.",
+		job.ID, result.ObjectsCreated, result.RelationshipsCreated)
+	if filename != "" {
+		message = fmt.Sprintf("%s · %d objects, %d relationships", filename, result.ObjectsCreated, result.RelationshipsCreated)
+	}
+
+	if err := w.notificationsSvc.CreateForProjectMembers(ctx, job.ProjectID, notifications.CreateInput{
+		EventKey:            "extraction.review_ready",
+		Title:               title,
+		Message:             message,
+		Severity:            "info",
+		Importance:          "important",
+		SourceType:          &sourceType,
+		SourceID:            &job.ID,
+		RelatedResourceType: &relatedType,
+		RelatedResourceID:   &relatedID,
+		ActionURL:           actionURL,
+		ActionLabel:         &actionLabel,
+		GroupKey:            &groupKey,
+		Details:             details,
+	}); err != nil {
+		w.log.Warn("failed to emit review-ready notification",
+			slog.String("job_id", job.ID),
+			slog.String("branch_id", branchID),
+			logger.Error(err))
+	}
 }
 
 // deleteStagingBranch removes a staging branch that was created for a job that

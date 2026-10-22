@@ -221,6 +221,13 @@ func coreFxOptions() fx.Option {
 		fx.Provide(func(orgRepo *orgs.Repository) projects.OrgMembershipReader {
 			return orgRepo
 		}),
+
+		// Cross-domain wiring: resolve review-ready notifications when a staging
+		// branch is merged. The notifications service satisfies graph's
+		// BranchNotificationResolver interface directly (no adapter needed).
+		fx.Invoke(func(graphSvc *graph.Service, notifSvc *notifications.Service) {
+			graphSvc.WithBranchNotificationResolver(notifSvc)
+		}),
 	)
 }
 

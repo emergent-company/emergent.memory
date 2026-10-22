@@ -611,3 +611,65 @@ func (r *Repository) UpsertPreference(ctx context.Context, p *NotificationPrefer
 
 	return p, nil
 }
+
+// ListProjectMemberUserIDs returns the user ids of every member of a project
+// (kb.project_memberships). Producers use it to fan a single project event out
+// to one notification per member.
+func (r *Repository) ListProjectMemberUserIDs(ctx context.Context, projectID string) ([]string, error) {
+	var ids []string
+	err := r.db.NewSelect().
+		TableExpr("kb.project_memberships").
+		Column("user_id").
+		Where("project_id = ?", projectID).
+		Scan(ctx, &ids)
+	if err != nil && err != sql.ErrNoRows {
+		r.log.Error("failed to list project member user ids", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	return ids, nil
+}
+
+// ResolveByBranch marks every actionable, unresolved notification referencing a
+// staging branch as resolved. Called after a merge so review-ready alerts stop
+// demanding action once their branch is merged.
+func (r *Repository) ResolveByBranch(ctx context.Context, projectID, branchID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("action_status = ?", "resolved").
+		Set("action_status_at = ?", time.Now()).
+		Set("updated_at = ?", time.Now()).
+		Where("project_id = ?", projectID).
+		Where("related_resource_type = ?", "graph_branch").
+		Where("related_resource_id = ?", branchID).
+		Where("requires_action = true").
+		Where("action_status IS NULL").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to resolve branch notifications", logger.Error(err))
+		return apperror.NewDatabase("Database operation failed", err)
+	}
+	return nil
+}
+
+// ResolveResource marks every actionable, unresolved notification referencing a
+// resource as resolved, scoped to the given project. Returns the number of rows
+// affected. This backs the resolve-resource endpoint.
+func (r *Repository) ResolveResource(ctx context.Context, projectID, resourceType, resourceID string) (int64, error) {
+	result, err := r.db.NewUpdate().
+		Model((*Notification)(nil)).
+		Set("action_status = ?", "resolved").
+		Set("action_status_at = ?", time.Now()).
+		Set("updated_at = ?", time.Now()).
+		Where("project_id = ?", projectID).
+		Where("related_resource_type = ?", resourceType).
+		Where("related_resource_id = ?", resourceID).
+		Where("requires_action = true").
+		Where("action_status IS NULL").
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to resolve resource notifications", logger.Error(err))
+		return 0, apperror.NewDatabase("Database operation failed", err)
+	}
+	count, _ := result.RowsAffected()
+	return count, nil
+}

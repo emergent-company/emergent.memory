@@ -5,11 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/uptrace/bun"
 
+	"github.com/emergent-company/emergent.memory/domain/branches"
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/internal/testdb"
@@ -587,4 +589,211 @@ func TestMergeConflictCarriesActor(t *testing.T) {
 	require.Equal(t, graph.ActorAgent, *typ)
 	require.NotNil(t, id)
 	require.Equal(t, agentB, *id, "conflict-resolved main HEAD must carry the source (branch/agent B) actor")
+}
+
+// recordingBranchNotificationResolver records every ResolveByBranch call so a
+// test can assert whether (and for which branch) the resolver fired.
+type recordingBranchNotificationResolver struct {
+	calls []string
+}
+
+func (r *recordingBranchNotificationResolver) ResolveByBranch(_ context.Context, _, branchID string) error {
+	r.calls = append(r.calls, branchID)
+	return nil
+}
+
+// TestMergeBranchResolvesNotificationsOnlyOnFullMerge pins the merge-notification
+// contract: review-ready notifications are resolved and merged_at is stamped only
+// when the merge actually closes the source branch (nothing left for review, no
+// relationship conflicts). A partial merge keeps the branch open, so it must
+// neither resolve the notifications nor stamp merged_at.
+func TestMergeBranchResolvesNotificationsOnlyOnFullMerge(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	newRepo := func(db bun.IDB) *graph.Repository {
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		cfg := &config.Config{}
+		cfg.Graph.MaxListLimit = 100_000
+		return graph.NewRepository(db, log, cfg)
+	}
+
+	newService := func(db bun.IDB, repo *graph.Repository, resolver graph.BranchNotificationResolver) *graph.Service {
+		log := slog.New(slog.NewTextHandler(io.Discard, nil))
+		svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil)
+		return svc.WithBranchNotificationResolver(resolver)
+	}
+
+	mergedAtOf := func(db bun.IDB, branchID uuid.UUID) *time.Time {
+		var mergedAt *time.Time
+		err := db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, branchID).Scan(ctx, &mergedAt)
+		require.NoError(t, err)
+		return mergedAt
+	}
+
+	seedOrgProject := func(db bun.IDB, orgName, projName string) uuid.UUID {
+		orgID := uuid.NewString()
+		require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, orgName))
+		projectID := uuid.NewString()
+		require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+			ID: projectID, OrgID: orgID, Name: projName,
+		}, testutil.AdminUser.ID))
+		return uuid.MustParse(projectID)
+	}
+
+	t.Run("full merge resolves notifications and stamps merged_at", func(t *testing.T) {
+		tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_merge_notify_full")
+		t.Cleanup(tdb.Close)
+		db := tdb.GetDB()
+		projectID := seedOrgProject(db, "Merge Notify Full Org", "Merge Notify Full Project")
+
+		repo := newRepo(db)
+		resolver := &recordingBranchNotificationResolver{}
+		svc := newService(db, repo, resolver)
+
+		sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: projectID, Name: "full-branch"}
+		require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+		_, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+			Type: "FullObj", Key: strPtr("full-key"), BranchID: &sourceBranch.ID,
+		}, nil)
+		require.NoError(t, err)
+
+		resp, err := svc.MergeBranch(ctx, projectID, nil, &graph.BranchMergeRequest{
+			SourceBranchID: sourceBranch.ID, Execute: true, Policy: "enrich_no_sim",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 0, resp.LeftForReviewCount)
+
+		require.Len(t, resolver.calls, 1, "full merge must resolve the branch notifications")
+		require.Equal(t, sourceBranch.ID.String(), resolver.calls[0])
+		require.NotNil(t, mergedAtOf(db, sourceBranch.ID), "full merge must stamp merged_at")
+	})
+
+	t.Run("partial merge leaves notifications and merged_at alone", func(t *testing.T) {
+		tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_merge_notify_partial")
+		t.Cleanup(tdb.Close)
+		db := tdb.GetDB()
+		projectID := seedOrgProject(db, "Merge Notify Partial Org", "Merge Notify Partial Project")
+
+		repo := newRepo(db)
+		resolver := &recordingBranchNotificationResolver{}
+		svc := newService(db, repo, resolver)
+
+		// Create an object on main, diverge it on a fork so the merge has a
+		// canonical conflict; "partial" policy (preserve_target) leaves it for review.
+		created, err := svc.Create(ctx, projectID, &graph.CreateGraphObjectRequest{
+			Type: "PartialConf", Key: strPtr("partial-conf-key"), Properties: map[string]any{"v": 1},
+		}, nil)
+		require.NoError(t, err)
+		_, err = svc.Patch(ctx, projectID, created.ID, &graph.PatchGraphObjectRequest{Properties: map[string]any{"v": 2}}, nil)
+		require.NoError(t, err)
+
+		forkResp, err := svc.ForkBranch(ctx, projectID, nil, &graph.ForkBranchRequest{Name: "partial-branch"})
+		require.NoError(t, err)
+		forkBranchID := uuid.MustParse(forkResp.BranchID)
+		_, err = svc.Patch(ctx, projectID, created.ID, &graph.PatchGraphObjectRequest{
+			BranchID: &forkBranchID, Properties: map[string]any{"v": 3},
+		}, nil)
+		require.NoError(t, err)
+
+		resp, err := svc.MergeBranch(ctx, projectID, nil, &graph.BranchMergeRequest{
+			SourceBranchID: forkBranchID, Execute: true, Policy: "partial",
+		})
+		require.NoError(t, err)
+		require.Equal(t, 1, resp.LeftForReviewCount, "conflict must be left for review")
+
+		require.Empty(t, resolver.calls, "partial merge must not resolve the branch notifications")
+		require.Nil(t, mergedAtOf(db, forkBranchID), "partial merge must not stamp merged_at")
+	})
+}
+
+// TestMergeBranchExactKeyNoSimLeftForReview pins the exact-key reclassification
+// contract for presets whose SimilarityAction is empty ("manual",
+// "enrich_no_sim", "mine_no_sim"): a source object that shares a normalized
+// type+key with a target HEAD is reclassified "similar", and — because the empty
+// action means "no auto-action" — it must be LEFT FOR REVIEW, not silently
+// skipped. Before the fix, the applyMerge path skipped it while the dry-run
+// precompute did not count it, so leftForReview stayed 0 and the branch was
+// wrongly stamped merged (merged_at) and its review-ready notification resolved
+// even though nothing was actually merged.
+func TestMergeBranchExactKeyNoSimLeftForReview(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "integration test requires database")
+	}
+	ctx := context.Background()
+
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "graph_exact_key_nosim")
+	t.Cleanup(tdb.Close)
+	db := tdb.GetDB()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := &config.Config{}
+	cfg.Graph.MaxListLimit = 100_000
+	repo := graph.NewRepository(db, log, cfg)
+	resolver := &recordingBranchNotificationResolver{}
+	svc := graph.NewService(repo, log, nil, nil, nil, nil, nil, graph.NoopEventSink{}, branches.NewStore(db), nil).
+		WithBranchNotificationResolver(resolver)
+
+	orgID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestOrganization(ctx, db, orgID, "Exact Key Org"))
+	projectID := uuid.NewString()
+	require.NoError(t, testutil.CreateTestProject(ctx, db, testutil.TestProject{
+		ID: projectID, OrgID: orgID, Name: "Exact Key Project",
+	}, testutil.AdminUser.ID))
+	pid := uuid.MustParse(projectID)
+
+	mergedAtOf := func(branchID uuid.UUID) *time.Time {
+		var mergedAt *time.Time
+		require.NoError(t, db.NewRaw(`SELECT merged_at FROM kb.branches WHERE id = ?`, branchID).Scan(ctx, &mergedAt))
+		return mergedAt
+	}
+
+	// Target (main) already has an entity with this type+key.
+	_, err := svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type:       "Service",
+		Key:        strPtr("payment-service"),
+		Properties: map[string]any{"name": "Payments"},
+	}, nil)
+	require.NoError(t, err)
+
+	// Source branch extracts the SAME entity (same type+key) as a fresh object —
+	// a distinct canonical ID that the merge would otherwise treat as "added".
+	sourceBranch := &graph.Branch{ID: uuid.New(), ProjectID: pid, Name: "exact-key-src"}
+	require.NoError(t, repo.CreateBranch(ctx, sourceBranch))
+	_, err = svc.Create(ctx, pid, &graph.CreateGraphObjectRequest{
+		Type:       "Service",
+		Key:        strPtr("payment-service"),
+		BranchID:   &sourceBranch.ID,
+		Properties: map[string]any{"name": "Payment Service", "owner": "billing"},
+	}, nil)
+	require.NoError(t, err)
+
+	// enrich_no_sim → SimilarityAction == "", SimilarityEnabled == false. The
+	// exact-key path still fires; the empty action must leave it for review.
+	resp, err := svc.MergeBranch(ctx, pid, nil, &graph.BranchMergeRequest{
+		SourceBranchID: sourceBranch.ID,
+		Execute:        true,
+		Policy:         "enrich_no_sim",
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, 1, resp.LeftForReviewCount,
+		"exact-key match under empty SimilarityAction must be left for review, not silently skipped")
+
+	// The reclassified object must be flagged "similar" + "suggested" in the
+	// summary, matching what applyMerge does (skip, no absorb, no add).
+	var foundSuggested bool
+	for _, o := range resp.Objects {
+		if o.Status == "similar" && o.Resolution == "suggested" {
+			foundSuggested = true
+		}
+	}
+	require.True(t, foundSuggested, "reclassified object must carry status=similar, resolution=suggested")
+
+	// Nothing was merged → the branch must NOT be closed and its notification
+	// must NOT be resolved.
+	require.Empty(t, resolver.calls, "left-for-review merge must not resolve the branch notifications")
+	require.Nil(t, mergedAtOf(sourceBranch.ID), "left-for-review merge must not stamp merged_at")
 }

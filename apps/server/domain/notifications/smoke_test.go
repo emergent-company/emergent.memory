@@ -11,7 +11,7 @@ import (
 
 func TestRegisterRoutes(t *testing.T) {
 	e := echo.New()
-	h := notifications.NewHandler(&notifications.Service{})
+	h := notifications.NewHandler(&notifications.Service{}, &auth.Middleware{})
 	notifications.RegisterRoutes(e, h, &auth.Middleware{})
 
 	got := map[string]bool{}

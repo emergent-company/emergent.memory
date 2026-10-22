@@ -117,6 +117,12 @@ type DocumentVersion struct {
 	SourceRevisionID *string    `json:"sourceRevisionId,omitempty"`
 	SourceDeletedAt  *time.Time `json:"sourceDeletedAt,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
+
+	// Extraction metadata attributed to this specific version row (from
+	// kb.object_extraction_jobs where document_id = this version's id).
+	ExtractionJobs   int        `json:"extractionJobs"`
+	ObjectsCreated   int        `json:"objectsCreated"`
+	LastExtractionAt *time.Time `json:"lastExtractionAt,omitempty"`
 }
 
 // ApplySourceItemParams is the input to the provider-agnostic ingestion seam.

@@ -12,12 +12,13 @@ import (
 
 // Handler handles HTTP requests for notifications
 type Handler struct {
-	svc *Service
+	svc  *Service
+	auth *auth.Middleware
 }
 
 // NewHandler creates a new notifications handler
-func NewHandler(svc *Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *Service, authMiddleware *auth.Middleware) *Handler {
+	return &Handler{svc: svc, auth: authMiddleware}
 }
 
 // parseScope reads the scope query param, returning "" when absent or a 400
@@ -520,4 +521,65 @@ func (h *Handler) SavePreference(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, pref)
+}
+
+// resolveResourceRequest is the body for POST /api/notifications/resolve-resource.
+type resolveResourceRequest struct {
+	ResourceType string `json:"resourceType"`
+	ResourceID   string `json:"resourceId"`
+	ProjectID    string `json:"projectId"`
+}
+
+// ResolveResource handles POST /api/notifications/resolve-resource
+// @Summary      Resolve notifications for a resource
+// @Description  Marks all actionable, unresolved notifications referencing a resource as resolved. Used when a resource (e.g. a staging branch) is merged or otherwise actioned.
+// @Tags         notifications
+// @Produce      json
+// @Accept       json
+// @Param        body body resolveResourceRequest true "Resource to resolve"
+// @Success      200 {object} map[string]interface{} "Resolve confirmation with count"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/notifications/resolve-resource [post]
+// @Security     bearerAuth
+func (h *Handler) ResolveResource(c echo.Context) error {
+	var req resolveResourceRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	if req.ResourceType == "" || req.ResourceID == "" {
+		return apperror.NewBadRequest("resourceType and resourceId are required")
+	}
+
+	// Resolve the project scope: an explicit body project_id wins, otherwise fall
+	// back to the authenticated context's project (API-token project or
+	// X-Project-ID header). Scoping the update prevents a resolve-resource call
+	// from resolving another project's notifications.
+	projectID := req.ProjectID
+	if projectID == "" {
+		pid, err := auth.GetProjectID(c)
+		if err != nil {
+			return err
+		}
+		projectID = pid
+	}
+
+	// Authorize the addressed project before acting on it (issue #2041): the
+	// body projectId is caller-supplied and invisible to the shared
+	// RequireProjectTokenScope → RequireProjectMember pair, so a caller could
+	// otherwise resolve another project's actionable notifications. Mirror the
+	// events/invites handlers by authorizing the body-sourced project here.
+	if err := h.auth.AuthorizeProject(c, projectID); err != nil {
+		return err
+	}
+
+	count, err := h.svc.ResolveResource(c.Request().Context(), projectID, req.ResourceType, req.ResourceID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"status": "resolved",
+		"count":  count,
+	})
 }

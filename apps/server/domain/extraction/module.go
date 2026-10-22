@@ -16,6 +16,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/graph"
 	"github.com/emergent-company/emergent.memory/domain/mcp"
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/scheduler"
@@ -422,6 +423,7 @@ func provideObjectExtractionWorker(
 	log *slog.Logger,
 	monitor syshealth.Monitor,
 	limitResolver adk.ModelLimitResolver,
+	notificationsSvc *notifications.Service,
 ) *ObjectExtractionWorker {
 	workerConfig := &ObjectExtractionWorkerConfig{
 		PollInterval:      time.Duration(cfg.ObjectExtraction.WorkerIntervalMs) * time.Millisecond,
@@ -440,7 +442,8 @@ func provideObjectExtractionWorker(
 	// Wire shared cached embedding service into schema provider (for vector classification).
 	schemaProvider.WithEmbeddingService(cachedEmbeds)
 	return NewObjectExtractionWorker(jobs, graphService, branchService, docService, projectsRepo, schemaProvider, modelFactory, embeds, workerConfig, log, scaler).
-		WithLimitResolver(limitResolver)
+		WithLimitResolver(limitResolver).
+		WithNotifications(notificationsSvc)
 }
 
 // RegisterObjectExtractionWorkerLifecycle registers the object extraction worker with fx lifecycle
