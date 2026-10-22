@@ -17,7 +17,7 @@
         },
         "version": "0.87.4"
     },
-    "host": "localhost:5300",
+    "host": "localhost:3002",
     "basePath": "/",
     "paths": {
         "/.well-known/oauth-protected-resource": {
@@ -38639,6 +38639,14 @@
                     "type": "string"
                 },
                 "nextSyncAt": {
+                    "type": "string"
+                },
+                "oauthGrantedStrategy": {
+                    "description": "OAuthGrantedStrategy names the scope strategy the stored token was\nactually granted at connect, resolved from the token response's granted\nscope. It differs from OAuthStrategy, which reports the currently\nconfigured strategy: a source authorized under drive.file keeps its\ngranted strategy even after the org's configured strategy changes. Empty\nfor older sources connected before this was persisted, or when the token\ncarried only custom/unrecognised scopes.",
+                    "type": "string"
+                },
+                "oauthStrategy": {
+                    "description": "OAuthStrategy names the scope strategy this source effectively uses\n(resolved project → org → provider default). It is filled on the\nsingle-source read only, and only for OAuth providers; empty means the\nprovider default applies.",
                     "type": "string"
                 },
                 "projectId": {

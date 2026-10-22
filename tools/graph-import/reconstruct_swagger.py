@@ -147,7 +147,7 @@ swagger = {
         },
         "license": {"name": "Proprietary"}
     },
-    "host": cp.get("base_url", "localhost:5300").replace("https://", "").replace("http://", ""),
+    "host": cp.get("base_url", "localhost:3002").replace("https://", "").replace("http://", ""),
     "basePath": "/",
     "schemes": ["http", "https"],
     "paths": dict(sorted(paths.items())),

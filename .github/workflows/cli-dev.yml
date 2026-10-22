@@ -2,8 +2,9 @@ name: Memory CLI Dev
 
 # Dev channel: push to main touching apps/cli/** → rolling prerelease under the
 # fixed tag `cli-dev`, overwritten each build. The dev version embeds the short
-# commit sha so builds are identifiable. Cross-compiles on GitHub-hosted runners
-# (CGO disabled), so it never blocks on the self-hosted macOS runner.
+# commit sha so builds are identifiable. Cross-compiles on the self-hosted Linux
+# `memory` runners (CGO disabled), so it never needs a macOS runner or a runner
+# with Docker; keep that in mind when reasoning about runner capacity and egress.
 
 on:
   push:

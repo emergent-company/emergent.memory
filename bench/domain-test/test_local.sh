@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-API="http://localhost:5300"
+API="http://localhost:3002"
 KEY="${MEMORY_API_TOKEN:?MEMORY_API_TOKEN must be set}"
 PROJECT_ID="54be6136-8af3-47a1-9b36-7dbea67627ce"
 DEEPSEEK_KEY="${DEEPSEEK_KEY:?DEEPSEEK_KEY must be set}"

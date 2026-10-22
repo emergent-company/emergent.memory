@@ -16,7 +16,7 @@ This implementation exposes three core MCP capabilities:
 
 ```bash
 # Initialize session
-curl -X POST http://localhost:5300/api/mcp/rpc \
+curl -X POST http://localhost:3002/api/mcp/rpc \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-api-token>" \
   -d '{
@@ -31,7 +31,7 @@ curl -X POST http://localhost:5300/api/mcp/rpc \
   }'
 
 # List all resources
-curl -X POST http://localhost:5300/api/mcp/rpc \
+curl -X POST http://localhost:3002/api/mcp/rpc \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-api-token>" \
   -d '{
@@ -47,12 +47,12 @@ The SSE transport uses a two-step flow: open a persistent SSE stream, then POST 
 
 ```bash
 # Step 1 — Open SSE stream (replace <project-id> with your project UUID)
-curl -N "http://localhost:5300/api/mcp/sse/<project-id>" \
+curl -N "http://localhost:3002/api/mcp/sse/<project-id>" \
   -H "Authorization: Bearer <your-api-token>"
 # Server sends: event: endpoint\ndata: /api/mcp/sse/<project-id>/message?sessionId=<id>
 
 # Step 2 — POST JSON-RPC to the message endpoint
-curl -X POST "http://localhost:5300/api/mcp/sse/<project-id>/message?sessionId=<session-id>" \
+curl -X POST "http://localhost:3002/api/mcp/sse/<project-id>/message?sessionId=<session-id>" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <your-api-token>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
@@ -829,7 +829,7 @@ class EmergentMCP:
 
 # Usage
 client = EmergentMCP(
-    base_url="http://localhost:5300",
+    base_url="http://localhost:3002",
     api_key="your-api-token"
 )
 
@@ -901,7 +901,7 @@ class EmergentMCP implements MCPClient {
 
 // Usage
 const client = new EmergentMCP(
-  'http://localhost:5300',
+  'http://localhost:3002',
   'your-api-token'
 );
 

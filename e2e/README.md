@@ -10,7 +10,7 @@ These tests run inside a Docker container where the `memory` binary is built fro
 
 | Variable | Default | Description |
 |---|---|---|
-| `MEMORY_TEST_SERVER` | `http://test-emergent-server:5300` | URL of the Memory API server the tests run against. In Docker Compose the compose-internal hostname is used automatically; override to point at a different server. |
+| `MEMORY_TEST_SERVER` | `http://test-emergent-server:3002` | URL of the Memory API server the tests run against. In Docker Compose the compose-internal hostname is used automatically; override to point at a different server. |
 | `MEMORY_SERVER_IMAGE` | `ghcr.io/emergent-company/memory-server:latest` | Docker image used for the test server in the full-stack Docker Compose run. |
 | `MEMORY_PROD_TEST_TOKEN` | _(none)_ | Pre-issued API token for production smoke tests. Must be set as a repository secret in CI. When absent all `TestProduction_*` tests are skipped. |
 | `TEST_RUN` | _(none)_ | Optional `-run` filter passed to `go test`. Example: `TEST_RUN=TestCLIInstalled_Version`. When unset, all tests run. |

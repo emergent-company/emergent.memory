@@ -18,7 +18,7 @@
 # apps/server/pkg/sdk:
 #   docker build -f e2e/Dockerfile -t emergent-cli-test .
 #   docker run --rm \
-#     -e MEMORY_TEST_SERVER=http://host.docker.internal:5300 \
+#     -e MEMORY_TEST_SERVER=http://host.docker.internal:3002 \
 #     emergent-cli-test
 
 # ── Stage 1: build the memory CLI from the checked-out source ───────────────

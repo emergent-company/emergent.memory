@@ -72,8 +72,11 @@ def on_post_build(config):
             print(f"mkdocs-hook: WARNING {src} not found, skipping")
 
     # --- swagger spec files (swagger.json, swagger.yaml, openapi.json alias) ---
-    swagger_src = repo_root / "docs/swagger/swagger.json"
-    swagger_yaml_src = repo_root / "docs/swagger/swagger.yaml"
+    # The generated spec has a single home (apps/server/docs/swagger, produced by
+    # `task swagger`); the second copy under docs/ went stale and shipped a dead
+    # host/port to the site (#2024).
+    swagger_src = repo_root / "apps/server/docs/swagger/swagger.json"
+    swagger_yaml_src = repo_root / "apps/server/docs/swagger/swagger.yaml"
 
     for src, dst_name in [
         (swagger_src, "swagger.json"),

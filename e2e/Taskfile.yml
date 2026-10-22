@@ -384,7 +384,7 @@ tasks:
     dir: "{{.TASKFILE_DIR}}"
 
   test:rextract:
-    desc: "Run 5-episode Friends re-extraction test against local server (localhost:5300)"
+    desc: "Run 5-episode Friends re-extraction test against local server (localhost:3002)"
     deps: [runlog:start]
     cmds:
       - |
@@ -488,8 +488,8 @@ tasks:
           echo "  server: NOT RUNNING"
         fi
         echo ""
-        echo "=== Local dev server (localhost:5300) ==="
-        if curl -sf http://localhost:5300/health > /dev/null 2>&1; then
+        echo "=== Local dev server (localhost:3002) ==="
+        if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
           echo "  server: RUNNING"
         else
           echo "  server: NOT RUNNING"

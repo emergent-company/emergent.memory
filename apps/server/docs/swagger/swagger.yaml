@@ -9078,6 +9078,23 @@ definitions:
         type: string
       nextSyncAt:
         type: string
+      oauthGrantedStrategy:
+        description: |-
+          OAuthGrantedStrategy names the scope strategy the stored token was
+          actually granted at connect, resolved from the token response's granted
+          scope. It differs from OAuthStrategy, which reports the currently
+          configured strategy: a source authorized under drive.file keeps its
+          granted strategy even after the org's configured strategy changes. Empty
+          for older sources connected before this was persisted, or when the token
+          carried only custom/unrecognised scopes.
+        type: string
+      oauthStrategy:
+        description: |-
+          OAuthStrategy names the scope strategy this source effectively uses
+          (resolved project → org → provider default). It is filled on the
+          single-source read only, and only for OAuth providers; empty means the
+          provider default applies.
+        type: string
       projectId:
         type: string
       providerType:
@@ -10184,7 +10201,7 @@ definitions:
     additionalProperties:
       type: string
     type: object
-host: localhost:5300
+host: localhost:3002
 info:
   contact:
     email: support@emergent-company.ai

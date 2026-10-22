@@ -74,13 +74,13 @@ There is no hot reload for the docs service - this is by design for production p
 
 ```bash
 # List documents
-curl http://localhost:5300/api/docs | jq '.'
+curl http://localhost:3002/api/docs | jq '.'
 
 # Get specific document
-curl http://localhost:5300/api/docs/template-pack-creation | jq '.title'
+curl http://localhost:3002/api/docs/template-pack-creation | jq '.title'
 
 # Get categories
-curl http://localhost:5300/api/docs/categories | jq '.categories[].name'
+curl http://localhost:3002/api/docs/categories | jq '.categories[].name'
 ```
 
 ## Current Documents

@@ -34,7 +34,7 @@ RUN apk add --no-cache git ca-certificates tzdata
 WORKDIR /build/server
 
 # Install swag BEFORE source copy — cached until base image or version changes
-RUN go install github.com/swaggo/swag/cmd/swag@v1.16.4
+RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6
 
 # Copy go.mod/go.sum first for dependency caching
 # Also copy pkg/sdk go.mod/go.sum needed by the replace directive in apps/server/go.mod

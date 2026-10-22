@@ -4,7 +4,7 @@ Emergent Memory is the **single brain and store** for Memory. It already impleme
 everything Memory needs except voice. This file records what we depend on and how we
 address it.
 
-- **Repo:** `/root/emergent.memory` · Go, PostgreSQL 16 + pgvector · running on `:5300`
+- **Repo:** `/root/emergent.memory` · Go, PostgreSQL 16 + pgvector · running on `:3002`
 - **SDKs:** Go (29 service clients), Python (13 sub-clients), Swift
 
 ## Capabilities we depend on (all verified live, not spec-only)

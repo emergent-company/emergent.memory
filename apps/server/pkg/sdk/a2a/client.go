@@ -16,7 +16,7 @@
 //
 // Example usage:
 //
-//	client := a2a.NewClient("http://localhost:5300", "emt_abc123...")
+//	client := a2a.NewClient("http://localhost:3002", "emt_abc123...")
 //	card, err := client.ExtendedAgentCard(ctx)
 package a2a
 
@@ -68,7 +68,7 @@ type Client struct {
 }
 
 // NewClient creates a new A2A client.
-// base is the server URL (e.g. "http://localhost:5300").
+// base is the server URL (e.g. "http://localhost:3002").
 // token is the emt_* project API token.
 func NewClient(base, token string) *Client {
 	return &Client{

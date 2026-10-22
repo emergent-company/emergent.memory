@@ -25,7 +25,7 @@
                                               └──────────────────────┘
 ```
 
-**External services** (not in the Memory Compose): LiveKit (self-hosted), Memory (:5300),
+**External services** (not in the Memory Compose): LiveKit (self-hosted), Memory (:3002),
 LiteLLM (:4000), Deepgram + Cartesia (cloud APIs), ha-mcp / any user MCP servers.
 Deployment topology (hosts, published ports, credentials) is out-of-band; this
 document describes components and data flow.

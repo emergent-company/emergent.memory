@@ -7,7 +7,7 @@
 // @contact.url https://emergent-company.ai
 // @contact.email support@emergent-company.ai
 // @license.name Proprietary
-// @host localhost:5300
+// @host localhost:3002
 // @BasePath /
 // @schemes http https
 //
