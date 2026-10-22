@@ -43,6 +43,13 @@ export async function createProject(
  * Configure a project provider via the PRG form (POST /settings/providers/config).
  * Uses an official-API provider (deepseek/google) so there is no base_url
  * probe/test gate; the backend upserts the config and redirects on success.
+ *
+ * Redirects are NOT followed (`maxRedirects: 0`). The route is registered on the
+ * unscoped page path, so its PRG target comes back unscoped
+ * (`/settings/providers?updated=1`) — and an unscoped page GET is a hard 404
+ * (`strictScopedPath`), because only a *scoped* request gets its Location
+ * re-scoped by `scopeLocation`. Following the redirect therefore turned a
+ * successful save into a 404 and made this helper throw (#2031).
  */
 export async function configureProvider(
   page: Page,
@@ -52,7 +59,18 @@ export async function configureProvider(
 ): Promise<void> {
   const form: Record<string, string> = { provider, api_key: apiKey };
   if (baseUrl) form.base_url = baseUrl;
-  const resp = await page.request.post('/settings/providers/config', { form });
+  const resp = await page.request.post('/settings/providers/config', {
+    form,
+    maxRedirects: 0,
+  });
+  const status = resp.status();
+  if (status >= 300 && status < 400) {
+    const location = resp.headers()['location'] || '';
+    if (location.includes('updated=1')) return;
+    // Any other redirect (login bounce, unexpected PRG target) is a failure —
+    // never read it as success.
+    throw new Error(`configureProvider failed (HTTP ${status}, redirect to ${location || 'nowhere'})`);
+  }
   // A failed save re-renders the form with an error at HTTP 200 (not a redirect),
   // so check the body, not just the status.
   const body = await resp.text();
