@@ -50,7 +50,7 @@ Direct HTTP calls are allowed **only** when:
 
 1. **No CLI equivalent exists** -- e.g. `/api/admin/mcp-servers`, `/api/admin/orgs/*/tool-settings`, `/api/auth/issuer`, MCP JSON-RPC protocol calls.
 2. **The test specifically validates HTTP-level behavior** -- e.g. verifying SSE streaming protocol (meta/token/done events), verifying 401 on unauthenticated requests, verifying specific HTTP status codes or headers.
-3. **The test validates an API contract** -- tests in `tests-api/` intentionally test the HTTP API surface and are exempt from this rule.
+3. **The test validates an API contract** -- tests in `tests/api/` intentionally test the HTTP API surface and are exempt from this rule.
 
 When HTTP is used, it must still be logged via `rl.Event()` or `rl.CLIStep()` so it appears in the run log.
 

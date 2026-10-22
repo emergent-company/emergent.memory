@@ -20,7 +20,7 @@ This document provides comprehensive guidance for developing, deploying, and deb
 
 ### Prerequisites
 
-- Go 1.24+ (installed at `/usr/local/go/bin/go`)
+- Go 1.26.6+ — the version declared in `apps/server/go.mod` and the workspace `go.work` (installed at `/usr/local/go/bin/go`)
 - PostgreSQL 17 with pgvector extension
 - Docker (for dependencies)
 
@@ -181,20 +181,30 @@ task build    # local binary only — no swagger, no version ldflags
 ### Running Tests
 
 ```bash
-cd apps/server
+# From the repo root — the supported entry point
+task test:integration
 
-# Run all E2E tests
-POSTGRES_PASSWORD=your-password /usr/local/go/bin/go test ./tests/e2e/... -v -count=1
-
-# Run specific test suite
-POSTGRES_PASSWORD=your-password /usr/local/go/bin/go test ./tests/e2e/... -run "TestHealthSuite" -v
-
-# Run with race detection
-POSTGRES_PASSWORD=your-password /usr/local/go/bin/go test ./tests/e2e/... -race -v
-
-# Run with coverage
-POSTGRES_PASSWORD=your-password /usr/local/go/bin/go test ./tests/e2e/... -cover
+# Run a specific suite (CLI_ARGS are passed through to `go test`)
+task test:integration -- -run TestAgentCompatSuite
 ```
+
+The task expands to `cd apps/server && go test ./tests/integration/... -v -count=1`.
+DB-backed tests need a reachable Postgres. Without one they skip locally; set
+`REQUIRE_DB=1` (as CI does) to fail instead of skipping:
+
+```bash
+cd apps/server
+REQUIRE_DB=1 TEST_DATABASE_URL='postgres://emergent:test@localhost:5432/emergent?sslmode=disable' \
+  /usr/local/go/bin/go test ./tests/integration/... -v -count=1
+
+# Race detector / coverage, same package set
+REQUIRE_DB=1 /usr/local/go/bin/go test ./tests/integration/... -race -v
+REQUIRE_DB=1 /usr/local/go/bin/go test ./tests/integration/... -cover
+```
+
+The API e2e suites are separate, live at `e2e/tests/api` (module
+`github.com/emergent-company/emergent.memory/e2e`), and are driven by
+`task test:e2e` from the repo root.
 
 ### Test Structure
 
@@ -202,20 +212,13 @@ Tests use [testify](https://github.com/stretchr/testify) suites:
 
 ```go
 type ExampleSuite struct {
-    suite.Suite
-    ctx *testutil.E2EContext
-}
-
-func (s *ExampleSuite) SetupSuite() {
-    s.ctx = testutil.NewE2EContext(s.T())
-}
-
-func (s *ExampleSuite) TearDownSuite() {
-    s.ctx.Cleanup()
+    testutil.BaseSuite
 }
 
 func (s *ExampleSuite) TestSomething() {
-    // Test code
+    // s.Client, s.ProjectID, s.OrgID are ready; the DB is transaction-isolated.
+    resp := s.Client.GET("/api/something", testutil.WithAuth("e2e-test-user"))
+    s.Equal(http.StatusOK, resp.StatusCode)
 }
 
 func TestExampleSuite(t *testing.T) {
@@ -223,14 +226,17 @@ func TestExampleSuite(t *testing.T) {
 }
 ```
 
-### E2E Context
+### Base suite
 
-The `testutil.E2EContext` provides:
+`testutil.BaseSuite` (`internal/testutil/suite.go`) provides:
 
-- Database connection with test isolation
-- HTTP client for API requests
-- Authentication helpers
-- Cleanup utilities
+- Isolated test database per suite, with per-test transaction rollback
+- `s.Client` — HTTP client for API requests; set `TEST_SERVER_URL` to target an
+  already-running server instead of the in-process one
+- Common fixtures (`s.ProjectID`, `s.OrgID`) and request helpers
+  (`testutil.WithAuth`, `WithProjectID`, `WithBody`)
+- Environment contract: a missing database skips the suite locally but fails it
+  when `REQUIRE_DB=1`
 
 ## Database Migrations
 
@@ -549,7 +555,7 @@ spec:
 
    ```bash
    # Tests use their own schema isolation
-   POSTGRES_PASSWORD=... /usr/local/go/bin/go test ./tests/e2e/... -run "TestHealth" -v
+   REQUIRE_DB=1 /usr/local/go/bin/go test ./tests/integration/... -run "TestAgentCompat" -v
    ```
 
 2. **Check for port conflicts:**
