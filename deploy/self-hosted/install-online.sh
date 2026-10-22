@@ -340,7 +340,10 @@ if [ -f "${INSTALL_DIR}/docker/docker-compose.yml" ]; then
     echo -e "${GREEN}✓${NC} Images updated"
     
     echo -e "${CYAN}Restarting services...${NC}"
-    docker compose --env-file "${INSTALL_DIR}/config/.env.local" up -d
+    # --remove-orphans matches `memory server upgrade` (DockerManager.upArgs):
+    # a service removed between releases must not keep running, holding its port
+    # and RAM, just because this path forgot the flag (#2039).
+    docker compose --env-file "${INSTALL_DIR}/config/.env.local" up -d --remove-orphans
     echo -e "${GREEN}✓${NC} Services restarted"
     
     echo -e "${CYAN}Waiting for services to become healthy...${NC}"
@@ -500,6 +503,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
     deploy:
       resources:
         limits:
@@ -617,7 +621,10 @@ EOF
 echo ""
 echo -e "${CYAN}Starting services...${NC}"
 cd "${INSTALL_DIR}/docker"
-docker compose -f docker-compose.yml --env-file "${INSTALL_DIR}/config/.env.local" up -d
+# Same flag as the upgrade path above: a re-run over an existing install (the
+# installer is also the re-install path) must drop services the new compose file
+# no longer defines instead of leaving them as orphans (#2039).
+docker compose -f docker-compose.yml --env-file "${INSTALL_DIR}/config/.env.local" up -d --remove-orphans
 
 echo ""
 echo -e "${CYAN}Waiting for services to become healthy...${NC}"

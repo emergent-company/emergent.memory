@@ -131,6 +131,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
     deploy:
       resources:
         limits:
@@ -291,7 +292,7 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       tempo:
         condition: service_healthy
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3002/health']
+      test: ['CMD', 'curl', '-sf', 'http://localhost:3002/health']
       interval: 30s
       timeout: 10s
       retries: 3
