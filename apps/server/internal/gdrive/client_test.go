@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
 
@@ -112,6 +113,77 @@ func TestGetRevision(t *testing.T) {
 	rev, err := c.GetRevision(context.Background(), "file1")
 	require.NoError(t, err)
 	require.Equal(t, "rev-123", rev)
+}
+
+// TestGetRevisionGoogleNativeFallsBackToVersion covers Google Docs/Sheets/Slides,
+// for which Drive never populates headRevisionId.
+func TestGetRevisionGoogleNativeFallsBackToVersion(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/files/doc1" {
+			require.Contains(t, r.URL.Query().Get("fields"), "version")
+			fmt.Fprint(w, `{"id":"doc1","version":"7","modifiedTime":"2024-01-02T03:04:05.000Z"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c, err := NewWithHTTPClient(srv.Client(), option.WithEndpoint(srv.URL))
+	require.NoError(t, err)
+
+	rev, err := c.GetRevision(context.Background(), "doc1")
+	require.NoError(t, err)
+	require.Equal(t, "v:7", rev)
+}
+
+func TestRevisionFor(t *testing.T) {
+	tests := []struct {
+		name string
+		file drive.File
+		want string
+	}{
+		{name: "binary head revision wins", file: drive.File{HeadRevisionId: "rev-9", Version: 3}, want: "rev-9"},
+		{name: "google native falls back to version", file: drive.File{Version: 42}, want: "v:42"},
+		{name: "version is preferred over modified time", file: drive.File{Version: 7, ModifiedTime: "2024-01-02T03:04:05.000Z"}, want: "v:7"},
+		{name: "modified time is the last resort", file: drive.File{ModifiedTime: "2024-01-02T03:04:05.000Z"}, want: "mtime:2024-01-02T03:04:05.000Z"},
+		{name: "no revision signal", file: drive.File{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, revisionFor(&tt.file))
+		})
+	}
+}
+
+// TestListFolderItemsGoogleNativeRevision is the regression guard for the sync
+// bug where Google-native files carried an empty revision id, so the worker's
+// pre-filter compared "" with the stored "" and never re-fetched an edited doc.
+func TestListFolderItemsGoogleNativeRevision(t *testing.T) {
+	var fields string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fields = r.URL.Query().Get("fields")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"files":[`+
+			// Google-native Doc: no headRevisionId, only a version.
+			`{"id":"doc1","name":"Spec","mimeType":"application/vnd.google-apps.document","version":"42","trashed":false,"modifiedTime":"2024-01-02T03:04:05.000Z"},`+
+			// Binary file: headRevisionId is the revision.
+			fileJSON("pdf1", "Report", "application/pdf", "rev1")+`,`+
+			// Nothing to detect a change with.
+			`{"id":"mystery","name":"Mystery","mimeType":"application/pdf","trashed":false}]}`)
+	}))
+	defer srv.Close()
+
+	c, err := NewWithHTTPClient(srv.Client(), option.WithEndpoint(srv.URL))
+	require.NoError(t, err)
+
+	items, err := c.ListFolderItems(context.Background(), "root", nil, false, "")
+	require.NoError(t, err)
+	require.Len(t, items, 3)
+
+	require.Equal(t, "v:42", items[0].RevisionID, "google-native files must derive a revision from the file version")
+	require.Equal(t, "rev1", items[1].RevisionID, "binary files keep their head revision id")
+	require.Empty(t, items[2].RevisionID, "no revision signal must stay empty so the worker never skips on it")
+	require.Contains(t, fields, "version", "the list call must request version for the revision fallback")
 }
 
 func TestExportText(t *testing.T) {

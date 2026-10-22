@@ -216,7 +216,7 @@ func (c *Client) ListFolders(ctx context.Context, parentID, nameQuery string) ([
 			SupportsAllDrives(true).
 			IncludeItemsFromAllDrives(true).
 			PageSize(1000).
-			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,trashed,modifiedTime)")
+			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,version,trashed,modifiedTime)")
 		if pageToken != "" {
 			call = call.PageToken(pageToken)
 		}
@@ -262,7 +262,7 @@ func (c *Client) listChildren(ctx context.Context, folderID string, mimeTypes []
 			Q(q).
 			SupportsAllDrives(true).
 			IncludeItemsFromAllDrives(true).
-			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,trashed,modifiedTime)")
+			Fields("nextPageToken,files(id,name,mimeType,headRevisionId,version,trashed,modifiedTime)")
 		if sharedDriveID != "" {
 			call = call.DriveId(sharedDriveID)
 		}
@@ -285,8 +285,10 @@ func (c *Client) listChildren(ctx context.Context, folderID string, mimeTypes []
 	return files, nil
 }
 
-// GetRevision returns the item's head revision id (a cheap change-detection
-// pre-filter) by selecting only headRevisionId/version/modifiedTime.
+// GetRevision returns the item's change-detection revision (a cheap pre-filter)
+// by selecting only headRevisionId/version/modifiedTime. Google-native files
+// report no headRevisionId, so the version-based fallback from revisionFor
+// applies here too.
 func (c *Client) GetRevision(ctx context.Context, fileID string) (string, error) {
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
@@ -299,7 +301,7 @@ func (c *Client) GetRevision(ctx context.Context, fileID string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("google drive: get file revision %q: %w", fileID, err)
 	}
-	return f.HeadRevisionId, nil
+	return revisionFor(f), nil
 }
 
 // exportMime maps Google-native MIME types to a text export target the
@@ -398,8 +400,32 @@ func toItem(f *drive.File) Item {
 		ID:           f.Id,
 		Name:         f.Name,
 		MimeType:     f.MimeType,
-		RevisionID:   f.HeadRevisionId,
+		RevisionID:   revisionFor(f),
 		Trashed:      f.Trashed,
 		ModifiedTime: modTime,
 	}
+}
+
+// revisionFor derives the change-detection revision for a Drive item.
+//
+// Drive only populates headRevisionId for files with binary content; Google
+// native Docs, Sheets, and Slides never carry one (see the Drive v3 File
+// resource: "currently only available for files with binary content"). Those
+// are exactly the items the connector fetches via export, so an empty revision
+// would make every later sync compare "" against the stored "" and skip the
+// item forever. The file's monotonically increasing version number covers that
+// gap: Drive bumps it for every change made on the server, Google-native edits
+// included. modifiedTime is the last-resort signal, and an empty return means
+// "no revision signal" — callers must not treat it as an unchanged item.
+func revisionFor(f *drive.File) string {
+	if f.HeadRevisionId != "" {
+		return f.HeadRevisionId
+	}
+	if f.Version != 0 {
+		return fmt.Sprintf("v:%d", f.Version)
+	}
+	if f.ModifiedTime != "" {
+		return "mtime:" + f.ModifiedTime
+	}
+	return ""
 }

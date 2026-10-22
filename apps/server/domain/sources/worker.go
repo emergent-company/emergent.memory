@@ -244,16 +244,21 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		seen[item.ID] = true
 		processed++
 
-		// Cheap pre-filter: skip when the HEAD revision already matches. A HEAD
-		// marked deleted_from_source is never skipped — a revived item (e.g.
-		// restored from trash) may keep the same head revision and still needs
-		// ApplySourceItem to reactivate it.
-		if rev, ok := headRevs[item.ID]; ok && rev == item.RevisionID && !deletedHeads[item.ID] {
-			skipped++
-			if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
-				return w.failJob(ctx, job, err)
+		// Cheap pre-filter: skip when the HEAD revision already matches. It only
+		// applies when the provider reports a revision: a provider that reports
+		// none would otherwise compare "" against a stored "" and skip the item
+		// forever, so no revision means "fetch and let the text hash decide". A
+		// HEAD marked deleted_from_source is never skipped either — a revived
+		// item (e.g. restored from trash) may keep the same head revision and
+		// still needs ApplySourceItem to reactivate it.
+		if item.RevisionID != "" {
+			if rev, ok := headRevs[item.ID]; ok && rev == item.RevisionID && !deletedHeads[item.ID] {
+				skipped++
+				if err := w.svc.repo.UpdateSyncJobProgress(ctx, job.ID, progress(nil, nil)); err != nil {
+					return w.failJob(ctx, job, err)
+				}
+				continue
 			}
-			continue
 		}
 
 		content, mimeType, err := connector.Fetch(ctx, item)

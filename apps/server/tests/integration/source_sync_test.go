@@ -270,6 +270,50 @@ func (s *SourceSyncSuite) TestSyncIngestsChangedItem() {
 	s.Require().Equal(1, dto.SuccessfulItems)
 }
 
+// TestSyncEmptyRevisionIsNotSkipped is the regression guard for Google-native
+// Docs: Drive reports no headRevisionId for them, so both the stored revision
+// and the reported revision were empty. The pre-filter treated that as
+// "unchanged" and never re-fetched an edited document, so no next version was
+// ever created. No revision signal must mean "fetch and let the parsed-text
+// hash decide".
+func (s *SourceSyncSuite) TestSyncEmptyRevisionIsNotSkipped() {
+	svc := s.newService()
+	sourceID := s.createSource(svc, nil)
+	docsSvc := s.newDocsService()
+	r1, err := docsSvc.ApplySourceItem(s.Ctx, documents.ApplySourceItemParams{
+		ProjectID:  s.ProjectID,
+		SourceID:   sourceID,
+		ExternalID: "doc-1",
+		RevisionID: "",
+		Filename:   "Spec",
+		MimeType:   "application/vnd.google-apps.document",
+		Content:    "first export of the google doc",
+	})
+	s.Require().NoError(err)
+	s.Require().True(r1.Created)
+
+	resp := s.trigger(svc, sourceID)
+	s.Require().True(resp.Success)
+	jobID := uuid.MustParse(*resp.JobID)
+
+	fake := &fakeDrive{
+		items:      []gdrive.Item{{ID: "doc-1", Name: "Spec", MimeType: "application/vnd.google-apps.document", RevisionID: ""}},
+		exportText: map[string]string{"doc-1": "second export of the google doc, edited"},
+	}
+	s.Require().NoError(s.newWorker(fake).RunOnce(s.Ctx))
+
+	s.Require().Equal([]string{"doc-1"}, fake.exported(), "an item with no revision must still be fetched")
+
+	versions, err := docsSvc.GetVersionHistory(s.Ctx, s.ProjectID, r1.DocumentID)
+	s.Require().NoError(err)
+	s.Require().Len(versions, 2, "edited content must append a version")
+
+	dto, err := svc.GetSyncJob(s.Ctx, s.projectUUID(), uuid.MustParse(sourceID), jobID)
+	s.Require().NoError(err)
+	s.Require().Equal(0, dto.SkippedItems)
+	s.Require().Equal(1, dto.SuccessfulItems)
+}
+
 func (s *SourceSyncSuite) TestSyncPerItemFailureDoesNotAbort() {
 	svc := s.newService()
 	sourceID := s.createSource(svc, nil)
