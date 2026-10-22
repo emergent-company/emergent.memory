@@ -16,6 +16,12 @@ run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
 # SHA alone would turn a rejection into an approval; the guard requires the
 # latest trusted marker to name the head *and* say `MERGE`.
 #
+# A rejection is also binding without a SHA line: any trusted verdict comment
+# newer than the approving marker that is not `MERGE` blocks the merge, so
+# declining without naming a head still stops it. Verdict lines are matched after
+# stripping markdown decoration, and any non-MERGE verdict in a comment outranks
+# a quoted approval template.
+#
 # The guard passes only when the most recent TRUSTED marker equals the PR head.
 # A marker is trusted only when its author is OWNER/COLLABORATOR or their
 # immutable user id is in the MERGE_GUARD_TRUSTED_USER_IDS repository variable
@@ -86,14 +92,19 @@ jobs:
                 or ((.user.id | tostring) as $id | ($allow | index($id)) != null)
               )
             | select(.body | test("(?m)^Reviewed-SHA: [0-9a-f]{40}[ \\t\\r]*$"))
+            | (.body | split("\n")
+                | map(gsub("^[\\s>#*_`•-]+"; "") | gsub("[\\s*_`.,;:!]+$"; ""))
+                | map(select(test("^(?i)verdict:[ \\t]*[A-Za-z_ ]+$")))
+                | map(capture("^(?i)verdict:[ \\t]*(?<v>[A-Za-z_ ]+)").v | gsub("[ \\t]+$"; ""))
+              ) as $verdicts
             | {
                 created_at: .created_at,
                 sha: (.body | split("\n") | map(select(test("^Reviewed-SHA: [0-9a-f]{40}[ \\t\\r]*$"))) | last | capture("^Reviewed-SHA: (?<sha>[0-9a-f]{40})").sha),
+                # A non-MERGE verdict anywhere in the comment outranks a quoted
+                # approval template, so a rejection cannot approve by pasting it.
                 verdict: (
-                  .body | split("\n")
-                  | map(select(test("^(?i)verdict:[ \\t]*[A-Za-z_]+[ \\t\\r]*$")))
-                  | last
-                  | if . == null then "" else capture("^(?i)verdict:[ \\t]*(?<v>[A-Za-z_]+)").v end
+                  ($verdicts | map(select((ascii_upcase) != "MERGE"))) as $bad
+                  | if ($bad | length) > 0 then $bad[0] else ($verdicts | last // "") end
                 ),
                 url: .html_url
               }
@@ -101,6 +112,39 @@ jobs:
           | sort_by(.created_at)
           | last
           | if . == null then empty else "\(.sha)\t\(.verdict)\t\(.created_at)\t\(.url)" end
+          JQ
+
+          # A reviewer can reject without naming a head: post `Verdict:
+          # CHANGES_REQUESTED` on its own. Such a comment carries no
+          # `Reviewed-SHA:` line, so the marker projection above never sees it and
+          # an earlier approval would stand. Any trusted verdict comment newer
+          # than the marker that is not MERGE therefore blocks the merge.
+          read -r -d '' BLOCKER_JQ <<'JQ' || true
+          ($trusted_ids // "" | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $allow
+          | [
+            .[]
+            | select(
+                .author_association == "OWNER"
+                or .author_association == "COLLABORATOR"
+                or ((.user.id | tostring) as $id | ($allow | index($id)) != null)
+              )
+            | (.body | split("\n")
+                | map(gsub("^[\\s>#*_`•-]+"; "") | gsub("[\\s*_`.,;:!]+$"; ""))
+                | map(select(test("^(?i)verdict:[ \\t]*[A-Za-z_ ]+$")))
+                | map(capture("^(?i)verdict:[ \\t]*(?<v>[A-Za-z_ ]+)").v | gsub("[ \\t]+$"; ""))
+              ) as $verdicts
+            | {
+                created_at: .created_at,
+                verdict: ($verdicts | map(select((ascii_upcase) != "MERGE")) | if length > 0 then .[0] else "" end),
+                url: .html_url
+              }
+            | select(.verdict != "")
+            | select(.created_at > $after)
+            | select((.verdict | ascii_upcase) != "MERGE")
+            ]
+          | sort_by(.created_at)
+          | last
+          | if . == null then empty else "\(.verdict)\t\(.created_at)\t\(.url)" end
           JQ
 
           comments=$(mktemp)
@@ -178,6 +222,39 @@ jobs:
               echo "then re-run this workflow for the current head."
             } >>"${GITHUB_STEP_SUMMARY}"
             echo "::error::Marker ${marker_sha} is not an approval (verdict: ${marker_verdict:-absent})."
+            exit 1
+          fi
+
+          # A rejection posted without a Reviewed-SHA line (reviewers may decline
+          # to name a head) must not leave an earlier approval standing.
+          blocker=$(jq -s -r --arg trusted_ids "${TRUSTED_IDS:-}" --arg after "${marker_at}" "${BLOCKER_JQ}" "${comments}") || {
+            echo "::error::cannot parse PR comments"
+            exit 1
+          }
+          if [[ -n "${blocker}" ]]; then
+            blocker_verdict=${blocker%%$'\t'*}
+            blocker_rest=${blocker#*$'\t'}
+            blocker_at=${blocker_rest%%$'\t'*}
+            blocker_url=${blocker_rest#*$'\t'}
+            {
+              echo "### Merge guard: a later trusted verdict blocks this head"
+              echo
+              echo "Head \`${HEAD}\` matches the approving marker (${marker_url}), but a trusted"
+              echo "review comment at \`${blocker_at}\` says \`${blocker_verdict}\`:"
+              echo "${blocker_url}"
+              echo
+              echo "A rejection does not need a \`Reviewed-SHA:\` line to be binding, so a"
+              echo "verdict newer than the approval blocks the merge. Re-review the delta,"
+              echo "then comment:"
+              echo
+              echo '```'
+              echo "Reviewed-SHA: ${HEAD}"
+              echo "Verdict: MERGE"
+              echo '```'
+              echo
+              echo "and re-run this workflow."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            echo "::error::A trusted comment at ${blocker_at} says ${blocker_verdict}; it is newer than the approving marker."
             exit 1
           fi
 
