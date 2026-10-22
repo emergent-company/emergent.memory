@@ -478,7 +478,7 @@ Added to `buildTypeDiscoveryPrompt` in `apps/server/domain/discoveryjobs/service
 
 ### LoCoMo quota issue
 
-smoke-v3 used Google AI as the LLM backend. After 27 questions the quota was exhausted. Switch to `MEMORY_LLM_MODEL=deepseek-v4-flash` or configure `OPENAI_API_KEY` pointing to DeepSeek endpoint for all benchmark runs. The DeepSeek key is already set in the server env (`sk-749cd91dcfa44c0280740c0726423966`).
+smoke-v3 used Google AI as the LLM backend. After 27 questions the quota was exhausted. Switch to `MEMORY_LLM_MODEL=deepseek-v4-flash` or configure `OPENAI_API_KEY` pointing to DeepSeek endpoint for all benchmark runs. The DeepSeek key is already set in the server env (`OPENAI_API_KEY` against the DeepSeek endpoint) and is never recorded in the repo.
 
 ### Relationship discovery gate
 

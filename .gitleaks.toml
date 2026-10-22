@@ -22,9 +22,8 @@ entropy     = 2.5
 # historical tokens were lowercase hex; the rule accepts the full base62
 # shape). The rule above does not match them, which is why the token leaked in
 # `commands.sh` survived the secret scan (infra tracking issue #37). Match the
-# full legacy shape so
-# test fixtures such as `emt_test_*` and other short `emt_` literals do not
-# produce false positives.
+# full legacy shape so test fixtures such as `emt_test_*` and other short `emt_`
+# literals do not produce false positives.
 #
 # Deliberately no entropy gate: the exact 64-character anchor already excludes
 # short fixtures, while an entropy threshold rejects a large fraction of real
@@ -35,6 +34,20 @@ id          = "emergent-memory-legacy-token"
 description = "emergent.memory legacy project/API token (emt_ prefix, 68 chars)"
 regex       = '''\b(emt_[A-Za-z0-9]{64})\b'''
 keywords    = ["emt_"]
+
+# Provider keys with no assignment context. The default ruleset catches an `sk-`
+# key only when it reads like an assignment (`api_key = "sk-..."`, via
+# `generic-api-key`); a bare token in prose matches nothing at any length, and no
+# provider rule knows the DeepSeek shape (`sk-` + 32 hex). One sat in
+# docs/evaluation/discovery-extraction-locomo.md that way. Keywords keep the rule
+# off unrelated prose; the hex-only body keeps the false-positive rate down, and
+# the global allowlists below cover test fixtures.
+[[rules]]
+id          = "deepseek-api-key"
+description = "DeepSeek API key (sk- followed by 32 hex characters)"
+regex       = '''\b(sk-[a-f0-9]{32})\b'''
+keywords    = ["sk-"]
+entropy     = 3.0
 
 # ── Global allowlists ────────────────────────────────────────────────────────
 
