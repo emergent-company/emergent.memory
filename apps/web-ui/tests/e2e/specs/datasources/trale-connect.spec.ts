@@ -116,6 +116,70 @@ test.describe('Trale data source', () => {
     expect(await resp.text()).toContain('config.name_pattern is not a valid regular expression:');
   });
 
+  test('rejects a JS-only name_pattern construct (RE2 has no lookbehind)', async ({ page }) => {
+    // `(?<=x)y` is a lookbehind: JS RegExp accepts it but Go RE2 rejects it, so
+    // the mock must reject it too (server-shaped error). This pins the RE2
+    // approximation — without it, a JS-only pattern would pass the mock and fail
+    // on the real server.
+    const resp = await page.request.post('/api/data-source-integrations', {
+      data: {
+        name: `e2e-trale-${Date.now()}`,
+        providerType: 'trale',
+        sourceType: 'meeting',
+        config: { tags: ['standup'], name_pattern: '(?<=x)y' },
+      },
+    });
+    expect(resp.ok(), await resp.text()).toBe(false);
+    expect(await resp.text()).toContain('config.name_pattern is not a valid regular expression:');
+  });
+
+  test('rejects a backreference ending in 8 or 9, which RE2 refuses', async ({ page }) => {
+    // `\18` is not a valid JS backreference (it needs a group 18) but it *is*
+    // an escape Go rejects, because a trailing 8 is not an octal digit: RE2
+    // accepts `\128` and refuses `\18`. Pin that edge so the mock cannot drift
+    // back to accepting it while claiming to model RE2.
+    const resp = await page.request.post('/api/data-source-integrations', {
+      data: {
+        name: `e2e-trale-${Date.now()}`,
+        providerType: 'trale',
+        sourceType: 'meeting',
+        config: { tags: ['standup'], name_pattern: '\\18' },
+      },
+    });
+    expect(resp.ok(), await resp.text()).toBe(false);
+    expect(await resp.text()).toContain('config.name_pattern is not a valid regular expression:');
+  });
+
+  test('never echoes Trale credential material on read', async ({ page }) => {
+    // The create fixture mirrors a full Trale token exchange (expires_at,
+    // token_endpoint, resource, scope in addition to the token pair). The read
+    // payload must strip the whole write-only set, so assert each extra key is
+    // absent from the JSON API read and that no token value leaks into the page.
+    const src = await createTraleSource(page, { name: `e2e-trale-${Date.now()}` });
+    try {
+      const resp = await page.request.get(`/api/data-source-integrations/${src.id}`);
+      expect(resp.ok(), await resp.text()).toBe(true);
+      const body = (await resp.json()) as { config?: Record<string, unknown> };
+      const config = body.config ?? {};
+      for (const key of ['expires_at', 'token_endpoint', 'resource', 'scope']) {
+        expect(config, `read config must not echo ${key}`).not.toHaveProperty(key);
+      }
+      expect(JSON.stringify(body)).not.toContain('e2e-trale-token');
+      expect(JSON.stringify(body)).not.toContain('e2e-trale-refresh');
+
+      // The edit page renders the same stripped config: no credential field or
+      // value surfaces.
+      await page.goto(`/data-sources/${src.id}`);
+      await expect(page.getByTestId('ds-edit-form')).toBeVisible();
+      const html = await page.content();
+      expect(html).not.toContain('e2e-trale-token');
+      expect(html).not.toContain('e2e-trale-refresh');
+      expect(html).not.toContain('https://app.trale.ai/api/mcp');
+    } finally {
+      await deleteDriveSource(page, src.id);
+    }
+  });
+
   test('rejects a non-integer backfill_days', async ({ page }) => {
     const resp = await page.request.post('/api/data-source-integrations', {
       data: {

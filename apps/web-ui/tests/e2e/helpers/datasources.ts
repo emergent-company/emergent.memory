@@ -129,9 +129,16 @@ export async function createTraleSource(
         backfill_days: opts.backfillDays ?? 30,
         include_transcript: opts.includeTranscript ?? true,
         // OAuth credential material the connect flow stores; the mock strips it
-        // from read responses exactly like the server does.
+        // from read responses exactly like the server does. Mirrors a full Trale
+        // token exchange (the server's write-only set — access_token, refresh_token,
+        // expires_at, client_id, token_endpoint, resource, scope), so the spec can
+        // assert the *extra* keys are stripped too, not just the token pair.
         access_token: 'e2e-trale-token',
         refresh_token: 'e2e-trale-refresh',
+        expires_at: '2026-10-22T00:00:00Z',
+        token_endpoint: 'https://example.invalid/oauth/token',
+        resource: 'https://app.trale.ai/api/mcp',
+        scope: 'openid email profile',
       },
     },
   });

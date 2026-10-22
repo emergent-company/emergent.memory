@@ -410,7 +410,24 @@ let dsJobCounter = 1;
 
 // dsIntegration projects a stored source: the row plus its non-secret config
 // (credential keys stripped). Credentials never leave here.
-const dsCredentialKeys = ["client_id", "client_secret", "refresh_token", "access_token"];
+//
+// Write-only credential keys, stripped from every read response. This is the
+// union of the legacy/OAuth client keys and Trale's extra write-only set — the
+// server's traleCredentialKeyNames is access_token/refresh_token/expires_at/
+// client_id/token_endpoint/resource/scope (apps/server/domain/sources/
+// trale_provider.go); client_secret covers the OAuth-client editor surface. Any
+// provider whose stored config can carry a secret must list that key here or it
+// leaks on read.
+const dsCredentialKeys = [
+  "client_id",
+  "client_secret",
+  "refresh_token",
+  "access_token",
+  "expires_at",
+  "token_endpoint",
+  "resource",
+  "scope",
+];
 const dsIntegration = (src) => {
   const config = {};
   for (const [k, v] of Object.entries(src.config || {})) {
@@ -418,6 +435,30 @@ const dsIntegration = (src) => {
   }
   return { ...src.row, config };
 };
+
+// re2Incompatibility approximates the Go RE2 restriction set the server applies
+// when it compiles `name_pattern` (regexp.Compile — see apps/server/domain/
+// sources/trale_connector.go). JavaScript's RegExp accepts Perl constructs RE2
+// rejects, so a pattern that passes a JS-only check could still fail on the real
+// server. Reject the two divergences a UI could plausibly submit — lookaround
+// and backreferences — while leaving named groups alone: Go 1.22+ RE2 accepts
+// both `(?<name>…)` and `(?P<name>…)` (and JS already rejects `(?P<name>…)` on
+// its own). Returns a reason string, or null when RE2 would accept the pattern.
+function re2Incompatibility(pattern) {
+  // Lookahead/lookbehind: `(?=`, `(?!`, `(?<=`, `(?<!` — RE2 has none of these.
+  if (/\(\?(?:[=!]|<[=!])/.test(pattern)) {
+    return "lookahead/lookbehind are not supported by RE2";
+  }
+  // Backreferences `\1`…`\9`: a single digit after a backslash is a JS
+  // backreference but RE2 rejects it as an "invalid escape sequence". Exclude
+  // `\NN`/`\NNN` octal (valid in both) by requiring no second OCTAL digit — a
+  // trailing 8/9 is not an octal digit, so `\18`/`\79` are rejected like Go
+  // does, while `\128`/`\178` (three octal digits) are left alone.
+  if (/\\(?:[89]|[1-7](?![0-7]))/.test(pattern)) {
+    return "backreferences are not supported by RE2";
+  }
+  return null;
+}
 
 // dsNewSyncJob prepends a job to a source's history.
 function dsNewSyncJob(sourceID, status, extra) {
@@ -1116,6 +1157,14 @@ const server = http.createServer((req, res) => {
           } catch (err) {
             res.statusCode = 422;
             return json(res, { error: { code: "validation_error", message: "config.name_pattern is not a valid regular expression: " + err.message } });
+          }
+          // JS compiled it, but the server validates with RE2 (regexp.Compile),
+          // which is stricter. Reject the RE2-unsupported constructs so the mock
+          // is never more permissive than the real server.
+          const re2 = re2Incompatibility(config.name_pattern);
+          if (re2) {
+            res.statusCode = 422;
+            return json(res, { error: { code: "validation_error", message: "config.name_pattern is not a valid regular expression: " + re2 } });
           }
         }
         if (config.backfill_days !== undefined && config.backfill_days !== null) {
