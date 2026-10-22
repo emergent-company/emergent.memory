@@ -71,6 +71,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # GITHUB_STEP_SUMMARY is per-step, so this step cannot hand its text to
+          # the publish step through it. Write to a file in RUNNER_TEMP and pass
+          # the path on as a step output.
+          SUMMARY="${RUNNER_TEMP}/merge-guard-summary.md"
+          : >"${SUMMARY}"
+          echo "summary_path=${SUMMARY}" >>"${GITHUB_OUTPUT}"
+
           if [[ -z "${HEAD}" ]]; then
             HEAD=$(gh api "repos/${REPO}/pulls/${PR}" --jq '.head.sha')
           fi
@@ -168,7 +175,7 @@ jobs:
               echo '```'
               echo
               echo "then re-run this workflow for the current head."
-            } >>"${GITHUB_STEP_SUMMARY}"
+            } >>"${SUMMARY}"
             echo "::error::No trusted Reviewed-SHA marker for PR #${PR}."
             exit 1
           fi
@@ -195,7 +202,7 @@ jobs:
               echo '```'
               echo
               echo "and re-run this workflow for the current head."
-            } >>"${GITHUB_STEP_SUMMARY}"
+            } >>"${SUMMARY}"
             echo "::error::Marker ${marker_sha} does not match head ${HEAD}."
             exit 1
           fi
@@ -220,7 +227,7 @@ jobs:
               echo '```'
               echo
               echo "then re-run this workflow for the current head."
-            } >>"${GITHUB_STEP_SUMMARY}"
+            } >>"${SUMMARY}"
             echo "::error::Marker ${marker_sha} is not an approval (verdict: ${marker_verdict:-absent})."
             exit 1
           fi
@@ -253,7 +260,7 @@ jobs:
               echo '```'
               echo
               echo "and re-run this workflow."
-            } >>"${GITHUB_STEP_SUMMARY}"
+            } >>"${SUMMARY}"
             echo "::error::A trusted comment at ${blocker_at} says ${blocker_verdict}; it is newer than the approving marker."
             exit 1
           fi
@@ -262,7 +269,7 @@ jobs:
             echo "### Merge guard: pass"
             echo
             echo "Head \`${HEAD}\` matches the latest trusted review marker (${marker_url})."
-          } >>"${GITHUB_STEP_SUMMARY}"
+          } >>"${SUMMARY}"
           echo "merge-guard: head ${HEAD} matches marker ${marker_url}"
 
       - name: Publish the merge-guard check on the PR head
@@ -274,6 +281,7 @@ jobs:
           PR: ${{ github.event.pull_request.number || inputs.pr }}
           HEAD: ${{ github.event.pull_request.head.sha || '' }}
           OUTCOME: ${{ steps.verify.outcome }}
+          SUMMARY_PATH: ${{ steps.verify.outputs.summary_path }}
         run: |
           set -euo pipefail
 
@@ -282,8 +290,15 @@ jobs:
           fi
           HEAD=$(printf '%s' "${HEAD}" | tr '[:upper:]' '[:lower:]')
 
-          summary=$(head -c 60000 "${GITHUB_STEP_SUMMARY}" 2>/dev/null || true)
-          [[ -n "${summary}" ]] || summary="merge-guard produced no summary."
+          # The verify step writes its summary to a file: GITHUB_STEP_SUMMARY is
+          # unique per step, so reading it here always yielded the placeholder.
+          if [[ -n "${SUMMARY_PATH:-}" && -s "${SUMMARY_PATH}" ]]; then
+            summary=$(head -c 60000 "${SUMMARY_PATH}")
+            cat "${SUMMARY_PATH}" >>"${GITHUB_STEP_SUMMARY}"
+          else
+            summary="merge-guard failed before producing a summary; read the 'Verify the reviewed SHA matches the head' step log."
+          fi
+          [[ -n "${summary}" ]] || summary="merge-guard produced an empty summary."
 
           conclusion=success
           title="merge-guard: pass"
