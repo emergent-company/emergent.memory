@@ -68,8 +68,14 @@ tasks:
 
   swagger:
     desc: Generate swagger docs
+    vars:
+      # Derived from go.mod, so the generator always matches the compiled
+      # github.com/swaggo/swag library (the same rule as the Makefile and both
+      # Dockerfiles). awk keeps Task's own {{...}} templating out of the -f flag.
+      SWAG_VERSION:
+        sh: go list -m github.com/swaggo/swag | awk '{print $2}'
     cmds:
-      - swag init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+      - go run github.com/swaggo/swag/cmd/swag@{{.SWAG_VERSION}} init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
 
   swagger:check:
     desc: Check swagger annotations

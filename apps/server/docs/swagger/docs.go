@@ -9989,6 +9989,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/notifications/resolve-resource": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Marks all actionable, unresolved notifications referencing a resource as resolved. Used when a resource (e.g. a staging branch) is merged or otherwise actioned.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "summary": "Resolve notifications for a resource",
+                "parameters": [
+                    {
+                        "description": "Resource to resolve",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_notifications.resolveResourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Resolve confirmation with count",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/notifications/stats": {
             "get": {
                 "security": [
@@ -30037,8 +30089,18 @@ const docTemplate = `{
                 "createdAt": {
                     "type": "string"
                 },
+                "extractionJobs": {
+                    "description": "Extraction metadata attributed to this specific version row (from\nkb.object_extraction_jobs where document_id = this version's id).",
+                    "type": "integer"
+                },
                 "id": {
                     "type": "string"
+                },
+                "lastExtractionAt": {
+                    "type": "string"
+                },
+                "objectsCreated": {
+                    "type": "integer"
                 },
                 "sourceDeletedAt": {
                     "type": "string"
@@ -34427,6 +34489,20 @@ const docTemplate = `{
                 "ScopeProject"
             ]
         },
+        "domain_notifications.resolveResourceRequest": {
+            "type": "object",
+            "properties": {
+                "projectId": {
+                    "type": "string"
+                },
+                "resourceId": {
+                    "type": "string"
+                },
+                "resourceType": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_notifications.setPreferenceRequest": {
             "type": "object",
             "properties": {
@@ -38782,6 +38858,10 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "selfRegistering": {
+                    "description": "SelfRegistering marks a provider whose OAuth client registers itself via\nRFC 7591 dynamic client registration at connect time (no admin-configured\napp). The credentials UI skips such providers: there is no client id/secret\nto manage, so a \"Set up OAuth app\" action would be misleading.",
+                    "type": "boolean"
                 },
                 "sourceType": {
                     "type": "string"

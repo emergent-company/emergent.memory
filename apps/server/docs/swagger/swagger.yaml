@@ -3097,8 +3097,17 @@ definitions:
         type: string
       createdAt:
         type: string
+      extractionJobs:
+        description: |-
+          Extraction metadata attributed to this specific version row (from
+          kb.object_extraction_jobs where document_id = this version's id).
+        type: integer
       id:
         type: string
+      lastExtractionAt:
+        type: string
+      objectsCreated:
+        type: integer
       sourceDeletedAt:
         type: string
       sourceRevisionId:
@@ -6139,6 +6148,15 @@ definitions:
     x-enum-varnames:
     - ScopeAccount
     - ScopeProject
+  domain_notifications.resolveResourceRequest:
+    properties:
+      projectId:
+        type: string
+      resourceId:
+        type: string
+      resourceType:
+        type: string
+    type: object
   domain_notifications.setPreferenceRequest:
     properties:
       channel:
@@ -9184,6 +9202,13 @@ definitions:
         type: string
       name:
         type: string
+      selfRegistering:
+        description: |-
+          SelfRegistering marks a provider whose OAuth client registers itself via
+          RFC 7591 dynamic client registration at connect time (no admin-configured
+          app). The credentials UI skips such providers: there is no client id/secret
+          to manage, so a "Set up OAuth app" action would be misleading.
+        type: boolean
       sourceType:
         type: string
       strategies:
@@ -17097,6 +17122,41 @@ paths:
       security:
       - bearerAuth: []
       summary: Set a notification preference
+      tags:
+      - notifications
+  /api/notifications/resolve-resource:
+    post:
+      consumes:
+      - application/json
+      description: Marks all actionable, unresolved notifications referencing a resource
+        as resolved. Used when a resource (e.g. a staging branch) is merged or otherwise
+        actioned.
+      parameters:
+      - description: Resource to resolve
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/domain_notifications.resolveResourceRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Resolve confirmation with count
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Invalid request body
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Resolve notifications for a resource
       tags:
       - notifications
   /api/notifications/stats:

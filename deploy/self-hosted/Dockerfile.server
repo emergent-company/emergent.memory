@@ -4,9 +4,9 @@
 #
 # Optimizations:
 #   - Cross-compilation (GOARCH) instead of QEMU emulation for arm64
-#   - Swag installed before source copy for Docker layer caching
+#   - swag version derived from go.mod for deterministic builds
+#   - Swag layer cached on go.mod/go.sum, not on source
 #   - Go build cache mounts for faster incremental builds
-#   - Pinned swag version for deterministic builds
 #   - Parallel builder stages for server + CLI
 
 # ── Global build args ──────────────────────────────────────────────
@@ -33,14 +33,16 @@ RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /build/server
 
-# Install swag BEFORE source copy — cached until base image or version changes
-RUN go install github.com/swaggo/swag/cmd/swag@v1.16.6
-
 # Copy go.mod/go.sum first for dependency caching
 # Also copy pkg/sdk go.mod/go.sum needed by the replace directive in apps/server/go.mod
 COPY apps/server/go.mod apps/server/go.sum ./
 COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
 RUN go mod download
+
+# Install swag at the version go.mod requires, so the generator can never
+# disagree with the compiled github.com/swaggo/swag library. The layer caches on
+# go.mod/go.sum (the COPY above), not on source.
+RUN go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
 
 # Copy source code (cache invalidation point for source changes)
 COPY apps/server/ ./

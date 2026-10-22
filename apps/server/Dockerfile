@@ -31,6 +31,9 @@ WORKDIR /build
 
 # Copy go.mod and go.sum first for dependency caching
 COPY apps/server/go.mod apps/server/go.sum ./
+# The go.mod replace directive points at ./pkg/sdk, so its module files must be
+# present before the dependency graph can be resolved.
+COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
 
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download
@@ -38,8 +41,15 @@ RUN go mod download
 # Copy source code
 COPY apps/server/ ./
 
-# Install swag for OpenAPI spec generation
-RUN go install github.com/swaggo/swag/cmd/swag@latest
+# The layer above resolved the dependency graph from go.mod/go.sum alone and had
+# to fill in the go.sum entries the committed file lacks; this COPY restores the
+# committed file, so resolve it again now that the whole tree is present.
+# Without this the build fails with "missing go.sum entry for go.mod file".
+RUN go mod download
+
+# Install swag at the version pinned in go.mod, so the generated spec always
+# matches the compiled swaggo/swag library.
+RUN go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
 
 # Remove symlink/directory and create real directory for swagger docs
 RUN rm -rf docs && mkdir -p docs/swagger

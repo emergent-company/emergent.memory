@@ -10,6 +10,10 @@ DOCS_DIR=./docs/swagger
 # Go variables
 GOFLAGS=-ldflags="-s -w"
 
+# Swagger generator, derived from go.mod so the committed spec always matches the
+# compiled swaggo/swag library. Keep the fallback in step with go.mod.
+SWAG_VERSION ?= $(shell go list -m -f '{{.Version}}' github.com/swaggo/swag 2>/dev/null || echo v1.16.6)
+
 # Default target
 all: build
 
@@ -88,7 +92,7 @@ test-all-coverage:
 # Generate OpenAPI/Swagger documentation
 swagger:
 	@mkdir -p $(DOCS_DIR)
-	swag init -g cmd/server/main.go -o $(DOCS_DIR) --parseDependency --parseInternal
+	go run github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION) init -g cmd/server/main.go -o $(DOCS_DIR) --parseDependency --parseInternal
 	@echo "Swagger docs generated: $(DOCS_DIR)/swagger.json"
 	@echo "View at: http://localhost:3002/docs (when server is running in debug mode)"
 
@@ -117,7 +121,7 @@ tools:
 	go install github.com/air-verse/air@latest
 	go install mvdan.cc/gofumpt@latest
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	go install github.com/swaggo/swag/cmd/swag@latest
+	go install github.com/swaggo/swag/cmd/swag@$(SWAG_VERSION)
 
 # Generate (if needed for future code generation)
 generate:
