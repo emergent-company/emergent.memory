@@ -481,6 +481,113 @@ func TestScopeLocationRewritesRedirects(t *testing.T) {
 	}
 }
 
+// TestUnscopedMutationRedirectUsesSessionProject pins the #2034 rule: an
+// unscoped mutation is still accepted (only reads are hard-cut), so its
+// context-free PRG target must not answer 404. The session's active project
+// supplies the scope — but only for targets the hard cut would reject, so global
+// pages, external URLs and already-scoped targets pass through untouched.
+func TestUnscopedMutationRedirectUsesSessionProject(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			ctx := withSessionContext(c.Request().Context(), &sessionContext{Sub: "u1", OrgID: "o1", ProjectID: "p1"})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.Use(s.scopeLocation)
+	e.POST("/settings/providers/config", func(c echo.Context) error {
+		return c.Redirect(http.StatusSeeOther, "/settings/providers?updated=1")
+	})
+	e.POST("/settings/devices/sync", func(c echo.Context) error {
+		c.Response().Header().Set("HX-Redirect", "/settings/devices?mcp_installed=1")
+		return c.NoContent(http.StatusOK)
+	})
+	e.POST("/profile/update", func(c echo.Context) error {
+		return c.Redirect(http.StatusSeeOther, "/profile?updated=1")
+	})
+	e.POST("/orgs/new", func(c echo.Context) error {
+		return c.Redirect(http.StatusSeeOther, "/orgs")
+	})
+	e.POST("/external", func(c echo.Context) error {
+		return c.Redirect(http.StatusSeeOther, "https://example.com/done")
+	})
+	e.POST("/already-scoped", func(c echo.Context) error {
+		return c.Redirect(http.StatusSeeOther, "/o/o9/p/p9/objects?created=1")
+	})
+
+	post := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		return rec
+	}
+
+	// The reported defect: a successful write answered with a 404 URL.
+	rec := post("/settings/providers/config")
+	if loc := rec.Header().Get("Location"); loc != "/o/o1/p/p1/settings/providers?updated=1" {
+		t.Fatalf("unscoped PRG Location = %q, want /o/o1/p/p1/settings/providers?updated=1", loc)
+	}
+	// htmx redirects take the same treatment.
+	rec = post("/settings/devices/sync")
+	if loc := rec.Header().Get("HX-Redirect"); loc != "/o/o1/p/p1/settings/devices?mcp_installed=1" {
+		t.Fatalf("unscoped HX-Redirect = %q, want scoped", loc)
+	}
+	// Global pages stay global: scoping them would invent a route.
+	for path, want := range map[string]string{
+		"/profile/update": "/profile?updated=1",
+		"/orgs/new":       "/orgs",
+		"/external":       "https://example.com/done",
+		// A handler that already emits a scoped target must not be re-scoped.
+		"/already-scoped": "/o/o9/p/p9/objects?created=1",
+	} {
+		if got := post(path).Header().Get("Location"); got != want {
+			t.Errorf("%s Location = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestUnscopedMutationRedirectLeavesNonSessionRequestsAlone pins the boundaries
+// of the #2034 fallback: no session, a device credential, a session with no
+// active project, and dev mode all keep the handler's target verbatim (dev mode
+// has no session/URL authority and its harness navigates unscoped by design).
+func TestUnscopedMutationRedirectLeavesNonSessionRequestsAlone(t *testing.T) {
+	cases := map[string]struct {
+		cfg     Config
+		session *sessionContext
+	}{
+		"no session":        {cfg: sessionCfg()},
+		"device credential": {cfg: sessionCfg(), session: &sessionContext{OrgID: "o1", ProjectID: "p1", Device: true}},
+		"no active project": {cfg: sessionCfg(), session: &sessionContext{OrgID: "o1"}},
+		"dev mode":          {cfg: Config{AuthMode: "dev"}, session: &sessionContext{OrgID: "o1", ProjectID: "p1"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			s := &Server{cfg: tc.cfg, memory: &fakeMemory{}}
+			e := echo.New()
+			if tc.session != nil {
+				e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+					return func(c echo.Context) error {
+						ctx := withSessionContext(c.Request().Context(), tc.session)
+						c.SetRequest(c.Request().WithContext(ctx))
+						return next(c)
+					}
+				})
+			}
+			e.Use(s.scopeLocation)
+			e.POST("/settings/providers/config", func(c echo.Context) error {
+				return c.Redirect(http.StatusSeeOther, "/settings/providers?updated=1")
+			})
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/settings/providers/config", nil))
+			if loc := rec.Header().Get("Location"); loc != "/settings/providers?updated=1" {
+				t.Fatalf("Location = %q, want the handler's target unchanged", loc)
+			}
+		})
+	}
+}
+
 // TestScopeRewriteBareProjectRootLanding pins that /o/{org}/p/{project} (no
 // trailing page) lands on the stated project's default page, not on uiRoot —
 // the global "/" resolver follows the recent/cookie project and could silently

@@ -255,27 +255,74 @@ func (s *Server) dataSourcesScopeRedirect(next echo.HandlerFunc) echo.HandlerFun
 // scopeLocation rewrites redirect targets (Location and htmx's HX-Redirect) on
 // a scoped request so handler-level PRG redirects stay in the active context.
 // Handlers keep emitting context-free paths; only this layer adds the scope.
+//
+// An unscoped request has no URL scope to rewrite from, but session-mode
+// mutations still keep the cookie fallback (strictScopedPath only cuts reads),
+// so a form POST to a flat route is accepted and its context-free target
+// (`/settings/providers?updated=1`) would then be a hard 404. For those, the
+// session's active project supplies the base — but only for targets the hard cut
+// would otherwise reject, so genuinely global pages (/profile, absolute URLs)
+// stay untouched.
 func (s *Server) scopeLocation(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if err := next(c); err != nil {
 			return err
 		}
-		reqScope, ok := scopeFromContext(c.Request().Context())
-		if !ok {
-			return nil
+		h := c.Response().Header()
+		reqScope, urlScoped := scopeFromContext(c.Request().Context())
+		base := ""
+		if urlScoped {
+			base = reqScope.base()
+		} else {
+			base = s.sessionRedirectBase(c)
 		}
-		base := reqScope.base()
 		if base == "" {
 			return nil
 		}
-		h := c.Response().Header()
 		for _, key := range []string{echo.HeaderLocation, "HX-Redirect"} {
-			if loc := h.Get(key); loc != "" {
-				h.Set(key, scopedPathFor(base, loc))
+			loc := h.Get(key)
+			if loc == "" {
+				continue
 			}
+			if !urlScoped && !needsRedirectScope(loc) {
+				continue
+			}
+			h.Set(key, scopedPathFor(base, loc))
 		}
 		return nil
 	}
+}
+
+// sessionRedirectBase returns the scope base to apply to a PRG target when the
+// request itself carried no scope: the session's active project in session mode.
+// Empty when the session is absent, a device credential (its scope comes from
+// token introspection and page PRG is not part of that surface), has no active
+// project, or the gateway runs in dev mode (no session/URL authority — the dev
+// harness navigates unscoped by design).
+func (s *Server) sessionRedirectBase(c echo.Context) string {
+	if s.cfg.AuthMode != "session" {
+		return ""
+	}
+	sess, ok := sessionContextFrom(c.Request().Context())
+	if !ok || sess.Device {
+		return ""
+	}
+	return projectScopeURL(sess.OrgID, sess.ProjectID)
+}
+
+// needsRedirectScope reports whether an unscoped request's PRG target is an app
+// path the hard cut would 404 — and therefore one the session scope must rescue.
+// Relative, scheme-relative and absolute URLs are left alone, as are global
+// pages (globalScopePath) and targets that are already scoped (/o/… is global).
+func needsRedirectScope(loc string) bool {
+	target := loc
+	if i := strings.IndexAny(target, "?#"); i >= 0 {
+		target = target[:i]
+	}
+	if !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+		return false
+	}
+	return strictScopedPath(http.MethodGet, target)
 }
 
 // --- scoped link generation ---

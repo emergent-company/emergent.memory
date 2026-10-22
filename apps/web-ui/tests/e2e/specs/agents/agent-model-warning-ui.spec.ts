@@ -48,6 +48,11 @@ function requireBootstrap() {
   return bootstrap!;
 }
 
+// Explicit scratch scope: every navigation in this file carries the ids of the
+// project the test just created, so each assertion's page does not depend on
+// which project the session cookie happens to point at. See #2033.
+type Scope = { orgId: string; projectId: string };
+
 async function createAgent(page: Page, name: string, model?: object): Promise<string> {
   const body: Record<string, unknown> = { name, tools: [], skills: [], config: {} };
   if (model) body.model = model;
@@ -81,7 +86,7 @@ async function cleanup(page: Page, agentId: string, projectId: string): Promise<
 // so confirm the provider is visible on the same ListProjectProviders-backed
 // settings panel the gateway's warning classifier reads, and skip when it is
 // not. Returns true once the precondition truly holds.
-async function requireConfiguredProvider(page: Page): Promise<boolean> {
+async function requireConfiguredProvider(page: Page, scope: Scope): Promise<boolean> {
   if (!hasLiveProviderCreds()) {
     test.skip(
       true,
@@ -98,7 +103,7 @@ async function requireConfiguredProvider(page: Page): Promise<boolean> {
   // A 303 redirect + "Providers saved." flash is not proof the provider
   // survived the credential/catalog check; re-read the project's provider list
   // from the settings panel and skip when the row is absent.
-  await goto(page, '/settings/providers');
+  await goto(page, '/settings/providers', scope);
   if ((await page.locator(`a[href$="/settings/providers/${LIVE_PROVIDER}/edit"]`).count()) === 0) {
     test.skip(
       true,
@@ -119,11 +124,12 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
     agentId = await createAgent(page, name);
     const title = new RegExp(name);
 
     // Dashboard: error alert + "Configure a provider" link.
-    await goto(page, `/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`, scope);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -136,7 +142,7 @@ test('error severity: no explicit model on a provider-less project', async ({ pa
     await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored error text + the same link.
-    await goto(page, `/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`, scope);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent has no model' });
     await expect(setAlert).toBeVisible();
@@ -158,17 +164,18 @@ test('warning severity: provider configured, no default model pinned', async ({ 
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
 
     // Live-validated provider upsert, then re-read the project's provider list:
     // warning severity (and the no-alert case) only holds when the provider
     // really landed, and the backend can still reject the credential probe.
-    if (!(await requireConfiguredProvider(page))) return;
+    if (!(await requireConfiguredProvider(page, scope))) return;
 
     agentId = await createAgent(page, name);
     const title = new RegExp(name);
 
     // Dashboard: warning alert + "Set a default model" link.
-    await goto(page, `/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`, scope);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -181,7 +188,7 @@ test('warning severity: provider configured, no default model pinned', async ({ 
     await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored warning text + the same link.
-    await goto(page, `/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`, scope);
     await expectAppPage(page, title);
     const setAlert = page
       .getByRole('alert')
@@ -205,6 +212,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
     agentId = await createAgent(page, name);
 
     const explicit = { name: MODEL_NAME, temperature: 0.7, maxTokens: 4096 };
@@ -245,7 +253,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     const title = new RegExp(name);
 
     // Dashboard: error alert naming the pinned model + "Configure a provider" link.
-    await goto(page, `/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`, scope);
     await expectAppPage(page, title);
     const dashAlert = page
       .getByRole('alert')
@@ -258,7 +266,7 @@ test('error severity: explicit model on a provider-less project', async ({ page 
     await expect(dashLink).toHaveAttribute('href', /\/settings\/providers$/);
 
     // Settings: settings-flavored error text ("pinned") + the same link.
-    await goto(page, `/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`, scope);
     await expectAppPage(page, title);
     const setAlert = page.getByRole('alert').filter({ hasText: 'This agent is pinned to' });
     await expect(setAlert).toBeVisible();
@@ -280,11 +288,12 @@ test("no alert when the explicit model's provider is configured", async ({ page 
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
 
     // Live-validated provider upsert, then re-read the project's provider list:
     // the no-alert assertion only holds when the explicit model's provider
     // really landed, and the backend can still reject the credential probe.
-    if (!(await requireConfiguredProvider(page))) return;
+    if (!(await requireConfiguredProvider(page, scope))) return;
 
     agentId = await createAgent(page, name);
 
@@ -324,14 +333,14 @@ test("no alert when the explicit model's provider is configured", async ({ page 
     const title = new RegExp(name);
 
     // Dashboard renders no model-config alert (provider prefix is configured).
-    await goto(page, `/agents/${agentId}`);
+    await goto(page, `/agents/${agentId}`, scope);
     await expectAppPage(page, title);
     await expect(page.getByRole('alert')).toHaveCount(0);
 
     // Settings renders no model-config alert and the model select is pinned to
     // the explicit model (catalog match or the "(current)" fallback both give
     // the select the stored model name as its value).
-    await goto(page, `/agents/${agentId}/settings/model`);
+    await goto(page, `/agents/${agentId}/settings/model`, scope);
     await expectAppPage(page, title);
     await expect(page.getByRole('alert')).toHaveCount(0);
     await expect(page.locator('#agent-settings-model')).toHaveValue(MODEL_NAME);
@@ -348,6 +357,7 @@ test('chat workspace warns before send when the selected agent model is unservab
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
     agentId = await createAgent(page, name);
 
     const explicit = { name: MODEL_NAME, temperature: 0.7, maxTokens: 4096 };
@@ -387,7 +397,7 @@ test('chat workspace warns before send when the selected agent model is unservab
 
     // The chat workspace selects the agent via ?agent=<id> and must show the
     // same unservable-model banner the agent dashboard renders, before send.
-    await goto(page, `/chat?agent=${agentId}`);
+    await goto(page, `/chat?agent=${agentId}`, scope);
     await expectAppPage(page, /Chat/);
     const banner = page
       .getByRole('alert')

@@ -31,6 +31,11 @@ function requireBootstrap() {
   return bootstrap!;
 }
 
+// Explicit scratch scope: every navigation carries the ids of the project the
+// test created, so the page a test asserts on does not depend on which project
+// the session cookie happens to point at. See #2033.
+type Scope = { orgId: string; projectId: string };
+
 async function createAgent(page: Page, name: string): Promise<string> {
   const resp = await page.request.post('/api/agents', {
     data: { name, tools: [], skills: [], config: {} },
@@ -78,13 +83,14 @@ async function setAgentModel(
 // per-agent pin.
 async function expectAgentModelInUI(
   page: Page,
+  scope: Scope,
   agentId: string,
   agentName: string,
   expectedModel: string,
   isDefault: boolean,
 ): Promise<void> {
   // 1. Agents list — the agent's row shows the effective model string.
-  await goto(page, '/agents');
+  await goto(page, '/agents', scope);
   await expectAppPage(page, /Agents/);
   const row = page
     .locator('#main-content tr')
@@ -94,7 +100,7 @@ async function expectAgentModelInUI(
 
   // 2. Dashboard — the "Model" summary field: the model name in a font-mono
   //    span, with a " (default)" suffix only when inherited.
-  await goto(page, `/agents/${agentId}`);
+  await goto(page, `/agents/${agentId}`, scope);
   await expectAppPage(page, new RegExp(agentName));
   await expect(
     page.locator('span.font-mono').filter({ hasText: expectedModel }).first(),
@@ -108,7 +114,7 @@ async function expectAgentModelInUI(
   // 3. Settings → Model — the picker's value: "" for Auto (default), else the
   //    pinned provider/model string (a stored model outside the catalog still
   //    renders as a "(current)" option carrying that exact value).
-  await goto(page, `/agents/${agentId}/settings/model`);
+  await goto(page, `/agents/${agentId}/settings/model`, scope);
   await expectAppPage(page, new RegExp(agentName));
   if (isDefault) {
     await expect(page.locator('#agent-settings-model')).toHaveValue('');
@@ -120,7 +126,7 @@ async function expectAgentModelInUI(
 // Configure the live-validated provider and pin the project's default
 // generative model, so "default" has a concrete, provider-prefixed name for the
 // whole flow. Skips fast when the creds are absent or either write is rejected.
-async function requireConfiguredDefault(page: Page): Promise<boolean> {
+async function requireConfiguredDefault(page: Page, scope: Scope): Promise<boolean> {
   if (!hasLiveProviderCreds()) {
     test.skip(
       true,
@@ -147,7 +153,7 @@ async function requireConfiguredDefault(page: Page): Promise<boolean> {
   // as a 200 + error toast, so the response alone proves nothing. Confirm
   // persistence the way setDefaultEmbeddingModel does: reload and read the
   // server-rendered select.
-  await goto(page, '/settings/providers');
+  await goto(page, '/settings/providers', scope);
   const gen = page.locator('select[name="generative_model"]');
   if ((await gen.count()) === 0) {
     test.skip(true, 'default-models panel unavailable — cannot pin the project default model');
@@ -195,27 +201,28 @@ test('switching two agents between default and specific models updates every mod
 
   try {
     projectId = await createProject(page, bootstrap.orgId, base);
-    if (!(await requireConfiguredDefault(page))) return;
+    const scope = { orgId: bootstrap.orgId, projectId };
+    if (!(await requireConfiguredDefault(page, scope))) return;
 
     idA = await createAgent(page, nameA);
     idB = await createAgent(page, nameB);
 
     // Default state — both agents inherit the project default model.
-    await expectAgentModelInUI(page, idA, nameA, DEFAULT_MODEL, true);
-    await expectAgentModelInUI(page, idB, nameB, DEFAULT_MODEL, true);
+    await expectAgentModelInUI(page, scope, idA, nameA, DEFAULT_MODEL, true);
+    await expectAgentModelInUI(page, scope, idB, nameB, DEFAULT_MODEL, true);
 
     // Pin each agent to a specific model (A differs from default; B coincides
     // with the default string, so the "explicit" signal is the lost suffix).
     await setAgentModel(page, idA, nameA, SPECIFIC_A);
     await setAgentModel(page, idB, nameB, SPECIFIC_B);
-    await expectAgentModelInUI(page, idA, nameA, SPECIFIC_A, false);
-    await expectAgentModelInUI(page, idB, nameB, SPECIFIC_B, false);
+    await expectAgentModelInUI(page, scope, idA, nameA, SPECIFIC_A, false);
+    await expectAgentModelInUI(page, scope, idB, nameB, SPECIFIC_B, false);
 
     // Back to default — the override clears and the default reappears.
     await setAgentModel(page, idA, nameA, null);
     await setAgentModel(page, idB, nameB, null);
-    await expectAgentModelInUI(page, idA, nameA, DEFAULT_MODEL, true);
-    await expectAgentModelInUI(page, idB, nameB, DEFAULT_MODEL, true);
+    await expectAgentModelInUI(page, scope, idA, nameA, DEFAULT_MODEL, true);
+    await expectAgentModelInUI(page, scope, idB, nameB, DEFAULT_MODEL, true);
   } finally {
     await cleanup(page, [idA, idB], projectId);
   }

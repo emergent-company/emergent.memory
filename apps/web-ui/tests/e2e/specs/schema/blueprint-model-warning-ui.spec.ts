@@ -25,9 +25,13 @@ const PIN_ERR =
 
 const OPERATOR = 'operator';
 
-/** Open the operator blueprint's detail page via its Available-list link. */
-async function openOperatorDetail(page: Page): Promise<void> {
-  await goto(page, '/blueprints');
+/**
+ * Open the operator blueprint's detail page via its Available-list link, under
+ * the scratch project's explicit scope (#2033). An unscoped `goto` resolves to
+ * the bootstrap project, whose provider config would hide the warning.
+ */
+async function openOperatorDetail(page: Page, scope: Scope): Promise<void> {
+  await goto(page, '/blueprints', scope);
   const row = page.locator(`[data-testid="available-blueprint-${OPERATOR}"]`);
   await expect(row).toBeVisible();
   await row.locator('a[href*="/blueprints/"]').click();
@@ -39,6 +43,8 @@ function requireBootstrap() {
   expect(bootstrap, 'setup project must run first').toBeTruthy();
   return bootstrap!;
 }
+
+type Scope = { orgId: string; projectId: string };
 
 // Restores the session to the bootstrap project, then deletes the scratch
 // project. All steps best-effort so repeated runs stay idempotent.
@@ -61,10 +67,11 @@ test("built-in operator agent warns when its pinned model's provider is unconfig
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
 
     // No provider configured on the scratch project → the operator agent's
     // pinned openai/deepseek-v4-pro model can't be served.
-    await openOperatorDetail(page);
+    await openOperatorDetail(page, scope);
 
     const alert = page
       .getByRole('alert')
@@ -87,6 +94,7 @@ test("no warning when the pinned model's provider is configured", async ({ page 
 
   try {
     projectId = await createProject(page, bootstrap.orgId, name);
+    const scope = { orgId: bootstrap.orgId, projectId };
 
     // Live-validated provider upsert, mirroring the suite's provider precedent:
     // the backend live-tests the credentials on save, so a placeholder key is
@@ -108,7 +116,7 @@ test("no warning when the pinned model's provider is configured", async ({ page 
 
     // The openai provider matches the operator agent's pinned model prefix, so
     // the blueprint details page must not flag it.
-    await openOperatorDetail(page);
+    await openOperatorDetail(page, scope);
     await expect(
       page.getByRole('alert').filter({ hasText: 'This blueprint defines agent operator' }),
     ).toHaveCount(0);

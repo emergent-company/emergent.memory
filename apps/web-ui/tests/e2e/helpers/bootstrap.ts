@@ -23,7 +23,17 @@ export async function createOrg(page: Page, name: string): Promise<string> {
   return org.id as string;
 }
 
-/** Create a project in an org (also activates it in the session). */
+/**
+ * Create a project in an org.
+ *
+ * For a session caller this also makes the new project the session's active
+ * project: the gateway re-issues the session cookie from `POST /api/projects`
+ * (`project_handlers.go`, pinned by `TestCreateProjectReissuesSessionCookie`).
+ * Specs should still pass an explicit `{ orgId, projectId }` scope to `goto` and
+ * to scoped assertions — that keeps a test independent of the cookie's side
+ * effect instead of relying on it — but no extra activation request is needed
+ * after creating.
+ */
 export async function createProject(
   page: Page,
   orgId: string,
@@ -44,12 +54,13 @@ export async function createProject(
  * Uses an official-API provider (deepseek/google) so there is no base_url
  * probe/test gate; the backend upserts the config and redirects on success.
  *
- * Redirects are NOT followed (`maxRedirects: 0`). The route is registered on the
- * unscoped page path, so its PRG target comes back unscoped
- * (`/settings/providers?updated=1`) — and an unscoped page GET is a hard 404
- * (`strictScopedPath`), because only a *scoped* request gets its Location
- * re-scoped by `scopeLocation`. Following the redirect therefore turned a
- * successful save into a 404 and made this helper throw (#2031).
+ * Redirects are NOT followed (`maxRedirects: 0`): the PRG target itself is the
+ * assertion. Following it used to 404 — the route is registered on the unscoped
+ * page path and an unscoped page GET is a hard 404 (`strictScopedPath`), which
+ * made this helper throw on a successful save (#2031). Since #2034 the Location
+ * of an unscoped session mutation is scoped by the session fallback, so
+ * following would now work; asserting `updated=1` still keeps a failed save (a
+ * 200 form re-render) from being read as success.
  */
 export async function configureProvider(
   page: Page,
