@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -537,9 +538,10 @@ func TestScopePickerProjectAdminGating(t *testing.T) {
 	}
 }
 
-// TestRenderAPITokenRevealPanel asserts the one-shot plaintext panel (shown on
-// create / regenerate) shows the secret exactly once with a copy affordance.
-func TestRenderAPITokenRevealPanel(t *testing.T) {
+// TestRenderAPITokenRevealModal asserts the one-shot plaintext reveal (shown on
+// create / regenerate) is a dialog the client auto-opens, shows the secret
+// exactly once with a copy affordance, and offers a Done link back to the list.
+func TestRenderAPITokenRevealModal(t *testing.T) {
 	r := apiTokenReveal{
 		Heading:     "API token created",
 		Name:        "CI deploy",
@@ -551,13 +553,26 @@ func TestRenderAPITokenRevealPanel(t *testing.T) {
 		"API token created", "CI deploy", "emt_secret_plaintext_1",
 		`id="api-token-secret"`, `clipboardCopyInput`, "Copy",
 		"shown only once", `href="/settings/tokens"`, "Done",
+		`<dialog id="api-token-reveal-modal"`, `data-dialog-autoopen="true"`,
+		`data-testid="token-secret-panel"`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("plaintext panel missing %q", want)
+			t.Errorf("plaintext reveal missing %q", want)
 		}
+	}
+	// The reveal is a dialog, not an inline card in the page body.
+	if strings.Contains(html, "card-body") {
+		t.Error("reveal must be a modal, not an inline card panel")
 	}
 	if got := strings.Count(html, "emt_secret_plaintext_1"); got != 1 {
 		t.Errorf("plaintext occurrences = %d, want exactly 1", got)
+	}
+	// The copy control must keep naming its copy target in the onclick attribute:
+	// form.ClipboardCopy rewrites the button's label to "✓ Copied!" on success, so
+	// the e2e spec (and anything else) resolves the control by that target rather
+	// than by its label. Losing the attribute silently re-breaks that selector.
+	if !regexp.MustCompile(`<button[^>]*onclick="[^"]*api-token-secret[^"]*"`).MatchString(html) {
+		t.Error("copy control must carry an onclick naming #api-token-secret (stable e2e selector)")
 	}
 }
 

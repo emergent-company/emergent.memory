@@ -15,13 +15,13 @@ import (
 // of invoking the raw ui.CardRaw shell directly.
 //
 // ui.CardRaw cannot be banned wholesale (unlike form.FormField, which is covered
-// by the deprecated-primitive check): the 5 uses inside components/ —
+// by the deprecated-primitive check): the 4 uses inside components/ —
 // components.PanelCard (panel.templ), components.TableCard (table.templ),
-// components.SecretRevealPanel (secret.templ), components.ApprovalCard
-// (approval_card.templ), and components.QuestionCard (question_card.templ) — are
-// the owning card shells themselves, not page-level adopters. This check
-// therefore scans only page-level root *.templ (the components/ package is out
-// of scope by construction), so it sees the adopters and never the owners.
+// components.ApprovalCard (approval_card.templ), and components.QuestionCard
+// (question_card.templ) — are the owning card shells themselves, not page-level
+// adopters. This check therefore scans only page-level root *.templ (the
+// components/ package is out of scope by construction), so it sees the adopters
+// and never the owners.
 
 // pageCardRawBudgetEntry declares the tolerated count of direct ui.CardRaw calls
 // in one page-level authored .templ file.

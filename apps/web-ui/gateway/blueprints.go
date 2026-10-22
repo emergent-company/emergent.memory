@@ -371,11 +371,6 @@ type BlueprintDetail struct {
 	// derive action.
 	FlashMsg string
 	FlashErr error
-
-	// ProviderNames holds the configured provider keys of the project (e.g.
-	// "openai"), attached best-effort by the uiBlueprint handler so agent rows
-	// can warn when a pinned model's provider isn't configured.
-	ProviderNames []string
 }
 
 // ObjectTypeDetail is one object type with its property definitions.

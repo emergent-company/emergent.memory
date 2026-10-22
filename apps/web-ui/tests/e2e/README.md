@@ -215,7 +215,7 @@ ahead of the memory deploy); the section-render and shares-guard tests always ru
 Note on `data-testid`: none of the four flows above needed one — semantic locators
 sufficed. Anchors are added only where an element has no stable accessible name (so
 far, four in `api_tokens.templ`: the token row, the revoked badge, the composed
-scope-area badge and the one-time secret reveal panel).
+scope-area badge and the one-time secret reveal dialog).
 
 Objects and schema: **object relationships** (edge created from the Connect dialog is
 visible from both objects), **object search** (`/objects/search` filters to the created

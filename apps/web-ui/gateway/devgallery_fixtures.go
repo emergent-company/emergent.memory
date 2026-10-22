@@ -225,21 +225,12 @@ func gallerySeed() []GalleryEntry {
 			Interactive:    true,
 			DefaultVariant: "open",
 			Render: func() templ.Component {
-				return components.SecretRevealModal(secretRevealFixtureProps(true, false))
+				return components.SecretRevealModal(secretRevealFixtureProps(false))
 			},
 			Stories: map[string]func() templ.Component{
 				"open": func() templ.Component {
-					return components.SecretRevealModal(secretRevealFixtureProps(true, true))
+					return components.SecretRevealModal(secretRevealFixtureProps(true))
 				},
-			},
-		},
-		{
-			ID: "SecretRevealPanel", Slug: "secret-reveal-panel", Name: "SecretRevealPanel", Layer: LayerComposite,
-			Category: "Feedback", Subcategory: "secret", SourceFile: "components/secret.templ",
-			PropsType:   "SecretRevealProps",
-			Description: "The same reveal anatomy inline, for pages that show the secret in the body.",
-			Render: func() templ.Component {
-				return components.SecretRevealPanel(secretRevealFixtureProps(false, false))
 			},
 		},
 		{
@@ -394,11 +385,11 @@ func gallerySeed() []GalleryEntry {
 }
 
 // secretRevealFixtureProps builds inert sample props for the secret reveal
-// components. modal selects the dialog variant; autoOpen sets the dialog's
-// AutoOpen flag (used only by the interactive "open" story). Both carry no live
-// endpoint ids so the preview cannot mutate the backend.
-func secretRevealFixtureProps(modal, autoOpen bool) components.SecretRevealProps {
-	p := components.SecretRevealProps{
+// dialog. autoOpen sets the dialog's AutoOpen flag (used only by the
+// interactive "open" story). It carries no live endpoint ids so the preview
+// cannot mutate the backend.
+func secretRevealFixtureProps(autoOpen bool) components.SecretRevealProps {
+	return components.SecretRevealProps{
 		Heading:    "MCP share created",
 		Name:       "share-a",
 		SecretID:   "gallery-secret",
@@ -407,13 +398,10 @@ func secretRevealFixtureProps(modal, autoOpen bool) components.SecretRevealProps
 		EndpointID: "gallery-endpoint",
 		Endpoint:   "https://example.invalid/mcp",
 		Warning:    "This key will not be shown again.",
+		DialogID:   "gallery-reveal-modal",
+		Snippets:   templ.Raw(`<div class="snippet-slot">{"mcpServers":{"memory":{"url":"https://example.invalid/mcp"}}}</div>`),
 		AutoOpen:   autoOpen,
 	}
-	if modal {
-		p.DialogID = "gallery-reveal-modal"
-		p.Snippets = templ.Raw(`<div class="snippet-slot">{"mcpServers":{"memory":{"url":"https://example.invalid/mcp"}}}</div>`)
-	}
-	return p
 }
 
 // withChildren wraps a component so it renders with the given child content.

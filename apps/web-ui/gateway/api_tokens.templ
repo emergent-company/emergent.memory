@@ -13,21 +13,21 @@ import (
 // --- API tokens (project page + account area) ---
 //
 // The token TABLE, the grouped scope picker, the standalone create pages, the
-// per-token edit-scopes pages, and the one-shot plaintext panel are shared by
+// per-token edit-scopes pages, and the one-shot reveal dialog are shared by
 // the project surface (APITokensPage at /settings/tokens) and the account
 // surface (AccountTokensPage at /profile/tokens). Both surfaces differ only by
 // the action base path (/settings/tokens vs /profile/tokens) and the
 // surrounding page chrome: the project surface is breadcrumb-framed, the
 // account surface sits in the profile two-column rail (profileSubNav, "API
 // tokens" active). Plaintext token values appear ONLY inside the one-shot
-// panel — never in the table.
+// reveal dialog — never in the table.
 
 // APITokensPage renders the project token list (/settings/tokens): the active
 // project's scoped API tokens in a TABLE with per-token row actions, and a
 // "New token" action linking to the standalone create page at
 // /settings/tokens/new. A failed list fetch renders the whole-page error state
-// (the plaintext panel stays visible when a write already succeeded, so the
-// secret is never lost).
+// (the reveal dialog stays open when a write already succeeded, so the secret
+// is never lost).
 templ APITokensPage(data apiTokensPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens")), "", "API Tokens", "Scoped tokens that let programs act as this project without a browser session.", detailHeaderOpts{Margin: "mb-6"}) {
@@ -76,15 +76,13 @@ templ apiTokenNewTokenLink(actionBase string) {
 }
 
 // apiTokenListState renders the shared list-page body for a surface: the
-// one-shot plaintext panel (after a regenerate POST) at the top, then either
-// the whole-page error state (or an alert under the panel when a write already
-// succeeded) or the token table. Kept out of the page shells so both surfaces
-// render identical plaintext/error semantics.
+// one-shot reveal dialog (after a regenerate POST), then either the whole-page
+// error state (or an alert beside the dialog when a write already succeeded) or
+// the token table. Kept out of the page shells so both surfaces render identical
+// plaintext/error semantics.
 templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, emptyDesc string) {
 	if data.Reveal != nil {
-		<div class="mb-6">
-			@apiTokenRevealContent(*data.Reveal)
-		</div>
+		@apiTokenRevealContent(*data.Reveal)
 	}
 	if data.LoadErr != nil {
 		if data.Reveal != nil {
@@ -286,16 +284,14 @@ templ apiTokenRowContent(t APIToken, actionBase string) {
 // APITokenCreatePage renders the project create-token page
 // (GET /settings/tokens/new): name + scope picker posting to POST
 // /settings/tokens/new. After a successful create the same page re-renders
-// with the one-shot plaintext panel (no redirect — the plaintext must reach the
+// with the one-shot reveal dialog (no redirect — the plaintext must reach the
 // browser). ?err= surfaces PRG feedback from the create flow.
 templ APITokenCreatePage(data apiTokenCreatePageData) {
 	<div class={ pageFormChromeClass }>
 		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens", "/settings/tokens", "New token")), "", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.", detailHeaderOpts{Margin: "mb-6"}) {}
 		@flashToasts("", data.FlashErr)
 		if data.Reveal != nil {
-			<div class="mb-6">
-				@apiTokenRevealContent(*data.Reveal)
-			</div>
+			@apiTokenRevealContent(*data.Reveal)
 		}
 	</div>
 	@apiTokenCreateFormContent("/settings/tokens", data.Picker, false)
@@ -309,9 +305,7 @@ templ AccountTokenCreatePage(data apiTokenCreatePageData) {
 		@pageHeader("Account", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
 		@flashToasts("", data.FlashErr)
 		if data.Reveal != nil {
-			<div class="mb-6">
-				@apiTokenRevealContent(*data.Reveal)
-			</div>
+			@apiTokenRevealContent(*data.Reveal)
 		}
 	</div>
 	@apiTokenCreateFormContent("/profile/tokens", data.Picker, true)
@@ -547,35 +541,24 @@ templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfi
 	</div>
 }
 
-// apiTokenRevealContent is the one-shot plaintext panel shown on the create /
-// regenerate responses: the full token value, a copy affordance, and a Done
-// link back to the list.
+// apiTokenRevealContent is the one-shot plaintext reveal shown on the create /
+// regenerate responses: a dialog the client auto-opens, holding the full token
+// value, a copy affordance, and a Done link back to the list. The dialog (not an
+// inline panel) matches every other one-time reveal in the app — MCP shares, the
+// agent MCP key, and agent share links — and keeps the secret from sitting in
+// the page body where a later htmx swap could re-render over it.
 templ apiTokenRevealContent(r apiTokenReveal) {
-	@components.SecretRevealPanel(components.SecretRevealProps{
-		Heading:   r.Heading,
-		Name:      r.Name,
-		Noun:      "value",
-		CopyLabel: "Copy",
-		SecretID:  "api-token-secret",
-		Secret:    r.Token,
-		Attrs:     templ.Attributes{"data-testid": "token-secret-panel"},
-		CardClass: "border-primary/20",
-		Footer:    apiTokenRevealFooter(r.DismissHref),
+	@components.SecretRevealModal(components.SecretRevealProps{
+		Heading:     r.Heading,
+		Name:        r.Name,
+		Noun:        "value",
+		CopyLabel:   "Copy",
+		SecretID:    "api-token-secret",
+		Secret:      r.Token,
+		Warning:     "This token will not appear on any list or detail view again.",
+		DialogID:    "api-token-reveal-modal",
+		Attrs:       templ.Attributes{"data-testid": "token-secret-panel"},
+		AutoOpen:    true,
+		DismissHref: r.DismissHref,
 	})
-}
-
-// apiTokenRevealFooter is the reveal panel's dismissive note and Done action.
-templ apiTokenRevealFooter(dismissHref string) {
-	@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { This token will not appear on any list or detail view again. }
-	<div class="mt-4 flex flex-wrap items-center gap-2">
-		@ui.Button(ui.ButtonProps{
-			Type:    ui.ButtonTypeLink,
-			Href:    dismissHref,
-			Variant: ui.ButtonGhost,
-			Size:    ui.ButtonSM,
-			Icon:    "lucide--x",
-		}) {
-			Done
-		}
-	</div>
 }

@@ -19,15 +19,15 @@ import (
 // (account-scoped Memory calls). Both now use the same page shapes: a TABLE
 // list on the base path, a standalone create page at <base>/new, and a
 // per-token edit-scopes page at <base>/:tokenId/edit. Create / regenerate
-// render the plaintext exactly once in a one-shot panel and do NOT redirect
-// (the secret would be lost). Revoke and scope saves are PRG flows that
+// render the plaintext exactly once in a one-shot reveal dialog and do NOT
+// redirect (the secret would be lost). Revoke and scope saves are PRG flows that
 // redirect back with a flash.
 
 // apiTokensPageData is the payload for the list pages (project APITokensPage,
 // account AccountTokensPage): the surface's tokens, a whole-page LoadErr when
 // the list is unreachable, PRG flash feedback, and an optional one-shot
-// plaintext panel (regenerate responses — see apiTokenCreatePageData for the
-// create-flow variant, which renders on the create page instead).
+// one-shot reveal dialog (regenerate responses — see apiTokenCreatePageData for
+// the create-flow variant, which renders on the create page instead).
 type apiTokensPageData struct {
 	Tokens   []APIToken
 	LoadErr  error
@@ -38,8 +38,8 @@ type apiTokensPageData struct {
 
 // apiTokenCreatePageData is the payload for the standalone create pages
 // (/settings/tokens/new and /profile/tokens/new): the create form plus PRG
-// error feedback, and — after a successful create POST — a one-shot plaintext
-// panel carrying the secret (the create page re-renders, no redirect).
+// error feedback, and — after a successful create POST — a one-shot reveal
+// dialog carrying the secret (the create page re-renders, no redirect).
 type apiTokenCreatePageData struct {
 	Reveal   *apiTokenReveal
 	FlashErr error
@@ -58,14 +58,14 @@ type apiTokenEditPageData struct {
 	Picker   apiTokenScopePickerConfig // surface + admin gate for the scope picker
 }
 
-// apiTokenReveal is the one-shot secret panel: the plaintext value of a just
+// apiTokenReveal is the one-shot secret reveal: the plaintext value of a just
 // created / regenerated token. It is rendered on the response page and never
 // stored anywhere.
 type apiTokenReveal struct {
 	Heading     string // "Token created" / "Token regenerated"
 	Name        string
 	Token       string // plaintext emt_* value
-	DismissHref string // link that drops the panel (plain list GET)
+	DismissHref string // modal Done target (plain list GET)
 }
 
 // apiTokenScopeOption is one selectable scope in the picker (wire value + a
@@ -425,9 +425,9 @@ func (s *Server) uiTokenList(c echo.Context, account bool) error {
 }
 
 // renderTokenListWithReveal re-renders a surface's list page after a regenerate
-// POST (no redirect — the one-shot plaintext panel must reach the browser). A
-// list failure after a successful write degrades to a page error beneath the
-// panel so the secret is never lost.
+// POST (no redirect — the one-shot reveal dialog must reach the browser). A
+// list failure after a successful write degrades to a page error beside the
+// dialog so the secret is never lost.
 func (s *Server) renderTokenListWithReveal(c echo.Context, reveal *apiTokenReveal, account bool) error {
 	ctx := c.Request().Context()
 	data := apiTokensPageData{Reveal: reveal}
@@ -449,7 +449,7 @@ func (s *Server) uiTokenNewPage(c echo.Context, account bool) error {
 }
 
 // renderTokenCreatePage re-renders a surface's create page after a successful
-// create POST (no redirect — the plaintext panel must reach the browser).
+// create POST (no redirect — the reveal dialog must reach the browser).
 func (s *Server) renderTokenCreatePage(c echo.Context, reveal *apiTokenReveal, account bool) error {
 	data := apiTokenCreatePageData{Reveal: reveal, Picker: s.apiTokenPickerConfig(c, account)}
 	if account {

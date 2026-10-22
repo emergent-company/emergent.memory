@@ -1,34 +1,26 @@
 import { test, expect, type Page } from '@playwright/test';
-import {
-  readBootstrap,
-  createProject,
-  configureLiveProvider,
-  hasLiveProviderCreds,
-} from '../../helpers/bootstrap';
+import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { expectAppPage, goto } from '../../helpers/page';
 
-// Blueprint-pinned model warnings (gateway unservable-model surface): the
-// blueprint details page (/blueprints/<id>) renders agent rows from the
-// blueprint's manifest, and an agent whose pinned model can't be served by the
-// project warns at error severity. The built-in `operator` blueprint pins
-// openai/deepseek-v4-pro, so on a FRESH project (no configured provider) its
-// detail page shows the error alert; once a provider matching the model's
-// prefix (openai) is configured, the same page is quiet. The operator detail is
-// reached by clicking its link in the /blueprints Available list (there is no
-// longer a bundled-name route like /blueprints/operator).
+// Blueprint-pinned model warnings: the blueprint DETAIL page (/blueprints/<id>)
+// is a read-only preview of the manifest, so it must never flag a pinned model
+// whose provider isn't configured in this project (#1955) — that notice belongs
+// to the install-time model-review step (see blueprint-model-review-ui.spec.ts),
+// and to an installed agent's own dashboard/model settings. The built-in
+// `operator` blueprint pins openai/deepseek-v4-pro, which makes it the sharpest
+// probe: on a FRESH project (no provider at all) its detail page must still be
+// quiet while rendering the agent row.
 //
 // Each test self-cleans: reactivates the bootstrap project, then deletes the
-// scratch project (POST /projects/delete, org-scoped). No agent is created,
-// so there is nothing else to delete.
-const PIN_ERR =
-  "This blueprint defines agent operator pinned to openai/deepseek-v4-pro, but no provider is configured in this project. Chats with it will fail until a provider is added or the agent's model is changed in Agent settings.";
-
+// scratch project (POST /projects/delete, org-scoped). No agent is created, so
+// there is nothing else to delete.
 const OPERATOR = 'operator';
+
+type Scope = { orgId: string; projectId: string };
 
 /**
  * Open the operator blueprint's detail page via its Available-list link, under
- * the scratch project's explicit scope (#2033). An unscoped `goto` resolves to
- * the bootstrap project, whose provider config would hide the warning.
+ * the scratch project's explicit scope (#2033).
  */
 async function openOperatorDetail(page: Page, scope: Scope): Promise<void> {
   await goto(page, '/blueprints', scope);
@@ -44,8 +36,6 @@ function requireBootstrap() {
   return bootstrap!;
 }
 
-type Scope = { orgId: string; projectId: string };
-
 // Restores the session to the bootstrap project, then deletes the scratch
 // project. All steps best-effort so repeated runs stay idempotent.
 async function cleanup(page: Page, projectId: string): Promise<void> {
@@ -60,7 +50,7 @@ async function cleanup(page: Page, projectId: string): Promise<void> {
   }
 }
 
-test("built-in operator agent warns when its pinned model's provider is unconfigured", async ({ page }) => {
+test('blueprint detail preview never warns about an unconfigured provider', async ({ page }) => {
   const bootstrap = requireBootstrap();
   const name = `E2E BP Model Warn ${Date.now()}`;
   let projectId = '';
@@ -69,57 +59,16 @@ test("built-in operator agent warns when its pinned model's provider is unconfig
     projectId = await createProject(page, bootstrap.orgId, name);
     const scope = { orgId: bootstrap.orgId, projectId };
 
-    // No provider configured on the scratch project → the operator agent's
-    // pinned openai/deepseek-v4-pro model can't be served.
+    // No provider is configured on the scratch project, yet the preview renders
+    // the operator agent row (its pinned model badge included) without any
+    // availability warning.
     await openOperatorDetail(page, scope);
+    await expect(page.getByText('openai/deepseek-v4-pro')).toBeVisible();
 
-    const alert = page
-      .getByRole('alert')
-      .filter({ hasText: 'This blueprint defines agent operator pinned to openai/deepseek-v4-pro' });
-    await expect(alert).toBeVisible();
-    await expect(alert).toHaveClass(/alert-error/);
-    await expect(alert).toContainText(PIN_ERR);
-    const link = page.getByRole('link', { name: 'Configure a provider' });
-    await expect(link).toBeVisible();
-    await expect(link).toHaveAttribute('href', /\/settings\/providers$/);
-  } finally {
-    await cleanup(page, projectId);
-  }
-});
-
-test("no warning when the pinned model's provider is configured", async ({ page }) => {
-  const bootstrap = requireBootstrap();
-  const name = `E2E BP Model Warn ${Date.now()}`;
-  let projectId = '';
-
-  try {
-    projectId = await createProject(page, bootstrap.orgId, name);
-    const scope = { orgId: bootstrap.orgId, projectId };
-
-    // Live-validated provider upsert, mirroring the suite's provider precedent:
-    // the backend live-tests the credentials on save, so a placeholder key is
-    // rejected. Skip when the env creds are unset or the save fails rather than
-    // asserting against an unconfigured state.
-    if (!hasLiveProviderCreds()) {
-      test.skip(
-        true,
-        'E2E_SCENARIO_LLM_API_KEY is not set — the openai provider save is live-validated by the backend',
-      );
-      return;
-    }
-    try {
-      await configureLiveProvider(page);
-    } catch (e) {
-      test.skip(true, `openai provider upsert unavailable on dev memory: ${(e as Error).message}`);
-      return;
-    }
-
-    // The openai provider matches the operator agent's pinned model prefix, so
-    // the blueprint details page must not flag it.
-    await openOperatorDetail(page, scope);
     await expect(
-      page.getByRole('alert').filter({ hasText: 'This blueprint defines agent operator' }),
+      page.getByRole('alert').filter({ hasText: 'This blueprint defines agent' }),
     ).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Configure a provider' })).toHaveCount(0);
   } finally {
     await cleanup(page, projectId);
   }

@@ -168,28 +168,22 @@ func TestSecretRevealModalNounAndTestID(t *testing.T) {
 	assertNotContains(t, html, "data-dialog-autoopen", "Client setup")
 }
 
-func TestSecretRevealPanelRendersInline(t *testing.T) {
+func TestSecretRevealModalDismissLink(t *testing.T) {
 	var p SecretRevealProps
 	p.Heading = "Token created"
-	p.Name = "my-token"
 	p.SecretID = "api-token-secret"
 	p.Secret = "tok"
-	p.Attrs = templ.Attributes{"data-testid": "token-secret-panel"}
-	p.Footer = templ.Raw(`<p class="dismiss-note">This token will not appear again.</p>`)
+	p.DialogID = "api-token-reveal-modal"
+	p.Noun = "value"
+	p.DismissHref = "/settings/tokens"
+	p.AutoOpen = true
 
-	html := renderHTML(t, SecretRevealPanel(p))
+	html := renderHTML(t, SecretRevealModal(p))
 	assertContains(t, html,
-		"border border-line",
-		`data-testid="token-secret-panel"`,
-		`<h3 class="text-sm font-semibold">Token created</h3>`,
-		"my-token — this key is shown only once. Store it somewhere safe.",
-		`id="api-token-secret"`,
-		`value="tok"`,
-		"tok",
-		"dismiss-note",
+		`<a href="/settings/tokens"`,
+		"Done — I've saved the key",
+		`data-dialog-autoopen="true"`,
 	)
-	// The panel variant is not a dialog and carries no snippet section.
-	assertNotContains(t, html, "<dialog", "Client setup", "modal-backdrop")
 }
 
 // --- form ---

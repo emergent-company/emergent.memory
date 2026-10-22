@@ -367,7 +367,8 @@
   // Delegated click on the panel: any element carrying data-copy-target copies
   // the resolved element's text (the sr-only canonical id span). Feedback is
   // attribute-only (no innerHTML) with a guarded timer so overlapping clicks
-  // reset cleanly.
+  // reset cleanly, and the glyph swaps to a check for the same window so the
+  // confirmation is visible on the button itself (#1964).
   function onCopyClick(ev) {
     var trigger = ev.target && ev.target.closest ? ev.target.closest("[data-copy-target]") : null;
     if (!trigger) return;
@@ -382,12 +383,21 @@
     var pending = trigger.copyResetTimer;
     if (pending) { clearTimeout(pending); trigger.copyResetTimer = null; }
     var originalLabel = trigger.getAttribute("aria-label") || "";
+    var icon = trigger.querySelector(".iconify");
     trigger.setAttribute("aria-label", "Copied");
     trigger.setAttribute("title", "Copied");
     trigger.setAttribute("data-copied", "true");
+    if (icon) {
+      icon.classList.remove("lucide--copy");
+      icon.classList.add("lucide--check");
+    }
     trigger.copyResetTimer = setTimeout(function () {
       trigger.copyResetTimer = null;
       trigger.removeAttribute("data-copied");
+      if (icon) {
+        icon.classList.remove("lucide--check");
+        icon.classList.add("lucide--copy");
+      }
       if (originalLabel) trigger.setAttribute("aria-label", originalLabel);
       trigger.removeAttribute("title");
     }, 1500);

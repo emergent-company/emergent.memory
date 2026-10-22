@@ -1530,23 +1530,6 @@ func agentModelSettingsIssue(agent *AgentDefinition, pinnedDefault string, pinne
 	}
 }
 
-// agentPinnedModelIssue returns the severity and copy for a blueprint detail
-// agent row whose pinned model can't be served, or ("", "") when the model is
-// empty or satisfiable by the project's configured providers.
-func agentPinnedModelIssue(agentName, model string, providerNames []string) (sev, msg string) {
-	if model == "" {
-		return "", ""
-	}
-	if len(providerNames) == 0 {
-		return "error", "This blueprint defines agent " + agentName + " pinned to " + model + ", but no provider is configured in this project. Chats with it will fail until a provider is added or the agent's model is changed in Agent settings."
-	}
-	prov := modelProviderOf(model)
-	if prov == "" || containsString(providerNames, prov) {
-		return "", ""
-	}
-	return "error", "This blueprint defines agent " + agentName + " pinned to " + model + ", which needs the " + prov + " provider — not configured in this project. Chats with it will fail until a provider is added or the agent's model is changed in Agent settings."
-}
-
 // modelWarningAlertType maps the warning severity ("error"/"warning") to the
 // go-daisy alert type used for the banner.
 func modelWarningAlertType(sev string) ui.AlertType {

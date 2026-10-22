@@ -896,30 +896,6 @@ func TestModelProviderOf(t *testing.T) {
 	}
 }
 
-// TestAgentPinnedModelIssue covers the blueprint-agent-row model availability
-// warning.
-func TestAgentPinnedModelIssue(t *testing.T) {
-	sev, msg := agentPinnedModelIssue("operator", "openai/deepseek-v4-pro", nil)
-	if sev != "error" || !strings.Contains(msg, "This blueprint defines agent operator pinned to openai/deepseek-v4-pro") || !strings.Contains(msg, "no provider is configured in this project") {
-		t.Errorf("zero providers: sev=%q msg=%q", sev, msg)
-	}
-
-	sev, msg = agentPinnedModelIssue("operator", "anthropic/claude-sonnet-4", []string{"openai"})
-	if sev != "error" || !strings.Contains(msg, "needs the anthropic provider") || !strings.Contains(msg, "not configured in this project") {
-		t.Errorf("missing provider: sev=%q msg=%q", sev, msg)
-	}
-
-	if sev, msg = agentPinnedModelIssue("operator", "openai/deepseek-v4-pro", []string{"openai"}); sev != "" || msg != "" {
-		t.Errorf("matching provider: sev=%q msg=%q", sev, msg)
-	}
-	if sev, msg = agentPinnedModelIssue("operator", "deepseek-v4-pro", []string{"openai"}); sev != "" || msg != "" {
-		t.Errorf("bare model: sev=%q msg=%q", sev, msg)
-	}
-	if sev, msg = agentPinnedModelIssue("operator", "", []string{"openai"}); sev != "" || msg != "" {
-		t.Errorf("empty model: sev=%q msg=%q", sev, msg)
-	}
-}
-
 // TestRenderBlueprintDetailVersionsAndDiff locks the version-history + diff-card
 // markup contract.
 func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {

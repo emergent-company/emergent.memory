@@ -1482,6 +1482,18 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   max-height: 48rem;
 }
 
+/* Copy confirmation for the icon-only copy buttons (object_preview.templ's
+   "Copy object ID", wired by object-preview.js): the handler swaps the copy
+   glyph for a check and flips data-copied for 1.5s. The check lands with a
+   short pop so the state change registers as an action, not a flicker (#1964). */
+[data-copied] .iconify {
+  animation: memory-copy-confirm 180ms var(--ease-out, ease-out);
+}
+@keyframes memory-copy-confirm {
+  from { transform: scale(0.6); opacity: 0.4; }
+  to { transform: scale(1); opacity: 1; }
+}
+
 /* ---------- Object preview: resize grip + modal window ---------- */
 /* Drag handle on the drawer's left edge (right-anchored drawer), mirroring
    #sidepanel-resize. Half-overhangs so it is easy to grab; touch-action:none
@@ -1631,4 +1643,6 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
      (#1389): no slide, no grip-hover transition when motion is reduced. */
   #object-preview-panel { transition: none; }
   #object-preview-resize::after { transition: none; }
+  /* Copy confirmation (#1964): the glyph swap still happens, just without the pop. */
+  [data-copied] .iconify { animation: none; }
 }

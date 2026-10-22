@@ -530,26 +530,7 @@ func (s *Server) uiBlueprint(c echo.Context) error {
 	if v := c.QueryParam("derived"); v != "" {
 		d.FlashMsg = "Draft version " + v + " created."
 	}
-	if detailCarriesPinnedModel(d) {
-		if ps, err := s.memory.ListProjectProviders(ctx); err == nil {
-			d.ProviderNames = projectProviderNames(ps)
-		} else {
-			captureError(err)
-		}
-	}
 	return s.page(c, pageTitle(d.Name), BlueprintDetailPage(d, nil))
-}
-
-// detailCarriesPinnedModel reports whether the blueprint detail includes at
-// least one agent with an explicit model — the only case that needs the
-// project's configured provider keys for the availability warning.
-func detailCarriesPinnedModel(d *BlueprintDetail) bool {
-	for _, a := range d.Agents {
-		if a.Model != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // blueprintVersionViews maps blueprint records to the version-history view,

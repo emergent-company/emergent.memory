@@ -1198,9 +1198,9 @@ templ relationshipTypeRow(rt RelationshipTypeDetail) {
 }
 
 // blueprintAgents renders the agent definitions a blueprint carries: name,
-// description, model, tools, skills, config, and full system prompt. providerNames
-// are the project's configured provider keys, used to warn when a pinned model's
-// provider isn't configured.
+// description, model, tools, skills, config, and full system prompt. It is a
+// read-only preview of the manifest — provider availability for a pinned model
+// is reviewed at install time (the model-map step), never here (#1955).
 templ blueprintAgents(d *BlueprintDetail) {
 	@cardList("Agents", cardListProps{
 		Margin:    "mt-6",
@@ -1208,16 +1208,15 @@ templ blueprintAgents(d *BlueprintDetail) {
 		EmptyIcon: "lucide--bot", EmptyTitle: "No agents", EmptyDesc: "This blueprint defines no agents.",
 	}) {
 		for _, a := range d.Agents {
-			@agentDetailRow(a, d.ProviderNames)
+			@agentDetailRow(a)
 		}
 	}
 }
 
 // agentDetailRow renders one agent definition in full: header (name + model +
-// visibility badges), an unservable-model warning when the pinned model's
-// provider isn't configured, description, tool list, skills, config, and system
+// visibility badges), description, tool list, skills, config, and system
 // prompt.
-templ agentDetailRow(a BundledAgent, providerNames []string) {
+templ agentDetailRow(a BundledAgent) {
 	<div class="px-4 py-4">
 		<div class="flex flex-wrap items-center gap-2">
 			if a.UI != nil && (a.UI.Icon != "" || a.UI.Color != "") {
@@ -1231,11 +1230,6 @@ templ agentDetailRow(a BundledAgent, providerNames []string) {
 				@ui.Badge(ui.BadgeProps{Label: a.Visibility, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
 			}
 		</div>
-		if sev, msg := agentPinnedModelIssue(a.Name, a.Model, providerNames); sev != "" {
-			<div class="mt-3">
-				@agentModelWarningBox(sev, msg)
-			</div>
-		}
 		if a.Description != "" {
 			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { { a.Description } }
 		}
