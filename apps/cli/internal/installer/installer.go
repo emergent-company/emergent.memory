@@ -451,6 +451,12 @@ func (i *Installer) Upgrade(version string) error {
 	}
 	// --- end PostgreSQL upgrade ---
 
+	// Warn about secrets the existing .env.local lacks before any container is
+	// recreated: an incomplete file is how a migrated install ends up with a
+	// server that cannot encrypt credentials (#2004).
+	i.output.Step("Checking installation secrets...")
+	i.checkEnvSecrets()
+
 	i.output.Step("Pulling Docker images...")
 	if err := docker.Pull(); err != nil {
 		// Restore backup on pull failure so the user isn't left with a compose
@@ -521,12 +527,123 @@ func (i *Installer) GetInstalledVersion() string {
 	if err != nil {
 		return "unknown"
 	}
-	return strings.TrimSpace(string(content))
+	return NormalizeVersion(string(content))
 }
 
+// SaveInstalledVersion records the installed server version in
+// <installDir>/version using the canonical form (bare semver, no "v" or
+// "cli-" prefix) so a version recorded by one CLI build compares equal to the
+// image tag read back by `memory server doctor` (#2004).
 func (i *Installer) SaveInstalledVersion(version string) {
 	versionPath := filepath.Join(i.config.InstallDir, "version")
-	_ = os.WriteFile(versionPath, []byte(version+"\n"), 0644)
+	_ = os.WriteFile(versionPath, []byte(NormalizeVersion(version)+"\n"), 0644)
+}
+
+// NormalizeVersion returns the canonical form of a server version string: the
+// bare semver with any "cli-" and "v" prefix removed.
+//
+// The release workflow strips the leading "v" from the ldflags Version while
+// the container image tag keeps it, so `0.87.4` and `v0.87.4` denote the same
+// server and must compare equal. Both formats resolve; neither is "wrong".
+func NormalizeVersion(v string) string {
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "cli-")
+	v = strings.TrimPrefix(v, "v")
+	return v
+}
+
+// requiredEnvKeys are the secrets the regenerated compose template interpolates
+// that have no safe default: missing ones either break authentication
+// (STANDALONE_API_KEY), disable credential encryption (LLM_ENCRYPTION_KEY) or
+// silently fall back to a well-known placeholder (POSTGRES_PASSWORD,
+// OBJECT_STORE_ACCESS_KEY, OBJECT_STORE_SECRET_KEY).
+var requiredEnvKeys = []string{
+	"POSTGRES_PASSWORD",
+	"STANDALONE_API_KEY",
+	"LLM_ENCRYPTION_KEY",
+	"OBJECT_STORE_ACCESS_KEY",
+	"OBJECT_STORE_SECRET_KEY",
+}
+
+// checkEnvSecrets warns, before containers are recreated, about secrets the
+// existing .env.local does not define. Installs created before a key was
+// introduced (or before the MinIO→SeaweedFS rename) keep their old file — the
+// upgrade never rewrites user secrets — so the first sign of the gap used to be
+// a server log line after the restart (#2004). Never fails the upgrade: the
+// stack may legitimately be partially configured.
+func (i *Installer) checkEnvSecrets() {
+	envPath := i.GetEnvPath()
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		i.output.Warn("Could not read %s: %v", envPath, err)
+		return
+	}
+
+	for _, key := range missingEnvKeys(string(content), requiredEnvKeys) {
+		i.output.Warn("%s is not set in %s — containers will start without it (or with the compose default)", key, envPath)
+	}
+
+	if hasLegacyMinioKeys(string(content)) && !envKeySet(string(content), "OBJECT_STORE_SECRET_KEY") {
+		i.output.Info("Found legacy MINIO_ROOT_USER/MINIO_ROOT_PASSWORD keys; SeaweedFS reads OBJECT_STORE_ACCESS_KEY/OBJECT_STORE_SECRET_KEY — see deploy/self-hosted/UPGRADING_OBJECT_STORE.md")
+	}
+}
+
+// missingEnvKeys returns the subset of required that content does not define
+// with a non-empty value. Formatting tolerated: comments, blank lines,
+// `export KEY=value`, and single- or double-quoted values.
+func missingEnvKeys(content string, required []string) []string {
+	defined := make(map[string]bool, len(required))
+	for _, line := range strings.Split(content, "\n") {
+		key, value, ok := parseEnvLine(line)
+		if ok && value != "" {
+			defined[key] = true
+		}
+	}
+
+	var missing []string
+	for _, key := range required {
+		if !defined[key] {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+// envKeySet reports whether content defines key with a non-empty value.
+func envKeySet(content, key string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if k, v, ok := parseEnvLine(line); ok && k == key && v != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLegacyMinioKeys reports whether content still carries the MinIO
+// credentials used before the object store moved to SeaweedFS.
+func hasLegacyMinioKeys(content string) bool {
+	return envKeySet(content, "MINIO_ROOT_USER") || envKeySet(content, "MINIO_ROOT_PASSWORD")
+}
+
+// parseEnvLine parses a single KEY=value line, returning ok=false for blanks,
+// comments and malformed lines.
+func parseEnvLine(line string) (key, value string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	line = strings.TrimPrefix(line, "export ")
+	key, value, ok = strings.Cut(line, "=")
+	if !ok {
+		return "", "", false
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", "", false
+	}
+	value = strings.TrimSpace(value)
+	value = strings.Trim(value, `"'`)
+	return key, value, true
 }
 
 // Uninstall removes an Emergent installation

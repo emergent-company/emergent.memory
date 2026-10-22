@@ -174,13 +174,20 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     volumes:
       - object_store_data:/data
     healthcheck:
-      # Master cluster-status endpoint (returns {"IsLeader":true}) — the S3
-      # port alone does not indicate a ready cluster. 127.0.0.1 is used
-      # explicitly because localhost resolves to IPv6 in the image.
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:9333/cluster/status']
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      # Readiness must prove BOTH that raft has elected a leader AND that the
+      # S3 gateway is accepting connections on 8333 (#2004):
+      #   - /cluster/status answers 200 with '{}' before leader election and
+      #     while the S3 listener is still closed, so a bare 2xx probe goes
+      #     green up to seconds too early.
+      #   - An unauthenticated S3 GET is not a usable probe either: with
+      #     AWS_ACCESS_KEY_ID set the gateway answers 403 for anonymous
+      #     requests, which fails 'wget --spider'.
+      # nc (busybox) and grep are present in the digest-pinned image; 127.0.0.1
+      # is used explicitly because localhost resolves to IPv6 there.
+      test: ["CMD-SHELL", "wget -q -O - --tries=1 http://127.0.0.1:9333/cluster/status | grep -q '\"IsLeader\":true' && nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
       start_period: 10s
     networks:
       - memory
@@ -189,7 +196,10 @@ func GetDockerComposeTemplateWithVersion(version string) string {
     image: ` + serverImage + `
     container_name: memory-storage-init
     # One-shot bucket bootstrap from the server image (same S3 client as the
-    # server). Exits non-zero on failure, blocking server start.
+    # server). The binary retries the HeadBucket/CreateBucket call with
+    # exponential backoff, so a SeaweedFS gateway that is not yet listening on
+    # 8333 does not fail the upgrade (#2004). Exits non-zero only once the
+    # retry budget is spent, blocking server start.
     entrypoint: ['` + StorageInitEntrypoint + `']
     restart: 'no'
     depends_on:

@@ -32,15 +32,34 @@ func (d *DockerManager) envPath() string {
 	return filepath.Join(d.installDir, "config", ".env.local")
 }
 
-func (d *DockerManager) runCompose(args ...string) error {
+// composeArgs returns the full argument list for a `docker compose` invocation:
+// the binary-relative prefix (compose file + env file) followed by args.
+//
+// The env file is passed explicitly and unconditionally so container
+// recreation always reads the installation's single secrets file
+// (config/.env.local) and never silently falls back to a stray
+// docker/.env left over from an older layout (#2004). install and upgrade
+// share this path, so they cannot diverge.
+func (d *DockerManager) composeArgs(args ...string) []string {
 	baseArgs := []string{
 		"compose",
 		"-f", d.composePath(),
 		"--env-file", d.envPath(),
 	}
-	baseArgs = append(baseArgs, args...)
+	return append(baseArgs, args...)
+}
 
-	cmd := exec.Command("docker", baseArgs...)
+// upArgs is the `compose up` argument list used by install and upgrade.
+// --remove-orphans drops containers that belonged to the compose project but
+// are no longer in the (regenerated) compose file — memory-minio,
+// memory-minio-init and memory-kreuzberg after the object-store/pipeline
+// transition (#2004). Without it they keep holding ports and RAM.
+func (d *DockerManager) upArgs() []string {
+	return []string{"up", "-d", "--remove-orphans"}
+}
+
+func (d *DockerManager) runCompose(args ...string) error {
+	cmd := exec.Command("docker", d.composeArgs(args...)...)
 	cmd.Dir = filepath.Join(d.installDir, "docker")
 
 	output, err := cmd.CombinedOutput()
@@ -55,11 +74,56 @@ func (d *DockerManager) Pull() error {
 }
 
 func (d *DockerManager) Up() error {
-	return d.runCompose("up", "-d")
+	if orphans := d.legacyOrphans(); len(orphans) > 0 {
+		d.output.Warn("Removing legacy containers left behind by the MinIO/Kreuzberg stack: %s",
+			strings.Join(orphans, ", "))
+	}
+	return d.runCompose(d.upArgs()...)
+}
+
+// legacyServiceNames are the compose service names that older self-hosted
+// installs ran and the current template no longer defines. They are removed by
+// `up --remove-orphans`; listing them first tells the user what is going away.
+var legacyServiceNames = []string{
+	"memory-minio",
+	"memory-minio-init",
+	"memory-kreuzberg",
+}
+
+// legacyOrphans returns the still-present legacy containers, best-effort: a
+// docker failure (no daemon, no permission) yields no warning rather than an
+// error, since --remove-orphans still does the right thing.
+func (d *DockerManager) legacyOrphans() []string {
+	out, err := exec.Command("docker", "ps", "-a", "--format", "{{.Names}}").Output()
+	if err != nil {
+		return nil
+	}
+	return filterLegacyOrphans(strings.Split(strings.TrimSpace(string(out)), "\n"))
+}
+
+// filterLegacyOrphans returns the legacy container names present in names, in
+// the stable order of legacyServiceNames. Extracted so the selection is
+// testable without a Docker daemon.
+func filterLegacyOrphans(names []string) []string {
+	present := make(map[string]bool, len(names))
+	for _, n := range names {
+		present[strings.TrimSpace(n)] = true
+	}
+
+	var orphans []string
+	for _, legacy := range legacyServiceNames {
+		if present[legacy] {
+			orphans = append(orphans, legacy)
+		}
+	}
+	return orphans
 }
 
 func (d *DockerManager) Down(removeVolumes bool) error {
-	args := []string{"down"}
+	// --remove-orphans keeps `down` consistent with `up`: legacy containers
+	// that are no longer in the compose file are removed too instead of being
+	// left running with no compose project owning them (#2004).
+	args := []string{"down", "--remove-orphans"}
 	if removeVolumes {
 		args = append(args, "-v")
 	}
@@ -186,14 +250,7 @@ func (d *DockerManager) Logs(service string, lines int) (string, error) {
 		args = append(args, service)
 	}
 
-	baseArgs := []string{
-		"compose",
-		"-f", d.composePath(),
-		"--env-file", d.envPath(),
-	}
-	baseArgs = append(baseArgs, args...)
-
-	cmd := exec.Command("docker", baseArgs...)
+	cmd := exec.Command("docker", d.composeArgs(args...)...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("failed to get logs: %w", err)

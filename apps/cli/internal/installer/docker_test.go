@@ -35,6 +35,141 @@ func TestDockerManagerPaths(t *testing.T) {
 	}
 }
 
+// TestComposeArgsPassEnvLocalExplicitly locks the #2004 env-file contract: every
+// compose invocation must name the installation's single secrets file
+// (config/.env.local) explicitly, for install and upgrade alike, and must never
+// fall back to a second copy under docker/.
+func TestComposeArgsPassEnvLocalExplicitly(t *testing.T) {
+	dm := NewDockerManager("/home/user/.memory", &mockOutput{})
+
+	got := dm.composeArgs("up", "-d")
+	want := []string{
+		"compose",
+		"-f", filepath.Join("/home/user/.memory", "docker", "docker-compose.yml"),
+		"--env-file", filepath.Join("/home/user/.memory", "config", ".env.local"),
+		"up", "-d",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("composeArgs() =\n  %v\nwant\n  %v", got, want)
+	}
+	if strings.Contains(strings.Join(got, " "), "docker/.env") {
+		t.Errorf("compose args must not reference docker/.env: %v", got)
+	}
+}
+
+// TestUpArgsRemoveOrphans guards the orphan cleanup: the MinIO/Kreuzberg
+// containers from older installs are only dropped when compose is told to.
+func TestUpArgsRemoveOrphans(t *testing.T) {
+	dm := NewDockerManager("/home/user/.memory", &mockOutput{})
+
+	args := dm.composeArgs(dm.upArgs()...)
+	joined := strings.Join(args, " ")
+
+	if !strings.Contains(joined, "--remove-orphans") {
+		t.Errorf("`compose up` args missing --remove-orphans: %v", args)
+	}
+	if !strings.Contains(joined, "up -d") {
+		t.Errorf("`compose up` args malformed: %v", args)
+	}
+}
+
+// TestDownArgsRemoveOrphans keeps `memory server uninstall` from leaving legacy
+// containers running after the install directory is deleted.
+func TestDownArgsRemoveOrphans(t *testing.T) {
+	dm := NewDockerManager("/home/user/.memory", &mockOutput{})
+
+	args := dm.composeArgs("down", "--remove-orphans", "-v")
+	if !strings.Contains(strings.Join(args, " "), "--remove-orphans") {
+		t.Errorf("compose down args missing --remove-orphans: %v", args)
+	}
+}
+
+// TestFilterLegacyOrphans covers the warning that names what is being removed.
+func TestFilterLegacyOrphans(t *testing.T) {
+	tests := []struct {
+		name  string
+		names []string
+		want  []string
+	}{
+		{
+			name:  "no legacy containers",
+			names: []string{"memory-db", "memory-server", "memory-seaweedfs", ""},
+			want:  nil,
+		},
+		{
+			name:  "full legacy stack after the transition",
+			names: []string{"memory-server", "memory-minio", "memory-minio-init", "memory-kreuzberg"},
+			want:  []string{"memory-minio", "memory-minio-init", "memory-kreuzberg"},
+		},
+		{
+			name:  "order is stable regardless of docker output order",
+			names: []string{"memory-kreuzberg", "memory-minio-init", "memory-minio"},
+			want:  []string{"memory-minio", "memory-minio-init", "memory-kreuzberg"},
+		},
+		{
+			name:  "prefix matches are not treated as legacy services",
+			names: []string{"memory-minio-backup", "memory-kreuzberg2"},
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterLegacyOrphans(tt.names)
+			if len(got) != len(tt.want) {
+				t.Fatalf("filterLegacyOrphans(%v) = %v, want %v", tt.names, got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("filterLegacyOrphans(%v) = %v, want %v", tt.names, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestSeaweedFSHealthcheckRequiresS3Listener guards #2004: the master endpoint
+// is green (`{}`) before raft election and before the S3 gateway listens on
+// 8333, and anonymous S3 GETs answer 403 (so `wget --spider` cannot be used).
+// The probe must therefore check leader election AND that 8333 accepts.
+func TestSeaweedFSHealthcheckRequiresS3Listener(t *testing.T) {
+	template := GetDockerComposeTemplate()
+
+	start := strings.Index(template, "\n  seaweedfs:\n")
+	if start < 0 {
+		t.Fatal("seaweedfs service not found in docker-compose template")
+	}
+	next := strings.Index(template[start+1:], "\n\n  ")
+	if next < 0 {
+		t.Fatal("could not delimit the seaweedfs service block")
+	}
+	block := template[start : start+1+next]
+
+	var testLine string
+	for _, line := range strings.Split(block, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "test:") {
+			testLine = line
+			break
+		}
+	}
+	if testLine == "" {
+		t.Fatalf("seaweedfs healthcheck has no test line:\n%s", block)
+	}
+
+	if !strings.Contains(testLine, "nc -z 127.0.0.1 8333") {
+		t.Errorf("seaweedfs healthcheck must prove the S3 port is accepting: %s", testLine)
+	}
+	if !strings.Contains(testLine, "cluster/status") || !strings.Contains(testLine, "IsLeader") {
+		t.Errorf("seaweedfs healthcheck must prove raft leadership: %s", testLine)
+	}
+	if strings.Contains(testLine, "--spider") {
+		t.Errorf("seaweedfs healthcheck must not rely on a 2xx-only spider probe: %s", testLine)
+	}
+	if strings.Contains(block, "interval: 30s") {
+		t.Errorf("seaweedfs healthcheck interval must be short so storage-init starts promptly:\n%s", block)
+	}
+}
+
 func TestGetDockerComposeTemplate(t *testing.T) {
 	template := GetDockerComposeTemplate()
 

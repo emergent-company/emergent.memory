@@ -523,10 +523,14 @@ services:
     volumes:
       - object_store_data:/data
     healthcheck:
-      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://127.0.0.1:9333/cluster/status']
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      # Readiness must prove BOTH raft leadership and that the S3 gateway is
+      # accepting on 8333 (#2004). /cluster/status answers 200 with `{}` while
+      # the S3 listener is still closed, and anonymous S3 GETs answer 403
+      # (fails `wget --spider`). `nc`/`grep` ship in the pinned image.
+      test: ["CMD-SHELL", "wget -q -O - --tries=1 http://127.0.0.1:9333/cluster/status | grep -q '\"IsLeader\":true' && nc -z 127.0.0.1 8333"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
       start_period: 10s
     networks:
       - memory

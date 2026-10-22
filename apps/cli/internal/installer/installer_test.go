@@ -359,3 +359,125 @@ func TestSetOutput(t *testing.T) {
 		t.Error("SetOutput did not set the output writer")
 	}
 }
+
+// TestNormalizeVersion pins #2004's version-format contract: the release
+// workflow writes the ldflags Version without the leading "v" while the image
+// tag keeps it, so both must normalise to the same bare semver.
+func TestNormalizeVersion(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"with v prefix", "v0.87.4", "0.87.4"},
+		{"already bare", "0.87.4", "0.87.4"},
+		{"cli prefix then v", "cli-v0.87.4", "0.87.4"},
+		{"cli prefix without v", "cli-0.87.4", "0.87.4"},
+		{"surrounding whitespace and newline", "  v0.87.4\n", "0.87.4"},
+		{"dev build", "dev", "dev"},
+		{"empty", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := NormalizeVersion(tt.in); got != tt.want {
+				t.Errorf("NormalizeVersion(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSaveInstalledVersionNormalizes(t *testing.T) {
+	installDir := t.TempDir()
+	inst := New(Config{InstallDir: installDir})
+
+	inst.SaveInstalledVersion("v0.87.4")
+
+	raw, err := os.ReadFile(filepath.Join(installDir, "version"))
+	if err != nil {
+		t.Fatalf("reading version file: %v", err)
+	}
+	if got := strings.TrimSpace(string(raw)); got != "0.87.4" {
+		t.Errorf("version file = %q, want %q", got, "0.87.4")
+	}
+}
+
+func TestGetInstalledVersionNormalizesLegacyFile(t *testing.T) {
+	installDir := t.TempDir()
+	inst := New(Config{InstallDir: installDir})
+
+	// Written by an older CLI that kept the "v" prefix.
+	if err := os.WriteFile(filepath.Join(installDir, "version"), []byte("v0.87.4\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := inst.GetInstalledVersion(); got != "0.87.4" {
+		t.Errorf("GetInstalledVersion() = %q, want %q", got, "0.87.4")
+	}
+}
+
+// TestMissingEnvKeys covers the pre-upgrade secrets check: an .env.local that
+// predates a key (or the MinIO→SeaweedFS rename) must be reported before the
+// containers are recreated.
+func TestMissingEnvKeys(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		required []string
+		want     []string
+	}{
+		{
+			name:     "complete file",
+			content:  "POSTGRES_PASSWORD=abc\nLLM_ENCRYPTION_KEY=def\n",
+			required: []string{"POSTGRES_PASSWORD", "LLM_ENCRYPTION_KEY"},
+			want:     nil,
+		},
+		{
+			name:     "empty value counts as missing",
+			content:  "POSTGRES_PASSWORD=\nLLM_ENCRYPTION_KEY=def\n",
+			required: []string{"POSTGRES_PASSWORD", "LLM_ENCRYPTION_KEY"},
+			want:     []string{"POSTGRES_PASSWORD"},
+		},
+		{
+			name:     "comments, export and quotes",
+			content:  "# comment\n\nexport POSTGRES_PASSWORD='abc'\nLLM_ENCRYPTION_KEY=\"def\"\n",
+			required: []string{"POSTGRES_PASSWORD", "LLM_ENCRYPTION_KEY"},
+			want:     nil,
+		},
+		{
+			name:     "legacy MinIO-only file misses the SeaweedFS keys",
+			content:  "POSTGRES_PASSWORD=abc\nMINIO_ROOT_USER=minioadmin\nMINIO_ROOT_PASSWORD=xyz\n",
+			required: []string{"POSTGRES_PASSWORD", "OBJECT_STORE_ACCESS_KEY", "OBJECT_STORE_SECRET_KEY"},
+			want:     []string{"OBJECT_STORE_ACCESS_KEY", "OBJECT_STORE_SECRET_KEY"},
+		},
+		{
+			name:     "key present only in a comment does not count",
+			content:  "# LLM_ENCRYPTION_KEY=abc\n",
+			required: []string{"LLM_ENCRYPTION_KEY"},
+			want:     []string{"LLM_ENCRYPTION_KEY"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := missingEnvKeys(tt.content, tt.required)
+			if len(got) != len(tt.want) {
+				t.Fatalf("missingEnvKeys() = %v, want %v", got, tt.want)
+			}
+			for i := range tt.want {
+				if got[i] != tt.want[i] {
+					t.Fatalf("missingEnvKeys() = %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestHasLegacyMinioKeys(t *testing.T) {
+	if !hasLegacyMinioKeys("MINIO_ROOT_PASSWORD=xyz\n") {
+		t.Error("expected legacy MinIO keys to be detected")
+	}
+	if hasLegacyMinioKeys("OBJECT_STORE_SECRET_KEY=xyz\n") {
+		t.Error("did not expect MinIO keys in a migrated file")
+	}
+}

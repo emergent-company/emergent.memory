@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
 )
 
 const (
@@ -74,10 +76,10 @@ func filterReleasesBetween(releases []Release, currentVersion, targetVersion str
 }
 
 // normalizeVersion strips "v" and "cli-" prefixes from a version string.
+// Single source of truth: installer.NormalizeVersion, which also normalises the
+// version recorded in <installDir>/version (#2004).
 func normalizeVersion(v string) string {
-	v = strings.TrimPrefix(v, "cli-")
-	v = strings.TrimPrefix(v, "v")
-	return v
+	return installer.NormalizeVersion(v)
 }
 
 // extractChangelog extracts the "What's Changed" section from a GitHub release body.

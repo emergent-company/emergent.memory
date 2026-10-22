@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
 	"github.com/spf13/cobra"
 )
 
@@ -864,7 +865,7 @@ func checkDockerContainers(installDir string) checkResult {
 	installedVersion := getInstalledVersionFromFile(installDir)
 	containerVersion := getContainerVersion("memory-server")
 
-	if installedVersion != "" && containerVersion != "" && installedVersion != containerVersion {
+	if installedVersion != "" && containerVersion != "" && !serverVersionsMatch(installedVersion, containerVersion) {
 		fmt.Println("VERSION MISMATCH")
 		return checkResult{
 			name:    "Docker Containers",
@@ -1385,7 +1386,17 @@ func getInstalledVersionFromFile(installDir string) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(content))
+	return installer.NormalizeVersion(string(content))
+}
+
+// serverVersionsMatch reports whether the version recorded in
+// <installDir>/version and the running container's image tag denote the same
+// release. The file has held both "0.87.4" and "v0.87.4" depending on the CLI
+// build that wrote it, so both formats must resolve (#2004).
+func serverVersionsMatch(installed, container string) bool {
+	installed = installer.NormalizeVersion(installed)
+	container = installer.NormalizeVersion(container)
+	return installed != "" && container != "" && installed == container
 }
 
 func getContainerVersion(containerName string) string {
