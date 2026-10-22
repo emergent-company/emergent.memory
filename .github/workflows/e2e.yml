@@ -93,6 +93,14 @@ jobs:
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound (infra #363): must match
+          # ci_host_buildkit_max_parallelism in the infra ansible role that
+          # configures the CI hosts. Set inline because the self-hosted pool
+          # spans hosts that role does not configure.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
 
       # infra #335: pin the docker-container builder this action creates for the
       # bare `docker build` / `docker compose ... --build` steps inside
@@ -199,6 +207,14 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound (infra #363): must match
+          # ci_host_buildkit_max_parallelism in the infra ansible role that
+          # configures the CI hosts. Set inline because the self-hosted pool
+          # spans hosts that role does not configure.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
 
       - name: Build memory-server image
         uses: docker/build-push-action@v5
@@ -335,6 +351,14 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound (infra #363): must match
+          # ci_host_buildkit_max_parallelism in the infra ansible role that
+          # configures the CI hosts. Set inline because the self-hosted pool
+          # spans hosts that role does not configure.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
 
       - name: Build memory-server image
         uses: docker/build-push-action@v5
