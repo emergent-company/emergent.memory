@@ -26,18 +26,34 @@ defaults:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    # Self-hosted (#184): the SDK tests are pure-Python (httpx/pydantic have
+    # wheels; no C toolchain needed), so this does not depend on the missing
+    # compiler tracked in #233. The fork guard keeps PR-authored code off the
+    # persistent runner for forks, matching every other self-hosted job here.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      # actions/setup-python cannot resolve a version on this pool (Arch
+      # `memory-dev` reports "not found for this operating system"), so uv
+      # installs a managed interpreter and the job installs into an isolated
+      # venv — no host Python toolchain required (#184, #233).
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-3.12"
+          echo "$RUNNER_TEMP/venv-3.12/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-3.12" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -e '.[dev]'
+        run: uv pip install -e '.[dev]'
 
       - name: Ruff check
         run: ruff check .
@@ -47,25 +63,38 @@ jobs:
 
   typecheck:
     name: Type Check
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      # actions/setup-python cannot resolve a version on this pool (Arch
+      # `memory-dev` reports "not found for this operating system"), so uv
+      # installs a managed interpreter and the job installs into an isolated
+      # venv — no host Python toolchain required (#184, #233).
+      - name: Set up Python 3.12 (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: '3.12'
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/venv-3.12"
+          echo "$RUNNER_TEMP/venv-3.12/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-3.12" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -e '.[dev]'
+        run: uv pip install -e '.[dev]'
 
       - name: Mypy
         run: mypy .
 
   test:
     name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
     strategy:
       fail-fast: false
       matrix:
@@ -74,13 +103,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.python-version }} (uv)
+        uses: astral-sh/setup-uv@v10.3.0
         with:
           python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Create virtualenv
+        run: |
+          uv venv --python ${{ matrix.python-version }} "$RUNNER_TEMP/venv-${{ matrix.python-version }}"
+          echo "$RUNNER_TEMP/venv-${{ matrix.python-version }}/bin" >> "$GITHUB_PATH"
+          echo "VIRTUAL_ENV=$RUNNER_TEMP/venv-${{ matrix.python-version }}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
-        run: pip install -e '.[dev]'
+        run: uv pip install -e '.[dev]'
 
       - name: Run tests
         run: pytest -v --tb=short
