@@ -18,7 +18,8 @@ const EMAIL = process.env.E2E_TEST_USER_EMAIL;
 const PASSWORD = process.env.E2E_TEST_USER_PASSWORD;
 
 // Defaults to the memory API origin; override only when the connector targets a
-// different deployment. The live config requires E2E_MEMORY_API_URL.
+// different deployment. The live setup project requires E2E_MEMORY_API_URL;
+// this spec reads it only as the server fallback.
 const SERVER =
   process.env.E2E_CONNECTOR_SERVER || process.env.E2E_MEMORY_API_URL || '';
 const CLIENT_ID = process.env.E2E_CONNECTOR_CLIENT_ID || '390138928478289930';
@@ -228,6 +229,10 @@ test.describe('memory-connector auth', () => {
     test.skip(
       !EMAIL || !PASSWORD,
       'E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD not set — connector auth spec skipped',
+    );
+    test.skip(
+      !SERVER,
+      'E2E_CONNECTOR_SERVER (or E2E_MEMORY_API_URL) not set — connector auth spec skipped',
     );
     test.setTimeout(TEST_TIMEOUT_MS);
 

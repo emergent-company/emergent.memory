@@ -17,6 +17,7 @@ chat project      live-LLM chat-UI scenarios (agent switch + session rail, run-c
                   inline-card/queue/rail) on a scratch project, sequential; skips fast when
                   E2E_SCENARIO_LLM_API_KEY is unset
 connector project memory-connector CLI PKCE sign-in with the test user; gateway-independent
+                  (needs E2E_CONNECTOR_SERVER or E2E_MEMORY_API_URL; no gateway/setup)
 globalTeardown    delete the bootstrap org (idempotent, runs on failure)
 ```
 
@@ -27,6 +28,11 @@ globalTeardown    delete the bootstrap org (idempotent, runs on failure)
    `E2E_BASE_URL` if it is not `http://localhost:8095`.
 2. A Zitadel **test user** with no MFA exists on the deployment's issuer
    (e.g. `https://zitadel.example.com`).
+
+The gateway-backed projects read `E2E_MEMORY_API_URL` at the start of the
+`setup` project they depend on, and fail loudly there when it is unset. The
+gateway-free `connector` project does not depend on `setup`, so it runs without
+it (see [Connector auth](#connector-auth)).
 
 ## Setup
 
@@ -39,6 +45,8 @@ npx playwright install chromium   # once (--with-deps on a bare host)
 cp .env.e2e.example .env.e2e
 # edit .env.e2e → set E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD and
 #                 E2E_MEMORY_API_URL (the memory API origin)
+#                 — the last one is not needed for --project=connector,
+#                   which reads E2E_CONNECTOR_SERVER instead (see below)
 ```
 
 Live-LLM scenario credentials (optional — the scenario spec skips without a
@@ -88,15 +96,21 @@ and that `projects list --json` returns a valid array. All CLI calls pass a
 temp `--config`, so the real connector store is never touched.
 
 Required env: `E2E_TEST_USER_EMAIL` / `E2E_TEST_USER_PASSWORD` (same as the rest
-of the suite — the spec skips fast when either is unset). The connector binary is
-built once via `go build ./cmd/memory-connector`; no gateway is needed.
+of the suite — the spec skips fast when either is unset) and an API origin:
+`E2E_CONNECTOR_SERVER`, or `E2E_MEMORY_API_URL` as the fallback (the spec skips
+fast when neither is set). `E2E_MEMORY_API_URL` itself is **not** required for
+this project: gateway-backed projects get it enforced by the `setup` project
+they depend on, and `connector` does not depend on `setup` — so
+`--project=connector` runs on a machine that does not target a deployment. The
+connector binary is built once via `go build ./cmd/memory-connector`; no gateway
+is needed.
 
 ```bash
 cd tests/e2e
 npx playwright test --project=connector
 
 # env overrides (no baked-in default):
-#   E2E_CONNECTOR_SERVER=https://api.example.com   # defaults to E2E_MEMORY_API_URL
+#   E2E_CONNECTOR_SERVER=https://api.example.com   # required (or E2E_MEMORY_API_URL)
 #   E2E_CONNECTOR_CLIENT_ID=390138928478289930
 #   E2E_CONNECTOR_REDIRECT=com.emergent.memory.connector://callback
 #   MEMORY_CONNECTOR_BIN=/path/to/memory-connector   # skip the build

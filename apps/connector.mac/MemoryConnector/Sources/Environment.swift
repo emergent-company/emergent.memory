@@ -43,6 +43,10 @@ struct Environment: Identifiable, Hashable, Sendable {
     }
 
     /// Hosted production environment.
+    ///
+    /// Its base URLs (and the dev fallbacks below) are literals, so the
+    /// remaining `URL(string:)!` force unwraps in this type operate on
+    /// compile-time constants, never on environment input.
     static let prod = Environment(
         id: "prod",
         name: "Memory",
@@ -51,24 +55,88 @@ struct Environment: Identifiable, Hashable, Sendable {
         clientID: "390138006318678019"
     )
 
-    /// Reads a dev-only override from the launch environment. The fallbacks are
-    /// RFC 2606 reserved hosts so the public source never bakes in an internal
-    /// deployment; a dev build sets these in its Xcode scheme or shell.
-    private static func devValue(_ key: String, fallback: String) -> String {
-        ProcessInfo.processInfo.environment[key] ?? fallback
+    /// Fallback dev deployment: RFC 2606 reserved hosts, so the public source
+    /// never bakes in an internal deployment and the entry stays inert until a
+    /// dev build sets the overrides in its Xcode scheme or shell.
+    private static let devServerFallback = URL(string: "https://api.example.com")!
+    private static let devIssuerFallback = URL(string: "https://zitadel.example.com")!
+    private static let devClientIDFallback = "390138928478289930"
+
+    /// Reads a dev-only override from a launch-environment dictionary.
+    ///
+    /// Absent, empty, and whitespace-only values all count as "not set" — a
+    /// shell or Xcode scheme commonly exports `KEY=` for a variable that was
+    /// never filled in, and `environment[key] ?? fallback` would let that blank
+    /// defeat the fallback. A real value has surrounding whitespace trimmed.
+    static func devValue(
+        _ key: String,
+        fallback: String,
+        environment: [String: String]
+    ) -> String {
+        trimmedDevValue(key, environment: environment) ?? fallback
+    }
+
+    /// Same rules as `devValue`, but the value must also parse as an absolute
+    /// `http`/`https` URL with a host. Anything else (malformed, relative,
+    /// another scheme) falls back instead of trapping in `URL(string:)!`.
+    static func devURL(
+        _ key: String,
+        fallback: URL,
+        environment: [String: String]
+    ) -> URL {
+        guard
+            let value = trimmedDevValue(key, environment: environment),
+            let url = URL(string: value),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "http" || scheme == "https",
+            let host = url.host,
+            !host.isEmpty
+        else {
+            return fallback
+        }
+        return url
+    }
+
+    private static func trimmedDevValue(
+        _ key: String,
+        environment: [String: String]
+    ) -> String? {
+        guard let raw = environment[key] else { return nil }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// Builds the Dev entry from a launch environment. A function (rather than
+    /// inline in the `static let`) so every value shape is testable without
+    /// mutating the process environment.
+    static func makeDev(environment: [String: String]) -> Environment {
+        Environment(
+            id: "dev",
+            name: "Memory Dev",
+            serverURL: devURL(
+                "MEMORY_DEV_SERVER_URL",
+                fallback: devServerFallback,
+                environment: environment
+            ),
+            issuer: devURL(
+                "MEMORY_DEV_ISSUER_URL",
+                fallback: devIssuerFallback,
+                environment: environment
+            ),
+            clientID: devValue(
+                "MEMORY_DEV_CLIENT_ID",
+                fallback: devClientIDFallback,
+                environment: environment
+            )
+        )
     }
 
     /// Hosted development environment (separate Zitadel provider + client).
     /// Configure it out-of-band with `MEMORY_DEV_SERVER_URL` /
     /// `MEMORY_DEV_ISSUER_URL` (and optionally `MEMORY_DEV_CLIENT_ID`); without
-    /// them the entry stays on reserved example hosts.
-    static let dev = Environment(
-        id: "dev",
-        name: "Memory Dev",
-        serverURL: URL(string: devValue("MEMORY_DEV_SERVER_URL", fallback: "https://api.example.com"))!,
-        issuer: URL(string: devValue("MEMORY_DEV_ISSUER_URL", fallback: "https://zitadel.example.com"))!,
-        clientID: devValue("MEMORY_DEV_CLIENT_ID", fallback: "390138928478289930")
-    )
+    /// them — or with blank/unparseable values — the entry stays on reserved
+    /// example hosts.
+    static let dev = makeDev(environment: ProcessInfo.processInfo.environment)
 
     /// Built-in environments, in display order.
     static let all: [Environment] = [.prod, .dev]

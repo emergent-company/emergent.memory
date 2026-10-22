@@ -17,6 +17,26 @@ import {
   PERSONAL_MEMORY_BLUEPRINT_VERSION,
 } from './helpers/blueprints';
 
+// The live suite targets a real deployment, so there is no baked-in host. Fail
+// loudly and early — before login or any network call — instead of letting a
+// relative URL silently hit the gateway.
+//
+// This guard lives here rather than in playwright.config.ts because Playwright
+// re-evaluates the config module inside its worker processes, where the CLI
+// argv has no `--project` flag; a project-based exemption decided at config
+// load would throw in the worker even for `--project=connector`. Every
+// gateway-backed project (chromium, mutations, scenarios, chat, gdrive-live)
+// depends on this `setup` project, while the gateway-free `connector` project
+// does not — so a connector-only run never loads this file.
+if (!process.env.E2E_MEMORY_API_URL) {
+  throw new Error(
+    'E2E_MEMORY_API_URL is required by the gateway-backed projects (chromium, mutations, scenarios, ' +
+      'chat, gdrive-live): the live suite targets a real deployment and there is no baked-in host. ' +
+      'Set it in tests/e2e/.env.e2e or the environment. The gateway-free connector project does not ' +
+      'need it: npx playwright test --project=connector',
+  );
+}
+
 // The GitHub import can take longer than a default test timeout (the backend
 // allows the archive fetch alone up to 60s); give setup a matching budget.
 setup.setTimeout(180_000);

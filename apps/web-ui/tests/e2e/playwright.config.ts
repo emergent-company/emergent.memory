@@ -6,13 +6,12 @@ import { BASE_URL, STORAGE_STATE } from './constants/storage';
 // Load the gitignored test-user credentials before config reads them.
 loadEnv({ path: path.join(__dirname, '.env.e2e') });
 
-// The live suite targets a real deployment, so there is no baked-in host.
-// Fail at config load instead of letting a relative URL silently hit the gateway.
-if (!process.env.E2E_MEMORY_API_URL) {
-  throw new Error(
-    'E2E_MEMORY_API_URL is required (there is no deployment default); set it in .env.e2e or the environment',
-  );
-}
+// NOTE: E2E_MEMORY_API_URL is enforced by the `setup` project (auth.setup.ts),
+// not here. The live suite targets a real deployment and has no baked-in host,
+// but the config module is re-evaluated inside Playwright worker processes,
+// where the CLI argv carries no `--project` flag — so a project-based exemption
+// decided at config load cannot be made worker-safe. Every gateway-backed
+// project depends on `setup`; the gateway-free `connector` project does not.
 
 export default defineConfig({
   testDir: './',
