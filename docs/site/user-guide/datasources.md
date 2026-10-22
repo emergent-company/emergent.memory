@@ -11,6 +11,7 @@ Data sources let you connect external systems to Emergent Memory and automatical
 | `google_drive` | `drive` | Google Drive files and folders |
 | `github` | `repo` | GitHub repositories (OAuth or a personal access token) |
 | `clickup` | `clickup-document` | ClickUp documents and spaces |
+| `trale` | `meeting` | Trale meeting transcripts and summaries |
 
 !!! note "Google Drive is OAuth-only"
     Google Drive can only be connected via OAuth. There is no paste-a-refresh-token option. Data
@@ -143,6 +144,24 @@ configured for the whole deployment, not per source).
   and **Contents: Read** on the target repository to list branches and tags and sync its files.
 
 Reading branches and tags needs no permission beyond contents access.
+
+### Trale (meeting intelligence)
+
+Trale imports meeting transcripts and their AI-generated summaries. It connects over OAuth, but unlike
+Google Drive and GitHub it registers its own OAuth client at connect time using dynamic client
+registration (RFC 7591). There is no app to create in a vendor console and no client id/secret to enter,
+so the credentials pages simply do not list Trale — connect it directly from **Data Sources**.
+
+| Field | Meaning |
+|---|---|
+| **Tags** | *Required.* The Trale tag slugs to import, for example `standup`. Pick from the suggestions the provider returns, or type them. |
+| **Name pattern** | Optional regex matched against a meeting's title; only matching meetings are imported. |
+| **Include transcript** | When enabled, the full transcript is imported as part of the document. Off (the default) imports the summary and structured summary only. |
+| **Backfill days** | How far back to look for past meetings (default 90). |
+
+Only completed meetings are imported. The document's identity is derived from the meeting's status,
+participant count, tags, and summary, so a meeting that is later re-summarized updates in place rather
+than duplicating.
 
 ---
 

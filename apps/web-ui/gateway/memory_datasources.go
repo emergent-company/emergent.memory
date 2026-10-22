@@ -23,6 +23,11 @@ type DSProvider struct {
 	VendorName string `json:"vendorName"`
 	IconURL    string `json:"iconUrl,omitempty"`
 	Available  bool   `json:"available"`
+	// SelfRegistering marks a provider whose OAuth client registers itself via
+	// RFC 7591 dynamic client registration at connect time (no admin-configured
+	// app). The credentials UI skips such providers: there is no client
+	// id/secret to manage, so a "Set up OAuth app" action would be misleading.
+	SelfRegistering bool `json:"selfRegistering,omitempty"`
 	// AuthMethods is the provider's advertised connect methods ("oauth" and/or
 	// "credentials"). The chooser renders from it rather than a hard-coded list.
 	AuthMethods []string `json:"authMethods,omitempty"`
@@ -48,6 +53,14 @@ func (p DSProvider) DSProviderSupportsStrategy(strategy string) bool {
 // credentials auth method.
 func (p DSProvider) DSProviderSupportsCredentials() bool {
 	return slices.Contains(p.AuthMethods, "credentials")
+}
+
+// DSProviderSelfRegistering reports whether a provider registers its own OAuth
+// client (RFC 7591) at connect time. Such providers must not appear in the
+// admin "OAuth app" management surface: there is no client id/secret to
+// configure, so a "Set up OAuth app" action would be misleading.
+func (p DSProvider) DSProviderSelfRegistering() bool {
+	return p.SelfRegistering
 }
 
 // DSProviderSchema is a provider's JSON config schema

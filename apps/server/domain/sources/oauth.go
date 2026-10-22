@@ -29,6 +29,12 @@ type OAuthClient struct {
 	// AuthURL/TokenURL override the provider defaults (used by tests).
 	AuthURL  string
 	TokenURL string
+	// Resource is the optional RFC 8707 resource parameter identifying the
+	// protected resource (e.g. an MCP endpoint). Static-client providers
+	// (Google/GitHub) leave it empty and are unaffected; dynamic-client
+	// providers (Trale) carry it so authorize and token requests target the
+	// right resource.
+	Resource string
 }
 
 // OAuthAuthorizeRequest is the per-connection input for building an authorize URL.
@@ -53,6 +59,71 @@ type OAuthStrategy interface {
 	// Exchange redeems an authorization code (with PKCE verifier) for a
 	// credential map, using the supplied HTTP client (injectable for tests).
 	Exchange(ctx context.Context, httpClient *http.Client, client OAuthClient, code, codeVerifier, redirectURI string) (Credentials, error)
+}
+
+// DynamicOAuthClient is the result of a provider's dynamic (self-registering)
+// OAuth bootstrap: the registered client id, the authorization/token endpoints,
+// the protected resource, and the requested scopes. It has no secret — the
+// client registers as a public client (token_endpoint_auth_method "none").
+type DynamicOAuthClient struct {
+	ClientID string
+	AuthURL  string
+	TokenURL string
+	Resource string
+	Scopes   []string
+}
+
+// DynamicOAuthProvider is implemented by a provider whose OAuth client is
+// registered on the fly (RFC 7591 dynamic client registration) rather than
+// configured by an admin. When a provider implements it, the connect flow skips
+// resolveOAuthClient and instead discovers + registers a client, persisting its
+// identity/endpoints in the pending state until the callback consumes them.
+type DynamicOAuthProvider interface {
+	DiscoverOAuth(ctx context.Context, httpClient *http.Client, redirectURI string) (DynamicOAuthClient, error)
+}
+
+// oauthDynamicKey is the reserved pending-state config key under which a
+// dynamic provider's discovered client identity/endpoints are persisted between
+// StartOAuth and CompleteOAuth. It is stripped at callback time and never lands
+// in the stored source config.
+const oauthDynamicKey = "_oauth_dynamic"
+
+// dynamicOAuthToConfig serialises a discovered dynamic client into the
+// pending-state config shape (a plain JSON object).
+func dynamicOAuthToConfig(dc DynamicOAuthClient) map[string]any {
+	return map[string]any{
+		"client_id": dc.ClientID,
+		"auth_url":  dc.AuthURL,
+		"token_url": dc.TokenURL,
+		"resource":  dc.Resource,
+		"scopes":    dc.Scopes,
+	}
+}
+
+// dynamicOAuthFromConfig reconstructs a discovered dynamic client from a
+// pending-state config value. The value arrives as map[string]any (JSONB read)
+// or []string/[]any for scopes depending on the store round-trip.
+func dynamicOAuthFromConfig(v any) (DynamicOAuthClient, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return DynamicOAuthClient{}, false
+	}
+	dc := DynamicOAuthClient{
+		ClientID: asString(m["client_id"]),
+		AuthURL:  asString(m["auth_url"]),
+		TokenURL: asString(m["token_url"]),
+		Resource: asString(m["resource"]),
+		Scopes:   stringSlice(m["scopes"]),
+	}
+	if strings.TrimSpace(dc.ClientID) == "" {
+		return DynamicOAuthClient{}, false
+	}
+	return dc, true
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 // NewOAuthState returns a URL-safe random state value for CSRF protection.

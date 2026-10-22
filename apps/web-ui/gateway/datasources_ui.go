@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -26,7 +27,7 @@ type dsConfigField struct {
 	Key         string
 	Label       string
 	Description string
-	Type        string // "string", "array", "boolean"
+	Type        string // "string", "array", "boolean", "integer"
 	Required    bool
 	Widget      string // "resource" | "ref" | "" (plain text) from x-ui-widget
 	Value       string // prefilled text value (string/array); blank for the connect form
@@ -88,6 +89,8 @@ func dsConfigFields(schema *DSProviderSchema, cfg map[string]any) (configFields,
 					}
 				case "array":
 					f.Value = dsConfigArrayText(cfg, key)
+				case "integer":
+					f.Value = dsConfigIntText(cfg, key)
 				default:
 					f.Value = dsConfigString(cfg, key)
 				}
@@ -195,6 +198,18 @@ func dsConfigFromFields(c echo.Context, fields []dsConfigField) map[string]any {
 		case "array":
 			if values := dsConfigList(c.FormValue(f.Key)); len(values) > 0 {
 				cfg[f.Key] = values
+			}
+		case "integer":
+			// A numeric field must reach the server as a number. A value that does
+			// not parse is forwarded as the raw string so the provider's own
+			// validation rejects it, instead of being dropped and silently replaced
+			// by the default.
+			if v := strings.TrimSpace(c.FormValue(f.Key)); v != "" {
+				if n, err := strconv.Atoi(v); err == nil {
+					cfg[f.Key] = n
+				} else {
+					cfg[f.Key] = v
+				}
 			}
 		default:
 			if v := strings.TrimSpace(c.FormValue(f.Key)); v != "" {
@@ -836,6 +851,10 @@ func (s *Server) uiOrgOAuthClients(c echo.Context) error {
 	if err != nil {
 		err = userFacingError(err)
 	}
+	// Self-registering providers (Trale) register their own OAuth client at
+	// connect time; there is no client id/secret to manage, so they have no card
+	// on this org-wide app editor.
+	providers = dsOAuthAppProviders(providers)
 	clients, cerr := s.memory.ListDSOAuthClients(ctx, orgID)
 	if cerr != nil {
 		cerr = userFacingError(cerr)
@@ -1004,6 +1023,21 @@ func dsCredentialAppLabel(p DSProvider) string {
 	return vendor + " OAuth app"
 }
 
+// dsOAuthAppProviders filters out self-registering providers (Trale). They
+// register their own OAuth client via RFC 7591 at connect time, so they have no
+// client id/secret for an admin to manage and must not appear on the
+// org-wide OAuth-app editor.
+func dsOAuthAppProviders(providers []DSProvider) []DSProvider {
+	out := make([]DSProvider, 0, len(providers))
+	for _, p := range providers {
+		if p.DSProviderSelfRegistering() {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // dsCredentialRows builds the table rows: project then organization per OAuth
 // provider, in catalog order. It also collects the providers that currently
 // resolve to the deployment default, so the page can explain that no
@@ -1019,6 +1053,13 @@ func dsCredentialRows(providers []DSProvider, creds []DSOAuthCredentialDescripti
 	var deployment []string
 	for _, p := range providers {
 		if !p.DSProviderSupportsOAuth() {
+			continue
+		}
+		// Self-registering providers (Trale) discover + register their own client
+		// via RFC 7591 at connect time; there is no client id/secret to manage, so
+		// they must not appear as a "Set up OAuth app" row (or in the
+		// deployment-default note) here or on the org OAuth-clients page.
+		if p.DSProviderSelfRegistering() {
 			continue
 		}
 		desc, ok := byType[p.Type]
@@ -1156,7 +1197,8 @@ func (s *Server) uiProjectCredential(c echo.Context) error {
 	}
 	var provider *DSProvider
 	for i := range providers {
-		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() {
+		// Self-registering providers (Trale) have no per-provider app editor.
+		if providers[i].Type == providerType && providers[i].DSProviderSupportsOAuth() && !providers[i].DSProviderSelfRegistering() {
 			provider = &providers[i]
 			break
 		}
@@ -1324,6 +1366,25 @@ func dsStrategyOptions(p DSProvider, current string) []string {
 // when absent or not a string.
 func dsConfigString(cfg map[string]any, key string) string {
 	if v, ok := cfg[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// dsConfigIntText renders a stored numeric value for an integer field. The API
+// decodes JSON numbers as float64, so a string-only read would leave the field
+// blank on the edit form and a save would silently reset it to the default.
+func dsConfigIntText(cfg map[string]any, key string) string {
+	switch v := cfg[key].(type) {
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(v)
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case json.Number:
+		return v.String()
+	case string:
 		return v
 	}
 	return ""

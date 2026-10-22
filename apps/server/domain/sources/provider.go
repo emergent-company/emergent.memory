@@ -205,5 +205,5 @@ func (r *Registry) List() []SourceProvider {
 // defaultProviders returns the providers registered for this build. githubBaseURL
 // is the deployment's GitHub API origin ("" means api.github.com).
 func defaultProviders(githubBaseURL string) []SourceProvider {
-	return []SourceProvider{newGoogleDriveProvider(), newGitHubProvider(githubBaseURL)}
+	return []SourceProvider{newGoogleDriveProvider(), newGitHubProvider(githubBaseURL), newTraleProvider()}
 }

@@ -57,6 +57,15 @@ const (
 	// SourceTypeRepo is the source-type category advertised for the GitHub
 	// provider (and future repository-backed providers).
 	SourceTypeRepo = "repo"
+
+	// ProviderTypeTrale syncs meeting intelligence (transcripts/summaries) from
+	// Trale via its remote MCP server, connected with OAuth 2.1 + dynamic client
+	// registration.
+	ProviderTypeTrale = "trale"
+
+	// SourceTypeMeeting is the source-type category advertised for the Trale
+	// provider (and future meeting-intelligence providers).
+	SourceTypeMeeting = "meeting"
 )
 
 // Source is the kb.sources row model. EncryptedCredentials is deliberately
@@ -94,11 +103,16 @@ type Provider struct {
 	// vendor-level app: the same Google Cloud client can later back several
 	// Google-backed providers, so the credentials UI labels it by VendorName
 	// and shows the data source (Name) separately.
-	Vendor      string   `json:"vendor"`
-	VendorName  string   `json:"vendorName"`
-	IconURL     string   `json:"iconUrl,omitempty"`
-	Available   bool     `json:"available"`
-	AuthMethods []string `json:"authMethods,omitempty"`
+	Vendor     string `json:"vendor"`
+	VendorName string `json:"vendorName"`
+	IconURL    string `json:"iconUrl,omitempty"`
+	Available  bool   `json:"available"`
+	// SelfRegistering marks a provider whose OAuth client registers itself via
+	// RFC 7591 dynamic client registration at connect time (no admin-configured
+	// app). The credentials UI skips such providers: there is no client id/secret
+	// to manage, so a "Set up OAuth app" action would be misleading.
+	SelfRegistering bool     `json:"selfRegistering,omitempty"`
+	AuthMethods     []string `json:"authMethods,omitempty"`
 	// Strategies advertises the org-selectable OAuth scope strategies (design
 	// D6); empty when the provider's scopes are fixed.
 	Strategies []string `json:"strategies,omitempty"`

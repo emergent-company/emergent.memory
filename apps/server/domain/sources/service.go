@@ -88,8 +88,12 @@ func NewService(repo *Repository, cfg *config.Config, log *slog.Logger, registry
 		repo:         repo,
 		providers:    registry,
 		oauthClients: map[string]OAuthClient{},
-		oauthHTTP:    http.DefaultClient,
-		log:          log.With(logger.Scope("sources.svc")),
+		// oauthHTTP stays nil in production: a dynamic (self-registering) provider
+		// must build its own SSRF-guarded client, and the static providers fall back
+		// to http.DefaultClient for their fixed vendor endpoints. Tests inject a
+		// client with WithOAuthHTTPClient to reach loopback fakes.
+		oauthHTTP: nil,
+		log:       log.With(logger.Scope("sources.svc")),
 	}
 	if repo != nil {
 		s.orgOAuth = repo

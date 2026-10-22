@@ -47,10 +47,6 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 	if !ok {
 		return nil, apperror.NewValidation("provider does not support OAuth connect: " + providerType)
 	}
-	client, err := s.resolveOAuthClient(ctx, projectID, providerType)
-	if err != nil {
-		return nil, err
-	}
 	redirectURI, err := s.oauthRedirectURI(providerType)
 	if err != nil {
 		return nil, err
@@ -64,6 +60,38 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		return nil, apperror.NewInternal("generate pkce verifier", err)
 	}
 
+	// Resolve the client. Dynamic (self-registering) providers discover + DCR a
+	// client instead of reading a configured one; static providers (Google/GitHub)
+	// keep the resolveOAuthClient path byte-for-byte.
+	scopes := req.Scopes
+	var extra map[string]string
+	var client OAuthClient
+	if dyn, ok := p.(DynamicOAuthProvider); ok {
+		dc, derr := dyn.DiscoverOAuth(ctx, s.oauthHTTP, redirectURI)
+		if derr != nil {
+			return nil, apperror.NewValidation("OAuth client discovery failed: " + derr.Error())
+		}
+		client = OAuthClient{
+			ClientID: dc.ClientID,
+			AuthURL:  dc.AuthURL,
+			TokenURL: dc.TokenURL,
+			Scopes:   dc.Scopes,
+			Resource: dc.Resource,
+		}
+		scopes = dc.Scopes
+		extra = map[string]string{"resource": dc.Resource}
+		// Persist the discovered identity/endpoints so the callback can exchange
+		// the code without re-registering (registration is single-use scoped to
+		// the redirect URI, and re-registering on the callback would race the
+		// just-issued authorization code).
+		req.Config = withDynamicOAuthConfig(req.Config, dc)
+	} else {
+		client, err = s.resolveOAuthClient(ctx, projectID, providerType)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.repo.CreateOAuthPendingState(ctx, &OAuthPendingState{
 		State:        state,
 		ProjectID:    projectID,
@@ -72,7 +100,7 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		CodeVerifier: verifier,
 		RedirectURI:  redirectURI,
 		Config:       req.Config,
-		Scopes:       req.Scopes,
+		Scopes:       scopes,
 		ExpiresAt:    s.now().Add(oauthPendingTTL),
 	}); err != nil {
 		return nil, err
@@ -82,9 +110,21 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		State:         state,
 		CodeChallenge: CodeChallengeS256(verifier),
 		RedirectURI:   redirectURI,
-		Scopes:        req.Scopes,
+		Scopes:        scopes,
+		Extra:         extra,
 	})
 	return &StartOAuthResponse{AuthorizeURL: authorizeURL}, nil
+}
+
+// withDynamicOAuthConfig returns a copy of cfg carrying the discovered dynamic
+// client under the reserved key. A nil cfg becomes a fresh map.
+func withDynamicOAuthConfig(cfg map[string]any, dc DynamicOAuthClient) map[string]any {
+	out := make(map[string]any, len(cfg)+1)
+	for k, v := range cfg {
+		out[k] = v
+	}
+	out[oauthDynamicKey] = dynamicOAuthToConfig(dc)
+	return out
 }
 
 // OAuthConnectError is a callback failure raised after the pending state was
@@ -127,25 +167,57 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	if !ok {
 		return nil, fail(apperror.NewValidation("provider does not support OAuth connect: " + pending.Provider))
 	}
-	client, err := s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider)
-	if err != nil {
-		return nil, fail(err)
+
+	// Resolve the client. Dynamic (self-registering) providers recover the
+	// client they registered at start time from the reserved pending-state key;
+	// static providers (Google/GitHub) resolve as before.
+	var client OAuthClient
+	dynamic := false
+	if _, ok := p.(DynamicOAuthProvider); ok {
+		v, present := pending.Config[oauthDynamicKey]
+		if !present {
+			return nil, fail(apperror.NewValidation("oauth state is missing its dynamic client; reconnect the source"))
+		}
+		dc, ok := dynamicOAuthFromConfig(v)
+		if !ok {
+			return nil, fail(apperror.NewValidation("oauth state has an invalid dynamic client"))
+		}
+		client = OAuthClient{
+			ClientID: dc.ClientID,
+			AuthURL:  dc.AuthURL,
+			TokenURL: dc.TokenURL,
+			Scopes:   dc.Scopes,
+			Resource: dc.Resource,
+		}
+		dynamic = true
+	} else {
+		client, err = s.resolveOAuthClient(ctx, pending.ProjectID, pending.Provider)
+		if err != nil {
+			return nil, fail(err)
+		}
 	}
+
 	creds, err := strategy.Exchange(ctx, s.oauthHTTP, client, code, pending.CodeVerifier, pending.RedirectURI)
 	if err != nil {
 		return nil, fail(apperror.NewValidation("oauth token exchange failed: " + err.Error()))
 	}
 
-	// Merge the deployment client material into the stored credential so the
-	// connector can refresh. Org-level clients (layered in a later phase) will
-	// replace this merge.
+	// Merge the client material into the stored credential so the connector can
+	// refresh. Dynamic clients register as public clients (no secret), so only
+	// the client id is merged; the strategy's Exchange already stores
+	// client_id/token_endpoint/resource. Org-level clients (layered in a later
+	// phase) will replace the static merge.
 	creds["client_id"] = client.ClientID
-	creds["client_secret"] = client.ClientSecret
+	if !dynamic {
+		creds["client_secret"] = client.ClientSecret
+	}
 
 	cfg := make(map[string]any, len(pending.Config)+len(creds))
 	for k, v := range pending.Config {
 		cfg[k] = v
 	}
+	// The reserved dynamic-client key is flow state, never source config.
+	delete(cfg, oauthDynamicKey)
 	name := "Data source"
 	if v, ok := cfg["name"].(string); ok && strings.TrimSpace(v) != "" {
 		name = v

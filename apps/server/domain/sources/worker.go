@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -187,6 +188,11 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	connector, err := provider.NewConnector(ctx, creds, ConnectorDeps{Extract: w.extractText})
 	if err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("initialize connector: %w", err))
+	}
+	// Connectors that hold a remote session (Trale's MCP client) release it when
+	// the job ends; connectors without a Close method are unaffected.
+	if c, ok := connector.(io.Closer); ok {
+		defer func() { _ = c.Close() }()
 	}
 
 	headRevs, err := w.svc.repo.ListHeadSourceRevisions(ctx, job.ProjectID, job.SourceID)

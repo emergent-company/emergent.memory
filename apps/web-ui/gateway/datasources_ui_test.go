@@ -2120,3 +2120,51 @@ func TestUIDataSourceOAuthStartMissingClientLinksProjectSettings(t *testing.T) {
 		t.Errorf("org settings link must not be used when the caller administers the project: %s", body)
 	}
 }
+
+func TestDSConfigFromFieldsInteger(t *testing.T) {
+	fields := []dsConfigField{{Key: "backfill_days", Type: "integer"}}
+	render := func(value string) map[string]any {
+		e := echo.New()
+		body := url.Values{"backfill_days": {value}}.Encode()
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+		return dsConfigFromFields(e.NewContext(req, httptest.NewRecorder()), fields)
+	}
+
+	if got := render("30")["backfill_days"]; got != 30 {
+		t.Errorf("numeric field = %#v, want int 30", got)
+	}
+	// A malformed value is forwarded verbatim so the provider's validation rejects
+	// it, instead of being dropped and silently replaced by the default.
+	if got := render("ninety")["backfill_days"]; got != "ninety" {
+		t.Errorf("malformed field = %#v, want the raw string", got)
+	}
+	// Blank means "unset", so the field stays out of the config map.
+	if _, ok := render("")["backfill_days"]; ok {
+		t.Error("blank integer field should be omitted")
+	}
+}
+
+func TestDSConfigFieldsPrefillsInteger(t *testing.T) {
+	schema := &DSProviderSchema{
+		Type: "trale",
+		Properties: map[string]any{
+			"tags":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"backfill_days": map[string]any{"type": "integer", "description": "Days back."},
+		},
+		Required: []string{"tags"},
+	}
+	// The API decodes a stored integer as float64; the edit form must not blank it,
+	// or saving would reset the value to the server default.
+	config, _ := dsConfigFields(schema, map[string]any{"backfill_days": float64(30)})
+	for _, f := range config {
+		if f.Key != "backfill_days" {
+			continue
+		}
+		if f.Value != "30" {
+			t.Errorf("backfill_days prefill = %q, want \"30\"", f.Value)
+		}
+		return
+	}
+	t.Fatal("backfill_days field missing from the config fields")
+}

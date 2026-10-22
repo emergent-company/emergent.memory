@@ -60,11 +60,15 @@ type Provider struct {
 	// "google", "github"); VendorName is its display form. OAuth apps are
 	// vendor-level, so the credentials UI labels them by vendor and shows the
 	// data source (Name) separately.
-	Vendor      string   `json:"vendor"`
-	VendorName  string   `json:"vendorName"`
-	IconURL     string   `json:"iconUrl,omitempty"`
-	Available   bool     `json:"available"`
-	AuthMethods []string `json:"authMethods,omitempty"`
+	Vendor     string `json:"vendor"`
+	VendorName string `json:"vendorName"`
+	IconURL    string `json:"iconUrl,omitempty"`
+	Available  bool   `json:"available"`
+	// SelfRegistering marks a provider whose OAuth client registers itself via
+	// RFC 7591 dynamic client registration at connect time (no admin-configured
+	// app). The credentials UI skips such providers.
+	SelfRegistering bool     `json:"selfRegistering,omitempty"`
+	AuthMethods     []string `json:"authMethods,omitempty"`
 }
 
 // ProviderSchema represents the configuration schema for a provider.
