@@ -771,7 +771,14 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () { openAutoOpenDialogs(document); });
-  document.addEventListener("htmx:after:swap", function (ev) { openAutoOpenDialogs(ev.target); });
+  /* htmx dispatches htmx:after:swap on the swap SOURCE element (the element
+     that carried hx-get/hx-post), which usually does NOT contain the swapped-in
+     markup — a button targeting a sibling container is the common shape. Scoping
+     the scan to ev.target therefore missed every lazily-fetched dialog (the
+     extraction merge preview inserted into its sibling #merge-preview-target-*
+     div stayed closed). Scan the whole document instead: openDialog is a no-op
+     for dialogs that are already open. */
+  document.addEventListener("htmx:after:swap", function () { openAutoOpenDialogs(document); });
 
   /*
    * alertModal fills and opens the shell's #memory-alert-modal

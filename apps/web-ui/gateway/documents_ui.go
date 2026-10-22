@@ -439,7 +439,7 @@ func mergeResultQuery(res *BranchMergeResult, jobID string) string {
 	if res == nil {
 		return "?merged=0"
 	}
-	q := url.Values{"merged": {strconv.Itoa(res.MergedCount)}}
+	q := url.Values{"merged": {strconv.Itoa(mergeAppliedObjects(res))}}
 	left := res.LeftForReviewCount
 	if res.ConflictCount > left {
 		left = res.ConflictCount
@@ -453,13 +453,20 @@ func mergeResultQuery(res *BranchMergeResult, jobID string) string {
 	return "?" + q.Encode()
 }
 
-// mergePreviewMerged returns how many objects a preview predicts will merge
-// cleanly into main (0 for a nil result).
-func mergePreviewMerged(res *BranchMergeResult) int {
+// mergeAppliedObjects returns how many source objects a merge applies to main
+// (0 for a nil result): new objects plus fast-forwards, the only statuses the
+// "partial" policy actually applies — similar objects are suggested for review
+// and conflicts are preserved on the target. It is used both to predict the
+// merge in the confirm dialog and to report what a completed merge did.
+//
+// It must NOT read MergedCount: that field counts source objects cloned to the
+// target by a PRIOR merge (the merge ledger), so it is 0 on a first merge —
+// which disabled the confirm button forever — and stale on a re-preview.
+func mergeAppliedObjects(res *BranchMergeResult) int {
 	if res == nil {
 		return 0
 	}
-	return res.MergedCount
+	return res.AddedCount + res.FastForwardCount
 }
 
 // mergePreviewAdded returns how many new objects a preview predicts will be
@@ -514,14 +521,14 @@ func mergePreviewTotal(res *BranchMergeResult) string {
 // mergePreviewDisabled reports whether the preview's confirm button should be
 // disabled: when nothing would merge cleanly there is no merge to run.
 func mergePreviewDisabled(res *BranchMergeResult) bool {
-	return mergePreviewMerged(res) <= 0
+	return mergeAppliedObjects(res) <= 0
 }
 
 // mergePreviewConfirmLabel is the preview's confirm button copy, naming the
 // clean-merge count so the action reads truthfully ("Merge 3 objects into
 // main"). A zero count still shows a neutral label (the button is disabled).
 func mergePreviewConfirmLabel(res *BranchMergeResult) string {
-	n := mergePreviewMerged(res)
+	n := mergeAppliedObjects(res)
 	if n <= 0 {
 		return "Merge into main"
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -1488,7 +1489,7 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 		relns:          []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c1", DstID: "c1"}},
 		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
 		mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 1},
-		mergeResult:    &BranchMergeResult{AddedCount: 1, MergedCount: 1},
+		mergeResult:    &BranchMergeResult{AddedCount: 1},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
@@ -1660,5 +1661,86 @@ func TestRenderMergePreviewSummary(t *testing.T) {
 	}
 	if strings.Contains(htmlNil, "text-warning") {
 		t.Errorf("nil merge preview summary should not warn:\n%s", htmlNil)
+	}
+}
+
+// TestRenderMergePreviewModalAutoOpens pins the contract the client relies on:
+// the lazily-fetched modal carries data-dialog-autoopen, so app.js calls
+// showModal() once the htmx swap inserts it, plus the confirm/cancel wiring and
+// the truthful confirm label. The error state must still auto-open with its
+// explanation, but must not offer a confirm action.
+func TestRenderMergePreviewModalAutoOpens(t *testing.T) {
+	const actionURL = "/documents/d1/extractions/job1/merge"
+	html := renderHTML(t, mergePreviewModal(actionURL, &BranchMergeResult{
+		TotalObjects: 3,
+		AddedCount:   2,
+		SimilarCount: 1,
+	}, nil))
+	for _, want := range []string{
+		`data-dialog-autoopen="true"`,
+		`data-testid="merge-preview-modal"`,
+		`action="` + actionURL + `"`,
+		`data-testid="merge-preview-confirm"`,
+		"Merge 2 objects into main",
+		"New objects", "Total",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("merge preview modal missing %q:\n%s", want, html)
+		}
+	}
+
+	errHTML := renderHTML(t, mergePreviewModal(actionURL, nil, errors.New("preview unavailable")))
+	for _, want := range []string{
+		`data-dialog-autoopen="true"`,
+		`data-testid="merge-preview-modal"`,
+		"preview unavailable",
+	} {
+		if !strings.Contains(errHTML, want) {
+			t.Errorf("error merge preview modal missing %q:\n%s", want, errHTML)
+		}
+	}
+	if strings.Contains(errHTML, `data-testid="merge-preview-confirm"`) {
+		t.Error("error merge preview modal must not offer a confirm action")
+	}
+}
+
+// TestMergeAppliedObjects pins the count the confirm gate and the post-merge
+// PRG flash use: the objects the "partial" policy actually applies (added +
+// fast-forward), never MergedCount. MergedCount is the merge-ledger count —
+// objects cloned by a PRIOR merge — so on a first merge it is 0, which disabled
+// the confirm button permanently and flashed "Merged 0 object(s) into main"
+// after a successful merge.
+func TestMergeAppliedObjects(t *testing.T) {
+	first := &BranchMergeResult{TotalObjects: 3, AddedCount: 2, FastForwardCount: 1}
+	if got := mergeAppliedObjects(first); got != 3 {
+		t.Errorf("first preview clean count = %d, want 3", got)
+	}
+	if mergePreviewDisabled(first) {
+		t.Error("a first merge with clean additions must be confirmable")
+	}
+	if got := mergePreviewConfirmLabel(first); got != "Merge 3 objects into main" {
+		t.Errorf("first preview confirm label = %q", got)
+	}
+	// The PRG query after an actual first merge must report the same count, not
+	// the (zero) merge-ledger MergedCount.
+	if got := mergeResultQuery(first, "job1"); got != "?merged=3" {
+		t.Errorf("first merge result query = %q, want ?merged=3", got)
+	}
+
+	// Everything already cloned by a prior merge: nothing clean left to apply,
+	// so the confirm button is correctly disabled.
+	prior := &BranchMergeResult{TotalObjects: 2, MergedCount: 2}
+	if got := mergeAppliedObjects(prior); got != 0 {
+		t.Errorf("prior-merge preview clean count = %d, want 0", got)
+	}
+	if !mergePreviewDisabled(prior) {
+		t.Error("a preview with nothing clean to merge must disable confirm")
+	}
+
+	// Conflicts and similarity matches stay on the branch under "partial", so
+	// they never count as clean merges.
+	review := &BranchMergeResult{TotalObjects: 5, ConflictCount: 2, SimilarCount: 3}
+	if got := mergeAppliedObjects(review); got != 0 {
+		t.Errorf("review-only preview clean count = %d, want 0", got)
 	}
 }

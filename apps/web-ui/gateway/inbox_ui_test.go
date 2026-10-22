@@ -619,7 +619,7 @@ func TestUIInboxMergeResolvesNotificationsOnClose(t *testing.T) {
 	}
 
 	t.Run("full merge resolves the reminder", func(t *testing.T) {
-		s, f := newServer(&BranchMergeResult{MergedCount: 5})
+		s, f := newServer(&BranchMergeResult{AddedCount: 5})
 		rec := serve(s, "/inbox/merge?document=d1&job=job1")
 		if rec.Code != http.StatusSeeOther {
 			t.Fatalf("full merge status = %d, want 303", rec.Code)
@@ -633,7 +633,7 @@ func TestUIInboxMergeResolvesNotificationsOnClose(t *testing.T) {
 	})
 
 	t.Run("partial merge leaves the reminder actionable", func(t *testing.T) {
-		s, f := newServer(&BranchMergeResult{MergedCount: 3, LeftForReviewCount: 2})
+		s, f := newServer(&BranchMergeResult{AddedCount: 3, LeftForReviewCount: 2})
 		rec := serve(s, "/inbox/merge?document=d1&job=job1")
 		if rec.Code != http.StatusSeeOther {
 			t.Fatalf("partial merge status = %d, want 303", rec.Code)
@@ -647,7 +647,7 @@ func TestUIInboxMergeResolvesNotificationsOnClose(t *testing.T) {
 	})
 
 	t.Run("conflict-only merge leaves the reminder actionable", func(t *testing.T) {
-		s, f := newServer(&BranchMergeResult{MergedCount: 1, ConflictCount: 1})
+		s, f := newServer(&BranchMergeResult{AddedCount: 1, ConflictCount: 1})
 		rec := serve(s, "/inbox/merge?document=d1&job=job1")
 		if rec.Code != http.StatusSeeOther {
 			t.Fatalf("conflict merge status = %d, want 303", rec.Code)
