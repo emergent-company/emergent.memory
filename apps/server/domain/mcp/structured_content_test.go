@@ -151,6 +151,111 @@ func TestToolsListSerializesNoNullProperties(t *testing.T) {
 	assert.Contains(t, query.InputSchema.Properties, "limit")
 }
 
+// TestAllCatalogsSerializeValidSchema guards #2062 across every tool-catalog
+// construction path, not just the project catalog. A nil Properties / Required /
+// Items map/slice/pointer must serialize as *omitted*, never as JSON `null`,
+// because strict MCP clients (OpenCode/@modelcontextprotocol/sdk) reject a
+// `properties: null` value — `properties` must be an object when present.
+//
+// #2006 added `omitempty` to InputSchema.Properties (the shared fix for both
+// input and output schemas); this test extends the pin to the operator/admin
+// catalog and the agent endpoint catalog, and to the `required` and `items`
+// keywords, which ride the same omitempty path.
+func TestAllCatalogsSerializeValidSchema(t *testing.T) {
+	svc := &Service{}
+	catalogs := []struct {
+		name  string
+		tools []ToolDefinition
+	}{
+		{"project", svc.GetToolDefinitions()},
+		{"admin/operator", svc.GetSuperadminToolDefinitions()},
+		{"agent endpoint", agentEndpointToolDefinitions("")},
+	}
+
+	for _, catalog := range catalogs {
+		catalog := catalog
+		t.Run(catalog.name, func(t *testing.T) {
+			require.NotEmptyf(t, catalog.tools, "catalog %q must be non-empty", catalog.name)
+			for _, tool := range catalog.tools {
+				assertValidSchemaSerialization(t, tool)
+			}
+		})
+	}
+}
+
+// TestRelaySessionToolsSanitizesNullSchema verifies the relay passthrough path:
+// a connected relay may report `"properties": null` in its own tools/list, but
+// relaySessionTools re-marshals it into ToolDefinition/InputSchema (which now
+// omit nil fields), so the re-emitted catalog never leaks the null.
+func TestRelaySessionToolsSanitizesNullSchema(t *testing.T) {
+	sess := &RelaySession{
+		InstanceID: "relay1",
+		Tools: map[string]any{
+			"tools": []any{
+				map[string]any{
+					"name":        "github_search_repositories",
+					"description": "search",
+					"inputSchema": map[string]any{"type": "object"},
+					"outputSchema": map[string]any{
+						"type":       "object",
+						"properties": nil,
+						"required":   nil,
+					},
+				},
+			},
+		},
+	}
+
+	defs := relaySessionTools(sess)
+	require.Len(t, defs, 1)
+	assert.Equal(t, "relay1_github_search_repositories", defs[0].Name)
+	assert.NotNil(t, defs[0].OutputSchema)
+	assertValidSchemaSerialization(t, defs[0])
+}
+
+// assertValidSchemaSerialization marshals a tool and asserts that neither its
+// inputSchema nor outputSchema emits a JSON `null` for the JSON Schema keywords
+// `properties`, `required`, or `items`, and that any present keyword holds the
+// correct JSON type (properties/items → object, required → array).
+func assertValidSchemaSerialization(t *testing.T, tool ToolDefinition) {
+	t.Helper()
+	raw, err := json.Marshal(tool)
+	require.NoErrorf(t, err, "tool %q must marshal", tool.Name)
+
+	for _, nullField := range []string{`"properties":null`, `"required":null`, `"items":null`} {
+		require.NotContainsf(t, string(raw), nullField,
+			"tool %q must not serialize %s: %s", tool.Name, nullField, raw)
+	}
+
+	var m map[string]any
+	require.NoError(t, json.Unmarshal(raw, &m))
+	for _, key := range []string{"inputSchema", "outputSchema"} {
+		schema, ok := m[key].(map[string]any)
+		if !ok {
+			continue // outputSchema is legitimately absent for prose-only tools
+		}
+		assertSchemaKeywords(t, tool.Name, key, schema)
+	}
+}
+
+// assertSchemaKeywords validates that any present JSON Schema keyword holds the
+// JSON type the MCP spec requires (properties/items → object, required → array).
+func assertSchemaKeywords(t *testing.T, tool, key string, schema map[string]any) {
+	t.Helper()
+	if props, present := schema["properties"]; present {
+		_, isObject := props.(map[string]any)
+		assert.Truef(t, isObject, "tool %q %s.properties must be an object when present, got %T", tool, key, props)
+	}
+	if req, present := schema["required"]; present {
+		_, isArray := req.([]any)
+		assert.Truef(t, isArray, "tool %q %s.required must be an array when present, got %T", tool, key, req)
+	}
+	if items, present := schema["items"]; present {
+		_, isObject := items.(map[string]any)
+		assert.Truef(t, isObject, "tool %q %s.items must be an object when present, got %T", tool, key, items)
+	}
+}
+
 // TestToolsCallSerializesStructuredContent checks that a tool result with
 // structuredContent serializes it alongside the required content block.
 func TestToolsCallSerializesStructuredContent(t *testing.T) {
