@@ -179,7 +179,7 @@ templ dsSourceStatusBadge(status string) {
 // surfaces an inline, actionable "no OAuth client configured" error (instead of
 // a transient toast) with a link to the org's OAuth client settings.
 templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error, oauthClientErr *dsOAuthClientError) {
-	if selected != nil && selected.DSProviderSupportsCredentials() {
+	if selected != nil && (selected.DSProviderSupportsCredentials() || selected.DSProviderSupportsConfigOnly()) {
 		@dsCredentialsConnectPage(*selected, configFields, credentialFields, loadErr, flashErr)
 	} else {
 		@layout.Container(layout.ContainerLG, nil) {
@@ -264,6 +264,18 @@ templ dsProviderChoice(p DSProvider) {
 						Attrs:   templ.Attributes{"data-testid": "ds-credentials-connect"},
 					}) {
 						Enter credentials
+					}
+				}
+				if p.DSProviderSupportsConfigOnly() {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=config",
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--settings",
+						Attrs:   templ.Attributes{"data-testid": "ds-config-connect"},
+					}) {
+						Configure source
 					}
 				}
 			</div>
@@ -374,12 +386,14 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 						@dsConfigFieldInputs(configFields)
 					</div>
 				}
-				@components.PanelCard("", nil) {
-					<h2 class="text-base font-semibold">Credentials</h2>
-					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Credentials are stored encrypted and are never shown again. }
-					<div class="mt-3">
-						@dsCredentialFieldInputs(credentialFields)
-					</div>
+				if len(credentialFields) > 0 {
+					@components.PanelCard("", nil) {
+						<h2 class="text-base font-semibold">Credentials</h2>
+						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Credentials are stored encrypted and are never shown again. }
+						<div class="mt-3">
+							@dsCredentialFieldInputs(credentialFields)
+						</div>
+					}
 				}
 				<div id="ds-test-result" data-testid="ds-test-result"></div>
 			</div>

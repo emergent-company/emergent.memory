@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -305,14 +306,37 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	}
 
 	// Removals: prior HEAD items absent from this enumeration are marked
-	// deleted-from-source (retained, not destroyed).
+	// deleted-from-source (retained, not destroyed) — but only when the
+	// enumeration is authoritative. A partial crawl (a page/depth/byte/deadline
+	// cap, or a page error) has not seen every prior item, so deleting an absent
+	// id would destroy a page the crawl simply did not reach. Tombstones (a
+	// canonical URL the crawl confirmed 404/410) are the only deletion evidence
+	// allowed from a partial crawl: a definitive 404 proves the page is gone,
+	// not that the crawl ran out of budget.
+	headIDs := make([]string, 0, len(headRevs))
 	for extID := range headRevs {
-		if seen[extID] {
-			continue
-		}
+		headIDs = append(headIDs, extID)
+	}
+	sort.Strings(headIDs)
+
+	complete := true
+	if c, ok := connector.(EnumerationCompleteness); ok {
+		complete = c.EnumerationComplete()
+	}
+	var tombstones []string
+	if c, ok := connector.(SourceTombstones); ok {
+		tombstones = c.Tombstones()
+	}
+
+	deleted, skippedRemovals := planRemovals(headIDs, seen, complete, tombstones)
+	for _, extID := range deleted {
 		if err := w.docs.MarkSourceItemDeleted(ctx, job.ProjectID.String(), job.SourceID.String(), extID); err != nil {
 			jobLog.Warn("failed to mark source item deleted", "external_id", extID, "error", err)
 		}
+	}
+	if len(skippedRemovals) > 0 {
+		jobLog.Info("removals skipped: incomplete enumeration cannot prove absence",
+			slog.Int("count", len(skippedRemovals)))
 	}
 
 	// Persist per-item error detail (structured) on a completed job.
@@ -358,6 +382,28 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		slog.Int("failed", failed),
 		slog.Int("skipped", skipped))
 	return nil
+}
+
+// planRemovals decides which prior HEAD items to mark deleted after an
+// enumeration. delete is the set of prior external ids to soft-delete; skipped
+// is the set left in place because a partial enumeration cannot prove their
+// absence. A definitive tombstone (404/410) deletes even on a partial crawl.
+func planRemovals(headIDs []string, seen map[string]bool, complete bool, tombstones []string) (delete, skipped []string) {
+	tombSet := make(map[string]bool, len(tombstones))
+	for _, t := range tombstones {
+		tombSet[t] = true
+	}
+	for _, id := range headIDs {
+		if seen[id] {
+			continue
+		}
+		if complete || tombSet[id] {
+			delete = append(delete, id)
+		} else {
+			skipped = append(skipped, id)
+		}
+	}
+	return delete, skipped
 }
 
 // isCancelled reports whether the job has been flipped to 'cancelled' by the

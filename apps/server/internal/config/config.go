@@ -112,6 +112,9 @@ type Config struct {
 	// GitHubSource configures the first-class GitHub data-source connector.
 	GitHubSource GitHubSourceConfig
 
+	// WebSource configures the first-class web-scraper data-source connector.
+	WebSource WebSourceConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -908,6 +911,22 @@ type GitHubSourceConfig struct {
 	// setting only: source configs can never override it, so a source cannot
 	// point the server at an arbitrary host.
 	APIBaseURL string `env:"GITHUB_API_BASE_URL" envDefault:""`
+}
+
+// WebSourceConfig holds the deployment-level settings for the web-scraper
+// data-source connector. It feeds the shared outbound SSRF guard (see
+// internal/outbound.Policy) so an operator can scope which hosts the crawler is
+// allowed to fetch.
+type WebSourceConfig struct {
+	// AllowedHosts lists hostnames the crawler may always fetch, matched as an
+	// exact host or a "*.suffix" wildcard. This is the escape hatch for
+	// operators who host crawlable content in private space; it never relaxes
+	// the always-blocked link-local/metadata ranges.
+	AllowedHosts []string `env:"WEB_SOURCE_ALLOWED_HOSTS" envDefault:""`
+	// AllowPrivate permits loopback and RFC1918/ULA private addresses for the
+	// crawler (test/dev). Link-local/metadata, multicast, unspecified, CGNAT,
+	// and reserved ranges stay blocked regardless.
+	AllowPrivate bool `env:"WEB_SOURCE_ALLOW_PRIVATE_HOSTS" envDefault:"false"`
 }
 
 // OAuthClientDefaults is the deployment-default OAuth client material for one

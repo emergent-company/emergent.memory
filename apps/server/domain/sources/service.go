@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -369,6 +370,14 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		return nil, err
 	}
 
+	// Apply a provider's sync-cadence bounds (default + minimum) when it
+	// declares them. Providers without the interface keep today's behaviour:
+	// whatever the request carried, or nil.
+	interval, err := applySyncIntervalBounds(p, req.SyncIntervalMinutes)
+	if err != nil {
+		return nil, err
+	}
+
 	now := s.now()
 	src := &Source{
 		ID:                   uuid.New(),
@@ -378,7 +387,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		Config:               stripCredentialKeys(req.Config, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		SyncPolicy:           "manual",
-		SyncIntervalMinutes:  req.SyncIntervalMinutes,
+		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
 		Status:               "active",
 		CreatedAt:            now,
@@ -432,7 +441,15 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		existing.SyncPolicy = *req.SyncMode
 	}
 	if req.SyncIntervalMinutes != nil {
-		existing.SyncIntervalMinutes = req.SyncIntervalMinutes
+		if p, ok := s.providers.Get(existing.Provider); ok {
+			resolved, err := applySyncIntervalBounds(p, req.SyncIntervalMinutes)
+			if err != nil {
+				return nil, err
+			}
+			existing.SyncIntervalMinutes = resolved
+		} else {
+			existing.SyncIntervalMinutes = req.SyncIntervalMinutes
+		}
 	}
 	if req.Enabled != nil {
 		if *req.Enabled {
@@ -535,6 +552,26 @@ func stripCredentialKeys(cfg map[string]any, keys []string) map[string]any {
 		out[k] = v
 	}
 	return out
+}
+
+// applySyncIntervalBounds applies a provider's sync-cadence bounds (when it
+// declares them via SyncIntervalBoundsProvider) to a requested interval. A nil
+// interval becomes the provider default; a below-minimum interval is rejected.
+// Providers without the interface are unchanged: nil stays nil and a set value
+// passes through.
+func applySyncIntervalBounds(p SourceProvider, interval *int) (*int, error) {
+	bp, ok := p.(SyncIntervalBoundsProvider)
+	if !ok {
+		return interval, nil
+	}
+	minMin, defMin := bp.SyncIntervalBounds()
+	if interval == nil {
+		return &defMin, nil
+	}
+	if *interval < minMin {
+		return nil, apperror.NewValidation(fmt.Sprintf("syncIntervalMinutes must be at least %d minutes for %s", minMin, p.Catalog().Type))
+	}
+	return interval, nil
 }
 
 // publicConfig returns the source's config with credential keys removed, ready

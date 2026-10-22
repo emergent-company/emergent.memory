@@ -262,6 +262,16 @@ const dsProviders = [
     available: true,
     authMethods: ["oauth", "credentials"],
   },
+  {
+    type: "web",
+    name: "Web",
+    description: "Crawl a website and sync its pages into your knowledge base.",
+    sourceType: "web",
+    vendor: "web",
+    vendorName: "Web",
+    available: true,
+    authMethods: ["config"],
+  },
 ];
 
 // Per-provider config schemas (the connect form is schema-driven). The mock
@@ -291,6 +301,17 @@ const dsSchemas = {
       access_token: { type: "string", writeOnly: true, label: "Personal access token" },
     },
     required: ["repo", "access_token"],
+  },
+  web: {
+    type: "web",
+    properties: {
+      start_urls: { type: "array", items: { type: "string" }, description: "One or more absolute http(s) URLs to start from (max 50)." },
+      include_globs: { type: "array", items: { type: "string" }, description: "Optional URL path globs to keep (e.g. /docs/**). Empty keeps every in-scope page." },
+      exclude_globs: { type: "array", items: { type: "string" }, description: "Optional URL path globs to skip (e.g. /admin/**)." },
+      max_pages: { type: "integer", description: "Maximum pages to crawl. Default 200 (the v1 ceiling)." },
+      max_depth: { type: "integer", description: "Maximum link depth to follow. Default 3; 0 ingests only the configured start URLs (no link following)." },
+    },
+    required: ["start_urls"],
   },
 };
 
@@ -961,6 +982,17 @@ const server = http.createServer((req, res) => {
         }
         return json(res, { success: true, message: "Connected to GitHub." });
       }
+      // Web is config-only: the start URL list is the whole scope, no credential.
+      if (payload.providerType === "web") {
+        const urls = Array.isArray(config.start_urls) ? config.start_urls : [];
+        if (urls.length === 0) {
+          return json(res, { success: false, message: "config.start_urls is required" });
+        }
+        if (urls.some((u) => /fail/i.test(String(u)))) {
+          return json(res, { success: false, message: "Start URL is not reachable." });
+        }
+        return json(res, { success: true, message: "Connected to Web." });
+      }
       // ValidateConfig then ExtractCredentials, like the server: the folder is
       // required before the stored credential.
       const folder = String(config.folder_id || "");
@@ -1027,6 +1059,13 @@ const server = http.createServer((req, res) => {
           res.statusCode = 422;
           return json(res, { error: { code: "validation_error", message: "config.access_token is required" } });
         }
+      } else if (payload.providerType === "web") {
+        // Config-only: the start URL list is the only required scope.
+        const urls = Array.isArray(config.start_urls) ? config.start_urls : [];
+        if (urls.length === 0) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.start_urls is required" } });
+        }
       } else {
         if (!String(config.folder_id || "")) {
           res.statusCode = 422;
@@ -1043,7 +1082,7 @@ const server = http.createServer((req, res) => {
         projectId: "p1",
         name: String(payload.name || "Data source"),
         providerType: payload.providerType || "google_drive",
-        sourceType: payload.sourceType || (payload.providerType === "github" ? "repo" : "drive"),
+        sourceType: payload.sourceType || (payload.providerType === "github" ? "repo" : payload.providerType === "web" ? "web" : "drive"),
         syncMode: payload.syncMode || "manual",
         syncIntervalMinutes: payload.syncIntervalMinutes,
         lastSyncedAt: null,
@@ -1102,8 +1141,41 @@ const server = http.createServer((req, res) => {
       res.statusCode = 404;
       return json(res, { error: { code: "not_found", message: "source not found" } });
     }
-    const folder = String(src.config.folder_id || "");
     let job;
+    if (src.row.providerType === "web") {
+      // Web sync outcomes key off the start URL list, not a folder id.
+      const urls = Array.isArray(src.config.start_urls) ? src.config.start_urls : [];
+      const scope = urls.join(" ");
+      if (/slow/i.test(scope)) {
+        job = dsNewSyncJob(src.row.id, "processing", {
+          totalItems: 10,
+          processedItems: 3,
+          successfulItems: 3,
+          currentPhase: "Crawling",
+          statusMessage: "Crawling pages from the start URL.",
+        });
+      } else if (/fail/i.test(scope)) {
+        job = dsNewSyncJob(src.row.id, "failed", {
+          totalItems: 1,
+          processedItems: 1,
+          failedItems: 1,
+          errorMessage: "Start URL is not reachable.",
+          completedAt: nowISO(),
+        });
+      } else {
+        job = dsNewSyncJob(src.row.id, "completed", {
+          totalItems: 3,
+          processedItems: 3,
+          successfulItems: 3,
+          currentPhase: "Done",
+          completedAt: nowISO(),
+        });
+        src.row.lastSyncedAt = nowISO();
+        src.row.updatedAt = nowISO();
+      }
+      return json(res, { success: true, message: "Sync started.", jobId: job.id });
+    }
+    const folder = String(src.config.folder_id || "");
     if (folder === "folder-slow") {
       job = dsNewSyncJob(src.row.id, "processing", {
         totalItems: 10,
@@ -1140,6 +1212,13 @@ const server = http.createServer((req, res) => {
     if (!src) {
       res.statusCode = 404;
       return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    if (src.row.providerType === "web") {
+      const urls = Array.isArray(src.config.start_urls) ? src.config.start_urls : [];
+      if (/fail/i.test(urls.join(" "))) {
+        return json(res, { success: false, message: "Start URL is not reachable." });
+      }
+      return json(res, { success: true, message: "Connection OK." });
     }
     if (String(src.config.folder_id || "") === "folder-fail") {
       return json(res, { success: false, message: "Drive folder not found." });

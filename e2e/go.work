@@ -17,4 +17,5 @@ use (
 	./stubs/github
 	./stubs/mailgun
 	./stubs/mcp-registry
+	./stubs/web
 )

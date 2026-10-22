@@ -12,6 +12,7 @@ Data sources let you connect external systems to Emergent Memory and automatical
 | `github` | `repo` | GitHub repositories (OAuth or a personal access token) |
 | `clickup` | `clickup-document` | ClickUp documents and spaces |
 | `trale` | `meeting` | Trale meeting transcripts and summaries |
+| `web` | `web` | Web pages crawled from one or more start URLs |
 
 !!! note "Google Drive is OAuth-only"
     Google Drive can only be connected via OAuth. There is no paste-a-refresh-token option. Data
@@ -162,6 +163,29 @@ so the credentials pages simply do not list Trale — connect it directly from *
 Only completed meetings are imported. The document's identity is derived from the meeting's status,
 participant count, tags, and summary, so a meeting that is later re-summarized updates in place rather
 than duplicating.
+
+### Web (website crawl)
+
+The `web` provider crawls a website starting from one or more URLs and imports each page as a Markdown
+document. It connects with **config only** — no credentials are collected or stored.
+
+| Field | Meaning |
+|---|---|
+| **Start URLs** (`start_urls`) | *Required.* One or more absolute `http(s)` URLs to start from (up to 50). The crawl stays on the same origin as each start URL. |
+| **Include globs** (`include_globs`) | Optional URL path globs to keep, for example `/docs/**`. Empty keeps every in-scope page. |
+| **Exclude globs** (`exclude_globs`) | Optional URL path globs to skip, for example `/admin/**`. |
+| **Max pages** (`max_pages`) | Maximum pages to crawl. Default and ceiling is 200. |
+| **Max depth** (`max_depth`) | Maximum link depth to follow. Default 3; `0` ingests only the start URLs (no link following). |
+
+- **Static HTML only.** Each page is fetched and converted to Markdown. The crawler does not execute
+  JavaScript, so sites that render their content client-side will ingest poorly.
+- **`robots.txt` is honored.** The crawler respects the site's `robots.txt` and identifies itself with an
+  `EmergentMemoryBot/1.0` user agent.
+- **Caps.** A single crawl is capped at 200 pages, 5 MiB per page, and 50 MiB in total.
+- **Politeness.** The crawler waits at least 1 second between requests to the same host.
+- **Sync cadence.** Sources sync every 60 minutes by default; the fastest allowed interval is 15 minutes.
+- **Removals are proof-based.** A page returning `404`/`410` is re-checked once before it is marked
+  `deleted_from_source` (soft-deleted) — a transient failure never deletes a page.
 
 ---
 

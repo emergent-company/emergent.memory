@@ -917,6 +917,187 @@ func TestRenderGitHubConnectFormPickers(t *testing.T) {
 	}
 }
 
+// webSchema is the connect form's web contract as the server now serves it:
+// crawl-scope config only, no credential fields.
+func webSchema() *DSProviderSchema {
+	return &DSProviderSchema{
+		Type: "web",
+		Properties: map[string]any{
+			"start_urls":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"include_globs": map[string]any{"type": "array"},
+			"exclude_globs": map[string]any{"type": "array"},
+			"max_pages":     map[string]any{"type": "integer"},
+			"max_depth":     map[string]any{"type": "integer"},
+		},
+		Required: []string{"start_urls"},
+	}
+}
+
+// TestDSConfigFieldsWebOrderCrawlScope asserts the web crawl-scope keys surface
+// first, in crawl order, so the connect form reads start URLs → filters → limits.
+func TestDSConfigFieldsWebOrderCrawlScope(t *testing.T) {
+	config, creds := dsConfigFields(webSchema(), nil)
+	if len(config) != 5 || len(creds) != 0 {
+		t.Fatalf("config=%+v creds=%+v", config, creds)
+	}
+	want := []string{"start_urls", "include_globs", "exclude_globs", "max_pages", "max_depth"}
+	for i, key := range want {
+		if config[i].Key != key {
+			t.Errorf("config[%d].Key = %q, want %q (order=%+v)", i, config[i].Key, key, config)
+		}
+	}
+	if !config[0].Required {
+		t.Errorf("start_urls must be required: %+v", config[0])
+	}
+}
+
+// TestRenderDataSourceNewPageConfigOnlyChooser asserts a config-only provider
+// renders a "Configure source" action and no credentials/OAuth action.
+func TestRenderDataSourceNewPageConfigOnlyChooser(t *testing.T) {
+	web := &DSProvider{Type: "web", Name: "Web", SourceType: "web", AuthMethods: []string{"config"}}
+	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*web}, nil, nil, nil, nil, nil, nil))
+	for _, want := range []string{
+		"Web",
+		`data-testid="ds-provider-choice"`,
+		`data-testid="ds-config-connect"`,
+		`href="/data-sources/new?providerType=web&amp;method=config"`,
+		"Configure source",
+	} {
+		if !strings.Contains(chooser, want) {
+			t.Errorf("config-only chooser missing %q", want)
+		}
+	}
+	if strings.Contains(chooser, `data-testid="ds-credentials-connect"`) {
+		t.Error("config-only provider must not render an 'Enter credentials' action")
+	}
+	if strings.Contains(chooser, `data-testid="ds-oauth-connect"`) {
+		t.Error("config-only provider must not render an OAuth action")
+	}
+}
+
+// TestRenderDataSourceNewPageDualCapabilityUnchanged is the regression guard: a
+// provider advertising both oauth and credentials keeps its two connect actions
+// and gains no config-only action.
+func TestRenderDataSourceNewPageDualCapabilityUnchanged(t *testing.T) {
+	github := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth", "credentials"}}
+	html := renderHTML(t, DataSourceNewPage([]DSProvider{*github}, nil, nil, nil, nil, nil, nil))
+	for _, want := range []string{
+		`data-testid="ds-oauth-connect"`,
+		`data-testid="ds-credentials-connect"`,
+		`href="/data-sources/new?providerType=github&amp;method=credentials"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dual-capability chooser missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="ds-config-connect"`) {
+		t.Error("dual-capability provider must not render a config-only action")
+	}
+}
+
+// TestUIDataSourceNewConfigOnlyConnectForm asserts ?providerType=web renders the
+// crawl-scope connect form with no credentials panel.
+func TestUIDataSourceNewConfigOnlyConnectForm(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "web", Name: "Web", SourceType: "web", AuthMethods: []string{"config"}}},
+		dsSchema:    webSchema(),
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/new?providerType=web&method=config", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="ds-connect-form"`,
+		`name="providerType" value="web"`,
+		`data-testid="ds-field-start_urls"`,
+		`data-testid="ds-field-include_globs"`,
+		`data-testid="ds-field-exclude_globs"`,
+		`data-testid="ds-field-max_pages"`,
+		`data-testid="ds-field-max_depth"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("config-only connect form missing %q", want)
+		}
+	}
+	if strings.Contains(body, `data-testid="ds-credentials-empty"`) {
+		t.Error("config-only provider must not render the credentials panel")
+	}
+	if strings.Contains(body, `type="password"`) {
+		t.Error("config-only provider must not render password inputs")
+	}
+	if strings.Contains(body, "This provider cannot be connected yet.") {
+		t.Error("config-only provider must render the connect form, not the unsupported alert")
+	}
+}
+
+// TestUIDataSourceNewConfigOnlyCredentialsMethodBounce asserts the error bounce
+// (dsConnectFormPath hardcodes method=credentials) still lands on a usable form
+// for a config-only provider, because the method hint does not narrow a provider
+// that does not advertise credentials.
+func TestUIDataSourceNewConfigOnlyCredentialsMethodBounce(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "web", Name: "Web", SourceType: "web", AuthMethods: []string{"config"}}},
+		dsSchema:    webSchema(),
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/new?providerType=web&method=credentials", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-connect-form"`) || !strings.Contains(body, `name="providerType" value="web"`) {
+		t.Errorf("bounce to method=credentials must still render the connect form: %s", body)
+	}
+	if strings.Contains(body, "This provider cannot be connected yet.") {
+		t.Error("bounce must not render the unsupported alert")
+	}
+}
+
+// TestUIDataSourceCreateConfigOnlyProvider asserts the create submit path posts
+// start_urls as a list and max_pages as a number (the schema-driven form parsing).
+func TestUIDataSourceCreateConfigOnlyProvider(t *testing.T) {
+	f := &fakeMemory{
+		dsProviders: []DSProvider{{Type: "web", Name: "Web", SourceType: "web", AuthMethods: []string{"config"}}},
+		dsSchema:    webSchema(),
+	}
+	e := newDSUIServer(f)
+
+	form := url.Values{
+		"providerType": {"web"},
+		"name":         {"Docs"},
+		"sync_mode":    {"manual"},
+		"start_urls":   {"https://example.com/a\nhttps://example.com/b"},
+		"max_pages":    {"42"},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsCreatedReq == nil {
+		t.Fatal("CreateDSIntegration was not called")
+	}
+	if f.dsCreatedReq.ProviderType != "web" {
+		t.Errorf("providerType = %q, want web", f.dsCreatedReq.ProviderType)
+	}
+	urls, ok := f.dsCreatedReq.Config["start_urls"].([]string)
+	if !ok || len(urls) != 2 || urls[0] != "https://example.com/a" || urls[1] != "https://example.com/b" {
+		t.Errorf("start_urls = %#v, want a two-item list", f.dsCreatedReq.Config["start_urls"])
+	}
+	if f.dsCreatedReq.Config["max_pages"] != 42 {
+		t.Errorf("max_pages = %#v, want the integer 42", f.dsCreatedReq.Config["max_pages"])
+	}
+}
+
 func TestUIDataSourceCreateUsesSelectedProvider(t *testing.T) {
 	f := &fakeMemory{dsSchema: githubSchema()}
 	e := newDSUIServer(f)

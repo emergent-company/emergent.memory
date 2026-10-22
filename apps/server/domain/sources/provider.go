@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/outbound"
 )
 
 // AuthMethod classifies how a provider authenticates a source.
@@ -17,6 +18,10 @@ const (
 	// AuthMethodCredentials is a provider connected by supplying credential
 	// fields directly (write-only).
 	AuthMethodCredentials AuthMethod = "credentials"
+	// AuthMethodConfig is a provider connected by supplying non-secret config
+	// only; no credential fields are collected or stored. The catalog advertises
+	// it and the gateway chooser treats it as continue-with-config.
+	AuthMethodConfig AuthMethod = "config"
 )
 
 // Credentials is a provider-defined, opaque credential payload. Its keys are
@@ -132,6 +137,17 @@ type ResourceRefLister interface {
 	ListRefs(ctx context.Context, creds Credentials, cfg map[string]any) (items []Resource, truncated bool, err error)
 }
 
+// SyncIntervalBoundsProvider is implemented by providers that impose a default
+// and minimum sync cadence (the web crawler defaults to 60 minutes and rejects
+// intervals below 15). The Service applies the bounds when a source sets a sync
+// interval and falls back to today's behaviour — any value, no default — for
+// providers that do not implement it.
+type SyncIntervalBoundsProvider interface {
+	// SyncIntervalBounds returns the minimum accepted interval and the default
+	// applied when a source omits the interval, both in minutes.
+	SyncIntervalBounds() (minMinutes, defaultMinutes int)
+}
+
 // ProviderField describes one config or credential field in a provider schema.
 type ProviderField struct {
 	Key         string `json:"key"`
@@ -161,20 +177,26 @@ func NewRegistry(providers ...SourceProvider) *Registry {
 // using default deployment settings (api.github.com). Package-level callers and
 // tests use it; fx wires NewConfiguredRegistry instead.
 func NewDefaultRegistry() *Registry {
-	return NewRegistry(defaultProviders("")...)
+	return NewRegistry(defaultProviders("", outbound.DefaultPolicy())...)
 }
 
 // NewConfiguredRegistry builds the registry of providers shipped with this
-// build, applying deployment-level settings. Today that is the GitHub API
-// origin (GITHUB_API_BASE_URL), which lets an operator point the connector at
-// GitHub Enterprise or a hermetic test wrapper without letting a source config
-// choose an endpoint.
+// build, applying deployment-level settings: the GitHub API origin
+// (GITHUB_API_BASE_URL), which lets an operator point the connector at GitHub
+// Enterprise or a hermetic test wrapper without letting a source config choose
+// an endpoint, and the web crawler's outbound SSRF policy
+// (WEB_SOURCE_ALLOWED_HOSTS / WEB_SOURCE_ALLOW_PRIVATE_HOSTS).
 func NewConfiguredRegistry(cfg *config.Config) *Registry {
 	baseURL := ""
+	webPolicy := outbound.DefaultPolicy()
 	if cfg != nil {
 		baseURL = cfg.GitHubSource.APIBaseURL
+		webPolicy = outbound.Policy{
+			AllowedHosts: cfg.WebSource.AllowedHosts,
+			AllowPrivate: cfg.WebSource.AllowPrivate,
+		}
 	}
-	return NewRegistry(defaultProviders(baseURL)...)
+	return NewRegistry(defaultProviders(baseURL, webPolicy)...)
 }
 
 // Register adds or replaces a provider by its catalog type, preserving insertion
@@ -203,7 +225,14 @@ func (r *Registry) List() []SourceProvider {
 }
 
 // defaultProviders returns the providers registered for this build. githubBaseURL
-// is the deployment's GitHub API origin ("" means api.github.com).
-func defaultProviders(githubBaseURL string) []SourceProvider {
-	return []SourceProvider{newGoogleDriveProvider(), newGitHubProvider(githubBaseURL), newTraleProvider()}
+// is the deployment's GitHub API origin ("" means api.github.com); webPolicy is
+// the deployment's outbound SSRF policy for the web crawler (see
+// internal/outbound).
+func defaultProviders(githubBaseURL string, webPolicy outbound.Policy) []SourceProvider {
+	return []SourceProvider{
+		newGoogleDriveProvider(),
+		newGitHubProvider(githubBaseURL),
+		newTraleProvider(),
+		newWebProvider(webPolicy),
+	}
 }

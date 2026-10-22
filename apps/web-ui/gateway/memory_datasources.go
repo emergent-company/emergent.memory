@@ -55,6 +55,13 @@ func (p DSProvider) DSProviderSupportsCredentials() bool {
 	return slices.Contains(p.AuthMethods, "credentials")
 }
 
+// DSProviderSupportsConfigOnly reports whether a provider advertises the config
+// auth method — connecting with non-secret config only, and no credential
+// fields.
+func (p DSProvider) DSProviderSupportsConfigOnly() bool {
+	return slices.Contains(p.AuthMethods, "config")
+}
+
 // DSProviderSelfRegistering reports whether a provider registers its own OAuth
 // client (RFC 7591) at connect time. Such providers must not appear in the
 // admin "OAuth app" management surface: there is no client id/secret to

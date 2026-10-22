@@ -38,6 +38,9 @@ type dsConfigField struct {
 // schema property outside this list is appended afterwards, sorted, so a
 // forward-compatible schema addition still surfaces in the form.
 var dsConfigFieldOrder = []string{
+	// The web provider's crawl-scope keys come first so its connect form reads
+	// in crawl-scope order (start URLs, then filters, then limits).
+	"start_urls", "include_globs", "exclude_globs", "max_pages", "max_depth",
 	"repo", "ref", "paths", "extensions",
 	"folder_id", "shared_drive_id", "mime_types", "recursive",
 	"client_id", "client_secret", "refresh_token",
@@ -511,8 +514,9 @@ func (s *Server) uiDataSourceNew(c echo.Context) error {
 // the optional ?method= hint: when the named method is one the provider
 // advertises, the returned copy is narrowed to it so the page renders exactly
 // that connect path. A dual-capability provider without a method hint keeps its
-// full capability set (its OAuth surface is shown). The catalog slice entry is
-// copied, never mutated.
+// full capability set (its OAuth surface is shown). A config-only provider
+// (e.g. web) narrows to "config" so the connect form renders; the catalog slice
+// entry is copied, never mutated.
 func dsSelectProvider(providers []DSProvider, providerType, method string) *DSProvider {
 	if providerType == "" {
 		return nil
@@ -527,6 +531,8 @@ func dsSelectProvider(providers []DSProvider, providerType, method string) *DSPr
 			narrowed.AuthMethods = []string{"oauth"}
 		case method == "credentials" && narrowed.DSProviderSupportsCredentials():
 			narrowed.AuthMethods = []string{"credentials"}
+		case method == "config" && narrowed.DSProviderSupportsConfigOnly():
+			narrowed.AuthMethods = []string{"config"}
 		}
 		return &narrowed
 	}

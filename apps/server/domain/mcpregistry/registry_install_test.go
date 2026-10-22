@@ -3,46 +3,9 @@ package mcpregistry
 import (
 	"context"
 	"errors"
-	"net/netip"
 	"strings"
 	"testing"
 )
-
-func TestBlockedAddr(t *testing.T) {
-	tests := []struct {
-		addr    string
-		blocked bool
-	}{
-		{"127.0.0.1", true},
-		{"::1", true},
-		{"10.0.0.1", true},
-		{"172.16.5.4", true},
-		{"192.168.1.1", true},
-		{"169.254.169.254", true}, // cloud metadata
-		{"169.254.1.1", true},
-		{"0.0.0.0", true},
-		{"100.64.0.1", true}, // CGNAT
-		{"240.0.0.1", true},  // reserved
-		{"fc00::1", true},    // ULA
-		{"fe80::1", true},    // link-local
-		{"::ffff:127.0.0.1", true},
-		{"224.0.0.1", true}, // multicast
-		{"8.8.8.8", false},
-		{"1.1.1.1", false},
-		{"2606:4700:4700::1111", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.addr, func(t *testing.T) {
-			addr, err := netip.ParseAddr(tt.addr)
-			if err != nil {
-				t.Fatalf("parse %q: %v", tt.addr, err)
-			}
-			if got := blockedAddr(addr); got != tt.blocked {
-				t.Errorf("blockedAddr(%s) = %v, want %v", tt.addr, got, tt.blocked)
-			}
-		})
-	}
-}
 
 func TestValidateRegistryRemoteURL(t *testing.T) {
 	accepted := []string{

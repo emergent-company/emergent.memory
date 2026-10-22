@@ -125,6 +125,27 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Stub website — a hermetic small site (link following, robots.txt, 404/500,
+  # redirect, PDF) so the web data-source connector can be exercised end to end
+  # without a real site or egress. The server reaches it as http://web-stub:8080
+  # (scoped by WEB_SOURCE_ALLOWED_HOSTS); host-run API tests seed and mutate the
+  # site through the stub's /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  web-stub:
+    build:
+      context: ./stubs/web
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port web-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Mailpit — SMTP capture box (1025) + HTTP API/UI (8025). The server sends
   # real email here via EMAIL_TRANSPORT=smtp; e2e tests read it back over the
   # HTTP API. No healthcheck (the image has no shell).
@@ -179,6 +200,8 @@ services:
         condition: service_healthy
       github-stub:
         condition: service_healthy
+      web-stub:
+        condition: service_healthy
       mailpit:
         condition: service_started
     environment:
@@ -220,6 +243,15 @@ services:
       # The API origin is a deployment setting (never per source), so this is
       # what lets the connector target the stub instead of api.github.com.
       GITHUB_API_BASE_URL: "http://github-stub:8080"
+      # Web-scraper data-source deployment policy (feeds internal/outbound's
+      # SSRF guard). AllowedHosts names the hermetic stub host, which lives on the
+      # compose bridge network (RFC1918 private space): an allow-listed host is
+      # dialable even though its addresses are private, both at pre-flight and at
+      # dial time. AllowPrivate stays unset so the harness keeps the strict
+      # production policy — the always-blocked link-local/metadata range
+      # (169.254.169.254) remains unreachable under every policy, so the SSRF
+      # scenario still holds.
+      WEB_SOURCE_ALLOWED_HOSTS: "web-stub"
 
       # Data-source credentials are AES-256 encrypted at rest with the same
       # operator-managed key as provider credentials. Without it every source
@@ -286,6 +318,7 @@ services:
       # The GitHub data-source test seeds/mutates the private-repo stub through
       # its /_control routes; empty outside the api job so the test skips.
       GITHUB_STUB_URL: "${E2E_GITHUB_STUB_URL:-}"
+      WEB_STUB_URL: "${E2E_WEB_STUB_URL:-}"
       # The image ships e2e/go.work (the module's own workspace). Run the suite
       # in module mode, exactly as before that file existed — the module's own
       # dependency graph, never the repo root's build list.

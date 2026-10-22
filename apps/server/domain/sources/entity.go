@@ -66,6 +66,15 @@ const (
 	// SourceTypeMeeting is the source-type category advertised for the Trale
 	// provider (and future meeting-intelligence providers).
 	SourceTypeMeeting = "meeting"
+
+	// ProviderTypeWeb crawls a website and syncs its pages into the knowledge
+	// base. It is config-only: no credentials are collected or stored, and every
+	// fetch runs through the deployment's SSRF guard.
+	ProviderTypeWeb = "web"
+
+	// SourceTypeWeb is the source-type category advertised for the web provider
+	// (and future crawl-backed providers).
+	SourceTypeWeb = "web"
 )
 
 // Source is the kb.sources row model. EncryptedCredentials is deliberately

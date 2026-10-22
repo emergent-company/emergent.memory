@@ -3,59 +3,11 @@ package mcpregistry
 import (
 	"context"
 	"fmt"
-	"net"
-	"net/netip"
 	"net/url"
 	"strings"
+
+	"github.com/emergent-company/emergent.memory/internal/outbound"
 )
-
-// blockedAddr reports whether ip lies in an address range that a
-// registry-supplied remote URL must never reach. Installing a registry entry
-// makes the server open an outbound MCP connection to a third-party-controlled
-// URL, so loopback, private, link-local, unique-local, multicast, unspecified,
-// CGNAT, and reserved ranges are all rejected (SSRF guard).
-func blockedAddr(ip netip.Addr) bool {
-	if !ip.IsValid() {
-		return true
-	}
-	ip = ip.Unmap()
-	if ip.IsLoopback() ||
-		ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() ||
-		ip.IsInterfaceLocalMulticast() ||
-		ip.IsMulticast() ||
-		ip.IsUnspecified() {
-		return true
-	}
-	if ip.Is4() {
-		b := ip.As4()
-		// 0.0.0.0/8 ("this network"), 100.64.0.0/10 (CGNAT), 240.0.0.0/4 (reserved).
-		if b[0] == 0 {
-			return true
-		}
-		if b[0] == 100 && b[1] >= 64 && b[1] <= 127 {
-			return true
-		}
-		if b[0] >= 240 {
-			return true
-		}
-	}
-	return false
-}
-
-// isInternalHostname reports whether a hostname names only private
-// infrastructure. It is a small denylist because validateRegistryRemoteURL
-// deliberately does not perform DNS resolution (see its doc comment).
-func isInternalHostname(host string) bool {
-	switch host {
-	case "localhost", "metadata", "metadata.google.internal", "instance-data":
-		return true
-	}
-	return strings.HasSuffix(host, ".localhost") ||
-		strings.HasSuffix(host, ".local") ||
-		strings.HasSuffix(host, ".internal")
-}
 
 // validateRegistryRemoteURL rejects remote URLs that the server must not
 // connect to on behalf of a registry entry: non-http(s) schemes, userinfo,
@@ -91,29 +43,19 @@ func validateRegistryRemoteURL(_ context.Context, raw string) error {
 	}
 
 	// Literal IP: classify directly, no DNS.
-	if addr, perr := netip.ParseAddr(host); perr == nil {
-		if blockedAddr(addr) {
-			return fmt.Errorf("remote URL host %s is in a disallowed address range", host)
-		}
-		return nil
+	if outbound.ParseBlockedHost(host) {
+		return fmt.Errorf("remote URL host %s is in a disallowed address range", host)
 	}
-	if isInternalHostname(strings.ToLower(host)) {
+	if outbound.IsInternalHostname(strings.ToLower(host)) {
 		return fmt.Errorf("remote URL host %q is a disallowed internal hostname", host)
 	}
 	return nil
 }
 
-// lookupHostIPs resolves a hostname to its addresses for SSRF validation. It is
-// a package variable so unit tests can substitute a deterministic resolver and
-// avoid real DNS.
-var lookupHostIPs = func(ctx context.Context, host string) ([]netip.Addr, error) {
-	return net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-}
-
 // validateOutboundFetchURL is the shared SSRF guard for every outbound fetch the
 // server performs against a caller-supplied MCP server URL: manual create and
 // update, the save-less connection probe (POST /api/admin/mcp-servers/test),
-// stored-server inspect, and registry installs (via the transports below).
+// stored-server inspect, and registry installs (via the transports).
 //
 // It applies the same static checks as validateRegistryRemoteURL (http/https
 // only, no userinfo, no literal blocked IP, no known-internal hostname) and then
@@ -122,34 +64,10 @@ var lookupHostIPs = func(ctx context.Context, host string) ([]netip.Addr, error)
 // range. This closes the hostname-based SSRF gap (e.g. a public-looking name
 // whose A record points at 169.254.169.254 or an RFC1918 host) that literal-only
 // validation misses.
+//
+// The implementation lives in internal/outbound so the web data source (and
+// any future connector) shares one tested policy; this wrapper fixes the MCP
+// registry to the production-strict default policy.
 func validateOutboundFetchURL(ctx context.Context, raw string) error {
-	if err := validateRegistryRemoteURL(ctx, raw); err != nil {
-		return err
-	}
-
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid remote URL %q: %w", raw, err)
-	}
-	host := u.Hostname()
-
-	// Literal IPs were already classified against the blocked ranges above;
-	// only hostnames need resolution.
-	if _, perr := netip.ParseAddr(host); perr == nil {
-		return nil
-	}
-
-	addrs, err := lookupHostIPs(ctx, host)
-	if err != nil {
-		return fmt.Errorf("cannot resolve remote URL host %q: %w", host, err)
-	}
-	if len(addrs) == 0 {
-		return fmt.Errorf("remote URL host %q did not resolve to any address", host)
-	}
-	for _, addr := range addrs {
-		if blockedAddr(addr) {
-			return fmt.Errorf("remote URL host %q resolves to disallowed address %s", host, addr)
-		}
-	}
-	return nil
+	return outbound.ValidateURL(ctx, raw, outbound.DefaultPolicy())
 }

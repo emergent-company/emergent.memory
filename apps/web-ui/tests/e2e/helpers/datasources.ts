@@ -75,3 +75,30 @@ export async function createGitHubSource(
   expect(id, 'connect should redirect to the new source detail page').not.toBe('');
   return { id, name: opts.name };
 }
+
+export interface WebSource {
+  id: string;
+  name: string;
+}
+
+/**
+ * Connect a Web source through the schema-driven config form. Web is
+ * config-only (no credential panel): the connect form collects the start URL
+ * list (a textarea, one URL per line) plus optional crawl-scope filters and
+ * limits. The mock validates that at least one start URL is present, matching
+ * the server's `start_urls` requirement.
+ */
+export async function createWebSource(
+  page: Page,
+  opts: { name: string; startUrls: string[] },
+): Promise<WebSource> {
+  await page.goto('/data-sources/new?providerType=web&method=config');
+  await expect(page.getByTestId('ds-connect-form')).toBeVisible();
+  await page.getByTestId('ds-field-name').fill(opts.name);
+  await page.getByTestId('ds-field-start_urls').fill(opts.startUrls.join('\n'));
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.waitForURL(/\/data-sources\/ds-\d+/);
+  const id = page.url().match(/\/data-sources\/(ds-\d+)/)?.[1] ?? '';
+  expect(id, 'connect should redirect to the new source detail page').not.toBe('');
+  return { id, name: opts.name };
+}
