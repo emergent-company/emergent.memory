@@ -52,8 +52,30 @@ echo "> runs DB will be written to: $RUNS_DB_DIR/runs.db"
 # The build context is the REPO ROOT: the Dockerfile compiles the memory CLI
 # from apps/cli (see e2e/Dockerfile). The repo is private, so the test no longer
 # downloads the CLI/install script from GitHub.
+#
+# Buildx builder pinning (infra #335): the `memory` self-hosted runner pool spans
+# two hosts. On memory-dev the daemon-default buildx builder (docker driver)
+# hands build containers systemd-resolved's stub resolver 127.0.0.53, which is
+# unreachable from the build network namespace, so every network `RUN` dies
+# instantly: `dial tcp: lookup proxy.golang.org on 127.0.0.53:53: network is
+# unreachable` (the "Preflight: build test image (fetches opencode)" step). Named
+# docker-container builders on the same host resolve fine. When the caller pins a
+# builder via E2E_BUILDX_BUILDER, use it here and — only when set — export it as
+# BUILDX_BUILDER so the compose build below selects the same builder. Unset or
+# empty keeps the current daemon-default behaviour so local runs are unaffected.
+if [ -n "${E2E_BUILDX_BUILDER:-}" ]; then
+  # Compose selects its buildx builder via the BUILDX_BUILDER env var; export it
+  # (only when pinned) so the `docker compose up -d --build` below builds on the
+  # same builder.
+  export BUILDX_BUILDER="$E2E_BUILDX_BUILDER"
+fi
 echo "> building Docker test image..."
-docker build -f "$SCRIPT_DIR/Dockerfile" -t emergent-cli-install-tests "$REPO_ROOT"
+if [ -n "${E2E_BUILDX_BUILDER:-}" ]; then
+  docker buildx build --load --builder "$E2E_BUILDX_BUILDER" \
+    -f "$SCRIPT_DIR/Dockerfile" -t emergent-cli-install-tests "$REPO_ROOT"
+else
+  docker build -f "$SCRIPT_DIR/Dockerfile" -t emergent-cli-install-tests "$REPO_ROOT"
+fi
 
 if $BUILD_ONLY; then
   echo "> build complete (--build-only, not running tests)"

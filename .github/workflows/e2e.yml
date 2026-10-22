@@ -91,7 +91,25 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+
+      # infra #335: pin the docker-container builder this action creates for the
+      # bare `docker build` / `docker compose ... --build` steps inside
+      # e2e/run_tests.sh. On memory-dev the daemon-default builder (docker
+      # driver) hands build containers systemd-resolved's stub resolver
+      # 127.0.0.53, which is unreachable from the build netns, so every network
+      # `RUN` dies: `dial tcp: lookup proxy.golang.org on 127.0.0.53:53: network
+      # is unreachable`. The named builder resolves fine. Export its name so both
+      # the script (E2E_BUILDX_BUILDER) and compose (BUILDX_BUILDER) select it.
+      - name: Export buildx builder for bare docker builds
+        env:
+          BUILDER_NAME: ${{ steps.buildx.outputs.name }}
+        run: |
+          {
+            echo "E2E_BUILDX_BUILDER=${BUILDER_NAME}"
+            echo "BUILDX_BUILDER=${BUILDER_NAME}"
+          } >> "$GITHUB_ENV"
 
       - name: Build memory-server image
         uses: docker/build-push-action@v5
