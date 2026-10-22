@@ -211,10 +211,12 @@ jobs:
   connector-ci:
     name: connector-ci
     runs-on: [self-hosted, linux, x64, memory]
-    # Advisory aggregate gate for this path-filtered workflow. NOT the required
-    # status check: the single required context on main is Meta CI's `ci`
-    # (.github/workflows/ci.yml). Renamed from `ci` to `connector-ci` so it no
-    # longer collides with the required `ci` context. always() so the gate still
+    # Advisory aggregate gate for this path-filtered workflow. NOT a required
+    # status check: the required contexts on main are Meta CI's `ci`
+    # (.github/workflows/ci.yml) and `merge-guard`
+    # (.github/workflows/merge-guard.yml). Renamed from `ci` to `connector-ci` so
+    # it no longer collides with the required `ci` context. always() so the gate
+    # still
     # reports when a dependency fails (same pattern as cli.yml).
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
     needs: [linux-lint, mac-lint, mac-build]

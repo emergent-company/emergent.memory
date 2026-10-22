@@ -427,10 +427,11 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
     # Aggregate gate for this path-filtered server workflow. It is NOT a required
-    # status check: the single required context on main is Meta CI's `ci`
-    # (.github/workflows/ci.yml). Renamed from `ci` to `server-ci` (#1673) to
-    # remove the check-name collision with Meta CI — two distinct jobs both named
-    # `ci` made the required context ambiguous.
+    # status check: the required contexts on main are Meta CI's `ci`
+    # (.github/workflows/ci.yml) and `merge-guard`
+    # (.github/workflows/merge-guard.yml). Renamed from `ci` to `server-ci` (#1673)
+    # to remove the check-name collision with Meta CI — two distinct jobs both
+    # named `ci` made the required context ambiguous.
     # test-db is part of this gate: a failing DB-backed test must fail the
     # aggregate (otherwise running it would not block the server suite), the same
     # "ran but did not gate" trap as #759/#778.

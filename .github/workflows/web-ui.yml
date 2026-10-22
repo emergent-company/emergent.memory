@@ -6,10 +6,11 @@ name: Web UI CI
 # and never satisfied the required `ci` status check — branch protection left
 # them unmergeable. This workflow supplies that check for web-ui changes.
 #
-# This workflow is path-filtered to `apps/web-ui/**`, so it is NOT the required
-# status check: the single branch-protection-required context on main is Meta
-# CI's `ci` (.github/workflows/ci.yml), which is unfiltered and reports for every
-# PR. This workflow's aggregate gate is named `web-ui-ci` (advisory).
+# This workflow is path-filtered to `apps/web-ui/**`, so it is NOT a required
+# status check: the branch-protection-required contexts on main are Meta CI's
+# `ci` (.github/workflows/ci.yml), which is unfiltered and reports for every PR,
+# and `merge-guard` (.github/workflows/merge-guard.yml). This workflow's
+# aggregate gate is named `web-ui-ci` (advisory).
 
 on:
   push:

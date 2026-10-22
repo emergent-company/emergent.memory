@@ -650,9 +650,10 @@ jobs:
   cli-ci:
     name: cli-ci
     runs-on: [self-hosted, linux, x64, memory]
-    # Advisory aggregate gate for this path-filtered workflow. It is NOT the
-    # branch-protection-required status check: the single required context on
-    # main is Meta CI's `ci` (.github/workflows/ci.yml). Renamed from `ci` to
+    # Advisory aggregate gate for this path-filtered workflow. It is NOT a
+    # branch-protection-required status check: the required contexts on `main`
+    # are Meta CI's `ci` (.github/workflows/ci.yml) and `merge-guard`
+    # (.github/workflows/merge-guard.yml). Renamed from `ci` to
     # `cli-ci` (#1673/#1675 follow-up) so it no longer collides with the required
     # `ci` context. always(): the tag-guarded lint/test jobs are legitimately
     # skipped on tag pushes, so the gate treats 'skipped' as acceptable and fails

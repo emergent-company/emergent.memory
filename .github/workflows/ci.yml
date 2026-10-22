@@ -2,12 +2,13 @@ name: Meta CI
 
 # NO `paths:` filter on either trigger.
 #
-# `ci` is the ONLY branch-protection-required status check on `main` (the
-# required context list is exactly ["ci"]). A path-filtered required check never
-# reports for PRs that do not touch the listed paths, so the required check would
-# simply be absent for those PRs and the whole required-check set would become
-# unenforceable. This workflow is therefore unfiltered and MUST run for every PR
-# and every push to main.
+# `ci` is one of the TWO branch-protection-required status checks on `main`
+# (the required context list is exactly ["ci", "merge-guard"], where
+# `merge-guard` is published by .github/workflows/merge-guard.yml). A
+# path-filtered required check never reports for PRs that do not touch the
+# listed paths, so the required check would simply be absent for those PRs and
+# the whole required-check set would become unenforceable. This workflow is
+# therefore unfiltered and MUST run for every PR and every push to main.
 #
 # The heavy suites (server unit/DB, E2E, CLI, web-ui, iOS, docker) are
 # intentionally path-filtered and are therefore NOT required: their job contexts
