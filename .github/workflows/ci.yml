@@ -64,7 +64,9 @@ jobs:
       # merge a secret-bearing commit while reporting green. Provision a pinned,
       # checksum-verified gitleaks here (never assume the runner's PATH) and run
       # the same invocation the lint group uses. A missing binary is a hard
-      # failure, and findings fail the step: `.gitleaksignore` stays the ratchet.
+      # failure, and findings fail the step. Waivers are value-pinned
+      # `[[allowlists]]` in `.gitleaks.toml` (issue #2022): a `path:rule:line`
+      # fingerprint re-opens the finding whenever lines shift above it.
       - name: Install gitleaks
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash .github/scripts/install-gitleaks.sh

@@ -81,7 +81,7 @@ Adopt the go-daisy / emergent.memory tooling:
   `gitleaks` secret scan (strict on staged changes).
   Full `task lint` runs `lefthook run lint-webui` (web UI + connector): `gofmt` + `go vet` +
   `go test` + `golangci-lint` + `templ generate -check` + repo-wide `gitleaks` (whole tree,
-  with a `.gitleaksignore` ratchet for pre-existing findings).
+  with the value-pinned waivers in `.gitleaks.toml` for pre-existing findings).
 - `templ generate` before build when `.templ` files change.
 
 ## Migration (existing → new)

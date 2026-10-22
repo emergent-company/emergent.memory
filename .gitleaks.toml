@@ -38,13 +38,16 @@ keywords    = ["emt_"]
 
 # ── Global allowlists ────────────────────────────────────────────────────────
 
+
 [[allowlists]]
 description = "Angle-bracket placeholders are never real keys — e.g. <YOUR_API_KEY>"
 regexes     = ['''<[A-Z][A-Z0-9_]{2,}>''']
 
+
 [[allowlists]]
 description = "Local env files — contain real keys intentionally, never committed"
 paths       = ['''(^|[\\/])\.env$''', '''(^|[\\/])\.env\.[A-Za-z0-9_.-]+$''']
+
 
 [[allowlists]]
 description = "Vendored, generated, and ignored trees are not product code"
@@ -55,6 +58,7 @@ paths       = [
   '''(^|[\\/])(dist|build|coverage)[\\/]''',
 ]
 
+
 [[allowlists]]
 description = "Go test fixtures use fabricated tokens/keys, not real secrets (manually verified)"
 paths       = [
@@ -63,14 +67,79 @@ paths       = [
   '''gateway/voice_settings_test\.go''',
 ]
 
+
 [[allowlists]]
 description = "The sandbox integration mock uses a fabricated GitHub token literal (ghp_secret123), never a real secret — matched by value so any other secret added to that file is still scanned"
 regexes     = ['''ghp_secret123''']
+
 
 [[allowlists]]
 description = "Unmistakably-named E2E env-var *names* (never values) trip the generic-api-key heuristic"
 regexes     = ['''\bE2E_SCENARIO_LLM_API_KEY\b''']
 
+
 [[allowlists]]
 description = "templ's own generated error identifier (templ_<hash>_Err, e.g. templ_7745c5c3_Err) is not a secret — matched by shape so it is covered in gitignored web-ui output and in the committed CLI *_templ.go alike"
 regexes     = ['''templ_[0-9a-f]{8}_Err''']
+
+# ── Pre-existing findings waived by value ────────────────────────────────────
+#
+# These replace the line-pinned `.gitleaksignore` fingerprints (issue #2022). A
+# `path:rule:line` fingerprint moves whenever lines above it shift, so an
+# unrelated edit re-opened a waived finding and turned the required `ci` secret
+# scan red even though the finding itself was unchanged.
+#
+# Each entry matches the exact *value* of a known fixture/placeholder, so it is
+# immune to line drift and still reports any new secret — including a new secret
+# on a different line of the same file. Matching is against the finding's secret,
+# not the line.
+#
+# RATCHET: entries may only be removed. Never add a real credential here — one
+# that looks like a live secret must be rotated/removed instead.
+
+[[allowlists]]
+description = "Documentation placeholders - `<YOUR_...>`-style examples and obviously fake ids in docs"
+regexes = [
+  '''YOUR_TOKEN''',
+  '''YOUR_NEW_ID_TOKEN''',
+  '''schema-read-token''',
+  '''invalid-token-12345''',
+  '''a1b2c3d4e5f6\.\.\.''',
+  '''person-jane-smith-x9y8z7''',
+]
+
+[[allowlists]]
+description = "Test fixtures - fabricated keys/tokens in Go and Python tests"
+regexes = [
+  '''test-api-key-12345''',
+  '''test-key_123\.abc''',
+  '''emt_abc12345''',
+  '''emt_abc123456''',
+  '''emt_abc123def456''',
+  '''emt_abc123def456xyz''',
+  '''emt_ghi01234''',
+  '''emt_jkl56789''',
+  '''sk--hdGtQNlFMQDO3aW2d-bPw''',
+  '''ya29\.a0AfH6SMBx\.\.\.''',
+]
+
+[[allowlists]]
+description = "JWT samples - the jwt.io demo token and its RS256 variant"
+regexes = [
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U''',
+  '''eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.signature''',
+]
+
+[[allowlists]]
+description = "Throwaway graph ids - run ids embedded in `tools/graph-import/*.py` seed data"
+regexes = [
+  '''e409976f-ed9b-481e-aea6-c3b30a5ffa49''',
+  '''0cf8ff96-45bb-4cc0-8d49-700896caca56''',
+  '''f9d29af5-cc31-4508-a6db-a68014db0181''',
+]
+
+[[allowlists]]
+description = "Metric names - a gate metric constant, not a credential"
+regexes = [
+  '''M6_temporal_accuracy''',
+]

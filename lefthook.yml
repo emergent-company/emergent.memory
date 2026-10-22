@@ -322,8 +322,8 @@ lint:
       root: apps/server
       run: go build ./...
 
-    # golangci-lint has no baseline ratchet (unlike gitleaks/.gitleaksignore or
-    # apps/server/scripts/lint-ratchet.sh). apps/server (~260 findings) and
+    # golangci-lint has no baseline ratchet (unlike the gitleaks waivers in
+    # .gitleaks.toml or apps/server/scripts/lint-ratchet.sh). apps/server (~260 findings) and
     # apps/cli (~71) carry pre-existing debt, so a whole-module run would leave
     # `task lint` red before any work. `--new-from-rev HEAD` reports only new
     # issues on changed lines — the same ratchet the server CI uses
