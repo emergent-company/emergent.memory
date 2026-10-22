@@ -9,6 +9,12 @@ run-name: merge-guard PR ${{ inputs.pr || github.event.pull_request.number }}
 # unreviewed tree. A reviewer records the reviewed revision as a PR comment:
 #
 #     Reviewed-SHA: <40 lowercase hex>
+#     Verdict: MERGE
+#
+# The verdict line is part of the gate, not decoration. A rejection is posted as
+# `Verdict: CHANGES_REQUESTED` **with** the SHA it applies to, so matching the
+# SHA alone would turn a rejection into an approval; the guard requires the
+# latest trusted marker to name the head *and* say `MERGE`.
 #
 # The guard passes only when the most recent TRUSTED marker equals the PR head.
 # A marker is trusted only when its author is OWNER/COLLABORATOR or their
@@ -83,12 +89,18 @@ jobs:
             | {
                 created_at: .created_at,
                 sha: (.body | split("\n") | map(select(test("^Reviewed-SHA: [0-9a-f]{40}[ \\t\\r]*$"))) | last | capture("^Reviewed-SHA: (?<sha>[0-9a-f]{40})").sha),
+                verdict: (
+                  .body | split("\n")
+                  | map(select(test("^(?i)verdict:[ \\t]*[A-Za-z_]+[ \\t\\r]*$")))
+                  | last
+                  | if . == null then "" else capture("^(?i)verdict:[ \\t]*(?<v>[A-Za-z_]+)").v end
+                ),
                 url: .html_url
               }
             ]
           | sort_by(.created_at)
           | last
-          | if . == null then empty else "\(.sha)\t\(.created_at)\t\(.url)" end
+          | if . == null then empty else "\(.sha)\t\(.verdict)\t\(.created_at)\t\(.url)" end
           JQ
 
           comments=$(mktemp)
@@ -108,6 +120,7 @@ jobs:
               echo
               echo '```'
               echo "Reviewed-SHA: ${HEAD}"
+              echo "Verdict: MERGE"
               echo '```'
               echo
               echo "then re-run this workflow for the current head."
@@ -118,6 +131,8 @@ jobs:
 
           marker_sha=${marker%%$'\t'*}
           marker_rest=${marker#*$'\t'}
+          marker_verdict=${marker_rest%%$'\t'*}
+          marker_rest=${marker_rest#*$'\t'}
           marker_at=${marker_rest%%$'\t'*}
           marker_url=${marker_rest#*$'\t'}
 
@@ -132,11 +147,37 @@ jobs:
               echo
               echo '```'
               echo "Reviewed-SHA: ${HEAD}"
+              echo "Verdict: MERGE"
               echo '```'
               echo
               echo "and re-run this workflow for the current head."
             } >>"${GITHUB_STEP_SUMMARY}"
             echo "::error::Marker ${marker_sha} does not match head ${HEAD}."
+            exit 1
+          fi
+
+          if [[ "${marker_verdict^^}" != "MERGE" ]]; then
+            {
+              echo "### Merge guard: latest trusted marker does not approve this head"
+              echo
+              echo "The latest trusted marker names \`${marker_sha}\` (${marker_at}), which matches the"
+              echo "head, but its verdict is \`${marker_verdict:-<absent>}\` rather than \`MERGE\`."
+              echo
+              echo "A marker is an approval only when the same comment carries an explicit"
+              echo "\`Verdict: MERGE\` line. A reviewer who found problems posts"
+              echo "\`Verdict: CHANGES_REQUESTED\` against the same SHA, so matching the SHA"
+              echo "alone would count a rejection as approval."
+              echo
+              echo "Re-review the delta and comment:"
+              echo
+              echo '```'
+              echo "Reviewed-SHA: ${HEAD}"
+              echo "Verdict: MERGE"
+              echo '```'
+              echo
+              echo "then re-run this workflow for the current head."
+            } >>"${GITHUB_STEP_SUMMARY}"
+            echo "::error::Marker ${marker_sha} is not an approval (verdict: ${marker_verdict:-absent})."
             exit 1
           fi
 
