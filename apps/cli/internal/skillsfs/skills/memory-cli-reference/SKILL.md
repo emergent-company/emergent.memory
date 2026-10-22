@@ -1184,6 +1184,93 @@ memory agents mcp-servers list [flags]
   -h, --help   help for list
 ```
 
+## memory agents mcp-servers oauth
+
+Manage OAuth authorization for an MCP server
+
+### Synopsis
+
+Connect, inspect, or disconnect the current user's OAuth authorization for
+an MCP server that requires OAuth 2.1 authorization.
+
+Commands:
+  connect    Begin an OAuth connect flow, open the authorization URL in a
+             browser, and poll until the server reports Connected.
+  status     Show the stored OAuth state for the current user.
+  disconnect Remove the current user's stored OAuth credential.
+
+### Options
+
+```
+  -h, --help   help for oauth
+```
+
+## memory agents mcp-servers oauth connect
+
+Connect OAuth for an MCP server
+
+### Synopsis
+
+Begin an OAuth connect flow for an MCP server and open the authorization
+URL in a browser. The CLI polls the server until the credential is stored and
+the server reports Connected.
+
+The connect flow is bound to the current user; each user connects their own
+credential.
+
+```
+memory agents mcp-servers oauth connect [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for connect
+```
+
+## memory agents mcp-servers oauth disconnect
+
+Disconnect OAuth for an MCP server
+
+### Synopsis
+
+Remove the current user's stored OAuth credential for an MCP server.
+
+Disconnect removes only the current user's personal credential; it cannot
+remove the project-wide shared credential.
+
+```
+memory agents mcp-servers oauth disconnect [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for disconnect
+```
+
+## memory agents mcp-servers oauth status
+
+Show MCP server OAuth status
+
+### Synopsis
+
+Show the stored OAuth state for the current user.
+
+Displays whether a client is configured, whether a credential is connected,
+whether that credential is the project-wide shared credential or the current
+user's personal one, and token expiry. Token values are never shown.
+
+```
+memory agents mcp-servers oauth status [server-id] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for status
+```
+
 ## memory agents mcp-servers sync
 
 Sync tools from an MCP server
@@ -1598,11 +1685,40 @@ memory blueprints [flags]
 ### Options
 
 ```
-      --dry-run          Preview actions without making any API calls
-  -h, --help             help for blueprints
-      --project string   Project ID or name (overrides config/env)
-      --token string     GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
-      --upgrade          Update existing resources instead of skipping them
+      --dry-run                 Preview actions without making any API calls
+  -h, --help                    help for blueprints
+      --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
+      --no-map                  Skip install-time model mapping and use the blueprint's pinned models as-is
+      --project string          Project ID or name (overrides config/env)
+      --token string            GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
+      --upgrade                 Update existing resources instead of skipping them
+```
+
+## memory blueprints check-updates
+
+Check GitHub-imported blueprints for newer upstream versions
+
+### Synopsis
+
+Check the current project's GitHub-imported blueprints for newer upstream
+versions. With a blueprint name, it triggers a check (POST .../updates/check) and
+prints the latest result; without a name, it prints the current status of every
+applied blueprint.
+
+Examples:
+
+  memory blueprints check-updates
+  memory blueprints check-updates crm
+  memory blueprints check-updates crm --project my-project
+
+```
+memory blueprints check-updates [name] [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for check-updates
 ```
 
 ## memory blueprints dump
@@ -1636,6 +1752,49 @@ memory blueprints dump <output-dir> [flags]
 ```
   -h, --help           help for dump
       --types string   Comma-separated list of object/relationship types to export (default: all types)
+```
+
+## memory blueprints github-token
+
+Manage the project's GitHub personal access token
+
+### Synopsis
+
+Manage the project-scoped GitHub personal access token used for update checks.
+
+### Options
+
+```
+  -h, --help   help for github-token
+```
+
+## memory blueprints github-token set
+
+Store the project's GitHub personal access token
+
+### Synopsis
+
+Store the project's GitHub personal access token, used by the server to check
+private repositories for updates. The token is encrypted at rest by the server
+and never echoed back.
+
+The token is read from --token, or from stdin when --token is omitted (e.g.
+`echo ghp_... | memory blueprints github-token set`).
+
+Examples:
+
+  memory blueprints github-token set --token ghp_...
+  memory blueprints github-token set
+
+```
+memory blueprints github-token set [flags]
+```
+
+### Options
+
+```
+  -h, --help           help for set
+      --token string   GitHub personal access token (read from stdin when omitted)
 ```
 
 ## memory blueprints inspect
@@ -1690,6 +1849,10 @@ SKILL.md file containing YAML frontmatter (name, description) and Markdown conte
 By default the command is additive-only: existing resources are skipped.
 Use --upgrade to update resources that already exist.
 
+The blueprint is validated offline before anything is applied, and agent model
+references are normalized to "provider/model" form. A validation error aborts
+the install with nothing applied.
+
 Examples:
 
   memory blueprints install ./my-config
@@ -1704,10 +1867,41 @@ memory blueprints install <source> [flags]
 ### Options
 
 ```
-      --dry-run        Preview actions without making any API calls
-  -h, --help           help for install
-      --token string   GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
-      --upgrade        Update existing resources instead of skipping them
+      --dry-run                 Preview actions without making any API calls
+  -h, --help                    help for install
+      --map-model stringArray   Map a blueprint agent to a project model (agent=provider/model, repeatable; empty model = project default)
+      --no-map                  Skip install-time model mapping and use the blueprint's pinned models as-is
+      --token string            GitHub personal access token (for private repos); also read from MEMORY_GITHUB_TOKEN
+      --upgrade                 Update existing resources instead of skipping them
+```
+
+## memory blueprints update
+
+Apply an available update for a GitHub-imported blueprint
+
+### Synopsis
+
+Enqueue an asynchronous update (apply) for the current project's
+GitHub-imported blueprint. The server fetches the upstream source and, when a
+newer version is available, creates, publishes, and applies it. With --wait, the
+command blocks until the update job reaches a terminal state and prints the
+outcome.
+
+Examples:
+
+  memory blueprints update crm
+  memory blueprints update crm --wait
+  memory blueprints update crm --project my-project
+
+```
+memory blueprints update <name> [flags]
+```
+
+### Options
+
+```
+  -h, --help   help for update
+      --wait   Block until the update job reaches a terminal state
 ```
 
 ## memory blueprints validate
@@ -3564,6 +3758,7 @@ standalone notes).
 
 Use --since to filter by age (e.g. 7d, 24h, 1h). Defaults to last 7 days.
 Use --limit to control the maximum number of entries returned.
+Use --cursor to fetch the next page; the cursor is printed after each non-final page.
 Use --output json for machine-readable output.
 
 ```
@@ -3574,6 +3769,7 @@ memory journal list [flags]
 
 ```
       --branch string      Branch name or UUID (omit for main branch)
+      --cursor string      Keyset cursor from a previous response (next_cursor)
   -h, --help               help for list
       --include-branches   Include merged branches in the feed alongside the main branch
       --limit int          Maximum number of entries to return (default 100)
@@ -3927,6 +4123,10 @@ it is shown as well. Use the --stats flag to additionally display counts for
 Documents, Graph Objects, Relationships, Extraction jobs, and installed Schemas
 with their object and relationship type names.
 
+With --json the output shape is stable: every documented field of a project is
+always present, with null for values that were never set, so scripts can rely on
+the keys. The stats object is only included when --stats is passed.
+
 ```
 memory projects get [name-or-id] [flags]
 ```
@@ -3951,6 +4151,10 @@ has a project info document set, it is shown beneath the name. Use the --stats
 flag to also display per-project counts for Documents, Graph Objects,
 Relationships, Extraction jobs (total/running/queued), and installed Schemas
 (with their object and relationship type names).
+
+With --json the output shape is stable: every documented field of a project is
+always present, with null for values that were never set, so scripts can rely on
+the keys. The stats object is only included when --stats is passed.
 
 ```
 memory projects list [flags]

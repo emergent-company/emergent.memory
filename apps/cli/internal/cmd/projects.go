@@ -41,7 +41,11 @@ Output prints a numbered list with each project's Name and ID. If the project
 has a project info document set, it is shown beneath the name. Use the --stats
 flag to also display per-project counts for Documents, Graph Objects,
 Relationships, Extraction jobs (total/running/queued), and installed Schemas
-(with their object and relationship type names).`,
+(with their object and relationship type names).
+
+With --json the output shape is stable: every documented field of a project is
+always present, with null for values that were never set, so scripts can rely on
+the keys. The stats object is only included when --stats is passed.`,
 	RunE: runListProjects,
 }
 
@@ -53,7 +57,11 @@ var getProjectCmd = &cobra.Command{
 Prints the project's Name, ID, and Org ID. If a project info document is set
 it is shown as well. Use the --stats flag to additionally display counts for
 Documents, Graph Objects, Relationships, Extraction jobs, and installed Schemas
-with their object and relationship type names.`,
+with their object and relationship type names.
+
+With --json the output shape is stable: every documented field of a project is
+always present, with null for values that were never set, so scripts can rely on
+the keys. The stats object is only included when --stats is passed.`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runGetProject,
@@ -325,6 +333,48 @@ func getClient(cmd *cobra.Command) (*client.Client, error) {
 	return client.New(cfg)
 }
 
+// projectJSON is the shape `--json` emits for a project. The SDK type carries
+// `omitempty` on its optional fields, so unset values vanish and the object's
+// key set depends on project state — a consumer cannot treat `--json` as a
+// schema. Projecting onto a type without `omitempty` keeps every documented
+// field present, with null for values that were never set. `stats` stays
+// conditional because it is only fetched with --stats.
+type projectJSON struct {
+	ID                   string                 `json:"id"`
+	Name                 string                 `json:"name"`
+	OrgID                string                 `json:"orgId"`
+	ProjectInfo          *string                `json:"project_info"`
+	ChatPromptTemplate   *string                `json:"chat_prompt_template"`
+	AutoExtractObjects   *bool                  `json:"auto_extract_objects"`
+	AutoExtractConfig    map[string]interface{} `json:"auto_extract_config"`
+	BudgetUSD            *float64               `json:"budget_usd"`
+	BudgetAlertThreshold *float64               `json:"budget_alert_threshold"`
+	Stats                *projects.ProjectStats `json:"stats,omitempty"`
+}
+
+func newProjectJSON(p projects.Project) projectJSON {
+	return projectJSON{
+		ID:                   p.ID,
+		Name:                 p.Name,
+		OrgID:                p.OrgID,
+		ProjectInfo:          p.ProjectInfo,
+		ChatPromptTemplate:   p.ChatPromptTemplate,
+		AutoExtractObjects:   p.AutoExtractObjects,
+		AutoExtractConfig:    p.AutoExtractConfig,
+		BudgetUSD:            p.BudgetUSD,
+		BudgetAlertThreshold: p.BudgetAlertThreshold,
+		Stats:                p.Stats,
+	}
+}
+
+func newProjectJSONList(in []projects.Project) []projectJSON {
+	out := make([]projectJSON, 0, len(in))
+	for _, p := range in {
+		out = append(out, newProjectJSON(p))
+	}
+	return out
+}
+
 func printProjectStats(stats *projects.ProjectStats) {
 	if stats == nil {
 		return
@@ -409,7 +459,7 @@ func runListProjects(cmd *cobra.Command, args []string) error {
 	if output == "json" {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
-		return enc.Encode(projectList)
+		return enc.Encode(newProjectJSONList(projectList))
 	}
 
 	if compact {
@@ -530,7 +580,7 @@ func runGetProject(cmd *cobra.Command, args []string) error {
 	if output == "json" {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
-		return enc.Encode(project)
+		return enc.Encode(newProjectJSON(*project))
 	}
 
 	orgName := project.OrgID

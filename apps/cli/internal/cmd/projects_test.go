@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -95,4 +97,96 @@ func TestIsUUID(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "isUUID(%q) should be %v", tt.input, tt.expected)
 		})
 	}
+}
+
+// TestProjectJSONAlwaysEmitsDocumentedFields pins the --json contract (#2065):
+// a project whose optional fields were never set must still produce every
+// documented key, with null values. The SDK type alone cannot do this — its
+// omitempty tags drop them.
+func TestProjectJSONAlwaysEmitsDocumentedFields(t *testing.T) {
+	p := projects.Project{
+		ID:    "11111111-1111-1111-1111-111111111111",
+		Name:  "fresh",
+		OrgID: "0aaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+	}
+
+	b, err := json.Marshal(newProjectJSON(p))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	for _, key := range []string{
+		"id", "name", "orgId",
+		"project_info", "chat_prompt_template", "auto_extract_objects",
+		"auto_extract_config", "budget_usd", "budget_alert_threshold",
+	} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("--json output is missing %q (keys are not schema-stable)", key)
+		}
+	}
+
+	for _, key := range []string{
+		"project_info", "chat_prompt_template", "auto_extract_objects",
+		"auto_extract_config", "budget_usd", "budget_alert_threshold",
+	} {
+		if string(got[key]) != "null" {
+			t.Errorf("%q = %s, want null for an unset field", key, got[key])
+		}
+	}
+
+	// stats is flag-gated: --stats fetches it, every other field is unconditional.
+	if _, ok := got["stats"]; ok {
+		t.Error("stats must be omitted from --json unless --stats was passed")
+	}
+}
+
+func TestProjectJSONPreservesSetValuesAndStats(t *testing.T) {
+	info := "project brief"
+	budget := 12.5
+	threshold := 80.0
+	autoExtract := true
+
+	p := projects.Project{
+		ID:                   "11111111-1111-1111-1111-111111111111",
+		Name:                 "configured",
+		OrgID:                "0aaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+		ProjectInfo:          &info,
+		BudgetUSD:            &budget,
+		BudgetAlertThreshold: &threshold,
+		AutoExtractObjects:   &autoExtract,
+		Stats:                &projects.ProjectStats{DocumentCount: 3},
+	}
+
+	b, err := json.Marshal(newProjectJSON(p))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	assert.Equal(t, `"project brief"`, string(got["project_info"]))
+	assert.Equal(t, "12.5", string(got["budget_usd"]))
+	assert.Equal(t, "80", string(got["budget_alert_threshold"]))
+	assert.Equal(t, "true", string(got["auto_extract_objects"]))
+	if _, ok := got["stats"]; !ok {
+		t.Error("stats must be present when the caller fetched it with --stats")
+	}
+}
+
+// TestProjectJSONListEmptyIsArray keeps `--json` emitting [] rather than null
+// when there are no projects to show.
+func TestProjectJSONListEmptyIsArray(t *testing.T) {
+	b, err := json.Marshal(newProjectJSONList(nil))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	assert.Equal(t, "[]", string(b))
 }
