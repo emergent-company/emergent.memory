@@ -34,11 +34,16 @@ on:
         required: false
         default: ""
 
-# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
-# should always finish and report its status).
+# Serialise runs on the same ref instead of cancelling the in-flight one.
+# Cancelling a running e2e job is precisely what strands a compose project on the
+# shared self-hosted Docker host: the runner stops the job mid-step, the
+# `if: always()` teardown steps never execute, and the stack survives as a
+# "healthy" zombie (#2008). A superseded PR run therefore queues behind the older
+# one. `teardown` below reaps anything an earlier attempt of the same run left
+# behind.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -61,7 +66,12 @@ jobs:
         working-directory: e2e
 
     env:
-      MEMORY_SERVER_IMAGE: memory-server:ci
+      # Per-run, per-job image tag (#2008): the three jobs here share one
+      # self-hosted Docker daemon, so a single `memory-server:ci` tag let them
+      # build over each other's image and made a leaked container
+      # unattributable. `teardown` removes every `memory-server:ci-<run_id>-*`
+      # image this run leaves behind.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-integration
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -71,7 +81,10 @@ jobs:
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
       # ports. Paired with ephemeral loopback port bindings in docker-compose.
-      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-integration
+      # The attempt is in the name so a re-run starts from an empty project
+      # rather than adopting a cancelled attempt's containers and volumes;
+      # `teardown` reaps every attempt of this run id by label prefix.
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-integration
 
     steps:
       - name: Checkout
@@ -87,7 +100,7 @@ jobs:
           file: deploy/self-hosted/Dockerfile.server
           load: true
           push: false
-          tags: memory-server:ci
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
           # Mirror server.yml: PR runs only consume the cache; the default
           # branch writes it. `mode=max` on every PR ref is what filled the
           # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
@@ -103,7 +116,7 @@ jobs:
 
       # Distinct infrastructure step: an image-pull failure must read as
       # infrastructure, not as a failing test (issue #23). The server image is
-      # built locally (memory-server:ci) and the test client/registry services
+      # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
         run: docker compose pull test-db seaweedfs mailpit
@@ -149,7 +162,8 @@ jobs:
         working-directory: e2e
 
     env:
-      MEMORY_SERVER_IMAGE: memory-server:ci
+      # Per-run, per-job image tag (#2008) — see the `integration` job.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-api
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -159,7 +173,7 @@ jobs:
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
       # ports. Paired with ephemeral loopback port bindings in docker-compose.
-      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-api
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-api
 
     steps:
       - name: Checkout
@@ -175,7 +189,7 @@ jobs:
           file: deploy/self-hosted/Dockerfile.server
           load: true
           push: false
-          tags: memory-server:ci
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
           # Mirror server.yml: PR runs only consume the cache; the default
           # branch writes it. `mode=max` on every PR ref is what filled the
           # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
@@ -200,7 +214,7 @@ jobs:
 
       # Distinct infrastructure step: an image-pull failure must read as
       # infrastructure, not as a failing test (issue #23). The server image is
-      # built locally (memory-server:ci) and the test client/registry services
+      # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
         run: docker compose pull test-db seaweedfs mailpit
@@ -274,7 +288,8 @@ jobs:
         working-directory: e2e
 
     env:
-      MEMORY_SERVER_IMAGE: memory-server:ci
+      # Per-run, per-job image tag (#2008) — see the `integration` job.
+      MEMORY_SERVER_IMAGE: memory-server:ci-${{ github.run_id }}-${{ github.run_attempt }}-mailgun
       # e2e is a standalone module with its own workspace (e2e/go.work), so the
       # root build list cannot perturb it: runlog pins an older
       # google.golang.org/adk whose telemetry does not compile against the
@@ -294,7 +309,7 @@ jobs:
       # Unique per run/job so concurrent jobs sharing one self-hosted Docker
       # daemon never collide on container names, the default network, or host
       # ports. Paired with ephemeral loopback port bindings in docker-compose.
-      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-mailgun
+      COMPOSE_PROJECT_NAME: e2e-${{ github.run_id }}-${{ github.run_attempt }}-mailgun
 
     steps:
       - name: Checkout
@@ -310,7 +325,7 @@ jobs:
           file: deploy/self-hosted/Dockerfile.server
           load: true
           push: false
-          tags: memory-server:ci
+          tags: ${{ env.MEMORY_SERVER_IMAGE }}
           # Mirror server.yml: PR runs only consume the cache; the default
           # branch writes it. `mode=max` on every PR ref is what filled the
           # shared 10 GB Actions cache budget with ~7 GB of buildkit blobs.
@@ -332,7 +347,7 @@ jobs:
 
       # Distinct infrastructure step: an image-pull failure must read as
       # infrastructure, not as a failing test (issue #23). The server image is
-      # built locally (memory-server:ci) and the mailgun stub is built from
+      # built locally ($MEMORY_SERVER_IMAGE) and the mailgun stub is built from
       # source, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
         run: docker compose pull test-db seaweedfs
@@ -390,4 +405,120 @@ jobs:
       - name: Stop server stack
         if: always()
         run: docker compose --profile mailgun down -v --remove-orphans
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # teardown: reap every compose project and per-run image this run left behind
+  # (#2008), plus abandoned stacks from earlier runs.
+  #
+  # `if: always()` on a step inside a job is not enough. When a job is cancelled
+  # the runner stops after the in-flight step, so the `Stop server stack` steps
+  # above never execute and the project survives as a "healthy" zombie stack —
+  # 12 of them, 48 containers, from 2026-10-07. This job depends on all three
+  # with `if: always()`, so it runs even when one of them failed or was
+  # cancelled, and it reaps by Docker label instead of re-reading a compose file
+  # that may not resolve from the runner's working directory.
+  #
+  # Stacks from *other* runs are swept too, but only once they are older than any
+  # job here could live (job timeout 30m; the gate is 6h). That is what makes a
+  # cancelled run that is never re-run reclaimable by the next run, not only by
+  # the host-side reaper (b4ng-link/infrastructure playbook 116).
+  #
+  # It reaps only the Docker daemon it lands on. The self-hosted `memory` pool
+  # spans two hosts — memory-dev-1/-2 on memory-dev and memory-mcj1/-2 on
+  # mcj-mini — with separate daemons, and the runners carry no host label to
+  # target one (they all expose exactly `self-hosted, Linux, X64, memory`). A
+  # leftover on the other host is therefore reaped by a later attempt or run
+  # whose teardown job lands there; deterministic per-host reaping needs a host
+  # label on the runners, which is fleet-owned.
+  # ───────────────────────────────────────────────────────────────────────────
+  teardown:
+    name: Reap e2e stacks
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [integration, api, mailgun]
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 10
+
+    steps:
+      - name: Reap compose projects and per-run images
+        # No checkout: this step must not depend on the workspace or on a compose
+        # file, only on the Docker labels compose itself wrote.
+        run: |
+          set -uo pipefail
+          run_id="${{ github.run_id }}"
+          now=$(date +%s)
+          reap=()
+
+          # Project names are `e2e-<run_id>-<attempt>-<job>` (COMPOSE_PROJECT_NAME
+          # in the jobs above). A label filter is exact-match only, so enumerate
+          # the labels once and decide per project: anything carrying this run id
+          # is always ours (all three jobs, every earlier attempt of a re-run);
+          # anything else has to look like an e2e project and be stale.
+          while read -r project; do
+            [ -n "$project" ] || continue
+            case "$project" in
+              "e2e-${run_id}-"*) reap+=("$project"); continue ;;
+            esac
+            case "$project" in
+              e2e-*-*-integration|e2e-*-*-api|e2e-*-*-mailgun) ;;
+              *) continue ;;
+            esac
+            # Age of the project = creation time of one of its containers.
+            # `docker inspect .Created` is RFC3339; `docker ps`'s CreatedAt
+            # carries a trailing zone abbreviation ("+0000 UTC") that GNU date
+            # cannot parse, which would silently disable this gate.
+            oldest_id=$(docker ps -aq \
+              --filter "label=com.docker.compose.project=${project}" | sed -n '1p')
+            [ -n "$oldest_id" ] || continue
+            created=$(date -d "$(docker inspect -f '{{.Created}}' "$oldest_id")" +%s 2>/dev/null || echo "$now")
+            if [ $((now - created)) -gt 21600 ]; then
+              reap+=("$project")
+            fi
+          done < <(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u || true)
+
+          if [ "${#reap[@]}" -eq 0 ]; then
+            echo "No e2e compose project to reap for run ${run_id}."
+          fi
+
+          for project in "${reap[@]}"; do
+            echo "::group::Reaping ${project}"
+            containers=$(docker ps -aq --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$containers" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting of the id list
+              docker rm -f $containers || true
+            fi
+            networks=$(docker network ls -q --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$networks" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting
+              docker network rm $networks || true
+            fi
+            volumes=$(docker volume ls -q --filter "label=com.docker.compose.project=${project}" || true)
+            if [ -n "$volumes" ]; then
+              # shellcheck disable=SC2086 # intentional word-splitting
+              docker volume rm -f $volumes || true
+            fi
+            echo "::endgroup::"
+          done
+
+          # Per-run server images (#2008). The run-id prefix covers every job and
+          # attempt of this run; another run's images are never touched.
+          images=$(docker images --format '{{.Repository}}:{{.Tag}}' \
+            | grep -E "^memory-server:ci-${run_id}-" || true)
+          if [ -n "$images" ]; then
+            # shellcheck disable=SC2086 # intentional word-splitting of the reference list
+            docker image rm -f $images || true
+          fi
+
+          # Fail loudly if a project of this run survived. A silent pass would
+          # leave the next run to discover the leak, which is how 12 stacks went
+          # unnoticed for two weeks.
+          leftover=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' \
+            | grep -E "^e2e-${run_id}-" | sort -u || true)
+          if [ -n "$leftover" ]; then
+            echo "::error::compose projects from run ${run_id} survived teardown: ${leftover}"
+            docker ps -a \
+              --filter "label=com.docker.compose.project" \
+              --format 'table {{.Names}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}' || true
+            exit 1
+          fi
+          echo "No e2e compose project left for run ${run_id}."
 

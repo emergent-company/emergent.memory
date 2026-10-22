@@ -23,9 +23,11 @@
 #
 # No fixed container_name is set on any service: containers, the default network,
 # and any volumes are namespaced by COMPOSE_PROJECT_NAME. CI sets a unique project
-# per job/run (e2e-<run_id>-<job>) so concurrent jobs sharing one Docker daemon
-# stay isolated. Host-published ports are ephemeral loopback binds; host-run
-# tests discover the assigned port via `docker compose port <svc> <port>`.
+# per run, attempt, and job (e2e-<run_id>-<attempt>-<job>) so concurrent jobs
+# sharing one Docker daemon stay isolated — and so a re-run starts from an empty
+# project instead of adopting a cancelled attempt's containers and volumes.
+# Host-published ports are ephemeral loopback binds; host-run tests discover the
+# assigned port via `docker compose port <svc> <port>`.
 
 services:
   # ─────────────────────────────────────────────────────────────────────────
