@@ -24,7 +24,11 @@ Scripts/            Mac HOST tooling (mac-build.sh, mac-doctor.sh, mac-uitest-ag
 
 ## Tests
 
-Three suites. **None run in CI** — manual / on-demand by design.
+Three suites. **None of them run in CI** — manual / on-demand by design. CI
+does compile them (`connector.yml` → `mac-build`: xcodegen + `xcodebuild
+build-for-testing`, ad-hoc signed), so a compile/type error anywhere in the app
+or in the unit/UI test sources fails the connector gate; running the suites
+below is still the only source of behavioural coverage.
 
 | Suite | Covers | Command (task) | Host | ~Time | Green looks like |
 |---|---|---|---|---|---|

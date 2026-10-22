@@ -7,10 +7,18 @@ name: Connector CI
 # context is still emitted by the repo-root ci.yml for every PR, and this
 # workflow adds a stricter `ci` gate for connector changes.
 #
-# Swift tooling runs on ubuntu using the Linux release binaries — no macOS
-# runner is needed for lint. Both tools ratchet to the changed files (see
+# Lint runs on ubuntu using the Linux release binaries — no macOS runner is
+# needed for it. Both tools ratchet to the changed files (see
 # apps/connector.mac/Scripts/lint-swift.sh) so pre-existing Swift debt does not
 # fail the job, while new drift does.
+#
+# `mac-build` is the only job that actually compiles the Swift app. Before it
+# existed, every job on `apps/connector.mac` was format/lint only, so a type
+# error, an API newer than the deployment target, or a broken actor-isolation
+# change merged green (infra issue #343). It uses the macOS runner label already
+# serving mac-release.yml and ios-test.yml, so it needs no new runner. It builds
+# for testing (`build-for-testing`) so the unit/UI test sources are compiled too;
+# running the suites stays manual (`task connector-mac:test`).
 
 on:
   push:
@@ -18,12 +26,22 @@ on:
     paths:
       - 'apps/connector.linux/**'
       - 'apps/connector.mac/**'
+      # The app embeds the connector engine, built from apps/connector.linux
+      # through the repo go.work and the apps/server/pkg/sdk module.
+      - 'apps/server/pkg/sdk/**'
+      - 'go.work'
+      - 'go.work.sum'
       - '.github/workflows/connector.yml'
   pull_request:
     branches: [main]
     paths:
       - 'apps/connector.linux/**'
       - 'apps/connector.mac/**'
+      # The app embeds the connector engine, built from apps/connector.linux
+      # through the repo go.work and the apps/server/pkg/sdk module.
+      - 'apps/server/pkg/sdk/**'
+      - 'go.work'
+      - 'go.work.sum'
       - '.github/workflows/connector.yml'
   workflow_dispatch:
 
@@ -122,6 +140,74 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: apps/connector.mac/Scripts/lint-swift.sh
 
+  # Compile check for the Swift app (infra issue #343). Keep the
+  # xcodegen/xcodebuild invocation in step with
+  # apps/connector.mac/Scripts/mac-build.sh — same project, scheme, ad-hoc
+  # signing and derived-data path. That script drives ssh builds and cannot run
+  # on a runner that has no ssh target, so the three settings are mirrored here
+  # rather than shelled out to it.
+  mac-build:
+    name: Mac connector build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, mac]
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode (project format 77 requires Xcode 16+)
+        run: |
+          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$XCODE" ]; then
+            echo "::error::No Xcode found in /Applications"
+            ls -d /Applications/Xcode*.app 2>/dev/null || true
+            exit 1
+          fi
+          echo "Selecting $XCODE"
+          sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
+          xcodebuild -version
+          MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')
+          if [ -z "$MAJOR" ] || [ "$MAJOR" -lt 16 ]; then
+            echo "::error::Xcode 16 or newer is required (project format 77); selected $XCODE"
+            exit 1
+          fi
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # The app embeds the connector engine, built by the Xcode pre-build
+          # phase (MemoryConnector/Scripts/build-engine.sh -> go build).
+          go-version: ${{ env.GO_VERSION }}
+          # Persistent runner: the toolchain and module cache survive between
+          # jobs, so the Actions cache only adds uploads (see
+          # runner-cache-hygiene.yml).
+          cache: false
+
+      - name: Install xcodegen
+        run: |
+          brew list xcodegen &>/dev/null || brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: apps/connector.mac/MemoryConnector
+        run: xcodegen generate --quiet
+
+      - name: Build app and test bundles (ad-hoc signed)
+        # `build-for-testing`, not `build`: the app target does not include
+        # MemoryConnectorTests / MemoryConnectorUITests, so a plain build leaves a
+        # compile error in those 48 files green. Building the test bundles needs
+        # no GUI session (running them does) and adds only a few seconds.
+        # No certificate: ad-hoc signing is enough to compile, type-check and
+        # link. Release signing/notarization stays in mac-release.yml.
+        run: |
+          xcodebuild \
+            -project "$GITHUB_WORKSPACE/apps/connector.mac/MemoryConnector/MemoryConnector.xcodeproj" \
+            -scheme MemoryConnector \
+            -destination 'platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- \
+            build-for-testing -quiet
+
   connector-ci:
     name: connector-ci
     runs-on: [self-hosted, linux, x64, memory]
@@ -131,12 +217,12 @@ jobs:
     # longer collides with the required `ci` context. always() so the gate still
     # reports when a dependency fails (same pattern as cli.yml).
     if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    needs: [linux-lint, mac-lint]
+    needs: [linux-lint, mac-lint, mac-build]
     steps:
       - name: CI gate
         run: |
           failed=0
-          for result in "${{ needs.linux-lint.result }}" "${{ needs.mac-lint.result }}"; do
+          for result in "${{ needs.linux-lint.result }}" "${{ needs.mac-lint.result }}" "${{ needs.mac-build.result }}"; do
             echo "dependency result: ${result}"
             case "${result}" in
               success|skipped) ;;
