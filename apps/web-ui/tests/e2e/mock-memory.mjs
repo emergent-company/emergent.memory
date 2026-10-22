@@ -272,6 +272,17 @@ const dsProviders = [
     available: true,
     authMethods: ["config"],
   },
+  {
+    type: "trale",
+    name: "Trale",
+    description: "Sync meeting transcripts and summaries from Trale into your knowledge base.",
+    sourceType: "meeting",
+    vendor: "trale",
+    vendorName: "Trale",
+    available: true,
+    selfRegistering: true,
+    authMethods: ["oauth"],
+  },
 ];
 
 // Per-provider config schemas (the connect form is schema-driven). The mock
@@ -312,6 +323,16 @@ const dsSchemas = {
       max_depth: { type: "integer", description: "Maximum link depth to follow. Default 3; 0 ingests only the configured start URLs (no link following)." },
     },
     required: ["start_urls"],
+  },
+  trale: {
+    type: "trale",
+    properties: {
+      tags: { type: "array", items: { type: "string" }, "x-ui-widget": "resource", description: "Trale tag slugs to sync (ANY match)." },
+      name_pattern: { type: "string", description: "Optional Go RE2 regular expression matched against the meeting title; non-matching meetings are skipped." },
+      include_transcript: { type: "boolean", description: "Include the speaker-tagged transcript in the imported document. Default false (summary only)." },
+      backfill_days: { type: "integer", description: "How many days back to sync. Default 90." },
+    },
+    required: ["tags"],
   },
 };
 
@@ -1013,6 +1034,15 @@ const server = http.createServer((req, res) => {
   // in the body and is never stored; only identifiers come back.
   if (path === "/api/data-source-integrations/resources" && req.method === "POST") {
     return readBody(req, (payload) => {
+      if (payload.providerType === "trale") {
+        // Trale's resource listing is the tag picker backing the required
+        // `tags` scope (mirrors ListResources on trale_provider.go).
+        return json(res, [
+          { id: "standup", name: "Standup", type: "tag" },
+          { id: "planning", name: "Planning", type: "tag" },
+          { id: "one-on-one", name: "One-on-one", type: "tag" },
+        ]);
+      }
       if (payload.providerType !== "github") {
         return json(res, []);
       }
@@ -1065,6 +1095,44 @@ const server = http.createServer((req, res) => {
         if (urls.length === 0) {
           res.statusCode = 422;
           return json(res, { error: { code: "validation_error", message: "config.start_urls is required" } });
+        }
+      } else if (payload.providerType === "trale") {
+        // Mirror the server's validateTraleConfig (trale_connector.go): tags is
+        // the required scope (choose at least one slug), name_pattern must
+        // compile, and backfill_days is an optional integer in [0, 3650]. The
+        // message strings match the server copy so the spec asserts real text.
+        const tags = Array.isArray(config.tags) ? config.tags : [];
+        if (tags.length === 0) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.tags is required: choose at least one Trale tag to sync" } });
+        }
+        if (tags.some((t) => typeof t !== "string" || t.trim() === "")) {
+          res.statusCode = 422;
+          return json(res, { error: { code: "validation_error", message: "config.tags must be non-empty slugs" } });
+        }
+        if (typeof config.name_pattern === "string" && config.name_pattern.trim() !== "") {
+          try {
+            new RegExp(config.name_pattern);
+          } catch (err) {
+            res.statusCode = 422;
+            return json(res, { error: { code: "validation_error", message: "config.name_pattern is not a valid regular expression: " + err.message } });
+          }
+        }
+        if (config.backfill_days !== undefined && config.backfill_days !== null) {
+          const raw = config.backfill_days;
+          if (typeof raw === "string" && raw.trim() === "") {
+            // A blank value means "use the default", matching the server.
+          } else {
+            const n = typeof raw === "number" ? raw : Number(raw);
+            if (typeof raw !== "number" && !Number.isInteger(n)) {
+              res.statusCode = 422;
+              return json(res, { error: { code: "validation_error", message: "config.backfill_days must be an integer" } });
+            }
+            if (n < 0 || n > 3650) {
+              res.statusCode = 422;
+              return json(res, { error: { code: "validation_error", message: "config.backfill_days must be between 0 and 3650" } });
+            }
+          }
         }
       } else {
         if (!String(config.folder_id || "")) {
@@ -1173,6 +1241,19 @@ const server = http.createServer((req, res) => {
         src.row.lastSyncedAt = nowISO();
         src.row.updatedAt = nowISO();
       }
+      return json(res, { success: true, message: "Sync started.", jobId: job.id });
+    }
+    if (src.row.providerType === "trale") {
+      // Trale has no folder scope: a source with valid tags always completes.
+      job = dsNewSyncJob(src.row.id, "completed", {
+        totalItems: 2,
+        processedItems: 2,
+        successfulItems: 2,
+        currentPhase: "Done",
+        completedAt: nowISO(),
+      });
+      src.row.lastSyncedAt = nowISO();
+      src.row.updatedAt = nowISO();
       return json(res, { success: true, message: "Sync started.", jobId: job.id });
     }
     const folder = String(src.config.folder_id || "");

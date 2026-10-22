@@ -102,3 +102,44 @@ export async function createWebSource(
   expect(id, 'connect should redirect to the new source detail page').not.toBe('');
   return { id, name: opts.name };
 }
+
+export interface TraleSource {
+  id: string;
+  name: string;
+}
+
+/**
+ * Create a Trale source through the gateway's JSON API. Trale connect is
+ * OAuth-only and self-registering, so there is no pasted-credential form to
+ * drive: this is the create shape the OAuth connect flow ends with (the chosen
+ * tag scope plus a stored token set), which is what the server's
+ * ExtractCredentials expects. Returns after navigating to the detail page.
+ */
+export async function createTraleSource(
+  page: Page,
+  opts: { name: string; tags?: string[]; backfillDays?: number; includeTranscript?: boolean },
+): Promise<TraleSource> {
+  const resp = await page.request.post('/api/data-source-integrations', {
+    data: {
+      name: opts.name,
+      providerType: 'trale',
+      sourceType: 'meeting',
+      config: {
+        tags: opts.tags ?? ['standup'],
+        backfill_days: opts.backfillDays ?? 30,
+        include_transcript: opts.includeTranscript ?? true,
+        // OAuth credential material the connect flow stores; the mock strips it
+        // from read responses exactly like the server does.
+        access_token: 'e2e-trale-token',
+        refresh_token: 'e2e-trale-refresh',
+      },
+    },
+  });
+  if (resp.status() !== 201) {
+    throw new Error(`create Trale source failed (${resp.status()}): ${await resp.text()}`);
+  }
+  const created = (await resp.json()) as { id: string };
+  expect(created.id, 'create should return the new source id').toBeTruthy();
+  await page.goto(`/data-sources/${created.id}`);
+  return { id: created.id, name: opts.name };
+}
