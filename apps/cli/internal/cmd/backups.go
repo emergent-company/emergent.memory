@@ -394,9 +394,16 @@ func waitForBackup(ctx context.Context, c *client.Client, orgID, backupID string
 // handled=true. Returns handled=false for table (caller renders the table) and
 // an error for csv, which these records do not support.
 func emitStructured(cmd *cobra.Command, v interface{}) (bool, error) {
-	switch output {
+	return emitStructuredTo(cmd.OutOrStdout(), output, v)
+}
+
+// emitStructuredTo is emitStructured with an explicit destination and format,
+// for commands that validate the format themselves instead of reading the
+// global --output value.
+func emitStructuredTo(w io.Writer, format string, v interface{}) (bool, error) {
+	switch format {
 	case "json":
-		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
 		return true, enc.Encode(v)
 	case "yaml":
@@ -404,7 +411,7 @@ func emitStructured(cmd *cobra.Command, v interface{}) (bool, error) {
 		if err != nil {
 			return true, fmt.Errorf("failed to encode YAML: %w", err)
 		}
-		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		_, err = fmt.Fprintln(w, string(data))
 		return true, err
 	case "csv":
 		return true, fmt.Errorf("csv output is not supported for this command; use table, json, or yaml")

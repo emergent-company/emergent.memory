@@ -111,25 +111,90 @@ var projectsCreateTokenCmd = &cobra.Command{
 	Short: "Create a new API token for a project",
 	Long: `Create a new project-scoped API token (emt_...) and print it.
 
-The token is also written to .env.local in the current directory as
-MEMORY_PROJECT_API_KEY so subsequent CLI commands pick it up automatically.
+The token is printed to stdout only. Pass --write-env to also merge it into
+.env.local in the current directory as MEMORY_PROJECT_API_KEY (file mode 0600),
+which is what makes subsequent CLI commands in that directory pick it up
+automatically. Writing a live credential to a file is opt-in: the current
+working directory is often a checkout, where a stray .env.local is a leak risk.
 
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
 Example:
-  memory projects create-token my-project --name onboard-token`,
+  memory projects create-token my-project --name onboard-token
+  memory projects create-token my-project --write-env`,
 	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completion.ProjectNamesCompletionFunc(),
 	RunE:              runProjectsCreateToken,
 }
 
 var (
-	createTokenName   string
-	createTokenScopes []string
-	createTokenNoEnv  bool
+	createTokenName     string
+	createTokenScopes   []string
+	createTokenNoEnv    bool
+	createTokenWriteEnv bool
 )
 
+// shouldWriteTokenEnv decides whether create-token merges the token into
+// .env.local. Writing is opt-in (#2068): a token-creation command must not drop
+// a plaintext credential into an arbitrary working directory. --no-env is kept
+// as a deprecated spelling of the new default so existing scripts that pass it
+// do not fail, but the two flags contradict each other and are rejected
+// together rather than silently preferring one.
+func shouldWriteTokenEnv(writeEnv, noEnv bool) (bool, error) {
+	if writeEnv && noEnv {
+		return false, fmt.Errorf("--write-env and --no-env are mutually exclusive")
+	}
+	return writeEnv, nil
+}
+
+// writeTokenToEnvLocal merges MEMORY_PROJECT_API_KEY into .env.local in dir,
+// preserving every other key, and returns the absolute path of the file. The
+// file is forced to 0600 because it holds a live credential: os.WriteFile only
+// applies perm on creation, so an existing 0644 file is chmodded afterwards.
+func writeTokenToEnvLocal(dir, token string) (string, error) {
+	path := filepath.Join(dir, ".env.local")
+
+	envMap, readErr := godotenv.Read(path)
+	if readErr != nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			// The file exists but cannot be parsed: overwriting it would silently
+			// drop every key it currently holds, including other credentials.
+			return "", fmt.Errorf("failed to read existing %s (refusing to overwrite it): %w", path, readErr)
+		}
+	}
+	if envMap == nil {
+		envMap = make(map[string]string)
+	}
+	envMap["MEMORY_PROJECT_API_KEY"] = token
+
+	data, err := godotenv.Marshal(envMap)
+	if err != nil {
+		return "", fmt.Errorf("failed to encode %s: %w", path, err)
+	}
+	if len(data) == 0 || data[len(data)-1] != '\n' {
+		data += "\n"
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		return "", fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return "", fmt.Errorf("failed to tighten permissions on %s: %w", path, err)
+	}
+
+	if abs, absErr := filepath.Abs(path); absErr == nil {
+		return abs, nil
+	}
+	return path, nil
+}
+
 func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
+	// Validate the flags before creating a token: a contradictory combination
+	// must not leave a minted credential behind.
+	writeEnv, err := shouldWriteTokenEnv(createTokenWriteEnv, createTokenNoEnv)
+	if err != nil {
+		return err
+	}
+
 	c, err := getClient(cmd)
 	if err != nil {
 		return err
@@ -160,16 +225,12 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Token created: %s\n", resp.Token)
 
-	if !createTokenNoEnv {
-		envMap, _ := godotenv.Read(".env.local")
-		if envMap == nil {
-			envMap = make(map[string]string)
-		}
-		envMap["MEMORY_PROJECT_API_KEY"] = resp.Token
-		if err := godotenv.Write(envMap, ".env.local"); err != nil {
+	if writeEnv {
+		path, err := writeTokenToEnvLocal(".", resp.Token)
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not write .env.local: %v\n", err)
 		} else {
-			fmt.Println("MEMORY_PROJECT_API_KEY written to .env.local")
+			fmt.Fprintf(os.Stderr, "Warning: wrote the plaintext token to %s (mode 0600). It is a live credential — keep it out of version control.\n", path)
 		}
 	}
 
@@ -1125,18 +1186,107 @@ Examples:
 
 // ── show-models ────────────────────────────────────────────────────────────────
 
+// showModelsModel is one resolved model in the machine-readable contract.
+type showModelsModel struct {
+	Model  string `json:"model" yaml:"model"`
+	Source string `json:"source" yaml:"source"`
+}
+
+// showModelsJSON is the shape `--output json|yaml` emits for show-models. It is
+// projected explicitly instead of marshalling modelconfig.EffectiveModelConfig
+// so the key set cannot drift with the SDK's json tags: every field is always
+// present, and a model the server could not resolve is "" (empty string) rather
+// than a missing key — scripts can rely on the shape (see #2065).
+type showModelsJSON struct {
+	ProjectID  string          `json:"projectId" yaml:"projectId"`
+	Generative showModelsModel `json:"generative" yaml:"generative"`
+	Embedding  showModelsModel `json:"embedding" yaml:"embedding"`
+}
+
+func newShowModelsJSON(projectID string, cfg *modelconfig.EffectiveModelConfig) showModelsJSON {
+	out := showModelsJSON{ProjectID: projectID}
+	if cfg != nil {
+		out.Generative = showModelsModel{Model: cfg.GenerativeModel, Source: cfg.GenerativeModelSource}
+		out.Embedding = showModelsModel{Model: cfg.EmbeddingModel, Source: cfg.EmbeddingModelSource}
+	}
+	return out
+}
+
+// showModelsOutputFormats are the values of the global --output flag that
+// show-models can render. table (also the empty default) is the human block.
+var showModelsOutputFormats = []string{"table", "json", "yaml"}
+
+// validateShowModelsOutput rejects formats show-models cannot render instead of
+// silently printing the human block, which made a mis-set --output look like a
+// successful machine-readable run (#2067).
+func validateShowModelsOutput(format string) error {
+	switch format {
+	case "", "table", "json", "yaml":
+		return nil
+	case "csv":
+		return fmt.Errorf("--output csv is not supported by 'projects show-models'; supported formats: %s",
+			strings.Join(showModelsOutputFormats, ", "))
+	default:
+		return fmt.Errorf("unsupported output format %q for 'projects show-models'; supported formats: %s",
+			format, strings.Join(showModelsOutputFormats, ", "))
+	}
+}
+
+// renderShowModels writes the resolved model config in the requested format.
+// Structured formats use the same encoder as the rest of the CLI; table keeps
+// the historical human block byte-for-byte.
+func renderShowModels(cmd *cobra.Command, format, projectID string, cfg *modelconfig.EffectiveModelConfig) error {
+	if err := validateShowModelsOutput(format); err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = &modelconfig.EffectiveModelConfig{}
+	}
+
+	w := cmd.OutOrStdout()
+	handled, err := emitStructuredTo(w, format, newShowModelsJSON(projectID, cfg))
+	if err != nil || handled {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(w, "Effective model config for project %s\n", projectID)
+	genModel := cfg.GenerativeModel
+	if genModel == "" {
+		genModel = "(not set)"
+	}
+	embModel := cfg.EmbeddingModel
+	if embModel == "" {
+		embModel = "(not set)"
+	}
+	_, _ = fmt.Fprintf(w, "  Generative: %-40s [%s]\n", genModel, cfg.GenerativeModelSource)
+	_, _ = fmt.Fprintf(w, "  Embedding:  %-40s [%s]\n", embModel, cfg.EmbeddingModelSource)
+	return nil
+}
+
 var showModelsProject string
 
 var showModelsCmd = &cobra.Command{
 	Use:   "show-models",
 	Short: "Show the effective model config for a project",
 	Long: `Show the resolved generative and embedding models for a project,
-including where each model was resolved from (project config or none).
+including where each model was resolved from (project config, provider config,
+or none).
+
+With --output json or --output yaml the output shape is stable:
+{"projectId": "...", "generative": {"model": "...", "source": "..."},
+ "embedding": {"model": "...", "source": "..."}}. Every key is always present;
+a model the server could not resolve is an empty string. Formats other than
+table, json, and yaml are rejected rather than silently rendered as text.
 
 Examples:
   memory projects show-models
-  memory projects show-models --project <projectId>`,
+  memory projects show-models --project <projectId>
+  memory projects show-models --project <projectId> --output json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Validate before touching the network: a bad --output must fail fast.
+		if err := validateShowModelsOutput(output); err != nil {
+			return err
+		}
 		c, err := getClient(cmd)
 		if err != nil {
 			return err
@@ -1152,18 +1302,7 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to get model config: %w", err)
 		}
-		fmt.Printf("Effective model config for project %s\n", projectID)
-		genModel := cfg.GenerativeModel
-		if genModel == "" {
-			genModel = "(not set)"
-		}
-		embModel := cfg.EmbeddingModel
-		if embModel == "" {
-			embModel = "(not set)"
-		}
-		fmt.Printf("  Generative: %-40s [%s]\n", genModel, cfg.GenerativeModelSource)
-		fmt.Printf("  Embedding:  %-40s [%s]\n", embModel, cfg.EmbeddingModelSource)
-		return nil
+		return renderShowModels(cmd, output, projectID, cfg)
 	},
 }
 
@@ -1196,7 +1335,9 @@ func init() {
 
 	projectsCreateTokenCmd.Flags().StringVar(&createTokenName, "name", "cli-token", "Token name")
 	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)")
-	projectsCreateTokenCmd.Flags().BoolVar(&createTokenNoEnv, "no-env", false, "Do not write token to .env.local")
+	projectsCreateTokenCmd.Flags().BoolVar(&createTokenWriteEnv, "write-env", false, "Also write the token to .env.local in the current directory (mode 0600); off by default")
+	projectsCreateTokenCmd.Flags().BoolVar(&createTokenNoEnv, "no-env", false, "Deprecated: writing to .env.local is off by default")
+	_ = projectsCreateTokenCmd.Flags().MarkDeprecated("no-env", "writing to .env.local is now opt-in via --write-env")
 
 	setProjectInfoCmd.Flags().StringVar(&setInfoFile, "file", "", "Path to a Markdown file to use as project info")
 	setProjectInfoCmd.Flags().StringVar(&setInfoText, "text", "", "Inline project info text")

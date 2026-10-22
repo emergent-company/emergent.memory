@@ -4,6 +4,16 @@
 
 ### BREAKING CHANGES
 
+**`memory projects create-token` no longer writes `.env.local` by default** (2026-10-22)
+
+The command used to merge the freshly minted plaintext token into `.env.local` in
+the current working directory, which silently dropped a live credential into
+whatever directory you happened to be in — often a checkout. Writing is now
+opt-in: pass `--write-env` to get the old behaviour (the file is created with mode
+`0600` and its path is printed with a warning). `--no-env` is accepted as a
+deprecated no-op so existing scripts keep working. If you relied on the token
+being picked up automatically, add `--write-env`.
+
 **Python SDK requires Python 3.10+** (2026-10-21)
 
 `sdk/python` (`emergent-memory`) drops Python 3.9, which reached end of life in
@@ -149,6 +159,17 @@ X-Project-ID: <projectId>
 - Separate quality tests for hybrid search (document chunks) and graph search with relationships
 
 See `/apps/server/src/modules/unified-search/` for implementation details.
+
+### Fixed
+
+**`memory projects show-models` honours `--json` / `--output`** (2026-10-22)
+
+`show-models` used to print the human block for every output format, so a script
+asking for JSON silently received text. It now emits a stable contract for
+`--output json|yaml` — `{"projectId", "generative": {"model", "source"},
+"embedding": {"model", "source"}}`, every key always present, unresolved models
+as empty strings — while unsupported formats are rejected instead of rendered as
+text. The human output is unchanged.
 
 ---
 

@@ -4045,13 +4045,17 @@ Create a new API token for a project
 
 Create a new project-scoped API token (emt_...) and print it.
 
-The token is also written to .env.local in the current directory as
-MEMORY_PROJECT_API_KEY so subsequent CLI commands pick it up automatically.
+The token is printed to stdout only. Pass --write-env to also merge it into
+.env.local in the current directory as MEMORY_PROJECT_API_KEY (file mode 0600),
+which is what makes subsequent CLI commands in that directory pick it up
+automatically. Writing a live credential to a file is opt-in: the current
+working directory is often a checkout, where a stray .env.local is a leak risk.
 
 Scopes default to: data:read data:write schema:read agents:read agents:write
 
 Example:
   memory projects create-token my-project --name onboard-token
+  memory projects create-token my-project --write-env
 
 ```
 memory projects create-token [project-name-or-id] [flags]
@@ -4062,8 +4066,8 @@ memory projects create-token [project-name-or-id] [flags]
 ```
   -h, --help             help for create-token
       --name string      Token name (default "cli-token")
-      --no-env           Do not write token to .env.local
       --scopes strings   Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)
+      --write-env        Also write the token to .env.local in the current directory (mode 0600); off by default
 ```
 
 ## memory projects create
@@ -4357,11 +4361,19 @@ Show the effective model config for a project
 ### Synopsis
 
 Show the resolved generative and embedding models for a project,
-including where each model was resolved from (project config or none).
+including where each model was resolved from (project config, provider config,
+or none).
+
+With --output json or --output yaml the output shape is stable:
+{"projectId": "...", "generative": {"model": "...", "source": "..."},
+ "embedding": {"model": "...", "source": "..."}}. Every key is always present;
+a model the server could not resolve is an empty string. Formats other than
+table, json, and yaml are rejected rather than silently rendered as text.
 
 Examples:
   memory projects show-models
   memory projects show-models --project <projectId>
+  memory projects show-models --project <projectId> --output json
 
 ```
 memory projects show-models [flags]
