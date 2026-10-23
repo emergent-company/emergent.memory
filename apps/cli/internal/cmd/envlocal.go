@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 	"github.com/joho/godotenv"
 )
 
@@ -16,41 +17,41 @@ const envLocalMode os.FileMode = 0o600
 
 // writeEnvLocal merges updates into .env.local in dir, preserving every other
 // key, and returns the absolute path of the file. The file is forced to 0600
-// because it holds a live credential: os.WriteFile only applies perm on
-// creation, so an existing 0644 file is chmodded afterwards.
+// because it holds a live credential: the shared writer sets the mode on the
+// replacement, so an existing 0644 file is tightened by the same rewrite.
 //
-// An existing file that cannot be parsed is never overwritten — doing so would
-// silently drop every key it currently holds, including other credentials.
+// Every key goes through internal/envfile, the CLI's one .env writer: comments
+// and key order survive (a marshal of the parsed map dropped both), the replace
+// is atomic, and an existing file that cannot be parsed is refused rather than
+// silently reduced to the keys this command knows about.
 func writeEnvLocal(dir string, updates map[string]string) (string, error) {
 	path := filepath.Join(dir, ".env.local")
 
-	envMap, readErr := godotenv.Read(path)
-	if readErr != nil {
-		if _, statErr := os.Stat(path); statErr == nil {
-			// The file exists but cannot be parsed: overwriting it would silently
-			// drop every key it currently holds, including other credentials.
-			return "", fmt.Errorf("failed to read existing %s (refusing to overwrite it): %w", path, readErr)
+	// The writer edits an existing file; a fresh project context starts from an
+	// empty one. Creating it 0600 first keeps the credential unreadable even if
+	// the update below refuses, and os.WriteFile's perm only applies on create.
+	existing, statErr := os.ReadFile(path)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("failed to read %s: %w", path, statErr)
+	}
+	if os.IsNotExist(statErr) {
+		if err := os.WriteFile(path, nil, envLocalMode); err != nil {
+			return "", fmt.Errorf("failed to create %s: %w", path, err)
 		}
-	}
-	if envMap == nil {
-		envMap = make(map[string]string)
-	}
-	for key, value := range updates {
-		envMap[key] = value
+		existing = nil
 	}
 
-	data, err := godotenv.Marshal(envMap)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode %s: %w", path, err)
+	// Refuse a file the loader cannot read. The shared writer deliberately does
+	// not gate on a file that did not parse before (its rewrite is byte-preserving
+	// apart from the target span), but this command merges whole keys into a
+	// credential file: appending into an unreadable file would hide every key it
+	// still holds. `memory config set` keeps the looser rule on purpose.
+	if _, parseErr := godotenv.Unmarshal(string(existing)); parseErr != nil {
+		return "", fmt.Errorf("failed to read existing %s (refusing to overwrite it): %w", path, parseErr)
 	}
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		data += "\n"
-	}
-	if err := os.WriteFile(path, []byte(data), envLocalMode); err != nil {
+
+	if err := envfile.UpdateAll(path, updates, envLocalMode); err != nil {
 		return "", fmt.Errorf("failed to write %s: %w", path, err)
-	}
-	if err := os.Chmod(path, envLocalMode); err != nil {
-		return "", fmt.Errorf("failed to tighten permissions on %s: %w", path, err)
 	}
 
 	if abs, absErr := filepath.Abs(path); absErr == nil {

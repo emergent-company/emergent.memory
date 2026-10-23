@@ -292,6 +292,11 @@ func (i *Installer) GenerateEnvFile() (string, error) {
 		return "", err
 	}
 
+	// The provider settings are left empty and filled in by UpdateAll below:
+	// their values come from flags or the environment and can contain '#', '$',
+	// quotes or surrounding whitespace, which raw interpolation would let the
+	// server misread (a " #" truncates the value) or make the file unparseable
+	// from the first boot. That is the creation-time half of #2148.
 	envContent := fmt.Sprintf(`POSTGRES_USER=emergent
 POSTGRES_PASSWORD=%s
 POSTGRES_DB=emergent
@@ -311,14 +316,14 @@ STANDALONE_PROJECT_NAME=Default Project
 XBERG_PORT=18000
 SERVER_PORT=%d
 
-GOOGLE_API_KEY=%s
-OPENAI_API_KEY=%s
-OPENAI_MODEL=%s
+GOOGLE_API_KEY=
+OPENAI_API_KEY=
+OPENAI_MODEL=
 EMBEDDING_DIMENSION=768
 XBERG_LOG_LEVEL=info
 
 LLM_ENCRYPTION_KEY=%s
-`, postgresPassword, objectStoreSecret, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)
+`, postgresPassword, objectStoreSecret, apiKey, i.config.ServerPort, llmEncryptionKey)
 
 	envPath := filepath.Join(i.config.InstallDir, "config", ".env.local")
 	if err := tightenExistingFile(envPath, envFileMode); err != nil {
@@ -326,6 +331,17 @@ LLM_ENCRYPTION_KEY=%s
 	}
 	if err := os.WriteFile(envPath, []byte(envContent), envFileMode); err != nil {
 		return "", fmt.Errorf("failed to write env file: %w", err)
+	}
+
+	// Empty values are written too, so the file keeps the full key set the
+	// template has always carried and the server sees "" rather than a missing
+	// key (the same shape as an unset flag before this change).
+	if err := envfile.UpdateAll(envPath, map[string]string{
+		"GOOGLE_API_KEY": i.config.GoogleAPIKey,
+		"OPENAI_API_KEY": i.config.OpenAIBaseURL,
+		"OPENAI_MODEL":   i.config.LLMModel,
+	}, envFileMode); err != nil {
+		return "", fmt.Errorf("failed to write provider settings: %w", err)
 	}
 
 	return apiKey, nil

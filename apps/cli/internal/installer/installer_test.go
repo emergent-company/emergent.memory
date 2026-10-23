@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 func TestGenerateSecret(t *testing.T) {
@@ -231,6 +233,92 @@ func TestGenerateEnvFile(t *testing.T) {
 		if !strings.Contains(envContent, check) {
 			t.Errorf("env file missing: %s", check)
 		}
+	}
+}
+
+// Values arrive from flags or the environment and are written through
+// internal/envfile, so godotenv must read back exactly what was passed. A raw
+// template interpolation truncated at " #", expanded $VAR, or could not parse a
+// value starting with a quote (#2156).
+func TestGenerateEnvFileQuotesProviderValues(t *testing.T) {
+	cases := []struct{ name, googleKey, openaiKey, model string }{
+		{name: "hash truncates unquoted", googleKey: "p@ss #1", openaiKey: "sk-#2", model: "gpt-4 #fast"},
+		{name: "dollar expands unquoted", googleKey: "pa$$word", openaiKey: "$OPENAI_KEY", model: "model-$x"},
+		{name: "leading quote", googleKey: `"abc`, openaiKey: `x"y`, model: `it's`},
+		{name: "surrounding spaces", googleKey: "  padded  ", openaiKey: " lead", model: "trail "},
+		{name: "empty", googleKey: "", openaiKey: "", model: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			installDir := filepath.Join(t.TempDir(), "emergent")
+			inst := New(Config{
+				InstallDir:    installDir,
+				ServerPort:    3002,
+				GoogleAPIKey:  tc.googleKey,
+				OpenAIBaseURL: tc.openaiKey,
+				LLMModel:      tc.model,
+			})
+			if err := inst.CreateDirectories(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := inst.GenerateEnvFile(); err != nil {
+				t.Fatalf("GenerateEnvFile failed: %v", err)
+			}
+
+			got, err := godotenv.Read(inst.GetEnvPath())
+			if err != nil {
+				t.Fatalf("generated env file is not parseable: %v", err)
+			}
+			for key, want := range map[string]string{
+				"GOOGLE_API_KEY": tc.googleKey,
+				"OPENAI_API_KEY": tc.openaiKey,
+				"OPENAI_MODEL":   tc.model,
+			} {
+				if got[key] != want {
+					t.Errorf("%s = %q, want %q", key, got[key], want)
+				}
+			}
+		})
+	}
+}
+
+// A value that needs double quotes to survive a round trip (a leading single
+// quote) cannot be written by the shared writer, which never introduces double
+// quotes because they expand $VAR. Refuse rather than write a value the server
+// reads back differently, and write none of the provider keys — the creation
+// path keeps #2155's all-or-nothing property (#2156).
+func TestGenerateEnvFileRefusesUnrepresentableProviderValue(t *testing.T) {
+	installDir := filepath.Join(t.TempDir(), "emergent")
+	inst := New(Config{
+		InstallDir:    installDir,
+		ServerPort:    3002,
+		GoogleAPIKey:  "AIzaSyFine",
+		OpenAIBaseURL: `'abc`,
+	})
+	if err := inst.CreateDirectories(); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := inst.GenerateEnvFile()
+	if err == nil {
+		t.Fatal("expected GenerateEnvFile to refuse an unrepresentable value")
+	}
+	if !strings.Contains(err.Error(), "cannot be represented") {
+		t.Fatalf("error = %v, want the writer's refusal message", err)
+	}
+
+	// The template is still a valid env file, and the representable key was not
+	// half-applied next to the refused one.
+	got, readErr := godotenv.Read(inst.GetEnvPath())
+	if readErr != nil {
+		t.Fatalf("refused file must still parse: %v", readErr)
+	}
+	if got["GOOGLE_API_KEY"] != "" {
+		t.Errorf("GOOGLE_API_KEY = %q, want it unwritten after a refused batch", got["GOOGLE_API_KEY"])
+	}
+	if got["OPENAI_API_KEY"] != "" {
+		t.Errorf("OPENAI_API_KEY = %q, want it unwritten", got["OPENAI_API_KEY"])
 	}
 }
 

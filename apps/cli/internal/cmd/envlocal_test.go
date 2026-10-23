@@ -70,6 +70,30 @@ func TestSetProjectEnvLocal(t *testing.T) {
 	}
 }
 
+// Routing the project-context merge through internal/envfile edits the file by
+// key instead of re-encoding the parsed map, so comments and existing key order
+// survive — the old godotenv.Marshal write dropped both (#2156).
+func TestSetProjectEnvLocalKeepsCommentsAndOrder(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env.local")
+	const before = "# team context\nMEMORY_PROJECT_ID=old\nOTHER_KEY=keep-me # inline\n"
+	assert.NoError(t, os.WriteFile(path, []byte(before), 0o600))
+
+	var out bytes.Buffer
+	_, err := setProjectEnvLocal(&out, dir, envTestProjectID, envTestProjectName, envTestToken)
+	assert.NoError(t, err)
+
+	content, err := os.ReadFile(path)
+	assert.NoError(t, err)
+	got := string(content)
+
+	assert.True(t, strings.HasPrefix(got, "# team context\n"), "leading comment must survive, got %q", got)
+	assert.Less(t, strings.Index(got, "MEMORY_PROJECT_ID="), strings.Index(got, "OTHER_KEY="),
+		"existing key order must survive, got %q", got)
+	assert.Contains(t, got, "OTHER_KEY=keep-me # inline")
+	assert.Contains(t, got, "MEMORY_PROJECT_API_KEY="+envTestToken)
+}
+
 // Both paths now share the reader, so neither can silently drop the keys of a
 // file it cannot parse (#2075 decision, extended here).
 func TestWriteProjectEnvLocalRefusesUnparseableFile(t *testing.T) {
