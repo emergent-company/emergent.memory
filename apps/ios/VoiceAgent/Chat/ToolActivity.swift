@@ -8,10 +8,14 @@ import SwiftUI
 /// "Used memory"). Tools the table does not know fall back to `.tool`, so
 /// a new tool family degrades to a generic row rather than a broken one.
 ///
-/// The taxonomy is deliberately coarser than one category per tool (~120 of
+/// The taxonomy is deliberately coarser than one category per tool (~140 of
 /// them): the point is a legible verb. Adding a family means adding one row to
 /// `prefixes` or `exact`; adding a *category* also means copy for both tenses,
 /// which the exhaustive switches below will not compile without.
+///
+/// A category's verb has to be true of every tool in it, so a family that both
+/// reads and writes gets neutral copy ("Worked in the session") and only a
+/// read-only family gets a reading verb ("Read the trace").
 enum MemoryToolCategory: String, CaseIterable, Sendable {
     case memory
     case search
@@ -23,6 +27,8 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
     case blueprints
     case projects
     case session
+    case trace
+    case workspace
     case connector
     case tool
 
@@ -32,30 +38,44 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         "forget": .memory,
         "memory-guide": .memory,
         "lookup": .search,
+        "search_entities": .search,
+        "set_session_title": .session,
         "classify-document": .schemas,
         "finalize-discovery": .schemas,
         "list-installed-schemas": .schemas,
         "call_llm": .agents,
         "execute_tool": .agents,
         "trigger_agent": .agents,
+        "update_agent": .agents,
+        "update_agent_definition": .agents,
+        "search_mcp_registry": .connector,
+        "sync_mcp_server_tools": .connector,
+        "toggle_mcp_server_tool": .connector,
+        "update_mcp_server": .connector,
+        "run_python": .workspace,
+        "run_go": .workspace,
     ]
 
     /// Prefixes in match order: a more specific family is listed before the
-    /// family it sits inside (`project-record-` before `project-`).
+    /// family it sits inside (`project-record-` before `project-`,
+    /// `adk-session-` before `adk-`).
     private static let prefixes: [(String, MemoryToolCategory)] = [
         ("project-record-", .memory),
         ("graph-", .memory),
         ("entity-", .memory),
         ("tag-", .memory),
         ("journal-", .memory),
+        ("relationship-", .memory),
         ("search-", .search),
         ("schema-", .schemas),
         ("migration-", .schemas),
         ("document-", .documents),
         ("embedding-", .documents),
         ("extraction-", .documents),
+        ("queue-reextraction", .documents),
         ("web-", .web),
         ("ts_web_fetch", .web),
+        ("adk-session-", .session),
         ("agent-", .agents),
         ("adk-", .agents),
         ("skill", .skills),
@@ -64,8 +84,10 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         ("org-", .projects),
         ("user-", .projects),
         ("session-", .session),
-        ("trace-", .session),
+        ("trace-", .trace),
+        ("workspace_", .workspace),
         ("account-key-", .connector),
+        ("service-token-", .connector),
         ("token-", .connector),
         ("mcp-", .connector),
         ("mcp_", .connector),
@@ -100,6 +122,8 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         case .blueprints: "square.on.square"
         case .projects: "folder"
         case .session: "clock.arrow.circlepath"
+        case .trace: "waveform.path"
+        case .workspace: "terminal"
         case .connector: "puzzlepiece.extension"
         case .tool: "wrench.and.screwdriver"
         }
@@ -118,6 +142,8 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         case .blueprints: "chat.tool.blueprints.running"
         case .projects: "chat.tool.projects.running"
         case .session: "chat.tool.session.running"
+        case .trace: "chat.tool.trace.running"
+        case .workspace: "chat.tool.workspace.running"
         case .connector: "chat.tool.connector.running"
         case .tool: "chat.tool.generic.running"
         }
@@ -136,6 +162,8 @@ enum MemoryToolCategory: String, CaseIterable, Sendable {
         case .blueprints: "chat.tool.blueprints.done"
         case .projects: "chat.tool.projects.done"
         case .session: "chat.tool.session.done"
+        case .trace: "chat.tool.trace.done"
+        case .workspace: "chat.tool.workspace.done"
         case .connector: "chat.tool.connector.done"
         case .tool: "chat.tool.generic.done"
         }

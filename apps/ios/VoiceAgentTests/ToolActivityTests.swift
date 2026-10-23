@@ -18,8 +18,35 @@ struct MemoryToolCategoryTests {
         #expect(MemoryToolCategory(toolName: "blueprint-apply") == .blueprints)
         #expect(MemoryToolCategory(toolName: "project-list") == .projects)
         #expect(MemoryToolCategory(toolName: "session-todo-list") == .session)
+        #expect(MemoryToolCategory(toolName: "trace-list") == .trace)
+        #expect(MemoryToolCategory(toolName: "workspace_bash") == .workspace)
         #expect(MemoryToolCategory(toolName: "mcp-brave-search") == .connector)
         #expect(MemoryToolCategory(toolName: "token-create") == .connector)
+    }
+
+    /// Families that write live beside families that read, so the two must not
+    /// be conflated: a session todo update is not a read, a trace is not a
+    /// session, and a relationship is memory rather than a generic tool.
+    @Test func mapsWriteFamiliesToTheirOwnCategory() {
+        #expect(MemoryToolCategory(toolName: "session-todo-update") == .session)
+        #expect(MemoryToolCategory(toolName: "session-get-messages") == .session)
+        #expect(MemoryToolCategory(toolName: "trace-get") == .trace)
+        #expect(MemoryToolCategory(toolName: "relationship-update") == .memory)
+        #expect(MemoryToolCategory(toolName: "service-token-create") == .connector)
+        #expect(MemoryToolCategory(toolName: "queue-reextraction") == .documents)
+    }
+
+    @Test func mapsSnakeCaseFamilies() {
+        #expect(MemoryToolCategory(toolName: "search_entities") == .search)
+        #expect(MemoryToolCategory(toolName: "search_mcp_registry") == .connector)
+        #expect(MemoryToolCategory(toolName: "set_session_title") == .session)
+        #expect(MemoryToolCategory(toolName: "update_agent") == .agents)
+        #expect(MemoryToolCategory(toolName: "update_agent_definition") == .agents)
+        #expect(MemoryToolCategory(toolName: "update_mcp_server") == .connector)
+        #expect(MemoryToolCategory(toolName: "sync_mcp_server_tools") == .connector)
+        #expect(MemoryToolCategory(toolName: "toggle_mcp_server_tool") == .connector)
+        #expect(MemoryToolCategory(toolName: "run_python") == .workspace)
+        #expect(MemoryToolCategory(toolName: "run_go") == .workspace)
     }
 
     @Test func mapsUnprefixedToolsByName() {
@@ -36,6 +63,10 @@ struct MemoryToolCategoryTests {
         // `project-record-` is a memory tool, `project-` a project tool.
         #expect(MemoryToolCategory(toolName: "project-record-get") == .memory)
         #expect(MemoryToolCategory(toolName: "project-get") == .projects)
+        // `adk-session-` reads a session through the agent kit, `adk-` is
+        // agent work.
+        #expect(MemoryToolCategory(toolName: "adk-session-get") == .session)
+        #expect(MemoryToolCategory(toolName: "adk-session-list") == .session)
     }
 
     @Test func matchesCaseInsensitivelyAndTrimsWhitespace() {
@@ -49,6 +80,28 @@ struct MemoryToolCategoryTests {
         // A recorded row with no call name is labelled "Tool 1" by the session
         // mapper; it must still render.
         #expect(MemoryToolCategory(toolName: "Tool 1") == .tool)
+    }
+
+    /// A key missing from the catalog renders as the key itself, so resolve
+    /// every category's copy instead of trusting the key names.
+    @Test func everyCategoryHasCopyInTheCatalog() {
+        for category in MemoryToolCategory.allCases {
+            for key in [category.runningKey, category.doneKey] {
+                let resolved = NSLocalizedString(key, bundle: .main, comment: "")
+                #expect(resolved != key, "missing copy for \(key)")
+                #expect(!resolved.isEmpty)
+            }
+        }
+    }
+
+    /// Pins the wording this vocabulary got wrong: the session family writes
+    /// (`session-todo-update`, `set_session_title`), so its copy must not claim
+    /// a read.
+    @Test func sessionCopyDescribesWorkRatherThanARead() {
+        #expect(NSLocalizedString("chat.tool.session.done", bundle: .main, comment: "")
+            == "Worked in the session")
+        #expect(NSLocalizedString("chat.tool.session.running", bundle: .main, comment: "")
+            == "Working in the session")
     }
 
     @Test func everyCategoryHasASymbolAndDistinctCopyKeys() {

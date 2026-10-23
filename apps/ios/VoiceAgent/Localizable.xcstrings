@@ -2193,7 +2193,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Reading the session"
+            "value": "Working in the session"
           }
         }
       }
@@ -2204,7 +2204,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Read the session"
+            "value": "Worked in the session"
           }
         }
       }
@@ -2304,6 +2304,51 @@
           "stringUnit": {
             "state": "translated",
             "value": "Scan setup QR code"
+          }
+        }
+      }
+    }
+,
+    "chat.tool.trace.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading the trace"
+          }
+        }
+      }
+    },
+    "chat.tool.trace.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the trace"
+          }
+        }
+      }
+    },
+    "chat.tool.workspace.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working in the workspace"
+          }
+        }
+      }
+    },
+    "chat.tool.workspace.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked in the workspace"
           }
         }
       }
