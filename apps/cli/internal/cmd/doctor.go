@@ -1081,7 +1081,12 @@ func updateEnvPassword(installDir, newPassword string) error {
 		}
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), 0600)
+	// The file carries credentials; WriteFile only applies the mode on create,
+	// so an existing over-permissive file is tightened before the rewrite.
+	if err := os.Chmod(envPath, envLocalMode); err != nil {
+		return fmt.Errorf("failed to tighten permissions on %s: %w", envPath, err)
+	}
+	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), envLocalMode)
 }
 
 func restartServerOnly(installDir string) error {

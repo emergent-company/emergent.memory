@@ -103,6 +103,63 @@ func TestCreateDirectories(t *testing.T) {
 	}
 }
 
+// The config directory's only content is .env.local, which carries provider
+// and account credentials, so it is created 0700 rather than 0755 (#2110).
+// MkdirAll only applies the mode on create, so an existing permissive
+// directory written by an older installer is tightened too.
+func TestCreateDirectoriesModes(t *testing.T) {
+	tests := []struct {
+		name          string
+		existingMode  os.FileMode
+		wantConfigDir os.FileMode
+	}{
+		{name: "fresh install creates the config directory 0700", existingMode: 0, wantConfigDir: 0o700},
+		{name: "existing 0755 config directory is tightened", existingMode: 0o755, wantConfigDir: 0o700},
+		{name: "existing 0750 config directory is tightened", existingMode: 0o750, wantConfigDir: 0o700},
+		{name: "existing 0700 config directory is left alone", existingMode: 0o700, wantConfigDir: 0o700},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installDir := filepath.Join(t.TempDir(), "emergent")
+			configDir := filepath.Join(installDir, "config")
+
+			if tt.existingMode != 0 {
+				if err := os.MkdirAll(configDir, tt.existingMode); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(configDir, tt.existingMode); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			inst := New(Config{InstallDir: installDir})
+			if err := inst.CreateDirectories(); err != nil {
+				t.Fatalf("CreateDirectories failed: %v", err)
+			}
+
+			info, err := os.Stat(configDir)
+			if err != nil {
+				t.Fatalf("config directory missing: %v", err)
+			}
+			if got := info.Mode().Perm(); got != tt.wantConfigDir {
+				t.Errorf("config dir mode = %o, want %o", got, tt.wantConfigDir)
+			}
+
+			// bin/ and docker/ hold executables and templates, not credentials.
+			for _, dir := range []string{filepath.Join(installDir, "bin"), filepath.Join(installDir, "docker")} {
+				info, err := os.Stat(dir)
+				if err != nil {
+					t.Fatalf("%s missing: %v", dir, err)
+				}
+				if got := info.Mode().Perm(); got != 0o755 {
+					t.Errorf("%s mode = %o, want 755", dir, got)
+				}
+			}
+		})
+	}
+}
+
 func TestIsInstalled(t *testing.T) {
 	tmpDir := t.TempDir()
 
@@ -174,6 +231,100 @@ func TestGenerateEnvFile(t *testing.T) {
 		if !strings.Contains(envContent, check) {
 			t.Errorf("env file missing: %s", check)
 		}
+	}
+}
+
+// The account key written by `memory install` lands in .env.local, so the file
+// must be 0600 however it came into being: os.WriteFile's perm applies only on
+// create (#2110).
+func TestGenerateEnvFileMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		existingMode os.FileMode
+	}{
+		{name: "fresh file is created 0600", existingMode: 0},
+		{name: "existing 0644 file is tightened to 0600", existingMode: 0o644},
+		{name: "existing 0600 file stays 0600", existingMode: 0o600},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installDir := filepath.Join(t.TempDir(), "emergent")
+			inst := New(Config{InstallDir: installDir, ServerPort: 3002})
+			if err := inst.CreateDirectories(); err != nil {
+				t.Fatal(err)
+			}
+
+			envPath := inst.GetEnvPath()
+			if tt.existingMode != 0 {
+				if err := os.WriteFile(envPath, []byte("STANDALONE_API_KEY=stale\n"), tt.existingMode); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(envPath, tt.existingMode); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, err := inst.GenerateEnvFile(); err != nil {
+				t.Fatalf("GenerateEnvFile failed: %v", err)
+			}
+
+			info, err := os.Stat(envPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0o600 {
+				t.Errorf("env file mode = %o, want 600", got)
+			}
+
+			content, err := os.ReadFile(envPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(content), "STANDALONE_API_KEY=") {
+				t.Error("env file missing the account-level STANDALONE_API_KEY")
+			}
+		})
+	}
+}
+
+// updateEnv backs the installer's provider prompts, which write provider keys
+// into the same .env.local and inherited its mode the same way (#2110).
+func TestUpdateEnvTightensMode(t *testing.T) {
+	installDir := filepath.Join(t.TempDir(), "emergent")
+	inst := New(Config{InstallDir: installDir})
+	if err := inst.CreateDirectories(); err != nil {
+		t.Fatal(err)
+	}
+
+	envPath := inst.GetEnvPath()
+	original := []byte("GOOGLE_API_KEY=old-google\nSTANDALONE_API_KEY=acct-key\n")
+	if err := os.WriteFile(envPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(envPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := inst.updateEnv(map[string]string{"GOOGLE_API_KEY": "new-google"}); err != nil {
+		t.Fatalf("updateEnv failed: %v", err)
+	}
+
+	info, err := os.Stat(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("env file mode = %o, want 600", got)
+	}
+
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "GOOGLE_API_KEY=new-google\nSTANDALONE_API_KEY=acct-key\n"
+	if string(content) != want {
+		t.Errorf("env file = %q, want %q", string(content), want)
 	}
 }
 

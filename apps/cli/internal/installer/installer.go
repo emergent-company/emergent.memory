@@ -12,6 +12,16 @@ import (
 	"strings"
 )
 
+const (
+	// envFileMode is the only mode this CLI accepts for .env.local. The file
+	// holds provider API keys and, on a standalone install, the account-level
+	// STANDALONE_API_KEY, so it must not be readable by other users.
+	envFileMode os.FileMode = 0o600
+	// configDirMode is the only mode this CLI accepts for <install>/config.
+	// Its only content is .env.local, so group/world traversal buys nothing.
+	configDirMode os.FileMode = 0o700
+)
+
 // Config holds installation configuration
 type Config struct {
 	// InstallDir is the base directory for installation (default: ~/.memory)
@@ -128,18 +138,69 @@ func GenerateSecret(bytes int) (string, error) {
 
 // CreateDirectories creates the installation directory structure
 func (i *Installer) CreateDirectories() error {
-	dirs := []string{
+	envDir := filepath.Join(i.config.InstallDir, "config")
+	for _, dir := range []string{
 		filepath.Join(i.config.InstallDir, "bin"),
-		filepath.Join(i.config.InstallDir, "config"),
+		envDir,
 		filepath.Join(i.config.InstallDir, "docker"),
-	}
-
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+	} {
+		// The env directory is the only one that holds credentials, so it is the
+		// only one created 0700; bin/ and docker/ hold executables and templates.
+		mode := os.FileMode(0o755)
+		if dir == envDir {
+			mode = configDirMode
+		}
+		if err := os.MkdirAll(dir, mode); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
 
+	// MkdirAll applies mode only when it creates a directory, so an install
+	// created by an older CLI keeps its 0755 config directory. Tighten it when
+	// it is ours to tighten: a directory owned by another user (root-installed
+	// install, shared mount) is left alone and an EPERM is not fatal.
+	if err := tightenExistingDir(envDir, configDirMode); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// tightenExistingDir forces dir to mode when it is more permissive than that and
+// we can chmod it. Best-effort by design: failing to tighten a directory we do
+// not own must not fail the install.
+func tightenExistingDir(dir string, mode os.FileMode) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("failed to stat %s: %w", dir, err)
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	if err := os.Chmod(dir, mode); err != nil {
+		if os.IsPermission(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to tighten permissions on %s: %w", dir, err)
+	}
+	return nil
+}
+
+// tightenExistingFile forces path to mode when it already exists. os.WriteFile
+// applies its perm argument only when it creates the file, so without this an
+// existing over-permissive file keeps its mode while gaining new secrets.
+// Tightening before the write keeps the new value from ever being briefly
+// readable at the old mode.
+func tightenExistingFile(path string, mode os.FileMode) error {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat %s: %w", path, err)
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return fmt.Errorf("failed to tighten permissions on %s: %w", path, err)
+	}
 	return nil
 }
 
@@ -194,7 +255,10 @@ LLM_ENCRYPTION_KEY=%s
 `, postgresPassword, objectStoreSecret, apiKey, i.config.ServerPort, i.config.GoogleAPIKey, i.config.OpenAIBaseURL, i.config.LLMModel, llmEncryptionKey)
 
 	envPath := filepath.Join(i.config.InstallDir, "config", ".env.local")
-	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
+	if err := tightenExistingFile(envPath, envFileMode); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(envPath, []byte(envContent), envFileMode); err != nil {
 		return "", fmt.Errorf("failed to write env file: %w", err)
 	}
 
@@ -824,7 +888,12 @@ func (i *Installer) updateEnv(updates map[string]string) error {
 		}
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600)
+	// The file carries credentials; WriteFile only applies the mode on create,
+	// so an existing over-permissive file is tightened before the rewrite.
+	if err := os.Chmod(envPath, envFileMode); err != nil {
+		return fmt.Errorf("failed to tighten permissions on %s: %w", envPath, err)
+	}
+	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), envFileMode)
 }
 
 func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, providerConfigured bool) {

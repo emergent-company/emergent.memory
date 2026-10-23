@@ -297,7 +297,11 @@ All other keys are saved to config.yaml.`,
 				cfg = &config.Config{}
 			}
 
-			// Ensure parent directory exists
+			// Ensure parent directory exists. Left at 0755 on purpose: --config
+			// may point at a system-wide location shared with other users, and
+			// this is the parent of config.yaml, not of the credentials file.
+			// The credential-bearing ~/.memory/config directory is created
+			// 0700 by the installer (see installer.CreateDirectories).
 			if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
 				return fmt.Errorf("failed to create config directory: %w", err)
 			}
@@ -336,6 +340,20 @@ All other keys are saved to config.yaml.`,
 }
 
 // updateEnvFileKey updates a key=value pair in an env file, or appends it if not found.
+//
+// The rewrite is deliberately line-preserving: comments, blank lines and key
+// order survive, and every line whose prefix is not exactly "KEY=" is carried
+// through untouched. A single-line prefix rewrite therefore cannot destroy
+// lines it does not understand, which is why this does not route through
+// writeEnvLocal's godotenv round-trip: that would reorder a hand-maintained
+// server env file and drop its comments.
+//
+// The mode is not inherited. The file holds billable provider credentials, so
+// an existing over-permissive file (written by an older CLI or by the user's
+// umask) is tightened to envLocalMode — os.WriteFile applies its perm argument
+// only when it creates the file. The chmod happens before the write so the new
+// value is never momentarily readable at the old mode; the file is known to
+// exist because the read above succeeded.
 func updateEnvFileKey(envPath, key, value string) error {
 	content, err := os.ReadFile(envPath)
 	if err != nil {
@@ -355,7 +373,10 @@ func updateEnvFileKey(envPath, key, value string) error {
 		lines = append(lines, key+"="+value)
 	}
 
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600)
+	if err := os.Chmod(envPath, envLocalMode); err != nil {
+		return fmt.Errorf("failed to tighten permissions on %s: %w", envPath, err)
+	}
+	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), envLocalMode)
 }
 
 func init() {
