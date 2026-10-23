@@ -1208,117 +1208,106 @@
         }
       }
     },
-     "objects.detail.noProperties": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "No properties"
-           }
-         }
-       }
-     },
-     "projects.add": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Add project"
-           }
-         }
-       }
-     },
-     "projects.empty": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "No projects connected yet."
-           }
-         }
-       }
-     },
-     "projects.none": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "No project"
-           }
-         }
-       }
-     },
-     "projects.remove": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Remove project"
-           }
-         }
-       }
-     },
-     "projects.remove.confirm.message": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "This device will forget its connection. You can add it again by scanning its setup QR code."
-           }
-         }
-       }
-     },
-     "projects.remove.confirm.title": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Remove project?"
-           }
-         }
-       }
-     },
-     "projects.section.footer": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "This device can connect to more than one Memory project. The active project decides which agents, objects, and sessions you see."
-           }
-         }
-       }
-     },
-     "projects.section.title": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Projects"
-           }
-         }
-       }
-     },
-     "projects.switcher.accessibility": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Switch project"
-           }
-         }
-       }
-     },
-     "sessions.detail.arguments": {
+    "objects.detail.noProperties": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No properties"
+          }
+        }
+      }
+    },
+    "projects.add": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add project"
+          }
+        }
+      }
+    },
+    "projects.none": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No project"
+          }
+        }
+      }
+    },
+    "projects.remove": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove project"
+          }
+        }
+      }
+    },
+    "projects.remove.confirm.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device will forget its connection. You can add it again by scanning its setup QR code."
+          }
+        }
+      }
+    },
+    "projects.remove.confirm.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove project?"
+          }
+        }
+      }
+    },
+    "projects.section.footer": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This device can connect to more than one Memory project. The active project decides which agents, objects, and sessions you see."
+          }
+        }
+      }
+    },
+    "projects.section.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Projects"
+          }
+        }
+      }
+    },
+    "projects.switcher.accessibility": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch project"
+          }
+        }
+      }
+    },
+    "sessions.detail.arguments": {
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -1560,112 +1549,13 @@
         }
       }
     },
-    "settings.advanced.footer": {
+    "settings.cancel": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Default values work for most setups."
-          }
-        }
-      }
-    },
-    "settings.agentConnectTimeout": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Agent connect timeout (seconds)"
-          }
-        }
-      }
-    },
-    "settings.agentConnectTimeout.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "How long to wait for the agent to join before giving up."
-          }
-        }
-      }
-    },
-    "settings.apiBaseURL": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Control plane URL"
-          }
-        }
-      }
-    },
-    "settings.apiBaseURL.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Where the agent control plane lives (port 8081)."
-          }
-        }
-      }
-    },
-    "settings.apiKey": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "API key"
-          }
-        }
-      }
-    },
-    "settings.apiKey.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Shared secret sent to the token endpoint."
-          }
-        }
-      }
-    },
-     "settings.cancel": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "Cancel"
-           }
-         }
-       }
-     },
-     "settings.chimeSoundID": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ready chime sound ID"
-          }
-        }
-      }
-    },
-    "settings.chimeSoundID.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "System sound ID played when the agent is ready."
+            "value": "Cancel"
           }
         }
       }
@@ -1681,134 +1571,13 @@
         }
       }
     },
-    "settings.exitKeywords": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Exit keywords"
-          }
-        }
-      }
-    },
-    "settings.exitKeywords.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Comma-separated phrases. Saying any of them ends the call."
-          }
-        }
-      }
-    },
     "settings.intro": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Connection settings for talking to Memory."
-          }
-        }
-      }
-    },
-    "settings.save": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save"
-          }
-        }
-      }
-    },
-    "settings.qr.footer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Point the camera at the admin setup code to set the server URL and API key."
-          }
-        }
-      }
-    },
-    "settings.qr.title": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scan setup QR code"
-          }
-        }
-      }
-    },
-    "settings.saved": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Saved. Changes apply the next time the app starts."
-          }
-        }
-      }
-    },
-    "settings.section.advanced": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Advanced"
-          }
-        }
-      }
-    },
-    "settings.section.connection": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Connection"
-          }
-        }
-      }
-    },
-     "settings.section.connection.footer": {
-       "extractionState": "manual",
-       "localizations": {
-         "en": {
-           "stringUnit": {
-             "state": "translated",
-             "value": "These fields edit the active project's connection. Add more projects with a setup QR code."
-           }
-         }
-       }
-     },
-     "settings.section.session": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Session"
-          }
-        }
-      }
-    },
-    "settings.serverURL": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Server URL"
+            "value": "Projects this device is connected to. Add one by scanning its setup QR code."
           }
         }
       }
@@ -1820,17 +1589,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Settings"
-          }
-        }
-      }
-    },
-    "settings.tokenEndpoint": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Token endpoint"
           }
         }
       }
@@ -2128,17 +1886,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Send rejection reason"
-          }
-        }
-      }
-    },
-    "settings.done": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Done"
           }
         }
       }
@@ -2524,6 +2271,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "Failed"
+          }
+        }
+      }
+    },
+    "projects.onboarding.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connect a project"
+          }
+        }
+      }
+    },
+    "projects.onboarding.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan the setup QR code from Settings → Devices in the web app. Your agents, objects and sessions will appear here."
+          }
+        }
+      }
+    },
+    "projects.onboarding.action": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan setup QR code"
           }
         }
       }

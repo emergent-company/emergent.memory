@@ -4,8 +4,12 @@ import SwiftUI
 ///
 /// Lists every onboarded connection with the active one checked, switches on
 /// tap, removes with a confirmation, and offers "Add project" (which opens the
-/// setup-QR scanner owned by `AppShellView`). The manual connection fields in
-/// ``MemorySettingsView`` edit whichever project is active.
+/// setup-QR scanner owned by `AppShellView`).
+///
+/// With nothing connected the section is the onboarding surface instead: the
+/// scan affordance sits where the list would be, so the empty state is a call
+/// to action rather than a dead end. There is no separate QR banner — "Add
+/// project" is the single entry point once a project exists.
 struct MemoryProjectsSection: View {
     @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
@@ -18,10 +22,14 @@ struct MemoryProjectsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3 * .grid) {
-            title
-            list
-            addRow
-            footer
+            if projectStore.connections.isEmpty {
+                onboarding
+            } else {
+                title
+                list
+                addRow
+                footer
+            }
         }
         .confirmationDialog(
             "projects.remove.confirm.title",
@@ -43,6 +51,37 @@ struct MemoryProjectsSection: View {
 
     // MARK: - Rows
 
+    /// First-run state: what a project is, and the one action that creates one.
+    private var onboarding: some View {
+        VStack(alignment: .leading, spacing: 3 * .grid) {
+            Image(systemName: "qrcode.viewfinder")
+                .font(.title2)
+                .foregroundStyle(.fgAccent)
+                .accessibilityHidden(true)
+            Text("projects.onboarding.title")
+                .font(MemoryFont.cardHeader)
+                .foregroundStyle(.fg0)
+            Text("projects.onboarding.description")
+                .font(MemoryFont.meta)
+                .foregroundStyle(.fg3)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: onAddProject) {
+                HStack(spacing: 1 * .grid) {
+                    Image(systemName: "qrcode.viewfinder")
+                    Text("projects.onboarding.action")
+                }
+                .font(MemoryFont.labelEmphasis)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.fgAccent)
+        }
+        .padding(4 * .grid)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusMedium))
+    }
+
     private var title: some View {
         Text("projects.section.title")
             .font(MemoryFont.metaEmphasis)
@@ -57,13 +96,6 @@ struct MemoryProjectsSection: View {
                     Divider().overlay(.separator2)
                 }
                 projectRow(connection)
-            }
-            if projectStore.connections.isEmpty {
-                Text("projects.empty")
-                    .font(MemoryFont.bodySmall)
-                    .foregroundStyle(.fg3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(3 * .grid)
             }
         }
         .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
@@ -168,6 +200,12 @@ struct MemoryProjectsSection: View {
         projectPendingRemoval = nil
         guard wasActive else { return }
         agentStore.setActiveProject(projectStore.activeProjectID)
+        if projectStore.connections.isEmpty {
+            // Nothing left to scope to: drop the old project's agents so the
+            // picker shows the connect-a-project prompt, not stale rows.
+            agentStore.reset()
+            return
+        }
         Task { @MainActor in
             await agentStore.load()
         }

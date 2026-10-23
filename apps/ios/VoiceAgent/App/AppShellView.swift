@@ -18,11 +18,11 @@ enum AppRoute: Hashable {
 /// Tab "Agents" hosts a `NavigationStack` whose root is the control-plane
 /// agent picker (a native list, with loading / error / read-only empty
 /// states). Tapping an agent selects it (persisted under
-/// `alfred.agentName`) and pushes its second level.
+/// `alfred.agentName.<projectID>`) and pushes its second level.
 ///
-/// Tab "Settings" shows the connection config directly (no longer a sheet),
-/// with the QR-auth scanner surfaced here because QR is app-level
-/// authentication, not per-agent config.
+/// Tab "Settings" lists the connected projects. Connecting a project is
+/// app-level authentication and happens through the setup QR code, presented
+/// from here and from the picker's no-project prompt.
 ///
 /// The voice controller lives above this shell (in `AgentSessionRoot`), so
 /// navigating here never tears down an active session — it is only rebuilt
@@ -41,6 +41,13 @@ struct AppShellView: View {
         _path = path
     }
 
+    /// Whether any project is connected. With none, the app is not configured
+    /// at all: the picker shows the connect prompt instead of loading (or
+    /// failing to load) agents for a project that does not exist yet.
+    private var hasProject: Bool {
+        !projectStore.connections.isEmpty
+    }
+
     var body: some View {
         TabView {
             agentsTab
@@ -51,10 +58,28 @@ struct AppShellView: View {
         .toolbar(.hidden, for: .navigationBar)
         .background(.bg1)
         // QR onboarding is app-level authentication, so the scanner is
-        // presented from the shell: the Settings row and the picker's
-        // load-failure state both open it.
+        // presented from the shell: the Settings project list and the picker's
+        // no-project prompt both open it.
         .sheet(isPresented: $qrPresented) { MemoryQRScannerView() }
-        .task { await agentStore.load() }
+        .task {
+            guard hasProject else { return }
+            await agentStore.load()
+        }
+        .onChange(of: hasProject) { _, connected in
+            if connected {
+                Task { @MainActor in await agentStore.load() }
+            } else {
+                // Last project removed: no connection means no agents, and no
+                // pushed screen may outlive the project it belonged to.
+                agentStore.reset()
+                path.removeAll()
+            }
+        }
+        .onChange(of: projectStore.activeProjectID) { _, _ in
+            // Switch from Settings as well as the picker header: a pushed
+            // agent belongs to the previous project's connection.
+            path.removeAll()
+        }
     }
 
     // MARK: - Tabs
@@ -99,9 +124,9 @@ struct AppShellView: View {
         return ObjectBrowserView(agentID: route.agentID, agentName: route.agentName)
     }
 
-    /// Tab 2: connection settings plus the QR-auth entry point.
+    /// Tab 2: the connected projects.
     private var settingsTab: some View {
-        AppSettingsTabView(qrPresented: $qrPresented)
+        MemorySettingsView(onAddProject: { qrPresented = true })
             .tabItem { Label("settings.title", systemImage: "gearshape") }
     }
 
@@ -111,17 +136,21 @@ struct AppShellView: View {
         VStack(spacing: 0) {
             header()
                 .padding(.horizontal)
-            switch agentStore.loadState {
-            case .idle, .loading:
-                loadingView()
-            case let .failed(message):
-                failureView(message)
-            case .loaded:
-                if agentStore.agents.isEmpty {
-                    emptyView()
-                } else {
-                    agentList()
+            if hasProject {
+                switch agentStore.loadState {
+                case .idle, .loading:
+                    loadingView()
+                case let .failed(message):
+                    failureView(message)
+                case .loaded:
+                    if agentStore.agents.isEmpty {
+                        emptyView()
+                    } else {
+                        agentList()
+                    }
                 }
+            } else {
+                noProjectView()
             }
         }
         .background(.bg1)
@@ -138,21 +167,22 @@ struct AppShellView: View {
                     .foregroundStyle(.fg3)
             }
             Spacer()
-            MemoryProjectSwitcher(onSwitch: switchProject, onAddProject: { qrPresented = true })
-                .padding(.top, 2 * .grid)
+            // No project, no switcher: a pill that says "No project" is a dead
+            // control, and the picker body already offers the connect action.
+            if hasProject {
+                MemoryProjectSwitcher(onSwitch: switchProject, onAddProject: { qrPresented = true })
+                    .padding(.top, 2 * .grid)
+            }
         }
         .padding(.top, 2 * .grid)
     }
 
-    /// Switches the active project: drops any pushed agent of the old project,
-    /// mirrors the new connection, re-scopes the agent selection, and reloads
-    /// the picker. The store posts `.memoryConfigChanged`, which rebuilds the
-    /// session controller from the new credential.
+    /// Switches the active project: mirrors the new connection and re-scopes
+    /// the agent selection. The store posts `.memoryConfigChanged`, which
+    /// rebuilds the session controller from the new credential; the shell's
+    /// `activeProjectID` observer drops any pushed route of the old project.
     private func switchProject(_ connection: MemoryProjectConnection) {
         guard connection.projectID != projectStore.activeProjectID else { return }
-        if !path.isEmpty {
-            path.removeAll()
-        }
         projectStore.setActive(projectID: connection.projectID)
         agentStore.setActiveProject(projectStore.activeProjectID)
         Task { @MainActor in
@@ -185,7 +215,8 @@ struct AppShellView: View {
         }
     }
 
-    /// Selects the agent (persists `alfred.agentName`) and pushes level 2.
+    /// Selects the agent (persists `alfred.agentName.<projectID>`) and pushes
+    /// level 2.
     private func select(_ agent: Agent) {
         agentStore.select(agent)
         Log.nav.info("select agent \(agent.name)")
@@ -198,9 +229,26 @@ struct AppShellView: View {
         LoadingStateView(title: "agents.loading", fillsHeight: false)
     }
 
-    /// Load failure — often stale/invalid connection settings after a server
-    /// change. Retry alone cannot fix a wrong host or key, so the setup-QR
-    /// re-onboard path is offered first.
+    /// No project connected yet (first launch, or every project removed).
+    ///
+    /// This is the app's onboarding screen, so it is a call to action — never a
+    /// load error. Nothing is known about agents before a project exists, and
+    /// nothing is fetched.
+    private func noProjectView() -> some View {
+        EmptyStateView(
+            title: "projects.onboarding.title",
+            description: "projects.onboarding.description",
+            systemImage: "qrcode.viewfinder",
+            topPadding: 6 * .grid,
+            actionLabel: "projects.onboarding.action",
+            actionImage: "qrcode.viewfinder",
+            action: { qrPresented = true }
+        )
+    }
+
+    /// Load failure — a connected project whose control plane the app cannot
+    /// reach (stale connection, rotated credential, server change). Retry
+    /// alone cannot fix a wrong host, so re-onboarding is offered first.
     private func failureView(_ message: String) -> some View {
         ErrorStateView(
             title: "agents.error",
@@ -223,58 +271,6 @@ struct AppShellView: View {
             systemImage: "person.crop.circle.badge.plus",
             topPadding: 4 * .grid
         )
-    }
-}
-
-/// The level-1 Settings tab: the connection config screen with the QR-auth
-/// entry point surfaced above it. QR is app-level authentication (backend
-/// reachability), so it lives here rather than inside any agent's second
-/// level. The scanner sheet itself is presented by `AppShellView`, which owns
-/// `qrPresented` (the picker's load-failure state reuses the same sheet).
-private struct AppSettingsTabView: View {
-    @Binding var qrPresented: Bool
-
-    /// Leading-icon column width, scaled with body text so the 17pt glyph is
-    /// never clipped at any Dynamic Type size.
-    @ScaledMetric(relativeTo: .body) private var qrIconWidth: CGFloat = 6 * .grid
-
-    var body: some View {
-        VStack(spacing: 0) {
-            qrRow()
-            MemorySettingsView(onAddProject: { qrPresented = true })
-        }
-        .background(.bg1)
-    }
-
-    private func qrRow() -> some View {
-        Button {
-            qrPresented = true
-        } label: {
-            HStack(spacing: 3 * .grid) {
-                Image(systemName: "qrcode.viewfinder")
-                    .font(.body)
-                    .foregroundStyle(.fgAccent)
-                    .frame(width: qrIconWidth)
-                VStack(alignment: .leading, spacing: 1 * .grid) {
-                    Text("settings.qr.title")
-                        .font(MemoryFont.cardHeader)
-                        .foregroundStyle(.fg0)
-                    Text("settings.qr.footer")
-                        .font(MemoryFont.meta)
-                        .foregroundStyle(.fg3)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(MemoryFont.metaEmphasis)
-                    .foregroundStyle(.fg3)
-            }
-            .padding(3 * .grid)
-            .background(.bg2, in: RoundedRectangle(cornerRadius: .cornerRadiusSmall))
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 4 * .grid)
-        .padding(.top, 2 * .grid)
-        .padding(.bottom, 1 * .grid)
     }
 }
 

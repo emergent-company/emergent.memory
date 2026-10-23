@@ -79,6 +79,20 @@ final class AgentStore {
         TraceLog.log("agent_selected", ["name": agent.name])
     }
 
+    /// Clears the loaded agents and returns the store to its initial state.
+    ///
+    /// Called when the last project is removed: the picker must show the
+    /// connect-a-project call to action rather than the previous project's
+    /// agents, a load failure, or a spinner. Bumping the generation also
+    /// discards any load still in flight, so a late response cannot repopulate
+    /// the list after the connection is gone.
+    func reset() {
+        _ = loadGeneration.next()
+        agents = []
+        loadState = .idle
+        selectedAgentName = MemoryConfig.defaultAgentName
+    }
+
     /// Loads the agent selection remembered for `id` (or the legacy default
     /// when `id` is nil/empty) and publishes it. Called on launch and whenever
     /// the active project changes.

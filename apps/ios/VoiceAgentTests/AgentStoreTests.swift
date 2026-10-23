@@ -144,4 +144,24 @@ struct AgentStoreTests {
         }
         #expect(store.agents.isEmpty)
     }
+
+    /// Removing the last project must leave the picker in its initial state:
+    /// no agents, no failure message, so the shell's no-project prompt shows.
+    @Test func resetClearsAgentsAndReturnsToIdle() async throws {
+        let suite = "AgentStoreTests.reset.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let json = #"{"id":"1","name":"diane","toolCount":20,"isDefault":false,"enabled":true}"#
+        let agent = try JSONDecoder().decode(Agent.self, from: Data(json.utf8))
+        let store = AgentStore(defaults: defaults, client: FakeAgentClient(result: .success([agent])))
+        await store.load()
+        store.setActiveProject("projA")
+
+        store.reset()
+
+        #expect(store.agents.isEmpty)
+        #expect(store.loadState == .idle)
+        #expect(store.selectedAgentName == MemoryConfig.defaultAgentName)
+    }
 }

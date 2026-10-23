@@ -145,6 +145,10 @@ struct MemoryProjectStoreTests {
         #expect(store.connections.isEmpty)
         #expect(store.activeProjectID == nil)
         #expect(store.activeConnection == nil)
+        // No connection means no credential: the mirror must drop the removed
+        // project's device token instead of leaving every client pointed at a
+        // server the user disconnected from.
+        #expect(MemoryConfig(defaults: defaults).apiKey.isEmpty)
     }
 
     @Test func legacyMigrationSynthesizesAndActivatesConnection() throws {

@@ -26,7 +26,14 @@ struct SessionDetailView: View {
             content
         }
         .background(.bg1)
-        .task(id: "session-detail-load") { await store.load(room: room) }
+        // Exactly one back affordance: the ScreenHeader chevron. The system
+        // navigation bar and its back button are hidden so a pushed session
+        // cannot show two of them.
+        #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+        #endif
+            .task(id: "session-detail-load") { await store.load(room: room) }
     }
 
     // MARK: - Content

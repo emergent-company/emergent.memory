@@ -85,6 +85,9 @@ struct ErrorStateView: View {
 }
 
 /// Shared read-only empty state.
+///
+/// The optional action turns it into a call to action (the first-run
+/// connect-a-project prompt), so an empty screen is never a dead end.
 struct EmptyStateView: View {
     let title: LocalizedStringKey
     let description: LocalizedStringKey
@@ -93,6 +96,10 @@ struct EmptyStateView: View {
     var message: String?
     /// Optional extra top padding (the picker's empty state).
     var topPadding: CGFloat = 0
+    /// Optional call-to-action button under the description.
+    var actionLabel: LocalizedStringKey?
+    var actionImage: String?
+    var action: (() -> Void)?
 
     var body: some View {
         ContentUnavailableView {
@@ -105,6 +112,22 @@ struct EmptyStateView: View {
                         .font(MemoryFont.meta)
                         .foregroundStyle(.fg3)
                 }
+            }
+        } actions: {
+            if let action, let actionLabel {
+                Button(action: action) {
+                    HStack(spacing: 1 * .grid) {
+                        if let actionImage {
+                            Image(systemName: actionImage)
+                        }
+                        Text(actionLabel)
+                    }
+                    .font(MemoryFont.labelEmphasis)
+                    .foregroundStyle(.fgAccent)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2 * .grid)
             }
         }
         .padding(.top, topPadding)

@@ -27,6 +27,13 @@ struct ObjectDetailView: View {
             }
         }
         .background(.bg1)
+        // Exactly one back affordance: the ScreenHeader chevron. The object
+        // browser reveals the system bar for its search field, so this pushed
+        // detail has to hide it explicitly.
+        #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+        #endif
     }
 
     // MARK: - Metadata

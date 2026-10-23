@@ -187,6 +187,10 @@ final class MemoryProjectStore: ObservableObject {
             updated.projectID = MemoryConfig.defaultProjectID
             updated.orgID = MemoryConfig.defaultOrgID
             updated.projectName = MemoryConfig.defaultProjectName
+            // No active project means no credential: without this the removed
+            // project's device token stayed in the config mirror and every
+            // client kept pointing at a server the user had disconnected from.
+            updated.apiKey = ""
         }
         guard updated != current else { return false }
         updated.save(defaults: defaults)

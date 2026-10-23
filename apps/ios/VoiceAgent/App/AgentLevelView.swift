@@ -40,8 +40,15 @@ struct AgentLevelView: View {
             .toolbarBackground(.bg1, for: .tabBar)
         }
         .toolbar(.hidden, for: .tabBar)
-        .background(.bg1)
-        .onAppear { Log.nav.info("AgentLevelView appear \(agentName)") }
+        // The custom ScreenHeader chevron is this screen's only back
+        // affordance. Hiding the system navigation bar (and with it the system
+        // back button) prevents the push from showing two back buttons.
+        #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarBackButtonHidden(true)
+        #endif
+            .background(.bg1)
+            .onAppear { Log.nav.info("AgentLevelView appear \(agentName)") }
     }
 
     private var subtitle: LocalizedStringKey {

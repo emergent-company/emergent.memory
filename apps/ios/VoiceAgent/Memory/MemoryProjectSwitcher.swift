@@ -29,9 +29,6 @@ struct MemoryProjectSwitcher: View {
                     }
                 }
             }
-            if projectStore.connections.isEmpty {
-                Text("projects.empty")
-            }
             Divider()
             Button(action: onAddProject) {
                 Label("projects.add", systemImage: "qrcode.viewfinder")
@@ -43,12 +40,16 @@ struct MemoryProjectSwitcher: View {
     }
 
     /// The compact pill: project glyph, active name, and a menu chevron.
+    ///
+    /// `AppShellView` only shows the pill when at least one project is
+    /// connected, so the name always resolves; the first connection covers a
+    /// transient mismatch between the active id and the stored list.
     private var label: some View {
         HStack(spacing: 1 * .grid) {
             Image(systemName: "square.stack.3d.up")
                 .font(MemoryFont.label)
                 .foregroundStyle(.fgAccent)
-            Text(projectStore.activeConnection?.displayName ?? String(localized: "projects.none"))
+            Text(displayName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.fg0)
                 .lineLimit(1)
@@ -60,6 +61,12 @@ struct MemoryProjectSwitcher: View {
         .padding(.vertical, 2 * .grid)
         .background(.bg2, in: Capsule())
         .contentShape(Capsule())
+    }
+
+    private var displayName: String {
+        projectStore.activeConnection?.displayName
+            ?? projectStore.connections.first?.displayName
+            ?? String(localized: "projects.none")
     }
 }
 
