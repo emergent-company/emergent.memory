@@ -283,18 +283,18 @@ func TestGenerateEnvFileQuotesProviderValues(t *testing.T) {
 	}
 }
 
-// A value that needs double quotes to survive a round trip (a leading single
-// quote) cannot be written by the shared writer, which never introduces double
-// quotes because they expand $VAR. Refuse rather than write a value the server
-// reads back differently, and write none of the provider keys — the creation
-// path keeps #2155's all-or-nothing property (#2156).
+// A value no quoting style can hold — one that starts with a single quote and
+// also references a variable, so the literal form closes early and the
+// double-quoted form would expand it — is refused rather than written, and none
+// of the provider keys is written: the creation path keeps #2155's
+// all-or-nothing property (#2156, #2164).
 func TestGenerateEnvFileRefusesUnrepresentableProviderValue(t *testing.T) {
 	installDir := filepath.Join(t.TempDir(), "emergent")
 	inst := New(Config{
 		InstallDir:    installDir,
 		ServerPort:    3002,
 		GoogleAPIKey:  "AIzaSyFine",
-		OpenAIBaseURL: `'abc`,
+		OpenAIBaseURL: `'a$b`,
 	})
 	if err := inst.CreateDirectories(); err != nil {
 		t.Fatal(err)

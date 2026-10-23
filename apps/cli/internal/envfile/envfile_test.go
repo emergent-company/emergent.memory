@@ -84,6 +84,24 @@ func TestRewriteEnvValuesPreservesQuoting(t *testing.T) {
 			value:  "$HOME-key",
 			want:   "OPENAI_API_KEY='$HOME-key'#prod-secret-tag\n",
 		},
+		{
+			// Single quotes cannot hold a value that begins with one, and the
+			// bare form would be read back starting at the quote, so the value
+			// used to be refused outright. Double quotes hold it: there is no
+			// "$", '"' or backslash for the parser to expand (#2164).
+			name:   "value starting with a single quote is double quoted",
+			before: "OPENAI_API_KEY=old\n",
+			value:  "'abc",
+			want:   "OPENAI_API_KEY=\"'abc\"\n",
+		},
+		{
+			// Same rescue when the value replaces a quoted one and another
+			// assignment follows on the line.
+			name:   "value starting with a single quote before another assignment",
+			before: "OPENAI_API_KEY='old'OTHER=keep\n",
+			value:  "'abc",
+			want:   "OPENAI_API_KEY=\"'abc\"OTHER=keep\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -101,6 +119,33 @@ func TestRewriteEnvValuesPreservesQuoting(t *testing.T) {
 			assert.Equal(t, tt.value, parsed[key], "the rewrite must read back as the value it was given")
 		})
 	}
+}
+
+// The double-quote fallback must not weaken the "$" rule: the parser expands
+// variables inside double quotes, so a value single quotes cannot hold and that
+// also contains a "$" has no safe form and is still refused (#2164).
+func TestRewriteEnvValuesRefusesVariableInDoubleQuoteFallback(t *testing.T) {
+	const key = "OPENAI_API_KEY"
+	before := []byte("OPENAI_API_KEY=old\n")
+
+	_, rewritten, err := rewriteEnvValues(before, key, "'$HOME")
+	require.Error(t, err, "a value with a leading quote and a variable must be refused, not expanded")
+	require.Zero(t, rewritten)
+	assert.Contains(t, err.Error(), "cannot be represented")
+	assert.Contains(t, err.Error(), key)
+}
+
+// A new key goes through the same fallback order, so a value that used to be
+// refused on append is written in a form the parser reads back verbatim.
+func TestAppendEnvAssignmentUsesDoubleQuotesWhenSingleQuotesCannot(t *testing.T) {
+	got, err := appendEnvAssignment([]byte("A=1\n"), "NEW", "'abc")
+	require.NoError(t, err)
+	assert.Equal(t, "A=1\nNEW=\"'abc\"\n", string(got))
+
+	parsed, err := godotenv.Unmarshal(string(got))
+	require.NoError(t, err)
+	assert.Equal(t, "'abc", parsed["NEW"])
+	assert.Equal(t, "1", parsed["A"])
 }
 
 // The round-trip guard is the last line of defence, so it is tested directly

@@ -376,3 +376,63 @@ func TestConfigShowMasksEnvLocalSecrets(t *testing.T) {
 	// Negative control: the base URL is not a secret and is still printed.
 	assert.Contains(t, stdout, "https://llm.example.com")
 }
+
+// A value the env-file writer quoted (#2155, #2163) used to print with its
+// quotes: this path trimmed a key prefix per line instead of parsing. It reads
+// through godotenv now, so the display shows the value the service sees (#2164).
+func TestConfigShowUnquotesEnvLocalValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// The model line uses an "export" prefix, which the prefix-scan fallback
+	// cannot see: this case is only green when the file is actually parsed.
+	writeEnvLocalFixture(t, home,
+		"OPENAI_BASE_URL='https://llm.example.com/a#b'\nexport LLM_MODEL=\"gemini-3\"\n", 0o600)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, config.Save(&config.Config{ServerURL: "https://api.example.com"}, configPath))
+
+	cmd := newConfigShowCmd()
+	cmd.SetArgs([]string{"--config", configPath})
+
+	capture := testutil.CaptureOutput()
+	defer capture.Restore()
+
+	require.NoError(t, cmd.Execute())
+	stdout, stderr, readErr := capture.Read()
+	require.NoError(t, readErr)
+	require.Empty(t, stderr)
+
+	assert.Contains(t, stdout, "https://llm.example.com/a#b (.env.local)")
+	assert.Contains(t, stdout, "gemini-3 (.env.local)")
+	assert.NotContains(t, stdout, "'https://llm.example.com", "a single-quoted value must print unquoted")
+	assert.NotContains(t, stdout, `"gemini-3"`, "a double-quoted value must print unquoted")
+}
+
+// One malformed line makes godotenv reject the whole file. The display must
+// still show the assignments it can — unquoted — rather than print nothing or
+// fail the command (#2164).
+func TestConfigShowToleratesUnparseableEnvLocal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	writeEnvLocalFixture(t, home,
+		"OPENAI_BASE_URL='https://llm.example.com'\nLLM_MODEL=\"unterminated\n", 0o600)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, config.Save(&config.Config{ServerURL: "https://api.example.com"}, configPath))
+
+	cmd := newConfigShowCmd()
+	cmd.SetArgs([]string{"--config", configPath})
+
+	capture := testutil.CaptureOutput()
+	defer capture.Restore()
+
+	require.NoError(t, cmd.Execute())
+	stdout, stderr, readErr := capture.Read()
+	require.NoError(t, readErr)
+	require.Empty(t, stderr)
+
+	assert.Contains(t, stdout, "https://llm.example.com (.env.local)")
+	assert.NotContains(t, stdout, "'https://llm.example.com")
+}

@@ -282,12 +282,17 @@ func rewriteEnvValues(content []byte, key, value string) ([]byte, int, error) {
 // reads back verbatim, in this order: bare when that is safe
 // (envValueFitsBare), then single-quoted, because that form is taken literally
 // — it is the only form that can hold a "$", which the parser expands in both
-// the bare and the double-quoted branch. A bare value keeps the user's style
-// and gets one separating space before a trailing "#" comment so it cannot be
-// glued ("xy\"z #tag"). When another assignment follows on the same line, a
-// bare value would swallow it (an unquoted value runs to the end of the line),
-// so the quoted form is used instead. When no form can hold the value, the
-// rewrite fails closed instead of writing a file the service cannot read.
+// the bare and the double-quoted branch. Double quotes come last, for a value
+// single quotes cannot hold (one starting with a "'"); they are safe only when
+// the value has no "$", '"' or backslash, which is exactly what
+// envValueFitsQuote('"') checks, because the parser expands and unescapes
+// inside them (#2164). A line break is still unrepresentable in every form. A bare value keeps the user's
+// style and gets one separating space before a trailing "#" comment so it
+// cannot be glued ("xy\"z #tag"). When another assignment follows on the same
+// line, a bare value would swallow it (an unquoted value runs to the end of
+// the line), so the quoted form is used instead. When no form can hold the
+// value, the rewrite fails closed instead of writing a file the service cannot
+// read.
 func envValueReplacement(content []byte, a envAssignment, value string) ([]byte, error) {
 	if a.quote != 0 && envValueFitsQuote(a.quote, value) {
 		replacement := make([]byte, 0, len(value)+2)
@@ -317,6 +322,13 @@ func envValueReplacement(content []byte, a envAssignment, value string) ([]byte,
 	}
 	if envValueFitsQuote('\'', value) {
 		return []byte("'" + value + "'"), nil
+	}
+	// The double-quoted branch is expanded and unescaped by the parser, so
+	// envValueFitsQuote('"') admits it only for a value with no "$", '"' or
+	// backslash. That still rescues values single quotes cannot hold — one
+	// starting with "'" — which used to be refused outright (#2164).
+	if envValueFitsQuote('"', value) {
+		return []byte(`"` + value + `"`), nil
 	}
 	return nil, envValueRefusal(content, &a, a.key)
 }
@@ -417,6 +429,8 @@ func appendEnvAssignment(content []byte, key, value string) ([]byte, error) {
 		text = value
 	case envValueFitsQuote('\'', value):
 		text = "'" + value + "'"
+	case envValueFitsQuote('"', value):
+		text = `"` + value + `"`
 	default:
 		return nil, envValueRefusal(content, nil, key)
 	}

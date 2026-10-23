@@ -10,6 +10,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
 
@@ -161,34 +162,26 @@ placeholder instead.`,
 			table.AddRow([]string{"Auto-Update Mode", cfg.AutoUpdate.Mode})
 			table.AddRow([]string{"Auto-Update Interval", cfg.AutoUpdate.CheckInterval})
 
-			// Show environment variables from standalone .env.local if it exists
+			// Show environment variables from standalone .env.local if it exists.
+			// Values are parsed with godotenv — the grammar the service and the
+			// env-file writer both use — so a value the writer quoted prints
+			// without its quotes instead of as "'p@ss #1'" (#2164).
 			homeDir, _ = os.UserHomeDir()
 			envPath := filepath.Join(homeDir, ".memory", "config", ".env.local")
-			if _, err := os.Stat(envPath); err == nil {
-				content, err := os.ReadFile(envPath)
-				if err == nil {
-					lines := strings.Split(string(content), "\n")
-					for _, line := range lines {
-						if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
-							val := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
-							if val != "" {
-								table.AddRow([]string{"GOOGLE_API_KEY", maskSecret(val) + " (.env.local)"})
-							}
+			if content, err := os.ReadFile(envPath); err == nil {
+				values := parseStandaloneEnv(content)
+				for _, key := range standaloneEnvDisplayKeys {
+					val, ok := values[key]
+					if !ok {
+						continue
+					}
+					switch key {
+					case "GOOGLE_API_KEY", "OPENAI_API_KEY":
+						if val != "" {
+							table.AddRow([]string{key, maskSecret(val) + " (.env.local)"})
 						}
-						if strings.HasPrefix(line, "OPENAI_BASE_URL=") {
-							val := strings.TrimPrefix(line, "OPENAI_BASE_URL=")
-							table.AddRow([]string{"OPENAI_BASE_URL", val + " (.env.local)"})
-						}
-						if strings.HasPrefix(line, "OPENAI_API_KEY=") {
-							val := strings.TrimPrefix(line, "OPENAI_API_KEY=")
-							if val != "" {
-								table.AddRow([]string{"OPENAI_API_KEY", maskSecret(val) + " (.env.local)"})
-							}
-						}
-						if strings.HasPrefix(line, "LLM_MODEL=") {
-							val := strings.TrimPrefix(line, "LLM_MODEL=")
-							table.AddRow([]string{"LLM_MODEL", val + " (.env.local)"})
-						}
+					default:
+						table.AddRow([]string{key, val + " (.env.local)"})
 					}
 				}
 			}
@@ -200,6 +193,55 @@ placeholder instead.`,
 
 	cmd.Flags().StringVar(&configPath, "config", "", "config file path")
 	return cmd
+}
+
+// standaloneEnvDisplayKeys are the .env.local values `memory config show`
+// displays, in display order.
+var standaloneEnvDisplayKeys = []string{"GOOGLE_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY", "LLM_MODEL"}
+
+// parseStandaloneEnv reads the values `memory config show` displays out of the
+// contents of .env.local.
+//
+// The bounds are deliberate: this is a display path, so it reports what it can
+// and never fails the command. A file godotenv parses is read through it — the
+// same grammar the service and the env-file writer use — so a value the writer
+// quoted (#2155, #2163) is shown without its quotes (#2164). One malformed
+// line makes godotenv reject the whole file, so the prefix scan below is the
+// fallback that still shows the well-formed assignments rather than nothing;
+// it strips a matching quote pair because that is the common case the parser
+// would have handled.
+func parseStandaloneEnv(content []byte) map[string]string {
+	values := make(map[string]string, len(standaloneEnvDisplayKeys))
+	if parsed, err := godotenv.Unmarshal(string(content)); err == nil {
+		for _, key := range standaloneEnvDisplayKeys {
+			if val, ok := parsed[key]; ok {
+				values[key] = val
+			}
+		}
+		return values
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
+		for _, key := range standaloneEnvDisplayKeys {
+			if val, ok := strings.CutPrefix(line, key+"="); ok {
+				// Last assignment wins, as it does for godotenv and
+				// `docker compose --env-file`.
+				values[key] = trimEnvQuotes(strings.TrimSpace(val))
+			}
+		}
+	}
+	return values
+}
+
+// trimEnvQuotes drops one matching quote pair, so the fallback path renders a
+// quoted value the same way the parsed path does.
+func trimEnvQuotes(s string) string {
+	if len(s) >= 2 {
+		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }
 
 // Settable keys and their mapping for standalone .env.local
