@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/agentdefinitions"
@@ -26,7 +28,16 @@ var listAgentDefsCmd = &cobra.Command{
 	Long: `List all agent definitions for the current project.
 
 Prints a numbered list with each definition's Name, ID, Visibility,
-IsDefault flag, Tool count, and Description (if set).`,
+IsDefault flag, Tool count, and Description (if set).
+
+Use --json for the summaries as a fixed-schema JSON array: every field this
+command emits is always present, with null for unset values and [] for unset
+lists, so the key set does not change with the definition's state.
+
+A summary is narrower than 'get': it does not carry systemPrompt, model,
+tools, skills, config or acpConfig at all, and the SDK summary does not decode
+enabled, hasSandboxConfig, effectiveModel or workConfig even though the list
+endpoint returns them. Use 'get <id> --json' for the full definition.`,
 	RunE: runListAgentDefs,
 }
 
@@ -39,7 +50,11 @@ Prints Name, ID, ProjectID, Visibility, IsDefault, Description (if
 set), System Prompt (truncated to 200 characters), Model configuration (Name,
 Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
 (DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
-and any extra Config JSON.`,
+and any extra Config JSON.
+
+Use --json for a fixed-schema JSON object: every documented field is always
+present (null for unset values, [] for unset lists), so the key set does not
+change with the definition's state.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runGetAgentDef,
 }
@@ -89,6 +104,171 @@ var (
 	getAgentDefJSONOutput   bool
 )
 
+// ── --json output contracts ──────────────────────────────────────────────────
+//
+// The SDK types this command encodes tag every optional field `omitempty`, so
+// the key set of the raw encoding is a function of the definition's state: a
+// definition created without a description simply has no `description` key, and
+// a script reading `.description` cannot tell "never set" from "removed in a
+// newer CLI". `projects get/list --json` had the same defect (#2065, fixed in
+// #2070); this is the same projection, for the same reason (#2094).
+//
+// The SDK types stay untouched: they are the public wire contract for every SDK
+// consumer, so dropping `omitempty` there would change everyone's JSON. The CLI
+// projects onto its own types instead.
+//
+// Zero-value conventions — consumers depend on these, so they are deliberate:
+//
+//   - pointers encode as null when unset, and so do maps and uiConfig (an
+//     opaque json.RawMessage): the key is always present with a null value.
+//     Null rather than {} is a consistency choice, not a claim that the two
+//     states differ — the server's omitempty drops an empty map too, so this
+//     SDK cannot tell them apart.
+//   - slices encode as [] when unset, never null. An unset list and an empty
+//     list mean the same thing to a definition, and iterating [] is safe while
+//     iterating null is not.
+//   - strings, numbers and bools keep their Go zero value ("", 0, false).
+
+// agentDefinitionJSON is the fixed shape of `agent-definitions get --json`.
+type agentDefinitionJSON struct {
+	ID             string                    `json:"id"`
+	ProductID      *string                   `json:"productId"`
+	ProjectID      string                    `json:"projectId"`
+	Name           string                    `json:"name"`
+	Description    *string                   `json:"description"`
+	SystemPrompt   *string                   `json:"systemPrompt"`
+	Model          *agentDefinitionModelJSON `json:"model"`
+	Tools          []string                  `json:"tools"`
+	Skills         []string                  `json:"skills"`
+	AutoLoadSkills bool                      `json:"autoLoadSkills"`
+	IsDefault      bool                      `json:"isDefault"`
+	MaxSteps       *int                      `json:"maxSteps"`
+	DefaultTimeout *int                      `json:"defaultTimeout"`
+	Visibility     string                    `json:"visibility"`
+	DispatchMode   string                    `json:"dispatchMode"`
+	ACPConfig      *agentDefinitionACPJSON   `json:"acpConfig"`
+	Config         map[string]any            `json:"config"`
+	UIConfig       json.RawMessage           `json:"uiConfig"`
+	CreatedAt      time.Time                 `json:"createdAt"`
+	UpdatedAt      time.Time                 `json:"updatedAt"`
+}
+
+// agentDefinitionModelJSON is the fixed shape of the nested `model` object.
+// The SDK's ModelConfig is omitempty on every field but `name`.
+type agentDefinitionModelJSON struct {
+	Name           string   `json:"name"`
+	Temperature    *float32 `json:"temperature"`
+	MaxTokens      *int     `json:"maxTokens"`
+	EnableThinking *bool    `json:"enableThinking"`
+}
+
+// agentDefinitionACPJSON is the fixed shape of the nested `acpConfig` object.
+type agentDefinitionACPJSON struct {
+	DisplayName  string   `json:"displayName"`
+	Description  string   `json:"description"`
+	Capabilities []string `json:"capabilities"`
+	InputModes   []string `json:"inputModes"`
+	OutputModes  []string `json:"outputModes"`
+}
+
+// agentDefinitionSummaryJSON is the fixed shape of `agent-definitions list
+// --json` (the endpoint returns summaries, not full definitions).
+type agentDefinitionSummaryJSON struct {
+	ID          string          `json:"id"`
+	ProjectID   string          `json:"projectId"`
+	Name        string          `json:"name"`
+	Description *string         `json:"description"`
+	Visibility  string          `json:"visibility"`
+	IsDefault   bool            `json:"isDefault"`
+	ToolCount   int             `json:"toolCount"`
+	UIConfig    json.RawMessage `json:"uiConfig"`
+	CreatedAt   time.Time       `json:"createdAt"`
+	UpdatedAt   time.Time       `json:"updatedAt"`
+}
+
+func newAgentDefinitionJSON(d agentdefinitions.AgentDefinition) agentDefinitionJSON {
+	out := agentDefinitionJSON{
+		ID:             d.ID,
+		ProductID:      d.ProductID,
+		ProjectID:      d.ProjectID,
+		Name:           d.Name,
+		Description:    d.Description,
+		SystemPrompt:   d.SystemPrompt,
+		Tools:          stringSliceOrEmpty(d.Tools),
+		Skills:         stringSliceOrEmpty(d.Skills),
+		AutoLoadSkills: d.AutoLoadSkills,
+		IsDefault:      d.IsDefault,
+		MaxSteps:       d.MaxSteps,
+		DefaultTimeout: d.DefaultTimeout,
+		Visibility:     d.Visibility,
+		DispatchMode:   d.DispatchMode,
+		Config:         d.Config,
+		UIConfig:       d.UIConfig,
+		CreatedAt:      d.CreatedAt,
+		UpdatedAt:      d.UpdatedAt,
+	}
+	if d.Model != nil {
+		out.Model = &agentDefinitionModelJSON{
+			Name:           d.Model.Name,
+			Temperature:    d.Model.Temperature,
+			MaxTokens:      d.Model.MaxTokens,
+			EnableThinking: d.Model.EnableThinking,
+		}
+	}
+	if d.ACPConfig != nil {
+		out.ACPConfig = &agentDefinitionACPJSON{
+			DisplayName:  d.ACPConfig.DisplayName,
+			Description:  d.ACPConfig.Description,
+			Capabilities: stringSliceOrEmpty(d.ACPConfig.Capabilities),
+			InputModes:   stringSliceOrEmpty(d.ACPConfig.InputModes),
+			OutputModes:  stringSliceOrEmpty(d.ACPConfig.OutputModes),
+		}
+	}
+	return out
+}
+
+func newAgentDefinitionSummaryJSON(s agentdefinitions.AgentDefinitionSummary) agentDefinitionSummaryJSON {
+	return agentDefinitionSummaryJSON{
+		ID:          s.ID,
+		ProjectID:   s.ProjectID,
+		Name:        s.Name,
+		Description: s.Description,
+		Visibility:  s.Visibility,
+		IsDefault:   s.IsDefault,
+		ToolCount:   s.ToolCount,
+		UIConfig:    s.UIConfig,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   s.UpdatedAt,
+	}
+}
+
+func newAgentDefinitionSummaryJSONList(in []agentdefinitions.AgentDefinitionSummary) []agentDefinitionSummaryJSON {
+	out := make([]agentDefinitionSummaryJSON, 0, len(in))
+	for _, s := range in {
+		out = append(out, newAgentDefinitionSummaryJSON(s))
+	}
+	return out
+}
+
+// stringSliceOrEmpty normalises the "unset slice encodes as []" rule; a
+// non-nil empty slice already encodes as [].
+func stringSliceOrEmpty(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
+// printAgentDefinitionJSON writes the `get --json` document.
+func printAgentDefinitionJSON(w io.Writer, d agentdefinitions.AgentDefinition) error {
+	return json.NewEncoder(w).Encode(newAgentDefinitionJSON(d))
+}
+
+// printAgentDefinitionListJSON writes the `list --json` document.
+func printAgentDefinitionListJSON(w io.Writer, defs []agentdefinitions.AgentDefinitionSummary) error {
+	return json.NewEncoder(w).Encode(newAgentDefinitionSummaryJSONList(defs))
+}
+
 func runListAgentDefs(cmd *cobra.Command, args []string) error {
 	projectID, err := resolveProjectContext(cmd, "")
 	if err != nil {
@@ -107,7 +287,7 @@ func runListAgentDefs(cmd *cobra.Command, args []string) error {
 	}
 
 	if listAgentDefsJSONOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(result.Data)
+		return printAgentDefinitionListJSON(cmd.OutOrStdout(), result.Data)
 	}
 
 	if len(result.Data) == 0 {
@@ -209,7 +389,7 @@ func runGetAgentDef(cmd *cobra.Command, args []string) error {
 
 	d := result.Data
 	if getAgentDefJSONOutput {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(d)
+		return printAgentDefinitionJSON(cmd.OutOrStdout(), d)
 	}
 	fmt.Printf("Agent Definition: %s\n", d.Name)
 	fmt.Printf("  ID:              %s\n", d.ID)

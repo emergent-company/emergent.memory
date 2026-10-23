@@ -65,7 +65,10 @@ var a2aDiscoverCmd = &cobra.Command{
 	Long: `Fetch and display the authenticated extended AgentCard.
 
 The card lists every agent with visibility='external' in the current project
-as an A2A skill. Use --json for the raw JSON response.`,
+as an A2A skill. Use --json for the extended AgentCard exactly as the server
+returned it: the A2A v1.0 wire object, where optional members (provider,
+documentationUrl, securitySchemes, iconUrl, ...) are absent until the card sets
+them. The shape is the protocol's, not a CLI schema.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := getA2AClient(cmd)
 		if err != nil {
@@ -125,7 +128,11 @@ prompts you interactively and resumes the task automatically.
 
 Use --task <id> to resume an existing input-required task by ID; in that case
 the skill id positional is accepted but not re-sent (the server infers the
-agent from the task).`,
+agent from the task).
+
+Use --json to print the A2A wire object the server returned as-is: a Task, or
+a {"message": ...} envelope (SendMessageResponse) when the reply is turn-scoped.
+Optional protocol members are absent when unset, per A2A v1.0.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		skillID := args[0]
@@ -373,7 +380,9 @@ var a2aTasksGetCmd = &cobra.Command{
 	Short: "Get an A2A task by ID",
 	Long: `Get the current state of an A2A task.
 
-Use --history-length to include history messages. Use --json for raw output.`,
+Use --history-length to include history messages. Use --json for the A2A Task
+exactly as the server returned it: the A2A v1.0 wire object, where optional
+members (artifacts, history, metadata, ...) are absent when unset.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := getA2AClient(cmd)
@@ -403,8 +412,10 @@ var a2aTasksListCmd = &cobra.Command{
 	Short: "List A2A tasks",
 	Long: `List project-scoped A2A tasks.
 
-Optionally filter by --context <id> and/or --status <state>. Use --json for
-the raw JSON response.`,
+Optionally filter by --context <id> and/or --status <state>. Use --json for the
+ListTasksResponse exactly as the server returned it: the A2A v1.0 wire object,
+where the pagination members (nextPageToken, pageSize, totalSize) are absent
+when unset.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := getA2AClient(cmd)
 		if err != nil {
@@ -450,7 +461,11 @@ var a2aTasksCancelCmd = &cobra.Command{
 	Long: `Request cancellation of a running or queued A2A task.
 
 The task transitions to TASK_STATE_CANCELED. Cancelling a terminal task is
-rejected.`,
+rejected.
+
+Use --json for the A2A Task exactly as the server returned it: the A2A v1.0
+wire object, where optional members (artifacts, history, metadata, ...) are
+absent when unset.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := getA2AClient(cmd)
@@ -481,6 +496,33 @@ rejected.`,
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 // a2aPrintJSON encodes v as indented JSON to w.
+//
+// This is a passthrough on purpose: every type that reaches it is an A2A v1.0
+// wire object, so the protocol — not the CLI — defines its shape:
+//
+//	discover       *a2a.AgentCard
+//	send           *a2a.SendMessageResponse, or *a2a.Task when the reply is a task
+//	tasks get      *a2a.Task
+//	tasks list     *a2a.ListTasksResponse
+//	tasks cancel   *a2a.Task
+//
+// #2094 asked for the same no-`omitempty` projection `projects --json` got in
+// #2070, and that would be wrong here. Those SDK types carry `omitempty` because
+// the A2A JSON binding is proto3 JSON: an unset optional member is legitimately
+// absent, and `Part` (text/raw/url/data), `SendMessageResponse`
+// (task/message), `StreamResponse` and `SecurityScheme` are *presence unions* —
+// member presence is the discriminator, there is no `kind` field. A
+// no-`omitempty` projection would not emit both variants at once (proto3 JSON
+// parses `null` as unset), but it would still be wrong: stabilising the
+// containers while leaving the nested protocol unions state-dependent is an
+// incoherent half-contract, and stabilising the whole tree means
+// re-implementing A2A inside the CLI, which then drifts from the server. The
+// key set here is therefore spec-optional, not CLI state: absence means "unset
+// per A2A v1.0", and it can never mean "removed in a newer CLI". The --help
+// text for each command says so.
+//
+// Do not add a projection here without changing that contract deliberately:
+// internal/cmd/a2a_test.go pins that this stays a passthrough.
 func a2aPrintJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

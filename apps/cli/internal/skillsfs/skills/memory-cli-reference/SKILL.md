@@ -70,7 +70,10 @@ Discover externally-visible agents (extended AgentCard)
 Fetch and display the authenticated extended AgentCard.
 
 The card lists every agent with visibility='external' in the current project
-as an A2A skill. Use --json for the raw JSON response.
+as an A2A skill. Use --json for the extended AgentCard exactly as the server
+returned it: the A2A v1.0 wire object, where optional members (provider,
+documentationUrl, securitySchemes, iconUrl, ...) are absent until the card sets
+them. The shape is the protocol's, not a CLI schema.
 
 ```
 memory a2a discover [flags]
@@ -102,6 +105,10 @@ prompts you interactively and resumes the task automatically.
 Use --task <id> to resume an existing input-required task by ID; in that case
 the skill id positional is accepted but not re-sent (the server infers the
 agent from the task).
+
+Use --json to print the A2A wire object the server returned as-is: a Task, or
+a {"message": ...} envelope (SendMessageResponse) when the reply is turn-scoped.
+Optional protocol members are absent when unset, per A2A v1.0.
 
 ```
 memory a2a send <agent-skill-id> [flags]
@@ -141,6 +148,10 @@ Request cancellation of a running or queued A2A task.
 The task transitions to TASK_STATE_CANCELED. Cancelling a terminal task is
 rejected.
 
+Use --json for the A2A Task exactly as the server returned it: the A2A v1.0
+wire object, where optional members (artifacts, history, metadata, ...) are
+absent when unset.
+
 ```
 memory a2a tasks cancel <id> [flags]
 ```
@@ -159,7 +170,9 @@ Get an A2A task by ID
 
 Get the current state of an A2A task.
 
-Use --history-length to include history messages. Use --json for raw output.
+Use --history-length to include history messages. Use --json for the A2A Task
+exactly as the server returned it: the A2A v1.0 wire object, where optional
+members (artifacts, history, metadata, ...) are absent when unset.
 
 ```
 memory a2a tasks get <id> [flags]
@@ -180,8 +193,10 @@ List A2A tasks
 
 List project-scoped A2A tasks.
 
-Optionally filter by --context <id> and/or --status <state>. Use --json for
-the raw JSON response.
+Optionally filter by --context <id> and/or --status <state>. Use --json for the
+ListTasksResponse exactly as the server returned it: the A2A v1.0 wire object,
+where the pagination members (nextPageToken, pageSize, totalSize) are absent
+when unset.
 
 ```
 memory a2a tasks list [flags]
@@ -364,6 +379,10 @@ Temperature, MaxTokens), Tools list, MaxSteps, DefaultTimeout, ACP Config
 (DisplayName, Description, Capabilities), CreatedAt and UpdatedAt timestamps,
 and any extra Config JSON.
 
+Use --json for a fixed-schema JSON object: every documented field is always
+present (null for unset values, [] for unset lists), so the key set does not
+change with the definition's state.
+
 ```
 memory agent-definitions get [id] [flags]
 ```
@@ -385,6 +404,15 @@ List all agent definitions for the current project.
 
 Prints a numbered list with each definition's Name, ID, Visibility,
 IsDefault flag, Tool count, and Description (if set).
+
+Use --json for the summaries as a fixed-schema JSON array: every field this
+command emits is always present, with null for unset values and [] for unset
+lists, so the key set does not change with the definition's state.
+
+A summary is narrower than 'get': it does not carry systemPrompt, model,
+tools, skills, config or acpConfig at all, and the SDK summary does not decode
+enabled, hasSandboxConfig, effectiveModel or workConfig even though the list
+endpoint returns them. Use 'get <id> --json' for the full definition.
 
 ```
 memory agent-definitions list [flags]
