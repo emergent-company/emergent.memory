@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,13 +75,87 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
+// configFileMode is the mode Save creates a config file with. config.yaml can
+// hold an account API key (`memory config set api_key`), so it must never be
+// created world-readable.
+const configFileMode os.FileMode = 0o600
+
+// Save writes cfg to path.
+//
+// os.WriteFile applies its perm argument only when it creates the file, so an
+// existing file keeps its mode. Creating at 0600 covers the credential case;
+// what to do about an over-permissive existing file depends on who owns it:
+//
+//   - The default path (~/.memory/config.yaml) is per-user by construction, so
+//     an existing file that is wider than 0600 is tightened before the write
+//     (tighten first, so a new key is never briefly readable at the old mode).
+//   - An explicit --config / MEMORY_CONFIG path may be a file shared between
+//     users (e.g. a shared admin location). Forcing 0600 on every save there
+//     would lock the other users out, so its existing mode is left alone; the
+//     owner can chmod it if it should be restrictive.
 func Save(cfg *Config, path string) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	if isDefaultPath(path) {
+		if err := tightenExistingFile(path, configFileMode); err != nil {
+			return err
+		}
+	}
+
+	return os.WriteFile(path, data, configFileMode)
+}
+
+// tightenExistingFile forces path to mode when it already exists and is a
+// regular file. A symlink is left alone: chmod would follow it and change the
+// mode of a target that may belong to someone else.
+func tightenExistingFile(path string, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	if info.Mode().Perm()&0o077 == 0 {
+		return nil
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		// Fail closed: writing a credential into a file we failed to tighten
+		// would leave it readable at its previous mode.
+		return fmt.Errorf("failed to tighten permissions on %s: %w", path, err)
+	}
+	return nil
+}
+
+// isDefaultPath reports whether path is the default config path,
+// ~/.memory/config.yaml.
+//
+// Both sides are made absolute and cleaned before comparison rather than
+// compared as strings, so "." / ".." segments and a relative path still match.
+// Symlinks in the path are deliberately not resolved (no EvalSymlinks): when the
+// home directory is itself reached through a symlink, resolving the argument
+// would stop it matching the default path we compute, and the file would
+// silently stay world-readable.
+func isDefaultPath(path string) bool {
+	defaultPath, ok := defaultConfigPath()
+	if !ok {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absDefault, err := filepath.Abs(defaultPath)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(absPath) == filepath.Clean(absDefault)
 }
 
 func defaults() *Config {
@@ -127,13 +202,21 @@ func DiscoverPath(flagPath string) string {
 		}
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
+	defaultPath, ok := defaultConfigPath()
+	if !ok {
 		return ".memory/config.yaml"
 	}
-
-	defaultPath := filepath.Join(homeDir, ".memory", "config.yaml")
 	return defaultPath
+}
+
+// defaultConfigPath returns the default config path, ~/.memory/config.yaml.
+// ok is false when the home directory cannot be determined.
+func defaultConfigPath() (string, bool) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		return "", false
+	}
+	return filepath.Join(homeDir, ".memory", "config.yaml"), true
 }
 
 func LoadWithEnv(path string) (*Config, error) {
