@@ -1,5 +1,10 @@
 # LangExtract vs LangGraph Extraction Pipeline Comparison
 
+> **Historical (2025-12-07 evaluation).** The LangGraph extraction pipeline
+> compared here was removed with the legacy NestJS backend (80f4ef461); entity
+> and relationship extraction now runs in the Go server. Kept as a record of the
+> evaluation, not as a description of current architecture.
+
 **Date**: 2025-12-07  
 **Test Document**: Ruth ch1 intro (704 characters)  
 **Model**: Gemini 2.5 Flash

@@ -1,5 +1,10 @@
 # Chat RAG Integration with Knowledge Graph
 
+> **Historical design note (NestJS era).** The `langgraph.service.ts` /
+> `unified-search.service.ts` design described here no longer exists: the legacy
+> NestJS backend was removed in 80f4ef461 and chat plus retrieval now run in the
+> Go server. Kept as a record of the design, not as current architecture.
+
 ## Overview
 
 This document describes the integration of Retrieval-Augmented Generation (RAG) with the chat system, enabling the AI to access and reference knowledge from the unified search system (graph objects + document chunks).

@@ -2536,51 +2536,11 @@ Table "kb"."work_item_state" {
 }
 // kb.work_item_state: Per-work-item failure budget ledger (object-driven work). Keyed by canonical_id so the count survives re-enqueue and version churn.
 
-Table "public"."checkpoint_blobs" {
-  "thread_id" text [pk]
-  "checkpoint_ns" text [pk, default: '']
-  "channel" text [pk]
-  "version" text [pk]
-  "type" text [not null]
-  "blob" bytea
-}
-
-Table "public"."checkpoint_migrations" {
-  "v" integer [pk]
-}
-
-Table "public"."checkpoint_writes" {
-  "thread_id" text [pk]
-  "checkpoint_ns" text [pk, default: '']
-  "checkpoint_id" text [pk]
-  "task_id" text [pk]
-  "idx" integer [pk]
-  "channel" text [not null]
-  "type" text
-  "blob" bytea [not null]
-}
-
-Table "public"."checkpoints" {
-  "thread_id" text [pk]
-  "checkpoint_ns" text [pk, default: '']
-  "checkpoint_id" text [pk]
-  "parent_checkpoint_id" text
-  "type" text
-  "checkpoint" jsonb [not null]
-  "metadata" jsonb [not null, default: '{}']
-}
-
 Table "public"."goose_db_version" {
   "id" integer [pk]
   "version_id" bigint [not null]
   "is_applied" boolean [not null]
   "tstamp" timestamp [not null, default: `now()`]
-}
-
-Table "public"."typeorm_migrations" {
-  "id" integer [pk, increment]
-  "timestamp" bigint [not null]
-  "name" varchar [not null]
 }
 
 // References

@@ -118,13 +118,13 @@ These tables are intentionally global or system-wide:
 
 ### Public Schema (System Tables)
 
-| Table                   | Reason                |
-| ----------------------- | --------------------- |
-| `checkpoints`           | LangGraph persistence |
-| `checkpoint_blobs`      | LangGraph persistence |
-| `checkpoint_writes`     | LangGraph persistence |
-| `checkpoint_migrations` | LangGraph persistence |
-| `typeorm_migrations`    | Schema migrations     |
+| Table              | Reason            |
+| ------------------ | ----------------- |
+| `goose_db_version` | Schema migrations |
+
+> The four LangGraph `checkpoint_*` tables and `typeorm_migrations` that used to
+> occupy `public` were empty leftovers of the retired NestJS backend and are
+> dropped by `apps/server/migrations/00246_drop_legacy_public_tables.sql`.
 
 ---
 

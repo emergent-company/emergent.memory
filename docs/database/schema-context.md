@@ -84,9 +84,10 @@ User identity and profile data.
 
 ### `public` Schema
 
-PostgreSQL extensions and TypeORM metadata.
+Schema-migration bookkeeping and PostgreSQL extensions. Application data never
+lives here.
 
-- `typeorm_migrations` - Migration history
+- `goose_db_version` - Migration history (Goose)
 - `public.vector` - pgvector extension type
 
 ## Common Query Patterns
