@@ -1,8 +1,17 @@
 # Strategic SQL Patterns Guide
 
 **Purpose**: PostgreSQL-specific patterns that require raw SQL  
-**Audience**: All developers working on backend services  
-**Last Updated**: January 2025
+**Audience**: Developers working in `apps/server` (Go, `pgx` v5 + `bun`)  
+**Last Updated**: October 2026
+
+> **Historical examples.** The patterns below are current PostgreSQL techniques —
+> advisory locks, `SKIP LOCKED`, full-text search, pgvector, RLS context — and the
+> Go server uses most of them. The code samples are preserved from the retired
+> NestJS/TypeORM backend this repository replaced, so read them as illustrations
+> of the SQL, not as current call sites. For the Go shape of each pattern, start
+> at the repository named in the [Quick Reference](#quick-reference). Raw SQL goes
+> through the `bun` raw path (`db.NewRaw`, `tx.ExecContext`); `pgxpool` is used
+> directly only where a handler holds the pool (e.g. `domain/health`).
 
 ---
 
@@ -22,7 +31,7 @@
 12. [Pattern 11: Custom Projections (row_to_json)](#pattern-11-custom-projections-row_to_json)
 13. [Pattern 12: RLS Context Setup](#pattern-12-rls-context-setup)
 14. [Best Practices](#best-practices)
-15. [When to Use vs TypeORM](#when-to-use-vs-typeorm)
+15. [When to Use Raw SQL vs the Query Builder](#when-to-use-raw-sql-vs-the-query-builder)
 
 ---
 
@@ -31,18 +40,22 @@
 Use Strategic SQL when:
 
 - ✅ **PostgreSQL-specific features** - Advisory locks, recursive CTEs, full-text search
-- ✅ **Performance-critical operations** - 10x-100x faster than ORM equivalent
+- ✅ **Performance-critical operations** - A hand-tuned query the query builder cannot express
 - ✅ **Complex aggregations** - Window functions, COUNT FILTER, advanced GROUP BY
 - ✅ **Database extensions** - pgvector, pgcrypto, custom functions
 - ✅ **Batch processing** - LATERAL joins, bulk operations
 
 **Don't use Strategic SQL when**:
 
-- ❌ **Simple CRUD** - Use TypeORM Repository
-- ❌ **Basic filtering** - Use TypeORM QueryBuilder
-- ❌ **Standard SQL operations** - Use TypeORM for portability
+- ❌ **Simple CRUD** - Use the `bun` query builder (`db.NewSelect`, `NewInsert`,
+  `NewUpdate`) or a `pgx` scan into a struct
+- ❌ **Basic filtering** - Use the query builder's `Where`/`WhereGroup`
+- ❌ **Standard SQL operations** - Use the query builder unless you need
+  PostgreSQL-specific behaviour
 
-See [TYPEORM_PATTERNS.md](./TYPEORM_PATTERNS.md) for TypeORM patterns.
+Raw SQL lives in the domain repository (`apps/server/domain/<domain>/repository.go`)
+and runs through the `bun` raw path (`db.NewRaw`, `tx.ExecContext`); typed CRUD
+uses the same handle's query builder (`db.NewSelect`, `NewInsert`, `NewUpdate`).
 
 ---
 
@@ -1569,7 +1582,7 @@ USING (
 ### General Guidelines
 
 1. **Use Strategic SQL for PostgreSQL features** - Don't emulate in application code
-2. **Document why Strategic SQL is used** - Explain the benefit over TypeORM
+2. **Document why raw SQL is used** - Explain the benefit over the query builder
 3. **Keep SQL readable** - Use formatting, comments, CTEs
 4. **Use named parameters** - `$1`, `$2` with clear variable names
 5. **Test edge cases** - NULL values, empty results, large datasets
@@ -1592,50 +1605,49 @@ USING (
 
 ### Maintainability
 
-1. **Extract complex queries to service methods** - Don't inline in controllers
-2. **Use TypeScript interfaces for results** - Type safety for query results
-3. **Add JSDoc comments** - Explain what query does and why
+1. **Extract complex queries to repository methods** - Don't inline them in handlers
+2. **Scan into typed Go structs** - Type safety for query results
+3. **Add Go doc comments** - Explain what the query does and why
 4. **Version control migrations** - Track schema changes
 5. **Write integration tests** - Test actual queries against database
 
 ---
 
-## When to Use vs TypeORM
+## When to Use Raw SQL vs the Query Builder
 
 ### Decision Matrix
 
-| Requirement          | Use Strategic SQL | Use TypeORM     |
-| -------------------- | ----------------- | --------------- |
-| Simple CRUD          | ❌                | ✅ Repository   |
-| Complex filtering    | ❌                | ✅ QueryBuilder |
-| PostgreSQL-specific  | ✅ Raw SQL        | ❌              |
-| Performance-critical | ✅ Raw SQL        | ❌              |
-| Transactions         | ❌                | ✅ QueryRunner  |
-| Portability needed   | ❌                | ✅ TypeORM      |
+| Requirement          | Raw SQL (`pgx`) | Query builder (`bun`)        |
+| -------------------- | --------------- | ---------------------------- |
+| Simple CRUD          | ❌              | ✅ `NewSelect`/`NewInsert`   |
+| Complex filtering    | ❌              | ✅ `Where`/`WhereGroup`      |
+| PostgreSQL-specific  | ✅              | ❌                           |
+| Performance-critical | ✅              | ❌                           |
+| Transactions         | ✅ `pgx.Tx`     | ✅ `bun.Tx`                  |
+| Portability needed   | ❌              | ✅                           |
 
 ### Examples by Category
 
-**TypeORM Repository**: `/docs/patterns/TYPEORM_PATTERNS.md#pattern-1`
+**Query builder CRUD** — `apps/server/domain/projects/repository.go`
 
-- Create, read, update, delete single entities
+- Create, read, update, delete single rows
 - Simple queries without complex logic
+- Multi-condition filtering with `Where`/`WhereGroup`
 
-**TypeORM QueryBuilder**: `/docs/patterns/TYPEORM_PATTERNS.md#pattern-2`
-
-- Multiple WHERE conditions
-- Dynamic filtering
-- JOINs across relations
-
-**TypeORM QueryRunner**: `/docs/patterns/TYPEORM_PATTERNS.md#pattern-3`
-
-- Multi-step atomic operations
-- Transactions with validation between steps
-
-**Strategic SQL**: This document
+**Raw SQL** — this document, e.g. `apps/server/domain/graph/repository.go`
 
 - PostgreSQL-specific features
 - Performance-critical operations
 - Complex aggregations
+
+**Transactions** — `apps/server/internal/database`
+
+- Multi-step atomic operations
+- Transactions with validation between steps
+
+**Queue primitives** — `apps/server/internal/jobs/queue.go`
+
+- `FOR UPDATE SKIP LOCKED` claiming, the pattern in Pattern 5
 
 ---
 
@@ -1645,34 +1657,34 @@ USING (
 
 1. **Use Strategic SQL for PostgreSQL features** - Advisory locks, recursive CTEs, full-text search
 2. **Performance matters** - 10x-100x faster for complex operations
-3. **Document why** - Explain why Strategic SQL is better than TypeORM
+3. **Document why** - Explain why raw SQL is better than the query builder it replaces
 4. **Test thoroughly** - Integration tests against real database
 5. **Monitor performance** - Use EXPLAIN ANALYZE and slow query logs
 
 ### Quick Reference
 
-| Pattern                | Use Case                  | Service Example                   |
-| ---------------------- | ------------------------- | --------------------------------- |
-| Advisory Locks         | Race condition prevention | GraphService, TagService          |
-| Recursive CTEs         | Graph/tree traversal      | PathSummaryService, BranchService |
-| Full-Text Search       | Linguistic search         | SearchService, GraphService       |
-| Vector Similarity      | Semantic search           | SearchService                     |
-| FOR UPDATE SKIP LOCKED | Job queues                | EmbeddingJobsService              |
-| pgcrypto               | Credential encryption     | EncryptionService                 |
-| IS NOT DISTINCT FROM   | Null-safe comparison      | BranchService, ChatService        |
-| COUNT FILTER           | Conditional aggregation   | NotificationsService              |
-| LATERAL                | Batch processing          | DiscoveryJobService               |
-| jsonb_path_query_array | JSON extraction           | DiscoveryJobService               |
-| row_to_json            | Custom projections        | TemplatePackService               |
-| RLS Context            | Multi-tenant isolation    | TemplatePackService               |
+| Pattern                | Use Case                  | Go example (under `apps/server/`)      |
+| ---------------------- | ------------------------- | -------------------------------------- |
+| Advisory Locks         | Race condition prevention | `domain/graph`, `domain/scheduler`, `domain/invites` |
+| Recursive CTEs         | Graph/tree traversal      | — (no current call site)               |
+| Full-Text Search       | Linguistic search         | `domain/search`, `domain/graph`, `pkg/ftsquery` |
+| Vector Similarity      | Semantic search           | `domain/search`                        |
+| FOR UPDATE SKIP LOCKED | Job queues                | `internal/jobs`, `domain/sources`      |
+| pgcrypto               | Credential encryption     | `pkg/encryption`                       |
+| IS NOT DISTINCT FROM   | Null-safe comparison      | `domain/mcpregistry`, `domain/search`  |
+| COUNT FILTER           | Conditional aggregation   | `internal/jobs`, `domain/monitoring`, `domain/health` |
+| LATERAL                | Batch processing          | `domain/orgs`, `domain/chunks`, `domain/projects` |
+| jsonb_path_query_array | JSON extraction           | — (no current call site)               |
+| row_to_json            | Custom projections        | — (no current call site)               |
+| RLS Context            | Multi-tenant isolation    | `internal/database`                    |
 
 ---
 
 ## Next Steps
 
-- Read [TYPEORM_PATTERNS.md](./TYPEORM_PATTERNS.md) for TypeORM patterns
-- Review [MIGRATION_TRACKING.md](../migrations/MIGRATION_TRACKING.md) for migration status
-- See [TYPEORM_MIGRATION_SUMMARY.md](../migrations/TYPEORM_MIGRATION_SUMMARY.md) for overall statistics
+- Raw SQL lives in the domain repositories under `apps/server/domain/*/repository.go`
+- Transactions and RLS context live in `apps/server/internal/database`
+- Multi-tenant isolation is documented in [docs/security/rls-comprehensive-audit.md](../security/rls-comprehensive-audit.md)
 
 ---
 

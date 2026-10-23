@@ -1,10 +1,18 @@
 # Automatic Chat Naming System - Design Document
 
+> **Status: design note, not implemented.** This document was written against the
+> NestJS backend (`apps/server/src/...`), which has since been removed. The
+> current Go server (`apps/server/domain/chat`) takes the conversation title from
+> the client — `title` is required and capped at 512 characters — and does not
+> generate one. The task list below is therefore unstarted, not partly
+> done, and every TypeScript path in it refers to code that no longer exists.
+
 ## Current State Analysis
 
 ### Existing Behavior
 
-Based on code investigation in `apps/server/src/modules/chat-sdk/chat-sdk.service.ts`:
+Based on code investigation in the retired NestJS backend
+(`apps/server/src/modules/chat-sdk/chat-sdk.service.ts`):
 
 **When a conversation is created WITHOUT a conversationId:**
 
