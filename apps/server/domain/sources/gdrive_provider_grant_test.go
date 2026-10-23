@@ -149,7 +149,7 @@ func TestDrivePickerSession_GrantStatusIsUnprocessable(t *testing.T) {
 // from the same stored credential as the interactive surfaces, so a dead grant
 // must reach the sync job as the reconnect action, not an internal error.
 func TestDriveEnumerate_GrantRevokedMapsToReconnect(t *testing.T) {
-	connector := &googleDriveConnector{client: &fakeDriveTransport{listErr: revokedGrantErr()}}
+	connector := &googleDriveConnector{client: &fakeDriveTransport{listItemsErr: revokedGrantErr()}}
 	_, err := connector.Enumerate(context.Background(), map[string]any{"folder_id": "folder-1"})
 	assertReconnectMessage(t, err)
 }
@@ -177,7 +177,7 @@ func TestDriveFetch_GrantRevokedMapsToReconnect(t *testing.T) {
 // would fail identically. It stays retryable/diagnosable.
 func TestDriveEnumerate_NonGrantErrorStaysRaw(t *testing.T) {
 	raw := &oauth2.RetrieveError{ErrorCode: "invalid_client", ErrorDescription: "Unauthorized"}
-	connector := &googleDriveConnector{client: &fakeDriveTransport{listErr: raw}}
+	connector := &googleDriveConnector{client: &fakeDriveTransport{listItemsErr: raw}}
 	_, err := connector.Enumerate(context.Background(), map[string]any{"folder_id": "folder-1"})
 	if !errors.Is(err, raw) {
 		t.Fatalf("error = %v, want the raw provider error", err)
@@ -189,27 +189,40 @@ func TestDriveEnumerate_NonGrantErrorStaysRaw(t *testing.T) {
 }
 
 // TestDriveListResources_GrantRevokedMapsToReconnect: listing folders is an
-// interactive surface too. A dead grant must reach the resources endpoint (and
-// the connect form, which lists through the same provider) as the reconnect
-// remediation, not as Google's raw invalid_grant text (#2149).
+// interactive surface too. A dead grant must reach the /resources endpoint as
+// the reconnect remediation, not as Google's raw invalid_grant text (#2149).
+// The provider's errors arrive wrapped (the transport wraps, and callers may
+// wrap again), so the mapping has to survive errors.As (#2157).
 func TestDriveListResources_GrantRevokedMapsToReconnect(t *testing.T) {
-	p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: revokedGrantErr()})
-	_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
-	if err == nil {
-		t.Fatal("ListResources(revoked grant) = nil, want an error")
+	cases := []struct {
+		name string
+		err  error
+	}{
+		{name: "bare retrieve error", err: revokedGrantErr()},
+		{name: "wrapped retrieve error", err: fmt.Errorf("drive: %w", revokedGrantErr())},
 	}
-	if strings.Contains(err.Error(), "invalid_grant") {
-		t.Errorf("ListResources(revoked grant) leaked the raw provider error: %q", err)
-	}
-	var appErr *apperror.Error
-	if !errors.As(err, &appErr) {
-		t.Fatalf("error = %v, want an *apperror.Error", err)
-	}
-	if appErr.HTTPStatus != http.StatusUnprocessableEntity {
-		t.Errorf("status = %d, want %d", appErr.HTTPStatus, http.StatusUnprocessableEntity)
-	}
-	if appErr.Message != driveReconnectRequired {
-		t.Errorf("message = %q, want %q", appErr.Message, driveReconnectRequired)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: tc.err})
+			_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+			if err == nil {
+				t.Fatal("ListResources(revoked grant) = nil, want an error")
+			}
+			if strings.Contains(err.Error(), "invalid_grant") {
+				t.Errorf("ListResources(revoked grant) leaked the raw provider error: %q", err)
+			}
+			var appErr *apperror.Error
+			if !errors.As(err, &appErr) {
+				t.Fatalf("error = %v, want an *apperror.Error", err)
+			}
+			if appErr.HTTPStatus != http.StatusUnprocessableEntity {
+				t.Errorf("status = %d, want %d", appErr.HTTPStatus, http.StatusUnprocessableEntity)
+			}
+			if appErr.Message != driveReconnectRequired {
+				t.Errorf("message = %q, want %q", appErr.Message, driveReconnectRequired)
+			}
+		})
 	}
 }
 

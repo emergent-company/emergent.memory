@@ -717,21 +717,17 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 		if rerr != nil {
 			rerr = dsFormError(rerr)
 		}
-		// An empty drive listing under the drive.file strategy is a dead end (the
-		// Google Picker is not implemented), so surface an actionable notice rather
-		// than the bare empty state.
-		driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
-		return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPageStatic(src, providerName, query, resources, truncated, rerr, driveFileScope, "", nil))
+		return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPageStatic(src, providerName, query, resources, truncated, rerr, "", nil))
 	}
 	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, query, nil, "", nil))
 }
 
 // uiDataSourceResourceList renders the deferred resource-list fragment for a
-// source: it recomputes the source + drive.file scope and lists the provider's
-// resources, then returns the bare list partial (no page layout) for the HTMX
-// swap. Errors map through dsFormError, not userFacingError: the backend's 4xx
-// message is the actionable copy ("reconnect the source…"), and userFacingError
-// would flatten it to "Something went wrong." exactly when the user needs it.
+// source: it recomputes the source and lists the provider's resources, then
+// returns the bare list partial (no page layout) for the HTMX swap. Errors map
+// through dsFormError, not userFacingError: the backend's 4xx message is the
+// actionable copy ("reconnect the source…"), and userFacingError would flatten
+// it to "Something went wrong." exactly when the user needs it.
 func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
@@ -760,8 +756,7 @@ func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	if rerr != nil {
 		rerr = dsFormError(rerr)
 	}
-	driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
-	renderPartial(c.Response().Writer, c.Request(), DataSourceResourceList(src, providerName, resources, truncated, query, rerr, driveFileScope))
+	renderPartial(c.Response().Writer, c.Request(), DataSourceResourceList(src, providerName, resources, truncated, query, rerr))
 	return nil
 }
 
@@ -827,6 +822,14 @@ func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
 		return redirectWithError(c, back, err)
+	}
+	// Drive's sync target is a folder list chosen in the Google Picker, not a
+	// single id from a server-rendered listing: the /resources page and this form
+	// no longer exist for Drive (both bounce to ?picker=1), so a stale POST is
+	// answered on the page that owns the action instead of on a page that would
+	// bounce and drop the message.
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		return redirectWithError(c, dsPickerURL(id), errors.New("choose folders in the Drive picker to set this source's sync target"))
 	}
 	key, ok := dsResourceConfigKey(src.ProviderType)
 	if !ok {

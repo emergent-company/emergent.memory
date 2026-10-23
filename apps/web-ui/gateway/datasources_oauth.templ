@@ -24,8 +24,8 @@ templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, quer
 // DataSourceResourceSelectPageStatic is the no-JavaScript fallback: the same
 // shell with the resource list server-rendered inline instead of deferred (the
 // page handler serves it for ?static=1).
-templ DataSourceResourceSelectPageStatic(src *DSIntegration, providerName string, query string, resources []DSResource, truncated bool, loadErr error, driveFileScope bool, flashMsg string, flashErr error) {
-	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, true, DataSourceResourceList(src, providerName, resources, truncated, query, loadErr, driveFileScope))
+templ DataSourceResourceSelectPageStatic(src *DSIntegration, providerName string, query string, resources []DSResource, truncated bool, loadErr error, flashMsg string, flashErr error) {
+	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, true, DataSourceResourceList(src, providerName, resources, truncated, query, loadErr))
 }
 
 // dsResourceSelectShell is the shared chrome for the resource-selection step:
@@ -114,11 +114,11 @@ templ dsResourceListDeferred(src *DSIntegration, providerName string, query stri
 }
 
 // DataSourceResourceList is the HTMX fragment returned by
-// /data-sources/:id/resources/list: the truncation hint and the three listing
-// states (rows / drive.file notice / empty-with-retry), moved verbatim from the
-// former single-shot page. The retry control re-issues the list request
-// client-side instead of reloading the whole page.
-templ DataSourceResourceList(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error, driveFileScope bool) {
+// /data-sources/:id/resources/list: the truncation hint and the two listing
+// states (rows / empty-with-retry). Google Drive never reaches it — the page and
+// this fragment both bounce to the picker on the detail page — so there is no
+// Drive-specific empty state here.
+templ DataSourceResourceList(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error) {
 	<div id="ds-resource-list-root">
 		if truncated {
 			@ui.EmptyNote(ui.EmptyNoteProps{
@@ -153,57 +153,33 @@ templ DataSourceResourceList(src *DSIntegration, providerName string, resources 
 				}
 			</div>
 		} else if len(resources) == 0 {
-			if driveFileScope {
-				<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-drivefile">
-					@ui.Alert(ui.AlertProps{
-						Type:    ui.AlertWarning,
-						Style:   ui.AlertStyleSoft,
-						Icon:    "lucide--alert-triangle",
-						Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. That grant cannot see a folder's children, so this page cannot list folders; reopen the source's detail page and reconnect it with the read-only Drive scope.",
-					})
-					<div class="flex flex-wrap items-center gap-2">
-						@ui.Button(ui.ButtonProps{
-							Type:    ui.ButtonTypeLink,
-							Href:    "/settings/credentials",
-							Variant: ui.ButtonPrimary,
-							Size:    ui.ButtonSM,
-							Icon:    "lucide--settings",
-							Attrs:   templ.Attributes{"data-testid": "ds-resource-drivefile-credentials"},
-						}) {
-							Settings → Credentials
-						}
-						<span class="text-sm text-muted">Set the OAuth app strategy to drive.readonly in Settings → Credentials (project) or Organization Settings → Data source OAuth clients (organization), then reconnect this source.</span>
-					</div>
-				</div>
-			} else {
-				<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
-					@ui.Alert(ui.AlertProps{
-						Type:    ui.AlertWarning,
-						Style:   ui.AlertStyleSoft,
-						Icon:    "lucide--alert-triangle",
-						Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
-					})
-					// A link, not a button: the retry must also work on the
-					// ?static=1 no-JS path, where hx-get never runs. With HTMX
-					// the hx-get below wins and only the fragment is re-requested;
-					// without it the href reloads the server-rendered static page.
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    dsResourceStaticURL(src.ID, query),
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--refresh-cw",
-						Attrs: templ.Attributes{
-							"data-testid": "ds-resource-retry",
-							"hx-get":      dsResourceListURL(src.ID, query),
-							"hx-target":   "closest #ds-resource-list-root",
-							"hx-swap":     "outerHTML",
-						},
-					}) {
-						Try again
-					}
-				</div>
-			}
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
+				})
+				// A link, not a button: the retry must also work on the
+				// ?static=1 no-JS path, where hx-get never runs. With HTMX
+				// the hx-get below wins and only the fragment is re-requested;
+				// without it the href reloads the server-rendered static page.
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    dsResourceStaticURL(src.ID, query),
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-resource-retry",
+						"hx-get":      dsResourceListURL(src.ID, query),
+						"hx-target":   "closest #ds-resource-list-root",
+						"hx-swap":     "outerHTML",
+					},
+				}) {
+					Try again
+				}
+			</div>
 		} else {
 			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
 				for _, r := range resources {

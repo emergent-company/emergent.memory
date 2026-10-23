@@ -264,7 +264,7 @@ func TestRenderDataSourceResourceSelectPage(t *testing.T) {
 func TestRenderDataSourceResourceSelectPageStaticSearchKeepsMode(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
 
-	static := renderHTML(t, DataSourceResourceSelectPageStatic(src, "Google Drive", "", nil, false, nil, false, "", nil))
+	static := renderHTML(t, DataSourceResourceSelectPageStatic(src, "Google Drive", "", nil, false, nil, "", nil))
 	if !strings.Contains(static, `name="static" value="1"`) {
 		t.Error("static shell search form must carry the hidden static field")
 	}
@@ -279,7 +279,7 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
 	resources := []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}, {ID: "f2", Name: "Contracts"}}
 
-	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, false, "", nil, false))
+	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, false, "", nil))
 	for _, want := range []string{
 		`data-testid="ds-resource-row"`,
 		"Reports", "Contracts",
@@ -298,7 +298,7 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 
 	// A truncated listing renders the note; the flag — not the item count —
 	// controls it.
-	truncated := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, true, "", nil, false))
+	truncated := renderHTML(t, DataSourceResourceList(src, "Google Drive", resources, true, "", nil))
 	if !strings.Contains(truncated, `data-testid="ds-resource-truncated"`) {
 		t.Error("truncation note missing for a truncated listing")
 	}
@@ -306,7 +306,7 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 		t.Error("truncation note missing its search-by-name hint")
 	}
 
-	empty := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, false))
+	empty := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil))
 	if !strings.Contains(empty, `data-testid="ds-resource-empty"`) {
 		t.Error("resource empty state missing")
 	}
@@ -327,14 +327,14 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 	}
 
 	// A non-Drive provider gets a generic resource action label.
-	genericList := renderHTML(t, DataSourceResourceList(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil, false))
+	genericList := renderHTML(t, DataSourceResourceList(&DSIntegration{ID: "s2", ProviderType: "github"}, "GitHub", []DSResource{{ID: "r1", Name: "acme/repo"}}, false, "", nil))
 	if !strings.Contains(genericList, "Use this resource") {
 		t.Error("generic resource action label missing")
 	}
 
 	// A failed listing renders the error state with the message and a retry, not
 	// the empty state: "no resources were returned" would hide the reason.
-	errored := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", errTest, false))
+	errored := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", errTest))
 	if !strings.Contains(errored, `data-testid="ds-resource-error"`) {
 		t.Error("resource error state missing")
 	}
@@ -346,41 +346,6 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 	}
 	if !strings.Contains(errored, `hx-get="/data-sources/s1/resources/list"`) {
 		t.Errorf("error state must offer the HTMX retry: %s", errored)
-	}
-}
-
-func TestRenderDataSourceResourceSelectPageDriveFileEmpty(t *testing.T) {
-	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, true))
-	for _, want := range []string{
-		`data-testid="ds-resource-drivefile"`,
-		"drive.file scope",
-		"detail page and reconnect it",
-		"read-only Drive scope",
-		`href="/settings/credentials"`,
-		`data-testid="ds-resource-drivefile-credentials"`,
-		"drive.readonly",
-		"Settings → Credentials (project)",
-		"Organization Settings",
-		"reconnect this source",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("drive.file empty state missing %q", want)
-		}
-	}
-	if strings.Contains(html, `data-testid="ds-resource-empty"`) {
-		t.Error("drive.file empty state must not render the bare ds-resource-empty state")
-	}
-}
-
-func TestRenderDataSourceResourceSelectPageNonDriveFileEmpty(t *testing.T) {
-	src := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", nil, false))
-	if !strings.Contains(html, `data-testid="ds-resource-empty"`) {
-		t.Error("non-drive.file empty listing must keep the plain empty state")
-	}
-	if strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
-		t.Error("non-drive.file empty listing must not render the drive.file notice")
 	}
 }
 
@@ -435,36 +400,6 @@ func TestDSDriveFileScopePrefersGranted(t *testing.T) {
 	fallback := &DSIntegration{ID: "s1", ProjectID: "p1", ProviderType: "google_drive", OAuthStrategy: "drive.file"}
 	if !dsDriveFileScope(fallback) {
 		t.Error("empty granted strategy should fall back to the configured drive.file strategy")
-	}
-}
-
-func TestRenderDataSourceResourceListPrefersGrantedScope(t *testing.T) {
-	// Granted drive.file with configured drive.readonly still renders the
-	// drive.file notice (the granted scope is what the token can actually do).
-	grantedFile := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.readonly", OAuthGrantedStrategy: "drive.file"}
-	html := renderHTML(t, DataSourceResourceList(grantedFile, "Google Drive", nil, false, "", nil, dsDriveFileScope(grantedFile)))
-	if !strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
-		t.Error("granted drive.file must render the drive.file notice even when configured drive.readonly")
-	}
-	if strings.Contains(html, `data-testid="ds-resource-empty"`) {
-		t.Error("granted drive.file must not render the bare empty state")
-	}
-
-	// Granted drive.readonly with configured drive.file does not render the notice.
-	grantedReadonly := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.file", OAuthGrantedStrategy: "drive.readonly"}
-	html = renderHTML(t, DataSourceResourceList(grantedReadonly, "Google Drive", nil, false, "", nil, dsDriveFileScope(grantedReadonly)))
-	if strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
-		t.Error("granted drive.readonly must not render the drive.file notice even when configured drive.file")
-	}
-	if !strings.Contains(html, `data-testid="ds-resource-empty"`) {
-		t.Error("granted drive.readonly empty listing must keep the plain empty state")
-	}
-
-	// Both empty falls back to the configured drive.file strategy.
-	fallback := &DSIntegration{ID: "s3", Name: "Team Drive", ProviderType: "google_drive", OAuthStrategy: "drive.file"}
-	html = renderHTML(t, DataSourceResourceList(fallback, "Google Drive", nil, false, "", nil, dsDriveFileScope(fallback)))
-	if !strings.Contains(html, `data-testid="ds-resource-drivefile"`) {
-		t.Error("empty granted strategy must fall back to the configured drive.file strategy")
 	}
 }
 
@@ -1748,29 +1683,11 @@ func TestUIDataSourceResourcesQuery(t *testing.T) {
 }
 
 func TestUIDataSourceResourceSave(t *testing.T) {
-	// google_drive no longer accepts the generic resource save: its folder list
-	// is chosen in the Google Picker modal and saved through sync-targets.
-	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}}}
+	// github maps the picked resource to repo and redirects to ?updated=1.
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s2", ProviderType: "github"}}}
 	e := newDSUIServer(f)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
-	}
-	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
-		t.Errorf("drive save location = %q, want an error redirect", loc)
-	}
-	if f.dsSavedResourceID != "" {
-		t.Errorf("drive must not save through the generic resource endpoint: %q", f.dsSavedResourceID)
-	}
-
-	// github maps the picked resource to repo and redirects to ?updated=1.
-	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s2", ProviderType: "github"}}}
-	e = newDSUIServer(f)
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/data-sources/s2/resources", strings.NewReader("resource_id=acme/repo"))
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s2/resources", strings.NewReader("resource_id=acme/repo"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
@@ -2009,12 +1926,30 @@ func TestUIDataSourceResourcesDriveRedirects(t *testing.T) {
 	if f.dsResourcesCallCount != 0 {
 		t.Errorf("ListDSResources called %d times, want 0", f.dsResourcesCallCount)
 	}
+
+	// htmx is how the deferred fragment is actually fetched, so the bounce has to
+	// arrive as HX-Redirect: a 303 would be followed as a full page navigation
+	// and lose the swap context.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hx status = %d, want 200", rec.Code)
+	}
+	if loc := rec.Header().Get("HX-Redirect"); loc != "/data-sources/s1?picker=1" {
+		t.Errorf("HX-Redirect = %q, want the detail page with the picker open", loc)
+	}
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times on the htmx path, want 0", f.dsResourcesCallCount)
+	}
 }
 
 // TestUIDataSourceResourceListDriveRedirects: the deferred fragment must bounce
 // to the same place as its page. Drive picks targets in the Google Picker, so a
 // direct or stale hit on /resources/list must not list folders (and must not
-// reach the backend at all).
+// reach the backend at all) — and because htmx issues that request, the bounce
+// must be HX-Redirect rather than a 303.
 func TestUIDataSourceResourceListDriveRedirects(t *testing.T) {
 	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
 	e := newDSUIServer(f)
@@ -2028,6 +1963,49 @@ func TestUIDataSourceResourceListDriveRedirects(t *testing.T) {
 	}
 	if f.dsResourcesCallCount != 0 {
 		t.Errorf("ListDSResources called %d times, want 0", f.dsResourcesCallCount)
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list", nil)
+	req.Header.Set("HX-Request", "true")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hx status = %d, want 200", rec.Code)
+	}
+	if loc := rec.Header().Get("HX-Redirect"); loc != "/data-sources/s1?picker=1" {
+		t.Errorf("HX-Redirect = %q, want the detail page with the picker open", loc)
+	}
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times on the htmx path, want 0", f.dsResourcesCallCount)
+	}
+}
+
+// TestUIDataSourceResourceSaveDriveRedirects: the server-rendered resource form
+// no longer exists for Drive (its page and fragment bounce), so a stale POST must
+// be answered on the page that owns the action. Previously it failed with
+// "resource selection is not supported for provider google_drive" and sent that
+// message to /resources, which bounced to the picker and dropped it.
+func TestUIDataSourceResourceSaveDriveRedirects(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader(url.Values{"resource_id": {"f1"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/s1?picker=1&err=") {
+		t.Errorf("location = %q, want the picker page carrying the error", loc)
+	}
+	if !strings.Contains(loc, "Drive+picker") {
+		t.Errorf("location = %q, want the picker-specific message", loc)
+	}
+	if f.dsSavedResourceID != "" {
+		t.Errorf("SaveDSResource called for a Drive source (id %q), want no write", f.dsSavedResourceID)
 	}
 }
 

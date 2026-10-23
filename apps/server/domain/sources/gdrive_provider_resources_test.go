@@ -15,7 +15,7 @@ type fakeDriveTransport struct {
 	listCalls      []string
 	getFolders     map[string]gdrive.Folder
 	getErr         error
-	listErr        error
+	listItemsErr   error
 	listFoldersErr error
 	exportErr      error
 	downloadErr    error
@@ -26,8 +26,8 @@ type fakeDriveTransport struct {
 
 func (f *fakeDriveTransport) ListFolderItems(_ context.Context, folderID string, _ []string, _ bool, _ string) ([]gdrive.Item, error) {
 	f.listCalls = append(f.listCalls, folderID)
-	if f.listErr != nil {
-		return nil, f.listErr
+	if f.listItemsErr != nil {
+		return nil, f.listItemsErr
 	}
 	return f.itemsByFolder[folderID], nil
 }
