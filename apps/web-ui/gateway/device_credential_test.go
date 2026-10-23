@@ -37,6 +37,10 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/setup", false},
 		{"DELETE", "/api/agents/abc", false},
 		{"GET", "/api/conversations", false},
+		// The project config is read-only for a device: widening the method
+		// must fail here rather than ship.
+		{"POST", "/api/project/config", false},
+		{"PUT", "/api/project/config", false},
 	}
 	for _, tc := range cases {
 		if got := deviceSurfacePath(tc.method, tc.path); got != tc.want {

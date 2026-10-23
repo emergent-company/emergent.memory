@@ -39,7 +39,14 @@ struct StartView: View {
             .padding(.horizontal, horizontalSizeClass == .regular ? 32 * .grid : 16 * .grid)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .safeAreaInset(edge: .bottom, content: tip)
+        // Only reserve the tip's inset when there is a tip: with voice off the
+        // hint is gone, and an empty inset would leave dead space above the
+        // voice-off notice.
+        .safeAreaInset(edge: .bottom) {
+            if voiceEnabled {
+                tip()
+            }
+        }
     }
 
     private func bars() -> some View {
@@ -55,14 +62,12 @@ struct StartView: View {
 
     private func tip() -> some View {
         VStack(spacing: 2 * .grid) {
-            if voiceEnabled {
-                #if targetEnvironment(simulator)
-                    Text("connect.simulator")
-                        .foregroundStyle(.fgModerate)
-                #endif
-                Text("connect.tip")
-                    .foregroundStyle(.fg3)
-            }
+            #if targetEnvironment(simulator)
+                Text("connect.simulator")
+                    .foregroundStyle(.fgModerate)
+            #endif
+            Text("connect.tip")
+                .foregroundStyle(.fg3)
         }
         .font(MemoryFont.meta)
         .multilineTextAlignment(.center)

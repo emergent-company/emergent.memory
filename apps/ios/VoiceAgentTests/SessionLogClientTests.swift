@@ -10,6 +10,26 @@ struct SessionLogClientTests {
         #expect(client.sessionsBaseURL == URL(string: "http://host:8080"))
     }
 
+    /// The shared derivation strips a `/api/token` suffix, but a deployment may
+    /// configure any token URL. The fallback (drop the last two path components)
+    /// is what keeps the session log and the project config pointing at the
+    /// same root in that case, so pin it.
+    @Test func gatewayBaseURLFallsBackForANonTokenEndpoint() {
+        var config = MemoryConfig()
+        config.tokenEndpoint = "http://host:8080/v1/auth/token"
+        // The fallback drops the token endpoint's last two path components;
+        // compare host + path so the assertion does not hinge on a trailing slash.
+        #expect(config.gatewayBaseURL?.host == "host")
+        #expect(config.gatewayBaseURL?.path == "/v1")
+    }
+
+    @Test func sessionsBaseURLUsesTheSameFallback() {
+        var config = MemoryConfig()
+        config.tokenEndpoint = "http://host:8080/v1/auth/token"
+        let client = SessionLogClient(config: config)
+        #expect(client.sessionsBaseURL?.path == "/v1")
+    }
+
     @Test func decodesTurnRecord() throws {
         let json = #"{"ts":1,"clock":"10:00:00.000","room":"memory-persistent","variant":"google-rt","kind":"turn","role":"user","text":"hello"}"#
         let record = try JSONDecoder().decode(SessionRecord.self, from: Data(json.utf8))
