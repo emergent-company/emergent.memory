@@ -54,46 +54,6 @@ struct ThinkingBlockView: View {
     }
 }
 
-// MARK: - Typing indicator
-
-/// Agent-position "agent is typing" dots, shown while awaiting the first
-/// reply token. Purely decorative (dismissal is driven by store state).
-struct TypingIndicatorView: View {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var animating = false
-
-    /// Dot diameter, scaled with the caption text it accompanies.
-    @ScaledMetric(relativeTo: .caption) private var dotSize: CGFloat = 5
-
-    var body: some View {
-        HStack(spacing: 2 * .grid) {
-            ForEach(0 ..< 3, id: \.self) { index in
-                Circle()
-                    .fill(.fg3)
-                    .frame(width: dotSize, height: dotSize)
-                    // Static dots under Reduce Motion; a gentle pulse otherwise.
-                    .opacity(reduceMotion ? 1 : (animating ? 0.35 : 1))
-                    .animation(
-                        reduceMotion
-                            ? nil
-                            : .easeInOut(duration: 0.6)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.2),
-                        value: animating
-                    )
-            }
-        }
-        .padding(.horizontal, 3 * .grid)
-        .padding(.vertical, 2 * .grid)
-        .bubbleBackground(.assistant, cornerRadius: .cornerRadiusMedium)
-        .onAppear {
-            if !reduceMotion {
-                animating = true
-            }
-        }
-    }
-}
-
 // MARK: - Approval card
 
 /// Interactive approval request: tool name + argument summary and

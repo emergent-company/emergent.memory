@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The text chat: message list with rich markdown replies, per-turn live
 /// activity (thinking block, tool-call chips, approval/question cards) rendered
-/// right after the user message that started the turn, a typing indicator while
+/// right after the user message that started the turn, a working line while
 /// awaiting the first reply token, and a suggested-prompt empty state.
 struct ChatView: View {
     @EnvironmentObject private var session: Session
@@ -178,20 +178,19 @@ struct ChatView: View {
     }
 
     /// The still-live turn when it has no anchor message in the list yet
-    /// (activity arriving before its user message is traced), plus the typing
-    /// indicator at the agent position.
+    /// (activity arriving before its user message is traced), plus the working
+    /// line at the agent position.
     @ViewBuilder
     private func trailingActivity() -> some View {
         if let live = store.liveTurn, live.anchorMessageID == nil, live.hasContent {
             turnActivity(live)
         }
-        if store.isAwaitingFirstReply {
-            HStack {
-                TypingIndicatorView()
-                Spacer(minLength: 4 * .grid)
-            }
-            .padding(.top, 1 * .grid)
-        }
+        // The working line shows only while the turn has no live row of its
+        // own to speak for it.
+        WorkingLine(
+            state: TurnWorkingState.of(awaitingFirstReply: store.isAwaitingFirstReply, turn: store.liveTurn),
+            since: store.liveTurn?.startedAt
+        )
     }
 
     /// Renders one turn's accumulated activity: thinking block, tool chips,

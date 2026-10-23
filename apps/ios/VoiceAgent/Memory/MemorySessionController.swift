@@ -289,8 +289,8 @@ final class MemorySessionController: ObservableObject {
                     TraceLog.log("message_received", ["role": role, "text": String(text.prefix(200))], room: session.room.name ?? "")
                     // Drive the live chat-activity turns from message traffic:
                     // user messages open a turn (anchored to the message), the
-                    // first agent transcript of the turn dismisses the typing
-                    // indicator and arms the stop-quiet timer.
+                    // first agent transcript of the turn dismisses the working
+                    // line and arms the stop-quiet timer.
                     switch message.content {
                     case .userInput(_), .userTranscript:
                         if message.isFinal {

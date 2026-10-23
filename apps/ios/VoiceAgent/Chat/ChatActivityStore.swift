@@ -96,10 +96,14 @@ final class ChatActivityStore {
         /// True once the reply is considered complete (quiet after the last
         /// agent token), hiding the stop affordance.
         var didReplyFinish = false
+        /// When the user's message opened this turn. Nil for a turn assembled
+        /// without a clock; the working line then shows no timer.
+        var startedAt: Date?
 
-        init(id: UUID = UUID(), anchorMessageID: String?) {
+        init(id: UUID = UUID(), anchorMessageID: String?, startedAt: Date? = nil) {
             self.id = id
             self.anchorMessageID = anchorMessageID
+            self.startedAt = startedAt
         }
 
         /// Any content worth rendering (skips empty placeholder turns).
@@ -141,7 +145,7 @@ final class ChatActivityStore {
     }
 
     /// True from a new user message until the first agent reply token arrives
-    /// (drives the typing indicator and the stop button pre-reply).
+    /// (drives the working line and the stop button pre-reply).
     var isAwaitingFirstReply: Bool {
         guard let turn = liveTurn else { return false }
         return !turn.didReplyStart && !turn.isWaitingOnUser
@@ -180,11 +184,11 @@ final class ChatActivityStore {
         guard turn(anchoredTo: anchorMessageID) == nil else { return }
         quietTask?.cancel()
         quietTask = nil
-        turns.append(Turn(anchorMessageID: anchorMessageID))
+        turns.append(Turn(anchorMessageID: anchorMessageID, startedAt: now()))
     }
 
     /// The first agent reply token of the current turn arrived: dismiss the
-    /// typing indicator and arm the quiet-finish timer.
+    /// working line and arm the quiet-finish timer.
     func agentReplyStarted() {
         guard var turn = liveTurn, !turn.didReplyStart else { return }
         turn.didReplyStart = true
@@ -201,7 +205,7 @@ final class ChatActivityStore {
     }
 
     /// The user hit stop/interrupt: end the current generation window and hide
-    /// both the typing indicator and the stop button. The interrupt itself is
+    /// both the working line and the stop button. The interrupt itself is
     /// sent by the controller (`lk.chat.interrupt`); this only flips state.
     func stopGenerating() {
         quietTask?.cancel()

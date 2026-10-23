@@ -207,18 +207,18 @@ struct InteractiveCardTests {
     }
 }
 
-// MARK: - 5.1 / 5.2 / 5.3 — Typing indicator, stop, suggested prompts
+// MARK: - 5.1 / 5.2 / 5.3 — Working line, stop, suggested prompts
 
 struct ComposerStateTests {
     @MainActor
-    @Test func typingIndicatorShowsUntilFirstReplyToken() {
+    @Test func firstReplyTokenEndsTheWorkingLineWindow() {
         let store = ChatActivityStore()
         #expect(store.isAwaitingFirstReply == false)
 
         store.userTurnStarted(anchorMessageID: "m1")
         #expect(store.isAwaitingFirstReply == true)
         #expect(store.isGeneratingReply == true)
-        _ = TypingIndicatorView()
+        _ = WorkingLine(state: .thinking)
 
         store.agentReplyStarted()
         #expect(store.isAwaitingFirstReply == false)
@@ -230,7 +230,7 @@ struct ComposerStateTests {
     }
 
     @MainActor
-    @Test func typingIndicatorHidesWhileWaitingOnCard() {
+    @Test func workingLineHidesWhileWaitingOnCard() {
         let store = ChatActivityStore()
         store.userTurnStarted(anchorMessageID: "m1")
         store.apply(.approval(ChatApprovalEvent(questionId: "q1", tool: "x", arguments: "{}")))
