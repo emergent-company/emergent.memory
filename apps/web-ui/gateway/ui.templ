@@ -782,12 +782,16 @@ templ detailHeaderWithTitleLeading(crumbs []nav.BreadcrumbItem, kicker, title, s
 	</div>
 }
 
-// crumbsActive marks the trailing crumb as the current page (active styling).
-// nav.Crumbs builds the trail without setting Active, so detail headers pass
-// their result through this helper.
+// crumbsActive marks the trailing crumb as the current page (active styling)
+// and drops its href. The current page is never a link: nav.Crumbs gives the
+// trailing item an href only when callers pass the page's own URL, and leaving
+// it clickable while styled as current renders an "active link" that no other
+// trail has. nav.Crumbs builds the trail without setting Active, so detail
+// headers pass their result through this helper.
 func crumbsActive(crumbs []nav.BreadcrumbItem) []nav.BreadcrumbItem {
 	if n := len(crumbs); n > 0 {
 		crumbs[n-1].Active = true
+		crumbs[n-1].Href = ""
 	}
 	return crumbs
 }

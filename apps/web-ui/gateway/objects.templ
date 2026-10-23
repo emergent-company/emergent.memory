@@ -698,7 +698,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 		</div>
 	} else {
 		<div class={ pageFormChromeClass }>
-			@pageHeader("Knowledge", "New object", "Manually add an entity to the knowledge graph.")
+			@detailHeader(crumbsActive(nav.Crumbs("Objects", "/objects", "New object")), "", "New object", "Manually add an entity to the knowledge graph.", detailHeaderOpts{Margin: "mb-6"})
 			<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action="/objects/new">
 				<select name="type" class="select select-bordered select-sm" onchange="this.form.submit()">
 					<option value="" disabled selected?={ form.Type == "" }>Pick a type…</option>

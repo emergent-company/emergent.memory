@@ -13,6 +13,22 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
+// orgCrumbs builds the organization breadcrumb trail:
+//
+//	Organizations > <org name> [> leaves...]
+//
+// With no leaves the organization is the current page; otherwise the org links
+// to its landing page and the final leaf is current. Leaves may include a
+// label+URL pair to keep an intermediate section (Members, Settings) navigable.
+func orgCrumbs(orgID, orgName string, leaves ...string) []nav.BreadcrumbItem {
+	if len(leaves) == 0 {
+		return crumbsActive(nav.Crumbs("Organizations", "/orgs", orgName))
+	}
+	args := []string{"Organizations", "/orgs", orgName, "/orgs/" + url.PathEscape(orgID)}
+	args = append(args, leaves...)
+	return crumbsActive(nav.Crumbs(args...))
+}
+
 // projectPendingCount counts the org projects awaiting purge.
 func projectPendingCount(projects []ProjectRef) int {
 	n := 0
@@ -70,7 +86,7 @@ templ OrgLandingPage(data orgPageData) {
 		if data.LoadErr != nil {
 			@pageError("Organization unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organization", data.Org.Name, "Projects in this organization.") {
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name), "", data.Org.Name, "Projects in this organization.", detailHeaderOpts{Margin: "mb-6"}) {
 				<div class="flex items-center gap-2">
 					@countBadge(len(data.Projects), "project", "lucide--folder")
 					if data.IsOrgAdmin {
@@ -639,7 +655,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 		if data.LoadErr != nil {
 			@pageError("Members unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organization", "Members", "People in "+data.Org.Name+".") {
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members"), "", "Members", "People in "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"}) {
 				@countBadge(len(data.Members), "member", "lucide--users")
 			}
 			@flashToasts(data.FlashMsg, data.FlashErr)
@@ -718,7 +734,7 @@ templ OrgInvitePage(data orgInvitePageData) {
 			@pageError("Organization unavailable", data.LoadErr)
 		} else {
 			{{ subtitle := "An email invitation carrying the org admin role — they join " + data.Org.Name + " once they accept." }}
-			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Invite a member")), "", "Invite a member", subtitle) {}
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members", "/orgs/"+url.PathEscape(data.Org.ID)+"/members", "Invite a member"), "", "Invite a member", subtitle) {}
 			@flashToasts("", data.FlashErr)
 			@components.PanelCard("", nil) {
 				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/invite") } hx-boost="false" class="flex flex-col gap-4">
@@ -829,7 +845,7 @@ templ OrgSettingsGeneralPage(data orgSettingsGeneralPageData) {
 		if data.LoadErr != nil {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
-			@pageHeader("Organization", "Settings", "Organization-level settings for "+data.Org.Name+".") {}
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Settings", "/orgs/"+url.PathEscape(data.Org.ID)+"/settings", "General"), "", "General", "Organization-level settings for "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"}) {}
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "general", data.IsOrgAdmin), nil) {
 				@ui.Section("General", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 					if data.IsOrgAdmin {
@@ -912,7 +928,7 @@ templ OrgSettingsDangerZonePage(data orgSettingsDangerZonePageData) {
 		if data.LoadErr != nil {
 			@pageError("Settings unavailable", data.LoadErr)
 		} else {
-			@detailHeader(crumbsActive(nav.Crumbs("Organization", "/orgs/"+url.PathEscape(data.Org.ID), "Danger zone")), "", "Danger zone", "Deleting an organization removes it and its projects permanently. This cannot be undone.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Settings", "/orgs/"+url.PathEscape(data.Org.ID)+"/settings", "Danger zone"), "", "Danger zone", "Deleting an organization removes it and its projects permanently. This cannot be undone.", detailHeaderOpts{Margin: "mb-6"}) {}
 			@layout.Rail(orgSettingsSubNav(data.Org.ID, "danger-zone", data.IsOrgAdmin), nil) {
 				@ui.Section("Danger zone", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 					if data.IsOrgAdmin {

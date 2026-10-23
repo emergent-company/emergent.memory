@@ -85,19 +85,22 @@ func (s *Server) uiRun(c echo.Context) error {
 }
 
 // runCrumbTrail builds the run page breadcrumb: Schedules → the agent's
-// schedule (linked when the run knows its agent id) → Session.
+// schedule (linked when the run knows its agent id).
+//
+// The run itself is deliberately not a crumb. Like an object opened from an
+// extraction run, the page title and the run metadata below the header carry
+// the run's identity, and the trail stops at its parent schedule. That also
+// means the trail has no active crumb: the schedule is a navigable ancestor,
+// not the current page.
 func runCrumbTrail(run *ScheduledAgentRun) []nav.BreadcrumbItem {
 	items := []nav.BreadcrumbItem{{Label: "Schedules", Href: "/schedules"}}
-	if run != nil {
-		if run.AgentName != "" {
-			schedule := nav.BreadcrumbItem{Label: run.AgentName}
-			if run.AgentID != "" {
-				schedule.Href = "/schedules/" + url.PathEscape(run.AgentID)
-			}
-			items = append(items, schedule)
+	if run != nil && run.AgentName != "" {
+		schedule := nav.BreadcrumbItem{Label: run.AgentName}
+		if run.AgentID != "" {
+			schedule.Href = "/schedules/" + url.PathEscape(run.AgentID)
 		}
+		items = append(items, schedule)
 	}
-	items = append(items, nav.BreadcrumbItem{Label: "Session"})
 	return items
 }
 

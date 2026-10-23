@@ -37,7 +37,7 @@ templ dsResourceSelectShell(src *DSIntegration, providerName string, query strin
 			if src == nil {
 				@pageError("Data source unavailable", loadErr)
 			} else {
-				@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src))), "", dsResourceStepTitle(*src), providerName) {
+				@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Select resources")), "", dsResourceStepTitle(*src), providerName) {
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeLink,
 						Href:    "/data-sources/" + url.PathEscape(src.ID),
@@ -215,7 +215,7 @@ templ DataSourceResourceList(src *DSIntegration, providerName string, resources 
 // provider that advertises the oauth method. A project-level client overrides
 // this org-wide one for that project; the same card serves both scopes.
 templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
-	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), "Organization", "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients"), "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
 }
 
 // ProjectOAuthClientsPage was replaced by the project Credentials table
@@ -225,9 +225,9 @@ templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients
 // dsOAuthClientsPage is the org-scoped OAuth-client settings page. It renders
 // one card per provider that advertises the oauth method, with the write-only
 // secret and the provider's console setup guide.
-templ dsOAuthClientsPage(rail templ.Component, eyebrow, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+templ dsOAuthClientsPage(rail templ.Component, crumbs []nav.BreadcrumbItem, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader(eyebrow, title, subtitle)
+		@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts(flashMsg, flashErr)
 		if loadErr != nil {
 			@pageError("OAuth clients unavailable", loadErr)

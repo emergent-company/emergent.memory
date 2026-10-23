@@ -5,6 +5,7 @@ import (
 
 	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
@@ -387,7 +388,7 @@ templ inboxNoProject() {
 // NotificationPreferencesPage renders the opt-in controls for project events.
 templ NotificationPreferencesPage(d notificationPrefsView) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@pageHeader("Inbox", "Notification settings", "Project activity is opt-in. Account, security, and action-required events are always delivered.") {
+		@detailHeader(crumbsActive(nav.Crumbs("Inbox", "/inbox", "Notification settings")), "", "Notification settings", "Project activity is opt-in. Account, security, and action-required events are always delivered.", detailHeaderOpts{Margin: "mb-6"}) {
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLink,
 				Href:       "/inbox?scope=project",

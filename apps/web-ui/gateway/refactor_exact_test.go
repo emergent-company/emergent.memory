@@ -118,7 +118,7 @@ func TestRefactorOutputExact(t *testing.T) {
 	// detailHeader dashboard variant
 	got = render(detailHeader(crumbsActive(nav.Crumbs("Agents", "/agents", "diane", "/agents/a1")), "", "diane", "household assistant", detailHeaderOpts{Margin: "mb-6", Dashboard: true}),
 		`<span class="badge badge-ghost badge-sm"><span class="iconify lucide--clock size-3"></span>updated 2h ago</span>`)
-	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/agents" class="">Agents</a></li><li class="font-medium text-base-content"><a href="/agents/a1" class="">diane</a></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">diane</h1><p class="text-base-content/55 mt-1 max-w-2xl text-sm">household assistant</p></div><span class="badge badge-ghost badge-sm"><span class="iconify lucide--clock size-3"></span>updated 2h ago</span></div></div>`
+	want = `<div class="mb-6"><div class="breadcrumbs text-sm" style="width: 100%;"><ul><li class=""><a href="/agents" class="">Agents</a></li><li class="font-medium text-base-content"><span class="">diane</span></li></ul></div><div class="mt-2 flex flex-wrap items-end justify-between gap-4"><div><h1 class="text-2xl font-bold tracking-tight lg:text-3xl">diane</h1><p class="text-base-content/55 mt-1 max-w-2xl text-sm">household assistant</p></div><span class="badge badge-ghost badge-sm"><span class="iconify lucide--clock size-3"></span>updated 2h ago</span></div></div>`
 	check("detailHeader dashboard", got, want)
 
 	// detailHeader bare (migrations)

@@ -7,6 +7,7 @@ import (
 	"github.com/emergent-company/go-daisy/components/form"
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
 	"github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
@@ -349,7 +350,7 @@ templ BackupDetailPage(b *Backup, loadErr error) {
 // backupDetailHeader is the detail header: title, status/type badges, and the
 // back/download/delete actions. Download is offered only for ready backups.
 templ backupDetailHeader(b *Backup) {
-	@pageHeader("Backups", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.") {
+	@detailHeader(crumbsActive(nav.Crumbs("Backups", "/backups", backupTitle(*b))), "", backupTitle(*b), "A snapshot of the active project's documents, objects, and chat.", detailHeaderOpts{Margin: "mb-6"}) {
 		<div class="flex flex-wrap items-center gap-2">
 			@ui.Badge(ui.BadgeProps{
 				Label:   backupStatusLabel(b.Status),
