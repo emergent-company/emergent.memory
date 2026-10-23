@@ -18,7 +18,8 @@ name: Meta CI
 #   * migration numbering + immutability (through scripts/preflight/all.sh, which
 #     calls migration-number.sh -> migration-immutability.sh --base origin/main),
 #   * migration workspace hygiene (stray untracked files / duplicate versions),
-#   * the route-authority guard.
+#   * the route-authority guard,
+#   * the swagger spec drift guard (#2082).
 # The heavy suites still run for the PRs that touch their paths; they stay
 # advisory. See emergent-company/emergent.memory#1673.
 #
@@ -119,6 +120,22 @@ jobs:
           # needed: an undeclared route, a vanished route, or a drifted tier all
           # fail. Same invocation as server.yml's `route-authority-guard` job.
           go run ./cmd/route-authority-guard
+      # Swagger spec drift guard (#2082). apps/server/docs/swagger/{docs.go,
+      # swagger.json,swagger.yaml} are generated from the handler/DTO
+      # annotations, committed, and published by docs.yml — but nothing
+      # regenerated them, so a stale artifact shipped silently. #2057 had to
+      # regenerate and picked up three source changes that had gone
+      # unregenerated (+220 lines); #931 was closed with "no CI verifies
+      # either". The script derives the swag version from go.mod (no second pin,
+      # per #2057), re-runs the generator, and fails on any difference —
+      # including an untracked docs_<handler>.go, which a bare `git diff` misses.
+      # It runs here rather than in server.yml because server.yml is
+      # path-filtered and advisory, so a guard there cannot gate. Measured cost
+      # ~5 s warm, ~14 s from an empty Go build cache. It is deliberately not in
+      # scripts/preflight/all.sh (run by the step below) so it runs exactly once.
+      - name: Swagger spec drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/swagger-drift.sh
       # Preflight guards: the same checks lanes run locally before pushing —
       # stale base, migration numbering + immutability (goose panics on duplicate
       # versions; migration-number.sh delegates the immutability rule to
