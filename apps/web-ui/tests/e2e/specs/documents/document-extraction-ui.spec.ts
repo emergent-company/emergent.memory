@@ -195,6 +195,61 @@ test.describe('Document upload + extraction', () => {
     }
   });
 
+  test('renders the extraction trace sub-page with summary strip + trace panel', async ({ page }) => {
+    // The sub-page renders for any job status (pending shows "waiting for the
+    // first spans"), but reaching it needs a triggered extraction, which is
+    // gated on a configured generative model. No real LLM call is required —
+    // enqueueing only inserts a pending row — so the skip idiom matches the
+    // other extraction tests.
+    test.setTimeout(300_000);
+    test.skip(
+      !API_KEY,
+      'E2E_SCENARIO_LLM_API_KEY is not set — the trigger is gated on a configured ' +
+        'generative model, which needs a project provider. Set it in ' +
+        'tests/e2e/.env.e2e (defaults target the dev litellm: openai).',
+    );
+
+    const saved = await addProvider(
+      page,
+      PROVIDER,
+      API_KEY,
+      PROVIDER === 'openai' ? BASE_URL : undefined,
+    );
+    if (saved !== 'saved') {
+      test.skip(true, 'provider save rejected by the memory backend (catalog unsynced or invalid key)');
+      return;
+    }
+    await setDefaultGenerativeModel(page, GENERATIVE_MODEL);
+    await setDefaultEmbeddingModel(page, EMBEDDING_MODEL);
+
+    const stamp = Date.now();
+    const name = `e2e-trace-${stamp}.md`;
+    const body = `# Trace ${stamp}\n\nSub-page fixture — uniquely identifiable body.`;
+    let id: string | undefined;
+
+    try {
+      await uploadDocument(page, name, body);
+      id = await openUploadedDocument(page, name);
+      await triggerExtraction(page, id);
+
+      // The history row links to the dedicated run sub-page via "View trace →".
+      await goto(page, `/documents/${id}/extractions`);
+      const viewTrace = page.getByTestId('extraction-view-trace').first();
+      await expect(viewTrace).toBeVisible();
+      await viewTrace.click();
+      await page.waitForURL(new RegExp(`/documents/${escapeRe(id)}/extractions/[^/]+$`));
+
+      // The sub-page carries the run header, the back link, the summary strip,
+      // and the (polling) trace panel.
+      await expect(page.getByTestId('extraction-run-header')).toBeVisible();
+      await expect(page.getByRole('link', { name: 'All extractions' })).toBeVisible();
+      await expect(page.getByTestId('extraction-summary-strip')).toBeVisible();
+      await expect(page.getByTestId('extraction-trace')).toBeVisible();
+    } finally {
+      await deleteDocument(page, id);
+    }
+  });
+
   test('disables extraction when the project has no generative model', async ({ page }) => {
     // Unconditional (no LLM key): a fresh, provider-less project must render the
     // blocked extraction card — disabled button, guidance copy, providers link.

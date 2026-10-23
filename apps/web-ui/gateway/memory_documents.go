@@ -264,6 +264,15 @@ type ExtractionJob struct {
 	CompletedAt      string   `json:"completed_at"`
 	CreatedAt        string   `json:"created_at"`
 	UpdatedAt        string   `json:"updated_at"`
+
+	// Trace fields, present only when the server recorded an OpenTelemetry
+	// trace for the run. Absent on legacy jobs and when tracing is disabled.
+	TraceID      string         `json:"trace_id,omitempty"`
+	Spans        []TraceSpan    `json:"spans,omitempty"`
+	TraceCostUSD *float64       `json:"trace_cost_usd,omitempty"`
+	ErrorDetails map[string]any `json:"error_details,omitempty"`
+	DebugInfo    map[string]any `json:"debug_info,omitempty"`
+	RetryCount   int            `json:"retry_count"`
 }
 
 // ObjectIDs returns the object ids this job created, preferring the modern
@@ -303,6 +312,22 @@ func (m *MemoryClient) ListExtractionJobs(ctx context.Context, documentID string
 		return nil, err
 	}
 	return out.Data.Jobs, nil
+}
+
+// GetExtractionJob fetches one extraction job by id (GET
+// /api/admin/extraction-jobs/{jobId}), unwrapping the {success,data} envelope
+// like ListExtractionJobs. The data payload carries the admin job DTO plus the
+// trace fields (trace_id, spans, trace_cost_usd) when the server recorded an
+// OpenTelemetry trace for the run.
+func (m *MemoryClient) GetExtractionJob(ctx context.Context, jobID string) (*ExtractionJob, error) {
+	var out struct {
+		Success bool          `json:"success"`
+		Data    ExtractionJob `json:"data"`
+	}
+	if err := m.do(ctx, http.MethodGet, "/api/admin/extraction-jobs/"+url.PathEscape(jobID), nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Data, nil
 }
 
 // DownloadDocument fetches a document's original file bytes (GET

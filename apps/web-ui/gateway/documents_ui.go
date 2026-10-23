@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/a-h/templ"
 	"github.com/emergent-company/go-daisy/render"
 	"github.com/labstack/echo/v4"
 )
@@ -199,16 +202,46 @@ func (s *Server) extractionJobBranch(ctx context.Context, job *ExtractionJob) (s
 // gracefully: a failed object/relationship/readiness fetch keeps the counts
 // already gathered rather than failing the partial.
 func (s *Server) loadExtractionJobDetail(ctx context.Context, documentID, jobID string) extractionJobDetail {
-	var d extractionJobDetail
 	job, err := s.findExtractionJob(ctx, documentID, jobID)
 	if err != nil {
-		d.Err = err
-		return d
+		return extractionJobDetail{Err: err}
 	}
-	d.Job = *job
+	return s.assembleExtractionJobDetail(ctx, *job)
+}
+
+// resolveExtractionJob fetches a job's rich DTO (trace spans, cost, error
+// details, retry count) via the single-job endpoint, falling back to the list
+// DTO when that endpoint is absent (a server predating the trace fields). The
+// fallback job carries no spans or cost, which the page degrades accordingly.
+func (s *Server) resolveExtractionJob(ctx context.Context, documentID, jobID string) (*ExtractionJob, error) {
+	job, err := s.memory.GetExtractionJob(ctx, jobID)
+	if err == nil {
+		return job, nil
+	}
+	return s.findExtractionJob(ctx, documentID, jobID)
+}
+
+// loadExtractionJobPage assembles the extraction-run sub-page detail: the rich
+// job DTO (spans, trace id, cost, error details, retry count) plus the
+// resolved objects/relationships/branch/readiness. It shares the branch/
+// object/relationship assembly with the history page's lazy partial.
+func (s *Server) loadExtractionJobPage(ctx context.Context, documentID, jobID string) extractionJobDetail {
+	job, err := s.resolveExtractionJob(ctx, documentID, jobID)
+	if err != nil {
+		return extractionJobDetail{Err: err}
+	}
+	return s.assembleExtractionJobDetail(ctx, *job)
+}
+
+// assembleExtractionJobDetail resolves a job's staging branch, created objects,
+// relationships, and merge readiness around an already-fetched job DTO. Shared
+// by the history lazy-detail (list DTO) and the extraction-run page (rich DTO).
+func (s *Server) assembleExtractionJobDetail(ctx context.Context, job ExtractionJob) extractionJobDetail {
+	var d extractionJobDetail
+	d.Job = job
 
 	ids := job.ObjectIDs()
-	branchID, branch, ok := s.extractionJobBranch(ctx, job)
+	branchID, branch, ok := s.extractionJobBranch(ctx, &job)
 	if !ok {
 		// The staging branch can no longer be resolved (it produced no objects,
 		// or was deleted on merge). Fall back to listing the job's created
@@ -258,6 +291,58 @@ func sortExtractionJobsNewestFirst(jobs []ExtractionJob) {
 	slices.SortStableFunc(jobs, func(a, b ExtractionJob) int {
 		return strings.Compare(b.CreatedAt, a.CreatedAt)
 	})
+}
+
+// extractionJobActive reports whether an extraction job is still running and
+// should keep polling: pending/queued/running/processing are non-terminal.
+func extractionJobActive(status string) bool {
+	switch strings.ToLower(status) {
+	case "pending", "queued", "running", "processing":
+		return true
+	default:
+		return false
+	}
+}
+
+// extractionDurationSeconds returns the wall-clock duration of an extraction
+// job in seconds (CompletedAt − StartedAt, both RFC3339), or 0 when either is
+// missing, unparseable, or completion precedes start.
+func extractionDurationSeconds(startedAt, completedAt string) float64 {
+	if startedAt == "" || completedAt == "" {
+		return 0
+	}
+	start, err1 := time.Parse(time.RFC3339, startedAt)
+	end, err2 := time.Parse(time.RFC3339, completedAt)
+	if err1 != nil || err2 != nil || !end.After(start) {
+		return 0
+	}
+	return end.Sub(start).Seconds()
+}
+
+// extractionTraceMeta derives the model and token totals from a job's spans for
+// the summary strip, reusing runTraceMetaFromRun (first span naming a model,
+// token counts summed across all spans).
+func extractionTraceMeta(spans []TraceSpan) (model string, inTokens, outTokens int64) {
+	m := runTraceMetaFromRun(&AgentRun{Spans: spans})
+	return m.Model, m.InputTokens, m.OutputTokens
+}
+
+// formatTraceCostUSD renders a trace cost in US dollars with four decimals
+// ("0.0123"). The caller gates on the pointer's presence, so a zero cost still
+// renders as "0.0000".
+func formatTraceCostUSD(usd float64) string {
+	return strconv.FormatFloat(usd, 'f', 4, 64)
+}
+
+// prettyJSON marshals v with two-space indentation for the error-details
+// disclosure, falling back to the Go fmt on a marshal failure (never an error
+// page).
+func prettyJSON(v any) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(b)
 }
 
 // --- handlers ---
@@ -339,6 +424,53 @@ func (s *Server) uiDocumentExtractionDetail(c echo.Context) error {
 	// show how many objects are still left on the branch for review.
 	detail.LeftForReview = atoiOrZero(c.QueryParam("review"))
 	renderPartial(c.Response().Writer, c.Request(), ExtractionJobDetail(docID, detail))
+	return nil
+}
+
+// uiDocumentExtractionPage renders the dedicated extraction-run sub-page: the
+// run's summary strip, its OpenTelemetry trace waterfall, its objects/
+// relationships/branch/merge block, and its error details. The trace fragment
+// polls itself while the run is active.
+func (s *Server) uiDocumentExtractionPage(c echo.Context) error {
+	ctx := c.Request().Context()
+	docID := c.Param("id")
+	doc, err := s.memory.GetDocument(ctx, docID)
+	if err != nil {
+		return s.page(c, pageTitle("Extraction run"), DocumentExtractionPage(nil, extractionJobDetail{}, userFacingError(err)))
+	}
+	detail := s.loadExtractionJobPage(ctx, docID, c.Param("jobId"))
+	// detail.Err is the job-fetch error (nil once the job resolved, even if its
+	// branch/object sub-detail degraded); it surfaces as the whole-page error.
+	return s.page(c, pageTitle(documentName(*doc), "Extraction run"), DocumentExtractionPage(doc, detail, detail.Err))
+}
+
+// uiDocumentExtractionTrace renders the polling fragment for one extraction
+// run: the summary strip, the trace panel, and an out-of-band refresh of the
+// run's status badge, so a job that finishes while the user is on the page gets
+// its final duration, token counts, and estimated cost without a reload. The
+// wrapper polls itself only while the job is active; once terminal it carries
+// no polling attributes and the interval self-terminates.
+func (s *Server) uiDocumentExtractionTrace(c echo.Context) error {
+	ctx := c.Request().Context()
+	docID := c.Param("id")
+	jobID := c.Param("jobId")
+	detail := s.loadExtractionJobPage(ctx, docID, jobID)
+	if detail.Err != nil {
+		// A transient fetch failure must not erase the last-known summary or
+		// status badge. HX-Reswap: none tells htmx to perform no swap at all,
+		// so the previously rendered polling root (with its hx-get/hx-trigger)
+		// stays in the DOM and the interval keeps retrying, while this response
+		// remains a valid 200 fragment. No OOB status group is emitted (it
+		// would blank the header badge) and no zeroed summary strip is
+		// rendered. renderPartial sets no swap header itself, so this header is
+		// the only swap signal htmx sees.
+		captureError(detail.Err)
+		c.Response().Header().Set("HX-Reswap", "none")
+		renderPartial(c.Response().Writer, c.Request(), templ.ComponentFunc(func(context.Context, io.Writer) error { return nil }))
+		return nil
+	}
+	poll := extractionJobActive(detail.Job.Status)
+	renderPartial(c.Response().Writer, c.Request(), extractionRunBody(docID, jobID, detail, poll, true))
 	return nil
 }
 

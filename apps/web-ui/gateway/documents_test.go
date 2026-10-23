@@ -837,7 +837,7 @@ func TestRenderExtractionHistoryRows(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="extraction-history"`,
 		`id="extraction-detail-job1"`,
-		`hx-get="/documents/d1/extractions/job1"`,
+		`hx-get="/documents/d1/extractions/job1/detail"`,
 		`hx-trigger="load"`,
 		`hx-target="this"`,
 		`hx-swap="outerHTML"`,
@@ -1206,7 +1206,9 @@ func TestDocumentRoutesRegister(t *testing.T) {
 	e.GET("/documents/:id", s.uiDocument)
 	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
 	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)
-	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionPage)
+	e.GET("/documents/:id/extractions/:jobId/detail", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId/trace", s.uiDocumentExtractionTrace)
 	e.GET("/documents/:id/file", s.uiDocumentFile)
 	e.POST("/documents", s.uiUploadDocument)
 	e.POST("/documents/:id/extract", s.uiTriggerExtraction)
@@ -1495,7 +1497,9 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 	e := echo.New()
 	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
 	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)
-	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionPage)
+	e.GET("/documents/:id/extractions/:jobId/detail", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId/trace", s.uiDocumentExtractionTrace)
 	e.GET("/documents/:id/file", s.uiDocumentFile)
 	e.POST("/documents/:id/extractions/:jobId/merge", s.uiDocumentMerge)
 
@@ -1513,14 +1517,14 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 	t.Run("extractions page", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions", nil))
-		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-get="/documents/d1/extractions/job1"`) {
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `hx-get="/documents/d1/extractions/job1/detail"`) {
 			t.Fatalf("extractions page: %d %s", rec.Code, rec.Body.String())
 		}
 	})
 
 	t.Run("job detail partial", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1/detail", nil)
 		req.Header.Set("HX-Request-Type", "partial")
 		e.ServeHTTP(rec, req)
 		body := rec.Body.String()
@@ -1541,7 +1545,7 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 
 	t.Run("missing job detail degrades", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/nope", nil))
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/nope/detail", nil))
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Failed to load this extraction") {
 			t.Fatalf("missing job detail: %d %s", rec.Code, rec.Body.String())
 		}
@@ -1743,4 +1747,303 @@ func TestMergeAppliedObjects(t *testing.T) {
 	if got := mergeAppliedObjects(review); got != 0 {
 		t.Errorf("review-only preview clean count = %d, want 0", got)
 	}
+}
+
+// TestRenderExtractionSummaryStrip asserts the summary strip badges: start/
+// finish/duration, progress counters, objects/relationships, model, token
+// counts, estimated cost, and retry count.
+func TestRenderExtractionSummaryStrip(t *testing.T) {
+	cost := 0.0123
+	d := extractionJobDetail{
+		Job: ExtractionJob{
+			ID:             "job1",
+			Status:         "completed",
+			StartedAt:      "2026-08-26T10:00:00Z",
+			CompletedAt:    "2026-08-26T10:01:30Z",
+			TotalItems:     10,
+			ProcessedItems: 10,
+			FailedItems:    1,
+			Spans: []TraceSpan{
+				{Name: "extract", SpanID: "s1"},
+				{Name: "call_llm", SpanID: "s2", ParentSpanID: "s1", Model: "deepseek-v4-flash", InputTokens: 123, OutputTokens: 456},
+			},
+			TraceCostUSD: &cost,
+			RetryCount:   2,
+		},
+		Objects:       []GraphObject{{ID: "o1"}},
+		Relationships: []GraphRelationship{{ID: "r1"}},
+	}
+	html := renderHTML(t, extractionSummaryStrip(d))
+	for _, want := range []string{
+		`data-testid="extraction-summary-strip"`,
+		"started ", "finished ", "1m", // duration 90s → "1m"
+		"10/10 processed", "1 failed",
+		"1 object", "1 relationship",
+		"deepseek-v4-flash", "123 in · 456 out",
+		"$0.0123", "2 retries",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("summary strip missing %q:\n%s", want, html)
+		}
+	}
+}
+
+// TestExtractionTracePanelPolling pins the polling-attribute lifecycle: the
+// run-body root (summary strip + trace panel) emits hx-get/hx-trigger/hx-swap
+// while the job is active and omits them once terminal, so the interval
+// self-terminates and the final numbers land inside the swapped element.
+func TestExtractionTracePanelPolling(t *testing.T) {
+	t.Run("processing renders polling attributes", func(t *testing.T) {
+		d := extractionJobDetail{Job: ExtractionJob{ID: "job1", Status: "processing"}}
+		html := renderHTML(t, extractionRunBody("d1", "job1", d, extractionJobActive(d.Job.Status), false))
+		for _, want := range []string{
+			`id="extraction-run-body"`,
+			`data-testid="extraction-run-body"`,
+			`data-testid="extraction-summary-strip"`,
+			`id="extraction-trace"`,
+			`data-testid="extraction-trace"`,
+			`hx-get="/documents/d1/extractions/job1/trace"`,
+			`hx-trigger="every 3s"`,
+			`hx-swap="outerHTML"`,
+			"Waiting for the first spans…",
+		} {
+			if !strings.Contains(html, want) {
+				t.Errorf("processing run body missing %q:\n%s", want, html)
+			}
+		}
+	})
+
+	t.Run("completed omits polling attributes", func(t *testing.T) {
+		d := extractionJobDetail{Job: ExtractionJob{ID: "job1", Status: "completed"}}
+		html := renderHTML(t, extractionRunBody("d1", "job1", d, extractionJobActive(d.Job.Status), false))
+		for _, unwanted := range []string{`hx-get`, `hx-trigger`, "every 3s"} {
+			if strings.Contains(html, unwanted) {
+				t.Errorf("completed run body must not emit %q:\n%s", unwanted, html)
+			}
+		}
+		if !strings.Contains(html, "No trace recorded for this run.") {
+			t.Errorf("completed run body missing no-trace note:\n%s", html)
+		}
+		if !strings.Contains(html, "Tracing is recorded only when the server has OTEL enabled.") {
+			t.Errorf("completed run body missing tracing-off hint:\n%s", html)
+		}
+	})
+
+	t.Run("completed with spans renders waterfall without polling", func(t *testing.T) {
+		d := extractionJobDetail{Job: ExtractionJob{
+			ID:     "job1",
+			Status: "completed",
+			Spans:  []TraceSpan{{SpanID: "s1", Name: "extract", StartUnixNano: 1700000000000000000, EndUnixNano: 1700000001230000000}},
+		}}
+		html := renderHTML(t, extractionRunBody("d1", "job1", d, extractionJobActive(d.Job.Status), false))
+		if strings.Contains(html, `hx-get`) {
+			t.Errorf("completed run body with spans must not poll:\n%s", html)
+		}
+		for _, want := range []string{"Trace", "1 span", "extract"} {
+			if !strings.Contains(html, want) {
+				t.Errorf("completed run body with spans missing %q:\n%s", want, html)
+			}
+		}
+	})
+
+	t.Run("oob status refreshes the header badge", func(t *testing.T) {
+		d := extractionJobDetail{Job: ExtractionJob{ID: "job1", Status: "completed"}}
+		html := renderHTML(t, extractionRunBody("d1", "job1", d, false, true))
+		if !strings.Contains(html, `id="extraction-run-status"`) || !strings.Contains(html, `hx-swap-oob="true"`) {
+			t.Errorf("oob run body missing out-of-band status group:\n%s", html)
+		}
+		if strings.Contains(html, `data-testid="extraction-live"`) {
+			t.Errorf("terminal status must not render the Live badge:\n%s", html)
+		}
+	})
+}
+
+// TestDocumentExtractionPageRoutes exercises the three extraction-run routes
+// against the fake backend: the full page, the moved /detail partial, and the
+// polling /trace fragment.
+func TestDocumentExtractionPageRoutes(t *testing.T) {
+	cost := 0.0123
+	msg := "extraction failed upstream"
+	f := &fakeMemory{
+		documents: []Document{{ID: "d1", Filename: "Spec.md", MimeType: "text/markdown"}},
+		extractionJobs: []ExtractionJob{{
+			ID:               "job1",
+			Status:           "processing",
+			CreatedAt:        "2026-08-26T10:00:00Z",
+			StartedAt:        "2026-08-26T10:00:00Z",
+			CreatedObjectIDs: []string{"o1"},
+			StagingBranchID:  "br1",
+		}},
+		extractionJob: &ExtractionJob{
+			ID:               "job1",
+			Status:           "processing",
+			CreatedAt:        "2026-08-26T10:00:00Z",
+			StartedAt:        "2026-08-26T10:00:00Z",
+			TotalItems:       10,
+			ProcessedItems:   4,
+			FailedItems:      1,
+			TraceID:          "tr_1",
+			TraceCostUSD:     &cost,
+			RetryCount:       1,
+			CreatedObjectIDs: []string{"o1"},
+			StagingBranchID:  "br1",
+			ErrorMessage:     &msg,
+			ErrorDetails:     map[string]any{"code": "upstream"},
+			Spans: []TraceSpan{
+				{SpanID: "sp_root", Name: "extract", StartUnixNano: 1700000000000000000, EndUnixNano: 1700000001230000000},
+				{SpanID: "sp_llm", ParentSpanID: "sp_root", Name: "call_llm", StartUnixNano: 1700000001000000000, EndUnixNano: 1700000001045000000, InputTokens: 123, OutputTokens: 456, Model: "deepseek-v4-flash"},
+			},
+		},
+		objects:        []GraphObject{{ID: "o1", CanonicalID: "c1", BranchID: "br1", Type: "person", Key: "sam"}},
+		branches:       []Branch{{ID: "br1", Name: "extract-1"}},
+		mergeReadiness: &MergeReadiness{Ready: true, TotalObjects: 1},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/documents/:id/extractions/:jobId", s.uiDocumentExtractionPage)
+	e.GET("/documents/:id/extractions/:jobId/detail", s.uiDocumentExtractionDetail)
+	e.GET("/documents/:id/extractions/:jobId/trace", s.uiDocumentExtractionTrace)
+
+	t.Run("page renders summary, trace, error, and objects", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("page status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{
+			"All extractions",
+			`id="extraction-run-body"`,
+			`data-testid="extraction-run-body"`,
+			`id="extraction-run-status"`,
+			`data-testid="extraction-summary-strip"`,
+			`data-testid="extraction-trace"`,
+			`hx-get="/documents/d1/extractions/job1/trace"`,
+			`hx-trigger="every 3s"`,
+			"deepseek-v4-flash", "123 in · 456 out", "$0.0123",
+			"extraction failed upstream", "Error details", "upstream",
+			"extract-1", "sam", "Ready to merge",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("page missing %q", want)
+			}
+		}
+		if strings.Contains(body, `hx-swap-oob`) {
+			t.Errorf("full page must not emit an out-of-band status swap:\n%s", body)
+		}
+	})
+
+	t.Run("detail partial still serves on /detail", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1/detail", nil)
+		req.Header.Set("HX-Request-Type", "partial")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("detail status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `data-testid="extraction-job-detail"`) {
+			t.Errorf("detail partial missing job-detail testid:\n%s", body)
+		}
+		if !strings.Contains(body, "extract-1") {
+			t.Errorf("detail partial missing branch name:\n%s", body)
+		}
+	})
+
+	t.Run("unknown job degrades to a page error", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/nope", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("unknown job status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "Extraction run unavailable") {
+			t.Errorf("unknown job page missing error heading:\n%s", rec.Body.String())
+		}
+	})
+
+	t.Run("trace fragment returns the polling body and oob status", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1/trace", nil)
+		req.Header.Set("HX-Request-Type", "partial")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("trace status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, want := range []string{
+			`data-testid="extraction-run-body"`,
+			`data-testid="extraction-summary-strip"`,
+			`data-testid="extraction-trace"`,
+			`hx-trigger="every 3s"`,
+			`id="extraction-run-status"`,
+			`hx-swap-oob="true"`,
+			"Trace", "2 span",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("trace fragment missing %q:\n%s", want, body)
+			}
+		}
+	})
+
+	t.Run("terminal trace fragment stops polling and shows final numbers", func(t *testing.T) {
+		original := f.extractionJob
+		completed := *original
+		completed.Status = "completed"
+		completed.CompletedAt = "2026-08-26T10:01:30Z"
+		f.extractionJob = &completed
+		defer func() { f.extractionJob = original }()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1/trace", nil)
+		req.Header.Set("HX-Request-Type", "partial")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("terminal trace status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		for _, unwanted := range []string{`hx-trigger`, "every 3s", `data-testid="extraction-live"`} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("terminal fragment must not emit %q:\n%s", unwanted, body)
+			}
+		}
+		for _, want := range []string{
+			`data-testid="extraction-summary-strip"`,
+			"finished ", "deepseek-v4-flash", "123 in · 456 out", "$0.0123",
+			`hx-swap-oob="true"`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("terminal fragment missing final %q:\n%s", want, body)
+			}
+		}
+	})
+
+	t.Run("trace fragment error leaves the last summary intact", func(t *testing.T) {
+		original := f.docErr
+		f.docErr = errTest
+		defer func() { f.docErr = original }()
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/documents/d1/extractions/job1/trace", nil)
+		req.Header.Set("HX-Request-Type", "partial")
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("error trace status = %d, body=%s", rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("HX-Reswap"); got != "none" {
+			t.Errorf("error trace HX-Reswap = %q, want %q", got, "none")
+		}
+		body := rec.Body.String()
+		for _, unwanted := range []string{
+			`data-testid="extraction-run-body"`,
+			`data-testid="extraction-summary-strip"`,
+			`id="extraction-run-status"`,
+			`hx-swap-oob`,
+			"0 object",
+			"0 relationship",
+		} {
+			if strings.Contains(body, unwanted) {
+				t.Errorf("error trace must not emit %q:\n%s", unwanted, body)
+			}
+		}
+	})
 }

@@ -52,6 +52,46 @@ func TestListExtractionJobs(t *testing.T) {
 	}
 }
 
+func TestGetExtractionJob(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true,"data":{"id":"job1","project_id":"proj-1","source_type":"document","source_id":"d1","status":"completed","total_items":10,"processed_items":10,"successful_items":9,"failed_items":1,"created_object_ids":["o1"],"trace_id":"tr_1","trace_cost_usd":0.0123,"error_details":{"code":"upstream","message":"down"},"retry_count":2,"spans":[
+			{"spanId":"sp_root","parentSpanId":"","name":"extract","startUnixNano":1700000000000000000,"endUnixNano":1700000001230000000},
+			{"spanId":"sp_llm","parentSpanId":"sp_root","name":"call_llm","startUnixNano":1700000001000000000,"endUnixNano":1700000001045000000,"inputTokens":123,"outputTokens":456,"model":"deepseek-v4-flash"}
+		]},"error":null}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj-1")
+	job, err := m.GetExtractionJob(context.Background(), "job1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/admin/extraction-jobs/job1" {
+		t.Errorf("path = %q, want /api/admin/extraction-jobs/job1", gotPath)
+	}
+	if job == nil || job.TraceID != "tr_1" {
+		t.Errorf("trace_id = %+v, want tr_1", job)
+	}
+	if len(job.Spans) != 2 {
+		t.Fatalf("len(spans) = %d, want 2", len(job.Spans))
+	}
+	if job.Spans[1].Model != "deepseek-v4-flash" || job.Spans[1].InputTokens != 123 || job.Spans[1].OutputTokens != 456 {
+		t.Errorf("llm span = %+v", job.Spans[1])
+	}
+	if job.TraceCostUSD == nil || *job.TraceCostUSD != 0.0123 {
+		t.Errorf("trace_cost_usd = %v, want 0.0123", job.TraceCostUSD)
+	}
+	if job.RetryCount != 2 {
+		t.Errorf("retry_count = %d, want 2", job.RetryCount)
+	}
+	if job.ErrorDetails == nil || job.ErrorDetails["code"] != "upstream" {
+		t.Errorf("error_details = %v, want code=upstream", job.ErrorDetails)
+	}
+}
+
 func TestDownloadDocumentStreams(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

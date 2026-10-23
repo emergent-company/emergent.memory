@@ -111,6 +111,7 @@ type MemoryBackend interface {
 	GetExtractionSummary(ctx context.Context, documentID string) (*ExtractionSummary, error)
 	GetDocumentContent(ctx context.Context, documentID string) (string, error)
 	ListExtractionJobs(ctx context.Context, documentID string) ([]ExtractionJob, error)
+	GetExtractionJob(ctx context.Context, jobID string) (*ExtractionJob, error)
 	DownloadDocument(ctx context.Context, id string) (io.ReadCloser, string, error)
 	ListDocumentVersions(ctx context.Context, documentID string) ([]DocumentVersion, error)
 	// Data-source integrations (see memory_datasources.go). Credentials are

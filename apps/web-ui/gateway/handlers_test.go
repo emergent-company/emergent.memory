@@ -140,6 +140,7 @@ type fakeMemory struct {
 	relns            []GraphRelationship // returned by ListRelationships
 	branches         []Branch            // returned by ListBranches
 	extractionJobs   []ExtractionJob     // returned by ListExtractionJobs
+	extractionJob    *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
 	downloadDocBody  []byte              // raw bytes returned by DownloadDocument
 	downloadDocCT    string              // Content-Type returned by DownloadDocument
 	downloadDocErr   error               // DownloadDocument failure
@@ -1254,6 +1255,21 @@ func (f *fakeMemory) ListExtractionJobs(ctx context.Context, documentID string) 
 		return nil, f.docErr
 	}
 	return f.extractionJobs, nil
+}
+
+func (f *fakeMemory) GetExtractionJob(ctx context.Context, jobID string) (*ExtractionJob, error) {
+	if f.docErr != nil {
+		return nil, f.docErr
+	}
+	if f.extractionJob != nil && f.extractionJob.ID == jobID {
+		return f.extractionJob, nil
+	}
+	for i := range f.extractionJobs {
+		if f.extractionJobs[i].ID == jobID {
+			return &f.extractionJobs[i], nil
+		}
+	}
+	return nil, fmt.Errorf("extraction job %s not found", jobID)
 }
 
 func (f *fakeMemory) DownloadDocument(ctx context.Context, id string) (io.ReadCloser, string, error) {

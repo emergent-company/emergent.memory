@@ -423,43 +423,6 @@ templ toolStatusBadge(status string) {
 // of spans, deepest-first by parentage. Runs whose agent-run DTO carries no
 // spans (tracing disabled/absent) render nothing.
 templ sessionRunTrace(g runGroup) {
-	if len(g.spans) > 0 {
-		<details class="mt-3 rounded-box border border-base-content/10 bg-base-200/30 p-3" open>
-			<summary class="flex cursor-pointer items-center gap-2 list-none select-none [&::-webkit-details-marker]:hidden">
-				<span class="iconify lucide--activity size-3.5 text-muted-faint" aria-hidden="true"></span>
-				<span class="text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Trace</span>
-				<span class="font-mono text-[11px] text-muted">{ strconv.Itoa(len(g.spans)) } span{ plural(len(g.spans)) }</span>
-			</summary>
-			<div class="mt-2 space-y-0.5 overflow-x-auto">
-				<div class="min-w-max">
-					for _, row := range traceRows(g.spans) {
-						@sessionTraceRow(row)
-					}
-				</div>
-			</div>
-		</details>
-	}
+	@TraceWaterfall(g.spans)
 }
 
-// sessionTraceRow renders one waterfall line: duration, operation name, and
-// input → output token counts for call_llm spans. Children are indented one
-// level per tree depth under their parent.
-templ sessionTraceRow(row traceRow) {
-	{{ name := row.span.Name
-	if name == "" {
-		name = "(unnamed)"
-	}
-	tokenLabel := ""
-	if row.span.Name == "call_llm" {
-		if label, ok := llmTokenLabel(row.span.InputTokens, row.span.OutputTokens); ok {
-			tokenLabel = label
-		}
-	} }}
-	<div class="flex items-baseline gap-2" style={ "padding-left: " + strconv.Itoa(row.depth*16) + "px" }>
-		<span class="shrink-0 font-mono text-[10px] text-muted-faint">{ formatSpanDuration(row.span.StartUnixNano, row.span.EndUnixNano) }</span>
-		<span class="min-w-0 font-mono text-[11px] text-base-content">{ name }</span>
-		if tokenLabel != "" {
-			<span class="shrink-0 text-[10px] whitespace-nowrap text-muted-faint">{ tokenLabel }</span>
-		}
-	</div>
-}

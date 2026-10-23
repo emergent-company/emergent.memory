@@ -70,8 +70,9 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternSurfaceOpacity, file: "proposal.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "schedules.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "schema.templ", count: 1, note: "normalise to bg-base-200/40"},
-		{pattern: patternSurfaceOpacity, file: "sessions.templ", count: 3, note: "normalise to bg-base-200/40"},
+		{pattern: patternSurfaceOpacity, file: "sessions.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "share_manage.templ", count: 3, note: "normalise to bg-base-200/40"},
+		{pattern: patternSurfaceOpacity, file: "trace_waterfall.templ", count: 1, note: "muted bg-base-200/30 fill on a collapsible <details> (ui.SoftBox has no details element); normalise to bg-base-200/40"},
 
 		// border-token-drift — canonical is border-base-content/10.
 		{pattern: patternBorderTokenDrift, file: "agent.templ", count: 3, note: "normalise to border-base-content/10"},

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/url"
 	"strconv"
 
@@ -373,6 +374,193 @@ templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error
 	}
 }
 
+// DocumentExtractionPage renders the dedicated extraction-run sub-page: the
+// shared detail header, the sub-navigation rail, and — in order — the run
+// header, summary strip, trace waterfall, error details, and the objects/
+// relationships/branch/merge block. A failed document or job fetch degrades
+// the whole page to the error state.
+templ DocumentExtractionPage(doc *Document, d extractionJobDetail, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Extraction run unavailable", loadErr)
+		} else {
+			@documentDetailHeader(doc)
+			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
+				@extractionRunHeader(doc, d)
+				@components.PanelCard("", nil) {
+					@extractionRunBody(doc.ID, d.Job.ID, d, extractionJobActive(d.Job.Status), false)
+				}
+				@extractionErrorBlock(d)
+				@components.PanelCard("", nil) {
+					@ExtractionJobDetail(doc.ID, d)
+				}
+			}
+		}
+	}
+}
+
+// extractionRunHeader renders the sub-page's run identity block: a back link to
+// the extraction history, the run's creation time + short id, its status badge,
+// and a "Live" indicator while the job is still running.
+templ extractionRunHeader(doc *Document, d extractionJobDetail) {
+	{{ job := d.Job }}
+	<div class="mb-4 flex flex-wrap items-center gap-3" data-testid="extraction-run-header">
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    documentExtractionsPath(doc.ID),
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--arrow-left",
+		}) {
+			All extractions
+		}
+		<div class="min-w-0 grow">
+			<p class="text-sm font-medium">{ relTime(job.CreatedAt) }</p>
+			<p class="text-muted-faint font-mono text-xs">{ shortID(job.ID) }</p>
+		</div>
+		@extractionRunStatus(d, false)
+	</div>
+}
+
+// extractionRunStatus renders the run's status badge and — while the job is
+// still running — its "Live" indicator. The group carries a stable id so the
+// polling fragment can refresh it out-of-band (`oob` adds hx-swap-oob), letting
+// the terminal status land without a full page reload.
+templ extractionRunStatus(d extractionJobDetail, oob bool) {
+	{{ job := d.Job
+	attrs := templ.Attributes{"id": "extraction-run-status", "data-testid": "extraction-run-status", "class": "flex items-center gap-2"}
+	if oob {
+		attrs["hx-swap-oob"] = "true"
+	} }}
+	<div { attrs... }>
+		@documentStatusBadge(job.Status)
+		if extractionJobActive(job.Status) {
+			@ui.Badge(ui.BadgeProps{Label: "Live", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--radio", Animate: true, Attrs: templ.Attributes{"data-testid": "extraction-live"}})
+		}
+	</div>
+}
+
+// extractionSummaryStrip renders the run's at-a-glance summary as a wrapping
+// row of ghost badges: start/finish times, duration, progress counters
+// (processed/total and failed), objects and relationships, model, token
+// counts, estimated cost, and retry count. Every element hides when its data is
+// absent.
+templ extractionSummaryStrip(d extractionJobDetail) {
+	{{ job := d.Job
+	model, inTok, outTok := extractionTraceMeta(job.Spans) }}
+	<div class="flex flex-wrap items-center gap-2" data-testid="extraction-summary-strip">
+		<h3 class="sr-only">Run summary</h3>
+		@ui.Badge(ui.BadgeProps{Label: "started " + relTime(job.StartedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--clock"})
+		if job.CompletedAt != "" {
+			@ui.Badge(ui.BadgeProps{Label: "finished " + relTime(job.CompletedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--flag"})
+			@ui.Badge(ui.BadgeProps{Label: formatRunDuration(extractionDurationSeconds(job.StartedAt, job.CompletedAt)), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		}
+		if job.TotalItems > 0 {
+			@ui.Badge(ui.BadgeProps{Label: fmt.Sprintf("%d/%d processed", job.ProcessedItems, job.TotalItems), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--loader"})
+		}
+		if job.FailedItems > 0 {
+			@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(job.FailedItems) + " failed", Variant: ui.BadgeError, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--triangle-alert"})
+		}
+		@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(len(d.Objects)) + " object" + plural(len(d.Objects)), Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--box"})
+		@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(len(d.Relationships)) + " relationship" + plural(len(d.Relationships)), Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--link"})
+		if model != "" {
+			@ui.Badge(ui.BadgeProps{Label: model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+		}
+		if inTok+outTok > 0 {
+			@ui.Badge(ui.BadgeProps{Label: fmt.Sprintf("%d in · %d out", inTok, outTok), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--gauge"})
+		}
+		if job.TraceCostUSD != nil {
+			@ui.Badge(ui.BadgeProps{Label: "$" + formatTraceCostUSD(*job.TraceCostUSD), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--circle-dollar-sign"})
+		}
+		if job.RetryCount > 0 {
+			@ui.Badge(ui.BadgeProps{Label: countLabel(job.RetryCount, "retry", "retries"), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--rotate-cw"})
+		}
+	</div>
+}
+
+// extractionRunBody is the polling root of the extraction-run sub-page: it
+// bundles the summary strip and the trace panel so a running job's final
+// duration, tokens, estimated cost, and object counts all land when the run
+// finishes — the strip lives inside the swapped element, not beside it. While
+// `poll` is true the root carries the HTMX interval; once the job is terminal
+// the root renders with no hx attributes so the interval self-terminates (see
+// projectsPendingRefreshNote in org_context.templ). `oobStatus` additionally
+// renders the header status group with hx-swap-oob so the badge and its "Live"
+// indicator update in the same swap.
+templ extractionRunBody(documentID, jobID string, d extractionJobDetail, poll, oobStatus bool) {
+	{{ attrs := templ.Attributes{"id": "extraction-run-body", "data-testid": "extraction-run-body"}
+	if poll {
+		attrs["hx-get"] = "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/trace"
+		attrs["hx-trigger"] = "every 3s"
+		attrs["hx-swap"] = "outerHTML"
+		// The page shell's <main> carries hx-target="#main-content" and htmx's
+		// implicit attribute inheritance would otherwise apply it here, so the
+		// swap target is pinned to this element.
+		attrs["hx-target"] = "this"
+	} }}
+	<div { attrs... }>
+		@extractionSummaryStrip(d)
+		@extractionTracePanel(d)
+	</div>
+	if oobStatus {
+		@extractionRunStatus(d, true)
+	}
+}
+
+// extractionTracePanel renders the run's OpenTelemetry trace: the span
+// waterfall when spans exist, a "waiting for the first spans" note while the
+// run is still active with no spans yet, and a "no trace recorded" note for
+// terminal runs with no trace. The polling attributes live on the enclosing
+// extractionRunBody root, not here.
+templ extractionTracePanel(d extractionJobDetail) {
+	{{ job := d.Job
+	running := extractionJobActive(job.Status) }}
+	<div id="extraction-trace" data-testid="extraction-trace">
+		<h3 class="sr-only">Trace</h3>
+		if len(job.Spans) > 0 {
+			@TraceWaterfall(job.Spans)
+		} else if running {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "mt-3 flex items-center gap-2"}) {
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Waiting for the first spans… }
+			}
+		} else {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "mt-3"}) {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { No trace recorded for this run. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Tracing is recorded only when the server has OTEL enabled. }
+			}
+		}
+	</div>
+}
+
+// extractionErrorBlock renders the run's failure: the error alert plus, when
+// the server recorded structured error details, a collapsible pretty-JSON dump.
+// Rendered only when the job carries an error message.
+templ extractionErrorBlock(d extractionJobDetail) {
+	{{ job := d.Job }}
+	if job.ErrorMessage != nil && *job.ErrorMessage != "" {
+		<div class="mb-4" data-testid="extraction-error-block">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: *job.ErrorMessage,
+			})
+			if len(job.ErrorDetails) > 0 {
+				<details class="mt-2 rounded-box border border-base-content/10">
+					<summary class="flex cursor-pointer items-center gap-2 list-none select-none px-3 py-2 [&::-webkit-details-marker]:hidden">
+						<span class="iconify lucide--braces size-3.5 shrink-0 text-muted-faint" aria-hidden="true"></span>
+						<span class="text-xs font-medium">Error details</span>
+					</summary>
+					<div class="border-t border-base-content/10 p-3">
+						<pre class="overflow-x-auto text-xs whitespace-pre-wrap">{ prettyJSON(job.ErrorDetails) }</pre>
+					</div>
+				</details>
+			}
+		</div>
+	}
+}
+
 // extractionHistory lists a document's extraction jobs newest-first. Each row
 // carries the run's summary and lazily loads its detail (objects,
 // relationships, branch, and merge action) over HTMX, avoiding N+1 requests on
@@ -397,7 +585,8 @@ templ extractionHistory(documentID string, jobs []ExtractionJob, hint *mergeRevi
 }
 
 templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHint) {
-	{{ detailHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) }}
+	{{ detailHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) + "/detail" }}
+	{{ traceHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) }}
 	{{ if hint != nil && hint.JobID == job.ID && hint.Left > 0 { detailHref = detailHref + "?review=" + strconv.Itoa(hint.Left) } }}
 	<div class="border border-line overflow-hidden" data-testid="extraction-job-row">
 		<div class="flex flex-wrap items-center gap-2 px-4 py-3">
@@ -421,6 +610,7 @@ templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHi
 					Size:    ui.BadgeSizeXS,
 				})
 			}
+			<a class="link link-primary text-xs" href={ templ.URL(traceHref) } data-testid="extraction-view-trace">View trace →</a>
 		</div>
 		if job.ErrorMessage != nil && *job.ErrorMessage != "" {
 			<div class="px-4 pb-3">
