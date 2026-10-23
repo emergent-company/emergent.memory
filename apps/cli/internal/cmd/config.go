@@ -221,6 +221,31 @@ var configYAMLKeys = map[string]bool{
 	"auto_update_check_interval": true,
 }
 
+// secretConfigKeys lists the config.yaml keys whose value is a credential, so
+// `config set` must not echo it back. stdout is copied into terminal
+// scrollback, screen shares, and tee'd CI logs; printing the value there
+// defeats the 0600 config file (#2068, #2075, #2081, #2110, #2118) on the
+// normal path. This is a classification, not blanket suppression: URLs, email
+// and IDs are identifiers, so their echo is a useful confirmation and is kept.
+// A key added to configYAMLKeys without being considered here is echoed, which
+// is why the switch below and this set have to be updated together.
+var secretConfigKeys = map[string]bool{
+	"api_key": true,
+}
+
+// confirmConfigSet prints the outcome of a config.yaml write. Secret values are
+// replaced by an explicit marker: the confirmation still proves the key was
+// written, without putting the credential on stdout. The .env.local branch
+// already prints the key name only; this brings the other branch in line.
+func confirmConfigSet(key, value string, configPath string) {
+	if secretConfigKeys[key] {
+		fmt.Printf("%s updated (value hidden)\n", key)
+	} else {
+		fmt.Printf("%s updated to: %s\n", key, value)
+	}
+	fmt.Printf("Configuration saved to: %s\n", configPath)
+}
+
 func newConfigSetCmd() *cobra.Command {
 	var configPath string
 
@@ -244,7 +269,12 @@ Supported keys:
   llm_model                   LLM model name (e.g., llama3, mistral)
 
 For standalone installations, google_api_key is saved to .env.local.
-All other keys are saved to config.yaml.`,
+All other keys are saved to config.yaml.
+
+Credential values (api_key, google_api_key, openai_api_key) are never echoed:
+the confirmation names the key and reports the value as hidden, so a secret
+does not land in terminal scrollback or tee'd CI logs. Non-secret values
+(server_url, email, org_id, project_id) are still printed back.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := strings.ToLower(args[0])
@@ -329,8 +359,7 @@ All other keys are saved to config.yaml.`,
 				return fmt.Errorf("failed to save config: %w", err)
 			}
 
-			fmt.Printf("%s updated to: %s\n", key, value)
-			fmt.Printf("Configuration saved to: %s\n", configPath)
+			confirmConfigSet(key, value, configPath)
 			return nil
 		},
 	}

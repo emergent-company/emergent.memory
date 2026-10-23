@@ -2149,6 +2149,11 @@ Supported keys:
 For standalone installations, google_api_key is saved to .env.local.
 All other keys are saved to config.yaml.
 
+Credential values (api_key, google_api_key, openai_api_key) are never echoed:
+the confirmation names the key and reports the value as hidden, so a secret
+does not land in terminal scrollback or tee'd CI logs. Non-secret values
+(server_url, email, org_id, project_id) are still printed back.
+
 ```
 memory config set <key> <value> [flags]
 ```
