@@ -45,10 +45,31 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
           if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/server/ | grep -q .; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Independent second opinion on the alias decision (#2111). The step above
+      # resolves PREV with `git describe`; a force-moved rolling tag can win that
+      # lookup (v0.88.0 / #2087). The script re-resolves the previous RELEASE tag
+      # from the tag list, diffs apps/server against it, and fails the release
+      # when the two signals disagree. A missing previous map (a release cut
+      # before #2111) degrades to the tree comparison.
+      - name: Download previous release version map
+        if: startsWith(github.ref, 'refs/tags/v') && steps.changed.outputs.prev != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          mkdir -p .release-prev
+          if gh release download "${PREV}" --pattern release-versions.json \
+               --dir .release-prev --repo "${GITHUB_REPOSITORY}" --clobber 2>/dev/null; then
+            echo "::notice::using ${PREV}'s recorded digest for the alias check"
+          else
+            echo "::notice::no release-versions.json on ${PREV}; degrading the alias check to the tree comparison"
           fi
 
       - name: Set up Docker Buildx
@@ -64,18 +85,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check source image exists
+      - name: Check previous release image
         id: source
         if: steps.changed.outputs.changed == 'false'
         shell: bash
+        env:
+          PREV: ${{ steps.changed.outputs.prev }}
         run: |
-          PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null | sed 's/^v//')
-          IMG="${{ env.IMAGE_PREFIX }}/memory-server"
-          if docker buildx imagetools inspect "$IMG:$PREV" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          prev="${PREV#v}"
+          IMG="${IMAGE_PREFIX}/memory-server"
+          if docker buildx imagetools inspect "${IMG}:${prev}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' \
+              "${IMG}:${prev}" 2>/dev/null | jq -r '.digest // empty' || true)"
+            echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
           fi
+
+      - name: Assert alias decision (independent second signal)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHECK_SERVICE: server
+          CHECK_PATH: apps/server
+          CHECK_CHANGED: ${{ steps.changed.outputs.changed }}
+          CHECK_PREV_TAG: ${{ steps.changed.outputs.prev }}
+          CHECK_CURRENT_TAG: ${{ github.ref_name }}
+          CHECK_PREV_MAP: .release-prev/release-versions.json
+          CHECK_PREV_DIGEST: ${{ steps.source.outputs.digest }}
+        run: .github/scripts/release-versions.sh check
 
       - name: Extract metadata
         id: meta
@@ -141,12 +179,13 @@ jobs:
         shell: bash
         env:
           COMMIT: ${{ steps.version.outputs.commit }}
+          PREV: ${{ steps.changed.outputs.prev }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           MAJOR_MINOR="${VERSION%.*}"
           MAJOR="${VERSION%%.*}"
-          PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null | sed 's/^v//')
-          IMG="${{ env.IMAGE_PREFIX }}/memory-server"
+          PREV="${PREV#v}"
+          IMG="${IMAGE_PREFIX}/memory-server"
           docker buildx imagetools create \
             -t "$IMG:$VERSION" \
             -t "$IMG:$MAJOR_MINOR" \

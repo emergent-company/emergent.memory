@@ -1,0 +1,290 @@
+name: Release Version Map
+
+# Record what each release is supposed to contain (#2111).
+#
+# Where the Release is created: the GitHub Release object is created by the
+# "Memory CLI & Release" workflow (.github/workflows/cli.yml, job `release`,
+# softprops/action-gh-release). The images the map describes are published by
+# *other* workflows — build-publish.yml (web-ui), publish-self-hosted-images.yml
+# (server), cli.yml's `docker` job (cli) and publish-workspace-image.yml
+# (workspace) — concurrently with that release job, so cli.yml cannot know their
+# digests when it creates the release.
+#
+# This workflow is therefore the step that owns the release-versions.json asset:
+# it triggers on the same tag push, waits for the release object and for every
+# service image, builds the map and uploads it to the release. A
+# `release: published` trigger is not usable: GitHub does not start workflow
+# runs for events caused by GITHUB_TOKEN, and the release is created with that
+# token.
+#
+# The alias *gate* lives in the publishing workflows, before they alias (see the
+# `Assert alias decision` steps). This workflow is the record, not the gate.
+#
+# Asset contract (schema_version 1) — see .github/scripts/release-versions.sh:
+#   release-versions.json
+#   {
+#     "schema_version": 1,
+#     "generated_at": "...",
+#     "release": {"tag": "v0.88.0", "version": "0.88.0", "commit": "abc1234"},
+#     "previous_release": {"tag": "v0.87.4"} | null,
+#     "degraded": false,
+#     "notes": [],
+#     "services": [{
+#       "service": "web-ui", "path": "apps/web-ui",
+#       "image": "ghcr.io/owner/memory-web-ui",
+#       "tags": [...],                    # only tags verified to resolve to `digest`
+#       "version": "0.87.4",              # exactly what the image self-reports
+#       "version_source": "previous-map", # built|previous-map|alias-tag|none
+#       "digest": "sha256:...",
+#       "source": "aliased-from:v0.87.4"  # built | aliased-from:<prev-tag>
+#     }]
+#   }
+#
+# `tags` is probed, not derived: the publishers disagree on tag conventions
+# (metadata-action publishes 7-character `sha-` tags, the alias paths publish
+# `git rev-parse --short`, web-ui's alias path publishes neither `latest` nor
+# `sha-`), so the map keeps only candidates that resolve to the `tags[0]`
+# digest at build time. `version` is per service (server self-reports
+# `v0.88.0`, web-ui/cli `0.88.0`); see the script header for the comparison
+# rule. Both are contract, not cosmetics: the deploy side consumes them.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build the map for (e.g. v0.88.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: read
+
+concurrency:
+  group: release-versions-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  map:
+    name: Publish release-versions.json
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve release
+        id: release
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          tag="${REQUESTED_TAG:-$REF_NAME}"
+          case "${tag}" in
+            v*) ;;
+            *) tag="v${tag}" ;;
+          esac
+          if ! [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::not a release tag: ${tag}" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          commit="$(git rev-parse --short HEAD)"
+          owner_lc="$(printf '%s' "${OWNER}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "tag=${tag}"
+            echo "version=${version}"
+            echo "commit=${commit}"
+            echo "image_prefix=${REGISTRY}/${owner_lc}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve previous release and download its map
+        id: previous
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prev="$(CHECK_REPO=. CHECK_CURRENT_TAG="${TAG}" \
+            .github/scripts/release-versions.sh prev-tag)"
+          echo "prev=${prev}" >> "${GITHUB_OUTPUT}"
+          mkdir -p .release-prev
+          if [ -n "${prev}" ] && gh release download "${prev}" \
+               --pattern release-versions.json --dir .release-prev \
+               --repo "${GITHUB_REPOSITORY}" --clobber 2>/dev/null; then
+            echo "map=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::previous release map: ${prev}/release-versions.json"
+          else
+            echo "map=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::no previous release map; aliased versions will be recorded as an assumption"
+          fi
+
+      - name: Write service descriptors
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          IMAGE_PREFIX: ${{ steps.release.outputs.image_prefix }}
+        run: |
+          major_minor="${VERSION%.*}"
+          major="${VERSION%%.*}"
+          # These are *candidate* tags. The map builder probes each one and keeps
+          # only those that resolve to the tags[0] digest, so the sha convention
+          # (metadata-action publishes 7 characters, `git rev-parse --short` is 9
+          # in this repo) and mutable `latest` do not have to be guessed here.
+          # version_style is what the image self-reports, not an alias decision:
+          # the server embeds the tag (`v0.88.0`), web-ui and cli embed the bare
+          # version (`0.88.0`). See the asset contract above.
+          jq -n \
+            --arg prefix "${IMAGE_PREFIX}" \
+            --arg v "${VERSION}" \
+            --arg mm "${major_minor}" \
+            --arg major "${major}" \
+            --arg sha "sha-${COMMIT}" \
+            '[
+              {
+                service: "server",
+                path: "apps/server",
+                image: ($prefix + "/memory-server"),
+                tags: [
+                  ($prefix + "/memory-server:" + $v),
+                  ($prefix + "/memory-server:" + $mm),
+                  ($prefix + "/memory-server:" + $major),
+                  ($prefix + "/memory-server:" + $sha)
+                ],
+                aliasable: true,
+                version_embedded: true,
+                version_style: "tag"
+              },
+              {
+                service: "web-ui",
+                path: "apps/web-ui",
+                image: ($prefix + "/memory-web-ui"),
+                tags: [
+                  ($prefix + "/memory-web-ui:" + $v),
+                  ($prefix + "/memory-web-ui:latest"),
+                  ($prefix + "/memory-web-ui:" + $sha)
+                ],
+                aliasable: true,
+                version_embedded: true,
+                version_style: "bare"
+              },
+              {
+                service: "cli",
+                path: "apps/cli",
+                image: ($prefix + "/memory-cli"),
+                tags: [
+                  ($prefix + "/memory-cli:" + $v),
+                  ($prefix + "/memory-cli:latest")
+                ],
+                aliasable: false,
+                version_embedded: true,
+                version_style: "bare"
+              },
+              {
+                service: "workspace",
+                path: "docker",
+                image: ($prefix + "/memory-workspace"),
+                tags: [
+                  ($prefix + "/memory-workspace:" + $v),
+                  ($prefix + "/memory-workspace:" + $mm),
+                  ($prefix + "/memory-workspace:latest"),
+                  ($prefix + "/memory-workspace:" + $sha)
+                ],
+                aliasable: false,
+                version_embedded: false
+              }
+            ]' >services.json
+          jq -r '.[] | "\(.service): \(.tags[0])"' services.json
+
+      - name: Wait for published images
+        run: |
+          mapfile -t refs < <(jq -r '.[].tags[0]' services.json)
+          deadline=$((SECONDS + 1800))
+          while :; do
+            missing=()
+            for ref in "${refs[@]}"; do
+              if ! docker buildx imagetools inspect "${ref}" >/dev/null 2>&1; then
+                missing+=("${ref}")
+              fi
+            done
+            if [ "${#missing[@]}" -eq 0 ]; then
+              echo "all ${#refs[@]} release images are published"
+              break
+            fi
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "::error::images not published after 30 minutes: ${missing[*]}" >&2
+              exit 1
+            fi
+            echo "waiting for: ${missing[*]}"
+            sleep 20
+          done
+
+      - name: Build release version map
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          PREV: ${{ steps.previous.outputs.prev }}
+          PREV_MAP: ${{ steps.previous.outputs.map }}
+        run: |
+          map_args=(
+            MAP_TAG="${TAG}"
+            MAP_COMMIT="${COMMIT}"
+            MAP_SERVICES=services.json
+            MAP_PREV_TAG="${PREV}"
+            MAP_OUT=release-versions.json
+          )
+          if [ "${PREV_MAP}" = "true" ]; then
+            map_args+=(MAP_PREV_MAP=.release-prev/release-versions.json)
+          fi
+          env "${map_args[@]}" .github/scripts/release-versions.sh map
+
+      - name: Emit map in the job log
+        run: |
+          cat release-versions.json
+          {
+            echo '## release-versions.json'
+            echo '```json'
+            cat release-versions.json
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Wait for the release object
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # cli.yml creates the Release object; this workflow can finish the
+          # images first. Same wait pattern as images-ready.txt.
+          for attempt in $(seq 1 90); do
+            if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              echo "release ${TAG} found"
+              exit 0
+            fi
+            echo "waiting for release ${TAG} (attempt ${attempt}/90)"
+            sleep 10
+          done
+          echo "::error::release ${TAG} was not created after 15 minutes" >&2
+          exit 1
+
+      - name: Attach map to the release
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${TAG}" release-versions.json \
+            --repo "${GITHUB_REPOSITORY}" --clobber
+          echo "::notice::attached release-versions.json to ${TAG}"

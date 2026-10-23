@@ -168,6 +168,12 @@ jobs:
       - name: Mac release skip-check tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/mac-release-should-build.test.sh
+      # Hermetic tests for the release version map and the alias assertion
+      # (#2111): built vs aliased entries, the 0.88.0 wrong-PREV case, missing
+      # previous maps degrading rather than failing.
+      - name: Release version map tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/release-versions.test.sh
       - name: Meta checks
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: 'echo "Meta CI: no meta checks remain in this repository."'
