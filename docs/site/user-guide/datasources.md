@@ -131,6 +131,10 @@ press **Choose folders** (or follow the prompt on a freshly connected source):
 
 - The modal shows the folders the connected Google account can read. Open a folder to browse its
   subfolders; use the sidebar to switch between **My Drive** and **Shared drives**.
+- If Google asks you to sign in, use the account that connected this source. The Picker runs in
+  your browser and needs a signed-in Google account — the token the server mints for the source is
+  not enough on its own, and folders visible only to a different signed-in account are rejected
+  when you save.
 - Select more than one folder. Selections accumulate across Picker openings, so you can add a
   folder, close the picker, browse elsewhere, and add another.
 - Remove a folder with the **×** on its chip, then press **Save folders**.

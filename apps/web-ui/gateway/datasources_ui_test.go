@@ -1943,6 +1943,11 @@ func TestRenderDataSourceDetailPageFolderTargets(t *testing.T) {
 		"drive.readonly",
 		`data-testid="ds-folder-picker"`,
 		`data-ds-open-folder-picker="true"`,
+		`data-testid="ds-picker-account-hint"`,
+		// The Picker iframe 401s ("Sign in to your Google Account") when the
+		// browser has no Google session, and the cross-origin frame gives no
+		// signal we can render — so the modal has to say it up front (#2108).
+		"Use the account that connected this source",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("detail page missing %q", want)
