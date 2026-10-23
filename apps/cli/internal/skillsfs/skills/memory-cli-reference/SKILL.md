@@ -3678,7 +3678,7 @@ Walks through:
   3. Memory skills installation for AI agents
 
 Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
-to .env.local and auto-adds .env.local to .gitignore.
+to .env.local (file mode 0600) and auto-adds .env.local to .gitignore.
 
 Running 'memory init' again detects existing configuration and offers
 to verify or reconfigure each step.
@@ -4308,10 +4308,10 @@ Set the active project context.
 
 Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
 MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY into .env.local in the current
-directory so that subsequent CLI commands and application code automatically use
-the selected project. If no existing token is found for the project, a new one
-is created automatically. Run without arguments to select interactively from a
-numbered list of available projects.
+directory (file mode 0600) so that subsequent CLI commands and application code
+automatically use the selected project. If no existing token is found for the
+project, a new one is created automatically. Run without arguments to select
+interactively from a numbered list of available projects.
 
 Use --clear to remove the active project from the global config.
 

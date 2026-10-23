@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -36,7 +37,7 @@ Walks through:
   3. Memory skills installation for AI agents
 
 Writes MEMORY_PROJECT_ID, MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY
-to .env.local and auto-adds .env.local to .gitignore.
+to .env.local (file mode 0600) and auto-adds .env.local to .gitignore.
 
 Running 'memory init' again detects existing configuration and offers
 to verify or reconfigure each step.
@@ -513,31 +514,10 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 		tokenValue = createResp.Token
 	}
 
-	// 4.3  Write .env.local (preserve existing keys).
-	envMap, _ := godotenv.Read(".env.local")
-	if envMap == nil {
-		envMap = make(map[string]string)
-	}
-	envMap["MEMORY_PROJECT_ID"] = projectID
-	envMap["MEMORY_PROJECT_NAME"] = projectName
-	envMap["MEMORY_PROJECT_API_KEY"] = tokenValue
-
-	// When the user chose local scope for --server, write MEMORY_SERVER_URL.
-	if localServerScope && localServerURL != "" {
-		envMap["MEMORY_SERVER_URL"] = localServerURL
-	}
-
-	// When we performed an inline login, write MEMORY_ACCOUNT_API_KEY so subsequent
-	// CLI invocations in this directory authenticate without needing
-	// ~/.memory/credentials.json (useful in project-local contexts).
-	if localServerScope && oauthAccessToken != "" {
-		envMap["MEMORY_ACCOUNT_API_KEY"] = oauthAccessToken
-	}
-
-	if err := godotenv.Write(envMap, ".env.local"); err != nil {
+	// 4.3  Write .env.local (preserve existing keys), forcing mode 0600.
+	if _, err := initWriteProjectEnvLocal(os.Stdout, ".", projectID, projectName, tokenValue, localServerScope, localServerURL, oauthAccessToken); err != nil {
 		return fmt.Errorf("failed to write .env.local: %w", err)
 	}
-	fmt.Println("Wrote project context to .env.local")
 
 	// 4.4  Update global config (only when not using local server scope).
 	configPath, _ := cmd.Flags().GetString("config")
@@ -562,6 +542,28 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 	}
 
 	return nil
+}
+
+// initWriteProjectEnvLocal records the discovered project in dir/.env.local.
+// The base keys are written by writeProjectEnvLocal; this adds the two keys that
+// are only meaningful when --server was given local scope. The file is created
+// (or tightened) with mode 0600 and its absolute path is printed once.
+func initWriteProjectEnvLocal(w io.Writer, dir, projectID, projectName, token string, localServerScope bool, localServerURL, oauthAccessToken string) (string, error) {
+	extra := make(map[string]string, 2)
+
+	// When the user chose local scope for --server, write MEMORY_SERVER_URL.
+	if localServerScope && localServerURL != "" {
+		extra["MEMORY_SERVER_URL"] = localServerURL
+	}
+
+	// When we performed an inline login, write MEMORY_ACCOUNT_API_KEY so subsequent
+	// CLI invocations in this directory authenticate without needing
+	// ~/.memory/credentials.json (useful in project-local contexts).
+	if localServerScope && oauthAccessToken != "" {
+		extra["MEMORY_ACCOUNT_API_KEY"] = oauthAccessToken
+	}
+
+	return writeProjectEnvLocal(w, dir, projectID, projectName, token, extra)
 }
 
 // ---------------------------------------------------------------------------

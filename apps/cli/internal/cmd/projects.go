@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +20,6 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/modelconfig"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects"
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/provider"
-	"github.com/joho/godotenv"
 	"github.com/juju/ansiterm"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -95,10 +95,10 @@ var setProjectCmd = &cobra.Command{
 
 Updates project_id in ~/.memory/config.yaml and writes MEMORY_PROJECT_ID,
 MEMORY_PROJECT_NAME, and MEMORY_PROJECT_API_KEY into .env.local in the current
-directory so that subsequent CLI commands and application code automatically use
-the selected project. If no existing token is found for the project, a new one
-is created automatically. Run without arguments to select interactively from a
-numbered list of available projects.
+directory (file mode 0600) so that subsequent CLI commands and application code
+automatically use the selected project. If no existing token is found for the
+project, a new one is created automatically. Run without arguments to select
+interactively from a numbered list of available projects.
 
 Use --clear to remove the active project from the global config.`,
 	Args:              cobra.MaximumNArgs(1),
@@ -149,42 +149,10 @@ func shouldWriteTokenEnv(writeEnv, noEnv bool) (bool, error) {
 
 // writeTokenToEnvLocal merges MEMORY_PROJECT_API_KEY into .env.local in dir,
 // preserving every other key, and returns the absolute path of the file. The
-// file is forced to 0600 because it holds a live credential: os.WriteFile only
-// applies perm on creation, so an existing 0644 file is chmodded afterwards.
+// mode and refusal rules live in writeEnvLocal, shared with `memory init` and
+// `memory projects set`.
 func writeTokenToEnvLocal(dir, token string) (string, error) {
-	path := filepath.Join(dir, ".env.local")
-
-	envMap, readErr := godotenv.Read(path)
-	if readErr != nil {
-		if _, statErr := os.Stat(path); statErr == nil {
-			// The file exists but cannot be parsed: overwriting it would silently
-			// drop every key it currently holds, including other credentials.
-			return "", fmt.Errorf("failed to read existing %s (refusing to overwrite it): %w", path, readErr)
-		}
-	}
-	if envMap == nil {
-		envMap = make(map[string]string)
-	}
-	envMap["MEMORY_PROJECT_API_KEY"] = token
-
-	data, err := godotenv.Marshal(envMap)
-	if err != nil {
-		return "", fmt.Errorf("failed to encode %s: %w", path, err)
-	}
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		data += "\n"
-	}
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		return "", fmt.Errorf("failed to write %s: %w", path, err)
-	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return "", fmt.Errorf("failed to tighten permissions on %s: %w", path, err)
-	}
-
-	if abs, absErr := filepath.Abs(path); absErr == nil {
-		return abs, nil
-	}
-	return path, nil
+	return writeEnvLocal(dir, map[string]string{"MEMORY_PROJECT_API_KEY": token})
 }
 
 func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
@@ -819,6 +787,13 @@ func runDeleteProject(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// setProjectEnvLocal records the active project in dir/.env.local with mode
+// 0600 and prints the absolute path once. It is the `projects set` entry point
+// into the writer shared with `memory init` and `create-token --write-env`.
+func setProjectEnvLocal(w io.Writer, dir, projectID, projectName, token string) (string, error) {
+	return writeProjectEnvLocal(w, dir, projectID, projectName, token, nil)
+}
+
 func runSetProject(cmd *cobra.Command, args []string) error {
 	// Handle --clear: remove project_id from global config and .env.local
 	if setProjectClearFlag {
@@ -952,17 +927,8 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		tokenValue = createResp.Token
 	}
 
-	// Write to .env.local
-	envMap, _ := godotenv.Read(".env.local")
-	if envMap == nil {
-		envMap = make(map[string]string)
-	}
-	envMap["MEMORY_PROJECT_ID"] = selectedProjectID
-	envMap["MEMORY_PROJECT_NAME"] = selectedProjectName
-	envMap["MEMORY_PROJECT_API_KEY"] = tokenValue
-
-	err = godotenv.Write(envMap, ".env.local")
-	if err != nil {
+	// Write to .env.local, preserving existing keys and forcing mode 0600.
+	if _, err := setProjectEnvLocal(os.Stdout, ".", selectedProjectID, selectedProjectName, tokenValue); err != nil {
 		return fmt.Errorf("failed to write to .env.local: %w", err)
 	}
 
@@ -986,8 +952,7 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Println("\nSuccessfully updated .env.local with project context!")
-	fmt.Printf("Active project set to: %s (%s)\n", selectedProjectName, selectedProjectID)
+	fmt.Printf("\nActive project set to: %s (%s)\n", selectedProjectName, selectedProjectID)
 	return nil
 }
 
