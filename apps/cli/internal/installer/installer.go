@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 )
 
 const (
@@ -937,35 +939,16 @@ func (i *Installer) PromptOpenAICompatible() {
 	i.output.Success("OpenAI API configured successfully")
 }
 
-// updateEnv updates one or more variables in the .env.local file
+// updateEnv updates one or more variables in the .env.local file.
+//
+// It goes through apps/cli/internal/envfile like every other env-file edit in
+// this CLI: the quoting fallback, the round-trip guard and the atomic replace are
+// shared, instead of a second raw writer that could corrupt a key the user
+// pasted into the wizard (#2148). UpdateAll keeps the old all-or-nothing
+// property: a value that cannot be represented refuses the whole update with the
+// file byte-identical, rather than writing the keys before it.
 func (i *Installer) updateEnv(updates map[string]string) error {
-	envPath := i.GetEnvPath()
-	content, err := os.ReadFile(envPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	for key, value := range updates {
-		found := false
-		for idx, line := range lines {
-			if strings.HasPrefix(line, key+"=") {
-				lines[idx] = key + "=" + value
-				found = true
-				break
-			}
-		}
-		if !found {
-			lines = append(lines, key+"="+value)
-		}
-	}
-
-	// The file carries credentials; WriteFile only applies the mode on create,
-	// so an existing over-permissive file is tightened before the rewrite.
-	if err := os.Chmod(envPath, envFileMode); err != nil {
-		return fmt.Errorf("failed to tighten permissions on %s: %w", envPath, err)
-	}
-	return os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), envFileMode)
+	return envfile.UpdateAll(i.GetEnvPath(), updates, envFileMode)
 }
 
 func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, providerConfigured bool) {

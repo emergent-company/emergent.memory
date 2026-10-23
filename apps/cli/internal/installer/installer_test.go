@@ -288,6 +288,49 @@ func TestGenerateEnvFileMode(t *testing.T) {
 	}
 }
 
+// A provider key the user pastes into the wizard is user input: a value that
+// cannot be represented in the file's quoting style must refuse the write instead
+// of landing raw and making the file unreadable (#2148).
+func TestUpdateEnvRefusesAnUnrepresentableValue(t *testing.T) {
+	installDir := filepath.Join(t.TempDir(), "emergent")
+	inst := New(Config{InstallDir: installDir})
+	if err := inst.CreateDirectories(); err != nil {
+		t.Fatal(err)
+	}
+
+	envPath := inst.GetEnvPath()
+	const before = "GOOGLE_API_KEY=old-google\nSTANDALONE_API_KEY=acct-key\n"
+	if err := os.WriteFile(envPath, []byte(before), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := inst.updateEnv(map[string]string{
+		"OPENAI_API_KEY": "a\nb",
+		"GOOGLE_API_KEY": "new-google", // sorts first; must not land on its own
+	})
+	if err == nil {
+		t.Fatal("updateEnv(unrepresentable value) = nil, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "cannot be represented") {
+		t.Errorf("error = %q, want the representation refusal", err)
+	}
+
+	content, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != before {
+		t.Errorf("env file = %q, want it byte-identical (%q)", string(content), before)
+	}
+	info, statErr := os.Stat(envPath)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("env file mode = %o, want 600", got)
+	}
+}
+
 // updateEnv backs the installer's provider prompts, which write provider keys
 // into the same .env.local and inherited its mode the same way (#2110).
 func TestUpdateEnvTightensMode(t *testing.T) {

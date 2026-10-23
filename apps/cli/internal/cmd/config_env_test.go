@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/testutil"
@@ -471,97 +470,6 @@ func TestUpdateEnvFileKeyLeavesQuotedValuesAlone(t *testing.T) {
 	}
 }
 
-// The rewrite itself must keep a quoted value's delimiters, so the failure is
-// localised here rather than only visible through the parser oracle. The bytes
-// the parser places after the closing quote are a separate statement and stay
-// outside the rewritten span.
-func TestRewriteEnvValuesPreservesQuoting(t *testing.T) {
-	const key = "OPENAI_API_KEY"
-	tests := []struct {
-		name   string
-		before string
-		value  string
-		want   string
-	}{
-		{
-			name:   "double quoted value before a comment",
-			before: "OPENAI_API_KEY=\"old\"#prod-secret-tag\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY=\"NEWVALUE\"#prod-secret-tag\n",
-		},
-		{
-			name:   "single quoted value before a comment",
-			before: "OPENAI_API_KEY='old'#prod-secret-tag\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY='NEWVALUE'#prod-secret-tag\n",
-		},
-		{
-			name:   "double quoted value before another assignment",
-			before: "OPENAI_API_KEY=\"old\"OTHER=x\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY=\"NEWVALUE\"OTHER=x\n",
-		},
-		{
-			name:   "single quoted value before another assignment",
-			before: "OPENAI_API_KEY='old'OTHER=x\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY='NEWVALUE'OTHER=x\n",
-		},
-		{
-			name:   "quoted value before whitespace and a comment keeps working",
-			before: "OPENAI_API_KEY=\"old\" # keep this\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY=\"NEWVALUE\" # keep this\n",
-		},
-		{
-			name:   "quoted value at end of line",
-			before: "OPENAI_API_KEY='old'\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY='NEWVALUE'\n",
-		},
-		{
-			name:   "unquoted value stays bare",
-			before: "OPENAI_API_KEY=old # keep this\n",
-			value:  "NEWVALUE",
-			want:   "OPENAI_API_KEY=NEWVALUE # keep this\n",
-		},
-		{
-			// A quote in the new value cannot go inside the original quotes; the
-			// fallback writes it bare but keeps the comment separate with one
-			// space instead of gluing it to the value.
-			name:   "value that cannot live in the original quotes gets a separator",
-			before: "OPENAI_API_KEY=\"old\"#prod-secret-tag\n",
-			value:  "has\"quote",
-			want:   "OPENAI_API_KEY=has\"quote #prod-secret-tag\n",
-		},
-		{
-			// A "$" is expanded by godotenv in the double-quoted *and* the bare
-			// branch, so keeping the quotes and writing the value bare both
-			// change it. Only the single-quoted form is literal.
-			name:   "value with a variable reference is single quoted",
-			before: "OPENAI_API_KEY=\"old\"#prod-secret-tag\n",
-			value:  "$HOME-key",
-			want:   "OPENAI_API_KEY='$HOME-key'#prod-secret-tag\n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, rewritten, err := rewriteEnvValues([]byte(tt.before), key, tt.value)
-			require.NoError(t, err)
-			require.Equal(t, 1, rewritten)
-			assert.Equal(t, tt.want, string(got))
-
-			// The expected bytes are not the contract — the parse is. This
-			// case used to encode "$HOME-key" written bare, which the parser
-			// expands to "-key".
-			parsed, err := godotenv.Unmarshal(string(got))
-			require.NoError(t, err)
-			assert.Equal(t, tt.value, parsed[key], "the rewrite must read back as the value it was given")
-		})
-	}
-}
-
 // The writer's edge cases must end in one of exactly two states: the value
 // round-trips through the parser unchanged, or the command refuses and the file
 // is byte-identical. A silent third state — the file still parses but holds a
@@ -674,59 +582,6 @@ func TestConfigSetStandaloneKeyRefusesUnrepresentableValue(t *testing.T) {
 	assert.Empty(t, leftovers, "a refusal must not leave a temp file behind")
 }
 
-// The round-trip guard is the last line of defence, so it is tested directly
-// with candidate content a future writer change could produce: if the guard
-// were removed, a wrong value or a dropped assignment would reach the file.
-func TestVerifyEnvRewriteRefusesACorruptingCandidate(t *testing.T) {
-	const before = "GOOGLE_API_KEY=old\nOTHER=keep\n"
-
-	tests := []struct {
-		name  string
-		after string
-	}{
-		{
-			name:  "value silently expanded",
-			after: "GOOGLE_API_KEY=$HOME-key\nOTHER=keep\n",
-		},
-		{
-			name:  "another assignment absorbed into the value",
-			after: "GOOGLE_API_KEY=old OTHER=keep\n",
-		},
-		{
-			name:  "another assignment dropped",
-			after: "GOOGLE_API_KEY=new\n",
-		},
-		{
-			name:  "value written raw with an unescaped newline",
-			after: "GOOGLE_API_KEY=a\nb\nOTHER=keep\n",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := verifyEnvRewrite([]byte(before), []byte(tt.after), "GOOGLE_API_KEY", "new")
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "GOOGLE_API_KEY")
-			assert.Contains(t, err.Error(), "cannot be represented in this file's quoting style")
-			assert.Contains(t, err.Error(), "the file is unchanged")
-		})
-	}
-
-	// The guard must not refuse the legitimate rewrite it exists to protect.
-	require.NoError(t, verifyEnvRewrite([]byte(before),
-		[]byte("GOOGLE_API_KEY='$HOME-key'\nOTHER=keep\n"), "GOOGLE_API_KEY", "$HOME-key"))
-}
-
-// A file that was already unreadable by the loader cannot be map-diffed, but a
-// line-preserving rewrite must still work on it (see
-// TestUpdateEnvFileKeyKeepsUnparseableLines): the guard skips only that case.
-func TestVerifyEnvRewriteSkipsAnUnparseableOriginal(t *testing.T) {
-	const before = "WEIRD=\"unterminated\nGOOGLE_API_KEY=old\n"
-
-	require.NoError(t, verifyEnvRewrite([]byte(before),
-		[]byte("WEIRD=\"unterminated\nGOOGLE_API_KEY=new\n"), "GOOGLE_API_KEY", "new"))
-}
-
 // A hand-maintained file may use CRLF; rewriting one assignment must not leave
 // mixed endings behind (the old split/join dropped the \r of every rewritten
 // line).
@@ -812,91 +667,4 @@ func TestConfigSetStandaloneKeyReportsDuplicates(t *testing.T) {
 	info, err := os.Stat(envPath)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-// A failed atomic write must leave no temp file behind: a stray
-// .env.local.tmp-* holding the new credential is worse than the failure.
-func TestReplaceFileAtomicallyCleansUpTempOnFailure(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, ".env.local")
-	require.NoError(t, os.WriteFile(target, []byte("KEEP=1\n"), 0o600))
-
-	restore := swapRename(func(string, string) error { return syscall.EBUSY })
-	defer restore()
-
-	err := replaceFileAtomically(target, []byte("NEW=2\n"), 0o600)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "the original file is unchanged")
-
-	content, err := os.ReadFile(target)
-	require.NoError(t, err)
-	assert.Equal(t, "KEEP=1\n", string(content), "a failed replace must not touch the original")
-
-	leftovers, err := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
-	require.NoError(t, err)
-	assert.Empty(t, leftovers, "a failed replace must not leave a temp file behind")
-}
-
-// The failure to create a temp file is the case a user hits on a read-only
-// directory, and the old message named the temp path with a doubled dot. It must
-// name the file they asked to write and the directory that has to be writable.
-func TestReplaceFileAtomicallyExplainsDirectoryRequirement(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, ".env.local")
-	require.NoError(t, os.WriteFile(target, []byte("KEEP=1\n"), 0o600))
-
-	restore := swapCreateTemp(func(string, string) (*os.File, error) { return nil, syscall.EACCES })
-	defer restore()
-
-	err := replaceFileAtomically(target, []byte("NEW=2\n"), 0o600)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), target, "the message must name the file being written")
-	assert.Contains(t, err.Error(), dir, "the message must name the directory that must be writable")
-	assert.Contains(t, err.Error(), "writable")
-	assert.NotContains(t, err.Error(), "tmp-", "the temp name is an implementation detail, not an explanation")
-
-	leftovers, globErr := filepath.Glob(filepath.Join(dir, "*.tmp-*"))
-	require.NoError(t, globErr)
-	assert.Empty(t, leftovers)
-}
-
-// rename replaces the inode, so a write over a file owned by another user would
-// leave it owned by whoever ran the command. When the caller may chown (root),
-// this reproduces the sudo case; when it may not, it pins the trivial path.
-func TestReplaceFileAtomicallyKeepsTheOwner(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, ".env.local")
-	require.NoError(t, os.WriteFile(target, []byte("GOOGLE_API_KEY=old\n"), 0o600))
-
-	wantUID, wantGID := os.Getuid(), os.Getgid()
-	if os.Geteuid() == 0 {
-		// nobody:nogroup on Linux; the root write is the case that used to flip
-		// the owner to root.
-		wantUID, wantGID = 65534, 65534
-		require.NoError(t, os.Chown(target, wantUID, wantGID))
-	}
-
-	require.NoError(t, replaceFileAtomically(target, []byte("GOOGLE_API_KEY=new\n"), 0o600))
-
-	info, err := os.Stat(target)
-	require.NoError(t, err)
-	st, ok := info.Sys().(*syscall.Stat_t)
-	require.True(t, ok, "stat owner is available on the platforms these tests run on")
-	assert.Equal(t, wantUID, int(st.Uid), "the rewritten file must keep its owner")
-	assert.Equal(t, wantGID, int(st.Gid), "the rewritten file must keep its group")
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
-}
-
-// swapRename replaces the rename seam and returns its restore function.
-func swapRename(fn func(string, string) error) func() {
-	original := renamePath
-	renamePath = fn
-	return func() { renamePath = original }
-}
-
-// swapCreateTemp replaces the temp-file seam and returns its restore function.
-func swapCreateTemp(fn func(string, string) (*os.File, error)) func() {
-	original := createTempFile
-	createTempFile = fn
-	return func() { createTempFile = original }
 }

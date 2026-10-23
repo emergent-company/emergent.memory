@@ -17,6 +17,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/auth"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/client"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/installer"
 	"github.com/spf13/cobra"
 )
@@ -1064,29 +1065,12 @@ func getPostgresPasswordFromContainer() (string, error) {
 
 func updateEnvPassword(installDir, newPassword string) error {
 	envPath := filepath.Join(installDir, "config", ".env.local")
-
-	content, err := os.ReadFile(envPath)
-	if err != nil {
-		return err
-	}
-
-	lines := strings.Split(string(content), "\n")
-	var newLines []string
-
-	for _, line := range lines {
-		if strings.HasPrefix(line, "POSTGRES_PASSWORD=") {
-			newLines = append(newLines, fmt.Sprintf("POSTGRES_PASSWORD=%s", newPassword))
-		} else {
-			newLines = append(newLines, line)
-		}
-	}
-
-	// The file carries credentials; WriteFile only applies the mode on create,
-	// so an existing over-permissive file is tightened before the rewrite.
-	if err := os.Chmod(envPath, envLocalMode); err != nil {
-		return fmt.Errorf("failed to tighten permissions on %s: %w", envPath, err)
-	}
-	return os.WriteFile(envPath, []byte(strings.Join(newLines, "\n")), envLocalMode)
+	// Through the shared writer, like the installer's own env edits: the password
+	// is user input (it can contain anything the user typed), so it needs the
+	// quoting fallback and the round-trip guard rather than a raw line
+	// replacement (#2148). A missing key is appended instead of silently ignored,
+	// which is what "synchronize the file with the database password" means.
+	return envfile.Update(envPath, "POSTGRES_PASSWORD", newPassword, envLocalMode)
 }
 
 func restartServerOnly(installDir string) error {
