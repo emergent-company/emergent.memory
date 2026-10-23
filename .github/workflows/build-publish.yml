@@ -124,6 +124,8 @@ jobs:
         env:
           CHECK_SERVICE: web-ui
           CHECK_PATH: apps/web-ui
+          CHECK_DOCKERFILE: apps/web-ui/Dockerfile
+          CHECK_CONTEXT: apps/web-ui
           CHECK_CHANGED: ${{ steps.changed.outputs.changed }}
           CHECK_PREV_TAG: ${{ steps.changed.outputs.prev }}
           CHECK_CURRENT_TAG: ${{ github.ref_name }}

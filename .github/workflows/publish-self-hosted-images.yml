@@ -108,6 +108,11 @@ jobs:
         env:
           CHECK_SERVICE: server
           CHECK_PATH: apps/server
+          # The published server image is built from deploy/self-hosted/ with the
+          # repo root as context, so its inputs also include apps/cli and
+          # deploy/self-hosted/* — not just apps/server (#2143).
+          CHECK_DOCKERFILE: deploy/self-hosted/Dockerfile.server
+          CHECK_CONTEXT: .
           CHECK_CHANGED: ${{ steps.changed.outputs.changed }}
           CHECK_PREV_TAG: ${{ steps.changed.outputs.prev }}
           CHECK_CURRENT_TAG: ${{ github.ref_name }}

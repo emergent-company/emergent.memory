@@ -104,6 +104,10 @@ new_repo "$incident"
 mkdir -p "$incident/apps/web-ui" "$incident/apps/server"
 echo "web v1" >"$incident/apps/web-ui/app.txt"
 echo "server v1" >"$incident/apps/server/main.txt"
+# The alias check reads each image's Dockerfile inputs; `COPY . .` keeps these
+# fixtures equivalent to the pre-#2143 path-scoped check.
+printf 'FROM scratch\nCOPY . .\n' >"$incident/apps/web-ui/Dockerfile"
+printf 'FROM scratch\nCOPY . .\n' >"$incident/apps/server/Dockerfile"
 commit "$incident" "c1 initial"
 git -C "$incident" tag v0.87.3
 echo "docs" >"$incident/README.md"
@@ -152,7 +156,7 @@ expect_rc "incident: changed=false with the resolved release PREV is rejected" 1
   CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
   "$script" check
 expect_stderr "incident: independent diff disagreement is reported" \
-  "differs between v0.87.4 and v0.88.0"
+  "differ between v0.87.4 and v0.88.0"
 
 expect_rc "incident: changed=true is allowed (rebuild)" 0 \
   env CHECK_REPO="$incident" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
@@ -171,6 +175,8 @@ new_repo "$clean"
 mkdir -p "$clean/apps/web-ui" "$clean/apps/server"
 echo "web v1" >"$clean/apps/web-ui/app.txt"
 echo "server v1" >"$clean/apps/server/main.txt"
+printf 'FROM scratch\nCOPY . .\n' >"$clean/apps/web-ui/Dockerfile"
+printf 'FROM scratch\nCOPY . .\n' >"$clean/apps/server/Dockerfile"
 commit "$clean" "c1"
 git -C "$clean" tag v0.87.3
 echo "web v2" >"$clean/apps/web-ui/app.txt"
@@ -253,6 +259,195 @@ expect_rc "first release: no previous tag degrades instead of failing" 0 \
 expect_stderr "first release: degradation is logged" \
   "no previous release tag reachable"
 git -C "$clean" checkout -q v0.88.0
+
+# ---------------------------------------------------------------------------
+# Fixture C: the published-server layout (#2143). The image is built from
+# deploy/self-hosted/Dockerfile.server with the repo root as context, so it
+# reads apps/cli and deploy/self-hosted/* — outside CHECK_PATH=apps/server.
+#
+#   c1 apps/server + apps/cli + deploy/self-hosted ... v0.87.3
+#   c2 docs only ..................................... v0.87.4
+#   c3 deploy/self-hosted/entrypoint.sh ............... v0.88.0
+#   c4 apps/cli/main.txt .............................. v0.88.1
+#   c5 Dockerfile base-image tag ....................... v0.88.2
+#   c6 apps/server/main.txt ........................... v0.88.3
+#   c7 a file named only on a continued COPY line ...... v0.88.4
+# ---------------------------------------------------------------------------
+mirror="$tmp/mirror"
+new_repo "$mirror"
+mkdir -p "$mirror/apps/server/migrations" "$mirror/apps/cli" "$mirror/deploy/self-hosted" "$mirror/docs"
+echo "server v1" >"$mirror/apps/server/main.txt"
+echo "go.mod" >"$mirror/apps/server/go.mod"
+echo "go.sum" >"$mirror/apps/server/go.sum"
+echo "migrations v1" >"$mirror/apps/server/migrations/0001.sql"
+echo "cli v1" >"$mirror/apps/cli/main.txt"
+echo "entrypoint v1" >"$mirror/deploy/self-hosted/entrypoint.sh"
+echo "wrapper v1" >"$mirror/deploy/self-hosted/memory-wrapper.sh"
+echo "docs v1" >"$mirror/docs/notes.md"
+cat >"$mirror/deploy/self-hosted/Dockerfile.server" <<'DOCKER'
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS server-builder
+COPY apps/server/go.mod apps/server/go.sum ./
+COPY apps/server/ ./
+RUN go build ./...
+FROM alpine:3.21
+COPY --from=server-builder /out/server /usr/local/bin/
+COPY apps/cli/ ./
+COPY apps/server/migrations/*.sql /app/migrations/
+COPY deploy/self-hosted/entrypoint.sh \
+     deploy/self-hosted/healthcheck.sh /app/
+COPY deploy/self-hosted/memory-wrapper.sh /usr/local/bin/emergent
+DOCKER
+# The default resolution (CHECK_DOCKERFILE unset) points at this one.
+printf 'FROM scratch\nCOPY . .\n' >"$mirror/apps/server/Dockerfile"
+commit "$mirror" "c1 inputs"
+git -C "$mirror" tag v0.87.3
+echo "docs v2" >"$mirror/docs/notes.md"
+commit "$mirror" "c2 docs only"
+git -C "$mirror" tag v0.87.4
+echo "entrypoint v2" >"$mirror/deploy/self-hosted/entrypoint.sh"
+commit "$mirror" "c3 entrypoint"
+git -C "$mirror" tag v0.88.0
+echo "cli v2" >"$mirror/apps/cli/main.txt"
+commit "$mirror" "c4 cli"
+git -C "$mirror" tag v0.88.1
+sed -i 's/golang:1.26-alpine/golang:1.27-alpine/' "$mirror/deploy/self-hosted/Dockerfile.server"
+commit "$mirror" "c5 base image"
+git -C "$mirror" tag v0.88.2
+echo "server v2" >"$mirror/apps/server/main.txt"
+commit "$mirror" "c6 server tree"
+git -C "$mirror" tag v0.88.3
+# Only named on a continued COPY line: without joining continuations the parse
+# sees `entrypoint.sh` and treats this line as an instruction of its own, so the
+# file would be an invisible input.
+echo "healthcheck v1" >"$mirror/deploy/self-hosted/healthcheck.sh"
+commit "$mirror" "c7 healthcheck (continued COPY line)"
+git -C "$mirror" tag v0.88.4
+
+# Signal 2 is about the image, not the tree: a docs-only change between two
+# releases leaves every input identical, so the alias is allowed. This case also
+# exercises the default CHECK_DOCKERFILE=<CHECK_PATH>/Dockerfile.
+expect_rc "inputs: a non-input change still allows the alias (default Dockerfile)" 0 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.3 CHECK_CURRENT_TAG=v0.87.4 \
+  "$script" check
+expect_stdout "inputs: alias success is logged" "alias=ok service=server previous=v0.87.3"
+
+# The case from the issue: the entrypoint is copied into the image but lives
+# outside apps/server, so the old path-scoped diff called it unchanged.
+expect_rc "inputs: entrypoint.sh change outside CHECK_PATH is rejected" 1 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
+  "$script" check
+expect_stderr "inputs: the rejection names the Dockerfile's inputs" \
+  "the image inputs (apps/server and everything deploy/self-hosted/Dockerfile.server copies) differ"
+expect_stderr "inputs: the diff names the entrypoint" "deploy/self-hosted/entrypoint.sh"
+
+# A shared tree consumed by the server image (apps/cli is COPYed in) is an input
+# too, even though it has its own release lane.
+expect_rc "inputs: apps/cli change is rejected for the server image" 1 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.88.0 CHECK_CURRENT_TAG=v0.88.1 \
+  "$script" check
+expect_stderr "inputs: the diff names apps/cli" "apps/cli/main.txt"
+
+# The Dockerfile is an input: a base-image bump (or any COPY line edit) changes
+# the image even when every copied tree is identical.
+expect_rc "inputs: Dockerfile change is rejected" 1 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.88.1 CHECK_CURRENT_TAG=v0.88.2 \
+  "$script" check
+expect_stderr "inputs: the diff names the Dockerfile" "deploy/self-hosted/Dockerfile.server"
+
+# Sanity: the tree the check has always covered still trips it.
+expect_rc "inputs: service-tree change is still rejected" 1 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.88.2 CHECK_CURRENT_TAG=v0.88.3 \
+  "$script" check
+
+# A source named only on a continued COPY line is still an input.
+expect_rc "inputs: a continued COPY line's source is rejected" 1 \
+  env CHECK_REPO="$mirror" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.88.3 CHECK_CURRENT_TAG=v0.88.4 \
+  "$script" check
+expect_stderr "inputs: the diff names the continued-line source" \
+  "deploy/self-hosted/healthcheck.sh"
+
+# A cross-stage copy (`COPY --from=...`) needs no pathspec of its own; the
+# fixture Dockerfile has one and every case above would have failed on it.
+ok "inputs: --from copies are skipped rather than treated as unresolved"
+
+# ---------------------------------------------------------------------------
+# Fixture D: inputs the check cannot see are a refusal, not a pass (#2143).
+#   c1 no Dockerfile .................................. v1.0.0
+#   c2 adds a Dockerfile with a build-variable source .. v1.0.1
+#   c3 change outside every input ..................... v1.0.2
+# ---------------------------------------------------------------------------
+opaque="$tmp/opaque"
+new_repo "$opaque"
+mkdir -p "$opaque/service"
+echo "v1" >"$opaque/service/main.txt"
+echo "notes v1" >"$opaque/README.md"
+commit "$opaque" "c1 no Dockerfile"
+git -C "$opaque" tag v1.0.0
+cat >"$opaque/service/Dockerfile" <<'DOCKER'
+FROM alpine:3.21
+ARG SRC=service
+COPY $SRC/ /app/
+DOCKER
+commit "$opaque" "c2 variable source"
+git -C "$opaque" tag v1.0.1
+# Outside the service tree, so an unreadable COPY source is the only reason this
+# can fail: without the fail-closed guard the diff is empty and the alias passes.
+echo "notes v2" >"$opaque/README.md"
+commit "$opaque" "c3 unrelated"
+git -C "$opaque" tag v1.0.2
+
+expect_rc "opaque: a build-variable COPY source refuses the alias" 1 \
+  env CHECK_REPO="$opaque" CHECK_SERVICE=svc CHECK_PATH=service \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v1.0.1 CHECK_CURRENT_TAG=v1.0.2 \
+  "$script" check
+expect_stderr "opaque: the refusal explains the unresolved variable" \
+  "is a build variable"
+
+expect_rc "opaque: a Dockerfile absent at the previous release refuses the alias" 1 \
+  env CHECK_REPO="$opaque" CHECK_SERVICE=svc CHECK_PATH=service \
+  CHECK_DOCKERFILE=service/Dockerfile CHECK_CHANGED=false \
+  CHECK_PREV_TAG=v1.0.0 CHECK_CURRENT_TAG=v1.0.1 \
+  "$script" check
+expect_stderr "opaque: the refusal says the Dockerfile is missing" \
+  "cannot read"
+
+# A rebuild needs no verification, so an unreadable Dockerfile is not a failure
+# for changed=true.
+expect_rc "opaque: changed=true still allows the rebuild" 0 \
+  env CHECK_REPO="$opaque" CHECK_SERVICE=svc CHECK_PATH=service \
+  CHECK_CHANGED=true CHECK_PREV_TAG=v1.0.1 CHECK_CURRENT_TAG=v1.0.2 \
+  "$script" check
+
+# A COPY whose continuation never ends cannot be parsed; refuse rather than
+# silently drop whatever the missing lines list (#2143).
+broken="$tmp/broken"
+new_repo "$broken"
+mkdir -p "$broken/service"
+echo "v1" >"$broken/service/main.txt"
+printf 'FROM alpine:3.21\nCOPY service/main.txt \\\n' >"$broken/service/Dockerfile"
+commit "$broken" "c1"
+git -C "$broken" tag v2.0.0
+echo "notes v2" >"$broken/README.md"
+commit "$broken" "c2 unrelated"
+git -C "$broken" tag v2.0.1
+
+expect_rc "opaque: an unterminated continuation refuses the alias" 1 \
+  env CHECK_REPO="$broken" CHECK_SERVICE=svc CHECK_PATH=service \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v2.0.0 CHECK_CURRENT_TAG=v2.0.1 \
+  "$script" check
+expect_stderr "opaque: the refusal names the continuation" \
+  "unterminated line continuation"
 
 # ---------------------------------------------------------------------------
 # Map builder. A fake `docker buildx imagetools inspect` answers from a table;

@@ -25,6 +25,10 @@
 #         CHECK_CURRENT_TAG   the release tag being published (optional)
 #         CHECK_PREV_MAP      path to the previous release map (optional)
 #         CHECK_PREV_DIGEST   digest of the image we are about to alias from
+#         CHECK_DOCKERFILE    Dockerfile the image is built from (default:
+#                             <CHECK_PATH>/Dockerfile)
+#         CHECK_CONTEXT       its build context, repo-relative (default:
+#                             CHECK_PATH)
 #         CHECK_REPO          git checkout (default: .)
 #         CHECK_HEAD          commit to compare against (default: CHECK_CURRENT_TAG
 #                             when it resolves, else HEAD)
@@ -32,13 +36,27 @@
 #         1. CHECK_PREV_TAG must BE the previous release tag. A force-moved
 #            rolling tag (`cli-dev`, `dev`, `mac-dev`, ...) is the #2087/0.88.0
 #            root cause; failing this alone catches that incident.
-#         2. The service tree must diff empty against the *independently*
-#            resolved previous release tag.
+#         2. The image *inputs* must diff empty against the *independently*
+#            resolved previous release tag: the service tree plus every local
+#            COPY/ADD source in CHECK_DOCKERFILE, resolved against
+#            CHECK_CONTEXT and read from both refs (so a file only the previous
+#            release copied still counts). This is what makes the check about
+#            the image rather than the tree — deploy/self-hosted/entrypoint.sh
+#            and apps/cli are in the server image but not under apps/server
+#            (#2143).
 #         3. When the previous release's map exists, the digest recorded there
 #            for this service must equal CHECK_PREV_DIGEST (the digest about to
 #            be aliased), i.e. the previous tag was not moved after publication.
 #       A missing previous release/map degrades to the tree comparison and never
 #       fails the release; a disagreement never degrades.
+#
+#       Signal 2 fails closed when it cannot see an input: a Dockerfile that is
+#       absent at either ref, a COPY source fetched at build time (URL) or named
+#       through a build variable, or a source escaping the context. Failing here
+#       costs a rebuild; guessing costs a mislabelled image (#2087). It still
+#       cannot see registry drift under a fixed base-image tag (`FROM
+#       golang:1.26` gaining a new patch) — nothing in git can; a base-image
+#       change that matters must bump the tag so the Dockerfile diff sees it.
 #
 #   map
 #       Build release-versions.json for one release. Inputs (environment):
@@ -213,6 +231,121 @@ check_previous_map() {
   fi
 }
 
+# dockerfile_inputs <repo> <ref> <dockerfile> <context>
+#
+# Print, one per line, the repo-relative paths the image built from <dockerfile>
+# at <ref> reads out of the checkout: the Dockerfile itself plus every local
+# COPY/ADD source, resolved against the build <context>.
+#
+# Unresolvable inputs are an error (rc 1, reason on stderr), never a silent skip:
+# a check that cannot see an input must refuse the alias instead of assuming the
+# input was unchanged (#2143). Exemptions that are genuinely covered elsewhere:
+#   * `--from=<stage>` copies — the stage's own COPY lines are inputs already, and
+#     a registry stage is pinned by the (diffed) Dockerfile line;
+#   * Dockerfile comments and non-COPY instructions — ENV/ARG/RUN cannot read the
+#     checkout, and RUN network fetches are pinned by their line in the file.
+dockerfile_inputs() {
+  local repo="$1" ref="$2" dockerfile="$3" context="$4"
+  local content line rest token source joined
+  local -a words sources
+
+  if ! content="$(git -C "$repo" show "${ref}:${dockerfile}" 2>/dev/null)"; then
+    echo "cannot read ${dockerfile} at ${ref}: the image's own Dockerfile is not in that tree" >&2
+    return 1
+  fi
+  printf '%s\n' "$dockerfile"
+
+  # Dockerfile line continuations: a `\` at end of line joins the next, so a
+  # COPY's sources can span lines. Joining first means the parse sees the whole
+  # instruction; an unterminated continuation is refused rather than guessed.
+  local pending=""
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" == *\\ ]]; then
+      pending+="${line%\\} "
+      continue
+    fi
+    line="${pending}${line}"
+    pending=""
+    case "$line" in
+      '' | '#'*) continue ;;
+    esac
+    read -ra words <<<"$line"
+    case "${words[0],,}" in
+      copy | add) ;;
+      *) continue ;;
+    esac
+
+    rest="${line#"${words[0]}"}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    sources=()
+    if [[ "$rest" == \[* ]]; then
+      # JSON form: COPY ["src", "dst"]
+      rest="${rest#\[}"
+      rest="${rest%\]}"
+      rest="${rest//\"/}"
+      IFS=',' read -ra words <<<"$rest"
+      sources=("${words[@]}")
+    else
+      read -ra words <<<"$rest"
+      sources=("${words[@]}")
+    fi
+
+    # A cross-stage copy needs no pathspec: the source stage's inputs are in
+    # this list already. Flags carry no source.
+    local stage=0
+    local -a kept=()
+    for token in "${sources[@]}"; do
+      token="${token#"${token%%[![:space:]]*}"}"
+      token="${token%"${token##*[![:space:]]}"}"
+      [ -n "$token" ] || continue
+      case "$token" in
+        --from=*) stage=1 ;;
+        --*) ;;
+        *) kept+=("$token") ;;
+      esac
+    done
+    [ "$stage" -eq 0 ] || continue
+    # The last token is the destination; everything before it is read.
+    if [ "${#kept[@]}" -lt 2 ]; then
+      echo "${dockerfile} at ${ref}: cannot parse '$(printf '%s' "$line")'" >&2
+      return 1
+    fi
+
+    for token in "${kept[@]:0:${#kept[@]}-1}"; do
+      case "$token" in
+        *://* | git@*)
+          echo "${dockerfile} at ${ref}: '${token}' is fetched at build time, so its contents cannot be diffed" >&2
+          return 1
+          ;;
+        *'$'*)
+          echo "${dockerfile} at ${ref}: '${token}' is a build variable, so its path cannot be resolved" >&2
+          return 1
+          ;;
+        *..*)
+          echo "${dockerfile} at ${ref}: '${token}' escapes the build context" >&2
+          return 1
+          ;;
+      esac
+      source="${token#./}"
+      source="${source#/}"
+      source="${source%/}"
+      case "$source" in
+        '' | .) joined="$context" ;;
+        *) joined="${context%/}/${source}" ;;
+      esac
+      joined="${joined#./}"
+      while [[ "$joined" == *//* ]]; do joined="${joined//\/\//\/}"; done
+      printf '%s\n' "$joined"
+    done
+  done <<<"$content"
+
+  if [ -n "$pending" ]; then
+    echo "${dockerfile} at ${ref}: unterminated line continuation, so the last instruction's sources cannot be parsed" >&2
+    return 1
+  fi
+}
+
 run_check() {
   local repo="${CHECK_REPO:-.}"
   local service="${CHECK_SERVICE:-service}"
@@ -256,15 +389,34 @@ run_check() {
       die "alias decision for ${service} used '${publisher_prev}', but the previous release tag is '${prev_release}'; refusing to alias an image that is not the previous release (#2111)."
     fi
 
-    # Signal 2: an independent diff of the service tree between the previous
-    # release and HEAD. Computed here, not from the publisher's PREV.
+    # Signal 2: an independent diff of the *image inputs* between the previous
+    # release and HEAD — the service tree plus every path the Dockerfile copies
+    # out of the checkout, read from both refs. Computed here, not from the
+    # publisher's PREV. A path-scoped diff alone missed inputs outside the tree
+    # (deploy/self-hosted/entrypoint.sh, apps/cli for the server image, go.work),
+    # so an image could change while the check said "alias" (#2143).
+    local dockerfile="${CHECK_DOCKERFILE:-${path%/}/Dockerfile}"
+    local build_context="${CHECK_CONTEXT:-${path%/}}"
+    local prev_inputs head_inputs
+    if ! prev_inputs="$(dockerfile_inputs "$repo" "$prev_release" "$dockerfile" "$build_context" 2>&1)"; then
+      die "cannot verify the alias decision for ${service}: ${prev_inputs}"
+    fi
+    if ! head_inputs="$(dockerfile_inputs "$repo" "$head" "$dockerfile" "$build_context" 2>&1)"; then
+      die "cannot verify the alias decision for ${service}: ${head_inputs}"
+    fi
+
+    local -a inputs
+    mapfile -t inputs < <(
+      { printf '%s\n' "$path" "$prev_inputs" "$head_inputs"; } \
+        | sed '/^[[:space:]]*$/d' | sort -u
+    )
     local stat
-    if ! stat="$(git -C "$repo" diff --stat "$prev_release" "$head" -- "$path")"; then
+    if ! stat="$(git -C "$repo" diff --stat "$prev_release" "$head" -- "${inputs[@]}")"; then
       die "could not diff ${prev_release}..${head} for ${path}"
     fi
     if [ -n "$stat" ]; then
       {
-        echo "::error::alias disagreement for ${service}: changed=false, but ${path} differs between ${prev_release} and ${head} (#2111)."
+        echo "::error::alias disagreement for ${service}: changed=false, but the image inputs (${path} and everything ${dockerfile} copies) differ between ${prev_release} and ${head} (#2111, #2143)."
         printf '%s\n' "$stat"
       } >&2
       exit 1
