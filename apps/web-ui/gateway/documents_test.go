@@ -1930,6 +1930,18 @@ func TestDocumentExtractionPageRoutes(t *testing.T) {
 				t.Errorf("page missing %q", want)
 			}
 		}
+		region := breadcrumbRegion(body)
+		for _, want := range []string{"Documents", "Spec.md", "Extraction history"} {
+			if !strings.Contains(region, ">"+want+"<") {
+				t.Errorf("run page breadcrumb missing %q: %s", want, region)
+			}
+		}
+		if !strings.Contains(region, ">Extraction history</span>") {
+			t.Errorf("run page section crumb must be the current, unlinked item: %s", region)
+		}
+		if strings.Contains(region, "job1") || strings.Contains(region, "Run ") {
+			t.Errorf("run page breadcrumb must not repeat the run short id: %s", region)
+		}
 		if strings.Contains(body, `hx-swap-oob`) {
 			t.Errorf("full page must not emit an out-of-band status swap:\n%s", body)
 		}
@@ -2137,8 +2149,8 @@ func TestRenderDocumentVersionsBreadcrumb(t *testing.T) {
 
 // TestRenderExtractionObjectsCarryOrigin pins that an object opened from a
 // run's object list links back with the origin trail, so the object page can
-// render Documents > <doc> > Extraction history > Run rather than a bare
-// Objects trail.
+// render Documents > <doc> > Extraction history rather than a bare Objects
+// trail.
 func TestRenderExtractionObjectsCarryOrigin(t *testing.T) {
 	d := extractionJobDetail{
 		Job:     ExtractionJob{ID: "job1", Status: "completed"},
@@ -2148,32 +2160,5 @@ func TestRenderExtractionObjectsCarryOrigin(t *testing.T) {
 	want := `href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`
 	if !strings.Contains(html, want) {
 		t.Fatalf("extracted object link missing origin trail %q:\n%s", want, html)
-	}
-}
-
-// TestDocumentRunBreadcrumb pins the dedicated extraction-run page trail: the
-// document's Extraction history, then the run itself.
-func TestDocumentRunBreadcrumb(t *testing.T) {
-	doc := &Document{ID: "d1", Filename: "Spec.md"}
-	region := breadcrumbRegion(renderHTML(t, documentRunDetailHeader(doc, "job1")))
-	if region == "" {
-		t.Fatal("no breadcrumb trail rendered")
-	}
-	last := -1
-	for _, label := range []string{"Documents", "Spec.md", "Extraction history", "Run job1"} {
-		i := strings.Index(region, ">"+label+"<")
-		if i < 0 {
-			t.Fatalf("missing crumb %q in %s", label, region)
-		}
-		if i <= last {
-			t.Fatalf("crumb %q out of order in %s", label, region)
-		}
-		last = i
-	}
-	if !strings.Contains(region, `href="/documents/d1/extractions"`) {
-		t.Errorf("extraction history crumb must link back: %s", region)
-	}
-	if !strings.Contains(region, ">Run job1</span>") {
-		t.Errorf("run crumb must be the active, unlinked crumb: %s", region)
 	}
 }

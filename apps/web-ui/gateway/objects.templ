@@ -888,12 +888,16 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 // objectBreadcrumbs returns the breadcrumb trail for the object detail header.
 // trail is an optional origin resolved from the ?from= query parameter (e.g. a
 // document's Extraction history); when it is empty the header falls back to the
-// plain Objects > <object> trail. The trailing item is the current page.
+// plain Objects > <object> trail, with the object as the current item.
+//
+// An origin trail ends at a section page, not at the object: the object's own
+// title is the current page, so every origin crumb stays a navigable ancestor
+// and none is marked active (an active link would claim the section is current).
 func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.BreadcrumbItem {
 	if len(trail) > 0 {
 		return trail
 	}
-	return nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj))
+	return crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj)))
 }
 
 // objectDetailHeader intentionally does NOT use the shared detailHeader: it
@@ -904,7 +908,7 @@ func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.Bread
 templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="mb-6">
-		@nav.Breadcrumbs(crumbsActive(objectBreadcrumbs(obj, trail)), nav.BreadcrumbsDividerDefault)
+		@nav.Breadcrumbs(objectBreadcrumbs(obj, trail), nav.BreadcrumbsDividerDefault)
 		<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
 			<div class="min-w-0">
 				<div class="mb-2 flex flex-wrap items-center gap-2">

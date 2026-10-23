@@ -287,28 +287,13 @@ func documentSectionCrumbs(doc *Document, section string) []nav.BreadcrumbItem {
 	}
 }
 
-// documentRunCrumbs is the trail for a single extraction run's page: the same
-// document > Extraction history trail, ending at the run.
-func documentRunCrumbs(doc *Document, jobID string) []nav.BreadcrumbItem {
-	base := "/documents/" + url.PathEscape(doc.ID)
-	return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Extraction history", base+"/extractions", "Run "+shortID(jobID))
-}
-
 // documentDetailHeader renders the shared header for every document view. The
 // section names the active sub-page ("chunks", "extractions", "versions"); any
-// other value renders the overview trail.
+// other value renders the overview trail. A single extraction run is a child of
+// Extraction history: its own identity (short id, status) lives in the run
+// header below, so the trail stops at the section.
 templ documentDetailHeader(doc *Document, section string) {
-	@documentDetailHeaderFor(doc, documentSectionCrumbs(doc, section))
-}
-
-// documentRunDetailHeader is documentDetailHeader for a single extraction run,
-// whose trail ends at the run instead of the Extraction history section.
-templ documentRunDetailHeader(doc *Document, jobID string) {
-	@documentDetailHeaderFor(doc, documentRunCrumbs(doc, jobID))
-}
-
-templ documentDetailHeaderFor(doc *Document, crumbs []nav.BreadcrumbItem) {
-	@detailHeader(crumbsActive(crumbs), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
+	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
 		<div class="flex flex-wrap items-center gap-2">
 			@countBadgeLabel(strconv.Itoa(doc.Chunks)+" chunk"+plural(doc.Chunks), "lucide--braces")
 			@documentStatusBadge(doc.ExtractionStatus)
@@ -422,7 +407,7 @@ templ DocumentExtractionPage(doc *Document, d extractionJobDetail, loadErr error
 		if loadErr != nil {
 			@pageError("Extraction run unavailable", loadErr)
 		} else {
-			@documentRunDetailHeader(doc, d.Job.ID)
+			@documentDetailHeader(doc, "extractions")
 			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
 				@extractionRunHeader(doc, d)
 				@components.PanelCard("", nil) {
@@ -889,10 +874,11 @@ templ mergePreviewRow(icon, label, value string, warn bool) {
 // --- extraction results ---
 
 // extractedObjectOrigin is the ?from= breadcrumb trail an extracted object links
-// back through: the document's Extraction history, then the run. It is built
-// from the page's own document and job identifiers, so the object detail view
-// can present Document > Extraction history > Run instead of a bare Objects
-// trail.
+// back through: the document and the run it came from. The object detail view
+// resolves it into Documents > Document > Extraction history; the run's short id
+// is already shown in the object's Source card, so it is not a crumb. It is
+// built from the page's own identifiers, so the object view can present that
+// document trail instead of a bare Objects trail.
 func extractedObjectOrigin(documentID, jobID string) string {
 	return "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID)
 }

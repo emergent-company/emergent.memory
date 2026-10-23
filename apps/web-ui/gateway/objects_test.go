@@ -2988,7 +2988,6 @@ func TestObjectOriginTrail(t *testing.T) {
 		{"Documents", "/documents"},
 		{"Spec.md", "/documents/d1"},
 		{"Extraction history", "/documents/d1/extractions"},
-		{"Run job1", ""},
 	}
 	if len(trail) != len(want) {
 		t.Fatalf("trail = %+v, want %d crumbs", trail, len(want))
@@ -3017,8 +3016,9 @@ func TestObjectOriginTrail(t *testing.T) {
 }
 
 // TestRenderObjectDetailOriginTrail pins that a supplied origin replaces the
-// default Objects > <object> trail and ends at the extraction run — the object
-// label is the page title, not a crumb.
+// default Objects > <object> trail and ends at the document's Extraction
+// history — the object label is the page title, not a crumb, and the section
+// remains a navigable ancestor rather than the active item.
 func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}
 	doc := &Document{ID: "d1", Filename: "Spec.md"}
@@ -3031,7 +3031,7 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 		t.Fatal("no breadcrumb trail rendered")
 	}
 	last := -1
-	for _, label := range []string{"Documents", "Spec.md", "Extraction history", "Run job1"} {
+	for _, label := range []string{"Documents", "Spec.md", "Extraction history"} {
 		i := strings.Index(region, ">"+label+"<")
 		if i < 0 {
 			t.Fatalf("missing crumb %q in %s", label, region)
@@ -3044,8 +3044,17 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	if strings.Contains(region, "sam-lee") {
 		t.Errorf("object label must not appear in an origin trail: %s", region)
 	}
+	if strings.Contains(region, "Run job1") || strings.Contains(region, "job1") {
+		t.Errorf("run short id must not repeat in the trail: %s", region)
+	}
 	if !strings.Contains(region, `href="/documents/d1/extractions"`) {
 		t.Errorf("extraction history crumb must link back: %s", region)
+	}
+	if !strings.Contains(region, ">Extraction history</a>") {
+		t.Errorf("extraction history crumb must stay a link, not the current item: %s", region)
+	}
+	if strings.Contains(region, "font-medium text-base-content") {
+		t.Errorf("origin trail must not mark a crumb active: %s", region)
 	}
 	if strings.Contains(region, `href="/objects"`) {
 		t.Errorf("origin trail must not keep the default Objects crumb: %s", region)
@@ -3069,10 +3078,13 @@ func TestObjectDetailFromHandler(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	region := breadcrumbRegion(rec.Body.String())
-	for _, want := range []string{"Documents", "Spec.md", "Extraction history", "Run job1"} {
+	for _, want := range []string{"Documents", "Spec.md", "Extraction history"} {
 		if !strings.Contains(region, ">"+want+"<") {
 			t.Errorf("handler origin trail missing %q: %s", want, region)
 		}
+	}
+	if strings.Contains(region, "job1") {
+		t.Errorf("handler origin trail must not repeat the run short id: %s", region)
 	}
 
 	// A stale/invalid origin degrades to the default trail, never an error.

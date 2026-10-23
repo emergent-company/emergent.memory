@@ -686,11 +686,13 @@ func (s *Server) uiObject(c echo.Context) error {
 //
 //	/documents/<docID>/extractions/<jobID>
 //
-// The document is fetched best-effort for its label. An unknown shape, a
+// The trail stops at the document's Extraction history: the run's short id is
+// already shown in the object's Source card, so repeating it in the trail adds
+// noise. The document is fetched best-effort for its label. An unknown shape, a
 // missing document, or a backend failure yields nil, so the object page falls
 // back to Objects > <object> and never fails because of an origin hint.
 func objectOriginTrail(ctx context.Context, from string, getDoc func(context.Context, string) (*Document, error)) []nav.BreadcrumbItem {
-	docID, jobID, ok := parseExtractionOrigin(from)
+	docID, _, ok := parseExtractionOrigin(from)
 	if !ok || getDoc == nil {
 		return nil
 	}
@@ -703,7 +705,6 @@ func objectOriginTrail(ctx context.Context, from string, getDoc func(context.Con
 		"Documents", "/documents",
 		documentName(*doc), base,
 		"Extraction history", base+"/extractions",
-		"Run "+shortID(jobID),
 	)
 }
 
