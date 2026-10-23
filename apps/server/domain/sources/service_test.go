@@ -65,13 +65,27 @@ func TestGetProviderSchema_Shape(t *testing.T) {
 	if schema.Type != ProviderTypeGoogleDrive {
 		t.Errorf("schema type = %q, want %q", schema.Type, ProviderTypeGoogleDrive)
 	}
-	if len(schema.Required) != 1 || schema.Required[0] != "folder_id" {
-		t.Errorf("schema.Required = %v, want [folder_id]", schema.Required)
+	// Folder targets are chosen in the Google Picker, not typed into the form,
+	// so the schema has no required raw-id fields.
+	if len(schema.Required) != 0 {
+		t.Errorf("schema.Required = %v, want none", schema.Required)
 	}
-	for _, key := range []string{"folder_id", "shared_drive_id", "mime_types", "recursive"} {
+	for _, key := range []string{"folders", "mime_types", "recursive"} {
 		if _, ok := schema.Properties[key]; !ok {
 			t.Errorf("schema.Properties missing %q", key)
 		}
+	}
+	for _, key := range []string{"folder_id", "shared_drive_id"} {
+		if _, ok := schema.Properties[key]; ok {
+			t.Errorf("schema.Properties must not expose legacy key %q", key)
+		}
+	}
+	foldersProp, ok := schema.Properties["folders"].(map[string]any)
+	if !ok {
+		t.Fatalf("folders property = %#v, want an object", schema.Properties["folders"])
+	}
+	if got := foldersProp["x-ui-widget"]; got != "folders" {
+		t.Errorf("folders x-ui-widget = %v, want folders", got)
 	}
 }
 
@@ -230,18 +244,18 @@ func TestCreate_RejectsMissingRefreshToken(t *testing.T) {
 	}
 }
 
-// TestCreate_RejectsMissingFolderID asserts Create enforces the folder_id
+// TestCreate_RejectsMissingFolderTarget asserts Create enforces the folder
 // contract when AllowIncompleteConfig is unset (the credentials connect path).
-func TestCreate_RejectsMissingFolderID(t *testing.T) {
+func TestCreate_RejectsMissingFolderTarget(t *testing.T) {
 	svc := newTestService(make([]byte, 32))
 	_, err := svc.Create(context.Background(), uuid.New(), &CreateIntegrationRequest{
 		ProviderType: ProviderTypeGoogleDrive,
 		Config:       map[string]any{"refresh_token": "rt"},
 	})
 	if err == nil {
-		t.Fatal("Create() with no folder_id = nil, want error")
+		t.Fatal("Create() with no folder target = nil, want error")
 	}
-	if !strings.Contains(err.Error(), "folder_id") {
-		t.Errorf("Create() error = %q, want folder_id validation error", err)
+	if !strings.Contains(err.Error(), "folders") {
+		t.Errorf("Create() error = %q, want folders validation error", err)
 	}
 }

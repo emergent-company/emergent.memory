@@ -23,7 +23,9 @@ export async function createDriveSource(
       providerType: 'google_drive',
       sourceType: 'drive',
       config: {
-        folder_id: opts.folder,
+        // Canonical folder-target list. A legacy folder_id is still accepted by
+        // the API, but the specs exercise the shape the picker writes.
+        folders: [{ folder_id: opts.folder, name: opts.folder }],
         refresh_token: opts.token ?? 'e2e-refresh-token',
       },
     },

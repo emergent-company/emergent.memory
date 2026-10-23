@@ -2,7 +2,9 @@ package sources
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -24,6 +26,8 @@ var credentialKeyNames = []string{"client_id", "client_secret", "refresh_token",
 type DriveTransport interface {
 	ListFolderItems(ctx context.Context, folderID string, mimeTypes []string, recursive bool, sharedDriveID string) ([]gdrive.Item, error)
 	ListFolders(ctx context.Context, parentID, nameQuery string) ([]gdrive.Item, bool, error)
+	GetFolder(ctx context.Context, folderID string) (gdrive.Folder, error)
+	AccessToken(ctx context.Context) (string, time.Time, error)
 	ExportText(ctx context.Context, fileID, mimeType string) ([]byte, error)
 	DownloadFile(ctx context.Context, fileID string) ([]byte, error)
 	TestConnection(ctx context.Context) error
@@ -62,34 +66,51 @@ func (p *googleDriveProvider) Catalog() Provider {
 	}
 }
 
+// driveMaxFolderTargets bounds the number of folders one Drive source may sync.
+// It keeps a single sync job to a human-manageable scope and bounds the
+// picker-save validation calls (one Drive files.get per folder).
+const driveMaxFolderTargets = 50
+
 // ConfigSchema is the non-secret config contract for Drive. The OAuth2
 // credential keys (client_id/client_secret/refresh_token) are deliberately
 // absent: Drive connect is OAuth-only and its client credentials are configured
 // per project/org, never per integration. Legacy sources whose stored config
 // still carries those keys keep syncing (see CredentialKeys).
+//
+// The canonical sync scope is `folders`: a bounded list of
+// {folder_id, name, drive_id} targets chosen in the Google Picker. The legacy
+// single-target keys (folder_id/shared_drive_id) are still accepted on write and
+// normalized into `folders`; they are intentionally absent from the schema so
+// the forms never render a raw id input.
 func (p *googleDriveProvider) ConfigSchema() ProviderSchema {
 	return ProviderSchema{
 		Type: ProviderTypeGoogleDrive,
 		Properties: map[string]any{
-			"folder_id": map[string]any{
-				"type":        "string",
-				"description": "The Google Drive folder id to sync from.",
-			},
-			"shared_drive_id": map[string]any{
-				"type":        "string",
-				"description": "Optional shared-drive id when the folder lives in a shared drive.",
+			"folders": map[string]any{
+				"type":        "array",
+				"description": "Folders to sync. Pick them in the folder picker; each entry is {folder_id, name, drive_id}.",
+				"x-ui-widget": "folders",
+				"maxItems":    driveMaxFolderTargets,
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"folder_id": map[string]any{"type": "string"},
+						"name":      map[string]any{"type": "string"},
+						"drive_id":  map[string]any{"type": "string"},
+					},
+					"required": []string{"folder_id"},
+				},
 			},
 			"mime_types": map[string]any{
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
-				"description": "Optional MIME-type allowlist; empty syncs all non-folder types.",
+				"description": "Optional MIME-type allowlist; empty syncs all non-folder types. Applies to every selected folder.",
 			},
 			"recursive": map[string]any{
 				"type":        "boolean",
-				"description": "Recurse into subfolders when true.",
+				"description": "Recurse into subfolders when true. Applies to every selected folder.",
 			},
 		},
-		Required: []string{"folder_id"},
 	}
 }
 
@@ -159,6 +180,80 @@ func (p *googleDriveProvider) ValidateConfig(cfg map[string]any) error {
 	return validateDriveConfig(cfg)
 }
 
+// NormalizeConfig rewrites the legacy single-target shape
+// ({folder_id, shared_drive_id}) into the canonical `folders` list. It is
+// idempotent and never invents a name: a legacy target keeps an empty name and
+// the UI falls back to the folder id until the next picker save resolves it.
+func (p *googleDriveProvider) NormalizeConfig(cfg map[string]any) {
+	if cfg == nil {
+		return
+	}
+	if folders, ok := parseFoldersValue(cfg["folders"]); ok && len(folders) > 0 {
+		cfg["folders"] = foldersValue(folders)
+		delete(cfg, "folder_id")
+		delete(cfg, "shared_drive_id")
+		return
+	}
+	folderID, _ := cfg["folder_id"].(string)
+	if strings.TrimSpace(folderID) == "" {
+		return
+	}
+	driveID, _ := cfg["shared_drive_id"].(string)
+	cfg["folders"] = foldersValue([]driveFolderTarget{{
+		FolderID: strings.TrimSpace(folderID),
+		DriveID:  strings.TrimSpace(driveID),
+	}})
+	delete(cfg, "folder_id")
+	delete(cfg, "shared_drive_id")
+}
+
+// ResolveResourceTargets validates picked folder ids against the source's own
+// credentials and returns each folder's authoritative name and shared-drive id.
+// The picker only sends ids, so names and drive ids cannot be spoofed by the
+// browser, and a shared-drive folder is queryable by the sync afterwards.
+func (p *googleDriveProvider) ResolveResourceTargets(ctx context.Context, creds Credentials, ids []string) ([]ResourceRef, error) {
+	if len(ids) > driveMaxFolderTargets {
+		return nil, apperror.NewValidation(fmt.Sprintf("select at most %d folders", driveMaxFolderTargets))
+	}
+	client, err := p.newClient(ctx, driveCredentials(creds))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ResourceRef, 0, len(ids))
+	for _, id := range ids {
+		folder, err := client.GetFolder(ctx, id)
+		if err != nil {
+			return nil, apperror.NewValidation("one of the selected folders is not accessible: folder " + id + ": " + err.Error())
+		}
+		out = append(out, ResourceRef{ID: folder.ID, Name: folder.Name, DriveID: folder.DriveID})
+	}
+	return out, nil
+}
+
+// PickerSession mints a short-lived Google Picker session bound to the source's
+// own refresh token. The picker therefore browses exactly the account the source
+// syncs, with the source's read scope.
+func (p *googleDriveProvider) PickerSession(ctx context.Context, creds Credentials, _ map[string]any, picker PickerConfig) (*PickerSession, error) {
+	if picker.Strategy == string(ScopeStrategyDriveFile) {
+		return nil, apperror.NewValidation("this source was authorized with per-file access (drive.file), so the folder picker cannot browse its folders; reconnect the source with read-only Drive access")
+	}
+	client, err := p.newClient(ctx, driveCredentials(creds))
+	if err != nil {
+		return nil, err
+	}
+	token, expires, err := client.AccessToken(ctx)
+	if err != nil {
+		return nil, apperror.NewInternal("mint folder-picker access token", err)
+	}
+	return &PickerSession{
+		AccessToken:  token,
+		DeveloperKey: picker.DeveloperKey,
+		AppID:        picker.AppID,
+		Origin:       picker.Origin,
+		ExpiresAt:    expires,
+	}, nil
+}
+
 func (p *googleDriveProvider) ExtractCredentials(cfg map[string]any) (Credentials, error) {
 	creds := Credentials{}
 	for _, k := range credentialKeyNames {
@@ -199,23 +294,33 @@ type googleDriveConnector struct {
 }
 
 func (c *googleDriveConnector) Enumerate(ctx context.Context, cfg map[string]any) ([]SourceItem, error) {
-	folderID, mimeTypes, recursive, sharedDriveID, err := parseDriveSyncConfig(cfg)
+	folders, mimeTypes, recursive, err := parseDriveSyncConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	items, err := c.client.ListFolderItems(ctx, folderID, mimeTypes, recursive, sharedDriveID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SourceItem, len(items))
-	for i, it := range items {
-		out[i] = SourceItem{
-			ID:           it.ID,
-			Name:         it.Name,
-			MimeType:     it.MimeType,
-			RevisionID:   it.RevisionID,
-			Trashed:      it.Trashed,
-			ModifiedTime: it.ModifiedTime,
+	// Union the targets, de-duplicating by Drive item id: overlapping picks
+	// (a folder and one of its parents) would otherwise ingest the same file
+	// twice in one run.
+	seen := make(map[string]struct{})
+	var out []SourceItem
+	for _, folder := range folders {
+		items, err := c.client.ListFolderItems(ctx, folder.FolderID, mimeTypes, recursive, folder.DriveID)
+		if err != nil {
+			return nil, err
+		}
+		for _, it := range items {
+			if _, ok := seen[it.ID]; ok {
+				continue
+			}
+			seen[it.ID] = struct{}{}
+			out = append(out, SourceItem{
+				ID:           it.ID,
+				Name:         it.Name,
+				MimeType:     it.MimeType,
+				RevisionID:   it.RevisionID,
+				Trashed:      it.Trashed,
+				ModifiedTime: it.ModifiedTime,
+			})
 		}
 	}
 	return out, nil
@@ -247,11 +352,12 @@ func (c *googleDriveConnector) TestConnection(ctx context.Context, _ map[string]
 	return c.client.TestConnection(ctx)
 }
 
-// validateDriveConfig enforces the google_drive config contract: folder_id
-// required, mime_types (when present) an array of non-empty strings.
+// validateDriveConfig enforces the google_drive config contract: at least one
+// folder target (canonical `folders`, or the legacy folder_id) and
+// mime_types (when present) an array of non-empty strings.
 func validateDriveConfig(cfg map[string]any) error {
-	if folderID, _ := cfg["folder_id"].(string); strings.TrimSpace(folderID) == "" {
-		return apperror.NewValidation("config.folder_id is required")
+	if _, _, _, err := parseDriveSyncConfig(cfg); err != nil {
+		return err
 	}
 	if mimeTypes, ok := cfg["mime_types"].([]any); ok {
 		for _, m := range mimeTypes {
@@ -269,13 +375,132 @@ func validateDriveConfig(cfg map[string]any) error {
 	return nil
 }
 
-// parseDriveSyncConfig extracts the enumeration scope from a Drive source config.
-func parseDriveSyncConfig(cfg map[string]any) (folderID string, mimeTypes []string, recursive bool, sharedDriveID string, err error) {
-	folderID, _ = cfg["folder_id"].(string)
-	if strings.TrimSpace(folderID) == "" {
-		return "", nil, false, "", apperror.NewValidation("config.folder_id is required")
+// driveFolderTarget is one folder a Drive source syncs.
+type driveFolderTarget struct {
+	FolderID string
+	Name     string
+	DriveID  string
+}
+
+// foldersValue renders targets in the JSON shape stored in config
+// (`[]map[string]any`, not the internal struct).
+func foldersValue(folders []driveFolderTarget) []any {
+	out := make([]any, 0, len(folders))
+	for _, f := range folders {
+		entry := map[string]any{"folder_id": f.FolderID}
+		if name := strings.TrimSpace(f.Name); name != "" {
+			entry["name"] = name
+		}
+		if driveID := strings.TrimSpace(f.DriveID); driveID != "" {
+			entry["drive_id"] = driveID
+		}
+		out = append(out, entry)
 	}
-	sharedDriveID, _ = cfg["shared_drive_id"].(string)
+	return out
+}
+
+// parseFoldersValue decodes a config `folders` value in any of the shapes the
+// API, the database, or a test may supply. Entries with an empty folder_id are
+// rejected so a partially-written list cannot reach enumeration.
+func parseFoldersValue(raw any) ([]driveFolderTarget, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	appendEntry := func(target driveFolderTarget, out *[]driveFolderTarget) bool {
+		target.FolderID = strings.TrimSpace(target.FolderID)
+		if target.FolderID == "" {
+			return false
+		}
+		target.Name = strings.TrimSpace(target.Name)
+		target.DriveID = strings.TrimSpace(target.DriveID)
+		*out = append(*out, target)
+		return true
+	}
+	fromMap := func(m map[string]any) (driveFolderTarget, bool) {
+		id, _ := m["folder_id"].(string)
+		name, _ := m["name"].(string)
+		drive, _ := m["drive_id"].(string)
+		return driveFolderTarget{FolderID: id, Name: name, DriveID: drive}, true
+	}
+
+	var out []driveFolderTarget
+	seen := make(map[string]struct{})
+	appendUnique := func(t driveFolderTarget) bool {
+		if !appendEntry(t, &out) {
+			return false
+		}
+		id := out[len(out)-1].FolderID
+		if _, dup := seen[id]; dup {
+			out = out[:len(out)-1]
+			return true
+		}
+		seen[id] = struct{}{}
+		return true
+	}
+	switch v := raw.(type) {
+	case []driveFolderTarget:
+		for _, t := range v {
+			if !appendUnique(t) {
+				return nil, false
+			}
+		}
+		return out, true
+	case []map[string]any:
+		for _, m := range v {
+			t, _ := fromMap(m)
+			if !appendUnique(t) {
+				return nil, false
+			}
+		}
+		return out, true
+	case []any:
+		for _, item := range v {
+			switch m := item.(type) {
+			case map[string]any:
+				t, _ := fromMap(m)
+				if !appendUnique(t) {
+					return nil, false
+				}
+			case driveFolderTarget:
+				if !appendUnique(m) {
+					return nil, false
+				}
+			default:
+				return nil, false
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+// parseDriveSyncConfig extracts the enumeration scope from a Drive source
+// config: the folder targets (canonical `folders`, or the legacy single-target
+// folder_id/shared_drive_id), the global MIME allowlist, and recursion.
+func parseDriveSyncConfig(cfg map[string]any) (folders []driveFolderTarget, mimeTypes []string, recursive bool, err error) {
+	if raw, ok := cfg["folders"]; ok && raw != nil {
+		parsed, ok := parseFoldersValue(raw)
+		if !ok {
+			return nil, nil, false, apperror.NewValidation("config.folders must be an array of {folder_id, name, drive_id} objects")
+		}
+		folders = parsed
+	}
+	if len(folders) == 0 {
+		// Legacy single-target shape.
+		folderID, _ := cfg["folder_id"].(string)
+		if strings.TrimSpace(folderID) == "" {
+			return nil, nil, false, apperror.NewValidation("config.folders must name at least one folder")
+		}
+		sharedDriveID, _ := cfg["shared_drive_id"].(string)
+		folders = []driveFolderTarget{{
+			FolderID: strings.TrimSpace(folderID),
+			DriveID:  strings.TrimSpace(sharedDriveID),
+		}}
+	}
+	if len(folders) > driveMaxFolderTargets {
+		return nil, nil, false, apperror.NewValidation(fmt.Sprintf("config.folders supports at most %d folders", driveMaxFolderTargets))
+	}
 	recursive, _ = cfg["recursive"].(bool)
 	switch mt := cfg["mime_types"].(type) {
 	case []string:
@@ -287,7 +512,7 @@ func parseDriveSyncConfig(cfg map[string]any) (folderID string, mimeTypes []stri
 			}
 		}
 	}
-	return folderID, mimeTypes, recursive, sharedDriveID, nil
+	return folders, mimeTypes, recursive, nil
 }
 
 // isGoogleNative reports whether a MIME type is a Google-native editable doc.

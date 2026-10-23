@@ -9188,6 +9188,19 @@ definitions:
       updatedAt:
         type: string
     type: object
+  domain_sources.PickerSession:
+    properties:
+      accessToken:
+        type: string
+      appId:
+        type: string
+      developerKey:
+        type: string
+      expiresAt:
+        type: string
+      origin:
+        type: string
+    type: object
   domain_sources.Provider:
     properties:
       authMethods:
@@ -9259,6 +9272,13 @@ definitions:
         type: string
       type:
         type: string
+    type: object
+  domain_sources.SaveSyncTargetsRequest:
+    properties:
+      folderIds:
+        items:
+          type: string
+        type: array
     type: object
   domain_sources.SetOAuthClientRequest:
     properties:
@@ -25406,6 +25426,45 @@ paths:
       summary: Update a data-source integration
       tags:
       - data-source-integrations
+  /data-source-integrations/{id}/picker-session:
+    get:
+      description: Mints a short-lived credential for the provider's browser resource
+        picker (Google Picker). The token is minted from the source's own stored refresh
+        token.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Picker session
+          schema:
+            $ref: '#/definitions/domain_sources.PickerSession'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get a resource-picker session
+      tags:
+      - data-source-integrations
   /data-source-integrations/{id}/resources:
     get:
       description: Lists the sync targets (Drive folders / GitHub repositories) for
@@ -25655,6 +25714,52 @@ paths:
       security:
       - bearerAuth: []
       summary: Get latest sync job
+      tags:
+      - data-source-integrations
+  /data-source-integrations/{id}/sync-targets:
+    put:
+      consumes:
+      - application/json
+      description: Validates the picked resource ids against the source's credentials
+        and stores them as the source's sync scope.
+      parameters:
+      - description: Source ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Picked folder ids
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.SaveSyncTargetsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated integration
+          schema:
+            $ref: '#/definitions/domain_sources.Integration'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Source not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Replace a source's sync targets
       tags:
       - data-source-integrations
   /data-source-integrations/{id}/test-connection:

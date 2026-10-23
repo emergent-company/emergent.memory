@@ -45,6 +45,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("/resources", h.ListProviderResources)
 	writeGroup.POST("/refs", h.ListProviderRefs)
 	writeGroup.POST("/:id/test-connection", h.TestConnection)
+	// The picker session mints a Google access token from the source's refresh
+	// token, so it is grouped with the write scope even though it is a GET: a
+	// read-scoped API token must not be able to obtain a token that reaches
+	// further than the token's own scope.
+	writeGroup.GET("/:id/picker-session", h.PickerSession)
+	writeGroup.PUT("/:id/sync-targets", h.SaveSyncTargets)
 	writeGroup.POST("/:id/sync", h.TriggerSync)
 	writeGroup.POST("/:id/sync-jobs/:jobId/cancel", h.CancelSyncJob)
 	writeGroup.GET("/providers/:providerType/oauth/authorize", h.StartOAuth)

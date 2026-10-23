@@ -112,6 +112,24 @@ type DSIntegration struct {
 	UpdatedAt            string  `json:"updatedAt"`
 }
 
+// DSFolderTarget is one folder a Drive source syncs (the canonical
+// `folders` config entry).
+type DSFolderTarget struct {
+	FolderID string `json:"folder_id"`
+	Name     string `json:"name,omitempty"`
+	DriveID  string `json:"drive_id,omitempty"`
+}
+
+// DSPickerSession is the short-lived Google Picker bootstrap returned by
+// GET /api/data-source-integrations/:id/picker-session.
+type DSPickerSession struct {
+	AccessToken  string `json:"accessToken"`
+	DeveloperKey string `json:"developerKey"`
+	AppID        string `json:"appId"`
+	Origin       string `json:"origin,omitempty"`
+	ExpiresAt    string `json:"expiresAt,omitempty"`
+}
+
 // DSSyncJob is one sync job of a source. It mirrors the SDK SyncJob shape so the
 // full progress contract (phase, message, item counts, trigger, timings) is
 // available to the UI.
@@ -494,6 +512,31 @@ func (m *MemoryClient) UpdateDSIntegration(ctx context.Context, id string, req *
 	var out DSIntegration
 	path := "/api/data-source-integrations/" + url.PathEscape(id)
 	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetDSPickerSession mints a short-lived provider resource-picker credential for
+// a source (GET /api/data-source-integrations/:id/picker-session). The response
+// carries an access token, so it must never be cached or logged.
+func (m *MemoryClient) GetDSPickerSession(ctx context.Context, id string) (*DSPickerSession, error) {
+	var out DSPickerSession
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/picker-session"
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// SetDSSyncTargets replaces a source's sync targets with the picked folder ids
+// (PUT /api/data-source-integrations/:id/sync-targets). The server resolves the
+// authoritative names and shared-drive ids.
+func (m *MemoryClient) SetDSSyncTargets(ctx context.Context, id string, folderIDs []string) (*DSIntegration, error) {
+	var out DSIntegration
+	path := "/api/data-source-integrations/" + url.PathEscape(id) + "/sync-targets"
+	body := map[string]any{"folderIds": folderIDs}
+	if err := m.doH(ctx, http.MethodPut, path, body, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

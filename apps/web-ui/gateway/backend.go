@@ -125,6 +125,8 @@ type MemoryBackend interface {
 	TestDSConnection(ctx context.Context, id string) (*DSTestConnectionResponse, error)
 	ListDSIntegrations(ctx context.Context) ([]DSIntegration, error)
 	GetDSIntegration(ctx context.Context, id string) (*DSIntegration, error)
+	GetDSPickerSession(ctx context.Context, id string) (*DSPickerSession, error)
+	SetDSSyncTargets(ctx context.Context, id string, folderIDs []string) (*DSIntegration, error)
 	CreateDSIntegration(ctx context.Context, req *DSCreateIntegrationRequest) (*DSIntegration, error)
 	UpdateDSIntegration(ctx context.Context, id string, req *DSUpdateIntegrationRequest) (*DSIntegration, error)
 	DeleteDSIntegration(ctx context.Context, id string) error

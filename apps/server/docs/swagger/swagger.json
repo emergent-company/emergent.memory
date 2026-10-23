@@ -23531,6 +23531,64 @@
                 }
             }
         },
+        "/data-source-integrations/{id}/picker-session": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Mints a short-lived credential for the provider's browser resource picker (Google Picker). The token is minted from the source's own stored refresh token.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Get a resource-picker session",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Picker session",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.PickerSession"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/data-source-integrations/{id}/resources": {
             "get": {
                 "security": [
@@ -23904,6 +23962,76 @@
                     },
                     "404": {
                         "description": "Job not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/data-source-integrations/{id}/sync-targets": {
+            "put": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Validates the picked resource ids against the source's credentials and stores them as the source's sync scope.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Replace a source's sync targets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Picked folder ids",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SaveSyncTargetsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated integration",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.Integration"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Source not found",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -38836,6 +38964,26 @@
                 }
             }
         },
+        "domain_sources.PickerSession": {
+            "type": "object",
+            "properties": {
+                "accessToken": {
+                    "type": "string"
+                },
+                "appId": {
+                    "type": "string"
+                },
+                "developerKey": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "origin": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.Provider": {
             "type": "object",
             "properties": {
@@ -38924,6 +39072,17 @@
                 },
                 "type": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_sources.SaveSyncTargetsRequest": {
+            "type": "object",
+            "properties": {
+                "folderIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

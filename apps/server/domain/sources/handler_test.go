@@ -71,9 +71,16 @@ func (s *SourcesHandlerSuite) TestProviderSchema() {
 	var schema map[string]any
 	s.Require().NoError(resp.JSON(&schema))
 	s.Require().Equal("google_drive", schema["type"])
-	req, ok := schema["required"].([]any)
-	s.Require().True(ok, "schema.required missing")
-	s.Require().Contains(req, "folder_id")
+	// Drive has no required config key: OAuth creates the source before any
+	// folder is picked, and the sync scope is the optional `folders` list.
+	_, hasRequired := schema["required"]
+	s.Require().False(hasRequired, "Drive schema must not require a config key")
+	props, ok := schema["properties"].(map[string]any)
+	s.Require().True(ok, "schema.properties missing")
+	folders, ok := props["folders"].(map[string]any)
+	s.Require().True(ok, "schema.properties.folders missing")
+	s.Require().Equal("folders", folders["x-ui-widget"])
+	s.Require().EqualValues(50, folders["maxItems"])
 
 	unknown := s.Client.GET("/api/data-source-integrations/providers/imap/schema",
 		testutil.WithAuth("e2e-test-user"))

@@ -7,6 +7,7 @@ package gdrive
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -93,6 +94,19 @@ func DefaultConfig() Config {
 type Client struct {
 	svc *drive.Service
 	cfg Config
+	// tokenSource is the credential-backed OAuth2 source, when the client was
+	// built from refresh-token credentials. It is nil for NewWithHTTPClient.
+	// AccessToken uses it to mint short-lived tokens for the browser-side
+	// Google Picker.
+	tokenSource oauth2.TokenSource
+}
+
+// Folder is the resolved metadata of a Drive folder, independent of the parent
+// listing. DriveID is non-empty for folders inside a shared drive.
+type Folder struct {
+	ID      string
+	Name    string
+	DriveID string
 }
 
 // SizeError indicates a Drive response exceeded the configured MaxBytes cap.
@@ -121,7 +135,12 @@ func New(ctx context.Context, creds Credentials, opts ...option.ClientOption) (*
 	tokenSource := oauthCfg.TokenSource(ctx, &oauth2.Token{RefreshToken: creds.RefreshToken})
 	hc := oauth2.NewClient(ctx, tokenSource)
 
-	return newClient(ctx, hc, opts...)
+	c, err := newClient(ctx, hc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	c.tokenSource = tokenSource
+	return c, nil
 }
 
 // NewWithHTTPClient builds a Client from an already-configured *http.Client
@@ -283,6 +302,80 @@ func (c *Client) listChildren(ctx context.Context, folderID string, mimeTypes []
 	}
 
 	return files, nil
+}
+
+// AccessToken mints a fresh OAuth2 access token from the client's stored
+// refresh token. It is used to bootstrap the browser-side Google Picker with
+// exactly the source's own credentials, so the picker can never browse a
+// different Google account than the one the source syncs.
+func (c *Client) AccessToken(ctx context.Context) (string, time.Time, error) {
+	if c.tokenSource == nil {
+		return "", time.Time{}, errors.New("google drive: access token requires refresh-token credentials")
+	}
+	tok, err := c.tokenSource.Token()
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("google drive: mint access token: %w", err)
+	}
+	if strings.TrimSpace(tok.AccessToken) == "" {
+		return "", time.Time{}, errors.New("google drive: token endpoint returned an empty access token")
+	}
+	return tok.AccessToken, tok.Expiry, nil
+}
+
+// GetFolder resolves a folder id to its name and shared-drive id. It fails when
+// the id is not a folder (a file id) or the folder is trashed, so a picker
+// selection is validated against the source's own credentials before it is
+// persisted.
+func (c *Client) GetFolder(ctx context.Context, folderID string) (Folder, error) {
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	f, err := c.svc.Files.Get(folderID).
+		SupportsAllDrives(true).
+		Fields("id,name,mimeType,driveId,trashed").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return Folder{}, fmt.Errorf("google drive: get folder %q: %w", folderID, err)
+	}
+	if f.MimeType != folderMimeType {
+		return Folder{}, fmt.Errorf("google drive: %q is not a folder", folderID)
+	}
+	if f.Trashed {
+		return Folder{}, fmt.Errorf("google drive: folder %q is trashed", folderID)
+	}
+	return Folder{ID: f.Id, Name: f.Name, DriveID: f.DriveId}, nil
+}
+
+// AccountEmailFromToken reads the authenticated user's email address from
+// Drive's about.get using a bare OAuth2 access token. It is used right after a
+// connect exchange, when only the token response's access token is available.
+func AccountEmailFromToken(ctx context.Context, accessToken string) (string, error) {
+	if strings.TrimSpace(accessToken) == "" {
+		return "", errors.New("google drive: access token is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)&prettyPrint=false", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("google drive: read account email: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("google drive: read account email: status %d", resp.StatusCode)
+	}
+	var payload struct {
+		User struct {
+			EmailAddress string `json:"emailAddress"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return "", fmt.Errorf("google drive: decode account email: %w", err)
+	}
+	return payload.User.EmailAddress, nil
 }
 
 // GetRevision returns the item's change-detection revision (a cheap pre-filter)

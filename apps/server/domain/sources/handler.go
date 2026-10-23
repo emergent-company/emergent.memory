@@ -187,6 +187,79 @@ func (h *Handler) ListResources(c echo.Context) error {
 	return c.JSON(http.StatusOK, resources)
 }
 
+// PickerSession handles GET /api/data-source-integrations/:id/picker-session.
+// @Summary      Get a resource-picker session
+// @Description  Mints a short-lived credential for the provider's browser resource picker (Google Picker). The token is minted from the source's own stored refresh token.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Param        id path string true "Source ID (UUID)"
+// @Success      200 {object} PickerSession "Picker session"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Source not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/{id}/picker-session [get]
+// @Security     bearerAuth
+func (h *Handler) PickerSession(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	session, err := h.svc.PickerSession(c.Request().Context(), projectID, id)
+	if err != nil {
+		return err
+	}
+	// The response carries a short-lived bearer token: never let a proxy or the
+	// browser cache it.
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.JSON(http.StatusOK, session)
+}
+
+// setSyncTargetsBody is the picker save payload: folder ids only. Names and
+// shared-drive ids are resolved server-side against the source's credentials.
+type SaveSyncTargetsRequest struct {
+	FolderIDs []string `json:"folderIds"`
+}
+
+// SaveSyncTargets handles PUT /api/data-source-integrations/:id/sync-targets.
+// @Summary      Replace a source's sync targets
+// @Description  Validates the picked resource ids against the source's credentials and stores them as the source's sync scope.
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Source ID (UUID)"
+// @Param        request body SaveSyncTargetsRequest true "Picked folder ids"
+// @Success      200 {object} Integration "Updated integration"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Source not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/{id}/sync-targets [put]
+// @Security     bearerAuth
+func (h *Handler) SaveSyncTargets(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	var req SaveSyncTargetsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	updated, err := h.svc.SaveSyncTargets(c.Request().Context(), projectID, id, req.FolderIDs)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
 // ListProviderResources handles POST /api/data-source-integrations/resources.
 // @Summary      List a provider's resources from unsaved credentials
 // @Description  Lists the selectable sync targets (Drive folders, GitHub repositories) for an unsaved provider config. Nothing is persisted.

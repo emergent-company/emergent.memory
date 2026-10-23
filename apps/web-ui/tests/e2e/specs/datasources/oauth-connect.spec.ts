@@ -13,6 +13,52 @@ import { test, expect } from '@playwright/test';
 //   /data-sources/:id                     source detail (seeded s1)
 //   /orgs/:id/settings/oauth-clients      org-admin OAuth-client settings
 
+// Stubs the Google Picker (gapi + google.picker) so a spec exercises the gateway
+// modal, session fetch, multi-select accumulation, and save without loading
+// Google's script or opening an iframe. The stub "picks" the given folders as
+// soon as the dialog is shown.
+async function stubGooglePicker(
+  page: import('@playwright/test').Page,
+  picked: Array<{ id: string; name: string }>,
+): Promise<void> {
+  await page.addInitScript((docs) => {
+    const picker = {
+      Response: { ACTION: 'action', DOCUMENTS: 'docs' },
+      Action: { PICKED: 'picked', CANCEL: 'cancel' },
+      Document: { ID: 'id', NAME: 'name' },
+      Feature: { MULTISELECT_ENABLED: 'multiselect' },
+      ViewId: { FOLDERS: 'folders' },
+      DocsView: class {
+        setIncludeFolders() { return this; }
+        setSelectFolderEnabled() { return this; }
+        setEnableDrives() { return this; }
+      },
+      PickerBuilder: class {
+        cb: ((data: unknown) => void) | null = null;
+        setOAuthToken() { return this; }
+        setDeveloperKey() { return this; }
+        addView() { return this; }
+        setAppId() { return this; }
+        setOrigin() { return this; }
+        enableFeature() { return this; }
+        setCallback(cb: (data: unknown) => void) { this.cb = cb; return this; }
+        build() {
+          const cb = this.cb;
+          return {
+            setVisible: () => {
+              setTimeout(() => cb?.({ action: 'picked', docs }), 0);
+            },
+          };
+        }
+      },
+    };
+    (window as unknown as { google: unknown }).google = { picker };
+    (window as unknown as { gapi: unknown }).gapi = {
+      load: (_name: string, opts: { callback: () => void }) => opts.callback(),
+    };
+  }, picked);
+}
+
 // Google Drive advertises OAuth only (its card has no credentials action);
 // GitHub advertises OAuth + credentials, so its card renders both. Scope every
 // action to its provider card to disambiguate.
@@ -74,18 +120,56 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-field-client_secret')).toHaveCount(0);
   });
 
-  test('OAuth-connected source prompts for its sync target, then reaches the resource step', async ({ page }) => {
-    // The seeded OAuth source (s1) is connected but has no folder selected, so
-    // its detail page prompts to finish connecting and links to the resource step.
+  test('OAuth-connected source picks folders in the modal and saves them', async ({ page }) => {
+    await stubGooglePicker(page, [
+      { id: 'folder-picked', name: 'Picked Folder' },
+      { id: 'folder-two', name: 'Second Folder' },
+    ]);
+
+    // The seeded OAuth source (s1) starts without a folder target, which is the
+    // state the OAuth callback leaves a source in. The sync-scope action is
+    // always available, so the spec also works when a retry finds s1 populated.
     await page.goto('/data-sources/s1');
-    await expect(page.getByTestId('ds-resource-needed')).toBeVisible();
-    await page.getByTestId('ds-resource-needed-link').click();
-    await page.waitForURL('**/data-sources/s1/resources');
-    await expect(page.getByTestId('ds-resource-step')).toBeVisible();
-    // The mock has no folder listing, so the step renders its retry-able empty
-    // state rather than the legacy "connector lands" placeholder.
-    await expect(page.getByTestId('ds-resource-empty')).toBeVisible();
-    await expect(page.getByTestId('ds-resource-retry')).toBeVisible();
+    await page.getByTestId('ds-choose-folders').click();
+
+    const dialog = page.getByTestId('ds-folder-picker');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('ds-folder-picker-open').click();
+    await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Picked Folder');
+    await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Second Folder');
+    await expect(dialog.getByTestId('ds-folder-picker-count')).toHaveText('2 selected');
+
+    await dialog.getByTestId('ds-folder-picker-save').click();
+    await page.waitForURL(/updated=1/);
+
+    // The saved list renders as chips and the sync-target prompt is gone.
+    await expect(page.getByTestId('ds-folder-target')).toHaveCount(2);
+    await expect(page.getByTestId('ds-folder-targets')).toContainText('Picked Folder');
+    await expect(page.getByTestId('ds-resource-needed')).toHaveCount(0);
+  });
+
+  test('picker save surfaces a rejected target and keeps the selection', async ({ page }) => {
+    // The mock upstream resolves ids against its folder catalog and rejects an
+    // unknown one, exactly as the server does against Drive. The modal must show
+    // that message inline rather than closing or discarding the selection.
+    await stubGooglePicker(page, [{ id: 'folder-missing', name: 'Missing Folder' }]);
+
+    await page.goto('/data-sources/s1');
+    await page.getByTestId('ds-choose-folders').click();
+    const dialog = page.getByTestId('ds-folder-picker');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByTestId('ds-folder-picker-open').click();
+    await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Missing Folder');
+
+    await dialog.getByTestId('ds-folder-picker-save').click();
+    await expect(dialog.getByTestId('ds-folder-picker-error')).toContainText('not accessible');
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Missing Folder');
+    // A rejected save never navigates: the modal stays open on the source page.
+    expect(new URL(page.url()).searchParams.get('updated')).toBeNull();
+    await expect(page.getByTestId('ds-sync-scope')).toBeVisible();
   });
 
   test('org OAuth-client settings keep the secret write-only', async ({ page }) => {

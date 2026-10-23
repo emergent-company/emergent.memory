@@ -4243,6 +4243,34 @@ func (f *fakeMemory) GetDSIntegration(ctx context.Context, id string) (*DSIntegr
 	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
 }
 
+func (f *fakeMemory) GetDSPickerSession(ctx context.Context, id string) (*DSPickerSession, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	return &DSPickerSession{AccessToken: "picker-token", DeveloperKey: "dev-key", AppID: "123"}, nil
+}
+
+func (f *fakeMemory) SetDSSyncTargets(ctx context.Context, id string, folderIDs []string) (*DSIntegration, error) {
+	if f.dsErr != nil {
+		return nil, f.dsErr
+	}
+	for i := range f.dsIntegrations {
+		if f.dsIntegrations[i].ID != id {
+			continue
+		}
+		if f.dsIntegrations[i].Config == nil {
+			f.dsIntegrations[i].Config = map[string]any{}
+		}
+		folders := make([]any, 0, len(folderIDs))
+		for _, folderID := range folderIDs {
+			folders = append(folders, map[string]any{"folder_id": folderID, "name": "Folder " + folderID})
+		}
+		f.dsIntegrations[i].Config["folders"] = folders
+		return &f.dsIntegrations[i], nil
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "source not found"}
+}
+
 func (f *fakeMemory) CreateDSIntegration(ctx context.Context, req *DSCreateIntegrationRequest) (*DSIntegration, error) {
 	if f.dsCreateErr != nil {
 		return nil, f.dsCreateErr

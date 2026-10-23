@@ -79,6 +79,15 @@ For Google Drive:
 6. Under **Authorized JavaScript origins**, add the **JavaScript origin** shown on the same page
    (the Memory UI origin).
 7. Copy the **Client ID** and **Client secret**.
+8. Enable the **Google Picker API** for the same project.
+9. Create an **API key** (Credentials → Create credentials → API key) and restrict it to the
+   Memory UI origin plus `https://docs.google.com/*`. Copy the key and the **project number** —
+   they become the picker's **Developer key** and **App ID** in the credentials editor.
+
+The picker keys are stored on the OAuth client that authorizes the source, so set them on the same
+**project** or **organization** client that holds the client id. A deployment-default client is
+environment configuration and has no editable config, so a source that resolves to it cannot load
+the picker until a project or organization client is configured.
 
 ### Enter the app
 
@@ -103,9 +112,10 @@ Google Drive has two selectable strategies, and they decide what the folder pick
 - **`drive.readonly`** (default) — the app can list and read every file the connecting Google
   account can see, so the folder picker shows the whole drive. This is a restricted scope: a
   widely distributed app may need Google verification.
-- **`drive.file`** — the app sees only files it created or the user picked through the Google
-  Picker. Picker support is not available yet, so on this strategy the folder list is empty by
-  design and the resource step says so.
+- **`drive.file`** — the app sees only files it created or that a user picked through the Google
+  Picker. That grant covers the picked **object**, not its children, so a `drive.file` source
+  cannot browse or sync a folder tree. Folder sync needs `drive.readonly`; the source's detail page
+  says so and links to reconnect.
 
 The strategy resolves project first, then organization, then the provider default. Leaving the
 project strategy blank inherits the organization's strategy; it does not reset to the default.
@@ -113,6 +123,32 @@ project strategy blank inherits the organization's strategy; it does not reset t
 Changing the strategy applies to the next consent, not to sources that are already connected — a
 source keeps the scope its token was granted with. Delete the source and connect the provider again
 after switching to `drive.readonly`.
+
+### Choosing folders in the Google Picker
+
+A Drive source syncs the folders selected in the Google Picker. Open the source's detail page and
+press **Choose folders** (or follow the prompt on a freshly connected source):
+
+- The modal shows the folders the connected Google account can read. Open a folder to browse its
+  subfolders; use the sidebar to switch between **My Drive** and **Shared drives**.
+- Select more than one folder. Selections accumulate across Picker openings, so you can add a
+  folder, close the picker, browse elsewhere, and add another.
+- Remove a folder with the **×** on its chip, then press **Save folders**.
+
+Each picked folder is stored as `{folder_id, name, drive_id}`. `name` and `drive_id` are resolved
+from Drive when you save, so a renamed or moved folder stays identifiable. One source accepts at
+most **50** folders; `mime_types` and `recursive` apply to all of them. A file that appears in two
+selected folders is ingested once per sync.
+
+Subfolder inclusion still follows the **Recursive** setting: recursive sync walks below each
+selected folder, non-recursive sync ingests the folder's direct children only.
+
+The source detail page also shows the credentials in use: the OAuth app scope (project,
+organization, or deployment default), the short client id, the connected Google account, and the
+granted scope. **Manage credentials** opens **Settings → Credentials**.
+
+Free-text folder ids from older clients are still accepted: the first update rewrites
+`folder_id`/`shared_drive_id` into the canonical `folders` list.
 
 GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
 token entered when connecting the source; a token connection does not need an OAuth app.
@@ -253,6 +289,46 @@ POST /api/data-source-integrations/test-config
 | `syncMode` | `manual` (trigger explicitly) or `recurring` (automatic on interval) |
 | `syncIntervalMinutes` | Minutes between automatic syncs (for `recurring` mode) |
 | `status` | `active` · `error` · `disabled` |
+
+For `google_drive`, `config.folders` is the sync scope:
+
+```json
+{
+  "config": {
+    "folders": [
+      { "folder_id": "1AbC…", "name": "Reports", "drive_id": "" },
+      { "folder_id": "1XyZ…", "name": "Shared contracts", "drive_id": "0AFt…" }
+    ],
+    "mime_types": ["application/pdf"],
+    "recursive": true
+  }
+}
+```
+
+When you write `folders` directly, `name` and `drive_id` are stored as you send them — send both so
+the UI and sync can label the target. Only `PUT /sync-targets` resolves them from Drive for you (see
+below). The legacy single-target keys `folder_id` and `shared_drive_id` are accepted and normalized
+into `folders`.
+
+---
+
+## Choosing Sync Targets Through the API
+
+The folder-picker modal saves through the same endpoint an API client can call. Submit only folder
+ids; the server resolves each folder's name and shared-drive id from Drive and merges the result
+into the source config while preserving its other keys:
+
+```http
+PUT /api/data-source-integrations/{id}/sync-targets
+Content-Type: application/json
+
+{ "folderIds": ["1AbC…", "1XyZ…"] }
+```
+
+An empty list, an inaccessible folder, or more than 50 ids is rejected. The response is the updated
+integration. The picker itself mints a short-lived access token from the source's own stored refresh
+token via `GET /api/data-source-integrations/{id}/picker-session` (UI-only; the token is never
+logged or cached).
 
 ---
 

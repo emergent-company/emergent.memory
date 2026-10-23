@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -608,25 +609,37 @@ templ DSTestResultPartial(resp *DSTestConnectionResponse, err error) {
 // test, settings, and sync-job history. A nil src renders the load-error state.
 // resourcePrompt, when non-nil, is the banner prompting the user to finish
 // connecting by choosing a sync target (folder/repo).
-templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, jobs []DSSyncJob, loadErr error, resourcePrompt *dsResourcePrompt, flashMsg string, flashErr error) {
+templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, jobs []DSSyncJob, loadErr error, resourcePrompt *dsResourcePrompt, credentialSummary *dsCredentialSummary, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
 		} else {
 			@dataSourceDetailHeader(src, providerName, resourcePrompt == nil)
 			@flashToasts(flashMsg, flashErr)
-			if resourcePrompt != nil {
+			if credentialSummary != nil && credentialSummary.PickerBlocked {
+				@dsPickerBlockedNotice(*credentialSummary)
+			} else if resourcePrompt != nil {
 				@dsResourceNeededBanner(*resourcePrompt)
 			}
+			if src.ProviderType == dsProviderTypeGoogleDrive {
+				@dsSyncScopeCard(src, credentialSummary)
+			}
 			@dsConnectionCard(src)
-			@dsEditCard(src, configFields, credentialFields)
+			if credentialSummary != nil {
+				@dsCredentialCard(*credentialSummary)
+			}
+			@dsEditCard(src, dsSettingsConfigFields(configFields), credentialFields)
 			@dsSyncHistory(src.ID, jobs)
+			if src.ProviderType == dsProviderTypeGoogleDrive && (credentialSummary == nil || !credentialSummary.PickerBlocked) {
+				@dsFolderPickerModal(src)
+			}
 		}
 	}
 }
 
 // dsResourceNeededBanner prompts the user to finish a source whose config is
-// missing its sync target, linking to the resource-selection step.
+// missing its sync target. A Drive source opens the in-page Google Picker modal;
+// a provider with a generic resource step links to it.
 templ dsResourceNeededBanner(p dsResourcePrompt) {
 	<div class="mb-4" data-testid="ds-resource-needed">
 		@ui.Alert(ui.AlertProps{
@@ -636,18 +649,292 @@ templ dsResourceNeededBanner(p dsResourcePrompt) {
 			Message: p.Description,
 		})
 		<div class="mt-2">
-			@ui.Button(ui.ButtonProps{
-				Type:    ui.ButtonTypeLink,
-				Href:    p.Href,
-				Variant: ui.ButtonPrimary,
-				Size:    ui.ButtonSM,
-				Icon:    "lucide--folder-search",
-				Attrs:   templ.Attributes{"data-testid": "ds-resource-needed-link"},
-			}) {
-				{ p.Title }
+			if p.OpenPicker {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--folder-search",
+					Attrs: templ.Attributes{
+						"data-ds-open-folder-picker": "true",
+						"data-testid":                "ds-resource-needed-link",
+					},
+				}) {
+					{ p.Title }
+				}
+			} else {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    p.Href,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--folder-search",
+					Attrs:   templ.Attributes{"data-testid": "ds-resource-needed-link"},
+				}) {
+					{ p.Title }
+				}
 			}
 		</div>
 	</div>
+}
+
+// dsPickerBlockedNotice explains why a drive.file source cannot use the folder
+// picker and gives the one remediation that works: reconnect with the read-only
+// scope (the token's grant is fixed at connect time).
+templ dsPickerBlockedNotice(summary dsCredentialSummary) {
+	<div class="mb-4" data-testid="ds-picker-blocked">
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertWarning,
+			Style:   ui.AlertStyleSoft,
+			Icon:    "lucide--lock",
+			Message: summary.PickerError,
+		})
+		<div class="mt-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/data-sources/new?providerType=" + url.QueryEscape(summary.ProviderName) + "&method=oauth",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plug-zap",
+				Attrs:   templ.Attributes{"data-testid": "ds-picker-reconnect"},
+			}) {
+				Reconnect Google Drive
+			}
+		</div>
+	</div>
+}
+
+// dsSyncScopeCard is the Drive source's folder targets: the folders it ingests,
+// with the always-available "Choose folders" action that opens the Google
+// Picker modal. It replaces the raw folder-id inputs the settings form used to
+// render.
+templ dsSyncScopeCard(src *DSIntegration, summary *dsCredentialSummary) {
+	{{ folders := dsFolders(src) }}
+	<div class="mb-4" data-testid="ds-sync-scope">
+		@components.PanelCard("", nil) {
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="flex items-center gap-3">
+					@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "info"})
+					<div>
+						<h2 class="text-base font-semibold">Sync scope</h2>
+						@ui.EmptyNote() { These folders are ingested into this project. Subfolders are included when recursive sync is on. }
+					</div>
+				</div>
+				if summary == nil || !summary.PickerBlocked {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeButton,
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--folder-search",
+						Attrs: templ.Attributes{
+							"data-ds-open-folder-picker": "true",
+							"data-testid":                "ds-choose-folders",
+						},
+					}) {
+						if len(folders) == 0 {
+							Choose folders
+						} else {
+							Change folders
+						}
+					}
+				}
+			</div>
+			<div class="mt-3">
+				if len(folders) == 0 {
+					@ui.EmptyNote(ui.EmptyNoteProps{
+						Class: "mt-1",
+						Attrs: templ.Attributes{"data-testid": "ds-folders-empty"},
+					}) {
+						No folders chosen yet. Choose at least one folder before syncing.
+					}
+				} else {
+					@dsFolderChips(folders)
+				}
+			</div>
+		}
+	</div>
+}
+
+// dsFolderChips renders a source's selected folders as chips.
+templ dsFolderChips(folders []DSFolderTarget) {
+	<ul class="flex flex-wrap gap-2" data-testid="ds-folder-targets">
+		for _, f := range folders {
+			<li class="inline-flex items-center gap-2 rounded-box border border-base-content/10 px-3 py-1.5" data-testid="ds-folder-target" data-folder-id={ f.FolderID }>
+				<span class="text-sm font-medium">{ dsFolderLabel(f) }</span>
+				if f.DriveID != "" {
+					@ui.Badge(ui.BadgeProps{
+						Label:   "Shared drive",
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--hard-drive",
+					})
+				}
+			</li>
+		}
+	</ul>
+}
+
+// dsCredentialCard is the read-only credentials summary: which OAuth app (at
+// which scope) is used, which account authorized the source, and which scope the
+// token actually carries.
+templ dsCredentialCard(summary dsCredentialSummary) {
+	<div class="mb-4" data-testid="ds-credentials-card">
+		@components.PanelCard("", nil) {
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
+				<div>
+					<h2 class="text-base font-semibold">Credentials</h2>
+					@ui.EmptyNote() { The OAuth app and the account this source uses to read the provider. Secrets are never shown. }
+				</div>
+			</div>
+			<dl class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+				<div>
+					<dt class="text-xs font-medium uppercase tracking-wide text-muted">OAuth app</dt>
+					<dd class="mt-1 text-sm font-medium" data-testid="ds-credential-scope">{ summary.ScopeLabel }</dd>
+					if summary.ClientID != "" {
+						<dd class="mt-1">
+							<code class="text-xs" data-testid="ds-credential-client-id">{ summary.ClientID }</code>
+						</dd>
+					}
+				</div>
+				<div>
+					<dt class="text-xs font-medium uppercase tracking-wide text-muted">Google account</dt>
+					<dd class="mt-1 text-sm" data-testid="ds-credential-account">{ dsCredentialValue(summary.AccountEmail) }</dd>
+					<dd class="mt-1 text-xs text-muted">Captured when the source was connected.</dd>
+				</div>
+				<div>
+					<dt class="text-xs font-medium uppercase tracking-wide text-muted">Granted access</dt>
+					<dd class="mt-1">
+						if summary.GrantedTone == "success" {
+							@ui.Badge(ui.BadgeProps{
+								Label:   summary.GrantedLabel,
+								Variant: ui.BadgeSuccess,
+								Size:    ui.BadgeSizeSM,
+								Icon:    "lucide--shield-check",
+							})
+						} else {
+							@ui.Badge(ui.BadgeProps{
+								Label:   summary.GrantedLabel,
+								Variant: ui.BadgeWarning,
+								Size:    ui.BadgeSizeSM,
+								Icon:    "lucide--shield-alert",
+							})
+						}
+					</dd>
+				</div>
+			</dl>
+			if summary.LookupFailed {
+				<p class="mt-3 text-sm text-warning" data-testid="ds-credential-lookup-failed">The credential settings could not be loaded. Reload the page, or open credential settings to check the OAuth app.</p>
+			} else if !summary.Configured {
+				<p class="mt-3 text-sm text-warning" data-testid="ds-credential-missing">No OAuth app is resolved for this provider. Set one up in credential settings before connecting.</p>
+			}
+			<div class="mt-3">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    summary.SettingsHref,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--settings",
+					Attrs:   templ.Attributes{"data-testid": "ds-credential-settings-link"},
+				}) {
+					Open credential settings
+				}
+			</div>
+		}
+	</div>
+}
+
+// dsFolderPickerModal is the Drive folder picker: a daisyUI dialog that hosts
+// the Google Picker and holds the working selection until Save. The picker
+// itself (an iframe owned by Google) provides subfolder navigation, shared
+// drives, and multi-select; the modal keeps that flow on the detail page.
+templ dsFolderPickerModal(src *DSIntegration) {
+	{{ folders := dsFolders(src) }}
+	@ui.Dialog(ui.DialogProps{
+		ID:       "ds-folder-picker",
+		BoxClass: "max-w-2xl",
+		Attrs: templ.Attributes{
+			"data-testid":               "ds-folder-picker",
+			"data-picker-session-url":   "/data-sources/" + url.PathEscape(src.ID) + "/picker-session",
+			"data-save-url":             "/data-sources/" + url.PathEscape(src.ID) + "/sync-targets",
+			"aria-labelledby":           "ds-folder-picker-title",
+		},
+	}) {
+		<div class="flex items-start justify-between gap-3">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "ds-folder-picker-title"}) { Choose folders }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+					Select one or more folders in Google Drive. Use the picker's folder list to open subfolders; shared drives appear in the sidebar. Nothing syncs until you save.
+				}
+			</div>
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeSubmit,
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					AriaLabel: "Close folder picker",
+					Attrs:     templ.Attributes{"data-testid": "ds-folder-picker-close"},
+				}) {
+					Close
+				}
+			</form>
+		</div>
+		<div id="ds-folder-picker-error" class="mt-3 hidden rounded-box border border-error/30 bg-error/10 p-3 text-sm text-error" data-testid="ds-folder-picker-error"></div>
+		<div class="mt-4">
+			<div class="flex items-center justify-between gap-2">
+				<h4 class="text-sm font-semibold">Selected folders</h4>
+				<span class="text-xs text-muted" data-testid="ds-folder-picker-count">{ strconv.Itoa(len(folders)) } selected</span>
+			</div>
+			<ul id="ds-folder-picker-selected" class="mt-2 flex min-h-12 flex-wrap gap-2 rounded-box border border-dashed border-base-content/10 p-2" data-testid="ds-folder-picker-selected">
+				for _, f := range folders {
+					<li class="inline-flex items-center gap-2 rounded-box border border-base-content/10 px-3 py-1.5" data-folder-id={ f.FolderID } data-folder-name={ dsFolderLabel(f) } data-drive-id={ f.DriveID }>
+						<span class="text-sm font-medium">{ dsFolderLabel(f) }</span>
+						if f.DriveID != "" {
+							@ui.Badge(ui.BadgeProps{Label: "Shared drive", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeButton,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonXS,
+							AriaLabel: "Remove " + dsFolderLabel(f),
+						}) {
+							×
+						}
+					</li>
+				}
+			</ul>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "ds-folder-picker-hint"}}) {
+				The folder picker opens in a Google dialog. You can add more folders after each selection.
+			}
+		</div>
+		<div class="modal-action">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonOutline,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--folder-open",
+				Attrs: templ.Attributes{
+					"data-ds-picker-open": "true",
+					"data-testid":         "ds-folder-picker-open",
+				},
+			}) {
+				Open Google Picker
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--check",
+				Attrs: templ.Attributes{
+					"data-ds-picker-save": "true",
+					"data-testid":         "ds-folder-picker-save",
+				},
+			}) {
+				Save folders
+			}
+		</div>
+	}
+	<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-folder-picker.js")) }></script>
 }
 
 templ dataSourceDetailHeader(src *DSIntegration, providerName string, canSync bool) {
@@ -725,19 +1012,21 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 				@dsSyncModeSelect(src.SyncMode, src.SyncIntervalMinutes)
 			</div>
 			<div>
-				<h3 class="text-sm font-semibold">Sync scope</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Your stored scope and options are shown below. Credential fields are write-only and never shown. }
+				<h3 class="text-sm font-semibold">Sync options</h3>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Filter types and recursion apply to every selected folder. Credential fields are write-only and never shown. }
 				<div class="mt-3">
 					@dsConfigFieldInputs(configFields)
 				</div>
 			</div>
-			<div>
-				<h3 class="text-sm font-semibold">Credentials</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Stored credentials are never returned. Leave the credential fields blank to keep the current credentials; fill them all to replace them. }
-				<div class="mt-3">
-					@dsCredentialFieldInputs(credentialFields)
+			if len(credentialFields) > 0 {
+				<div>
+					<h3 class="text-sm font-semibold">Credentials</h3>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Stored credentials are never returned. Leave the credential fields blank to keep the current credentials; fill them all to replace them. }
+					<div class="mt-3">
+						@dsCredentialFieldInputs(credentialFields)
+					</div>
 				</div>
-			</div>
+			}
 			<div class="flex flex-wrap items-center gap-2 justify-start">
 				@components.SaveChangesButton()
 			</div>

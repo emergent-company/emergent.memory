@@ -3,20 +3,43 @@ package sources
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 )
 
 // fakeDriveTransport satisfies DriveTransport for provider-level tests.
 type fakeDriveTransport struct {
-	folders []gdrive.Item
+	folders       []gdrive.Item
+	itemsByFolder map[string][]gdrive.Item
+	listCalls     []string
+	getFolders    map[string]gdrive.Folder
+	getErr        error
+	token         string
 }
 
-func (f *fakeDriveTransport) ListFolderItems(context.Context, string, []string, bool, string) ([]gdrive.Item, error) {
-	return nil, nil
+func (f *fakeDriveTransport) ListFolderItems(_ context.Context, folderID string, _ []string, _ bool, _ string) ([]gdrive.Item, error) {
+	f.listCalls = append(f.listCalls, folderID)
+	return f.itemsByFolder[folderID], nil
 }
 func (f *fakeDriveTransport) ListFolders(context.Context, string, string) ([]gdrive.Item, bool, error) {
 	return f.folders, false, nil
+}
+func (f *fakeDriveTransport) GetFolder(_ context.Context, id string) (gdrive.Folder, error) {
+	if f.getErr != nil {
+		return gdrive.Folder{}, f.getErr
+	}
+	if folder, ok := f.getFolders[id]; ok {
+		return folder, nil
+	}
+	return gdrive.Folder{ID: id}, nil
+}
+func (f *fakeDriveTransport) AccessToken(context.Context) (string, time.Time, error) {
+	token := f.token
+	if token == "" {
+		token = "at"
+	}
+	return token, time.Now().Add(time.Hour), nil
 }
 func (f *fakeDriveTransport) ExportText(context.Context, string, string) ([]byte, error) {
 	return nil, nil

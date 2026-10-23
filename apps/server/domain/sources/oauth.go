@@ -35,6 +35,9 @@ type OAuthClient struct {
 	// providers (Trale) carry it so authorize and token requests target the
 	// right resource.
 	Resource string
+	// Config carries the winning row's non-secret provider extras (e.g. the
+	// Google Picker developer key/app id). It is empty for a deployment default.
+	Config map[string]any
 }
 
 // OAuthAuthorizeRequest is the per-connection input for building an authorize URL.

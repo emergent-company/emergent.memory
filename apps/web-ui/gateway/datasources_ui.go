@@ -41,8 +41,8 @@ var dsConfigFieldOrder = []string{
 	// The web provider's crawl-scope keys come first so its connect form reads
 	// in crawl-scope order (start URLs, then filters, then limits).
 	"start_urls", "include_globs", "exclude_globs", "max_pages", "max_depth",
+	"folders", "mime_types", "recursive",
 	"repo", "ref", "paths", "extensions",
-	"folder_id", "shared_drive_id", "mime_types", "recursive",
 	"client_id", "client_secret", "refresh_token",
 }
 
@@ -149,6 +149,8 @@ func dsIsCredentialKey(key string) bool {
 // dsFieldLabel humanizes a config key into a form label.
 func dsFieldLabel(key string) string {
 	switch key {
+	case "folders":
+		return "Folders"
 	case "folder_id":
 		return "Folder ID"
 	case "shared_drive_id":
@@ -264,6 +266,25 @@ func (s *Server) dsFormConfig(ctx context.Context, c echo.Context, providerType 
 // dsIsPicker reports whether the field offers provider-listing suggestions.
 func (f dsConfigField) dsIsPicker() bool {
 	return f.Widget == "resource" || f.Widget == "ref"
+}
+
+// dsIsFolderPicker reports whether the field is Drive's folder-target list,
+// which renders in its own scope card (with the Google Picker) rather than as a
+// raw form input.
+func (f dsConfigField) dsIsFolderPicker() bool { return f.Widget == "folders" }
+
+// dsSettingsConfigFields drops the fields rendered outside the settings form so
+// the form never offers a raw folder id/list input. The server preserves the
+// stored value across a settings save.
+func dsSettingsConfigFields(fields []dsConfigField) []dsConfigField {
+	out := make([]dsConfigField, 0, len(fields))
+	for _, f := range fields {
+		if f.dsIsFolderPicker() {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // dsOptionsListID is the datalist id the field's suggestions are written to.
@@ -676,6 +697,14 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	if err != nil {
 		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", "", userFacingError(err), "", nil))
 	}
+	// Google Drive selects its targets in the browser's Google Picker modal on
+	// the detail page, so the old full-page listing is retired for it. Keep the
+	// URL working (bookmarks, older links) by bouncing to the detail page with
+	// the picker open.
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(id)+"?picker=1")
+		return nil
+	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
 		providerName = dsProviderLabel(dsProviderNameMap(providers), src.ProviderType)
@@ -802,12 +831,12 @@ func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
 }
 
 // dsResourceConfigKey maps a provider type to the config key its chosen sync
-// resource is stored under. A provider absent from the switch has no resource
-// step (the caller fails closed).
+// resource is stored under. A provider absent from the switch has no generic
+// resource-list step (the caller fails closed). Google Drive is deliberately
+// absent: its target is a list chosen in the Google Picker, not a single id
+// picked from a server-rendered listing.
 func dsResourceConfigKey(providerType string) (string, bool) {
 	switch providerType {
-	case dsProviderTypeGoogleDrive:
-		return "folder_id", true
 	case "github":
 		return "repo", true
 	default:
@@ -815,34 +844,243 @@ func dsResourceConfigKey(providerType string) (string, bool) {
 	}
 }
 
+// dsFolders decodes a source's canonical folder targets, falling back to the
+// legacy single-target keys for sources connected before the list contract.
+// The fallback keeps old rows renderable and syncable while they converge on
+// the canonical shape at the next save.
+func dsFolders(src *DSIntegration) []DSFolderTarget {
+	if src == nil {
+		return nil
+	}
+	var out []DSFolderTarget
+	if items, ok := src.Config["folders"].([]any); ok {
+		for _, item := range items {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			id := dsConfigString(m, "folder_id")
+			if id == "" {
+				continue
+			}
+			out = append(out, DSFolderTarget{
+				FolderID: id,
+				Name:     dsConfigString(m, "name"),
+				DriveID:  dsConfigString(m, "drive_id"),
+			})
+		}
+	}
+	if len(out) == 0 {
+		if id := dsConfigString(src.Config, "folder_id"); id != "" {
+			out = append(out, DSFolderTarget{
+				FolderID: id,
+				DriveID:  dsConfigString(src.Config, "shared_drive_id"),
+			})
+		}
+	}
+	return out
+}
+
+// dsFolderLabel is a folder target's display name, falling back to a short
+// folder id when the target was stored before names were persisted.
+func dsFolderLabel(f DSFolderTarget) string {
+	if name := strings.TrimSpace(f.Name); name != "" {
+		return name
+	}
+	return "Folder " + dsShortID(f.FolderID)
+}
+
+// dsShortID shortens an opaque id for display without hiding which id it is.
+func dsShortID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:8] + "…" + id[len(id)-4:]
+}
+
+// dsCredentialValue renders an optional credential-summary value, naming the
+// unknown state instead of leaving an empty cell.
+func dsCredentialValue(v string) string {
+	if s := strings.TrimSpace(v); s != "" {
+		return s
+	}
+	return "Not recorded"
+}
+
+// dsSourceHasSyncTarget reports whether a source has the sync target its
+// provider requires. Drive accepts a folder list (or the legacy single folder);
+// other providers use their single config key.
+func dsSourceHasSyncTarget(src *DSIntegration) bool {
+	if src == nil {
+		return false
+	}
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		return len(dsFolders(src)) > 0
+	}
+	key, ok := dsResourceConfigKey(src.ProviderType)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(dsConfigString(src.Config, key)) != ""
+}
+
 // dsResourcePrompt is the detail-page banner shown when a source's config is
-// missing its sync target (folder_id/repo), linking to the resource-selection
-// step so the user can finish connecting the source.
+// missing its sync target (folders/repo). OpenPicker marks the action as the
+// in-page folder-picker modal instead of a link to the resource step.
 type dsResourcePrompt struct {
 	Title       string
 	Description string
 	Href        string
+	OpenPicker  bool
 }
 
 // dsResourcePromptFor builds a resource prompt for a source whose config is
 // missing its sync target, or nil when the source is complete or the provider
 // has no resource step.
 func dsResourcePromptFor(src *DSIntegration) *dsResourcePrompt {
-	if src == nil {
+	if src == nil || dsSourceHasSyncTarget(src) {
 		return nil
 	}
-	key, ok := dsResourceConfigKey(src.ProviderType)
-	if !ok {
+	_, genericResourceStep := dsResourceConfigKey(src.ProviderType)
+	if src.ProviderType != dsProviderTypeGoogleDrive && !genericResourceStep {
 		return nil
 	}
-	if strings.TrimSpace(dsConfigString(src.Config, key)) != "" {
-		return nil
-	}
-	return &dsResourcePrompt{
+	prompt := &dsResourcePrompt{
 		Title:       dsResourceStepTitle(*src),
 		Description: dsResourceStepDescription(*src),
 		Href:        "/data-sources/" + url.PathEscape(src.ID) + "/resources",
 	}
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		prompt.OpenPicker = true
+	}
+	return prompt
+}
+
+// dsCredentialSummary is the read-only "which credentials does this source
+// use" card on the detail page. It answers the three questions a user has when
+// a sync fails or when a source was connected by someone else: which OAuth app
+// (and at which scope), which Google account, and which scope the token was
+// actually granted.
+type dsCredentialSummary struct {
+	ProviderName    string
+	ScopeKey        string // project | organization | deployment | ""
+	ScopeLabel      string
+	ClientID        string // short, display form
+	ClientIDFull    string
+	AccountEmail    string
+	GrantedStrategy string
+	GrantedLabel    string
+	GrantedTone     string // "success" | "warning"
+	Configured      bool
+	LookupFailed    bool
+	SettingsHref    string
+	PickerBlocked   bool
+	PickerError     string
+}
+
+// dsCredentialSummary builds the credentials card for a source. The app details
+// are member-readable server data (never secrets); the account email is the
+// best-effort value captured at connect. A lookup failure degrades to the
+// account/scope fields the source read already carries rather than failing the
+// detail page.
+func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *dsCredentialSummary {
+	summary := &dsCredentialSummary{
+		ProviderName:    src.ProviderType,
+		AccountEmail:    dsConfigString(src.Config, "oauth_account_email"),
+		SettingsHref:    dsCredentialAppHref(src.ProviderType),
+		GrantedTone:     "warning",
+		GrantedLabel:    "Not recorded (connected before scope tracking)",
+		GrantedStrategy: src.OAuthGrantedStrategy,
+	}
+	descriptions, err := s.memory.ListDSCredentials(ctx)
+	if err != nil {
+		captureError(err)
+		summary.LookupFailed = true
+	}
+	for _, d := range descriptions {
+		if d.ProviderType != src.ProviderType {
+			continue
+		}
+		summary.ScopeKey = d.ResolvedScope
+		var source DSOAuthCredentialSource
+		switch d.ResolvedScope {
+		case "project":
+			source = d.Project
+			summary.ScopeLabel = "Project override"
+		case "organization":
+			source = d.Organization
+			summary.ScopeLabel = "Organization app"
+		case "deployment":
+			source = d.Deployment
+			summary.ScopeLabel = "Deployment default"
+		}
+		summary.Configured = source.Configured && source.ClientID != ""
+		summary.ClientIDFull = source.ClientID
+		summary.ClientID = dsShortID(source.ClientID)
+		break
+	}
+	if summary.ScopeLabel == "" {
+		// A failed lookup and a genuinely unconfigured provider are different
+		// problems: "not configured" would send the user to create a duplicate
+		// client when the real fault is the credentials API.
+		if summary.LookupFailed {
+			summary.ScopeLabel = "Could not load credentials"
+		} else {
+			summary.ScopeLabel = "Not configured"
+		}
+	}
+	effective := src.OAuthGrantedStrategy
+	if effective == "" {
+		effective = src.OAuthStrategy
+	}
+	switch effective {
+	case "drive.readonly":
+		summary.GrantedLabel = "Read-only Drive access (drive.readonly)"
+		summary.GrantedTone = "success"
+	case "drive.file":
+		summary.GrantedLabel = "Per-file access (drive.file)"
+		summary.GrantedTone = "warning"
+	}
+	if dsDriveFileScope(src) {
+		summary.PickerBlocked = true
+		summary.PickerError = "This source was authorized with per-file access (drive.file), so Google will not let the folder picker browse its folders. Reconnect the source and choose the read-only Drive scope to pick folders."
+	}
+	return summary
+}
+
+// uiDataSourcePickerSession proxies the short-lived Google Picker bootstrap for
+// a source. It is called by the modal's script on open, so the token never sits
+// in the page HTML and each open mints a fresh one. The response is no-store.
+func (s *Server) uiDataSourcePickerSession(c echo.Context) error {
+	session, err := s.memory.GetDSPickerSession(c.Request().Context(), c.Param("id"))
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": dsFormError(err).Error()})
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	c.Response().Header().Set("Pragma", "no-cache")
+	return c.JSON(http.StatusOK, session)
+}
+
+// dsSyncTargetsRequest is the picker-save payload. Only ids travel from the
+// browser; the server resolves authoritative names and shared-drive ids.
+type dsSyncTargetsRequest struct {
+	FolderIDs []string `json:"folderIds"`
+}
+
+// uiDataSourceSyncTargetsSave persists the folders picked in the modal and
+// answers 204 so the modal script can reload the page. Validation failures come
+// back as JSON so the modal can show them inline without losing the selection.
+func (s *Server) uiDataSourceSyncTargetsSave(c echo.Context) error {
+	req := &dsSyncTargetsRequest{}
+	if err := c.Bind(req); err != nil || len(req.FolderIDs) == 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Choose at least one folder."})
+	}
+	if _, err := s.memory.SetDSSyncTargets(c.Request().Context(), c.Param("id"), req.FolderIDs); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": dsFormError(err).Error()})
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return c.NoContent(http.StatusNoContent)
 }
 
 // uiOrgOAuthClients renders the org's OAuth client settings page (org-admin
@@ -1549,7 +1787,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), nil, "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), nil, nil, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
@@ -1568,6 +1806,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 		configFields, credentialFields = dsConfigFields(schema, src.Config)
 	}
 	resourcePrompt := dsResourcePromptFor(src)
+	credentialSummary := s.dsCredentialSummary(ctx, src)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},
 		{key: "updated", msg: "Data source updated."},
@@ -1576,7 +1815,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(dsSourceName(*src)),
-		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, resourcePrompt, flashMsg, flashErr))
+		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, resourcePrompt, credentialSummary, flashMsg, flashErr))
 }
 
 // uiDataSourceUpdate handles the settings form (PRG). The config is rebuilt from
@@ -1586,6 +1825,10 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	detailPath := "/data-sources/" + url.PathEscape(id)
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, detailPath, err)
+	}
 	req := &DSUpdateIntegrationRequest{}
 	if name := strings.TrimSpace(c.FormValue("name")); name != "" {
 		req.Name = &name
@@ -1599,9 +1842,7 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	providerType := strings.TrimSpace(c.FormValue("providerType"))
 	if providerType == "" {
 		// Older forms did not carry providerType; resolve it from the source.
-		if src, err := s.memory.GetDSIntegration(ctx, id); err == nil {
-			providerType = src.ProviderType
-		}
+		providerType = src.ProviderType
 	}
 	if providerType == "" {
 		return redirectWithError(c, detailPath, errors.New("providerType is required"))
@@ -1640,7 +1881,7 @@ func (s *Server) uiDataSourceTriggerSync(c echo.Context) error {
 	// enumeration; bounce back to the detail page's resource banner instead of
 	// admitting a doomed job.
 	if dsResourcePromptFor(src) != nil {
-		return redirectWithError(c, detailPath, errors.New("choose a folder before syncing this data source"))
+		return redirectWithError(c, detailPath, errors.New("choose a sync target before syncing this data source"))
 	}
 	if _, err := s.memory.TriggerDSSync(c.Request().Context(), id); err != nil {
 		return redirectWithError(c, detailPath, err)

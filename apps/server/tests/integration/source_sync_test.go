@@ -160,6 +160,16 @@ func (f *fakeDrive) ListFolders(_ context.Context, _, _ string) ([]gdrive.Item, 
 	return nil, false, nil
 }
 
+func (f *fakeDrive) GetFolder(_ context.Context, folderID string) (gdrive.Folder, error) {
+	return gdrive.Folder{ID: folderID}, nil
+}
+
+func (f *fakeDrive) AccessToken(_ context.Context) (string, time.Time, error) {
+	return "integration-token", time.Now().Add(time.Hour), nil
+}
+
+func (f *fakeDrive) AccountEmail(_ context.Context) (string, error) { return "", nil }
+
 func (s *SourceSyncSuite) newWorker(fake *fakeDrive) *sources.SyncWorker {
 	provider := sources.NewGoogleDriveProvider(func(_ context.Context, _ gdrive.Credentials) (sources.DriveTransport, error) {
 		return fake, nil

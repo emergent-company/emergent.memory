@@ -295,12 +295,23 @@ const dsSchemas = {
   google_drive: {
     type: "google_drive",
     properties: {
-      folder_id: { type: "string", description: "The Drive folder to sync." },
-      shared_drive_id: { type: "string" },
+      folders: {
+        type: "array",
+        "x-ui-widget": "folders",
+        description: "Folders to sync; each entry is {folder_id, name, drive_id}.",
+        items: {
+          type: "object",
+          properties: {
+            folder_id: { type: "string" },
+            name: { type: "string" },
+            drive_id: { type: "string" },
+          },
+          required: ["folder_id"],
+        },
+      },
       mime_types: { type: "array", items: { type: "string" } },
       recursive: { type: "boolean" },
     },
-    required: ["folder_id"],
   },
   github: {
     type: "github",
@@ -384,6 +395,28 @@ function dsOAuthClientView(stored, providerType) {
 // Seeded with the source the OAuth bounce-back lands on (`connected=s1`), so the
 // OAuth callback → detail flow resolves. Specs that create their own sources are
 // unaffected — they filter the list by name.
+// dsFolderIDs reads the selected folder ids from a source config, canonical
+// `folders` first and the legacy single-target keys as the fallback. The sync
+// outcome specs key off these ids.
+function dsFolderIDs(config) {
+  const folders = Array.isArray(config && config.folders) ? config.folders : [];
+  const ids = folders
+    .map((f) => String((f && f.folder_id) || ""))
+    .filter(Boolean);
+  if (ids.length) return ids;
+  const legacy = String((config && config.folder_id) || "");
+  return legacy ? [legacy] : [];
+}
+
+// The folder catalog the picker save resolves names/drive ids from.
+const dsMockFolders = {
+  "folder-ok": { name: "Reports" },
+  "folder-slow": { name: "Slow folder" },
+  "folder-fail": { name: "Failing folder" },
+  "folder-picked": { name: "Picked Folder", drive_id: "drive-1" },
+  "folder-two": { name: "Second Folder" },
+};
+
 let dsSources = [
   {
     row: {
@@ -1055,16 +1088,16 @@ const server = http.createServer((req, res) => {
         }
         return json(res, { success: true, message: "Connected to Web." });
       }
-      // ValidateConfig then ExtractCredentials, like the server: the folder is
-      // required before the stored credential.
-      const folder = String(config.folder_id || "");
-      if (!folder) {
-        return json(res, { success: false, message: "config.folder_id is required" });
+      // ValidateConfig then ExtractCredentials, like the server: at least one
+      // folder target is required before the stored credential.
+      const folders = dsFolderIDs(config);
+      if (!folders.length) {
+        return json(res, { success: false, message: "config.folders must name at least one folder" });
       }
       if (!String(config.refresh_token || "")) {
         return json(res, { success: false, message: "config.refresh_token is required" });
       }
-      if (folder === "folder-fail") {
+      if (folders.includes("folder-fail")) {
         return json(res, { success: false, message: "Drive folder not found." });
       }
       return json(res, { success: true, message: "Connected to Google Drive." });
@@ -1184,9 +1217,9 @@ const server = http.createServer((req, res) => {
           }
         }
       } else {
-        if (!String(config.folder_id || "")) {
+        if (!dsFolderIDs(config).length && payload.allowIncompleteConfig !== true) {
           res.statusCode = 422;
-          return json(res, { error: { code: "validation_error", message: "config.folder_id is required" } });
+          return json(res, { error: { code: "validation_error", message: "config.folders must name at least one folder" } });
         }
         if (!String(config.refresh_token || "")) {
           res.statusCode = 422;
@@ -1305,8 +1338,8 @@ const server = http.createServer((req, res) => {
       src.row.updatedAt = nowISO();
       return json(res, { success: true, message: "Sync started.", jobId: job.id });
     }
-    const folder = String(src.config.folder_id || "");
-    if (folder === "folder-slow") {
+    const folders = dsFolderIDs(src.config);
+    if (folders.includes("folder-slow")) {
       job = dsNewSyncJob(src.row.id, "processing", {
         totalItems: 10,
         processedItems: 3,
@@ -1314,7 +1347,7 @@ const server = http.createServer((req, res) => {
         currentPhase: "Downloading",
         statusMessage: "Scanning the configured folder.",
       });
-    } else if (folder === "folder-fail") {
+    } else if (folders.includes("folder-fail")) {
       job = dsNewSyncJob(src.row.id, "failed", {
         totalItems: 1,
         processedItems: 1,
@@ -1336,6 +1369,84 @@ const server = http.createServer((req, res) => {
     return json(res, { success: true, message: "Sync started.", jobId: job.id });
   }
 
+  // Short-lived Google Picker bootstrap. Mirrors the server: the token is minted
+  // from the source's own credentials and a drive.file grant cannot browse
+  // folders. The hermetic specs stub window.google/gapi, so this only supplies
+  // the session payload.
+  const dsPickerMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/picker-session$/);
+  if (dsPickerMatch && req.method === "GET") {
+    const src = dsSources.find((s) => s.row.id === dsPickerMatch[1]);
+    if (!src) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    if (String(src.config.oauth_granted_strategy || "") === "drive.file") {
+      res.statusCode = 422;
+      return json(res, {
+        error: {
+          code: "validation_error",
+          message:
+            "this source was authorized with per-file access (drive.file), so the folder picker cannot browse its folders; reconnect the source with read-only Drive access",
+        },
+      });
+    }
+    return json(res, {
+      accessToken: "mock-picker-token",
+      developerKey: "mock-picker-key",
+      appId: "123456789",
+      origin: GATEWAY_ORIGIN,
+      expiresAt: new Date(Date.now() + 3600e3).toISOString(),
+    });
+  }
+
+  // Folder-picker save. Only ids travel from the browser; names and shared-drive
+  // ids are resolved against the folder catalog, like the server resolves them
+  // from Drive.
+  const dsTargetsMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/sync-targets$/);
+  if (dsTargetsMatch && req.method === "PUT") {
+    return readBody(req, (payload) => {
+      const src = dsSources.find((s) => s.row.id === dsTargetsMatch[1]);
+      if (!src) {
+        res.statusCode = 404;
+        return json(res, { error: { code: "not_found", message: "source not found" } });
+      }
+      const ids = Array.isArray(payload.folderIds)
+        ? payload.folderIds.map((id) => String(id || "").trim()).filter(Boolean)
+        : [];
+      if (!ids.length) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "select at least one folder" } });
+      }
+      // Mirrors ResolveResourceTargets: the bound is checked before any lookup,
+      // and an id the source cannot read fails the whole save.
+      if (ids.length > 50) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "select at most 50 folders" } });
+      }
+      const unknown = ids.find((id) => !dsMockFolders[id]);
+      if (unknown) {
+        res.statusCode = 422;
+        return json(res, {
+          error: {
+            code: "validation_error",
+            message: "one of the selected folders is not accessible: google drive: folder \"" + unknown + "\" not found",
+          },
+        });
+      }
+      const folders = ids.map((id) => {
+        const known = dsMockFolders[id];
+        const entry = { folder_id: id, name: known.name };
+        if (known.drive_id) entry.drive_id = known.drive_id;
+        return entry;
+      });
+      src.config = { ...src.config, folders };
+      delete src.config.folder_id;
+      delete src.config.shared_drive_id;
+      src.row.updatedAt = nowISO();
+      return json(res, dsIntegration(src));
+    });
+  }
+
   const dsTestConnMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/test-connection$/);
   if (dsTestConnMatch && req.method === "POST") {
     const src = dsSources.find((s) => s.row.id === dsTestConnMatch[1]);
@@ -1350,7 +1461,7 @@ const server = http.createServer((req, res) => {
       }
       return json(res, { success: true, message: "Connection OK." });
     }
-    if (String(src.config.folder_id || "") === "folder-fail") {
+    if (dsFolderIDs(src.config).includes("folder-fail")) {
       return json(res, { success: false, message: "Drive folder not found." });
     }
     return json(res, { success: true, message: "Connection OK." });

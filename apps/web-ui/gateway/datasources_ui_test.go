@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,30 +20,28 @@ func testDSSchema() *DSProviderSchema {
 	return &DSProviderSchema{
 		Type: "google_drive",
 		Properties: map[string]any{
-			"folder_id":       map[string]any{"type": "string", "description": "The Google Drive folder id to sync from."},
-			"shared_drive_id": map[string]any{"type": "string"},
-			"mime_types":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"recursive":       map[string]any{"type": "boolean"},
-			"client_id":       map[string]any{"type": "string"},
-			"client_secret":   map[string]any{"type": "string"},
-			"refresh_token":   map[string]any{"type": "string"},
+			"folders":       map[string]any{"type": "array", "x-ui-widget": "folders", "description": "The Google Drive folders to sync from."},
+			"mime_types":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"recursive":     map[string]any{"type": "boolean"},
+			"client_id":     map[string]any{"type": "string"},
+			"client_secret": map[string]any{"type": "string"},
+			"refresh_token": map[string]any{"type": "string"},
 		},
-		Required: []string{"folder_id"},
 	}
 }
 
 func TestDSConfigFieldsSplitsCredentials(t *testing.T) {
 	config, creds := dsConfigFields(testDSSchema(), nil)
-	if len(config) != 4 {
+	if len(config) != 3 {
 		t.Fatalf("config fields = %+v", config)
 	}
 	if len(creds) != 3 {
 		t.Fatalf("credential fields = %+v", creds)
 	}
-	if config[0].Key != "folder_id" || !config[0].Required {
+	if config[0].Key != "folders" || config[0].Widget != "folders" {
 		t.Errorf("first config field = %+v", config[0])
 	}
-	if config[1].Key != "shared_drive_id" || config[2].Key != "mime_types" || config[3].Key != "recursive" {
+	if config[1].Key != "mime_types" || config[2].Key != "recursive" {
 		t.Errorf("config order = %+v", config)
 	}
 	if creds[0].Key != "client_id" || creds[1].Key != "client_secret" || creds[2].Key != "refresh_token" {
@@ -53,22 +54,22 @@ func TestDSConfigFieldsSplitsCredentials(t *testing.T) {
 // newline-joined Value, boolean → Checked) while credential fields stay blank.
 func TestDSConfigFieldsPrefillsNonCredential(t *testing.T) {
 	cfg := map[string]any{
-		"folder_id":     "f1",
+		"folders":       []any{map[string]any{"folder_id": "f1", "name": "Reports", "drive_id": "d1"}},
 		"mime_types":    []any{"application/pdf", "text/plain"},
 		"recursive":     true,
 		"refresh_token": "must-not-leak",
 	}
 	config, creds := dsConfigFields(testDSSchema(), cfg)
-	if len(config) != 4 || len(creds) != 3 {
+	if len(config) != 3 || len(creds) != 3 {
 		t.Fatalf("config=%+v creds=%+v", config, creds)
 	}
-	if config[0].Value != "f1" {
-		t.Errorf("folder_id value = %q", config[0].Value)
+	if config[0].Key != "folders" || config[0].Widget != "folders" {
+		t.Errorf("folders field = %+v", config[0])
 	}
-	if config[2].Value != "application/pdf\ntext/plain" {
-		t.Errorf("mime_types value = %q", config[2].Value)
+	if config[1].Value != "application/pdf\ntext/plain" {
+		t.Errorf("mime_types value = %q", config[1].Value)
 	}
-	if !config[3].Checked {
+	if !config[2].Checked {
 		t.Error("recursive should be checked")
 	}
 	for _, c := range creds {
@@ -179,7 +180,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 		`data-testid="ds-connect-form"`,
 		`name="providerType" value="github"`,
 		`data-testid="ds-field-name"`,
-		`data-testid="ds-field-folder_id"`,
+		`data-testid="ds-field-folders"`,
 		`name="mime_types"`,
 		`name="recursive"`,
 		`type="password"`,
@@ -187,7 +188,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 		`hx-post="/data-sources/test-config"`,
 		`id="ds-test-result"`,
 		`name="sync_mode"`,
-		"Folder ID",
+		"Folders",
 	} {
 		if !strings.Contains(form, want) {
 			t.Errorf("connect form missing %q", want)
@@ -344,7 +345,8 @@ func TestRenderDataSourceResourceSelectPageDriveFileEmpty(t *testing.T) {
 	for _, want := range []string{
 		`data-testid="ds-resource-drivefile"`,
 		"drive.file scope",
-		"Google Picker support is not available yet",
+		"detail page and reconnect it",
+		"read-only Drive scope",
 		`href="/settings/credentials"`,
 		`data-testid="ds-resource-drivefile-credentials"`,
 		"drive.readonly",
@@ -585,7 +587,7 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	job := DSSyncJob{ID: "j1", IntegrationID: "s1", Status: "processing", TotalItems: 10, ProcessedItems: 4, SuccessfulItems: 3, FailedItems: 1, CurrentPhase: &phase, TriggerType: "manual", CreatedAt: "2026-09-01T10:00:00Z"}
 	config, creds := dsConfigFields(testDSSchema(), nil)
 
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, []DSSyncJob{job}, nil, nil, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, []DSSyncJob{job}, nil, nil, nil, "", nil))
 	for _, want := range []string{
 		"Team Drive", "Google Drive",
 		`hx-post="/data-sources/s1/test-connection"`,
@@ -606,13 +608,13 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	}
 
 	// No jobs renders the explanatory note, not a broken section.
-	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, "", nil))
+	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, nil, "", nil))
 	if !strings.Contains(noJobs, "No syncs yet") {
 		t.Error("empty sync history missing")
 	}
 
 	// A nil source renders the load-error state.
-	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, nil, errTest, nil, "", nil))
+	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, nil, errTest, nil, nil, "", nil))
 	if !strings.Contains(errPage, "Data source unavailable") {
 		t.Error("load-error state missing")
 	}
@@ -625,15 +627,24 @@ func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
 	config, creds := dsConfigFields(testDSSchema(), nil)
 
 	incomplete := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(incomplete), "", nil))
+	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(incomplete), nil, "", nil))
 	if !strings.Contains(html, `data-testid="ds-resource-needed"`) {
 		t.Error("resource-needed banner missing")
 	}
 	if !strings.Contains(html, `data-testid="ds-resource-needed-link"`) {
-		t.Error("resource-needed link missing")
+		t.Error("resource-needed action missing")
 	}
-	if !strings.Contains(html, "/data-sources/s1/resources") {
-		t.Error("resource-needed link href missing")
+	// Drive chooses folders in the in-page Google Picker modal, not the legacy
+	// resource-listing page, so the action opens the modal and the page carries
+	// the picker dialog.
+	if !strings.Contains(html, `data-ds-open-folder-picker="true"`) {
+		t.Error("resource-needed action must open the folder picker")
+	}
+	if strings.Contains(html, "/data-sources/s1/resources") {
+		t.Error("incomplete Drive source must not link to the retired resource page")
+	}
+	if !strings.Contains(html, `data-testid="ds-folder-picker"`) {
+		t.Error("folder-picker modal missing")
 	}
 	// The trigger-sync form must not be offered while the sync target is missing.
 	if strings.Contains(html, `data-testid="ds-trigger-sync"`) {
@@ -644,7 +655,7 @@ func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
 	}
 
 	complete := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}
-	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(complete), "", nil))
+	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(complete), nil, "", nil))
 	if strings.Contains(html, `data-testid="ds-resource-needed"`) {
 		t.Error("resource-needed banner must not render for a complete source")
 	}
@@ -734,6 +745,8 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/picker-session", s.uiDataSourcePickerSession)
+	e.POST("/data-sources/:id/sync-targets", s.uiDataSourceSyncTargetsSave)
 	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
 	e.GET("/data-sources/:id/resources/list", s.uiDataSourceResourceList)
 	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)
@@ -1560,9 +1573,9 @@ func TestUIDataSourceOAuthCallbackScoped(t *testing.T) {
 
 func TestUIDataSourceResourcesRoute(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
-		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
-		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github"}},
+		dsProviders:    []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "acme/repo", Name: "acme/repo", Type: "repo"}},
 	}
 	e := newDSUIServer(f)
 
@@ -1572,7 +1585,7 @@ func TestUIDataSourceResourcesRoute(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `data-testid="ds-resource-step"`) || !strings.Contains(body, "Choose a Drive folder") {
+	if !strings.Contains(body, `data-testid="ds-resource-step"`) || !strings.Contains(body, "Choose a resource") {
 		t.Errorf("resource step body = %s", body)
 	}
 	// The page must defer the list, not block on it: no resources API call and
@@ -1586,16 +1599,16 @@ func TestUIDataSourceResourcesRoute(t *testing.T) {
 	if !strings.Contains(body, `hx-get="/data-sources/s1/resources/list"`) {
 		t.Errorf("deferred list URL missing: %s", body)
 	}
-	if strings.Contains(body, "Reports") {
+	if strings.Contains(body, "acme/repo") {
 		t.Errorf("page route must not render resources inline: %s", body)
 	}
 }
 
 func TestUIDataSourceResourceListRoute(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
-		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
-		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github"}},
+		dsProviders:    []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "acme/repo", Name: "acme/repo", Type: "repo"}},
 	}
 	e := newDSUIServer(f)
 
@@ -1605,7 +1618,7 @@ func TestUIDataSourceResourceListRoute(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Reports") || !strings.Contains(body, `data-testid="ds-resource-row"`) {
+	if !strings.Contains(body, "acme/repo") || !strings.Contains(body, `data-testid="ds-resource-row"`) {
 		t.Errorf("list partial rows missing: %s", body)
 	}
 	if f.dsResourcesCallCount != 1 {
@@ -1619,9 +1632,9 @@ func TestUIDataSourceResourceListRoute(t *testing.T) {
 
 func TestUIDataSourceResourcesStatic(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
-		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
-		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github"}},
+		dsProviders:    []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "acme/repo", Name: "acme/repo", Type: "repo"}},
 	}
 	e := newDSUIServer(f)
 
@@ -1631,7 +1644,7 @@ func TestUIDataSourceResourcesStatic(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Reports") {
+	if !strings.Contains(body, "acme/repo") {
 		t.Errorf("static inline list missing: %s", body)
 	}
 	if strings.Contains(body, `data-testid="ds-resource-loading"`) {
@@ -1691,9 +1704,9 @@ func TestDSResourceURLsWithQuery(t *testing.T) {
 // call (list partial), and echoed back into the rendered search input.
 func TestUIDataSourceResourcesQuery(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}},
-		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
-		dsResources:    []DSResource{{ID: "f1", Name: "Reports", Type: "folder"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github"}},
+		dsProviders:    []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+		dsResources:    []DSResource{{ID: "acme/repo", Name: "acme/repo", Type: "repo"}},
 	}
 	e := newDSUIServer(f)
 
@@ -1725,7 +1738,8 @@ func TestUIDataSourceResourcesQuery(t *testing.T) {
 }
 
 func TestUIDataSourceResourceSave(t *testing.T) {
-	// google_drive maps the picked resource to folder_id and redirects to ?updated=1.
+	// google_drive no longer accepts the generic resource save: its folder list
+	// is chosen in the Google Picker modal and saved through sync-targets.
 	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}}}
 	e := newDSUIServer(f)
 	rec := httptest.NewRecorder()
@@ -1735,26 +1749,32 @@ func TestUIDataSourceResourceSave(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?updated=1" {
-		t.Errorf("location = %q", loc)
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
+		t.Errorf("drive save location = %q, want an error redirect", loc)
 	}
-	if f.dsSavedResourceID != "s1" || f.dsSavedResourceCfg["folder_id"] != "f1" {
-		t.Fatalf("save = %q %+v", f.dsSavedResourceID, f.dsSavedResourceCfg)
+	if f.dsSavedResourceID != "" {
+		t.Errorf("drive must not save through the generic resource endpoint: %q", f.dsSavedResourceID)
 	}
 
-	// github maps the picked resource to repo.
+	// github maps the picked resource to repo and redirects to ?updated=1.
 	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s2", ProviderType: "github"}}}
 	e = newDSUIServer(f)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/data-sources/s2/resources", strings.NewReader("resource_id=acme/repo"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("github status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s2?updated=1" {
+		t.Errorf("github location = %q", loc)
+	}
 	if f.dsSavedResourceCfg["repo"] != "acme/repo" {
 		t.Fatalf("github save cfg = %+v", f.dsSavedResourceCfg)
 	}
 
 	// A missing resource id redirects back with an error and never reaches memory.
-	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	f = &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "github"}}}
 	e = newDSUIServer(f)
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader(""))
@@ -1772,12 +1792,12 @@ func TestUIDataSourceResourceSave(t *testing.T) {
 
 	// A backend failure redirects back with an error.
 	f = &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "github"}},
 		dsUpdateErr:    errTest,
 	}
 	e = newDSUIServer(f)
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=acme/repo"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1/resources?err=") {
@@ -1790,25 +1810,323 @@ func TestUIDataSourceResourceSave(t *testing.T) {
 // it, so other persisted keys (mime_types, recursive) survive the update.
 func TestUIDataSourceResourceSaveMergesStoredConfig(t *testing.T) {
 	f := &fakeMemory{dsIntegrations: []DSIntegration{{
-		ID: "s1", Name: "Team Drive", ProviderType: "google_drive",
+		ID: "s1", Name: "Acme repo", ProviderType: "github",
 		Config: map[string]any{"mime_types": []any{"application/pdf"}, "recursive": true},
 	}}}
 	e := newDSUIServer(f)
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=f1"))
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/resources", strings.NewReader("resource_id=acme/repo"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if f.dsSavedResourceCfg["folder_id"] != "f1" {
-		t.Fatalf("folder_id missing from saved cfg: %+v", f.dsSavedResourceCfg)
+	if f.dsSavedResourceCfg["repo"] != "acme/repo" {
+		t.Fatalf("repo missing from saved cfg: %+v", f.dsSavedResourceCfg)
 	}
 	if _, ok := f.dsSavedResourceCfg["mime_types"]; !ok {
 		t.Errorf("stored mime_types lost in merge: %+v", f.dsSavedResourceCfg)
 	}
 	if v, ok := f.dsSavedResourceCfg["recursive"].(bool); !ok || !v {
 		t.Errorf("stored recursive lost in merge: %+v", f.dsSavedResourceCfg)
+	}
+}
+
+func TestDSFoldersCanonicalAndLegacy(t *testing.T) {
+	canonical := &DSIntegration{Config: map[string]any{
+		"folders": []any{
+			map[string]any{"folder_id": "f1", "name": "Reports", "drive_id": "d1"},
+			map[string]any{"folder_id": "f2"},
+			map[string]any{"name": "no id"},
+			"not a map",
+		},
+	}}
+	got := dsFolders(canonical)
+	if len(got) != 2 {
+		t.Fatalf("folders = %+v, want 2", got)
+	}
+	if got[0].FolderID != "f1" || got[0].Name != "Reports" || got[0].DriveID != "d1" {
+		t.Errorf("first folder = %+v", got[0])
+	}
+	if got[1].FolderID != "f2" || got[1].Name != "" {
+		t.Errorf("second folder = %+v", got[1])
+	}
+
+	// Legacy single-target keys stay readable until the next save canonicalises
+	// them.
+	legacy := &DSIntegration{Config: map[string]any{"folder_id": "f9", "shared_drive_id": "d9"}}
+	got = dsFolders(legacy)
+	if len(got) != 1 || got[0].FolderID != "f9" || got[0].DriveID != "d9" {
+		t.Fatalf("legacy folders = %+v", got)
+	}
+	if dsFolders(nil) != nil {
+		t.Error("nil source must have no folders")
+	}
+}
+
+func TestDSSourceHasSyncTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		src  *DSIntegration
+		want bool
+	}{
+		{"drive canonical", &DSIntegration{ProviderType: "google_drive", Config: map[string]any{"folders": []any{map[string]any{"folder_id": "f1"}}}}, true},
+		{"drive legacy", &DSIntegration{ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}, true},
+		{"drive empty", &DSIntegration{ProviderType: "google_drive", Config: map[string]any{}}, false},
+		{"github repo", &DSIntegration{ProviderType: "github", Config: map[string]any{"repo": "acme/repo"}}, true},
+		{"github empty", &DSIntegration{ProviderType: "github", Config: map[string]any{}}, false},
+		{"provider without target", &DSIntegration{ProviderType: "notion"}, true},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := dsSourceHasSyncTarget(tc.src); got != tc.want {
+				t.Errorf("dsSourceHasSyncTarget = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDSSettingsConfigFieldsDropsFolderPicker keeps the raw folder target out of
+// the settings form: folders are chosen in the picker and preserved by the
+// server across a settings save.
+func TestDSSettingsConfigFieldsDropsFolderPicker(t *testing.T) {
+	config, _ := dsConfigFields(testDSSchema(), nil)
+	got := dsSettingsConfigFields(config)
+	if len(got) != 2 || got[0].Key != "mime_types" || got[1].Key != "recursive" {
+		t.Fatalf("settings config fields = %+v", got)
+	}
+}
+
+func TestRenderDataSourceDetailPageFolderTargets(t *testing.T) {
+	src := DSIntegration{
+		ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", SyncMode: "scheduled",
+		Config: map[string]any{
+			"folders": []any{
+				map[string]any{"folder_id": "f1", "name": "Reports", "drive_id": "d1"},
+				map[string]any{"folder_id": "f2", "name": "Contracts"},
+			},
+			"mime_types": []any{"application/pdf"},
+		},
+	}
+	config, creds := dsConfigFields(testDSSchema(), src.Config)
+	summary := &dsCredentialSummary{
+		ProviderName:    "google_drive",
+		ScopeLabel:      "Organization app",
+		ClientID:        "12345678…abcd",
+		AccountEmail:    "ops@example.com",
+		GrantedLabel:    "Read-only Drive access (drive.readonly)",
+		GrantedTone:     "success",
+		Configured:      true,
+		SettingsHref:    "/settings/credentials/google_drive",
+		GrantedStrategy: "drive.readonly",
+	}
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, summary, "", nil))
+	for _, want := range []string{
+		`data-testid="ds-sync-scope"`,
+		`data-testid="ds-folder-targets"`,
+		"Reports",
+		"Contracts",
+		"Shared drive",
+		`data-testid="ds-credentials-card"`,
+		"Organization app",
+		"ops@example.com",
+		"drive.readonly",
+		`data-testid="ds-folder-picker"`,
+		`data-ds-open-folder-picker="true"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("detail page missing %q", want)
+		}
+	}
+	if strings.Contains(html, `data-testid="ds-field-folders"`) {
+		t.Error("settings form must not render the raw folders field")
+	}
+	if strings.Contains(html, `data-testid="ds-resource-needed"`) {
+		t.Error("complete source must not prompt for a sync target")
+	}
+}
+
+func TestRenderDataSourceDetailPageDriveFileBlocked(t *testing.T) {
+	src := DSIntegration{
+		ID: "s1", Name: "Legacy Drive", ProviderType: "google_drive", Status: "active",
+		OAuthStrategy: "drive.file",
+		Config:        map[string]any{},
+	}
+	summary := &dsCredentialSummary{
+		ProviderName:  "google_drive",
+		ScopeLabel:    "Deployment default",
+		GrantedLabel:  "Per-file access (drive.file)",
+		GrantedTone:   "warning",
+		PickerBlocked: true,
+		PickerError:   "This source was authorized with per-file access (drive.file), so Google will not let the folder picker browse its folders.",
+		Configured:    true,
+		SettingsHref:  "/settings/credentials/google_drive",
+	}
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, dsResourcePromptFor(&src), summary, "", nil))
+	if !strings.Contains(html, `data-testid="ds-picker-blocked"`) {
+		t.Error("drive.file notice missing")
+	}
+	if !strings.Contains(html, `data-testid="ds-picker-reconnect"`) {
+		t.Error("drive.file reconnect action missing")
+	}
+	if strings.Contains(html, `data-testid="ds-folder-picker"`) {
+		t.Error("drive.file source must not render the folder picker modal")
+	}
+	if strings.Contains(html, `data-ds-open-folder-picker`) {
+		t.Error("drive.file source must not offer the picker action")
+	}
+	if strings.Contains(html, `data-testid="ds-resource-needed"`) {
+		t.Error("blocked source should show the notice instead of the picker prompt")
+	}
+}
+
+func TestUIDataSourceResourcesDriveRedirects(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?picker=1" {
+		t.Errorf("location = %q, want the detail page with the picker open", loc)
+	}
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times, want 0", f.dsResourcesCallCount)
+	}
+}
+
+// TestDSCredentialSummaryDistinguishesLookupFailure asserts a credentials-API
+// failure is not reported as "not configured": the second message would send the
+// user to create a duplicate OAuth client when the app may be fine.
+func TestDSCredentialSummaryDistinguishesLookupFailure(t *testing.T) {
+	src := &DSIntegration{ID: "s1", ProviderType: "google_drive"}
+
+	failed := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{dsErr: &memoryHTTPError{Status: http.StatusInternalServerError, Message: "credentials unavailable"}}}
+	failedSummary := failed.dsCredentialSummary(context.Background(), src)
+	if failedSummary.ScopeLabel != "Could not load credentials" {
+		t.Errorf("ScopeLabel after a lookup failure = %q, want %q", failedSummary.ScopeLabel, "Could not load credentials")
+	}
+	// The card follows the same distinction: a lookup failure must not tell the
+	// user to create a second OAuth client.
+	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, nil, nil, nil, failedSummary, "", nil))
+	if !strings.Contains(html, "ds-credential-lookup-failed") {
+		t.Error("lookup failure must render its own note")
+	}
+	if strings.Contains(html, "Set one up in credential settings") {
+		t.Error("a lookup failure must not advise creating an OAuth app")
+	}
+
+	empty := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	emptySummary := empty.dsCredentialSummary(context.Background(), src)
+	if emptySummary.ScopeLabel != "Not configured" {
+		t.Errorf("ScopeLabel with no client = %q, want %q", emptySummary.ScopeLabel, "Not configured")
+	}
+	html = renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, nil, nil, nil, emptySummary, "", nil))
+	if !strings.Contains(html, "ds-credential-missing") {
+		t.Error("an unconfigured provider must advertise setting an app up")
+	}
+}
+
+func TestUIDataSourcePickerSessionRoute(t *testing.T) {
+	f := &fakeMemory{}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/picker-session", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	var session DSPickerSession
+	if err := json.Unmarshal(rec.Body.Bytes(), &session); err != nil {
+		t.Fatalf("decode session: %v", err)
+	}
+	if session.AccessToken != "picker-token" || session.DeveloperKey != "dev-key" || session.AppID != "123" {
+		t.Errorf("session = %+v", session)
+	}
+
+	// A backend failure is a JSON error, never an HTML error page the modal
+	// script would choke on — and it carries the server's actionable copy, so
+	// "the Picker is not configured" reaches the user instead of a generic
+	// failure line.
+	wantMsg := "the Google Picker is not configured: set the Picker developer key and Picker app ID under Settings → Credentials"
+	f = &fakeMemory{dsErr: &memoryHTTPError{Status: http.StatusUnprocessableEntity, Code: "validation_error", Message: wantMsg}}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/picker-session", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("error status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error payload: %v", err)
+	}
+	if payload["error"] != wantMsg {
+		t.Errorf("error = %q, want the server's validation copy %q", payload["error"], wantMsg)
+	}
+
+	// A 5xx is redacted: transport detail and upstream identifiers never reach
+	// the browser.
+	f = &fakeMemory{dsErr: &memoryHTTPError{Status: http.StatusInternalServerError, Message: "memory 500: dial tcp 10.0.0.5:8080: connection refused"}}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/picker-session", nil))
+	if bytes.Contains(rec.Body.Bytes(), []byte("10.0.0.5")) {
+		t.Errorf("error body leaks backend detail: %s", rec.Body.String())
+	}
+}
+
+func TestUIDataSourceSyncTargetsSaveRoute(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s1/sync-targets", strings.NewReader(`{"folderIds":["f1","f2"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	folders, ok := f.dsIntegrations[0].Config["folders"].([]any)
+	if !ok || len(folders) != 2 {
+		t.Fatalf("saved folders = %#v", f.dsIntegrations[0].Config["folders"])
+	}
+
+	// An empty selection is a validation error, not a silent clear.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/sync-targets", strings.NewReader(`{"folderIds":[]}`))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// A provider rejection comes back as JSON for the modal to render inline,
+	// with the server's own message (here: the target bound) rather than a
+	// generic failure line.
+	wantMsg := "select at most 50 folders"
+	f = &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}},
+		dsErr:          &memoryHTTPError{Status: http.StatusUnprocessableEntity, Code: "validation_error", Message: wantMsg},
+	}
+	e = newDSUIServer(f)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/data-sources/s1/sync-targets", strings.NewReader(`{"folderIds":["f1"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("rejected status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode rejected payload: %v", err)
+	}
+	if payload["error"] != wantMsg {
+		t.Errorf("error = %q, want the provider's copy %q", payload["error"], wantMsg)
 	}
 }
 

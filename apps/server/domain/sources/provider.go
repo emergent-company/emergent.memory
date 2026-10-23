@@ -148,6 +148,59 @@ type SyncIntervalBoundsProvider interface {
 	SyncIntervalBounds() (minMinutes, defaultMinutes int)
 }
 
+// ConfigNormalizer is implemented by a provider whose config accepts a legacy
+// shape alongside its canonical one. The core calls it before validating and
+// persisting a create/update so stored rows converge on the canonical shape;
+// it must not remove credential material (the core strips that separately).
+type ConfigNormalizer interface {
+	NormalizeConfig(cfg map[string]any)
+}
+
+// ResourceTargetResolver is implemented by providers that can validate a
+// resource id against the source's own credentials and return its authoritative
+// name/metadata (a Drive folder's name and shared-drive id). It backs the
+// picker save path: the browser submits ids only, and the server resolves the
+// rest so a client cannot name a folder it cannot see.
+type ResourceTargetResolver interface {
+	ResolveResourceTargets(ctx context.Context, creds Credentials, ids []string) ([]ResourceRef, error)
+}
+
+// ResourceRef is a resolved provider resource: the id, its display name, and
+// the owning drive id for providers that namespace resources by drive.
+type ResourceRef struct {
+	ID      string
+	Name    string
+	DriveID string
+}
+
+// PickerConfig is the non-secret browser bootstrap material for a hosted
+// resource picker (the Google Picker developer key and Cloud project id), plus
+// the source's effective OAuth scope strategy so the provider can reject a
+// picker that cannot browse the drive.
+type PickerConfig struct {
+	DeveloperKey string
+	AppID        string
+	Origin       string
+	Strategy     string
+}
+
+// PickerSession is a short-lived credential for a provider-hosted resource
+// picker. The access token is the source's own, so the picker browses exactly
+// the Google account the source syncs.
+type PickerSession struct {
+	AccessToken  string    `json:"accessToken"`
+	DeveloperKey string    `json:"developerKey"`
+	AppID        string    `json:"appId"`
+	Origin       string    `json:"origin,omitempty"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+}
+
+// ResourcePicker is implemented by providers whose resource selection runs in
+// the provider's own browser picker instead of the generic listing step.
+type ResourcePicker interface {
+	PickerSession(ctx context.Context, creds Credentials, cfg map[string]any, picker PickerConfig) (*PickerSession, error)
+}
+
 // ProviderField describes one config or credential field in a provider schema.
 type ProviderField struct {
 	Key         string `json:"key"`

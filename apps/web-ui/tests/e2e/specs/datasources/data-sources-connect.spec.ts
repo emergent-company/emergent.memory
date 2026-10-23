@@ -42,7 +42,7 @@ test.describe('Drive data source', () => {
       },
     });
     expect(folderless.ok(), await folderless.text()).toBe(false);
-    expect(await folderless.text()).toContain('config.folder_id is required');
+    expect(await folderless.text()).toContain('config.folders must name at least one folder');
   });
 
   test('creates a source and renders its detail page', async ({ page }) => {
@@ -56,12 +56,14 @@ test.describe('Drive data source', () => {
       await expect(page.getByTestId('ds-sync-history')).toBeVisible();
       await expect(page.getByTestId('ds-sync-empty')).toBeVisible();
       await expect(page.getByRole('heading', { name: src.name })).toBeVisible();
-      // The edit form renders the provider's config contract: the stored
-      // folder round-trips and the optional scope fields are all present.
+      // The sync-scope card owns the folder targets; the settings form owns the
+      // remaining provider options and never exposes a raw folder id.
+      await expect(page.getByTestId('ds-sync-scope')).toBeVisible();
+      await expect(page.getByTestId('ds-folder-target')).toContainText('folder-ok');
+      await expect(page.getByTestId('ds-credentials-card')).toBeVisible();
       await expect(page.getByTestId('ds-edit-form')).toBeVisible();
       await expect(page.getByTestId('ds-field-sync-mode')).toBeVisible();
-      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
-      await expect(page.getByTestId('ds-field-shared_drive_id')).toBeVisible();
+      await expect(page.getByTestId('ds-field-folders')).toHaveCount(0);
       await expect(page.getByTestId('ds-field-mime_types')).toBeVisible();
       await expect(page.getByTestId('ds-field-recursive')).toBeVisible();
       // Drive has no credential fields, so there is no write-only secret input.
@@ -77,13 +79,14 @@ test.describe('Drive data source', () => {
       folder: 'folder-ok',
     });
     try {
-      // Change only the name; the prefilled folder is resubmitted untouched.
+      // Change only the name; the server preserves the folder list the settings
+      // form never submits.
       await page.getByTestId('ds-field-name').fill(`${src.name}-renamed`);
       await page.getByRole('button', { name: 'Save changes' }).click();
       await page.waitForURL(/updated=1/);
       await expect(page.getByRole('heading', { name: `${src.name}-renamed` })).toBeVisible();
       // The folder survives the round-trip (no data loss).
-      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue('folder-ok');
+      await expect(page.getByTestId('ds-folder-target')).toContainText('folder-ok');
       // The stored refresh-token blob is never re-rendered or blank-resubmitted.
       await expect(page.getByTestId('ds-field-refresh_token')).toHaveCount(0);
     } finally {

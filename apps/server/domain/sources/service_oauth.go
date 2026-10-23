@@ -21,6 +21,11 @@ const oauthPendingTTL = 10 * time.Minute
 // as credential material from user-submitted config); edits preserve it.
 const oauthGrantedStrategyKey = "oauth_granted_strategy"
 
+// oauthAccountEmailKey is the reserved config key holding the authenticated
+// provider account's email, captured best-effort at connect. It is non-secret
+// metadata (used to show which account a source syncs), not a credential.
+const oauthAccountEmailKey = "oauth_account_email"
+
 // StartOAuthRequest carries the inputs for starting an OAuth connect.
 type StartOAuthRequest struct {
 	UserID *uuid.UUID
@@ -235,6 +240,18 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	// it now so the read can report it independently of the client config.
 	if granted := grantedStrategy(p, creds); granted != "" {
 		cfg[oauthGrantedStrategyKey] = granted
+	}
+	// Capture which Google account authorized the source while the exchange's
+	// short-lived access token is still available. Best-effort: a failed lookup
+	// must never fail the connect, and the value is display metadata only.
+	if s.accountEmail != nil {
+		if token, _ := creds["access_token"].(string); strings.TrimSpace(token) != "" {
+			emailCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if email, eerr := s.accountEmail(emailCtx, token); eerr == nil && strings.TrimSpace(email) != "" {
+				cfg[oauthAccountEmailKey] = strings.TrimSpace(email)
+			}
+			cancel()
+		}
 	}
 
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{

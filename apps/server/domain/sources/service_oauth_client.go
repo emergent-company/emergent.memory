@@ -514,7 +514,7 @@ func (s *Service) decryptOAuthClientConfig(row *OAuthClientConfig) (OAuthClient,
 	if strings.TrimSpace(id) == "" || secret == "" {
 		return OAuthClient{}, apperror.NewInternal("org OAuth client config is incomplete", nil)
 	}
-	return OAuthClient{ClientID: id, ClientSecret: secret, Scopes: row.Scopes}, nil
+	return OAuthClient{ClientID: id, ClientSecret: secret, Scopes: row.Scopes, Config: row.Config}, nil
 }
 
 // toOAuthClientDTO maps a stored row to the redacted API shape.

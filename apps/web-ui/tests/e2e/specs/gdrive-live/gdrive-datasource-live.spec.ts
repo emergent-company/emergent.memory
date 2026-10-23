@@ -32,13 +32,13 @@ import { GDriveFixture } from '../../helpers/gdrive';
 // Flow (seeded, default):
 //   1. Fresh scratch project (isolates the source + documents).
 //   2. Create the scratch Drive folder + seed the source via the public API.
-//   3. Detail page prefills the stored folder (config round-trip).
-//   4. Resource step: the unfiltered listing of this huge account must report
-//      truncation (ds-resource-truncated) and return well inside the budget;
-//      searching the scratch folder's name lists it and nothing stale.
-//   5. Save the picked folder → edit form prefills the stored folder (round-trip).
-//   6. Prove stored credentials reach Drive (connection test), then v1 → sync →
+//   3. Detail page shows the stored folder as a sync-scope chip (round-trip).
+//   4. Prove stored credentials reach Drive (connection test), then v1 → sync →
 //      v2 → sync (v1 retained) → trash → sync → deleted_from_source.
+//
+// Folder *picking* is covered hermetically in specs/datasources/oauth-connect
+// (the Google Picker modal, stubbed); this live gate seeds the target through
+// the same canonical `folders` config the save endpoint writes.
 // Cleanup is best-effort: delete source, delete scratch folder/project.
 
 const CLIENT_ID = process.env.E2E_GDRIVE_CLIENT_ID ?? '';
@@ -55,12 +55,6 @@ const CONSENT = process.env.E2E_GDRIVE_LIVE_CONSENT === '1';
 const OAUTH_WAIT_MS = 10 * 60_000;
 const SYNC_WAIT_MS = 5 * 60_000;
 const POLL_MS = 3_000;
-// The resource picker caps the unfiltered walk at 5×1000 folders (#1993), so the
-// unbounded-listing page must render in a handful of seconds. This budget is far
-// looser than that while still distinguishing a bounded listing from the old
-// page-through-every-folder behaviour.
-const RESOURCE_LISTING_BUDGET_MS = 30_000;
-
 const CONTENT_V1 = '# gdrive-live fixture\n\nversion one\n';
 const CONTENT_V2 = '# gdrive-live fixture\n\nversion two (edited)\n';
 
@@ -210,6 +204,7 @@ async function seedSource(
   page: Page,
   projectId: string,
   folderId: string,
+  folderName: string,
   name: string,
 ): Promise<{ id: string; config: Record<string, unknown> }> {
   // Node `fetch`, not `page.request`: the body carries the stored credentials and
@@ -231,7 +226,7 @@ async function seedSource(
         client_id: CLIENT_ID,
         client_secret: CLIENT_SECRET,
         refresh_token: FIXTURE_REFRESH_TOKEN,
-        folder_id: folderId,
+        folders: [{ folder_id: folderId, name: folderName }],
       },
     }),
   });
@@ -348,7 +343,7 @@ async function exerciseSyncLifecycle(
   };
 }
 
-test('seeded source → resource step (truncation + search) → sync → edit → v2 → trash → deleted_from_source', async ({
+test('seeded source → folder chip → sync → v2 → trash → deleted_from_source', async ({
   page,
 }) => {
   const missing = missingEnv();
@@ -391,64 +386,31 @@ test('seeded source → resource step (truncation + search) → sync → edit �
     const folderId = FOLDER_ID || (await gdrive.createFolder(folderName));
     if (!FOLDER_ID) createdFolderId = folderId;
 
-    const seeded = await seedSource(page, projectId, folderId, `E2E gdrive live ${nonce}`);
+    const seeded = await seedSource(
+      page,
+      projectId,
+      folderId,
+      folderName,
+      `E2E gdrive live ${nonce}`,
+    );
     sourceId = seeded.id;
     expect(sourceId, 'seed must return the source id').not.toBe('');
-    expect(
-      seeded.config['folder_id'],
-      'seeded source config must round-trip the stored folder_id',
-    ).toBe(folderId);
+    const seededFolders = seeded.config['folders'] as Array<Record<string, unknown>> | undefined;
+    expect(seededFolders, 'seeded config must carry the canonical folders list').toHaveLength(1);
+    expect(seededFolders![0]['folder_id']).toBe(folderId);
 
-    // 3. Detail page prefills the stored folder (config round-trip).
+    // 3. Detail page shows the stored folder as a sync-scope chip.
     await goto(page, `/data-sources/${sourceId}`, { orgId: bootstrap.orgId, projectId });
     await expect(page.getByTestId('ds-edit-form')).toBeVisible();
-    await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
-
-    // 4. Resource step: the unfiltered listing of this huge account must report
-    //    truncation and return well inside the budget (the bounded walk, #1993).
-    const t0 = Date.now();
-    await goto(page, `/data-sources/${sourceId}/resources`, {
-      orgId: bootstrap.orgId,
-      projectId,
-    });
-    await expect(page.getByTestId('ds-resource-step'), 'resource step must render').toBeVisible();
     await expect(
-      page.getByTestId('ds-resource-truncated'),
-      'unfiltered listing must report truncation (ds-resource-truncated)',
-    ).toBeVisible({ timeout: 60_000 });
-    const unfilteredMs = Date.now() - t0;
-    console.log(`[gdrive-live] unfiltered resource listing rendered in ${unfilteredMs}ms`);
-    await test.info().attach('resource-listing-timing', {
-      body: `unfiltered=${unfilteredMs}ms`,
-      contentType: 'text/plain',
-    });
-    expect(
-      unfilteredMs,
-      `unfiltered listing must return well inside the ${RESOURCE_LISTING_BUDGET_MS}ms budget`,
-    ).toBeLessThan(RESOURCE_LISTING_BUDGET_MS);
-
-    // Search by the scratch folder's name; only it (nothing stale) survives.
-    await page.getByTestId('ds-resource-search').fill(folderName);
-    await page.getByTestId('ds-resource-search-submit').click();
-    await page.waitForURL(/[?&]q=/, { timeout: 15_000 });
-    expect(page.url(), 'search URL must carry the folder name').toContain(folderName);
-    const folderRow = page
-      .getByTestId('ds-resource-row')
-      .filter({ has: page.locator(`input[name="resource_id"][value="${folderId}"]`) });
-    await expect(
-      folderRow,
-      `resource step must list the scratch folder ${folderId}`,
-    ).toHaveCount(1);
-    await expect(
-      page.getByTestId('ds-resource-row'),
-      'search must list the scratch folder and nothing stale',
-    ).toHaveCount(1);
-
-    // 5. Save the picked folder → edit form prefills the stored folder (round-trip).
-    await folderRow.getByTestId('ds-resource-select').click();
-    await page.waitForURL(/\?updated=1/, { timeout: 30_000 });
-    await expect(page.getByTestId('ds-edit-form')).toBeVisible();
-    await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
+      // The chip carries the folder id on the element, and its label is the
+      // name Drive resolved (which differs from the id when a fixture folder is
+      // reused via E2E_GDRIVE_FOLDER_ID).
+      page.locator(`[data-testid="ds-folder-target"][data-folder-id="${folderId}"]`),
+      'detail page must render the stored folder target',
+    ).toBeVisible();
+    // The settings form never edits the folder list.
+    await expect(page.getByTestId('ds-field-folders')).toHaveCount(0);
 
     // Prove the stored credentials actually reach Drive before syncing.
     await page.getByTestId('ds-test-connection').click();
@@ -649,8 +611,10 @@ test.describe('manual OAuth consent connect (opt-in)', () => {
         `/o/${bootstrap.orgId}/p/${projectId}/data-sources/${sourceId}`,
       );
 
-      // The callback created the source with NO sync target — assert the
-      // ds-resource-needed banner + link, then walk the resource step.
+      // The callback created the source with NO sync target — the detail page
+      // prompts for one and opens the Google Picker modal. A live picker needs a
+      // human inside Google's iframe, so save the target through the endpoint the
+      // modal uses and then assert the chip the UI renders.
       await goto(page, `/data-sources/${sourceId}?created=1`, {
         orgId: bootstrap.orgId,
         projectId,
@@ -662,34 +626,24 @@ test.describe('manual OAuth consent connect (opt-in)', () => {
       ).toBeVisible();
       await expect(
         page.getByTestId('ds-resource-needed-link'),
-        'resource prompt must link to the resource step',
+        'resource prompt must open the folder picker',
       ).toBeVisible();
-      await expect(page.getByTestId('ds-resource-needed-link')).toHaveAttribute(
-        'href',
-        new RegExp(`/data-sources/${sourceId}/resources$`),
-      );
 
-      // Navigate directly (the app shell's htmx boost intermittently no-ops live).
-      await goto(page, `/data-sources/${sourceId}/resources`, {
+      const saved = await page.request.put(
+        `/api/data-source-integrations/${sourceId}/sync-targets`,
+        { data: { folderIds: [folderId] } },
+      );
+      expect(saved.ok(), `sync-targets save failed (HTTP ${saved.status()})`).toBeTruthy();
+
+      await goto(page, `/data-sources/${sourceId}?updated=1`, {
         orgId: bootstrap.orgId,
         projectId,
       });
-      await expect(page.getByTestId('ds-resource-step'), 'resource step must render').toBeVisible();
-
-      await page.getByTestId('ds-resource-search').fill(folderName);
-      await page.getByTestId('ds-resource-search-submit').click();
-      await page.waitForURL(/[?&]q=/, { timeout: 15_000 });
-      expect(page.url()).toContain(folderName);
-
-      const folderRow = page
-        .getByTestId('ds-resource-row')
-        .filter({ has: page.locator(`input[name="resource_id"][value="${folderId}"]`) });
-      await expect(folderRow, `resource step must list the scratch folder ${folderId}`).toHaveCount(1);
-      await folderRow.getByTestId('ds-resource-select').click();
-      await page.waitForURL(/\?updated=1/, { timeout: 30_000 });
-
-      await expect(page.getByTestId('ds-edit-form')).toBeVisible();
-      await expect(page.getByTestId('ds-field-folder_id')).toHaveValue(folderId);
+      await expect(
+        page.locator(`[data-testid="ds-folder-target"][data-folder-id="${folderId}"]`),
+        'saved folder must render as a sync-scope chip',
+      ).toBeVisible();
+      await expect(page.getByTestId('ds-resource-needed')).toHaveCount(0);
 
       await page.getByTestId('ds-test-connection').click();
       await expect(page.getByTestId('ds-test-result')).toContainText(/connection successful/i, {

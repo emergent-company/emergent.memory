@@ -63,7 +63,9 @@ func TestTriggerSync_IncompleteConfig_Rejected(t *testing.T) {
 	if !strings.HasPrefix(appErr.Message, "choose a sync target before syncing") {
 		t.Errorf("TriggerSync(incomplete) message = %q, want prefix %q", appErr.Message, "choose a sync target before syncing")
 	}
-	if !strings.Contains(err.Error(), "folder_id") {
+	// The provider detail is the canonical `folders` message now that the
+	// single-folder key is legacy, and it must survive into the rendered error.
+	if !strings.Contains(err.Error(), "config.folders must name at least one folder") {
 		t.Errorf("TriggerSync(incomplete) error = %q, want provider detail retained", err)
 	}
 

@@ -135,7 +135,7 @@ templ DataSourceResourceList(src *DSIntegration, providerName string, resources 
 						Type:    ui.AlertWarning,
 						Style:   ui.AlertStyleSoft,
 						Icon:    "lucide--alert-triangle",
-						Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. Google Picker support is not available yet, so no folders can be listed here.",
+						Message: "This Drive app uses the drive.file scope, which only lists files the app created or the user picked. That grant cannot see a folder's children, so this page cannot list folders; reopen the source's detail page and reconnect it with the read-only Drive scope.",
 					})
 					<div class="flex flex-wrap items-center gap-2">
 						@ui.Button(ui.ButtonProps{

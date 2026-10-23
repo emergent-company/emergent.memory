@@ -2,18 +2,21 @@ package sources
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/discoveryjobs"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/gdrive"
 )
 
 var Module = fx.Module("sources",
 	fx.Provide(
 		NewRepository,
 		NewConfiguredRegistry,
-		NewService,
+		ProvideService,
 		NewHandler,
 		NewDiscoveryStarter,
 		NewSyncWorker,
@@ -24,6 +27,19 @@ var Module = fx.Module("sources",
 		RegisterSyncSchedulerTask,
 	),
 )
+
+// ProvideService builds the production source service. It wires the Drive
+// account-email lookup used to label a source's credentials; unit tests build
+// the service directly (NewService) and therefore never make the network call.
+func ProvideService(repo *Repository, cfg *config.Config, log *slog.Logger, registry *Registry) *Service {
+	return NewService(repo, cfg, log, registry, WithAccountEmailResolver(driveAccountEmailResolver))
+}
+
+// driveAccountEmailResolver reads the account email through a short-lived Drive
+// client built from the exchange's access token.
+func driveAccountEmailResolver(ctx context.Context, accessToken string) (string, error) {
+	return gdrive.AccountEmailFromToken(ctx, accessToken)
+}
 
 // discoveryStarterAdapter adapts *discoveryjobs.Service to the DiscoveryStarter
 // interface used by the sync worker, building a StartDiscoveryRequest from the

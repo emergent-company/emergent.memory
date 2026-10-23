@@ -403,6 +403,8 @@ func main() {
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/picker-session", s.uiDataSourcePickerSession)
+	e.POST("/data-sources/:id/sync-targets", s.uiDataSourceSyncTargetsSave)
 	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
 	e.GET("/data-sources/:id/resources/list", s.uiDataSourceResourceList)
 	e.POST("/data-sources/:id/resources", s.uiDataSourceResourceSave)

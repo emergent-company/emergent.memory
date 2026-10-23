@@ -36,6 +36,27 @@ type Service struct {
 	// projectOAuth resolves and manages project-scoped OAuth client configs. It
 	// defaults to the repository and is overridable in tests.
 	projectOAuth ProjectOAuthClientStore
+
+	// accountEmail resolves the authenticated Google account's email after an
+	// OAuth exchange, so the source read can show which account it syncs. It is
+	// best-effort metadata: nil (unit tests) simply skips the lookup.
+	accountEmail func(ctx context.Context, accessToken string) (string, error)
+}
+
+// carriedConfigKeys are non-secret config keys owned by dedicated flows rather
+// than the settings form. An update that does not submit them preserves the
+// stored value instead of replacing it, so a name/interval save never clears a
+// source's folder targets, granted scope, or account email.
+var carriedConfigKeys = []string{"folders", oauthGrantedStrategyKey, oauthAccountEmailKey}
+
+// cloneConfig shallow-copies a config map so normalization cannot mutate the
+// caller's map (which may be the persisted struct or a request body).
+func cloneConfig(cfg map[string]any) map[string]any {
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		out[k] = v
+	}
+	return out
 }
 
 // ServiceOption customises a Service at construction (keeps the API setter-free).
@@ -73,6 +94,13 @@ func WithProjectOAuthClientStore(store ProjectOAuthClientStore) ServiceOption {
 			s.projectOAuth = store
 		}
 	}
+}
+
+// WithAccountEmailResolver overrides the post-connect account-email lookup. The
+// production wiring supplies the Drive implementation; tests leave it nil so no
+// network call is made.
+func WithAccountEmailResolver(fn func(ctx context.Context, accessToken string) (string, error)) ServiceOption {
+	return func(s *Service) { s.accountEmail = fn }
 }
 
 // NewService creates a new sources service. The credential-encryption key is
@@ -356,12 +384,18 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 	if !ok {
 		return nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
 	}
+	// Normalize before validating/persisting so a legacy shape submitted by a
+	// caller converges on the canonical contract instead of being stored as-is.
+	cfg := cloneConfig(req.Config)
+	if normalizer, ok := p.(ConfigNormalizer); ok {
+		normalizer.NormalizeConfig(cfg)
+	}
 	if !req.AllowIncompleteConfig {
-		if err := p.ValidateConfig(req.Config); err != nil {
+		if err := p.ValidateConfig(cfg); err != nil {
 			return nil, err
 		}
 	}
-	creds, err := p.ExtractCredentials(req.Config)
+	creds, err := p.ExtractCredentials(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +418,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		ProjectID:            projectID,
 		Provider:             req.ProviderType,
 		DisplayName:          req.Name,
-		Config:               stripCredentialKeys(req.Config, p.CredentialKeys()),
+		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
 		SyncPolicy:           "manual",
 		SyncIntervalMinutes:  interval,
@@ -463,11 +497,38 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		if !ok {
 			return nil, apperror.NewValidation("unsupported providerType: " + existing.Provider)
 		}
-		if err := p.ValidateConfig(req.Config); err != nil {
-			return nil, err
+		// Normalize both sides so a legacy stored shape and a canonical
+		// submission compare and persist in one form.
+		cfg := cloneConfig(req.Config)
+		if normalizer, ok := p.(ConfigNormalizer); ok {
+			normalizer.NormalizeConfig(cfg)
 		}
-		if hasCredentialKeys(req.Config, p.CredentialKeys()) {
-			creds, err := p.ExtractCredentials(req.Config)
+		stored := cloneConfig(existing.Config)
+		if normalizer, ok := p.(ConfigNormalizer); ok {
+			normalizer.NormalizeConfig(stored)
+		}
+		// Preserve the keys the forms do not manage. The picker and the connect
+		// flow own the folder targets; the OAuth callback owns the granted
+		// strategy and account email. A settings save must not drop them.
+		for _, key := range carriedConfigKeys {
+			if _, submitted := cfg[key]; submitted {
+				continue
+			}
+			if v, ok := stored[key]; ok {
+				cfg[key] = v
+			}
+		}
+		// A settings save on a source that has not chosen its sync target yet must
+		// still work (name/interval edits). Validation is relaxed only when the
+		// source was already incomplete: a complete source can never be made
+		// incomplete by an update.
+		if verr := p.ValidateConfig(cfg); verr != nil {
+			if storedErr := p.ValidateConfig(stored); storedErr == nil {
+				return nil, verr
+			}
+		}
+		if hasCredentialKeys(cfg, p.CredentialKeys()) {
+			creds, err := p.ExtractCredentials(cfg)
 			if err != nil {
 				return nil, err
 			}
@@ -477,15 +538,7 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			}
 			existing.EncryptedCredentials = blob
 		}
-		// Preserve the granted strategy recorded at connect: the edit form
-		// submits only the provider's declared fields, so a replace would drop
-		// the key and the value cannot be recovered later. An explicit value in
-		// the submitted config still wins.
-		granted, hasGranted := existing.Config[oauthGrantedStrategyKey]
-		existing.Config = stripCredentialKeys(req.Config, p.CredentialKeys())
-		if _, submitted := existing.Config[oauthGrantedStrategyKey]; !submitted && hasGranted {
-			existing.Config[oauthGrantedStrategyKey] = granted
-		}
+		existing.Config = stripCredentialKeys(cfg, p.CredentialKeys())
 	}
 
 	updated, err := s.repo.Update(ctx, existing)
