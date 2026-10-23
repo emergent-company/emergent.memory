@@ -5,11 +5,13 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -158,7 +160,8 @@ func (i *Installer) CreateDirectories() error {
 	// MkdirAll applies mode only when it creates a directory, so an install
 	// created by an older CLI keeps its 0755 config directory. Tighten it when
 	// it is ours to tighten: a directory owned by another user (root-installed
-	// install, shared mount) is left alone and an EPERM is not fatal.
+	// install, shared mount) or a filesystem that cannot express the mode is
+	// tolerated (see tightenTolerated).
 	if err := tightenExistingDir(envDir, configDirMode); err != nil {
 		return err
 	}
@@ -168,22 +171,83 @@ func (i *Installer) CreateDirectories() error {
 
 // tightenExistingDir forces dir to mode when it is more permissive than that and
 // we can chmod it. Best-effort by design: failing to tighten a directory we do
-// not own must not fail the install.
+// not own must not fail the install or upgrade. A missing directory is a no-op:
+// there is nothing to tighten, and an existing install that has no config/
+// directory should not fail the upgrade over it.
 func tightenExistingDir(dir string, mode os.FileMode) error {
+	_, _, err := tightenExistingDirReporting(dir, mode)
+	return err
+}
+
+// tightenExistingDirReporting is tightenExistingDir plus the mode the directory
+// had and whether it was changed, so the upgrade path can say when it narrowed a
+// directory the user pointed at explicitly instead of doing it silently.
+func tightenExistingDirReporting(dir string, mode os.FileMode) (oldMode os.FileMode, changed bool, err error) {
 	info, err := os.Stat(dir)
 	if err != nil {
-		return fmt.Errorf("failed to stat %s: %w", dir, err)
-	}
-	if info.Mode().Perm()&0o077 == 0 {
-		return nil
-	}
-	if err := os.Chmod(dir, mode); err != nil {
-		if os.IsPermission(err) {
-			return nil
+		if os.IsNotExist(err) {
+			return 0, false, nil
 		}
-		return fmt.Errorf("failed to tighten permissions on %s: %w", dir, err)
+		return 0, false, fmt.Errorf("failed to stat %s: %w", dir, err)
 	}
-	return nil
+	oldMode = info.Mode().Perm()
+	if oldMode&0o077 == 0 {
+		return oldMode, false, nil
+	}
+	if err := chmodPath(dir, mode); err != nil {
+		if tightenTolerated(err) {
+			return oldMode, false, nil
+		}
+		return oldMode, false, fmt.Errorf("failed to tighten permissions on %s: %w", dir, err)
+	}
+	return oldMode, true, nil
+}
+
+// chmodPath is os.Chmod. Tests swap it to exercise tightenTolerated without a
+// real read-only mount or a root-owned directory.
+var chmodPath = os.Chmod
+
+// tightenTolerated reports whether a failed chmod on a directory we may not
+// control is best-effort rather than fatal.
+//
+// A tighter directory mode is best-effort on a filesystem that cannot express
+// it: the credentials live in the 0600 file inside, so failing an install or
+// upgrade over the directory mode would break something that is otherwise fine.
+//
+//   - EPERM: we do not own the directory (root-installed or shared install).
+//   - EROFS: the filesystem is mounted read-only.
+//   - ENOTSUP: the filesystem does not implement chmod (some network mounts).
+//     ENOTSUP and EOPNOTSUPP are the same value on Linux (95), so one constant
+//     covers both deliberately — writing the pair would be dead code.
+//
+// EACCES is deliberately NOT tolerated: it means we lack permission on a
+// directory we are supposed to own (or an ACL denies us), which is worth
+// surfacing instead of leaving a permissive directory behind and reporting a
+// successful install.
+func tightenTolerated(err error) bool {
+	return errors.Is(err, syscall.EPERM) ||
+		errors.Is(err, syscall.EROFS) ||
+		errors.Is(err, syscall.ENOTSUP)
+}
+
+// tightenConfigDir best-effort tightens <installDir>/config to configDirMode.
+// It warns instead of failing: an upgrade that is otherwise fine must not fail
+// because a directory mode could not be applied (see tightenTolerated).
+//
+// Unlike item 1's default-path rule this runs for any --dir, so an explicit
+// installation directory is narrowed too. That is safe (the only file inside is
+// .env.local, already 0600, so 0700 removes listing and creation, not read
+// access) but it is not silent: a change that actually lands is reported.
+func (i *Installer) tightenConfigDir() {
+	dir := filepath.Join(i.config.InstallDir, "config")
+	oldMode, changed, err := tightenExistingDirReporting(dir, configDirMode)
+	if err != nil {
+		i.output.Warn("Could not tighten permissions on %s: %v", dir, err)
+		return
+	}
+	if changed {
+		i.output.Info("Tightened permissions on %s from %04o to %04o", dir, oldMode, configDirMode)
+	}
 }
 
 // tightenExistingFile forces path to mode when it already exists. os.WriteFile
@@ -441,6 +505,14 @@ func (i *Installer) Upgrade(version string) error {
 
 	i.output.Info("Upgrading server installation at %s", i.config.InstallDir)
 	fmt.Println()
+
+	// An install created by an older CLI keeps a 0755 config directory:
+	// MkdirAll only applies the mode on create and Install bails out when a
+	// standalone install already exists, so Upgrade is the only path that ever
+	// sees one (#2119). Idempotent, and it warns rather than fails: the file
+	// inside is already 0600, so the directory mode hides a filename, not a
+	// secret, and must not break an otherwise fine upgrade.
+	i.tightenConfigDir()
 
 	currentVersion := i.GetInstalledVersion()
 	i.output.Info("Current version: %s", currentVersion)
