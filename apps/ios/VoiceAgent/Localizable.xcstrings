@@ -2241,6 +2241,292 @@
           }
         }
       }
+    },
+    "chat.tool.memory.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using memory"
+          }
+        }
+      }
+    },
+    "chat.tool.memory.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used memory"
+          }
+        }
+      }
+    },
+    "chat.tool.search.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Searching memory"
+          }
+        }
+      }
+    },
+    "chat.tool.search.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Searched memory"
+          }
+        }
+      }
+    },
+    "chat.tool.schemas.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working with schemas"
+          }
+        }
+      }
+    },
+    "chat.tool.schemas.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked with schemas"
+          }
+        }
+      }
+    },
+    "chat.tool.documents.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working with documents"
+          }
+        }
+      }
+    },
+    "chat.tool.documents.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked with documents"
+          }
+        }
+      }
+    },
+    "chat.tool.web.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Searching the web"
+          }
+        }
+      }
+    },
+    "chat.tool.web.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Searched the web"
+          }
+        }
+      }
+    },
+    "chat.tool.agents.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working with agents"
+          }
+        }
+      }
+    },
+    "chat.tool.agents.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked with agents"
+          }
+        }
+      }
+    },
+    "chat.tool.skills.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using a skill"
+          }
+        }
+      }
+    },
+    "chat.tool.skills.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used a skill"
+          }
+        }
+      }
+    },
+    "chat.tool.blueprints.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working with blueprints"
+          }
+        }
+      }
+    },
+    "chat.tool.blueprints.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked with blueprints"
+          }
+        }
+      }
+    },
+    "chat.tool.projects.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Working with projects"
+          }
+        }
+      }
+    },
+    "chat.tool.projects.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Worked with projects"
+          }
+        }
+      }
+    },
+    "chat.tool.session.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reading the session"
+          }
+        }
+      }
+    },
+    "chat.tool.session.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the session"
+          }
+        }
+      }
+    },
+    "chat.tool.connector.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using a connector"
+          }
+        }
+      }
+    },
+    "chat.tool.connector.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used a connector"
+          }
+        }
+      }
+    },
+    "chat.tool.generic.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Using a tool"
+          }
+        }
+      }
+    },
+    "chat.tool.generic.done": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Used a tool"
+          }
+        }
+      }
+    },
+    "chat.tool.a11y.running": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Running"
+          }
+        }
+      }
+    },
+    "chat.tool.a11y.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Failed"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

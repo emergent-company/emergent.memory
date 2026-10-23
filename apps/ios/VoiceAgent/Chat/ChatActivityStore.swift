@@ -70,6 +70,14 @@ struct QuestionRequest: Identifiable, Equatable {
 @MainActor
 @Observable
 final class ChatActivityStore {
+    /// Supplies "now" for step timing. Injectable so a test can assert an
+    /// exact duration instead of one measured against the wall clock.
+    @ObservationIgnored private let now: () -> Date
+
+    init(now: @escaping () -> Date = Date.init) {
+        self.now = now
+    }
+
     /// One user-initiated turn: everything the worker emitted for it.
     struct Turn: Identifiable, Equatable {
         let id: UUID
@@ -216,25 +224,9 @@ final class ChatActivityStore {
         guard var turn = liveTurn else { return }
         switch event {
         case let .toolCall(call):
-            turn.tools.append(ToolCallInfo(
-                id: call.id,
-                name: call.tool,
-                arguments: call.arguments,
-                result: nil,
-                isError: false,
-                isRunning: true
-            ))
+            recordToolCall(call, in: &turn)
         case let .toolResult(result):
-            if let index = turn.tools.firstIndex(where: { $0.id == result.id }) {
-                turn.tools[index] = ToolCallInfo(
-                    id: result.id,
-                    name: turn.tools[index].name,
-                    arguments: turn.tools[index].arguments,
-                    result: result.result,
-                    isError: result.isError,
-                    isRunning: false
-                )
-            }
+            settleToolResult(result, in: &turn)
         case let .thinking(delta):
             if !delta.isEmpty {
                 turn.thinkingText += (turn.thinkingText.isEmpty ? "" : "\n") + delta
@@ -259,6 +251,38 @@ final class ChatActivityStore {
         }
         turns[turns.count - 1] = turn
         armQuietFinishTimer()
+    }
+
+    /// Opens a live step. The start stamp is what lets the row report how long
+    /// the work took — the worker's events carry no timing of their own.
+    private func recordToolCall(_ call: ChatToolCallEvent, in turn: inout Turn) {
+        turn.tools.append(ToolCallInfo(
+            id: call.id,
+            name: call.tool,
+            arguments: call.arguments,
+            result: nil,
+            isError: false,
+            isRunning: true,
+            startedAt: now()
+        ))
+    }
+
+    /// Settles a live step: keeps its start stamp, records the result, and
+    /// measures the duration. A result with no matching call is ignored, and a
+    /// call with no start stamp stays untimed rather than timed from now.
+    private func settleToolResult(_ result: ChatToolResultEvent, in turn: inout Turn) {
+        guard let index = turn.tools.firstIndex(where: { $0.id == result.id }) else { return }
+        let start = turn.tools[index].startedAt
+        turn.tools[index] = ToolCallInfo(
+            id: result.id,
+            name: turn.tools[index].name,
+            arguments: turn.tools[index].arguments,
+            result: result.result,
+            isError: result.isError,
+            isRunning: false,
+            startedAt: start,
+            duration: start.map { max(0, now().timeIntervalSince($0)) }
+        )
     }
 
     // MARK: - A2UI surfaces
