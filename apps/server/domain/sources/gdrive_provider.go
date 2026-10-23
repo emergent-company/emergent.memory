@@ -2,14 +2,39 @@ package sources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/xberg"
 )
+
+// driveReconnectRequired is the remediation for a source whose stored refresh
+// token Google no longer accepts. The grant is gone (the user revoked access, or
+// the token expired), so no retry can recover it: only a fresh consent restores
+// access. It is worded as a validation error rather than an internal one so the
+// UI shows the action instead of a generic backend-outage page.
+const driveReconnectRequired = "the Google Drive connection for this source has expired or was revoked; reconnect the source to continue"
+
+// isDriveGrantRejected reports whether err is Google rejecting the stored
+// refresh token with invalid_grant. Transient token-endpoint failures (5xx,
+// timeouts, network errors) are deliberately not matched: those deserve a
+// retry, not a reconnect.
+func isDriveGrantRejected(err error) bool {
+	var retrieveErr *oauth2.RetrieveError
+	if !errors.As(err, &retrieveErr) {
+		return false
+	}
+	if retrieveErr.ErrorCode == "invalid_grant" {
+		return true
+	}
+	return strings.Contains(string(retrieveErr.Body), "invalid_grant")
+}
 
 // credentialKeyNames are the config keys that carry provider credential
 // material. They are write-only: stripped from the persisted config and never
@@ -223,6 +248,9 @@ func (p *googleDriveProvider) ResolveResourceTargets(ctx context.Context, creds 
 	for _, id := range ids {
 		folder, err := client.GetFolder(ctx, id)
 		if err != nil {
+			if isDriveGrantRejected(err) {
+				return nil, apperror.NewValidation(driveReconnectRequired)
+			}
 			return nil, apperror.NewValidation("one of the selected folders is not accessible: folder " + id + ": " + err.Error())
 		}
 		out = append(out, ResourceRef{ID: folder.ID, Name: folder.Name, DriveID: folder.DriveID})
@@ -243,6 +271,9 @@ func (p *googleDriveProvider) PickerSession(ctx context.Context, creds Credentia
 	}
 	token, expires, err := client.AccessToken(ctx)
 	if err != nil {
+		if isDriveGrantRejected(err) {
+			return nil, apperror.NewValidation(driveReconnectRequired)
+		}
 		return nil, apperror.NewInternal("mint folder-picker access token", err)
 	}
 	return &PickerSession{
@@ -349,7 +380,13 @@ func (c *googleDriveConnector) Fetch(ctx context.Context, item SourceItem) (cont
 }
 
 func (c *googleDriveConnector) TestConnection(ctx context.Context, _ map[string]any) error {
-	return c.client.TestConnection(ctx)
+	err := c.client.TestConnection(ctx)
+	if isDriveGrantRejected(err) {
+		// TestConnection reports this string verbatim, so keep it free of the
+		// "validation:" prefix an apperror would add.
+		return errors.New(driveReconnectRequired)
+	}
+	return err
 }
 
 // validateDriveConfig enforces the google_drive config contract: at least one
