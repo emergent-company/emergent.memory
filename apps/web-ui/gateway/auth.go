@@ -590,6 +590,10 @@ func deviceSurfacePath(method, path string) bool {
 			return ok && id != "" && !strings.Contains(id, "/")
 		case path == "/api/sessions" || path == "/api/session":
 			return true
+		case path == "/api/project/config":
+			// Read-only project configuration the device needs before it can
+			// offer voice (voice enablement only — never secrets).
+			return true
 		}
 		return false
 	case http.MethodPost:

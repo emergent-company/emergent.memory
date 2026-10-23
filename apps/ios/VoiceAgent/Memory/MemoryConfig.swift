@@ -191,3 +191,20 @@ struct MemoryConfig: Sendable, Equatable {
         defaults.removeObject(forKey: projectNameKey)
     }
 }
+
+extension MemoryConfig {
+    /// The gateway's host root, derived from `tokenEndpoint` by stripping the
+    /// `/api/token` suffix.
+    ///
+    /// Shared by the device-surface clients (session log, project config) so
+    /// the derivation cannot drift between them. A non-standard endpoint falls
+    /// back to dropping the last two path components (`/api` and `token`).
+    var gatewayBaseURL: URL? {
+        if tokenEndpoint.hasSuffix("/api/token") {
+            return URL(string: String(tokenEndpoint.dropLast("/api/token".count)))
+        }
+        return URL(string: tokenEndpoint)?
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+}

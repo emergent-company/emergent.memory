@@ -45,9 +45,13 @@ struct VoiceAgentApp: App {
 private struct AgentSessionRoot: View {
     @Environment(AgentStore.self) private var agentStore
     @EnvironmentObject private var projectStore: MemoryProjectStore
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var controller: MemorySessionController?
     @State private var audioOptions: AudioOptions?
+    /// The active project's voice enablement, refreshed on launch, project
+    /// switch, config change and foreground (see ``ProjectConfigStore``).
+    @State private var projectConfig = ProjectConfigStore()
     /// Navigation path for the level-1 agents stack. Owned here (not in
     /// `AppShellView`) so recreating the controller/shell on agent change
     /// cannot reset it and strand the user on the picker.
@@ -62,7 +66,9 @@ private struct AgentSessionRoot: View {
                     .environmentObject(controller.localMedia)
                     .environment(audioOptions)
                     .environment(controller.chatActivity)
-                    .environment(\.voiceEnabled, true)
+                    // A project with voice disabled must not offer Start call
+                    // or audio options anywhere in the app.
+                    .environment(\.voiceEnabled, projectConfig.voiceEnabled)
                     .environment(\.textEnabled, true)
             }
         }
@@ -71,6 +77,11 @@ private struct AgentSessionRoot: View {
             // controller, so the first connect uses the right agent.
             agentStore.setActiveProject(projectStore.activeProjectID)
             install()
+        }
+        // Launch, and every project switch: publish that project's cached
+        // voice setting, then refresh it.
+        .task(id: projectStore.activeProjectID) {
+            await projectConfig.refresh(projectID: projectStore.activeProjectID)
         }
         .onChange(of: agentStore.selectedAgentName) { _, _ in
             install()
@@ -83,8 +94,16 @@ private struct AgentSessionRoot: View {
             // already drives.
             agentStore.setActiveProject(projectStore.activeProjectID)
         }
+        // A re-scan or credential rotation may land on a different project
+        // configuration; the foreground revisit covers a setting changed from
+        // the web app while the app was suspended.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await projectConfig.refresh(projectID: projectStore.activeProjectID) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .memoryConfigChanged)) { _ in
             install()
+            Task { await projectConfig.refresh(projectID: projectStore.activeProjectID) }
         }
     }
 

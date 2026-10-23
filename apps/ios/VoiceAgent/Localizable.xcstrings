@@ -2307,6 +2307,28 @@
           }
         }
       }
+    },
+    "connect.voiceOff.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice is off for this project"
+          }
+        }
+      }
+    },
+    "connect.voiceOff.description": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on Voice in Settings → Voice in the web app to call this agent from the app."
+          }
+        }
+      }
     }
 ,
     "chat.tool.trace.running": {

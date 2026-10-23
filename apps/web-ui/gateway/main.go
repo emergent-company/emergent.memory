@@ -195,6 +195,7 @@ func main() {
 	api.POST("/token", s.mintToken)
 	api.GET("/sessions", s.listSessions)
 	api.GET("/session", s.getSession)
+	api.GET("/project/config", s.projectConfig)
 	api.GET("/schedules", s.listScheduledAgents)
 	api.POST("/schedules", s.createScheduledAgent)
 	api.GET("/schedules/:id", s.getScheduledAgent)

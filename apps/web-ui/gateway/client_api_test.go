@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -516,5 +517,79 @@ func TestGetSessionMissingRoom(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/session", nil))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// --- project configuration ---
+
+// TestProjectConfig pins the device-facing voice flag: stored true/false, an
+// absent setting (a fresh project) as disabled, and a backend read failure as
+// 502 so the device keeps its cached value instead of silently hiding voice.
+func TestProjectConfig(t *testing.T) {
+	cases := []struct {
+		name       string
+		f          *fakeMemory
+		wantStatus int
+		wantVoice  bool
+	}{
+		{
+			name: "voice enabled",
+			f: &fakeMemory{settings: map[string]map[string]map[string]any{
+				voiceCategory: {voiceKeyEnabled: {"value": true}},
+			}},
+			wantStatus: http.StatusOK,
+			wantVoice:  true,
+		},
+		{
+			name: "voice disabled",
+			f: &fakeMemory{settings: map[string]map[string]map[string]any{
+				voiceCategory: {voiceKeyEnabled: {"value": false}},
+			}},
+			wantStatus: http.StatusOK,
+			wantVoice:  false,
+		},
+		{
+			name:       "unset defaults to off",
+			f:          &fakeMemory{},
+			wantStatus: http.StatusOK,
+			wantVoice:  false,
+		},
+		{
+			name:       "non-bool value defaults to off",
+			f:          &fakeMemory{settings: map[string]map[string]map[string]any{voiceCategory: {voiceKeyEnabled: {"value": "yes"}}}},
+			wantStatus: http.StatusOK,
+			wantVoice:  false,
+		},
+		{
+			name:       "backend read failure",
+			f:          &fakeMemory{settingErr: context.DeadlineExceeded},
+			wantStatus: http.StatusBadGateway,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{memory: tc.f}
+			e := echo.New()
+			e.GET("/api/project/config", s.projectConfig)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/project/config", nil))
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantStatus != http.StatusOK {
+				return
+			}
+			var got map[string]bool
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode: %v; body=%s", err, rec.Body.String())
+			}
+			if got["voiceEnabled"] != tc.wantVoice {
+				t.Errorf("voiceEnabled = %v, want %v", got["voiceEnabled"], tc.wantVoice)
+			}
+			if len(got) != 1 {
+				t.Errorf("payload = %v, want exactly voiceEnabled (no secrets/endpoints)", got)
+			}
+		})
 	}
 }

@@ -49,6 +49,13 @@ func TestRejectDeviceTokenOutsideSurface(t *testing.T) {
 		{"conversation history allowed", "GET", "/api/chat/c1/history", deviceScopes, false},
 		{"search allowed", "POST", "/api/search/unified", deviceScopes, false},
 		{"graph objects search allowed", "GET", "/api/graph/objects/search", deviceScopes, false},
+		{"voice enablement setting allowed", "GET", "/api/projects/p1/settings/voice/enabled", deviceScopes, false},
+
+		{"other voice setting rejected", "GET", "/api/projects/p1/settings/voice/goodbyeText", deviceScopes, true},
+		{"non-voice setting rejected", "GET", "/api/projects/p1/settings/budget/limit", deviceScopes, true},
+		{"voice setting write rejected", "PUT", "/api/projects/p1/settings/voice/enabled", deviceScopes, true},
+		{"voice setting deeper path rejected", "GET", "/api/projects/p1/settings/voice/enabled/extra", deviceScopes, true},
+		{"voice setting without project rejected", "GET", "/api/projects//settings/voice/enabled", deviceScopes, true},
 
 		{"token mint rejected", "POST", "/api/projects/p1/tokens", deviceScopes, true},
 		{"device token mint rejected", "POST", "/api/projects/p1/device-tokens", deviceScopes, true},

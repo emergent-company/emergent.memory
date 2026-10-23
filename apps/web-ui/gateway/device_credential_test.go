@@ -27,6 +27,7 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/chat", true},
 		{"GET", "/api/sessions", true},
 		{"GET", "/api/session", true},
+		{"GET", "/api/project/config", true},
 
 		{"GET", "/api/agents/abc/mcp-endpoint", false},
 		{"POST", "/api/agents", false},

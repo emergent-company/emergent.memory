@@ -262,12 +262,42 @@ func deviceSurfaceAllowed(method, path string) bool {
 		if path == "/api/graph/objects/search" {
 			return true
 		}
+		// The device-facing project config (gateway GET /api/project/config)
+		// reads exactly one setting: voice enablement. It stays an exact path
+		// match, never a /settings prefix — every other project setting
+		// (budget, providers, credentials, editor/merge config) remains
+		// off-surface.
+		if deviceVoiceSettingPath(path) {
+			return true
+		}
 		return false
 	case http.MethodPost:
 		return path == "/api/chat/stream" || path == "/api/search/unified"
 	default:
 		return false
 	}
+}
+
+// deviceVoiceSettingPath reports whether path is exactly a project's voice
+// enablement setting (`/api/projects/{id}/settings/voice/enabled`).
+//
+// This is the single project setting a device credential may read: the gateway's
+// `/api/project/config` relays it so a device knows whether to offer voice. The
+// match is exact on both the category and the key, so no sibling setting (and no
+// deeper path under it) becomes device-readable by accident. Literals mirror the
+// chat/voice domain constants because pkg/auth cannot import them.
+func deviceVoiceSettingPath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/projects/")
+	if !ok {
+		return false
+	}
+	// modelref:allow: segments of a project-settings request URL, not a routed model name.
+	parts := strings.Split(rest, "/")
+	return len(parts) == 4 &&
+		parts[0] != "" &&
+		parts[1] == "settings" &&
+		parts[2] == "voice" &&
+		parts[3] == "enabled"
 }
 
 // rejectDeviceTokenOutsideSurface returns a 403 error when a device:api token

@@ -12,6 +12,32 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
+// --- project configuration (device surface) ---
+
+// projectConfig reports the slice of project configuration a device needs
+// before it decides what to offer. It is read-only and deliberately minimal:
+// voice enablement only, never secrets, endpoints or provider settings.
+//
+// Voice defaults to off for a fresh project (the same default as the settings
+// page), so an absent setting means disabled. A read failure is a 502 rather
+// than a silent "off": the device keeps its last known value instead of hiding
+// a working call affordance because the backend blipped.
+func (s *Server) projectConfig(c echo.Context) error {
+	ctx := c.Request().Context()
+	ps, err := s.memory.GetProjectSetting(ctx, voiceCategory, voiceKeyEnabled)
+	if err != nil {
+		captureError(err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
+	}
+	enabled := false
+	if ps != nil {
+		if on, ok := ps.Value["value"].(bool); ok {
+			enabled = on
+		}
+	}
+	return c.JSON(http.StatusOK, map[string]bool{"voiceEnabled": enabled})
+}
+
 // --- session log (sourced from Memory conversations/history) ---
 
 // sessionSummary mirrors the iOS SessionSummary model (snake_case field names).

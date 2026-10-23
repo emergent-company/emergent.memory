@@ -202,18 +202,10 @@ protocol SessionLogFetching: Sendable {
 struct SessionLogClient: SessionLogFetching {
     let config: MemoryConfig
 
-    /// The session-log base URL, derived from the token endpoint by stripping
-    /// the `/api/token` suffix.
+    /// The session-log base URL: the gateway host root derived from the token
+    /// endpoint (see ``MemoryConfig/gatewayBaseURL``).
     var sessionsBaseURL: URL? {
-        let endpoint = config.tokenEndpoint
-        if endpoint.hasSuffix("/api/token") {
-            return URL(string: String(endpoint.dropLast("/api/token".count)))
-        }
-        // Fallback for non-standard endpoints: drop the last two path
-        // components (`/api` and `token`) to reach the host root.
-        return URL(string: endpoint)?
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
+        config.gatewayBaseURL
     }
 
     /// Lists recorded sessions, most recently active first.
