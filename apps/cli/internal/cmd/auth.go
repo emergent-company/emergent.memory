@@ -91,18 +91,6 @@ func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 	return projects, nil
 }
 
-// maskAPIKey masks an API key for display, showing prefix and last 4 chars
-func maskAPIKey(key string) string {
-	if len(key) <= 12 {
-		return key
-	}
-	// For emt_ tokens, show the prefix
-	if strings.HasPrefix(key, "emt_") {
-		return "emt_" + "..." + key[len(key)-4:]
-	}
-	return key[:8] + "..." + key[len(key)-4:]
-}
-
 // tokenInfoResponse mirrors the server-side TokenInfoResponse for /api/auth/me
 type tokenInfoResponse struct {
 	UserID    string `json:"user_id"`
@@ -653,7 +641,7 @@ func printAPIKeyStatus(cfg *config.Config, configPath string) {
 	}
 	fmt.Printf("  Key source:  %s\n", detectKeySource(cfg, configPath))
 	fmt.Printf("  Server:      %s\n", cfg.ServerURL)
-	fmt.Printf("  Key:         %s\n", maskAPIKey(activeKey))
+	fmt.Printf("  Key:         %s\n", maskSecret(activeKey))
 
 	health, healthErr := fetchHealth(cfg.ServerURL)
 	if healthErr == nil {

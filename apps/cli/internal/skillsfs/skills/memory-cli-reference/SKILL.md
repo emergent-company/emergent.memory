@@ -2173,10 +2173,13 @@ Display current configuration
 
 Display the current CLI configuration as a table.
 
-Prints a Setting/Value table with: Server URL, API Key (masked, showing only
-the first 8 and last 4 characters), Email, Organization ID, Project ID, Debug
-mode, and the Config File path. Values are merged from the config file and any
-overriding environment variables.
+Prints a Setting/Value table with: Server URL, API Key (masked), Email,
+Organization ID, Project ID, Debug mode, and the Config File path. Values are
+merged from the config file and any overriding environment variables.
+
+Secrets are masked to the first and last 4 characters when they are long
+enough for that to leave the rest unknown; shorter values print as a fixed
+placeholder instead.
 
 ```
 memory config show [flags]

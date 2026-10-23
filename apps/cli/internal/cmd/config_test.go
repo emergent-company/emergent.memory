@@ -242,3 +242,137 @@ func TestConfigShow(t *testing.T) {
 	assert.Contains(t, stdout, "org-123")
 	assert.Contains(t, stdout, "proj-456")
 }
+
+// `config show` is the command a user runs to verify the `config set` they
+// just did, and `cfg.APIKey != ""` does not imply len >= 8. The old mask sliced
+// APIKey[:8] and panicked with "slice bounds out of range [:8] with length 3"
+// (exit 2) for any key shorter than 8 characters (#2127).
+func TestConfigShowShortAPIKeyDoesNotPanic(t *testing.T) {
+	for _, key := range []string{"a", "abc", "abcdefg"} {
+		t.Run(key, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, config.Save(&config.Config{
+				ServerURL: "https://api.example.com",
+				APIKey:    key,
+			}, configPath))
+
+			cmd := newConfigShowCmd()
+			cmd.SetArgs([]string{"--config", configPath})
+
+			capture := testutil.CaptureOutput()
+			defer capture.Restore()
+
+			require.NoError(t, cmd.Execute(), "config show must not panic on a %d-character api_key", len(key))
+			stdout, stderr, readErr := capture.Read()
+			require.NoError(t, readErr)
+			require.Empty(t, stderr)
+
+			assert.Contains(t, stdout, "Current Configuration:")
+			assert.Contains(t, stdout, maskedSecretPlaceholder+" (configured)")
+			assert.NotContains(t, stdout, key+" (configured)")
+		})
+	}
+}
+
+// A key of 12 characters or fewer used to be printed in full: the mask was
+// first 8 + last 4, so the two slices covered the whole value at 12 and
+// overlapped below it. `abcdefghij` rendered as `abcdefgh...ghij` — 8 of 10
+// characters, with the last 4 repeated (#2127).
+func TestConfigShowDoesNotDiscloseShortKeys(t *testing.T) {
+	const shortKey = "abcdefghij" // 10 characters, the issue's repro
+	longKey := fakeSecret(32)
+
+	tests := []struct {
+		name           string
+		key            string
+		mustContain    []string
+		mustNotContain []string
+	}{
+		{
+			name:        "10-character key shows no characters",
+			key:         shortKey,
+			mustContain: []string{"Current Configuration:", maskedSecretPlaceholder + " (configured)"},
+			mustNotContain: []string{
+				shortKey,
+				"abcdefgh...ghij", // the old output
+				"abcdefgh",
+				"ghij",
+			},
+		},
+		{
+			name:           "32-character key keeps a recognisable prefix and suffix",
+			key:            longKey,
+			mustContain:    []string{"0123...cdef (configured)"},
+			mustNotContain: []string{longKey},
+		},
+		{
+			// Negative control: the empty key still renders the distinct
+			// "(not set)" state rather than the placeholder.
+			name:           "empty key still reports not set",
+			key:            "",
+			mustContain:    []string{"(not set)"},
+			mustNotContain: []string{maskedSecretPlaceholder + " (configured)"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, config.Save(&config.Config{
+				ServerURL: "https://api.example.com",
+				APIKey:    tt.key,
+			}, configPath))
+
+			cmd := newConfigShowCmd()
+			cmd.SetArgs([]string{"--config", configPath})
+
+			capture := testutil.CaptureOutput()
+			defer capture.Restore()
+
+			require.NoError(t, cmd.Execute())
+			stdout, stderr, readErr := capture.Read()
+			require.NoError(t, readErr)
+			require.Empty(t, stderr)
+
+			for _, want := range tt.mustContain {
+				assert.Contains(t, stdout, want)
+			}
+			for _, notWant := range tt.mustNotContain {
+				assert.NotContains(t, stdout, notWant)
+			}
+		})
+	}
+}
+
+// The GOOGLE_API_KEY / OPENAI_API_KEY rows of the .env.local section used
+// min/max slicing, so they did not panic but printed short values in full:
+// `short` rendered as `short...hort` (#2127). Both go through maskSecret now.
+func TestConfigShowMasksEnvLocalSecrets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	longKey := fakeSecret(32)
+	writeEnvLocalFixture(t, home,
+		"GOOGLE_API_KEY=short\nOPENAI_API_KEY="+longKey+"\nOPENAI_BASE_URL=https://llm.example.com\n", 0o600)
+
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, config.Save(&config.Config{ServerURL: "https://api.example.com"}, configPath))
+
+	cmd := newConfigShowCmd()
+	cmd.SetArgs([]string{"--config", configPath})
+
+	capture := testutil.CaptureOutput()
+	defer capture.Restore()
+
+	require.NoError(t, cmd.Execute())
+	stdout, stderr, readErr := capture.Read()
+	require.NoError(t, readErr)
+	require.Empty(t, stderr)
+
+	assert.Contains(t, stdout, maskedSecretPlaceholder+" (.env.local)")
+	assert.Contains(t, stdout, "0123...cdef (.env.local)")
+	assert.NotContains(t, stdout, "short...hort")
+	assert.NotContains(t, stdout, longKey)
+	// Negative control: the base URL is not a secret and is still printed.
+	assert.Contains(t, stdout, "https://llm.example.com")
+}

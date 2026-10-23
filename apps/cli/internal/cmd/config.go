@@ -110,10 +110,13 @@ func newConfigShowCmd() *cobra.Command {
 		Short: "Display current configuration",
 		Long: `Display the current CLI configuration as a table.
 
-Prints a Setting/Value table with: Server URL, API Key (masked, showing only
-the first 8 and last 4 characters), Email, Organization ID, Project ID, Debug
-mode, and the Config File path. Values are merged from the config file and any
-overriding environment variables.`,
+Prints a Setting/Value table with: Server URL, API Key (masked), Email,
+Organization ID, Project ID, Debug mode, and the Config File path. Values are
+merged from the config file and any overriding environment variables.
+
+Secrets are masked to the first and last 4 characters when they are long
+enough for that to leave the rest unknown; shorter values print as a fixed
+placeholder instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if configPath == "" {
 				configPath = config.DiscoverPath("")
@@ -143,8 +146,7 @@ overriding environment variables.`,
 			table.AddRow([]string{"Server URL", serverURL})
 
 			if cfg.APIKey != "" {
-				maskedKey := cfg.APIKey[:8] + "..." + cfg.APIKey[len(cfg.APIKey)-4:]
-				table.AddRow([]string{"API Key", maskedKey + " (configured)"})
+				table.AddRow([]string{"API Key", maskSecret(cfg.APIKey) + " (configured)"})
 			} else {
 				table.AddRow([]string{"API Key", "(not set)"})
 			}
@@ -169,8 +171,7 @@ overriding environment variables.`,
 						if strings.HasPrefix(line, "GOOGLE_API_KEY=") {
 							val := strings.TrimPrefix(line, "GOOGLE_API_KEY=")
 							if val != "" {
-								masked := val[:min(8, len(val))] + "..." + val[max(0, len(val)-4):]
-								table.AddRow([]string{"GOOGLE_API_KEY", masked + " (.env.local)"})
+								table.AddRow([]string{"GOOGLE_API_KEY", maskSecret(val) + " (.env.local)"})
 							}
 						}
 						if strings.HasPrefix(line, "OPENAI_BASE_URL=") {
@@ -180,8 +181,7 @@ overriding environment variables.`,
 						if strings.HasPrefix(line, "OPENAI_API_KEY=") {
 							val := strings.TrimPrefix(line, "OPENAI_API_KEY=")
 							if val != "" {
-								masked := val[:min(8, len(val))] + "..." + val[max(0, len(val)-4):]
-								table.AddRow([]string{"OPENAI_API_KEY", masked + " (.env.local)"})
+								table.AddRow([]string{"OPENAI_API_KEY", maskSecret(val) + " (.env.local)"})
 							}
 						}
 						if strings.HasPrefix(line, "LLM_MODEL=") {

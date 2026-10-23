@@ -597,7 +597,7 @@ func checkLLMProvider(installDir string) checkResult {
 		return checkResult{
 			name:    "LLM Provider",
 			status:  "pass",
-			message: fmt.Sprintf("Using Google AI (%s...)", key[:min(8, len(key))]),
+			message: fmt.Sprintf("Using Google AI (%s)", maskSecret(key)),
 		}
 	}
 
@@ -738,7 +738,7 @@ func checkAuth(cfg *config.Config, configPath string) checkResult {
 		return checkResult{
 			name:    "Authentication",
 			status:  "pass",
-			message: fmt.Sprintf("Using API key (%s...)", cfg.APIKey[:8]),
+			message: fmt.Sprintf("Using API key (%s)", maskSecret(cfg.APIKey)),
 		}
 	}
 

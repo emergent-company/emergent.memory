@@ -63,7 +63,7 @@ func printProjectIndicator(cmd *cobra.Command, cfg *config.Config) {
 		name = resolveProjectNameFromToken(cfg)
 	}
 	if name == "" && cfg.ProjectToken != "" {
-		name = maskAPIKey(cfg.ProjectToken)
+		name = maskSecret(cfg.ProjectToken)
 	}
 	if name == "" {
 		name = cfg.ProjectID // UUID fallback — at least show something
