@@ -3863,10 +3863,14 @@ Show MCP configuration for AI agents
 
 Print ready-to-use MCP server configuration snippets for connecting AI agents to Memory.
 
-Outputs JSON configuration blocks for Claude Desktop, Cursor, and other MCP-
-compatible clients. Snippets use the active server URL and API key (project
-token takes precedence over account key). Copy the relevant block into your
-AI client's MCP configuration to enable Memory tools.
+Outputs JSON configuration blocks for Claude Desktop, Cursor, OpenCode, and
+other MCP-compatible clients. Memory is a remote MCP server (Streamable HTTP,
+spec 2025-11-25): snippets point at the HTTPS endpoint, with SSE offered as a
+legacy fallback.
+
+API keys and tokens are redacted by default — snippets show placeholders
+instead of the live credential. Pass --show-secret to print the configured
+values (account keys are account-scoped, so a project token is preferred).
 
 ```
 memory mcp-guide [flags]
@@ -3875,7 +3879,8 @@ memory mcp-guide [flags]
 ### Options
 
 ```
-  -h, --help   help for mcp-guide
+  -h, --help          help for mcp-guide
+      --show-secret   Print the live API key/token values in the snippets (redacted by default)
 ```
 
 ## memory mcp-relay

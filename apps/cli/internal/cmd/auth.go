@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -90,33 +89,6 @@ func fetchProjects(serverURL, apiKey string) ([]projectResponse, error) {
 		return nil, err
 	}
 	return projects, nil
-}
-
-// getCLIPath returns the path to the CLI binary
-func getCLIPath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "memory"
-	}
-
-	// Check common installation paths
-	paths := []string{
-		filepath.Join(homeDir, ".memory", "bin", "memory"),
-		"/usr/local/bin/memory",
-		filepath.Join(homeDir, "bin", "memory"),
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	// Return platform-appropriate default
-	if runtime.GOOS == "windows" {
-		return filepath.Join(homeDir, ".memory", "bin", "memory.exe")
-	}
-	return filepath.Join(homeDir, ".memory", "bin", "memory")
 }
 
 // maskAPIKey masks an API key for display, showing prefix and last 4 chars
@@ -1316,43 +1288,81 @@ func fetchAPI(serverURL, path, apiKey, projectID string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-func printMCPConfig(cfg *config.Config, project *projectResponse) {
-	cliPath := getCLIPath()
+func printMCPConfig(cfg *config.Config, project *projectResponse, activeKey string, showSecret bool) {
+	// The credential is redacted by default. The snippets are meant to be pasted,
+	// so a live account key must never be echoed into a terminal, shell history,
+	// transcript or issue report unless the user explicitly opts in.
+	key := activeKey
+	if !showSecret {
+		key = "${MEMORY_PROJECT_TOKEN}"
+	}
 
-	fmt.Println("For Claude Desktop (~/.config/claude/claude_desktop_config.json):")
+	streamHTTPURL := fmt.Sprintf("%s/api/mcp", cfg.ServerURL)
+	sseURL := fmt.Sprintf("%s/api/mcp/sse/%s", cfg.ServerURL, project.ID)
+
+	fmt.Println("Note: Memory is a remote MCP server (Streamable HTTP, spec 2025-11-25).")
+	fmt.Println("      There is no local stdio subcommand, so connect over HTTPS instead.")
 	fmt.Println()
 
-	stdioConfig := map[string]interface{}{
+	fmt.Println("Streamable HTTP (recommended — Claude Desktop, Claude Code, Cursor):")
+	fmt.Println()
+
+	streamHTTPConfig := map[string]interface{}{
 		"mcpServers": map[string]interface{}{
 			"memory": map[string]interface{}{
-				"command": cliPath,
-				"args":    []string{"mcp"},
-				"env": map[string]string{
-					"MEMORY_SERVER_URL":      cfg.ServerURL,
-					"MEMORY_ACCOUNT_API_KEY": cfg.APIKey,
+				"type": "http",
+				"url":  streamHTTPURL,
+				"headers": map[string]string{
+					"X-Project-ID": project.ID,
+					"X-API-Key":    key,
 				},
 			},
 		},
 	}
 
-	stdioJSON, err := internalui.FormatJSON(stdioConfig, noColor)
+	streamHTTPJSON, err := internalui.FormatJSON(streamHTTPConfig, noColor)
 	if err != nil {
-		b, _ := json.MarshalIndent(stdioConfig, "", "  ")
-		stdioJSON = string(b)
+		b, _ := json.MarshalIndent(streamHTTPConfig, "", "  ")
+		streamHTTPJSON = string(b)
 	}
-	fmt.Println(stdioJSON)
+	fmt.Println(streamHTTPJSON)
 
 	fmt.Println()
-	fmt.Println("Alternative (SSE transport - for Cursor, Continue, etc.):")
+	fmt.Println("OpenCode v2 (opencode.json in project root):")
+	fmt.Println()
+
+	openCodeConfig := map[string]interface{}{
+		"mcp": map[string]interface{}{
+			"memory": map[string]interface{}{
+				"type": "remote",
+				"url":  streamHTTPURL,
+				"headers": map[string]string{
+					"X-Project-ID": project.ID,
+					"X-API-Key":    key,
+				},
+				"enabled": true,
+			},
+		},
+	}
+
+	openCodeJSON, err := internalui.FormatJSON(openCodeConfig, noColor)
+	if err != nil {
+		b, _ := json.MarshalIndent(openCodeConfig, "", "  ")
+		openCodeJSON = string(b)
+	}
+	fmt.Println(openCodeJSON)
+
+	fmt.Println()
+	fmt.Println("SSE transport (legacy — for clients that only speak SSE):")
 	fmt.Println()
 
 	sseConfig := map[string]interface{}{
 		"servers": map[string]interface{}{
 			"memory": map[string]interface{}{
 				"type": "sse",
-				"url":  fmt.Sprintf("%s/api/mcp/sse/%s", cfg.ServerURL, project.ID),
+				"url":  sseURL,
 				"headers": map[string]string{
-					"X-API-Key": cfg.APIKey,
+					"X-API-Key": key,
 				},
 			},
 		},
@@ -1364,6 +1374,13 @@ func printMCPConfig(cfg *config.Config, project *projectResponse) {
 		sseJSON = string(b)
 	}
 	fmt.Println(sseJSON)
+
+	if !showSecret {
+		fmt.Println()
+		fmt.Println("Replace ${MEMORY_PROJECT_TOKEN} with a project-scoped token (create one with")
+		fmt.Println("`memory tokens create --name mcp-config --project <project>`), or re-run")
+		fmt.Println("with --show-secret to print the key currently in your config.")
+	}
 	fmt.Println()
 }
 
@@ -1560,9 +1577,15 @@ func init() {
 	rootCmd.AddCommand(logoutCmd)
 	rootCmd.AddCommand(mcpGuideCmd)
 
+	mcpGuideCmd.Flags().BoolVar(&mcpGuideShowSecret, "show-secret", false, "Print the live API key/token values in the snippets (redacted by default)")
+
 	setTokenCmd.Flags().StringVar(&setTokenDuration, "duration", "", "Token validity duration (default 24h, e.g. 48h, 168h)")
 	rootCmd.AddCommand(setTokenCmd)
 }
+
+// mcpGuideShowSecret controls whether the live API key/token values are printed.
+// They are redacted by default so the pasted snippets never leak a credential.
+var mcpGuideShowSecret bool
 
 // mcpGuideCmd prints MCP configuration snippets for connecting AI agents to Memory.
 var mcpGuideCmd = &cobra.Command{
@@ -1570,10 +1593,14 @@ var mcpGuideCmd = &cobra.Command{
 	Short: "Show MCP configuration for AI agents",
 	Long: `Print ready-to-use MCP server configuration snippets for connecting AI agents to Memory.
 
-Outputs JSON configuration blocks for Claude Desktop, Cursor, and other MCP-
-compatible clients. Snippets use the active server URL and API key (project
-token takes precedence over account key). Copy the relevant block into your
-AI client's MCP configuration to enable Memory tools.`,
+Outputs JSON configuration blocks for Claude Desktop, Cursor, OpenCode, and
+other MCP-compatible clients. Memory is a remote MCP server (Streamable HTTP,
+spec 2025-11-25): snippets point at the HTTPS endpoint, with SSE offered as a
+legacy fallback.
+
+API keys and tokens are redacted by default — snippets show placeholders
+instead of the live credential. Pass --show-secret to print the configured
+values (account keys are account-scoped, so a project token is preferred).`,
 	GroupID: "ai",
 	RunE:    runMCPGuide,
 }
@@ -1595,6 +1622,11 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 	if cfg.ProjectToken != "" {
 		activeKey = cfg.ProjectToken
 	}
+
+	// accountScoped means the active key is the account key (no project token
+	// set), so it can address any project in the account. Used to warn when
+	// --show-secret is about to print such a credential.
+	accountScoped := cfg.ProjectToken == ""
 
 	separator := strings.Repeat("━", 50)
 
@@ -1631,11 +1663,15 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 		fmt.Println("  export MEMORY_ACCOUNT_API_KEY=<token>")
 		fmt.Println()
 
-		// Print template with placeholder
-		cfgCopy := *cfg
-		cfgCopy.APIKey = "<YOUR_API_KEY>"
-		printMCPConfig(&cfgCopy, &projects[0])
+		// Print template with placeholder (no live secret exists in this path).
+		printMCPConfig(cfg, &projects[0], "", false)
 		return nil
+	}
+
+	if mcpGuideShowSecret && accountScoped {
+		fmt.Fprintln(os.Stderr, "Warning: --show-secret will print an account-scoped key (no project token is set).")
+		fmt.Fprintln(os.Stderr, "         It can access every project in your account — prefer a project-scoped token:")
+		fmt.Fprintln(os.Stderr, "           memory tokens create --name mcp-config --project <project>")
 	}
 
 	projects, err := fetchProjects(cfg.ServerURL, activeKey)
@@ -1648,6 +1684,6 @@ func runMCPGuide(cmd *cobra.Command, args []string) error {
 	fmt.Println("MCP Configuration (copy to your AI agent config)")
 	fmt.Println(separator)
 	fmt.Println()
-	printMCPConfig(cfg, &projects[0])
+	printMCPConfig(cfg, &projects[0], activeKey, mcpGuideShowSecret)
 	return nil
 }
