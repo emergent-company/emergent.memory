@@ -162,7 +162,7 @@ templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, 
 		if loadErr != nil {
 			@pageError("Document unavailable", loadErr)
 		} else {
-			@documentDetailHeader(doc)
+			@documentDetailHeader(doc, "overview")
 			@layout.Rail(documentSubNav(doc.ID, "overview"), nil) {
 				@extractionCard(doc, flashMsg, flashErr, extractionBlocked)
 				@documentPreviewCard(doc, preview)
@@ -269,8 +269,46 @@ templ documentPreviewDownload(doc *Document) {
 	</div>
 }
 
-templ documentDetailHeader(doc *Document) {
-	@detailHeader(crumbsActive(nav.Crumbs("Documents", "/documents", documentName(*doc))), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
+// documentSectionCrumbs builds the breadcrumb trail for a document view: the
+// documents list, the document itself, and — for a sub-page — the section. The
+// overview stops at the document. The document crumb always links to the
+// overview so a sub-page can walk back up the trail.
+func documentSectionCrumbs(doc *Document, section string) []nav.BreadcrumbItem {
+	base := "/documents/" + url.PathEscape(doc.ID)
+	switch section {
+	case "chunks":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Chunks")
+	case "extractions":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Extraction history")
+	case "versions":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Versions")
+	default:
+		return nav.Crumbs("Documents", "/documents", documentName(*doc))
+	}
+}
+
+// documentRunCrumbs is the trail for a single extraction run's page: the same
+// document > Extraction history trail, ending at the run.
+func documentRunCrumbs(doc *Document, jobID string) []nav.BreadcrumbItem {
+	base := "/documents/" + url.PathEscape(doc.ID)
+	return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Extraction history", base+"/extractions", "Run "+shortID(jobID))
+}
+
+// documentDetailHeader renders the shared header for every document view. The
+// section names the active sub-page ("chunks", "extractions", "versions"); any
+// other value renders the overview trail.
+templ documentDetailHeader(doc *Document, section string) {
+	@documentDetailHeaderFor(doc, documentSectionCrumbs(doc, section))
+}
+
+// documentRunDetailHeader is documentDetailHeader for a single extraction run,
+// whose trail ends at the run instead of the Extraction history section.
+templ documentRunDetailHeader(doc *Document, jobID string) {
+	@documentDetailHeaderFor(doc, documentRunCrumbs(doc, jobID))
+}
+
+templ documentDetailHeaderFor(doc *Document, crumbs []nav.BreadcrumbItem) {
+	@detailHeader(crumbsActive(crumbs), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
 		<div class="flex flex-wrap items-center gap-2">
 			@countBadgeLabel(strconv.Itoa(doc.Chunks)+" chunk"+plural(doc.Chunks), "lucide--braces")
 			@documentStatusBadge(doc.ExtractionStatus)
@@ -346,7 +384,7 @@ templ DocumentChunksPage(doc *Document, chunks []Chunk, loadErr error) {
 		if loadErr != nil {
 			@pageError("Document unavailable", loadErr)
 		} else {
-			@documentDetailHeader(doc)
+			@documentDetailHeader(doc, "chunks")
 			@layout.Rail(documentSubNav(doc.ID, "chunks"), nil) {
 				@chunksSection(chunks)
 				@chunkRollbackDialog()
@@ -365,7 +403,7 @@ templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error
 		if loadErr != nil {
 			@pageError("Failed to load extraction history", loadErr)
 		} else {
-			@documentDetailHeader(doc)
+			@documentDetailHeader(doc, "extractions")
 			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
 				@flashToastsWarn(flashMsg, warnMsg, flashErr)
 				@extractionHistory(doc.ID, jobs, hint)
@@ -384,7 +422,7 @@ templ DocumentExtractionPage(doc *Document, d extractionJobDetail, loadErr error
 		if loadErr != nil {
 			@pageError("Extraction run unavailable", loadErr)
 		} else {
-			@documentDetailHeader(doc)
+			@documentRunDetailHeader(doc, d.Job.ID)
 			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
 				@extractionRunHeader(doc, d)
 				@components.PanelCard("", nil) {
@@ -693,11 +731,11 @@ templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
 					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
 				} else {
 					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run's staging branch is no longer available — showing the objects on the main graph. }
-					@extractedObjects(d.Objects)
+					@extractedObjects(documentID, d.Job.ID, d.Objects)
 					@extractedRelationships(d.Objects, d.Relationships)
 				}
 			} else {
-				@extractedObjects(d.Objects)
+				@extractedObjects(documentID, d.Job.ID, d.Objects)
 				@extractedRelationships(d.Objects, d.Relationships)
 			}
 			if d.Branch != nil {
@@ -850,7 +888,16 @@ templ mergePreviewRow(icon, label, value string, warn bool) {
 
 // --- extraction results ---
 
-templ extractedObjects(objects []GraphObject) {
+// extractedObjectOrigin is the ?from= breadcrumb trail an extracted object links
+// back through: the document's Extraction history, then the run. It is built
+// from the page's own document and job identifiers, so the object detail view
+// can present Document > Extraction history > Run instead of a bare Objects
+// trail.
+func extractedObjectOrigin(documentID, jobID string) string {
+	return "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID)
+}
+
+templ extractedObjects(documentID, jobID string, objects []GraphObject) {
 	if len(objects) == 0 {
 		@ui.EmptyState(ui.EmptyStateProps{
 			Icon:        "lucide--boxes",
@@ -859,18 +906,19 @@ templ extractedObjects(objects []GraphObject) {
 			Bordered:    true,
 		})
 	} else {
+		{{ origin := extractedObjectOrigin(documentID, jobID) }}
 		@cardList("", cardListProps{}) {
 			for _, o := range objects {
-				@extractedObjectRow(o)
+				@extractedObjectRow(o, origin)
 			}
 		}
 	}
 }
 
-templ extractedObjectRow(o GraphObject) {
+templ extractedObjectRow(o GraphObject, origin string) {
 	<a
 		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50"
-		href={ templ.URL("/objects/" + url.PathEscape(o.ID)) }
+		href={ templ.URL("/objects/" + url.PathEscape(o.ID) + "?from=" + url.QueryEscape(origin)) }
 	>
 		@ui.Badge(ui.BadgeProps{
 			Label:   o.Type,

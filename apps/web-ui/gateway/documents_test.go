@@ -1129,7 +1129,8 @@ func TestRenderExtractionJobDetailObjects(t *testing.T) {
 	for _, want := range []string{
 		"2 objects", "1 relationship",
 		"person", "sam", "task", "call dentist", "assigned to",
-		`href="/objects/o1"`, `href="/objects/o2"`,
+		`href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
+		`href="/objects/o2?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("extraction job detail missing %q", want)
@@ -1184,7 +1185,8 @@ func TestRenderExtractionJobDetailNoBranchFallback(t *testing.T) {
 		"2 objects", "1 relationship",
 		`data-testid="extraction-detail-nobranch"`,
 		"showing the objects on the main graph",
-		`href="/objects/o1"`, `href="/objects/o2"`,
+		`href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
+		`href="/objects/o2?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`,
 		"assigned to",
 	} {
 		if !strings.Contains(html, want) {
@@ -2046,4 +2048,132 @@ func TestDocumentExtractionPageRoutes(t *testing.T) {
 			}
 		}
 	})
+}
+
+// --- breadcrumbs ---
+
+// breadcrumbRegion returns the rendered breadcrumb trail, or "" when the page
+// renders none. Scoping assertions to the trail matters because the same labels
+// also appear in the sub-navigation and the page title.
+func breadcrumbRegion(html string) string {
+	start := strings.Index(html, `class="breadcrumbs`)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(html[start:], "</ul></div>")
+	if end < 0 {
+		return ""
+	}
+	end += start + len("</ul></div>")
+	return html[start:end]
+}
+
+// TestDocumentSectionBreadcrumbs pins the trail on every document view: the
+// documents list, the document (linking back to its overview), and the section
+// on the three sub-pages. The overview stops at the document.
+func TestDocumentSectionBreadcrumbs(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md"}
+	cases := []struct {
+		section string
+		trail   []string
+	}{
+		{"overview", []string{"Documents", "Spec.md"}},
+		{"chunks", []string{"Documents", "Spec.md", "Chunks"}},
+		{"extractions", []string{"Documents", "Spec.md", "Extraction history"}},
+		{"versions", []string{"Documents", "Spec.md", "Versions"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.section, func(t *testing.T) {
+			region := breadcrumbRegion(renderHTML(t, documentDetailHeader(doc, tc.section)))
+			if region == "" {
+				t.Fatal("no breadcrumb trail rendered")
+			}
+			last := -1
+			for _, label := range tc.trail {
+				i := strings.Index(region, ">"+label+"<")
+				if i < 0 {
+					t.Fatalf("missing crumb %q in %s", label, region)
+				}
+				if i <= last {
+					t.Fatalf("crumb %q out of order in %s", label, region)
+				}
+				last = i
+			}
+			if !strings.Contains(region, `href="/documents"`) {
+				t.Errorf("documents crumb must link to the list: %s", region)
+			}
+			if tc.section == "overview" {
+				// The document is the current page on the overview, so it is not
+				// a link there; on a sub-page it links back to the overview.
+				if strings.Contains(region, `href="/documents/d1"`) {
+					t.Errorf("overview document crumb must not link to itself: %s", region)
+				}
+			} else if !strings.Contains(region, `href="/documents/d1"`) {
+				t.Errorf("document crumb must link to the overview: %s", region)
+			}
+			if !strings.Contains(region, `class="font-medium text-base-content"`) {
+				t.Errorf("trailing crumb must be marked active: %s", region)
+			}
+			if tc.section != "overview" && !strings.Contains(region, ">"+tc.trail[len(tc.trail)-1]+"<") {
+				t.Errorf("section crumb missing: %s", region)
+			}
+		})
+	}
+}
+
+// TestRenderDocumentVersionsBreadcrumb pins that the shared header is told the
+// versions section on the versions page, so the trail is not a bare
+// Documents > <document>.
+func TestRenderDocumentVersionsBreadcrumb(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md"}
+	html := renderHTML(t, DocumentVersionsPage(doc, nil, nil))
+	region := breadcrumbRegion(html)
+	for _, want := range []string{"Documents", "Spec.md", "Versions"} {
+		if !strings.Contains(region, ">"+want+"<") {
+			t.Errorf("versions breadcrumb missing %q: %s", want, region)
+		}
+	}
+}
+
+// TestRenderExtractionObjectsCarryOrigin pins that an object opened from a
+// run's object list links back with the origin trail, so the object page can
+// render Documents > <doc> > Extraction history > Run rather than a bare
+// Objects trail.
+func TestRenderExtractionObjectsCarryOrigin(t *testing.T) {
+	d := extractionJobDetail{
+		Job:     ExtractionJob{ID: "job1", Status: "completed"},
+		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam"}},
+	}
+	html := renderHTML(t, ExtractionJobDetail("d1", d))
+	want := `href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`
+	if !strings.Contains(html, want) {
+		t.Fatalf("extracted object link missing origin trail %q:\n%s", want, html)
+	}
+}
+
+// TestDocumentRunBreadcrumb pins the dedicated extraction-run page trail: the
+// document's Extraction history, then the run itself.
+func TestDocumentRunBreadcrumb(t *testing.T) {
+	doc := &Document{ID: "d1", Filename: "Spec.md"}
+	region := breadcrumbRegion(renderHTML(t, documentRunDetailHeader(doc, "job1")))
+	if region == "" {
+		t.Fatal("no breadcrumb trail rendered")
+	}
+	last := -1
+	for _, label := range []string{"Documents", "Spec.md", "Extraction history", "Run job1"} {
+		i := strings.Index(region, ">"+label+"<")
+		if i < 0 {
+			t.Fatalf("missing crumb %q in %s", label, region)
+		}
+		if i <= last {
+			t.Fatalf("crumb %q out of order in %s", label, region)
+		}
+		last = i
+	}
+	if !strings.Contains(region, `href="/documents/d1/extractions"`) {
+		t.Errorf("extraction history crumb must link back: %s", region)
+	}
+	if !strings.Contains(region, ">Run job1</span>") {
+		t.Errorf("run crumb must be the active, unlinked crumb: %s", region)
+	}
 }

@@ -519,7 +519,7 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 		}
 
 		obj := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: c.status}
-		html = renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+		html = renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
 		if !strings.Contains(html, c.label) {
 			t.Errorf("detail header for %q missing label %q", c.status, c.label)
 		}
@@ -527,14 +527,14 @@ func TestRenderObjectEmbeddingBadges(t *testing.T) {
 
 	// detail header renders the muted "Embedded <time>" text when updated_at is set
 	obj := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded", EmbeddingUpdatedAt: "2026-09-20T10:00:00Z"}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
 	if !strings.Contains(html, `class="text-muted text-xs">Embedded `) {
 		t.Errorf("detail header missing muted embedded-at timestamp: %s", html)
 	}
 
 	// no timestamp when updated_at is empty
 	objNoTime := &GraphObject{ID: "o1", Type: "person", Key: "sam", EmbeddingStatus: "embedded"}
-	htmlNoTime := renderHTML(t, ObjectDetailPage(objNoTime, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil))
+	htmlNoTime := renderHTML(t, ObjectDetailPage(objNoTime, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
 	if strings.Contains(htmlNoTime, `text-muted text-xs">Embedded `) {
 		t.Errorf("detail header should omit the timestamp when updated_at is empty")
 	}

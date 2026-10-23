@@ -16,6 +16,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/emergent-company/go-daisy/components/nav"
 )
 
 // --- objects browser ---
@@ -627,8 +629,13 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil, nil))
 	}
+
+	// ?from= carries where the user came from (an extraction run's object list).
+	// It is resolved best-effort: an unknown or stale origin must never break
+	// the object page — the header simply falls back to Objects > <object>.
+	trail := objectOriginTrail(ctx, c.QueryParam("from"), s.memory.GetDocument)
 
 	var (
 		labelSuggestions []string
@@ -671,7 +678,55 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (issue #1096): it is not fetched here. The detail page renders the section
 	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
 	// never hold the page render again. nil similar triggers that deferred path.
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions, trail))
+}
+
+// objectOriginTrail resolves an optional ?from= breadcrumb origin into a trail.
+// Only a document extraction run is recognised:
+//
+//	/documents/<docID>/extractions/<jobID>
+//
+// The document is fetched best-effort for its label. An unknown shape, a
+// missing document, or a backend failure yields nil, so the object page falls
+// back to Objects > <object> and never fails because of an origin hint.
+func objectOriginTrail(ctx context.Context, from string, getDoc func(context.Context, string) (*Document, error)) []nav.BreadcrumbItem {
+	docID, jobID, ok := parseExtractionOrigin(from)
+	if !ok || getDoc == nil {
+		return nil
+	}
+	doc, err := getDoc(ctx, docID)
+	if err != nil || doc == nil {
+		return nil
+	}
+	base := "/documents/" + url.PathEscape(docID)
+	return nav.Crumbs(
+		"Documents", "/documents",
+		documentName(*doc), base,
+		"Extraction history", base+"/extractions",
+		"Run "+shortID(jobID),
+	)
+}
+
+// parseExtractionOrigin accepts exactly /documents/<id>/extractions/<id> and
+// rejects every other shape. Query and fragment markers are refused so a
+// crafted origin cannot smuggle extra path semantics into the trail.
+func parseExtractionOrigin(from string) (docID, jobID string, ok bool) {
+	if !strings.HasPrefix(from, "/") || strings.ContainsAny(from, "?#") {
+		return "", "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(from, "/"), "/")
+	if len(parts) != 4 || parts[0] != "documents" || parts[2] != "extractions" {
+		return "", "", false
+	}
+	docID, err := url.PathUnescape(parts[1])
+	if err != nil || docID == "" || strings.Contains(docID, "/") {
+		return "", "", false
+	}
+	jobID, err = url.PathUnescape(parts[3])
+	if err != nil || jobID == "" || strings.Contains(jobID, "/") {
+		return "", "", false
+	}
+	return docID, jobID, true
 }
 
 // uiObjectSimilarPartial renders the "Similar objects" section as an HTMX

@@ -864,14 +864,15 @@ templ longTextarea(name string, value string) {
 // flashErr surfaces PRG feedback (e.g. the "no agents configured" chat hint)
 // as an auto-dismissing toast. typeUIByType carries the compiled types'
 // declared ui accents (icon/color) so the header chip can render the object
-// type's icon.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string) {
+// type's icon. trail is an optional origin trail (e.g. a document's extraction
+// history); when nil the header renders Objects > <object>.
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string, trail []nav.BreadcrumbItem) {
 	@flashToasts(flashMsg, flashErr)
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
 			@pageError("Object unavailable", loadErr)
 		} else {
-			@objectDetailHeader(obj, branch, typeUIByType)
+			@objectDetailHeader(obj, branch, typeUIByType, trail)
 			@objectSourceCard(sources)
 			@objectPropertiesCard(obj, propDefs, labelSuggestions, statusOptions)
 			@objectRelationships(obj, relTypes, edges, related)
@@ -884,15 +885,26 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 	}
 }
 
+// objectBreadcrumbs returns the breadcrumb trail for the object detail header.
+// trail is an optional origin resolved from the ?from= query parameter (e.g. a
+// document's Extraction history); when it is empty the header falls back to the
+// plain Objects > <object> trail. The trailing item is the current page.
+func objectBreadcrumbs(obj *GraphObject, trail []nav.BreadcrumbItem) []nav.BreadcrumbItem {
+	if len(trail) > 0 {
+		return trail
+	}
+	return nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj))
+}
+
 // objectDetailHeader intentionally does NOT use the shared detailHeader: it
 // renders a rich chip row (type chip + status/embedding badges) ABOVE the title
 // and uses items-start alignment, neither of which detailHeader models (kicker is
 // a plain string, TitleLeading is inline-before-title, Actions sit on the right,
 // and the flex is hardcoded items-center/items-end).
-templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI) {
+templ objectDetailHeader(obj *GraphObject, branch objectBranchRef, typeUIByType map[string]typeUI, trail []nav.BreadcrumbItem) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
 	<div class="mb-6">
-		@nav.Breadcrumbs(crumbsActive(nav.Crumbs("Objects", "/objects", graphObjectLabel(*obj))), nav.BreadcrumbsDividerDefault)
+		@nav.Breadcrumbs(crumbsActive(objectBreadcrumbs(obj, trail)), nav.BreadcrumbsDividerDefault)
 		<div class="mt-2 flex flex-wrap items-start justify-between gap-4">
 			<div class="min-w-0">
 				<div class="mb-2 flex flex-wrap items-center gap-2">
