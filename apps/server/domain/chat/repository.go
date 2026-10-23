@@ -28,6 +28,25 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// ownerOrSharedScope is the owner-or-shared access predicate every conversation
+// accessor applies (see the chat-conversation-ownership capability). prefix
+// qualifies the columns for queries that alias the conversation table (e.g.
+// "conversation.").
+//
+// An empty owner means the caller carries no user identity: an ownerless,
+// project-bound device credential, which the gateway uses for the iOS session
+// log. Such a caller may see only project-shared (non-private) conversations
+// and must never be compared against the uuid owner column — the comparison
+// `owner_user_id = ”` fails in Postgres with SQLSTATE 22P02.
+func ownerOrSharedScope(prefix, ownerUserID string) (string, []any) {
+	owner := prefix + "owner_user_id"
+	shared := prefix + "is_private = false"
+	if ownerUserID == "" {
+		return shared, nil
+	}
+	return "(" + owner + " = ? OR " + shared + ")", []any{ownerUserID}
+}
+
 // ListConversations retrieves conversations with pagination
 func (r *Repository) ListConversations(ctx context.Context, params ListConversationsParams) (*ListConversationsResult, error) {
 	// Default and max limits
@@ -43,9 +62,11 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 		Model((*Conversation)(nil)).
 		Where("project_id = ?", params.ProjectID)
 
-	// Apply owner filter if provided
+	// Apply the owner-or-shared filter. An ownerless caller (device credential)
+	// still gets the project-shared predicate rather than an unfiltered list.
 	if params.OwnerUserID != nil {
-		query = query.Where("(owner_user_id = ? OR is_private = false)", *params.OwnerUserID)
+		condition, args := ownerOrSharedScope("", *params.OwnerUserID)
+		query = query.Where(condition, args...)
 	}
 
 	// Default-exclude archived conversations unless the caller explicitly opts
@@ -81,11 +102,12 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 // must own the conversation or it must be non-private (project-shared).
 func (r *Repository) GetByID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	err := r.db.NewSelect().
 		Model(&conv).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Scan(ctx)
 
 	if err != nil {
@@ -102,6 +124,7 @@ func (r *Repository) GetByID(ctx context.Context, projectID, ownerUserID string,
 // to the caller (owner or non-private).
 func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
+	condition, args := ownerOrSharedScope("conversation.", ownerUserID)
 	err := r.db.NewSelect().
 		Model(&conv).
 		Relation("Messages", func(q *bun.SelectQuery) *bun.SelectQuery {
@@ -109,7 +132,7 @@ func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID, ownerUs
 		}).
 		Where("conversation.id = ?", conversationID).
 		Where("conversation.project_id = ?", projectID).
-		Where("(conversation.owner_user_id = ? OR conversation.is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Scan(ctx)
 
 	if err != nil {
@@ -127,11 +150,12 @@ func (r *Repository) GetByIDWithMessages(ctx context.Context, projectID, ownerUs
 // conversation or it must be non-private (project-shared).
 func (r *Repository) GetByCanonicalID(ctx context.Context, projectID, ownerUserID string, canonicalID uuid.UUID) (*Conversation, error) {
 	var conv Conversation
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	err := r.db.NewSelect().
 		Model(&conv).
 		Where("canonical_id = ?", canonicalID).
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Scan(ctx)
 
 	if err != nil {
@@ -167,11 +191,12 @@ func (r *Repository) Create(ctx context.Context, conv *Conversation) error {
 
 // Update updates a conversation, scoped to the caller (owner or non-private).
 func (r *Repository) Update(ctx context.Context, projectID, ownerUserID string, conv *Conversation) error {
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	result, err := r.db.NewUpdate().
 		Model(conv).
 		WherePK().
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Returning("*").
 		Exec(ctx)
 
@@ -191,11 +216,12 @@ func (r *Repository) Update(ctx context.Context, projectID, ownerUserID string, 
 // Delete deletes a conversation (cascades to messages via FK), scoped to the
 // caller (owner or non-private).
 func (r *Repository) Delete(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (bool, error) {
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	result, err := r.db.NewDelete().
 		Model((*Conversation)(nil)).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Exec(ctx)
 
 	if err != nil {
@@ -212,11 +238,12 @@ func (r *Repository) Delete(ctx context.Context, projectID, ownerUserID string, 
 // a row matched so the service can map a no-match to not-found. Setting a state
 // that is already in effect is a no-op that still reports a match (idempotent).
 func (r *Repository) SetArchived(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, archived bool) (bool, error) {
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	q := r.db.NewUpdate().
 		Model((*Conversation)(nil)).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID)
+		Where(condition, args...)
 
 	if archived {
 		q = q.Set("is_archived = ?", true).
@@ -314,11 +341,12 @@ func (r *Repository) GetConversationHistory(ctx context.Context, projectID, owne
 	// Guard the read: never return messages from a conversation the caller
 	// cannot see. This is the exfiltration step the canonical-id path could
 	// otherwise feed — a foreign conversation id must yield no history.
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	visible, err := r.db.NewSelect().
 		Model((*Conversation)(nil)).
 		Where("id = ?", conversationID).
 		Where("project_id = ?", projectID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID).
+		Where(condition, args...).
 		Exists(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("check conversation visibility: %w", err)
@@ -350,12 +378,13 @@ func (r *Repository) GetConversationHistory(ctx context.Context, projectID, owne
 // SetAgentDefinitionID updates the agent_definition_id on a conversation,
 // scoped to the caller (owner or non-private).
 func (r *Repository) SetAgentDefinitionID(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, agentDefID *uuid.UUID) error {
+	condition, args := ownerOrSharedScope("", ownerUserID)
 	q := r.db.NewUpdate().
 		Model((*Conversation)(nil)).
 		Set("agent_definition_id = ?", agentDefID).
 		Set("updated_at = NOW()").
 		Where("id = ?", conversationID).
-		Where("(owner_user_id = ? OR is_private = false)", ownerUserID)
+		Where(condition, args...)
 	if projectID != "" {
 		q = q.Where("project_id = ?", projectID)
 	} else {

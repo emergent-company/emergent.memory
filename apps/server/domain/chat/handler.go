@@ -129,7 +129,10 @@ func (h *Handler) ListConversations(c echo.Context) error {
 		includeArchived = parsed
 	}
 
-	// Pass user ID for filtering private conversations (user.ID is the UUID from user_profiles)
+	// Pass the caller's user id for the owner-or-shared filter. An ownerless
+	// device credential carries no user id (""), so the repository scopes it to
+	// project-shared conversations instead of comparing "" against a uuid
+	// column (SQLSTATE 22P02).
 	result, err := h.svc.ListConversations(c.Request().Context(), user.ProjectID, &user.ID, limit, offset, includeArchived)
 	if err != nil {
 		return err

@@ -290,3 +290,52 @@ func TestDeletePredicateAndCascade(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, deleted)
 }
+
+// TestOwnerlessCallerScope covers the device session log: the gateway reaches
+// the chat read paths with an ownerless, project-bound device credential, whose
+// user id is "". The owner-or-shared predicate must collapse to "non-private"
+// for such a caller instead of comparing "" against the uuid owner column
+// (SQLSTATE 22P02), and it must never expose another user's private chat.
+func TestOwnerlessCallerScope(t *testing.T) {
+	e := newRepoEnv(t)
+
+	shared := e.insertConversation(e.ownerID, false, "shared", time.Now())
+	e.insertMessage(shared, "shared-msg")
+	foreignPrivate := e.insertConversation(e.foreignID, true, "foreign-private", time.Now())
+	ownerPrivate := e.insertConversation(e.ownerID, true, "owner-private", time.Now())
+
+	ownerless := ""
+	list, err := e.repo.ListConversations(e.ctx, chat.ListConversationsParams{
+		ProjectID:   e.projectID,
+		OwnerUserID: &ownerless,
+		Limit:       50,
+	})
+	require.NoError(t, err, "an ownerless caller must not fail on a uuid comparison")
+
+	listed := make([]uuid.UUID, 0, len(list.Conversations))
+	for _, conv := range list.Conversations {
+		listed = append(listed, conv.ID)
+	}
+	require.Contains(t, listed, shared, "ownerless caller sees project-shared conversations")
+	require.NotContains(t, listed, foreignPrivate, "ownerless caller must not see a private conversation")
+	require.NotContains(t, listed, ownerPrivate, "ownerless caller must not see a private conversation")
+	require.Equal(t, len(list.Conversations), list.Total)
+
+	// By-id accessors used by the session detail must apply the same scope.
+	conv, err := e.repo.GetByID(e.ctx, e.projectID, "", shared)
+	require.NoError(t, err)
+	require.NotNil(t, conv, "ownerless caller may read a shared conversation")
+
+	conv, err = e.repo.GetByIDWithMessages(e.ctx, e.projectID, "", shared)
+	require.NoError(t, err)
+	require.NotNil(t, conv)
+	require.Len(t, conv.Messages, 1)
+
+	conv, err = e.repo.GetByIDWithMessages(e.ctx, e.projectID, "", foreignPrivate)
+	require.NoError(t, err)
+	require.Nil(t, conv, "ownerless caller must not read a private conversation")
+
+	history, err := e.repo.GetConversationHistory(e.ctx, e.projectID, "", foreignPrivate, 5)
+	require.NoError(t, err)
+	require.Empty(t, history, "ownerless caller must not read a private conversation's history")
+}
