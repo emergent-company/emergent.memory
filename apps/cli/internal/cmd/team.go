@@ -302,14 +302,16 @@ func runTeamInvites(cmd *cobra.Command, args []string) error {
 			expiry = "expires " + fmtTimePTime(inv.ExpiresAt)
 		}
 
-		tokenDisplay := inv.Token
-		if len(tokenDisplay) > 12 {
-			tokenDisplay = tokenDisplay[:12] + "..."
-		}
-
-		fmt.Printf("%d. Project %q (org: %s) — %s  %s  token: %s\n",
-			i+1, projectName, orgName, role, expiry, tokenDisplay)
+		// The invitation token is bearer-equivalent and is not printed: a
+		// prefix can neither be completed into a usable token nor be trusted
+		// not to leak one, and anything shorter than the old 12-character cut
+		// was echoed verbatim (#2131). The token is delivered by email, which
+		// is where `team accept` tells the user to look.
+		fmt.Printf("%d. Project %q (org: %s) — %s  %s\n",
+			i+1, projectName, orgName, role, expiry)
 	}
+
+	fmt.Println("\nTokens are not printed. Use the token from the invitation email with 'memory projects team accept <token>'.")
 
 	return nil
 }

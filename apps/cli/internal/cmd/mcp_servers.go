@@ -223,8 +223,15 @@ func runListMCPServers(cmd *cobra.Command, args []string) error {
 // toolConfigSuffix builds the setup annotation shown next to a tool name in the list.
 // - No configKeys → ""
 // - Has configKeys, none set → " [setup required: key1, key2]"
-// - Has configKeys, all set → " [key1=…xxxx, key2=…xxxx]"
-// - Mixed → configured keys shown masked, missing ones flagged
+// - Has configKeys, all set → " [key1=has_value, key2=has_value]"
+// - Mixed → present keys marked, missing ones flagged
+//
+// The value itself is never printed. A tool config key is usually the MCP
+// server's API key or token, and the listing only answers "is this tool
+// configured?" — the value is not something an operator needs to read back,
+// and no partial display of it is actionable. The previous cell echoed the
+// last four characters of the value and printed a value of four characters or
+// fewer in full (#2131).
 func toolConfigSuffix(configKeys []string, config map[string]any) string {
 	if len(configKeys) == 0 {
 		return ""
@@ -237,9 +244,7 @@ func toolConfigSuffix(configKeys []string, config map[string]any) string {
 			parts = append(parts, k+"=?")
 			anyMissing = true
 		} else {
-			s := fmt.Sprintf("%v", v)
-			masked := "…" + s[max(0, len(s)-4):]
-			parts = append(parts, k+"="+masked)
+			parts = append(parts, k+"=has_value")
 		}
 	}
 	if anyMissing && len(parts) == len(configKeys) && allMissing(config, configKeys) {
