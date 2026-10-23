@@ -12,6 +12,22 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
+// ownerForCreate returns the owner id to persist and whether the new
+// conversation is private.
+//
+// An ownerless caller is a device credential (`core.api_tokens.user_id` is
+// NULL), so its user id is "". Binding that against the uuid owner column
+// fails with SQLSTATE 22P02, and a private conversation with no owner would be
+// invisible to everyone — including the caller that just created it. Such
+// conversations are therefore created project-shared and unowned, the same
+// visibility rule the ownerless read path applies.
+func ownerForCreate(ownerUserID string, wantPrivate bool) (*string, bool) {
+	if ownerUserID == "" {
+		return nil, false
+	}
+	return &ownerUserID, wantPrivate
+}
+
 // Service provides business logic for chat operations
 type Service struct {
 	repo *Repository
@@ -97,15 +113,17 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 		}
 	}
 
+	// Canonical (refinement) conversations are project-shared: the
+	// globally-unique canonical_id index permits exactly one row per canonical
+	// id, so a private per-user conversation would block every other project
+	// member from the object's refinement chat.
+	owner, isPrivate := ownerForCreate(ownerUserID, canonicalID == nil)
+
 	now := time.Now()
 	conv := &Conversation{
 		Title:       req.Title,
-		OwnerUserID: &ownerUserID,
-		// Canonical (refinement) conversations are project-shared: the
-		// globally-unique canonical_id index permits exactly one row per
-		// canonical id, so a private per-user conversation would block every
-		// other project member from the object's refinement chat.
-		IsPrivate:   canonicalID == nil,
+		OwnerUserID: owner,
+		IsPrivate:   isPrivate,
 		ProjectID:   projectUUIDPtr,
 		CanonicalID: canonicalID,
 		CreatedAt:   now,
@@ -265,11 +283,14 @@ func (s *Service) GetOrCreateConversation(ctx context.Context, projectID, ownerU
 		return existing, false, nil
 	}
 
-	// Create new
+	// Create new. Refinement chats are shared, so an ownerless caller simply
+	// leaves the owner empty rather than failing on the uuid column.
+	owner, _ := ownerForCreate(ownerUserID, false)
+
 	now := time.Now()
 	conv := &Conversation{
 		Title:       title,
-		OwnerUserID: &ownerUserID,
+		OwnerUserID: owner,
 		IsPrivate:   false, // Refinement chats are shared
 		ProjectID:   &projectUUID,
 		CanonicalID: &canonicalUUID,
