@@ -234,7 +234,7 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 	if err != nil {
 		return nil, err
 	}
-	return s.testProviderConnection(ctx, p, creds, req.Config)
+	return s.testProviderConnection(ctx, p, creds, req.Config, unsavedCredentials)
 }
 
 // ListProviderResources lists a provider's selectable sync targets (repositories,
@@ -320,16 +320,39 @@ func (s *Service) TestConnection(ctx context.Context, projectID, id uuid.UUID) (
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
-	return s.testProviderConnection(ctx, p, creds, src.Config)
+	return s.testProviderConnection(ctx, p, creds, src.Config, storedCredentials)
 }
 
-func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials, cfg map[string]any) (*TestConnectionResponse, error) {
+// credentialContext says where the credential under test came from. It decides
+// the remediation wording when the provider rejects the grant outright.
+type credentialContext int
+
+const (
+	// storedCredentials: the grant belongs to a saved source, so the fix is to
+	// reconnect that source.
+	storedCredentials credentialContext = iota
+	// unsavedCredentials: TestConfig on a form the user is still editing. There is
+	// no source yet, so "reconnect the source" would name a control that does not
+	// exist on the screen.
+	unsavedCredentials
+)
+
+// connectionFailureMessage picks the remediation for a rejected credential. The
+// provider cannot tell the two cases apart; the caller can.
+func connectionFailureMessage(cc credentialContext, err error) string {
+	if cc == unsavedCredentials && errors.Is(err, errDriveGrantRejected) {
+		return driveUnsavedGrantRequired
+	}
+	return err.Error()
+}
+
+func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials, cfg map[string]any, cc credentialContext) (*TestConnectionResponse, error) {
 	connector, err := p.NewConnector(ctx, creds, ConnectorDeps{})
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: "failed to initialize connector: " + err.Error()}, nil
 	}
 	if err := connector.TestConnection(ctx, cfg); err != nil {
-		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
+		return &TestConnectionResponse{Success: false, Message: connectionFailureMessage(cc, err)}, nil
 	}
 	return &TestConnectionResponse{Success: true, Message: "connection successful"}, nil
 }

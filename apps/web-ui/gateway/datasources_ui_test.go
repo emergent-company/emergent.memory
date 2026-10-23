@@ -332,10 +332,20 @@ func TestRenderDataSourceResourceList(t *testing.T) {
 		t.Error("generic resource action label missing")
 	}
 
-	// A failed listing renders the empty/error state, not a broken list.
+	// A failed listing renders the error state with the message and a retry, not
+	// the empty state: "no resources were returned" would hide the reason.
 	errored := renderHTML(t, DataSourceResourceList(src, "Google Drive", nil, false, "", errTest, false))
-	if !strings.Contains(errored, `data-testid="ds-resource-empty"`) {
+	if !strings.Contains(errored, `data-testid="ds-resource-error"`) {
 		t.Error("resource error state missing")
+	}
+	if !strings.Contains(errored, errTest.Error()) {
+		t.Errorf("resource error state dropped the message: %s", errored)
+	}
+	if strings.Contains(errored, `data-testid="ds-resource-empty"`) {
+		t.Error("a failed listing must not render the empty state")
+	}
+	if !strings.Contains(errored, `hx-get="/data-sources/s1/resources/list"`) {
+		t.Errorf("error state must offer the HTMX retry: %s", errored)
 	}
 }
 
@@ -2725,4 +2735,59 @@ func TestDSConfigFieldsPrefillsInteger(t *testing.T) {
 		return
 	}
 	t.Fatal("backfill_days field missing from the config fields")
+}
+
+// TestUIDataSourceResourceList_ReconnectCopyReachesPartial: a dead Google grant
+// comes back as a 422 carrying the remediation. The fragment must render that
+// copy — userFacingError would flatten it to "Something went wrong." exactly when
+// the user needs the action (it only passes 4xx messages through dsFormError).
+func TestUIDataSourceResourceList_ReconnectCopyReachesPartial(t *testing.T) {
+	const reconnect = "the Google Drive connection for this source has expired or was revoked; reconnect the source to continue"
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsResourcesErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: reconnect,
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "reconnect the source") {
+		t.Fatalf("fragment dropped the reconnect copy:\n%s", body)
+	}
+	if strings.Contains(body, genericErrorMessage) {
+		t.Errorf("fragment rendered the generic copy for a 4xx:\n%s", body)
+	}
+	if strings.Contains(body, "invalid_grant") {
+		t.Errorf("fragment leaked the raw provider error:\n%s", body)
+	}
+}
+
+// TestUIDataSourceResourceList_ServerErrorStaysRedacted is the other half of the
+// binding: routing the fragment through dsFormError must not leak backend detail
+// when the failure really is an outage.
+func TestUIDataSourceResourceList_ServerErrorStaysRedacted(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsResourcesErr: &memoryHTTPError{
+			Status:  http.StatusInternalServerError,
+			Code:    "internal_error",
+			Message: "dial tcp 10.0.0.7:5432: connect: connection refused",
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, "10.0.0.7") || strings.Contains(body, "5432") {
+		t.Errorf("fragment leaked backend coordinates:\n%s", body)
+	}
+	if !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("fragment should show the redacted outage copy for a 5xx:\n%s", body)
+	}
 }

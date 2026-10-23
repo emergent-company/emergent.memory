@@ -21,6 +21,17 @@ import (
 // UI shows the action instead of a generic backend-outage page.
 const driveReconnectRequired = "the Google Drive connection for this source has expired or was revoked; reconnect the source to continue"
 
+// driveUnsavedGrantRequired is the same state for credentials the user has just
+// entered and is still testing: there is no source to reconnect yet, so naming
+// one would send them looking for a control that does not exist.
+const driveUnsavedGrantRequired = "the Google Drive authorization was rejected; sign in again to grant Drive access"
+
+// errDriveGrantRejected is the sentinel form of driveReconnectRequired. The
+// connector reports it verbatim (TestConnection output is shown as-is), and the
+// service matches it with errors.Is to pick the wording for the caller's context
+// instead of comparing message strings.
+var errDriveGrantRejected = errors.New(driveReconnectRequired)
+
 // isDriveGrantRejected reports whether err is Google rejecting the stored
 // refresh token with invalid_grant. Transient token-endpoint failures (5xx,
 // timeouts, network errors) are deliberately not matched: those deserve a
@@ -34,6 +45,17 @@ func isDriveGrantRejected(err error) bool {
 		return true
 	}
 	return strings.Contains(string(retrieveErr.Body), "invalid_grant")
+}
+
+// driveGrantOrRaw swaps a rejected grant for the reconnect sentinel and leaves
+// every other error untouched: a Google 5xx or a timeout deserves a retry, not a
+// reconnect prompt. The sync path reports errors verbatim in the job history and
+// the source's error row, so it gets the bare message — no "validation:" prefix.
+func driveGrantOrRaw(err error) error {
+	if isDriveGrantRejected(err) {
+		return errDriveGrantRejected
+	}
+	return err
 }
 
 // credentialKeyNames are the config keys that carry provider credential
@@ -337,7 +359,7 @@ func (c *googleDriveConnector) Enumerate(ctx context.Context, cfg map[string]any
 	for _, folder := range folders {
 		items, err := c.client.ListFolderItems(ctx, folder.FolderID, mimeTypes, recursive, folder.DriveID)
 		if err != nil {
-			return nil, err
+			return nil, driveGrantOrRaw(err)
 		}
 		for _, it := range items {
 			if _, ok := seen[it.ID]; ok {
@@ -361,13 +383,13 @@ func (c *googleDriveConnector) Fetch(ctx context.Context, item SourceItem) (cont
 	if isGoogleNative(item.MimeType) {
 		data, err := c.client.ExportText(ctx, item.ID, item.MimeType)
 		if err != nil {
-			return "", "", err
+			return "", "", driveGrantOrRaw(err)
 		}
 		return string(data), googleNativeExportMime(item.MimeType), nil
 	}
 	data, err := c.client.DownloadFile(ctx, item.ID)
 	if err != nil {
-		return "", "", err
+		return "", "", driveGrantOrRaw(err)
 	}
 	if c.deps.Extract != nil && xberg.ShouldUseXberg(item.MimeType, item.Name) {
 		text, err := c.deps.Extract(ctx, data, item.Name, item.MimeType)
@@ -382,9 +404,10 @@ func (c *googleDriveConnector) Fetch(ctx context.Context, item SourceItem) (cont
 func (c *googleDriveConnector) TestConnection(ctx context.Context, _ map[string]any) error {
 	err := c.client.TestConnection(ctx)
 	if isDriveGrantRejected(err) {
-		// TestConnection reports this string verbatim, so keep it free of the
-		// "validation:" prefix an apperror would add.
-		return errors.New(driveReconnectRequired)
+		// TestConnection reports this string verbatim, so return the sentinel:
+		// no "validation:" prefix, and the service can still rewrite the wording
+		// for credentials that are not saved on a source yet.
+		return errDriveGrantRejected
 	}
 	return err
 }

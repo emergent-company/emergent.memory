@@ -695,7 +695,7 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", "", userFacingError(err), "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceResourceSelectPage(nil, "", "", dsFormError(err), "", nil))
 	}
 	// Google Drive selects its targets in the browser's Google Picker modal on
 	// the detail page, so the old full-page listing is retired for it. Keep the
@@ -715,7 +715,7 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	if c.QueryParam("static") == "1" {
 		resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
 		if rerr != nil {
-			rerr = userFacingError(rerr)
+			rerr = dsFormError(rerr)
 		}
 		// An empty drive listing under the drive.file strategy is a dead end (the
 		// Google Picker is not implemented), so surface an actionable notice rather
@@ -729,14 +729,16 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 // uiDataSourceResourceList renders the deferred resource-list fragment for a
 // source: it recomputes the source + drive.file scope and lists the provider's
 // resources, then returns the bare list partial (no page layout) for the HTMX
-// swap. Errors map through userFacingError and render inline in the partial.
+// swap. Errors map through dsFormError, not userFacingError: the backend's 4xx
+// message is the actionable copy ("reconnect the source…"), and userFacingError
+// would flatten it to "Something went wrong." exactly when the user needs it.
 func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := c.Param("id")
 	query := c.QueryParam("q")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		renderPartial(c.Response().Writer, c.Request(), pageError("Data source unavailable", userFacingError(err)))
+		renderPartial(c.Response().Writer, c.Request(), pageError("Data source unavailable", dsFormError(err)))
 		return nil
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
@@ -747,7 +749,7 @@ func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 	}
 	resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
 	if rerr != nil {
-		rerr = userFacingError(rerr)
+		rerr = dsFormError(rerr)
 	}
 	driveFileScope := rerr == nil && len(resources) == 0 && dsDriveFileScope(src)
 	renderPartial(c.Response().Writer, c.Request(), DataSourceResourceList(src, providerName, resources, truncated, query, rerr, driveFileScope))

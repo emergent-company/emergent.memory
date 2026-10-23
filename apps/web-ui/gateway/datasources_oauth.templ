@@ -128,7 +128,31 @@ templ DataSourceResourceList(src *DSIntegration, providerName string, resources 
 				Only the first 5,000 folders are shown — search by name to narrow the list.
 			}
 		}
-		if loadErr != nil || len(resources) == 0 {
+		if loadErr != nil {
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-error">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: loadErr.Error(),
+				})
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    dsResourceStaticURL(src.ID, query),
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-resource-error-retry",
+						"hx-get":      dsResourceListURL(src.ID, query),
+						"hx-target":   "closest #ds-resource-list-root",
+						"hx-swap":     "outerHTML",
+					},
+				}) {
+					Try again
+				}
+			</div>
+		} else if len(resources) == 0 {
 			if driveFileScope {
 				<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-drivefile">
 					@ui.Alert(ui.AlertProps{

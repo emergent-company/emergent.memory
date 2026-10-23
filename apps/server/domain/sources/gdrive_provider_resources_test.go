@@ -15,6 +15,9 @@ type fakeDriveTransport struct {
 	listCalls     []string
 	getFolders    map[string]gdrive.Folder
 	getErr        error
+	listErr       error
+	exportErr     error
+	downloadErr   error
 	token         string
 	tokenErr      error
 	testConnErr   error
@@ -22,6 +25,9 @@ type fakeDriveTransport struct {
 
 func (f *fakeDriveTransport) ListFolderItems(_ context.Context, folderID string, _ []string, _ bool, _ string) ([]gdrive.Item, error) {
 	f.listCalls = append(f.listCalls, folderID)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	return f.itemsByFolder[folderID], nil
 }
 func (f *fakeDriveTransport) ListFolders(context.Context, string, string) ([]gdrive.Item, bool, error) {
@@ -47,10 +53,12 @@ func (f *fakeDriveTransport) AccessToken(context.Context) (string, time.Time, er
 	return token, time.Now().Add(time.Hour), nil
 }
 func (f *fakeDriveTransport) ExportText(context.Context, string, string) ([]byte, error) {
-	return nil, nil
+	return nil, f.exportErr
 }
-func (f *fakeDriveTransport) DownloadFile(context.Context, string) ([]byte, error) { return nil, nil }
-func (f *fakeDriveTransport) TestConnection(context.Context) error                 { return f.testConnErr }
+func (f *fakeDriveTransport) DownloadFile(context.Context, string) ([]byte, error) {
+	return nil, f.downloadErr
+}
+func (f *fakeDriveTransport) TestConnection(context.Context) error { return f.testConnErr }
 
 func TestGoogleDriveProvider_ListResources(t *testing.T) {
 	p := NewGoogleDriveProvider(func(context.Context, gdrive.Credentials) (DriveTransport, error) {
