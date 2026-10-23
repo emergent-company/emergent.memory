@@ -2329,8 +2329,7 @@
           }
         }
       }
-    }
-,
+    },
     "chat.tool.trace.running": {
       "extractionState": "manual",
       "localizations": {
@@ -2371,6 +2370,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "Worked in the workspace"
+          }
+        }
+      }
+    },
+    "chat.tool.group.steps %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld steps"
+          }
+        }
+      }
+    },
+    "chat.tool.group.a11y.expanded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expanded"
+          }
+        }
+      }
+    },
+    "chat.tool.group.a11y.collapsed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapsed"
+          }
+        }
+      }
+    },
+    "chat.tool.group.a11y.failed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "a step failed"
           }
         }
       }

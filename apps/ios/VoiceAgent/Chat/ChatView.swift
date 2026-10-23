@@ -27,11 +27,23 @@ struct ChatView: View {
     /// Scroll anchor pinned at the bottom of the message list.
     private static let bottomAnchorID = "chat.bottom"
 
+    /// Which step runs the reader has opened or closed, kept here so it
+    /// outlives the rows (they are rebuilt as steps settle).
+    @State private var disclosure = ToolActivityDisclosure()
+
     var body: some View {
-        if session.messages.isEmpty {
-            emptyState()
-        } else {
-            messageList()
+        Group {
+            if session.messages.isEmpty {
+                emptyState()
+            } else {
+                messageList()
+            }
+        }
+        .environment(\.toolActivityDisclosure, disclosure)
+        .onChange(of: store.turns.isEmpty) { _, empty in
+            if empty {
+                disclosure.clear()
+            }
         }
     }
 
@@ -190,11 +202,9 @@ struct ChatView: View {
                 ThinkingBlockView(text: turn.thinkingText, isLive: !turn.didReplyStart)
             }
             if !turn.tools.isEmpty {
-                VStack(alignment: .leading, spacing: 1 * .grid) {
-                    ForEach(turn.tools) { tool in
-                        LiveToolChip(tool: tool)
-                    }
-                }
+                // One run per turn: a summary line with the steps behind it,
+                // open while they run and closed once they settle.
+                ToolActivityGroup(tools: turn.tools, turnID: turn.id)
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in
