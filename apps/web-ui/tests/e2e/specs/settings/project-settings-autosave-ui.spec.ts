@@ -13,10 +13,13 @@ import { expectAppPage, goto } from '../../helpers/page';
 // Exercised fields, both safe to change and symmetrically restorable:
 //   - project-info textarea   → POST /settings/project/project_info
 //   - editor-agent select     → POST /settings/editor
+//   - merge-agent select      → POST /settings/merge (capability-gated)
 //
 // The editor select only lists the project's agent definitions, so the second
 // test creates a scratch `E2E Autosave Agent …` via the API, selects it, then
 // restores the original selection and deletes the agent (in cleanup, pass/fail).
+// The merge select additionally requires the merge tool set, so it is covered
+// with one capable and one toolless scratch agent.
 
 const SETTINGS = '/settings';
 
@@ -157,5 +160,81 @@ test('project settings: editor-agent autosaves inline and persists after reload'
       await expect(page.locator('#editor-agent')).toHaveValue(original);
     }
     if (agentId) await page.request.delete(`/api/agents/${agentId}`).catch(() => {});
+  }
+});
+
+test('project settings: merge agent autosaves and only merge-capable agents are selectable', async ({ page }) => {
+  test.setTimeout(120_000);
+  const stamp = Date.now();
+  let capableId = '';
+  let toollessId = '';
+  let original: string | null = null;
+
+  try {
+    // The merge flow needs entity-create (or -update), entity-delete,
+    // entity-edges-get and relationship-create (gateway/agent_tools.go).
+    const capable = await page.request.post('/api/agents', {
+      data: {
+        name: `E2E Merge Agent ${stamp}`,
+        tools: ['entity-create', 'entity-delete', 'entity-edges-get', 'relationship-create'],
+        skills: [],
+        config: {},
+      },
+    });
+    expect(capable.ok(), `create merge-capable agent failed (HTTP ${capable.status()})`).toBeTruthy();
+    capableId = ((await capable.json()) as { id: string }).id;
+
+    const toolless = await page.request.post('/api/agents', {
+      data: { name: `E2E Toolless Agent ${stamp}`, tools: [], skills: [], config: {} },
+    });
+    expect(toolless.ok(), `create toolless agent failed (HTTP ${toolless.status()})`).toBeTruthy();
+    toollessId = ((await toolless.json()) as { id: string }).id;
+
+    await goto(page, SETTINGS);
+    await expectAppPage(page, /Project Settings/);
+    const select = page.locator('#merge-agent');
+    await expect(select).toBeVisible();
+
+    // A merge-capable agent is selectable; a toolless agent is present but
+    // disabled with the missing requirements spelled out.
+    await expect(select.locator(`option[value="${capableId}"]`)).toHaveCount(1);
+    await expect(select.locator(`option[value="${capableId}"]`)).not.toHaveAttribute('disabled', '');
+    const toollessOption = select.locator(`option[value="${toollessId}"]`);
+    await expect(toollessOption).toHaveCount(1);
+    await expect(toollessOption).toHaveAttribute('disabled', '');
+    await expect(toollessOption).toContainText('missing:');
+
+    original = await select.inputValue();
+    await recordToasts(page);
+
+    const [resp] = await Promise.all([
+      waitForSave(page, '/settings/merge'),
+      select.selectOption(capableId), // select change → HTMX POST /settings/merge
+    ]);
+    await expectSavedToast(page, resp);
+
+    await page.reload();
+    await expectAppPage(page, /Project Settings/);
+    await expect(page.locator('#merge-agent')).toHaveValue(capableId);
+  } finally {
+    if (original !== null) {
+      await goto(page, SETTINGS);
+      const select = page.locator('#merge-agent');
+      const originalDisabled = await select
+        .locator(`option[value="${original}"]`)
+        .evaluate((el) => (el as HTMLOptionElement).disabled)
+        .catch(() => true);
+      // A stored value that is no longer merge-capable cannot be re-selected;
+      // clear the setting instead of leaving it pointing at a scratch agent we
+      // are about to delete.
+      const restoreTo = originalDisabled ? '' : original;
+      if ((await select.inputValue()) !== restoreTo) {
+        await Promise.all([waitForSave(page, '/settings/merge'), select.selectOption(restoreTo)]);
+      }
+      await page.reload();
+      await expect(page.locator('#merge-agent')).toHaveValue(restoreTo);
+    }
+    if (capableId) await page.request.delete(`/api/agents/${capableId}`).catch(() => {});
+    if (toollessId) await page.request.delete(`/api/agents/${toollessId}`).catch(() => {});
   }
 });

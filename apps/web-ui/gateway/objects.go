@@ -1114,17 +1114,19 @@ func (s *Server) uiObjectMerge(c echo.Context) error {
 	if err != nil {
 		return c.Redirect(http.StatusSeeOther, "/objects/"+srcID)
 	}
-	agentID := s.mergeAgentID(ctx)
+	agentID := s.resolveMergeAgentID(ctx)
 	if agentID == "" {
-		return c.Redirect(http.StatusSeeOther, "/objects/"+srcID)
+		return redirectWithError(c, "/objects/"+url.PathEscape(srcID), fmt.Errorf("no merge-capable agent — in Project settings pick an agent with %s", mergeCapabilityRequirement))
 	}
 	msg := mergeInstruction(src, dst)
 	return c.Redirect(http.StatusSeeOther, "/chat?agent="+url.QueryEscape(agentID)+"&prompt="+url.QueryEscape(msg))
 }
 
-// mergeAgentID picks the agent to run a merge: the default agent (IsDefault),
-// else the first enabled agent, else the first agent. Empty on error/none.
-func (s *Server) mergeAgentID(ctx context.Context) string {
+// defaultAgentID picks the generic default agent: the default agent
+// (IsDefault), else the first enabled agent, else the first agent. Empty on
+// error/none. Callers that need a specific capability (e.g. the merge flow)
+// must filter on top of this.
+func (s *Server) defaultAgentID(ctx context.Context) string {
 	agents, err := s.memory.ListAgentDefinitions(ctx)
 	if err != nil {
 		return ""
@@ -1154,7 +1156,64 @@ func (s *Server) resolveEditorAgentID(ctx context.Context) string {
 			return id
 		}
 	}
-	return s.mergeAgentID(ctx)
+	return s.defaultAgentID(ctx)
+}
+
+// resolveMergeAgentID returns the agent to run a merge. Unlike the editor
+// selection, a merge cannot be handed to an arbitrary agent: the agent must
+// grant the merge tool set (agentToolEligibility). Resolution order:
+//
+//  1. the configured merge agent, when it is still merge-capable
+//  2. the default agent, when it is merge-capable
+//  3. the first enabled merge-capable agent
+//  4. the first merge-capable agent
+//
+// Empty when no agent qualifies, which makes uiObjectMerge surface an
+// actionable configuration error instead of starting a doomed run.
+func (s *Server) resolveMergeAgentID(ctx context.Context) string {
+	cache := map[string]bool{}
+	capable := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		if v, ok := cache[id]; ok {
+			return v
+		}
+		def, err := s.memory.GetAgentDefinition(ctx, id)
+		ok := err == nil && def != nil
+		if ok {
+			missing, _ := agentToolEligibility(def)
+			ok = len(missing) == 0
+		}
+		cache[id] = ok
+		return ok
+	}
+
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok && capable(id) {
+			return id
+		}
+	}
+	agents, err := s.memory.ListAgentDefinitions(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, a := range agents {
+		if a.IsDefault && capable(a.ID) {
+			return a.ID
+		}
+	}
+	for _, a := range agents {
+		if a.Enabled && capable(a.ID) {
+			return a.ID
+		}
+	}
+	for _, a := range agents {
+		if capable(a.ID) {
+			return a.ID
+		}
+	}
+	return ""
 }
 
 // similarObjectLabel renders the display label for a similar-object row: the
@@ -1227,6 +1286,7 @@ func mergeInstruction(src, dst *GraphObject) string {
 	b.WriteString("\nSteps:\n")
 	b.WriteString("1. FIRST propose the merged shape: a single type, a single key, merged properties (reconciling conflicting values), and which relationships to keep or rewire.\n")
 	b.WriteString("2. THEN apply the merge using your memory tools: create/update the merged object and retire the source so only one object remains.\n")
+	b.WriteString("3. Rewire the source's remaining relationships onto the merged object (read them with entity-edges-get, then relationship-create). If you have relationship-delete, remove the stale edges left behind.\n")
 	return b.String()
 }
 

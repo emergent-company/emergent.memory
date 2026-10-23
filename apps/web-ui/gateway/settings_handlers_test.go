@@ -721,6 +721,213 @@ func TestUIProjectSettingsEditorRender(t *testing.T) {
 	}
 }
 
+// mergeCapableDefinition is a minimal definition that grants the merge tool set.
+func mergeCapableDefinition(id, name string) *AgentDefinition {
+	return &AgentDefinition{
+		ID: id, Name: name, Enabled: true,
+		Tools: []string{"entity-create", "entity-delete", "entity-edges-get", "relationship-create"},
+	}
+}
+
+// TestUIProjectSettingsMerge covers a valid merge-agent inline save (HTMX →
+// POST /settings/merge): the value stores as {"agentId": id} under
+// merge/agent_id and surfaces a success toast.
+func TestUIProjectSettingsMerge(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": mergeCapableDefinition("a1", "merger")}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("agent save should trigger a success toast, got %q", hdr)
+	}
+	if f.lastSettingCat != settingsMergeCategory || f.lastSettingKey != settingsMergeKey {
+		t.Errorf("write = %s/%s, want merge/agent_id", f.lastSettingCat, f.lastSettingKey)
+	}
+	if v, ok := f.lastSettingValue["agentId"].(string); !ok || v != "a1" {
+		t.Errorf("merge value = %v, want agentId a1", f.lastSettingValue)
+	}
+}
+
+// TestUIProjectSettingsMergeClear covers clearing the merge agent: an empty
+// value deletes the stored merge/agent_id setting.
+func TestUIProjectSettingsMergeClear(t *testing.T) {
+	f := &fakeMemory{settings: map[string]map[string]map[string]any{
+		"merge": {"agent_id": {"agentId": "a1"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"success"`) {
+		t.Errorf("clear should trigger a success toast, got %q", hdr)
+	}
+	if f.lastDeletedCat != settingsMergeCategory || f.lastDeletedKey != settingsMergeKey {
+		t.Errorf("clear should delete merge/agent_id, got %s/%s", f.lastDeletedCat, f.lastDeletedKey)
+	}
+}
+
+// TestUIProjectSettingsMergeRejectsIncapable covers the server-side validation:
+// an agent that lacks the merge tool set is rejected with an actionable error
+// toast and the setting is not written.
+func TestUIProjectSettingsMergeRejectsIncapable(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{
+		"a1": {ID: "a1", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=a1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "missing") {
+		t.Errorf("ineligible agent should trigger an error toast with the missing tools, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("ineligible agent must not be written, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsMergeUnknownAgent covers a stale option value: an agent
+// id that no longer resolves is rejected without a write.
+func TestUIProjectSettingsMergeUnknownAgent(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
+
+	rec := voicePost(e, "/settings/merge", "merge_agent=gone")
+	if hdr := rec.Header().Get("HX-Trigger"); !strings.Contains(hdr, `"kind":"error"`) {
+		t.Errorf("unknown agent should trigger an error toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("unknown agent must not be written, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsMergeRender exercises the merge-agent selector: capable
+// agents are selectable, incapable agents render disabled with their missing
+// tools, and a stored capable agent is preselected.
+func TestUIProjectSettingsMergeRender(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "merger", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": mergeCapableDefinition("a1", "merger"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"merge": {"agent_id": {"agentId": "a1"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Merge agent",
+		`hx-post="/settings/merge"`, `name="merge_agent"`, `hx-swap="none"`,
+		"None — auto-select a merge-capable agent",
+		mergeCapabilityRequirement,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("merge selector missing %q", want)
+		}
+	}
+	if !strings.Contains(body, `value="a1" selected`) {
+		t.Error("stored merge agent should render selected")
+	}
+	if !strings.Contains(body, "missing: entity-create or entity-update") {
+		t.Error("ineligible agent should show its missing tools")
+	}
+	if !strings.Contains(body, "merger — no relationship-delete (optional)") {
+		t.Error("an eligible agent missing a recommended tool should say so")
+	}
+	if strings.Contains(body, "merge-agent-warning") {
+		t.Error("a capable stored merge agent must not render a warning")
+	}
+}
+
+// TestMergeAgentWarning covers the three warning shapes, including the
+// agent-list-unavailable case that must not masquerade as "agent deleted".
+func TestMergeAgentWarning(t *testing.T) {
+	options := []mergeAgentOption{
+		{ID: "a1", Name: "merger", Eligible: true},
+		{ID: "a2", Name: "toolless", Detail: "entity-delete"},
+	}
+	if got := mergeAgentWarning(options, "", false); got != "" {
+		t.Errorf("unset selection warning = %q, want empty", got)
+	}
+	if got := mergeAgentWarning(options, "a1", false); got != "" {
+		t.Errorf("capable selection warning = %q, want empty", got)
+	}
+	if got := mergeAgentWarning(options, "a2", false); !strings.Contains(got, "missing: entity-delete") {
+		t.Errorf("incapable selection warning = %q, want the missing tools", got)
+	}
+	if got := mergeAgentWarning(options, "gone", false); !strings.Contains(got, "no longer in this project") {
+		t.Errorf("unlisted selection warning = %q, want the unlisted message", got)
+	}
+	if got := mergeAgentWarning(options, "a1", true); !strings.Contains(got, "Could not check") {
+		t.Errorf("unavailable list warning = %q, want the unavailable message", got)
+	}
+}
+
+// TestUIProjectSettingsMergeRenderStale covers a stored merge agent that is no
+// longer capable: the selector keeps the value visible, flags it invalid, and
+// explains that merges will not start.
+func TestUIProjectSettingsMergeRenderStale(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "merger", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": mergeCapableDefinition("a1", "merger"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"merge": {"agent_id": {"agentId": "a2"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "merge-agent-warning") {
+		t.Error("an incapable stored merge agent should render a warning")
+	}
+	if !strings.Contains(body, "Merges will not start") {
+		t.Error("the warning should say merges will not start")
+	}
+	if !strings.Contains(body, `value="a2" selected`) {
+		t.Error("the stale value should stay visible as the selected option")
+	}
+}
+
 // voicePost issues a form-encoded POST to a voice inline-save endpoint and
 // returns the recorder.
 func voicePost(e *echo.Echo, path, body string) *httptest.ResponseRecorder {

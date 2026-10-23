@@ -508,6 +508,7 @@ func main() {
 	e.POST("/settings/remember/:field", s.uiProjectSettingsRememberField)
 	e.POST("/settings/assistant", s.uiProjectSettingsAssistant)
 	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+	e.POST("/settings/merge", s.uiProjectSettingsMerge)
 	e.POST("/settings/voice", s.uiProjectSettingsVoice)
 	e.POST("/settings/voice/:key", s.uiProjectVoiceField)
 	e.POST("/settings/voice/group/:group", s.uiProjectVoiceGroup)

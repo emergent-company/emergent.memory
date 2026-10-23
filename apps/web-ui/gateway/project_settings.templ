@@ -88,6 +88,7 @@ templ ProjectSettingsPage(data projectSettingsData) {
 			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
 				@projectInfoPanel(data.Project)
 				@editorAgentPanel(data.EditorAgent, data.Agents)
+				@mergeAgentPanel(data.MergeAgent, data.MergeOptions, data.MergeAgentWarning)
 				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
 			}
 		}
@@ -418,6 +419,39 @@ templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
 					Object edits run on the default agent until you pick one.
 				}
+			}
+		</div>
+	}
+}
+
+// mergeAgentPanel edits the merge-agent selection (which agent definition runs
+// the object-merge flow from the object page). Unlike the editor selection,
+// this is validated: only agents that grant the merge tool set can be chosen.
+// Ineligible agents stay visible but disabled with their missing requirements,
+// so the page explains why an agent cannot be picked. The empty option clears
+// the override; the merge deep link then auto-selects a merge-capable agent.
+templ mergeAgentPanel(mergeAgent string, options []mergeAgentOption, warning string) {
+	@ui.Section("Merge agent", ui.SectionProps{
+		Margin:    "mb-6",
+		BodyClass: "memory-density-comfortable",
+	}) {
+		<div class="flex flex-col gap-4">
+			@settingsField("merge-agent", "Merge agent", "The agent that runs the object-merge flow (combining two objects, retiring the source, and rewiring relationships). Only agents with the required memory tools can be selected.", "The agent definition that runs object merges. Empty auto-selects a merge-capable agent.", nil) {
+				<select id="merge-agent" name="merge_agent" class="select w-full" hx-post="/settings/merge" hx-trigger="change" hx-include="this" hx-swap="none">
+					<option value="" selected?={ mergeAgent == "" }>None — auto-select a merge-capable agent</option>
+					for _, o := range options {
+						<option value={ o.ID } selected?={ o.ID == mergeAgent } disabled?={ !o.Eligible }>{ mergeAgentLabel(o) }</option>
+					}
+					if mergeAgent != "" && !mergeOptionListed(options, mergeAgent) {
+						<option value={ mergeAgent } selected>{ mergeAgent } (unlisted — not merge-capable)</option>
+					}
+				</select>
+			}
+			if warning != "" {
+				<p class="text-warning text-xs" data-testid="merge-agent-warning">{ warning }</p>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+				Requires { mergeCapabilityRequirement }. relationship-delete is recommended for stale-edge cleanup but not required. Agents missing required tools are listed but cannot be selected.
 			}
 		</div>
 	}

@@ -801,7 +801,7 @@ func TestSimilarityLabel(t *testing.T) {
 	}
 }
 
-func TestMergeAgentID(t *testing.T) {
+func TestDefaultAgentID(t *testing.T) {
 	ctx := context.Background()
 	newServer := func(f *fakeMemory) *Server { return &Server{memory: f} }
 
@@ -809,24 +809,24 @@ func TestMergeAgentID(t *testing.T) {
 		{ID: "a1", Name: "one", Enabled: true},
 		{ID: "a2", Name: "two", IsDefault: true, Enabled: true},
 	}}
-	if got := newServer(f).mergeAgentID(ctx); got != "a2" {
+	if got := newServer(f).defaultAgentID(ctx); got != "a2" {
 		t.Errorf("default agent = %q, want a2", got)
 	}
 	f = &fakeMemory{agents: []AgentDefinitionSummary{
 		{ID: "a1", Name: "one", Enabled: false},
 		{ID: "a2", Name: "two", Enabled: true},
 	}}
-	if got := newServer(f).mergeAgentID(ctx); got != "a2" {
+	if got := newServer(f).defaultAgentID(ctx); got != "a2" {
 		t.Errorf("first enabled agent = %q, want a2", got)
 	}
 	f = &fakeMemory{agents: []AgentDefinitionSummary{
 		{ID: "a1", Name: "one", Enabled: false},
 	}}
-	if got := newServer(f).mergeAgentID(ctx); got != "a1" {
+	if got := newServer(f).defaultAgentID(ctx); got != "a1" {
 		t.Errorf("first agent = %q, want a1", got)
 	}
 	f = &fakeMemory{}
-	if got := newServer(f).mergeAgentID(ctx); got != "" {
+	if got := newServer(f).defaultAgentID(ctx); got != "" {
 		t.Errorf("no agents = %q, want empty", got)
 	}
 }
@@ -857,7 +857,7 @@ func TestResolveEditorAgentID(t *testing.T) {
 		t.Errorf("empty configured value = %q, want fallback a1", got)
 	}
 
-	// unconfigured falls back to mergeAgentID (default → first enabled → first)
+	// unconfigured falls back to defaultAgentID (default → first enabled → first)
 	f = &fakeMemory{agents: []AgentDefinitionSummary{
 		{ID: "a1", Name: "one", Enabled: true},
 		{ID: "a2", Name: "two", IsDefault: true, Enabled: true},
@@ -874,6 +874,79 @@ func TestResolveEditorAgentID(t *testing.T) {
 	}
 	f = &fakeMemory{}
 	if got := newServer(f).resolveEditorAgentID(ctx); got != "" {
+		t.Errorf("no agents = %q, want empty", got)
+	}
+}
+
+func TestResolveMergeAgentID(t *testing.T) {
+	ctx := context.Background()
+	newServer := func(f *fakeMemory) *Server { return &Server{memory: f} }
+	// The tool set an agent needs to run a merge (see agentToolEligibility).
+	mergeTools := []string{"entity-create", "entity-delete", "entity-edges-get", "relationship-create"}
+	def := func(id, name string, enabled bool, tools ...string) *AgentDefinition {
+		return &AgentDefinition{ID: id, Name: name, Enabled: enabled, Tools: tools}
+	}
+
+	// the configured merge agent wins when it is merge-capable
+	f := &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", IsDefault: true, Enabled: true},
+			{ID: "a2", Name: "two", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": def("a1", "one", true, mergeTools...),
+			"a2": def("a2", "two", true, mergeTools...),
+		},
+		settings: map[string]map[string]map[string]any{
+			"merge": {"agent_id": {"agentId": "a2"}},
+		},
+	}
+	if got := newServer(f).resolveMergeAgentID(ctx); got != "a2" {
+		t.Errorf("configured merge agent = %q, want a2", got)
+	}
+
+	// a configured agent that lost a required tool is skipped in favour of the
+	// default agent — never run a merge with an incapable agent
+	f.defs["a2"] = def("a2", "two", true, "entity-create", "entity-edges-get", "relationship-create")
+	if got := newServer(f).resolveMergeAgentID(ctx); got != "a1" {
+		t.Errorf("incapable configured merge agent = %q, want fallback a1", got)
+	}
+
+	// the default agent is skipped when it cannot merge
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", IsDefault: true, Enabled: true},
+			{ID: "a2", Name: "two", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": def("a1", "one", true),
+			"a2": def("a2", "two", true, mergeTools...),
+		},
+	}
+	if got := newServer(f).resolveMergeAgentID(ctx); got != "a2" {
+		t.Errorf("incapable default agent = %q, want first capable enabled a2", got)
+	}
+
+	// a disabled but capable agent is still the only candidate
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", Enabled: false}},
+		defs:   map[string]*AgentDefinition{"a1": def("a1", "one", false, mergeTools...)},
+	}
+	if got := newServer(f).resolveMergeAgentID(ctx); got != "a1" {
+		t.Errorf("only capable agent (disabled) = %q, want a1", got)
+	}
+
+	// no merge-capable agent resolves to empty, so the deep link can explain
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", IsDefault: true, Enabled: true}},
+		defs:   map[string]*AgentDefinition{"a1": def("a1", "one", true, "entity-query")},
+	}
+	if got := newServer(f).resolveMergeAgentID(ctx); got != "" {
+		t.Errorf("no merge-capable agent = %q, want empty", got)
+	}
+
+	// no agents at all
+	if got := newServer(&fakeMemory{}).resolveMergeAgentID(ctx); got != "" {
 		t.Errorf("no agents = %q, want empty", got)
 	}
 }
@@ -899,6 +972,23 @@ func TestObjectChatInstruction(t *testing.T) {
 	}
 }
 
+func TestMergeInstruction(t *testing.T) {
+	src := &GraphObject{ID: "o1", Type: "person", Key: "sam-lee"}
+	dst := &GraphObject{ID: "o2", Type: "person", Key: "samuel-lee"}
+	got := mergeInstruction(src, dst)
+	for _, want := range []string{
+		"Merge the following two knowledge-graph objects",
+		"sam-lee", "samuel-lee",
+		"propose the merged shape",
+		"retire the source",
+		"entity-edges-get", "relationship-create", "relationship-delete",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("merge instruction missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestObjectMergeRedirect(t *testing.T) {
 	f := &fakeMemory{
 		objects: []GraphObject{
@@ -910,6 +1000,11 @@ func TestObjectMergeRedirect(t *testing.T) {
 		},
 		agents: []AgentDefinitionSummary{
 			{ID: "a1", Name: "diane", IsDefault: true, Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Enabled: true, Tools: []string{
+				"entity-create", "entity-delete", "entity-edges-get", "relationship-create",
+			}},
 		},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
@@ -942,6 +1037,18 @@ func TestObjectMergeRedirect(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/nope/merge?with=o2", nil))
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/objects/nope" {
 		t.Fatalf("unknown src: status=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// no merge-capable agent: the deep link must explain the configuration gap
+	// instead of starting a run the agent cannot complete
+	f.defs["a1"] = &AgentDefinition{ID: "a1", Name: "diane", Enabled: true, Tools: []string{"entity-query"}}
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1/merge?with=o2", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("no capable agent: status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "no+merge-capable+agent") && !strings.Contains(loc, "no%20merge-capable%20agent") {
+		t.Errorf("no capable agent: location = %q, want an error redirect", loc)
 	}
 }
 

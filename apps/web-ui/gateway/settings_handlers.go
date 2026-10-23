@@ -44,6 +44,15 @@ const (
 	settingsEditorKey      = "agent_id"
 )
 
+// settingsMergeCategory / settingsMergeKey are the generic-settings
+// coordinates of the merge agent selection (which agent definition runs the
+// object-merge flow). Only agents that grant the merge tool set may be stored;
+// see agentToolEligibility.
+const (
+	settingsMergeCategory = "merge"
+	settingsMergeKey      = "agent_id"
+)
+
 // defaultRememberAgent is the canonical agent definition that powers the
 // remember pipeline when no override is set (memory's
 // agents.CanonicalRememberAgentName). An override to this name, or an unset
@@ -165,9 +174,31 @@ type projectSettingsData struct {
 	RememberAgent  string
 	DedupThreshold string
 	EditorAgent    string
-	LoadErr        error
-	FlashMsg       string
-	FlashErr       error
+	MergeAgent     string
+	MergeOptions   []mergeAgentOption
+	// MergeAgentWarning is non-empty when the stored merge agent is no longer
+	// listed or no longer merge-capable; the selector shows it inline so the
+	// page never implies a merge would work.
+	MergeAgentWarning string
+	// AgentsUnavailable records a failed agent-list fetch so the merge warning
+	// can say the selection could not be checked instead of claiming the stored
+	// agent was deleted.
+	AgentsUnavailable bool
+	LoadErr           error
+	FlashMsg          string
+	FlashErr          error
+}
+
+// mergeAgentOption is one row of the merge-agent selector: whether the agent
+// definition grants the merge tool set, the missing requirements to show beside
+// a disabled option, and — for an eligible agent — the recommended tools it
+// lacks (never gating, surfaced as an advisory).
+type mergeAgentOption struct {
+	ID       string
+	Name     string
+	Eligible bool
+	Detail   string
+	Advisory string
 }
 
 // assistantSettingsPageData is the payload for AssistantSettingsPage: the
@@ -286,6 +317,7 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 	agents, err := s.memory.ListAgentDefinitions(ctx)
 	captureError(err)
 	data.Agents = agents
+	data.AgentsUnavailable = err != nil
 
 	if ps, perr := s.memory.GetProjectSetting(ctx, settingsRememberCategory, settingsRememberKey); perr == nil && ps != nil {
 		if name, ok := ps.Value["name"].(string); ok {
@@ -302,7 +334,69 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 			data.EditorAgent = id
 		}
 	}
+	if ps, perr := s.memory.GetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); perr == nil && ps != nil {
+		if id, ok := ps.Value["agentId"].(string); ok {
+			data.MergeAgent = id
+		}
+	}
+	data.MergeOptions = s.mergeAgentOptions(ctx, agents)
+	data.MergeAgentWarning = mergeAgentWarning(data.MergeOptions, data.MergeAgent, data.AgentsUnavailable)
 	return s.page(c, pageTitle("Project Settings"), ProjectSettingsPage(data))
+}
+
+// mergeAgentWarning explains a stored merge agent that can no longer run a
+// merge (deleted, unlisted, or edited to drop required tools). Empty when the
+// selection is fine or unset.
+func mergeAgentWarning(options []mergeAgentOption, id string, agentsUnavailable bool) string {
+	if id == "" {
+		return ""
+	}
+	if agentsUnavailable {
+		return "Could not check the configured merge agent: the agent list is unavailable right now."
+	}
+	opt, ok := mergeOptionByID(options, id)
+	if !ok {
+		return "The configured merge agent is no longer in this project. Merges will not start until you pick a merge-capable agent."
+	}
+	if opt.Eligible {
+		return ""
+	}
+	detail := opt.Detail
+	if detail == "" {
+		detail = "required tools"
+	}
+	return fmt.Sprintf("The configured merge agent (%s) cannot run a merge — missing: %s. Merges will not start until you pick a merge-capable agent.", opt.Name, detail)
+}
+
+// mergeAgentOptions annotates every agent with whether it can run the merge
+// flow. Eligibility needs the full definition (allowed/banned tools and tool
+// policies), which the list endpoint does not carry, so this is one extra GET
+// per agent — the project's agent count is small and this runs on the settings
+// page only. A failed fetch is treated as ineligible rather than crashing the
+// page.
+func (s *Server) mergeAgentOptions(ctx context.Context, agents []AgentDefinitionSummary) []mergeAgentOption {
+	opts := make([]mergeAgentOption, 0, len(agents))
+	for _, a := range agents {
+		opt := mergeAgentOption{ID: a.ID, Name: a.Name}
+		def, err := s.memory.GetAgentDefinition(ctx, a.ID)
+		switch {
+		case err != nil || def == nil:
+			if err != nil {
+				captureError(err)
+			}
+			opt.Detail = "agent definition unavailable"
+		default:
+			missing, recommended := agentToolEligibility(def)
+			if len(missing) == 0 {
+				opt.Eligible = true
+				opt.Advisory = strings.Join(recommended, ", ")
+			} else {
+				opt.Detail = strings.Join(missing, ", ")
+			}
+		}
+		opts = append(opts, opt)
+	}
+	return opts
 }
 
 // uiProjectAssistantSettings renders the Assistant settings page. ?updated=1 /
@@ -659,6 +753,34 @@ func (s *Server) uiProjectSettingsEditor(c echo.Context) error {
 			return toastTrigger(c, "error", err.Error())
 		}
 	} else if err := s.memory.SetProjectSetting(ctx, settingsEditorCategory, settingsEditorKey, map[string]any{"agentId": id}); err != nil {
+		return toastTrigger(c, "error", err.Error())
+	}
+	return toastTrigger(c, "success", "Saved")
+}
+
+// uiProjectSettingsMerge handles the merge agent inline save (HTMX → POST
+// /settings/merge). An empty value clears the setting (the merge deep link then
+// auto-selects a merge-capable agent); any other value must name an agent
+// definition that grants the merge tool set. Re-validating here is defence in
+// depth: the selector already disables ineligible agents, but a stale page or a
+// crafted request must not hand a merge to an agent that cannot do it.
+func (s *Server) uiProjectSettingsMerge(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := strings.TrimSpace(c.FormValue("merge_agent"))
+	if id == "" {
+		if err := s.memory.DeleteProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); err != nil {
+			return toastTrigger(c, "error", err.Error())
+		}
+		return toastTrigger(c, "success", "Saved")
+	}
+	def, err := s.memory.GetAgentDefinition(ctx, id)
+	if err != nil || def == nil {
+		return toastTrigger(c, "error", "That agent definition could not be loaded — pick another merge agent.")
+	}
+	if missing, _ := agentToolEligibility(def); len(missing) > 0 {
+		return toastTrigger(c, "error", fmt.Sprintf("%s cannot run a merge — missing: %s.", def.Name, strings.Join(missing, ", ")))
+	}
+	if err := s.memory.SetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey, map[string]any{"agentId": id}); err != nil {
 		return toastTrigger(c, "error", err.Error())
 	}
 	return toastTrigger(c, "success", "Saved")
@@ -1107,6 +1229,37 @@ func agentListedByID(agents []AgentDefinitionSummary, id string) bool {
 		}
 	}
 	return false
+}
+
+// mergeOptionByID returns the merge selector option for an agent id.
+func mergeOptionByID(options []mergeAgentOption, id string) (mergeAgentOption, bool) {
+	for _, o := range options {
+		if o.ID == id {
+			return o, true
+		}
+	}
+	return mergeAgentOption{}, false
+}
+
+// mergeOptionListed reports whether id appears in the merge selector options.
+func mergeOptionListed(options []mergeAgentOption, id string) bool {
+	_, ok := mergeOptionByID(options, id)
+	return ok
+}
+
+// mergeAgentLabel renders a merge selector option: the agent name, plus the
+// missing requirements when it cannot run a merge.
+func mergeAgentLabel(o mergeAgentOption) string {
+	if o.Eligible {
+		if o.Advisory != "" {
+			return o.Name + " — no " + o.Advisory + " (optional)"
+		}
+		return o.Name
+	}
+	if o.Detail == "" {
+		return o.Name + " (not merge-capable)"
+	}
+	return o.Name + " — missing: " + o.Detail
 }
 
 // agentNameByID resolves an agent definition's display name from its ID,
