@@ -83,7 +83,9 @@ func (t Tokens) ExpiresAt(now time.Time) time.Time {
 //  1. Discover the protected-resource metadata (RFC 9728): probe the resource
 //     for a 401 Bearer challenge advertising `resource_metadata`, else fetch
 //     `/.well-known/oauth-protected-resource` on the resource origin.
-//  2. Fetch the authorization-server metadata (RFC 8414 / OpenID discovery).
+//  2. Resolve the authorization-server metadata (RFC 8414 / OpenID discovery)
+//     from the issuer advertised in the protected-resource metadata (or the
+//     resource origin when none is advertised).
 //  3. Register a public client via RFC 7591 dynamic client registration.
 func DiscoverAndRegister(ctx context.Context, cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.Resource) == "" {
@@ -110,14 +112,20 @@ func DiscoverAndRegister(ctx context.Context, cfg Config) (*Client, error) {
 		resource = cfg.Resource
 	}
 
-	asURL := ""
+	// authorization_servers carries an issuer identifier (RFC 9728), not a
+	// metadata URL — discoverASMetadata derives the RFC 8414 / OpenID discovery
+	// candidates from it.
+	issuer := ""
 	if len(prm.AuthorizationServers) > 0 {
-		asURL = prm.AuthorizationServers[0]
+		issuer = prm.AuthorizationServers[0]
 	}
-	if strings.TrimSpace(asURL) == "" {
-		asURL = resourceOrigin(cfg.Resource) + "/.well-known/oauth-authorization-server"
+	if strings.TrimSpace(issuer) == "" {
+		// No servers advertised: discover on the resource's own origin. This is
+		// an issuer (origin), not a pre-built well-known URL — asMetadataCandidates
+		// derives the well-known paths.
+		issuer = resourceOrigin(cfg.Resource)
 	}
-	as, err := fetchASMetadata(ctx, httpc, asURL)
+	as, err := discoverASMetadata(ctx, httpc, issuer)
 	if err != nil {
 		return nil, fmt.Errorf("mcpauth: authorization-server metadata: %w", err)
 	}

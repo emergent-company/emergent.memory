@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -15,6 +16,10 @@ import (
 // serves the full dynamic-client bootstrap: resource probe (401 Bearer
 // challenge), protected-resource metadata, authorization-server metadata, DCR,
 // and the token endpoint. The token handler is customizable via tokenBody.
+//
+// The fake AS models RFC 8414 / Supabase/Trale behaviour: the issuer is
+// <base>/auth/v1, the bare issuer path answers 401, and the metadata document is
+// served at the path-insertion URL <base>/.well-known/oauth-authorization-server/auth/v1.
 func newTestAS(t *testing.T, tokenStatus int, tokenBody func() map[string]any) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -28,25 +33,9 @@ func newTestAS(t *testing.T, tokenStatus int, tokenBody func() map[string]any) *
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 
-	mux.HandleFunc("/prm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"resource":              serverBase(r) + "/api/mcp",
-			"authorization_servers": []string{serverBase(r) + "/as"},
-		})
-	})
+	mux.HandleFunc("/prm", writePRM)
 
-	mux.HandleFunc("/as", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 serverBase(r),
-			"authorization_endpoint": serverBase(r) + "/auth",
-			"token_endpoint":         serverBase(r) + "/token",
-			"registration_endpoint":  serverBase(r) + "/register",
-		})
-	})
-
-	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+	registerRFC8414AS(mux, func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req["token_endpoint_auth_method"] != "none" {
@@ -72,6 +61,41 @@ func newTestAS(t *testing.T, tokenStatus int, tokenBody func() map[string]any) *
 
 func serverBase(r *http.Request) string {
 	return "http://" + r.Host
+}
+
+// writePRM encodes protected-resource metadata advertising the RFC 8414 issuer
+// <base>/auth/v1 — exactly what Trale's live document advertises.
+func writePRM(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"resource":              serverBase(r) + "/api/mcp",
+		"authorization_servers": []string{serverBase(r) + "/auth/v1"},
+	})
+}
+
+// writeASMetadata serves the authorization-server metadata document naming the
+// authorization/token/registration endpoints.
+func writeASMetadata(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"issuer":                 serverBase(r) + "/auth/v1",
+		"authorization_endpoint": serverBase(r) + "/auth",
+		"token_endpoint":         serverBase(r) + "/token",
+		"registration_endpoint":  serverBase(r) + "/register",
+	})
+}
+
+// registerRFC8414AS wires the fake authorization server onto mux the way
+// Supabase/Trale actually behave: the bare issuer path <base>/auth/v1 answers
+// 401 (the production bug), and the metadata document lives at the RFC 8414 §3.1
+// path-insertion URL <base>/.well-known/oauth-authorization-server/auth/v1. reg
+// handles the DCR registration request (each test supplies its own response).
+func registerRFC8414AS(mux *http.ServeMux, reg http.HandlerFunc) {
+	mux.HandleFunc("/auth/v1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server/auth/v1", writeASMetadata)
+	mux.HandleFunc("/register", reg)
 }
 
 func TestDiscoverAndRegister_FullFlow(t *testing.T) {
@@ -112,22 +136,8 @@ func TestDiscoverAndRegister_WellKnownFallback(t *testing.T) {
 	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // no challenge
 	})
-	mux.HandleFunc("/.well-known/oauth-protected-resource", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"resource":              serverBase(r) + "/api/mcp",
-			"authorization_servers": []string{serverBase(r) + "/as"},
-		})
-	})
-	mux.HandleFunc("/as", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"authorization_endpoint": serverBase(r) + "/auth",
-			"token_endpoint":         serverBase(r) + "/token",
-			"registration_endpoint":  serverBase(r) + "/register",
-		})
-	})
-	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/.well-known/oauth-protected-resource", writePRM)
+	registerRFC8414AS(mux, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "client-wk"})
@@ -156,22 +166,8 @@ func TestDiscoverAndRegister_DCRError(t *testing.T) {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	})
-	mux.HandleFunc("/prm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"resource":              serverBase(r) + "/api/mcp",
-			"authorization_servers": []string{serverBase(r) + "/as"},
-		})
-	})
-	mux.HandleFunc("/as", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"authorization_endpoint": serverBase(r) + "/auth",
-			"token_endpoint":         serverBase(r) + "/token",
-			"registration_endpoint":  serverBase(r) + "/register",
-		})
-	})
-	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/prm", writePRM)
+	registerRFC8414AS(mux, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_redirect_uri", "error_description": "uri not allowed"})
@@ -194,21 +190,24 @@ func TestDiscoverAndRegister_DCRError(t *testing.T) {
 	}
 }
 
-func TestDiscoverAndRegister_ASMetadataError(t *testing.T) {
+// TestDiscoverAndRegister_AllMetadataEndpointsFail asserts that when every
+// discovery candidate fails, the error names the attempted endpoints and their
+// statuses, and no DCR attempt is made.
+func TestDiscoverAndRegister_AllMetadataEndpointsFail(t *testing.T) {
+	var registered atomic.Bool
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
 		w.WriteHeader(http.StatusUnauthorized)
 	})
-	mux.HandleFunc("/prm", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"resource":              serverBase(r) + "/api/mcp",
-			"authorization_servers": []string{serverBase(r) + "/as"},
-		})
+	mux.HandleFunc("/prm", writePRM)
+	// The bare issuer 401s (Supabase); no metadata is served at any candidate.
+	mux.HandleFunc("/auth/v1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
 	})
-	mux.HandleFunc("/as", func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "not found", http.StatusNotFound)
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		registered.Store(true)
+		w.WriteHeader(http.StatusCreated)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -223,6 +222,246 @@ func TestDiscoverAndRegister_ASMetadataError(t *testing.T) {
 	if err == nil {
 		t.Fatal("DiscoverAndRegister() error = nil, want AS metadata error")
 	}
+	if !strings.Contains(err.Error(), "authorization-server metadata") {
+		t.Errorf("DiscoverAndRegister() error = %v, want authorization-server metadata prefix", err)
+	}
+	// At least two candidate URLs and their statuses must be named.
+	for _, want := range []string{srv.URL + "/.well-known/oauth-authorization-server/auth/v1", srv.URL + "/auth/v1/.well-known/openid-configuration", " -> 404"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("DiscoverAndRegister() error = %v, want it to name %q", err, want)
+		}
+	}
+	if registered.Load() {
+		t.Error("DCR was attempted despite all discovery endpoints failing")
+	}
+}
+
+// TestDiscoverAndRegister_RFC8414PathInsertion is the regression test for the
+// Trale production bug: the PRM's authorization_servers[0] is an ISSUER
+// identifier (<base>/auth/v1), the bare issuer path answers 401 (Supabase), and
+// the metadata document is served only at the RFC 8414 §3.1 path-insertion URL
+// <base>/.well-known/oauth-authorization-server/auth/v1. Against the old code
+// (which fetched the issuer directly) this fails with a 401.
+func TestDiscoverAndRegister_RFC8414PathInsertion(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/prm", writePRM)
+	registerRFC8414AS(mux, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "client-rfc8414"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := DiscoverAndRegister(context.Background(), Config{
+		Resource:    srv.URL + "/api/mcp",
+		ClientName:  "Emergent Memory",
+		Scopes:      []string{"openid"},
+		RedirectURI: "https://app.example/callback",
+		HTTPClient:  srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndRegister() error = %v", err)
+	}
+	if c.ClientID != "client-rfc8414" {
+		t.Errorf("ClientID = %q, want client-rfc8414", c.ClientID)
+	}
+	if c.AuthURL != srv.URL+"/auth" {
+		t.Errorf("AuthURL = %q, want %q", c.AuthURL, srv.URL+"/auth")
+	}
+	if c.TokenURL != srv.URL+"/token" {
+		t.Errorf("TokenURL = %q, want %q", c.TokenURL, srv.URL+"/token")
+	}
+}
+
+// TestDiscoverAndRegister_OIDCFallback asserts discovery when the metadata is
+// served only at the OpenID location <base>/<path>/.well-known/openid-configuration.
+func TestDiscoverAndRegister_OIDCFallback(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/prm", writePRM)
+	mux.HandleFunc("/auth/v1/.well-known/openid-configuration", writeASMetadata)
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "client-oidc"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := DiscoverAndRegister(context.Background(), Config{
+		Resource:    srv.URL + "/api/mcp",
+		ClientName:  "Emergent Memory",
+		Scopes:      []string{"openid"},
+		RedirectURI: "https://app.example/callback",
+		HTTPClient:  srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndRegister() error = %v", err)
+	}
+	if c.ClientID != "client-oidc" {
+		t.Errorf("ClientID = %q, want client-oidc", c.ClientID)
+	}
+}
+
+// TestDiscoverAndRegister_OIDCAlternate asserts discovery when the metadata is
+// served only at the OpenID path-suffix variant <base>/.well-known/openid-configuration/<path>.
+func TestDiscoverAndRegister_OIDCAlternate(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/prm", writePRM)
+	mux.HandleFunc("/.well-known/openid-configuration/auth/v1", writeASMetadata)
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "client-oidc-alt"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := DiscoverAndRegister(context.Background(), Config{
+		Resource:    srv.URL + "/api/mcp",
+		ClientName:  "Emergent Memory",
+		Scopes:      []string{"openid"},
+		RedirectURI: "https://app.example/callback",
+		HTTPClient:  srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndRegister() error = %v", err)
+	}
+	if c.ClientID != "client-oidc-alt" {
+		t.Errorf("ClientID = %q, want client-oidc-alt", c.ClientID)
+	}
+}
+
+// TestDiscoverAndRegister_IssuerWithoutPath asserts discovery when the PRM
+// advertises an origin-only issuer (authorization_servers: [base]): the
+// metadata is discovered at <base>/.well-known/oauth-authorization-server.
+func TestDiscoverAndRegister_IssuerWithoutPath(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/mcp", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+serverBase(r)+`/prm"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/prm", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"resource":              serverBase(r) + "/api/mcp",
+			"authorization_servers": []string{serverBase(r)},
+		})
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server", writeASMetadata)
+	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": "client-origin"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c, err := DiscoverAndRegister(context.Background(), Config{
+		Resource:    srv.URL + "/api/mcp",
+		ClientName:  "Emergent Memory",
+		Scopes:      []string{"openid"},
+		RedirectURI: "https://app.example/callback",
+		HTTPClient:  srv.Client(),
+	})
+	if err != nil {
+		t.Fatalf("DiscoverAndRegister() error = %v", err)
+	}
+	if c.ClientID != "client-origin" {
+		t.Errorf("ClientID = %q, want client-origin", c.ClientID)
+	}
+}
+
+// TestAsMetadataCandidates pins the candidate derivation rules directly.
+func TestAsMetadataCandidates(t *testing.T) {
+	issuerWithPath := "https://auth.example/auth/v1"
+	pathCandidates := []string{
+		"https://auth.example/.well-known/oauth-authorization-server/auth/v1",
+		"https://auth.example/auth/v1/.well-known/oauth-authorization-server",
+		"https://auth.example/auth/v1/.well-known/openid-configuration",
+		"https://auth.example/.well-known/openid-configuration/auth/v1",
+	}
+
+	cases := []struct {
+		name    string
+		issuer  string
+		want    []string
+		notBare string
+	}{
+		{
+			name:    "issuer with path order",
+			issuer:  issuerWithPath,
+			want:    pathCandidates,
+			notBare: issuerWithPath,
+		},
+		{
+			name:   "origin only",
+			issuer: "https://auth.example",
+			want: []string{
+				"https://auth.example/.well-known/oauth-authorization-server",
+				"https://auth.example/.well-known/openid-configuration",
+			},
+			notBare: "https://auth.example",
+		},
+		{
+			name:   "already a metadata URL",
+			issuer: "https://auth.example/.well-known/oauth-authorization-server/auth/v1",
+			want:   []string{"https://auth.example/.well-known/oauth-authorization-server/auth/v1"},
+		},
+		{
+			name:    "trailing slash on path",
+			issuer:  "https://auth.example/auth/v1/",
+			want:    pathCandidates,
+			notBare: "https://auth.example/auth/v1/",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := asMetadataCandidates(tc.issuer)
+			if len(got) != len(tc.want) {
+				t.Fatalf("asMetadataCandidates(%q) = %v, want %v", tc.issuer, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("asMetadataCandidates(%q)[%d] = %q, want %q (full: %v)", tc.issuer, i, got[i], tc.want[i], got)
+				}
+			}
+			if tc.notBare != "" {
+				for _, c := range got {
+					if c == tc.notBare {
+						t.Errorf("asMetadataCandidates(%q) returned the bare issuer %q", tc.issuer, c)
+					}
+				}
+			}
+		})
+	}
+
+	// The bare issuer must never be a candidate even when it has no path.
+	if got := asMetadataCandidates("https://auth.example"); contains(got, "https://auth.example") {
+		t.Errorf("asMetadataCandidates returned the bare origin as a candidate: %v", got)
+	}
+}
+
+func contains(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDiscoverAndRegister_RejectsInternalResource(t *testing.T) {

@@ -33,13 +33,18 @@ func newTraleAS(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"resource":              "http://" + r.Host + "/api/mcp",
-			"authorization_servers": []string{"http://" + r.Host + "/as"},
+			"authorization_servers": []string{"http://" + r.Host + "/auth/v1"},
 		})
 	})
-	mux.HandleFunc("/as", func(w http.ResponseWriter, r *http.Request) {
+	// The bare issuer path 401s (Supabase behaviour); the metadata document is
+	// served at the RFC 8414 §3.1 path-insertion URL.
+	mux.HandleFunc("/auth/v1", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	mux.HandleFunc("/.well-known/oauth-authorization-server/auth/v1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"issuer":                 "http://" + r.Host,
+			"issuer":                 "http://" + r.Host + "/auth/v1",
 			"authorization_endpoint": "http://" + r.Host + "/auth",
 			"token_endpoint":         "http://" + r.Host + "/token",
 			"registration_endpoint":  "http://" + r.Host + "/register",

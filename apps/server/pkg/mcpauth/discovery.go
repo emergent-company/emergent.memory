@@ -3,10 +3,12 @@ package mcpauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -155,7 +157,7 @@ func fetchASMetadata(ctx context.Context, httpc *http.Client, metaURL string) (*
 	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("authorization-server metadata endpoint returned %d", resp.StatusCode)
+		return nil, &asMetadataStatusError{status: resp.StatusCode}
 	}
 	var as asMetadata
 	if err := json.Unmarshal(body, &as); err != nil {
@@ -165,6 +167,112 @@ func fetchASMetadata(ctx context.Context, httpc *http.Client, metaURL string) (*
 		return nil, fmt.Errorf("authorization-server metadata is missing endpoints")
 	}
 	return &as, nil
+}
+
+// asMetadataStatusError records the HTTP status of a metadata endpoint that
+// answered with a non-200. discoverASMetadata uses it to report which candidate
+// returned which status in the aggregate failure.
+type asMetadataStatusError struct{ status int }
+
+func (e *asMetadataStatusError) Error() string {
+	return fmt.Sprintf("authorization-server metadata endpoint returned %d", e.status)
+}
+
+// asMetadataCandidates derives candidate authorization-server metadata URLs from
+// an issuer identifier. RFC 9728's authorization_servers entries are ISSUER
+// identifiers, not metadata URLs; fetching one directly is the Trale bug
+// (Supabase answers 401). RFC 8414 §3.1 defines the path-insertion rule: an
+// issuer with a path component is discovered at
+// `/.well-known/oauth-authorization-server<path>`, so that is tried first. The
+// OpenID locations (and their path-suffix variants) follow because deployments
+// differ (Supabase serves `<issuer>/.well-known/openid-configuration`).
+//
+// The bare issuer is never returned as a candidate.
+func asMetadataCandidates(issuer string) []string {
+	issuer = strings.TrimSpace(issuer)
+	if issuer == "" {
+		return nil
+	}
+	// A deployment may already advertise a full metadata URL.
+	if strings.Contains(issuer, "/.well-known/") {
+		return []string{issuer}
+	}
+
+	u, err := url.Parse(issuer)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil
+	}
+	base := u.Scheme + "://" + u.Host
+	path := strings.TrimSuffix(u.Path, "/")
+
+	var candidates []string
+	if path == "" {
+		candidates = []string{
+			base + "/.well-known/oauth-authorization-server",
+			base + "/.well-known/openid-configuration",
+		}
+	} else {
+		candidates = []string{
+			// RFC 8414 §3.1 path insertion — the location Supabase/Trale uses.
+			base + "/.well-known/oauth-authorization-server" + path,
+			base + path + "/.well-known/oauth-authorization-server",
+			// OpenID discovery.
+			base + path + "/.well-known/openid-configuration",
+			base + "/.well-known/openid-configuration" + path,
+		}
+	}
+
+	// Dedupe while preserving order.
+	seen := make(map[string]struct{}, len(candidates))
+	out := make([]string, 0, len(candidates))
+	for _, c := range candidates {
+		if _, ok := seen[c]; ok {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}
+
+// maxFailuresReported bounds how many candidate outcomes are named in a total
+// discovery failure so the error cannot balloon.
+const maxFailuresReported = 4
+
+// discoverASMetadata resolves authorization-server metadata from an issuer
+// identifier by probing the RFC 8414 / OpenID discovery candidates derived from
+// that issuer. Candidates derive solely from the advertised issuer (or the
+// resource origin fallback), and every request still goes through the guarded
+// httpc (OutboundHTTPClient unless a caller injects a transport), so the SSRF
+// posture, redirect handling and body limiting are unchanged.
+func discoverASMetadata(ctx context.Context, httpc *http.Client, issuer string) (*asMetadata, error) {
+	candidates := asMetadataCandidates(issuer)
+	var failures []string
+	for _, candidate := range candidates {
+		as, err := fetchASMetadata(ctx, httpc, candidate)
+		if err == nil {
+			return as, nil
+		}
+		failures = append(failures, fmt.Sprintf("%s -> %s", candidate, asFailureReason(err)))
+	}
+	if len(failures) == 0 {
+		return nil, fmt.Errorf("no authorization-server discovery candidates derivable from issuer %q", issuer)
+	}
+	if len(failures) > maxFailuresReported {
+		failures = failures[:maxFailuresReported]
+	}
+	return nil, fmt.Errorf("all discovery endpoints failed: %s", strings.Join(failures, "; "))
+}
+
+// asFailureReason reduces a fetchASMetadata error to a compact per-endpoint
+// outcome for the aggregate failure message: the HTTP status when known,
+// otherwise a short marker.
+func asFailureReason(err error) string {
+	var statusErr *asMetadataStatusError
+	if errors.As(err, &statusErr) {
+		return strconv.Itoa(statusErr.status)
+	}
+	return "error"
 }
 
 // registerClient performs RFC 7591 dynamic client registration as a public
