@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -1633,36 +1634,94 @@ func TestDocumentSubPageRoutes(t *testing.T) {
 	})
 }
 
-// TestRenderMergePreviewSummary asserts the confirm-before-merge breakdown lists
-// new objects, existing objects updated (similar + fast-forward), conflicts,
-// left-for-review, and the branch total, with warning styling when anything is
-// left over.
+// mergePreviewRowPattern extracts a summary row's (label, value) pair: the
+// label span carries the "grow" class and the value span "tabular-nums".
+var mergePreviewRowPattern = regexp.MustCompile(
+	`<span class="[^"]*\bgrow\b[^"]*">([^<]+)</span>\s*<span class="[^"]*\btabular-nums\b[^"]*">([^<]+)</span>`)
+
+// mergePreviewRowValues maps each rendered summary row label to its value.
+func mergePreviewRowValues(t *testing.T, html string) map[string]string {
+	t.Helper()
+	matches := mergePreviewRowPattern.FindAllStringSubmatch(html, -1)
+	if len(matches) == 0 {
+		t.Fatalf("no merge preview rows found in:\n%s", html)
+	}
+	rows := make(map[string]string, len(matches))
+	for _, m := range matches {
+		rows[strings.TrimSpace(m[1])] = strings.TrimSpace(m[2])
+	}
+	return rows
+}
+
+// TestRenderMergePreviewSummary asserts the confirm-before-merge breakdown
+// counts only what the "partial" merge actually applies.
+//
+// Fixture — 10 objects on the branch:
+//
+//	3 added        → applied as new objects
+//	2 fast-forward → applied as updates to existing objects (the only existing
+//	                 objects "partial" writes; FastForwardCount already includes
+//	                 deleted→fast-forward objects)
+//	4 similar      → NOT applied: "partial" resolves similarity to "suggest", so
+//	                 they stay on the branch
+//	1 conflict     → NOT applied: "partial" preserves the target
+//	→ left for review = 4 similar + 1 conflict = 5
+//
+// This is the regression guard for #2084: mergePreviewUpdated used to return
+// SimilarCount+FastForwardCount (4+2=6), so the same four similar objects were
+// listed as both "Existing objects updated" (6) and "Left for review" (5),
+// while the confirm label counted 3+2=5 applied objects.
 func TestRenderMergePreviewSummary(t *testing.T) {
 	res := &BranchMergeResult{
 		TotalObjects:       10,
-		AddedCount:         4,
+		AddedCount:         3,
 		FastForwardCount:   2,
-		SimilarCount:       1,
+		SimilarCount:       4,
 		ConflictCount:      1,
-		LeftForReviewCount: 2,
-		MergedCount:        7,
+		LeftForReviewCount: 5, // 4 similar + 1 conflict, as the server computes it
+		MergedCount:        0, // first merge: the ledger is empty
 	}
 	html := renderHTML(t, mergePreviewSummary(res))
-	for _, want := range []string{
-		"New objects", "Existing objects updated", "Conflicts",
-		"Left for review", "Total", "text-warning",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("merge preview summary missing %q:\n%s", want, html)
+
+	rows := mergePreviewRowValues(t, html)
+	want := map[string]string{
+		"New objects":              "3",
+		"Existing objects updated": "2", // fast-forwards only — NOT 2+4 similar = 6
+		"Conflicts":                "1",
+		"Left for review":          "5", // 4 similar + 1 conflict
+		"Total":                    "10",
+	}
+	for label, value := range want {
+		if got := rows[label]; got != value {
+			t.Errorf("row %q = %q, want %q (rows: %v)", label, got, value, rows)
 		}
+	}
+	if len(rows) != len(want) {
+		t.Errorf("rendered %d summary rows, want %d: %v", len(rows), len(want), rows)
+	}
+
+	// The bug in one assertion: the similarity matches must appear only under
+	// "Left for review", never as updates — so the two rows cannot be equal.
+	if rows["Existing objects updated"] == rows["Left for review"] {
+		t.Errorf("updated (%s) and left-for-review (%s) rows show the same count; "+
+			"similar objects are double-counted", rows["Existing objects updated"], rows["Left for review"])
+	}
+	// The updated row must equal the applied set minus the new-object row.
+	if got, wantUpdated := mergePreviewUpdated(res), mergeAppliedObjects(res)-mergePreviewAdded(res); got != wantUpdated {
+		t.Errorf("updated count = %d, want %d (applied %d − added %d)",
+			got, wantUpdated, mergeAppliedObjects(res), mergePreviewAdded(res))
+	}
+	if !strings.Contains(html, "text-warning") {
+		t.Errorf("summary with conflicts/leftover must keep warning styling:\n%s", html)
 	}
 
 	// A nil result still renders the full breakdown with zero counts and no
 	// warning styling (nothing to flag).
 	htmlNil := renderHTML(t, mergePreviewSummary(nil))
-	for _, want := range []string{"New objects", "Existing objects updated", "Conflicts", "Left for review", "Total"} {
-		if !strings.Contains(htmlNil, want) {
-			t.Errorf("nil merge preview summary missing %q", want)
+	rowsNil := mergePreviewRowValues(t, htmlNil)
+	for _, label := range []string{"New objects", "Existing objects updated", "Conflicts", "Left for review", "Total"} {
+		if got, ok := rowsNil[label]; !ok || got != "0" {
+			t.Errorf("nil merge preview row %q = %q (present=%v), want \"0\"", label, got, ok)
 		}
 	}
 	if strings.Contains(htmlNil, "text-warning") {

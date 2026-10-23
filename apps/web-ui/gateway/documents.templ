@@ -852,9 +852,11 @@ templ mergePreviewModal(actionURL string, preview *BranchMergeResult, previewErr
 }
 
 // mergePreviewSummary renders the predicted merge split as a short list of
-// labeled counts: new objects, existing objects updated, conflicts, left for
-// review, and the branch total. Conflicts and left-for-review rows carry
-// warning styling when non-zero.
+// labeled counts: new objects, existing objects updated (fast-forwards — the
+// only existing objects "partial" writes), conflicts, left for review, and the
+// branch total. Similarity matches belong to "left for review" only: "partial"
+// suggests them for review instead of applying them. Conflicts and
+// left-for-review rows carry warning styling when non-zero.
 templ mergePreviewSummary(preview *BranchMergeResult) {
 	@mergePreviewRow("lucide--plus", "New objects", strconv.Itoa(mergePreviewAdded(preview)), false)
 	@mergePreviewRow("lucide--refresh-cw", "Existing objects updated", strconv.Itoa(mergePreviewUpdated(preview)), false)

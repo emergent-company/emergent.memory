@@ -611,12 +611,21 @@ func mergePreviewAdded(res *BranchMergeResult) int {
 }
 
 // mergePreviewUpdated returns how many existing objects a preview predicts will
-// be updated: the similar + fast-forward counts (0 for a nil result).
+// be updated: the fast-forward count (0 for a nil result), which already
+// includes deleted→fast-forward objects (the server counts "deleted" as
+// fast_forward when it builds the response).
+//
+// It must NOT add SimilarCount. The preview requests the "partial" preset,
+// which resolveMergePolicy resolves to similarity="suggest" and
+// conflicts="preserve_target": applyMerge skips similar objects and leaves them
+// on the branch, so they are already counted by mergePreviewLeft. Adding them
+// here listed the same objects as both "updated" and "left for review", and
+// contradicted the confirm label (which counts only what is applied).
 func mergePreviewUpdated(res *BranchMergeResult) int {
 	if res == nil {
 		return 0
 	}
-	return res.SimilarCount + res.FastForwardCount
+	return res.FastForwardCount
 }
 
 // mergePreviewConflicts returns how many conflicting objects a preview predicts
