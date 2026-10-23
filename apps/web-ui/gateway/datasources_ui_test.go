@@ -2006,6 +2006,26 @@ func TestUIDataSourceResourcesDriveRedirects(t *testing.T) {
 	}
 }
 
+// TestUIDataSourceResourceListDriveRedirects: the deferred fragment must bounce
+// to the same place as its page. Drive picks targets in the Google Picker, so a
+// direct or stale hit on /resources/list must not list folders (and must not
+// reach the backend at all).
+func TestUIDataSourceResourceListDriveRedirects(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s1", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/resources/list", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?picker=1" {
+		t.Errorf("location = %q, want the detail page with the picker open", loc)
+	}
+	if f.dsResourcesCallCount != 0 {
+		t.Errorf("ListDSResources called %d times, want 0", f.dsResourcesCallCount)
+	}
+}
+
 // TestDSCredentialSummaryDistinguishesLookupFailure asserts a credentials-API
 // failure is not reported as "not configured": the second message would send the
 // user to create a duplicate OAuth client when the app may be fine.
@@ -2741,10 +2761,15 @@ func TestDSConfigFieldsPrefillsInteger(t *testing.T) {
 // comes back as a 422 carrying the remediation. The fragment must render that
 // copy — userFacingError would flatten it to "Something went wrong." exactly when
 // the user needs the action (it only passes 4xx messages through dsFormError).
+//
+// The fixture is a GitHub source because a Drive source never reaches this
+// fragment (both /resources and /resources/list bounce it to the Google Picker);
+// what is under test is the fragment's 4xx handling, and the reconnect copy is
+// just the motivating message.
 func TestUIDataSourceResourceList_ReconnectCopyReachesPartial(t *testing.T) {
 	const reconnect = "the Google Drive connection for this source has expired or was revoked; reconnect the source to continue"
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github", Status: "active"}},
 		dsResourcesErr: &memoryHTTPError{
 			Status:  http.StatusUnprocessableEntity,
 			Code:    "validation_error",
@@ -2772,7 +2797,7 @@ func TestUIDataSourceResourceList_ReconnectCopyReachesPartial(t *testing.T) {
 // when the failure really is an outage.
 func TestUIDataSourceResourceList_ServerErrorStaysRedacted(t *testing.T) {
 	f := &fakeMemory{
-		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github", Status: "active"}},
 		dsResourcesErr: &memoryHTTPError{
 			Status:  http.StatusInternalServerError,
 			Code:    "internal_error",

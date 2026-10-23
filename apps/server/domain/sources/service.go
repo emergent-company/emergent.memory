@@ -377,7 +377,11 @@ func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID, qu
 	}
 	resources, truncated, err := p.ListResources(ctx, creds, src.Config, query)
 	if err != nil {
-		return nil, false, apperror.NewValidation("list resources failed: " + err.Error())
+		// providerListError passes an *apperror.Error through untouched, so a
+		// provider's actionable error (a dead Drive grant → "reconnect the
+		// source") reaches the UI intact. Re-wrapping it here flattened that copy
+		// into "list resources failed: oauth2: invalid_grant …" (#2149).
+		return nil, false, providerListError("list resources failed", err)
 	}
 	if resources == nil {
 		resources = []Resource{}

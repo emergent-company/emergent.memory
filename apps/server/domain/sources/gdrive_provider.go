@@ -214,6 +214,16 @@ func (p *googleDriveProvider) ListResources(ctx context.Context, creds Credentia
 	}
 	items, truncated, err := client.ListFolders(ctx, "", query)
 	if err != nil {
+		// A rejected grant is user-actionable on every listing surface, not just
+		// the picker and the folder-save path: without this the resources endpoint
+		// and the connect form relayed Google's raw invalid_grant text (issue
+		// #2149). Other errors stay raw — a 5xx or a timeout deserves a retry, not
+		// a reconnect prompt. p.newClient's error is deliberately left alone: the
+		// transport constructor performs no I/O, so it can only report a malformed
+		// credential (missing refresh token), never a rejected grant.
+		if isDriveGrantRejected(err) {
+			return nil, false, apperror.NewValidation(driveReconnectRequired)
+		}
 		return nil, false, err
 	}
 	out := make([]Resource, len(items))

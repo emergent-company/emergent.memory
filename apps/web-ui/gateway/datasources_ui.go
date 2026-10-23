@@ -702,7 +702,7 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	// URL working (bookmarks, older links) by bouncing to the detail page with
 	// the picker open.
 	if src.ProviderType == dsProviderTypeGoogleDrive {
-		render.RedirectAfterMutation(c.Response().Writer, c.Request(), "/data-sources/"+url.PathEscape(id)+"?picker=1")
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), dsPickerURL(id))
 		return nil
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
@@ -741,6 +741,15 @@ func (s *Server) uiDataSourceResourceList(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), pageError("Data source unavailable", dsFormError(err)))
 		return nil
 	}
+	// The fragment mirrors the page's Drive gate: the folder-listing step is
+	// retired for Drive (targets are picked in the Google Picker on the detail
+	// page), so a direct or stale hit on /resources/list must bounce to the same
+	// place rather than list folders the page never offers. Sharing dsPickerURL
+	// keeps the two surfaces from drifting apart.
+	if src.ProviderType == dsProviderTypeGoogleDrive {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), dsPickerURL(id))
+		return nil
+	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
 		providerName = dsProviderLabel(dsProviderNameMap(providers), src.ProviderType)
@@ -774,6 +783,12 @@ func dsDriveFileScope(src *DSIntegration) bool {
 		return src.OAuthGrantedStrategy == dsDriveFileStrategy
 	}
 	return src.OAuthStrategy == dsDriveFileStrategy
+}
+
+// dsPickerURL is the detail page with the Google Picker open — where every
+// folder-listing surface for a Drive source sends the user.
+func dsPickerURL(id string) string {
+	return "/data-sources/" + url.PathEscape(id) + "?picker=1"
 }
 
 // dsResourceListURL builds the deferred resource-list partial URL for a source,

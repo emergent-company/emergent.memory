@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
 
@@ -184,6 +185,65 @@ func TestDriveEnumerate_NonGrantErrorStaysRaw(t *testing.T) {
 	var appErr *apperror.Error
 	if errors.As(err, &appErr) {
 		t.Errorf("non-grant error was mapped to %v", appErr)
+	}
+}
+
+// TestDriveListResources_GrantRevokedMapsToReconnect: listing folders is an
+// interactive surface too. A dead grant must reach the resources endpoint (and
+// the connect form, which lists through the same provider) as the reconnect
+// remediation, not as Google's raw invalid_grant text (#2149).
+func TestDriveListResources_GrantRevokedMapsToReconnect(t *testing.T) {
+	p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: revokedGrantErr()})
+	_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+	if err == nil {
+		t.Fatal("ListResources(revoked grant) = nil, want an error")
+	}
+	if strings.Contains(err.Error(), "invalid_grant") {
+		t.Errorf("ListResources(revoked grant) leaked the raw provider error: %q", err)
+	}
+	var appErr *apperror.Error
+	if !errors.As(err, &appErr) {
+		t.Fatalf("error = %v, want an *apperror.Error", err)
+	}
+	if appErr.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want %d", appErr.HTTPStatus, http.StatusUnprocessableEntity)
+	}
+	if appErr.Message != driveReconnectRequired {
+		t.Errorf("message = %q, want %q", appErr.Message, driveReconnectRequired)
+	}
+}
+
+// TestDriveListResources_TransientStaysRaw: a Google 5xx or a timeout must not
+// tell the user to reconnect — reconnecting would not help, and the raw error is
+// what the operator needs to diagnose it.
+func TestDriveListResources_TransientStaysRaw(t *testing.T) {
+	raw := errors.New("googleapi: got HTTP response code 503")
+	p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: raw})
+	_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+	if !errors.Is(err, raw) {
+		t.Fatalf("error = %v, want the raw provider error", err)
+	}
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		t.Errorf("transient error was mapped to %v", appErr)
+	}
+}
+
+// TestDriveListResources_MissingCredentialStaysRaw pins the deliberate omission
+// at the transport constructor: it performs no I/O, so its error is a malformed
+// credential, never a rejected grant, and must not be reported as "reconnect".
+func TestDriveListResources_MissingCredentialStaysRaw(t *testing.T) {
+	raw := errors.New("google drive: refresh token is required")
+	p := NewGoogleDriveProvider(func(context.Context, gdrive.Credentials) (DriveTransport, error) {
+		return nil, raw
+	})
+	_, _, err := p.ListResources(context.Background(), Credentials{}, nil, "")
+	if !errors.Is(err, raw) {
+		t.Fatalf("error = %v, want the raw constructor error", err)
+	}
+	var appErr *apperror.Error
+	if errors.As(err, &appErr) {
+		t.Errorf("constructor error was mapped to %v", appErr)
 	}
 }
 

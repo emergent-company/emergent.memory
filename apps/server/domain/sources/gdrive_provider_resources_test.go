@@ -10,17 +10,18 @@ import (
 
 // fakeDriveTransport satisfies DriveTransport for provider-level tests.
 type fakeDriveTransport struct {
-	folders       []gdrive.Item
-	itemsByFolder map[string][]gdrive.Item
-	listCalls     []string
-	getFolders    map[string]gdrive.Folder
-	getErr        error
-	listErr       error
-	exportErr     error
-	downloadErr   error
-	token         string
-	tokenErr      error
-	testConnErr   error
+	folders        []gdrive.Item
+	itemsByFolder  map[string][]gdrive.Item
+	listCalls      []string
+	getFolders     map[string]gdrive.Folder
+	getErr         error
+	listErr        error
+	listFoldersErr error
+	exportErr      error
+	downloadErr    error
+	token          string
+	tokenErr       error
+	testConnErr    error
 }
 
 func (f *fakeDriveTransport) ListFolderItems(_ context.Context, folderID string, _ []string, _ bool, _ string) ([]gdrive.Item, error) {
@@ -31,6 +32,9 @@ func (f *fakeDriveTransport) ListFolderItems(_ context.Context, folderID string,
 	return f.itemsByFolder[folderID], nil
 }
 func (f *fakeDriveTransport) ListFolders(context.Context, string, string) ([]gdrive.Item, bool, error) {
+	if f.listFoldersErr != nil {
+		return nil, false, f.listFoldersErr
+	}
 	return f.folders, false, nil
 }
 func (f *fakeDriveTransport) GetFolder(_ context.Context, id string) (gdrive.Folder, error) {
