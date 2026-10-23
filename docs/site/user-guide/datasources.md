@@ -164,6 +164,22 @@ Only completed meetings are imported. The document's identity is derived from th
 participant count, tags, and summary, so a meeting that is later re-summarized updates in place rather
 than duplicating.
 
+Operational caveats:
+
+- **No modification timestamp.** Trale does not expose one, so change detection rests on the composite
+  identity above: a meeting whose status, participant count, tags and summary are unchanged is not fetched
+  again. That keeps repeat syncs cheap, but an edit that only touches the transcript is not picked up
+  until another part of that identity changes.
+- **Plan or access lapses surface as errors.** If the Trale plan lapses or the connected account loses
+  access, the sync fails with a connection error rather than reporting an empty success.
+- **Per-user visibility.** Trale returns the meetings the authorizing account can see, so a data
+  source imports exactly that account's meeting scope.
+- **25 meetings per call.** Enumeration pages through meetings 25 at a time; a large backfill takes
+  several calls and nothing is silently truncated.
+- **Reconnect after a failed token refresh.** Rotated refresh tokens are not persisted in this
+  version. If a refresh fails, the source stops with an actionable error and must be reconnected from
+  **Data Sources**.
+
 ### Web (website crawl)
 
 The `web` provider crawls a website starting from one or more URLs and imports each page as a Markdown
