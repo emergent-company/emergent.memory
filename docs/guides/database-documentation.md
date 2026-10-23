@@ -1,258 +1,199 @@
-# Database Documentation with dbdocs
+# Database Documentation with DBML
 
-This guide explains how to maintain and generate database schema documentation using [dbdocs](https://dbdocs.io/) and DBML (Database Markup Language).
+This guide explains how to maintain `docs/database/schema.dbml`, the DBML
+definition of the PostgreSQL schema.
 
 ## Overview
 
-The Emergent Memory project uses dbdocs to generate human-readable documentation from the PostgreSQL database schema. The documentation is maintained as a DBML file at `docs/database/schema.dbml` and can be viewed locally using the dbdocs CLI.
+`docs/database/schema.dbml` is generated from a **live** PostgreSQL catalog after
+migrations have been applied. The generator is a small Go command in this repo:
+
+```
+apps/server/cmd/schema-dbml/main.go
+```
+
+It replaces the Nx-era `npm run db:docs:generate` script, which was removed along
+with the workspace tooling — the checked-in DBML then drifted for dozens of
+migrations, so the file no longer matched the schema. Do not hand-edit it; the
+next regeneration overwrites the file.
 
 ### Related Documentation
 
-- **`docs/database/schema.dbml`** - Complete DBML schema definition
-- **`docs/database/schema-context.md`** - AI-friendly schema summary for quick reference (see [Schema Context for AI](#schema-context-for-ai))
+- **`docs/database/schema.dbml`** — complete DBML definition (generated)
+- **`docs/database/schema-context.md`** — concise, AI-oriented schema summary
+  (hand-maintained)
 
-## Prerequisites
+## Generating
 
-The dbdocs CLI tool is installed globally:
-
-```bash
-npm install -g dbdocs
-```
-
-## Available Commands
-
-### Generate Documentation
-
-Extract the current database schema to DBML format:
+Apply migrations first, then generate against the same database:
 
 ```bash
-npm run db:docs:generate
+task migrate:up
+DATABASE_URL="postgres://user:pass@host:5432/db" \
+  go run ./apps/server/cmd/schema-dbml -out docs/database/schema.dbml
 ```
 
-This command:
+The generator reads only the catalog; it never writes to the database. Flags:
 
-- Connects to the PostgreSQL database using credentials from `.env`
-- Extracts all tables, relationships, indexes, and constraints
-- Generates DBML output at `docs/database/schema.dbml`
-- **Note:** This will overwrite any manual annotations in the file
+| Flag | Meaning |
+|---|---|
+| `-database-url` | Connection string (falls back to `DATABASE_URL`) |
+| `-out` | Output path, default `docs/database/schema.dbml` |
+| `-check` | Exit 1 when the file differs from the catalog |
 
-### Validate Documentation
-
-Validate the DBML syntax and structure:
+`-check` fails when a migration changed the schema and the document was not
+regenerated; the `server` workflow runs it after migrating the test database, so a
+stale file fails CI.
 
 ```bash
-npm run db:docs:validate
+go run ./apps/server/cmd/schema-dbml -check
 ```
 
-This ensures the DBML file is correctly formatted and can be processed by dbdocs tools.
+The output is stable across the PostgreSQL majors we run: CI uses `pg17`,
+production uses `pg16`. Both produce byte-identical files, so it is safe to
+regenerate on either.
 
-### Generate and Validate (Combined)
+### Scoping
 
-Run both generation and validation in sequence:
+Only the schemas the product owns are documented: `core`, `kb` and `public`.
+`pg_catalog`, `information_schema` and extension-owned schemas are excluded.
+Everything inside those three schemas is included, including migration
+bookkeeping such as `public.goose_db_version`.
+
+### Determinism
+
+The output is stable, so a regeneration after an unchanged schema produces no
+diff:
+
+- tables and enums are ordered by schema, then name
+- columns keep their catalog order
+- references follow constraint order
+- defaults and comments are normalized to single lines
+
+## Validating
+
+DBML is parsed strictly, so validate before committing. The reference parser is
+`@dbml/cli`:
 
 ```bash
-npm run db:docs:local
+npx --package @dbml/cli -- dbml2sql --postgres docs/database/schema.dbml -o /tmp/schema.sql
 ```
 
-This is useful for quick verification that the database schema can be successfully extracted and documented.
-
-## Workflow
-
-### After Schema Changes
-
-When database migrations add or modify tables, columns, or relationships:
-
-1. **Apply the migration:**
-
-   ```bash
-   npm run db:migrate
-   ```
-
-2. **Regenerate the documentation:**
-
-   ```bash
-   npm run db:docs:generate
-   ```
-
-3. **Re-add annotations** (if needed):
-   The generated DBML is minimal and doesn't include:
-
-   - Project-level descriptions
-   - Table notes explaining purpose
-   - Column comments
-
-   You may want to manually re-add these annotations after regeneration.
-
-4. **Validate:**
-   ```bash
-   npm run db:docs:validate
-   ```
-
-### Viewing Documentation Locally
-
-dbdocs doesn't have a built-in local viewer, but you can:
-
-1. **Read the DBML file directly** - It's human-readable
-2. **Use online tools** - Paste the DBML into visualization tools
-3. **Review in code editor** - Most editors provide good syntax highlighting for DBML
-
-**Note:** This project intentionally does NOT publish documentation to dbdocs.io. All documentation is local-only.
+Any syntax error is reported with a line number. The generated DDL also applies
+cleanly to an empty PostgreSQL database once the extensions are created (`vector`,
+`pgcrypto`, `uuid-ossp`, `btree_gin`), which is a stronger check than parsing: every
+table and foreign key survives the round trip.
 
 ## DBML File Structure
 
-The `docs/database/schema.dbml` file contains:
+### Enums
 
-### Project Block
-
-Describes the overall database purpose and architecture:
+Custom enum types are declared before the tables that use them:
 
 ```dbml
-Project spec_server {
-  database_type: 'PostgreSQL'
-  Note: '''
-    # Emergent Memory Database Schema
-    ...
-  '''
+Enum "kb"."document_conversion_status" {
+  "pending"
+  "completed"
 }
 ```
 
-### Table Definitions
+### Tables
 
-Each table includes:
-
-- Column definitions with types and constraints
-- Indexes (including vector indexes)
-- Table-level notes explaining purpose
-
-Example:
+Each table lists its columns with their constraints, then any secondary indexes:
 
 ```dbml
 Table "kb"."chunks" {
-  "id" uuid [pk, not null, default: `gen_random_uuid()`]
-  "embedding" public.vector
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "document_id" uuid [not null]
+  "embedding" vector(768)
+  "tsv" tsvector
 
   Indexes {
-    embedding [type: ivfflat, name: "idx_chunks_embedding"]
+    (document_id) [name: "idx_chunks_document_id"]
+    (embedding) [name: "idx_chunks_embedding_hnsw"]
   }
-
-  Note: '''
-    Text chunks with vector embeddings for semantic search.
-  '''
 }
 ```
 
+Column comments from the catalog become `note:` settings. Table comments are
+emitted as a `// schema.table:` comment immediately *below* the `Table` block, so
+they never separate a table's name from its body.
+
 ### Relationships
 
-Foreign key relationships are expressed using `Ref`:
+One `Ref` per foreign key; composite keys keep their column tuple:
 
 ```dbml
-Ref "chunks_document_id_fkey":"kb"."documents"."id" < "kb"."chunks"."document_id" [delete: cascade]
+Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"
+Ref: "kb"."adk_states".("app_name", "user_id", "session_id") > "kb"."adk_sessions".("app_name", "user_id", "id")
 ```
+
+Every key is rendered many-to-one (`>`), including the handful that are unique.
+DBML's one-to-one operator (`-`) is direction-less: `dbml2sql` has to choose which
+side holds the foreign key, and it can place it on the parent — inverting the
+relationship the catalog records. `>` is a weaker statement about those keys, never
+a wrong one, and it keeps the direction intact both for readers and for the SQL
+round trip.
 
 ## Known Limitations
 
-### pgvector Dimension Information
-
-The dbdocs extraction doesn't capture the dimension parameter for pgvector columns:
-
-- **Actual column:** `embedding vector(768)`
-- **Extracted DBML:** `"embedding" public.vector`
-
-The dimension (768) is documented in table notes as a workaround.
-
-### Schema Selection
-
-The `db2dbml` command extracts all schemas by default. While this currently includes only `kb` and `public`, future schemas will be automatically included.
-
-## Environment Configuration
-
-The npm scripts read database credentials from `.env`:
-
-```bash
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5437
-POSTGRES_USER=spec
-POSTGRES_PASSWORD=spec
-POSTGRES_DB=spec
-```
-
-These are used to construct the connection string: `postgresql://spec:spec@localhost:5437/spec`
+- **Index method is not represented.** DBML index entries carry the name, columns
+  and uniqueness, but not `USING hnsw` / `ivfflat`. See the migration that created
+  the index for the operator class and parameters.
+- **Partial index predicates are not represented.** A predicate such as
+  `WHERE deleted_at IS NULL` is dropped.
+- **Expression indexes are emitted verbatim** inside backticks; they are valid
+  DBML but do not round-trip into an equivalent `CREATE INDEX` expression.
+- **Extensions are not declared.** `pgvector` is assumed to exist because the
+  column types reference it.
+- **Check constraints are not represented.** A `CHECK (...)` on a column or table
+  is emitted nowhere; read the migration that added it.
+- **Composite unique constraints appear as indexes.** They are rendered as
+  `Indexes { (a, b) [unique] }` rather than a named constraint, so a reader
+  looking for a constraint name finds none.
 
 ## Best Practices
 
-1. **Regenerate after migrations** - Keep documentation in sync with schema changes
-2. **Commit the DBML file** - Track schema evolution in version control
-3. **Add meaningful notes** - The auto-generated DBML is minimal; enhance it with context
-4. **Validate before committing** - Ensure DBML syntax is correct
-5. **Document special cases** - Note pgvector columns, custom types, and extensions
+1. **Regenerate after migrations** — same PR as the migration, so review sees both.
+2. **Never hand-edit** — the generator overwrites the file.
+3. **Run `-check` in review** — a stale file is a documentation bug.
+4. **Put meaning in comments** — `COMMENT ON TABLE/COLUMN` survives regeneration;
+   hand-written DBML notes do not.
 
 ## Troubleshooting
 
-### Connection Errors
+### Connection errors
 
-If `db:docs:generate` fails to connect:
+1. Confirm the database is running and migrated: `task migrate:status`
+2. Confirm `DATABASE_URL` points at the migrated database (not a scratch one)
+3. Check the schemas exist: `\dn` should list `core`, `kb` and `public`
 
-1. Check the database is running: `docker compose -f docker-compose.dev.yml up -d` (from the infra checkout)
-2. Verify `.env` credentials match your PostgreSQL setup
-3. Test connection manually: `psql -h localhost -p 5437 -U spec -d spec`
+### Empty output
 
-### Validation Errors
+`schema-dbml` writes zero tables when the schema list does not match. Check that
+migrations ran against the database you passed in.
 
-If `db:docs:validate` fails:
+### Validation errors
 
-1. Check DBML syntax in `docs/database/schema.dbml`
-2. Look for unmatched quotes or brackets
-3. Verify table and column names are properly quoted
-
-### Empty Output
-
-If the generated DBML is empty:
-
-1. Ensure migrations have been run: `npm run db:migrate`
-2. Check that tables exist in the database
-3. Verify the connection string is correct
-
-## Resources
-
-- [DBML Documentation](https://dbml.dbdiagram.io/docs/)
-- [dbdocs CLI Reference](https://dbdocs.io/docs)
-- [Project Migrations](../technical/DATABASE_MIGRATIONS.md)
+1. Re-run the generator rather than editing the file
+2. If the error persists, the catalog contains an identifier the renderer does not
+   quote correctly — fix `quote()` in `apps/server/cmd/schema-dbml/main.go`
 
 ## Schema Context for AI
 
-The `docs/database/schema-context.md` file provides a concise schema summary optimized for AI coding assistants. This helps avoid trial-and-error database queries by providing:
+`schema-context.md` is a hand-maintained quick reference for AI assistants: a
+short table list, query patterns and naming conventions. It is deliberately
+concise — `schema.dbml` is the complete reference.
 
-- Quick reference table of common tables with schema-qualified names
-- Database schema overview (kb, core, public)
-- Common query patterns
-- Column naming conventions
+Update it when a migration adds or renames tables, or adds a commonly-queried
+column:
 
-### When to Update Schema Context
+1. Apply the migration and regenerate `schema.dbml`
+2. Edit `schema-context.md` to match, and update its "Last Updated" line
+3. Validate the DBML
 
-Update `schema-context.md` when:
+## Resources
 
-1. Adding new tables
-2. Renaming tables or schemas
-3. Adding commonly-queried columns
-4. Changing table purposes
-
-### Update Workflow
-
-After creating or applying a migration:
-
-```bash
-# 1. Apply migration
-npm run db:migrate
-
-# 2. Regenerate DBML
-npm run db:docs:generate
-
-# 3. Update schema context (manual)
-#    Edit docs/database/schema-context.md to reflect changes
-#    Update the "Last Updated" timestamp
-
-# 4. Validate DBML
-npm run db:docs:validate
-```
-
-The schema context is intentionally concise - it's not a complete schema reference (that's `schema.dbml`), but a quick-lookup tool for AI assistants performing database queries.
+- [DBML documentation](https://dbml.dbdiagram.io/docs/)
+- [@dbml/cli](https://www.npmjs.com/package/@dbml/cli)
+- [Migrations](../technical/DATABASE_MIGRATIONS.md)
