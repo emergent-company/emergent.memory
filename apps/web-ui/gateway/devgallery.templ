@@ -62,12 +62,20 @@ templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
 			}
 		}
 
+		<!-- Whole-page previews come first: they are the review surface for
+		     layout work, ahead of the component catalog. -->
+		@pagePreviewSection()
+
 		<!-- Adoption gaps surface first: authored templates that re-declare
 		     component-owned markup inline instead of rendering the component. -->
 		@adoptionGapSection(gaps)
 
 		<!-- Compact horizontal jump row; the catalog itself is one column. -->
 		<nav aria-label="Component index" data-testid="gallery-index" class="border-base-content/10 mb-8 flex flex-wrap items-center gap-2 border-y py-2">
+			<a href="#page-previews" class="badge badge-ghost badge-sm whitespace-nowrap">
+				Pages · page previews
+				<span class="text-muted-faint ml-1 tabular-nums">{ strconv.Itoa(len(galleryPagePreviews())) }</span>
+			</a>
 			for _, layer := range galleryLayerOrder() {
 				<a href={ "#layer-" + string(layer) } class="badge badge-ghost badge-sm whitespace-nowrap">
 					{ string(layer) } · { galleryLayerBlurb(layer) }

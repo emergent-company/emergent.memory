@@ -1,0 +1,179 @@
+package main
+
+import (
+	"net/url"
+
+	"github.com/a-h/templ"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// objectsBrowserSelectionJS is the Alpine model for the objects table's row
+// selection. It lives on the page root so the checkbox column, the bulk bar, and
+// the bulk dialogs share one source of truth.
+//
+// The model is a plain object literal (not Alpine.data) so it needs no
+// registration script and works inside the gallery's sandboxed preview, where
+// the document is loaded fresh. `all`/`some` are getters that read the DOM, so
+// they stay correct after htmx appends a page of rows.
+const objectsBrowserSelectionJS = `{
+	sel: [],
+	get count() { return this.sel.length },
+	get all() {
+		var boxes = this.$root.querySelectorAll('input[data-object-select]');
+		return boxes.length > 0 && this.sel.length === boxes.length;
+	},
+	get some() {
+		var boxes = this.$root.querySelectorAll('input[data-object-select]');
+		return this.sel.length > 0 && this.sel.length < boxes.length;
+	},
+	toggleAll(checked) {
+		var boxes = this.$root.querySelectorAll('input[data-object-select]');
+		this.sel = checked ? Array.prototype.map.call(boxes, function (el) { return el.value }) : [];
+	},
+	clear() { this.sel = [] }
+}`
+
+// objectsSortHref is the query-only URL that flips the browse list between
+// newest-first and oldest-first. It carries every active filter forward and
+// omits the default direction, so the URL only grows when it has to. A
+// query-only href (no path) resolves against the current document, which keeps
+// it correct on /objects, on the agent-scoped route, and inside the gallery's
+// page-preview iframe — the preview re-renders its sample rows from the same
+// query string.
+func objectsSortHref(data objectsPageData, dir string) string {
+	q := url.Values{}
+	if data.Query != "" {
+		q.Set("q", data.Query)
+		if data.Mode != "" {
+			q.Set("mode", data.Mode)
+		}
+	}
+	if data.TypeFilter != "" {
+		q.Set("type", data.TypeFilter)
+	}
+	if data.BranchID != "" {
+		q.Set("branch", data.BranchID)
+	}
+	if data.ActorType != "" {
+		q.Set("actor_type", data.ActorType)
+		if data.ActorID != "" {
+			q.Set("actor_id", data.ActorID)
+		}
+	}
+	if data.Provenance != "" && data.Provenance != defaultObjectProvenance {
+		q.Set("provenance", data.Provenance)
+	}
+	if dir != "" && dir != "desc" {
+		q.Set("order", dir)
+	}
+	return "?" + q.Encode()
+}
+
+// objectsNextSortDir is the direction the header link toggles to.
+func objectsNextSortDir(data objectsPageData) string {
+	if objectsSortDir(data) == "asc" {
+		return "desc"
+	}
+	return "asc"
+}
+
+// objectsFilterAutoApply returns the change handler that applies a filter
+// immediately, or nil inside the gallery preview. The preview keeps every
+// control interactive but must not navigate its iframe, and form.submit()
+// bypasses the form's onsubmit guard — so the handler is not rendered there at
+// all rather than rendered and defeated.
+func objectsFilterAutoApply(preview bool) templ.Attributes {
+	if preview {
+		return nil
+	}
+	return templ.Attributes{"onchange": "this.form.submit()"}
+}
+
+// objectsPreviewGuards keeps a gallery preview inert: the form renders with all
+// of its markup and validation, but a submit is discarded instead of posting to
+// a handler (or navigating away from the preview). Live pages get no attribute.
+func objectsPreviewGuards(preview bool) templ.Attributes {
+	if !preview {
+		return nil
+	}
+	return templ.Attributes{"onsubmit": "return false"}
+}
+
+// objectsBulkAction is the bulk mutation endpoint, or "#" in the gallery
+// preview so a stray submit cannot reach a backend.
+func objectsBulkAction(data objectsPageData) string {
+	if data.Preview {
+		return "#"
+	}
+	return "/objects/bulk"
+}
+
+// objectsBrowserRowView is one row of the objects table, flattened from either a
+// browse object or a search hit so the table has one rendering path. Search-only
+// fields (Score) are zero in browse mode and simply not rendered.
+type objectsBrowserRowView struct {
+	ID               string
+	Label            string
+	Type             string
+	Status           string
+	StatusLabel      string
+	StatusIntent     ui.BadgeIntent
+	EmbeddingLabel   string
+	EmbeddingVariant ui.BadgeIntent
+	EmbeddingIcon    string
+	EmbeddingClass   string
+	Labels           []string
+	CreatedAt        string
+	Score            float32
+	UI               typeUI
+}
+
+// objectsBrowserRows flattens the page data into table rows: browse objects in
+// browse mode, ranked search hits otherwise.
+func objectsBrowserRows(data objectsPageData) []objectsBrowserRowView {
+	if data.Query != "" {
+		rows := make([]objectsBrowserRowView, 0, len(data.Results))
+		for _, r := range data.Results {
+			rows = append(rows, newObjectsBrowserRow(r.Object, data.TypeUIByType, r.Score))
+		}
+		return rows
+	}
+
+	rows := make([]objectsBrowserRowView, 0, len(data.Objects))
+	for _, o := range data.Objects {
+		rows = append(rows, newObjectsBrowserRow(o, data.TypeUIByType, 0))
+	}
+	return rows
+}
+
+// newObjectsBrowserRow is the single mapping from a graph object to the table
+// row view. Browse rows pass score 0 because they have no relevance column.
+func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, score float32) objectsBrowserRowView {
+	embedLabel, embedVariant := embeddingStatusBadge(o.EmbeddingStatus)
+	embedIcon, embedClass := embeddingStatusIcon(o.EmbeddingStatus)
+	return objectsBrowserRowView{
+		ID:               o.ID,
+		Label:            graphObjectLabel(o),
+		Type:             o.Type,
+		Status:           o.Status,
+		StatusLabel:      boardStatusLabel(o.Status),
+		StatusIntent:     boardStatusIntent(o.Status),
+		EmbeddingLabel:   embedLabel,
+		EmbeddingVariant: embedVariant,
+		EmbeddingIcon:    embedIcon,
+		EmbeddingClass:   embedClass,
+		Labels:           o.Labels,
+		CreatedAt:        o.CreatedAt,
+		Score:            score,
+		UI:               typeUIOf(typeUIByType, o.Type),
+	}
+}
+
+// firstLabels returns at most n labels, so a row with many labels stays one
+// line; the caller renders a "+N" chip for the remainder.
+func firstLabels(labels []string, n int) []string {
+	if len(labels) <= n {
+		return labels
+	}
+	return labels[:n]
+}

@@ -229,6 +229,14 @@ func (e GalleryEntry) previewURL(extra url.Values) string {
 // methods, and the templ call site (entry.previewClientScripts()) is a method
 // expression the scanner skips.
 func (e GalleryEntry) previewClientScripts() templ.Component {
+	return galleryClientScripts()
+}
+
+// galleryClientScripts returns the client-asset script block for any interactive
+// gallery document (component preview or page preview), in the shell's canonical
+// load order: htmx, the guarded htmx v2-compat config, the htmx/Alpine
+// compatibility extension, deferred Alpine, and app.js.
+func galleryClientScripts() templ.Component {
 	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
 		if _, err := io.WriteString(w, `<script src="`+webui.AssetPath("/js/htmx.min.js")+`"></script>`); err != nil {
 			return err

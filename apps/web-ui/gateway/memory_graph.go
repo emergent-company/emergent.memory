@@ -194,6 +194,11 @@ type ObjectListParams struct {
 	ActorType  string
 	ActorID    string
 	Provenance string
+	// Order is the created_at direction the browse list sorts by: "asc", or ""
+	// for the endpoint's default (newest first). It is the only sort the list
+	// endpoint supports together with its (created_at, id) cursor; property
+	// ordering is rejected alongside a cursor.
+	Order string
 }
 
 // ListGraphObjectsPage lists a single page of graph objects (most-recent-first),
@@ -205,6 +210,9 @@ func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, p ObjectListPar
 	// The total is never read here, and the exact COUNT(*) is the endpoint's
 	// latency floor on large projects — skip it (#733).
 	q.Set("include_total", "false")
+	if p.Order != "" {
+		q.Set("order", p.Order)
+	}
 	if p.TypeFilter != "" {
 		q.Set("type", p.TypeFilter)
 	}

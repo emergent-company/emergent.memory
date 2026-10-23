@@ -2182,10 +2182,26 @@ func TestUIOrgOAuthClientUpsertValidationAndSuccess(t *testing.T) {
 		t.Error("memory must not be called on validation failure")
 	}
 
+	// A Picker app id that is not the numeric Cloud project number is rejected:
+	// Google would mount an empty picker for it, so fail while the form is open.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_id=cid&picker_app_id=my-project-id"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("picker app id validation status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "err=") || !strings.Contains(loc, "project+number") {
+		t.Errorf("picker app id validation location = %q", loc)
+	}
+	if f.dsUpsertedOAuthReq != nil {
+		t.Error("memory must not be called with an invalid picker app id")
+	}
+
 	// Success → 303 with the saved flash, request forwarded with the picker
 	// config merged over the stored (unmanaged) keys.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_id=cid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file&picker_developer_key=dev-key&picker_app_id=app-7"))
+	req = httptest.NewRequest(http.MethodPost, "/orgs/o1/settings/oauth-clients/google_drive", strings.NewReader("client_id=cid&client_secret=sec&scopes=scope.a%2Cscope.b&strategy=drive.file&picker_developer_key=dev-key&picker_app_id=123456789012"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther {
@@ -2201,7 +2217,7 @@ func TestUIOrgOAuthClientUpsertValidationAndSuccess(t *testing.T) {
 	if len(got.Scopes) != 2 || got.Scopes[0] != "scope.a" || got.Scopes[1] != "scope.b" {
 		t.Errorf("scopes = %v", got.Scopes)
 	}
-	if got.Config["pickerDeveloperKey"] != "dev-key" || got.Config["pickerAppId"] != "app-7" {
+	if got.Config["pickerDeveloperKey"] != "dev-key" || got.Config["pickerAppId"] != "123456789012" {
 		t.Errorf("picker config = %+v", got.Config)
 	}
 	if got.Config["unmanaged"] != "keep-me" {

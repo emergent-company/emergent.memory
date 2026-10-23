@@ -35,10 +35,15 @@ type objectsStats struct {
 // so the page signature stays stable while its presentation evolves. Browse
 // mode fills Objects/HasMore/NextCursor/Stats; search mode fills Results.
 type objectsPageData struct {
-	Query        string
-	Mode         string // normalized to "fulltext" | "hybrid" | "unified"
-	TypeFilter   string
-	BranchID     string
+	Query      string
+	Mode       string // normalized to "fulltext" | "hybrid" | "unified"
+	TypeFilter string
+	BranchID   string
+	// Order is the browse list's created_at direction: "asc", or "" for the
+	// server default (newest first). Search results are relevance-ranked and
+	// ignore it. Kept as "" for the default so URLs stay clean and every
+	// pre-existing link keeps its meaning.
+	Order        string
 	Types        []string
 	Branches     []Branch
 	Objects      []GraphObject        // browse mode rows
@@ -69,6 +74,12 @@ type objectsPageData struct {
 	// server's search endpoints cannot be provenance-scoped.
 	AgentID   string
 	AgentName string
+
+	// Preview marks a dev-gallery render: pagination, search submission, and
+	// bulk mutations render without their live wiring (no hx-* attributes, no
+	// backend form action) so the sample page stays inert. Always false in the
+	// real handlers.
+	Preview bool
 }
 
 // listParams builds the graph-object list query for this page's active filters
@@ -82,6 +93,7 @@ func (d objectsPageData) listParams(cursor string) ObjectListParams {
 		ActorType:  d.ActorType,
 		ActorID:    d.ActorID,
 		Provenance: d.Provenance,
+		Order:      d.Order,
 	}
 }
 
@@ -117,6 +129,27 @@ func normalizeObjectProvenance(provenance string) string {
 	default:
 		return defaultObjectProvenance
 	}
+}
+
+// normalizeObjectOrder coerces a raw `order` query value to the only value the
+// browse list needs to carry: "asc". Everything else (absent, "desc", garbage)
+// is the server's default, newest first, so an unrecognised value never reaches
+// the API and the rendered header always agrees with the request.
+func normalizeObjectOrder(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), "asc") {
+		return "asc"
+	}
+	return ""
+}
+
+// objectsSortDir is the effective created_at direction for the table header:
+// "desc" unless the page asked for ascending. It is the value the header renders
+// as its aria-sort state and the one the sort link toggles away from.
+func objectsSortDir(data objectsPageData) string {
+	if data.Order == "asc" {
+		return "asc"
+	}
+	return "desc"
 }
 
 // effectiveObjectProvenance is the defense-in-depth form of
@@ -326,6 +359,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 		ActorType:  actorType,
 		ActorID:    actorID,
 		Provenance: effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
+		Order:      normalizeObjectOrder(c.QueryParam("order")),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -407,6 +441,7 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 		Provenance: normalizeObjectProvenance(c.QueryParam("provenance")),
 		TypeFilter: c.QueryParam("type"),
 		BranchID:   c.QueryParam("branch"),
+		Order:      normalizeObjectOrder(c.QueryParam("order")),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -430,6 +465,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 	cursor := c.QueryParam("cursor")
 	actorType, actorID := objectActorFilter(c)
 	provenance := effectiveObjectProvenance(c.QueryParam("provenance"), actorType)
+	order := normalizeObjectOrder(c.QueryParam("order"))
 
 	// Search mode has no cursor pagination (it renders the top 25 only).
 	if query != "" {
@@ -445,6 +481,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		ActorType:  actorType,
 		ActorID:    actorID,
 		Provenance: provenance,
+		Order:      order,
 	}
 	if err := s.loadObjectBrowsePage(ctx, &data, cursor); err != nil {
 		captureError(err)
@@ -487,6 +524,9 @@ func objectsPartialURL(data objectsPageData) string {
 	}
 	if data.Provenance != "" && data.Provenance != defaultObjectProvenance {
 		q.Set("provenance", data.Provenance)
+	}
+	if data.Order != "" {
+		q.Set("order", data.Order)
 	}
 	return "/objects/partial?" + q.Encode()
 }

@@ -141,7 +141,20 @@
 
   function onPicked(data) {
     var picker = window.google && window.google.picker;
-    if (!picker || !data || data[picker.Response.ACTION] !== picker.Action.PICKED) return;
+    if (!picker || !data) return;
+    var action = data[picker.Response.ACTION];
+    if (action === picker.Action.ERROR) {
+      // Google reports a bad developer key, app id, origin, or an API it cannot
+      // reach here; without this branch the dialog just looks empty.
+      showError(
+        "Google Picker could not load your Drive folders. Check Settings → Credentials: " +
+          "the developer key must be an API key from a Cloud project with the Google Picker API " +
+          "enabled and this site allowed as an origin, and the app ID must be that project's " +
+          "numeric number."
+      );
+      return;
+    }
+    if (action !== picker.Action.PICKED) return;
     var docs = data[picker.Response.DOCUMENTS] || [];
     docs.forEach(function (doc) {
       if (!doc) return;
@@ -178,7 +191,12 @@
           .addView(view)
           .setCallback(onPicked);
         if (session.appId) builder.setAppId(session.appId);
-        if (session.origin) builder.setOrigin(session.origin);
+        // The picker verifies the origin of the page that mounted it, not the
+        // server's landing host: preview deployments serve the UI from
+        // pr-<n>.<base>, which never matches a landing URL configured for the
+        // long-lived host. Bind to the browser origin, falling back to the
+        // server value only when the origin is unavailable (file:// pages).
+        builder.setOrigin(window.location.origin || session.origin);
         builder.enableFeature(picker.Feature.MULTISELECT_ENABLED);
         builder.build().setVisible(true);
       })

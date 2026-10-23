@@ -1135,18 +1135,23 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 	if clientID == "" {
 		return redirectWithError(c, back, errors.New("clientId is required"))
 	}
+	cfg, err := s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
+		return s.memory.GetDSOAuthClient(c.Request().Context(), orgID, pt)
+	}, c.Param("providerType"))
+	if err != nil {
+		return redirectWithError(c, back, err)
+	}
 	req := &DSSetOAuthClientRequest{
 		ClientID:     clientID,
 		ClientSecret: strings.TrimSpace(c.FormValue("client_secret")),
 		Scopes:       dsScopesFromForm(c.FormValue("scopes")),
 		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
-		Config: s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
-			return s.memory.GetDSOAuthClient(c.Request().Context(), orgID, pt)
-		}, c.Param("providerType")),
+		Config:       cfg,
 	}
 	if _, err := s.memory.UpsertDSOAuthClient(c.Request().Context(), orgID, c.Param("providerType"), req); err != nil {
 		return redirectWithError(c, back, err)
 	}
+
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), back+"?saved=1")
 	return nil
 }
@@ -1156,8 +1161,9 @@ func (s *Server) uiOrgOAuthClientUpsert(c echo.Context) error {
 // manage (the form only manages the two Picker fields). stored resolves the
 // currently-saved client for the active scope (org or project) and provider.
 // The two managed keys are set when the form supplies them and cleared when
-// blank. Secret material never belongs in Config.
-func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, stored func(providerType string) (*DSOAuthClientConfig, error), providerType string) map[string]any {
+// blank; a non-numeric Picker app id is an error because Google's Picker only
+// accepts the Cloud project number. Secret material never belongs in Config.
+func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, stored func(providerType string) (*DSOAuthClientConfig, error), providerType string) (map[string]any, error) {
 	cfg := map[string]any{}
 	if got, err := stored(providerType); err != nil {
 		captureError(err)
@@ -1166,20 +1172,27 @@ func (s *Server) dsOAuthClientConfigFromForm(c echo.Context, stored func(provide
 			cfg[k] = v
 		}
 	}
-	for _, f := range []struct{ form, key string }{
-		{"picker_developer_key", "pickerDeveloperKey"},
-		{"picker_app_id", "pickerAppId"},
-	} {
-		if v := strings.TrimSpace(c.FormValue(f.form)); v != "" {
-			cfg[f.key] = v
-		} else {
-			delete(cfg, f.key)
+	if v := strings.TrimSpace(c.FormValue("picker_developer_key")); v != "" {
+		cfg["pickerDeveloperKey"] = v
+	} else {
+		delete(cfg, "pickerDeveloperKey")
+	}
+	// Google's PickerBuilder.setAppId takes the Cloud project *number*; a project
+	// id (or any other string) mounts an empty picker instead of failing loudly,
+	// so reject it at save time while the form is in front of the admin.
+	appID := strings.TrimSpace(c.FormValue("picker_app_id"))
+	if appID != "" {
+		if _, err := strconv.ParseUint(appID, 10, 64); err != nil {
+			return nil, errors.New("picker app ID must be the numeric Cloud project number (for example 123456789012), not the project id")
 		}
+		cfg["pickerAppId"] = appID
+	} else {
+		delete(cfg, "pickerAppId")
 	}
 	if len(cfg) == 0 {
-		return nil
+		return nil, nil
 	}
-	return cfg
+	return cfg, nil
 }
 
 // uiOrgOAuthClientDelete removes an org's OAuth client for a provider
@@ -1512,14 +1525,18 @@ func (s *Server) uiProjectOAuthClientUpsert(c echo.Context) error {
 	if clientID == "" {
 		return redirectWithError(c, back, errors.New("clientId is required"))
 	}
+	cfg, err := s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
+		return s.memory.GetProjectDSOAuthClient(ctx, project.ID, pt)
+	}, c.Param("providerType"))
+	if err != nil {
+		return redirectWithError(c, back, err)
+	}
 	req := &DSSetOAuthClientRequest{
 		ClientID:     clientID,
 		ClientSecret: strings.TrimSpace(c.FormValue("client_secret")),
 		Scopes:       dsScopesFromForm(c.FormValue("scopes")),
 		Strategy:     strings.TrimSpace(c.FormValue("strategy")),
-		Config: s.dsOAuthClientConfigFromForm(c, func(pt string) (*DSOAuthClientConfig, error) {
-			return s.memory.GetProjectDSOAuthClient(ctx, project.ID, pt)
-		}, c.Param("providerType")),
+		Config:       cfg,
 	}
 	if _, err := s.memory.UpsertProjectDSOAuthClient(ctx, project.ID, c.Param("providerType"), req); err != nil {
 		return redirectWithError(c, back, err)

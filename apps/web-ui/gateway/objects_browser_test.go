@@ -1,0 +1,444 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+)
+
+// TestObjectsBrowserTableRendersSelectionSurface pins the table contract the
+// bulk actions depend on: one row checkbox per object carrying pure Alpine
+// selection state, and four self-contained dialog forms that each submit the
+// selection once.
+func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+
+	for _, want := range []string{
+		`data-testid="objects-table"`,
+		`id="objects-list"`,
+		`name="ids"`,
+		`toggleAll`,
+		`id="objects-bulk-delete-dialog"`,
+		`id="objects-bulk-status-dialog"`,
+		`id="objects-bulk-label-add-dialog"`,
+		`id="objects-bulk-label-remove-dialog"`,
+		`MemoryApp.openDialog(&#39;objects-knowledge-dialog&#39;)`,
+		`id="objects-knowledge-dialog"`,
+		`id="objects-load-more"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("objects browser missing %q", want)
+		}
+	}
+
+	// Selection is Alpine-only. Row checkboxes carry no name/form, so a row can
+	// never submit itself and `ids` cannot arrive twice (once per checked row,
+	// once as the CSV the handler expects).
+	if strings.Contains(html, `form="objects-bulk-form"`) || strings.Contains(html, `id="objects-bulk-form"`) {
+		t.Error("bulk submits must come from per-dialog forms, not one shared form")
+	}
+	if strings.Contains(html, `<input type="checkbox" class="checkbox checkbox-sm" name=`) {
+		t.Error("row checkboxes must not be submittable inputs")
+	}
+
+	// Exactly one hidden ids field per bulk dialog, each synced by the model.
+	if got := strings.Count(html, `name="ids"`); got != 4 {
+		t.Errorf("want one ids field per bulk dialog (4), got %d", got)
+	}
+	if got := strings.Count(html, `:value="sel.join(',')"`); got != 4 {
+		t.Errorf("want every dialog to submit the selected ids, got %d", got)
+	}
+	for _, action := range []string{"label_add", "label_remove", "status", "delete"} {
+		if want := `name="action" value="` + action + `"`; !strings.Contains(html, want) {
+			t.Errorf("missing per-dialog action field %q", want)
+		}
+	}
+
+	// Browse rows keep the status/type/embedding signals.
+	for _, want := range []string{
+		`data-status="in_progress"`,
+		`uppercase">Status<`,
+		`uppercase">Embedding<`,
+		`>Created</span>`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("browse table missing %q", want)
+		}
+	}
+	if strings.Contains(html, `uppercase">Score<`) {
+		t.Error("browse table must not render the search-only Score column")
+	}
+
+	// Every preview form discards its submit instead of posting: the gallery has
+	// no project behind it, and "Delete selected" must not navigate away.
+	for _, id := range []string{
+		"objects-search-form",
+		"objects-filters-form",
+	} {
+		if block := formBlock(t, html, id); !strings.Contains(block, `onsubmit="return false"`) {
+			t.Errorf("preview form %q must discard its submit", id)
+		}
+	}
+	for _, id := range []string{
+		"objects-bulk-delete-dialog",
+		"objects-bulk-status-dialog",
+		"objects-bulk-label-add-dialog",
+		"objects-bulk-label-remove-dialog",
+	} {
+		if block := dialogBlock(t, html, id); !strings.Contains(block, `onsubmit="return false"`) {
+			t.Errorf("preview dialog %q must discard its submit", id)
+		}
+	}
+
+	// …and the live page keeps submitting for real.
+	live := objectsBrowserSampleData("")
+	live.Preview = false
+	liveHTML := renderHTML(t, ObjectsBrowserPage(live))
+	if strings.Contains(liveHTML, `onsubmit="return false"`) {
+		t.Error("live page must not carry preview submit guards")
+	}
+}
+
+// formBlock returns the HTML of one <form id=...> element.
+func formBlock(t *testing.T, html, id string) string {
+	t.Helper()
+	start := strings.Index(html, `id="`+id+`"`)
+	if start < 0 {
+		t.Fatalf("form %q not found", id)
+	}
+	// Walk back to the opening tag, then forward to its close.
+	open := strings.LastIndex(html[:start], "<form")
+	if open < 0 {
+		t.Fatalf("form %q has no opening tag", id)
+	}
+	end := strings.Index(html[open:], "</form>")
+	if end < 0 {
+		t.Fatalf("form %q is not closed", id)
+	}
+	return html[open : open+end]
+}
+
+// TestObjectsBrowserBulkDialogsValidateIndependently guards the regression that
+// made every bulk action unusable: one shared form meant browser constraint
+// validation inspected the closed dialogs too, so the empty required label and
+// status fields blocked Delete.
+func TestObjectsBrowserBulkDialogsValidateIndependently(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+
+	deleteBlock := dialogBlock(t, html, "objects-bulk-delete-dialog")
+	if strings.Contains(deleteBlock, "required") {
+		t.Errorf("delete dialog must not carry a required control, got:\n%s", deleteBlock)
+	}
+
+	statusBlock := dialogBlock(t, html, "objects-bulk-status-dialog")
+	if strings.Contains(statusBlock, `name="label"`) {
+		t.Errorf("status dialog must not carry the label field, got:\n%s", statusBlock)
+	}
+	if !strings.Contains(statusBlock, `name="status"`) || !strings.Contains(statusBlock, "required") {
+		t.Error("status dialog must require its own status select")
+	}
+
+	addBlock := dialogBlock(t, html, "objects-bulk-label-add-dialog")
+	removeBlock := dialogBlock(t, html, "objects-bulk-label-remove-dialog")
+	if strings.Contains(addBlock, `name="status"`) || strings.Contains(removeBlock, `name="status"`) {
+		t.Error("label dialogs must not carry the status field")
+	}
+	for name, block := range map[string]string{"add": addBlock, "remove": removeBlock} {
+		if !strings.Contains(block, `name="label"`) || !strings.Contains(block, "required") {
+			t.Errorf("%s-label dialog must require its own label input", name)
+		}
+	}
+}
+
+// dialogBlock returns the HTML of one <dialog id=...> element, so assertions can
+// talk about a single dialog's controls instead of the whole page.
+func dialogBlock(t *testing.T, html, id string) string {
+	t.Helper()
+	start := strings.Index(html, `id="`+id+`"`)
+	if start < 0 {
+		t.Fatalf("dialog %q not found", id)
+	}
+	end := strings.Index(html[start:], "</dialog>")
+	if end < 0 {
+		t.Fatalf("dialog %q is not closed", id)
+	}
+	return html[start : start+end]
+}
+
+// TestObjectsBrowserPreviewIsInert pins the gallery preview contract: the
+// sample render must not carry live pagination or mutation wiring, so clicking
+// around the preview cannot reach a backend.
+func TestObjectsBrowserPreviewIsInert(t *testing.T) {
+	data := objectsBrowserSampleData("")
+	html := renderHTML(t, ObjectsBrowserPage(data))
+
+	if !data.Preview {
+		t.Fatal("sample data must set Preview")
+	}
+	for _, unwanted := range []string{
+		`hx-get=`,
+		`hx-post=`,
+		`action="/objects/bulk"`,
+		`action="/objects"`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("preview must not carry live wiring %q", unwanted)
+		}
+	}
+
+	// The same components keep their live wiring outside preview mode.
+	live := objectsBrowserSampleData("")
+	live.Preview = false
+	liveHTML := renderHTML(t, ObjectsBrowserPage(live))
+	for _, want := range []string{
+		`hx-get="/objects/partial`,
+		`hx-post="/objects/knowledge"`,
+		`action="/objects/bulk"`,
+	} {
+		if !strings.Contains(liveHTML, want) {
+			t.Errorf("live render missing %q", want)
+		}
+	}
+}
+
+// TestObjectsBrowserUnifiedDropsUnavailableColumns pins the mode-aware column
+// set: unified search hits carry no status, embedding, or created_at, so the
+// table drops those columns instead of rendering a column of dashes.
+func TestObjectsBrowserUnifiedDropsUnavailableColumns(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSearchSampleData()))
+
+	if !strings.Contains(html, `uppercase">Score<`) {
+		t.Error("search table must render the Score column")
+	}
+	if !strings.Contains(html, "0.94") {
+		t.Error("search table must render relevance scores")
+	}
+	for _, unwanted := range []string{`uppercase">Status<`, `uppercase">Embedding<`, `>Created</span>`, `aria-sort=`, `data-status=`} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("unified table must not render %q", unwanted)
+		}
+	}
+}
+
+// TestObjectsBrowserStatsStrip pins the collapsed overview: one stats strip with
+// grouped digits instead of three stat cards, and the unavailable state as an
+// em dash rather than a number.
+func TestObjectsBrowserStatsStrip(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	if !strings.Contains(html, ">1,284<") {
+		t.Errorf("stats strip must group digits, got:\n%s", html)
+	}
+
+	unavailable := objectsBrowserSampleData("")
+	unavailable.Stats = &objectsStats{
+		TotalErr: errTestUnavailable{},
+		EmbedErr: errTestUnavailable{},
+	}
+	html = renderHTML(t, ObjectsBrowserPage(unavailable))
+	if strings.Count(html, `>—</div>`) < 3 {
+		t.Errorf("unavailable stats must render three em dashes, got:\n%s", html)
+	}
+	if strings.Contains(html, ">0<") {
+		t.Error("unavailable stats must not render a numeric 0")
+	}
+}
+
+// errTestUnavailable is a stand-in for a failed stats source.
+type errTestUnavailable struct{}
+
+func (errTestUnavailable) Error() string { return "unavailable" }
+
+// TestUIComponentPagePreview covers the dev-gallery page-preview route: served
+// only with the gallery flag, 404 for unknown slugs, and the bodies render the
+// expected page surfaces.
+func TestUIComponentPagePreview(t *testing.T) {
+	newServer := func(flag bool) *echo.Echo {
+		s := &Server{cfg: Config{ComponentGallery: flag}, memory: &fakeMemory{}}
+		e := echo.New()
+		e.GET("/dev/components/pages/:slug", s.uiComponentPagePreview)
+		return e
+	}
+
+	rec := httptest.NewRecorder()
+	newServer(true).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page preview = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-testid="objects-table"`,
+		`/js/app.js`,
+		`/css/app.css`,
+		`id="objects-bulk-bar"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("page preview missing %q", want)
+		}
+	}
+
+	// The search variant renders the reduced column set.
+	rec = httptest.NewRecorder()
+	newServer(true).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects-search", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search page preview = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `uppercase">Score<`) {
+		t.Error("search page preview must render the Score column")
+	}
+
+	rec = httptest.NewRecorder()
+	newServer(true).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/nope", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown page preview = %d, want 404", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	newServer(false).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dev/components/pages/objects", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("flag-off page preview = %d, want 404", rec.Code)
+	}
+}
+
+// TestObjectsBrowserSortHeader pins the sort contract for the one column the
+// list endpoint can order: Created. The header always states its sort
+// (aria-sort), the indicator leads the label because the column is
+// right-aligned, the link is query-only so it works on every route and inside
+// the gallery preview, and the active filters ride along so sorting never drops
+// a narrowing.
+func TestObjectsBrowserSortHeader(t *testing.T) {
+	data := objectsBrowserSampleData("")
+	html := renderHTML(t, ObjectsBrowserPage(data))
+
+	if !strings.Contains(html, `aria-sort="descending"`) {
+		t.Error("the default browse order is newest-first, so Created must render aria-sort=descending")
+	}
+	if !strings.Contains(html, `href="?order=asc"`) {
+		t.Error("the sort link must toggle to ascending with a query-only href")
+	}
+
+	// Right-aligned column: the indicator leads the label, not the other way round.
+	iconAt := strings.Index(html, "lucide--chevron-down")
+	labelAt := strings.Index(html, ">Created</span>")
+	if iconAt < 0 || labelAt < 0 {
+		t.Fatalf("expected a descending indicator and the Created label (icon=%d label=%d)", iconAt, labelAt)
+	}
+	if iconAt > labelAt {
+		t.Error("indicator must precede the label on a right-aligned column")
+	}
+
+	ascHTML := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("asc")))
+	if !strings.Contains(ascHTML, `aria-sort="ascending"`) {
+		t.Error("ascending order must render aria-sort=ascending")
+	}
+	if !strings.Contains(ascHTML, "lucide--chevron-up") {
+		t.Error("ascending order must render the up indicator")
+	}
+	if strings.Contains(ascHTML, "?order=asc") {
+		t.Error("ascending order must link back to the default (newest-first) order")
+	}
+
+	// Toggling keeps the active filters, so a sorted view stays narrowed.
+	filtered := objectsBrowserSampleData("")
+	filtered.TypeFilter = "task"
+	filtered.BranchID = "b-objs"
+	href := objectsSortHref(filtered, objectsNextSortDir(filtered))
+	if !strings.HasPrefix(href, "?") {
+		t.Errorf("sort href must be query-only, got %q", href)
+	}
+	for _, want := range []string{"order=asc", "type=task", "branch=b-objs"} {
+		if !strings.Contains(href, want) {
+			t.Errorf("sort href dropped %q: %q", want, href)
+		}
+	}
+}
+
+// TestObjectsBrowserSampleDataHonoursOrder keeps the gallery preview honest: the
+// sample rows re-sort from the query string, so the sort header is reviewable
+// without a backend behind the iframe.
+func TestObjectsBrowserSampleDataHonoursOrder(t *testing.T) {
+	desc := objectsBrowserSampleData("")
+	asc := objectsBrowserSampleData("asc")
+
+	if len(desc.Objects) < 2 || len(asc.Objects) != len(desc.Objects) {
+		t.Fatalf("sample data must hold a stable page of rows (desc=%d asc=%d)", len(desc.Objects), len(asc.Objects))
+	}
+	if desc.Order != "" || asc.Order != "asc" {
+		t.Fatalf("sample order must round-trip (desc=%q asc=%q)", desc.Order, asc.Order)
+	}
+	if desc.Objects[0].ID == asc.Objects[0].ID {
+		t.Error("ascending order must not start with the same row as the default")
+	}
+	// RFC3339 with a shared offset compares lexicographically.
+	if desc.Objects[0].CreatedAt < desc.Objects[1].CreatedAt {
+		t.Error("default sample order must be newest first")
+	}
+	if asc.Objects[0].CreatedAt > asc.Objects[1].CreatedAt {
+		t.Error("ascending sample order must be oldest first")
+	}
+}
+
+// TestObjectsFiltersApplyOnChange pins the filter interaction: every control
+// applies itself, so no Apply button is needed (or left behind as the only way
+// to submit), and the active sort survives a narrowing.
+func TestObjectsFiltersApplyOnChange(t *testing.T) {
+	live := objectsBrowserSampleData("asc")
+	live.Preview = false
+	html := renderHTML(t, ObjectsBrowserPage(live))
+	form := formBlock(t, html, "objects-filters-form")
+
+	if strings.Contains(form, `type="submit"`) {
+		t.Error("filter form must not carry a submit button; every control applies itself")
+	}
+	if got := strings.Count(form, `onchange="this.form.submit()"`); got < 3 {
+		t.Errorf("want every filter select to apply on change, got %d auto-submits", got)
+	}
+	if !strings.Contains(form, `name="order" value="asc"`) {
+		t.Error("filter form must carry the active sort so narrowing keeps it")
+	}
+
+	// The gallery preview keeps every control live but must not navigate its
+	// iframe: form.submit() bypasses the preview's onsubmit guard, so the
+	// handler is not rendered there at all.
+	previewForm := formBlock(t, renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("asc"))), "objects-filters-form")
+	if strings.Contains(previewForm, `onchange="this.form.submit()"`) {
+		t.Error("preview filters must not auto-submit; a submit would navigate the iframe")
+	}
+	if !strings.Contains(previewForm, `onsubmit="return false"`) {
+		t.Error("preview filters must keep the inert submit guard")
+	}
+}
+
+// TestObjectsBrowserSearchHeaderIsNotSortable pins the mode distinction: search
+// hits are relevance-ranked, so ordering by created_at is meaningless there and
+// the column must not advertise a sort it cannot honour.
+func TestObjectsBrowserSearchHeaderIsNotSortable(t *testing.T) {
+	data := objectsBrowserSampleData("")
+	data.Query = "acme"
+	data.Mode = "hybrid"
+	for _, o := range data.Objects {
+		data.Results = append(data.Results, ObjectSearchResult{Score: 0.5, Object: o})
+	}
+	data.Objects = nil
+
+	html := renderHTML(t, ObjectsBrowserPage(data))
+	if strings.Contains(html, "aria-sort") {
+		t.Error("search results must not render a sortable header")
+	}
+	if !strings.Contains(html, `>Created</th>`) {
+		t.Error("search results must still show the Created column")
+	}
+}
+
+// TestObjectsPartialURLKeepsSort pins pagination: "Load more" must fetch the next
+// page in the same order, not silently fall back to newest-first.
+func TestObjectsPartialURLKeepsSort(t *testing.T) {
+	if got := objectsPartialURL(objectsBrowserSampleData("asc")); !strings.Contains(got, "order=asc") {
+		t.Errorf("partial URL must carry the sort, got %q", got)
+	}
+	if got := objectsPartialURL(objectsBrowserSampleData("")); strings.Contains(got, "order=") {
+		t.Errorf("partial URL must not carry the default order, got %q", got)
+	}
+}

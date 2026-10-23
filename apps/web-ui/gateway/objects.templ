@@ -88,7 +88,8 @@ templ objectsAgentHeader(data objectsPageData) {
 // renders in browse mode, so the global counts never compete with a search's
 // results.
 templ objectsStatsSection(s objectsStats) {
-	{{ totalValue := strconv.Itoa(s.TotalObjects)
+	{{
+		totalValue := strconv.Itoa(s.TotalObjects)
 		var totalAttrs templ.Attributes
 		if s.TotalErr != nil {
 			totalValue = "—"
@@ -101,7 +102,8 @@ templ objectsStatsSection(s objectsStats) {
 			pendingValue = "—"
 			failedValue = "—"
 			embedAttrs = templ.Attributes{"title": "Unavailable"}
-		} }}
+		}
+	}}
 	<div class="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
 		@ui.StatCard(ui.StatCardProps{
 			Label:     "objects",
@@ -180,71 +182,80 @@ templ objectsStatsDeferred(branchID string) {
 // aria-haspopup; the selected option is announced via role="menuitemradio" +
 // aria-checked instead.
 templ objectsSearchForm(data objectsPageData) {
-	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
 	<form id="objects-search-form" class="mb-4" method="get" action="/objects">
-		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-			<label class="input input-bordered flex w-full min-w-0 flex-1 items-center gap-2">
-				@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
-				<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
-			</label>
-			<div class="join shrink-0">
+		@objectsSearchControls(data)
+	</form>
+}
+
+// objectsSearchControls holds the search input, the split mode button, and the
+// hidden filter carry-over inputs. It is shared by the standalone search form
+// and the objects browser toolbar, so the search affordance has one definition.
+templ objectsSearchControls(data objectsPageData) {
+	{{ mode := normalizeObjectsSearchMode(data.Mode) }}
+	<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+		<label class="input input-bordered flex w-full min-w-0 flex-1 items-center gap-2">
+			@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
+			<input type="search" name="q" value={ data.Query } placeholder="Search objects…" class="grow" autocomplete="off" aria-label="Search objects"/>
+		</label>
+		<div class="join shrink-0">
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeSubmit,
+				Variant:    ui.ButtonPrimary,
+				Size:       ui.ButtonSM,
+				Icon:       "lucide--search",
+				ExtraClass: "join-item gap-2",
+				Attrs:      templ.Attributes{"name": "mode", "value": mode},
+			}) {
+				{ objectsSearchModeLabel(mode) + " Search" }
+			}
+			@ui.Dropdown(ui.DropdownEnd, nil) {
 				@ui.Button(ui.ButtonProps{
-					Type:       ui.ButtonTypeSubmit,
+					Type:       ui.ButtonTypeButton,
 					Variant:    ui.ButtonPrimary,
 					Size:       ui.ButtonSM,
-					Icon:       "lucide--search",
-					ExtraClass: "join-item gap-2",
-					Attrs:      templ.Attributes{"name": "mode", "value": mode},
-				}) {
-					{ objectsSearchModeLabel(mode) + " Search" }
-				}
-				@ui.Dropdown(ui.DropdownEnd, nil) {
-					@ui.Button(ui.ButtonProps{
-						Type:       ui.ButtonTypeButton,
-						Variant:    ui.ButtonPrimary,
-						Size:       ui.ButtonSM,
-						Icon:       "lucide--chevron-down",
-						ExtraClass: "join-item",
-						AriaLabel:  "Choose search mode",
-					})
-					@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
-						for _, m := range objectsSearchModes() {
-							{{ checked := "false"
+					Icon:       "lucide--chevron-down",
+					ExtraClass: "join-item",
+					AriaLabel:  "Choose search mode",
+				})
+				@ui.DropdownMenu(templ.Attributes{"aria-label": "Search mode", "class": "w-80"}) {
+					for _, m := range objectsSearchModes() {
+						{{
+							checked := "false"
 							if m.Value == mode {
 								checked = "true"
-							} }}
-							<li role="none">
-								<button
-									type="submit"
-									name="mode"
-									value={ m.Value }
-									role="menuitemradio"
-									aria-checked={ checked }
-									class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
-								>
-									<span class="flex w-full items-start gap-2">
-										<span class="min-w-0 grow">
-											<span class="block text-sm font-medium">{ m.Label }</span>
-											<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
-										</span>
-										if m.Value == mode {
-											@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
-										}
+							}
+						}}
+						<li role="none">
+							<button
+								type="submit"
+								name="mode"
+								value={ m.Value }
+								role="menuitemradio"
+								aria-checked={ checked }
+								class={ "min-w-0 break-words text-left", templ.KV("menu-active", m.Value == mode) }
+							>
+								<span class="flex w-full items-start gap-2">
+									<span class="min-w-0 grow">
+										<span class="block text-sm font-medium">{ m.Label }</span>
+										<span class="text-muted-faint block text-xs whitespace-normal">{ m.Description }</span>
 									</span>
-								</button>
-							</li>
-						}
+									if m.Value == mode {
+										@ui.IconSpan("lucide--check", "mt-0.5 size-4 shrink-0 text-primary")
+									}
+								</span>
+							</button>
+						</li>
 					}
 				}
-			</div>
+			}
 		</div>
-		if data.TypeFilter != "" {
-			<input type="hidden" name="type" value={ data.TypeFilter }/>
-		}
-		if data.BranchID != "" {
-			<input type="hidden" name="branch" value={ data.BranchID }/>
-		}
-	</form>
+	</div>
+	if data.TypeFilter != "" {
+		<input type="hidden" name="type" value={ data.TypeFilter }/>
+	}
+	if data.BranchID != "" {
+		<input type="hidden" name="branch" value={ data.BranchID }/>
+	}
 }
 
 // objectsFilters renders the browse filter bar: a provenance mode toggle
@@ -259,52 +270,68 @@ templ objectsSearchForm(data objectsPageData) {
 // On the agent-scoped view the actor pair is fixed to the agent, so it rides
 // along as hidden inputs and the filter form posts back to the agent's route.
 templ objectsFilters(data objectsPageData) {
-	{{ scoped := data.AgentID != ""
-	action := "/objects"
-	if scoped {
-		action = "/agents/" + url.PathEscape(data.AgentID) + "/objects"
-	} }}
-	<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action={ templ.URL(action) }>
-		<span class="text-muted-faint flex items-center gap-1.5">
-			@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
-			<span class="text-xs font-medium">Filter</span>
-		</span>
-		if data.Query != "" {
-			<input type="hidden" name="q" value={ data.Query }/>
-			<input type="hidden" name="mode" value={ data.Mode }/>
-		}
-		if scoped {
-			<input type="hidden" name="actor_type" value={ data.ActorType }/>
-			if data.ActorID != "" {
-				<input type="hidden" name="actor_id" value={ data.ActorID }/>
-			}
-		}
-		if len(data.Branches) > 0 {
-			<select name="branch" class="select select-bordered select-sm" aria-label="Branch" onchange="this.form.submit()">
-				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
-				for _, b := range data.Branches {
-					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
-				}
-			</select>
-		}
-		if len(data.Types) > 0 {
-			<select name="type" class="select select-bordered select-sm" aria-label="Object type" onchange="this.form.submit()">
-				<option value="">All types</option>
-				for _, t := range data.Types {
-					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
-				}
-			</select>
-		}
-		if data.Query == "" {
-			if data.ActorType != "" {
-				@objectsProvenanceFilter(data)
-			}
-			if !scoped {
-				@objectsActorFilter(data)
-			}
-		}
-		@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Apply }
+	<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action={ templ.URL(objectsTargetURL(data)) }>
+		@objectsFilterControls(data)
 	</form>
+}
+
+// objectsTargetURL is the URL the objects filter form submits to: the agent's
+// scoped route on the agent-scoped view, the generic browser otherwise.
+func objectsTargetURL(data objectsPageData) string {
+	if data.AgentID != "" {
+		return "/agents/" + url.PathEscape(data.AgentID) + "/objects"
+	}
+	return "/objects"
+}
+
+// objectsFilterControls holds the filter form's controls: the provenance mode
+// toggle, the actor pair, and the type/branch dropdowns. Every control applies
+// itself on change — there is no Apply button, because a control that reloads
+// the list anyway makes a second "confirm" step pure ceremony. It is shared by
+// the standalone filter bar and the objects browser toolbar.
+templ objectsFilterControls(data objectsPageData) {
+	{{ scoped := data.AgentID != "" }}
+	<span class="text-muted-faint flex items-center gap-1.5">
+		@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
+		<span class="text-xs font-medium">Filter</span>
+	</span>
+	if data.Query != "" {
+		<input type="hidden" name="q" value={ data.Query }/>
+		<input type="hidden" name="mode" value={ data.Mode }/>
+	}
+	if data.Order != "" {
+		<input type="hidden" name="order" value={ data.Order }/>
+	}
+	if scoped {
+		<input type="hidden" name="actor_type" value={ data.ActorType }/>
+		if data.ActorID != "" {
+			<input type="hidden" name="actor_id" value={ data.ActorID }/>
+		}
+	}
+	if len(data.Branches) > 0 {
+		<select name="branch" class="select select-bordered select-sm" aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
+			<option value="" selected?={ data.BranchID == "" }>Main branch</option>
+			for _, b := range data.Branches {
+				<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
+			}
+		</select>
+	}
+	if len(data.Types) > 0 {
+		<select name="type" class="select select-bordered select-sm" aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
+			<option value="">All types</option>
+			for _, t := range data.Types {
+				<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
+			}
+		</select>
+	}
+	if data.Query == "" {
+		if data.ActorType != "" {
+			@objectsProvenanceFilter(data)
+		}
+		if !scoped {
+			@objectsActorFilter(data)
+		}
+	}
 }
 
 // objectsProvenanceFilter is the "Created by / Updated by / Any" provenance
@@ -314,10 +341,12 @@ templ objectsFilters(data objectsPageData) {
 templ objectsProvenanceFilter(data objectsPageData) {
 	<div class="join" role="group" aria-label="Provenance">
 		for _, m := range objectProvenanceModes() {
-			{{ extra := "join-item"
-			if data.Provenance == m.Value {
-				extra += " btn-active"
-			} }}
+			{{
+				extra := "join-item"
+				if data.Provenance == m.Value {
+					extra += " btn-active"
+				}
+			}}
 			@ui.Button(ui.ButtonProps{
 				Type:       ui.ButtonTypeLabel,
 				Size:       ui.ButtonSM,
@@ -328,7 +357,7 @@ templ objectsProvenanceFilter(data objectsPageData) {
 					name="provenance"
 					value={ m.Value }
 					checked?={ data.Provenance == m.Value }
-					onchange="this.form.submit()"
+					{ objectsFilterAutoApply(data.Preview)... }
 					class="sr-only"
 				/>
 				{ m.Label }
@@ -347,7 +376,7 @@ templ objectsProvenanceFilter(data objectsPageData) {
 // selected option so the control reflects the active filter.
 templ objectsActorFilter(data objectsPageData) {
 	{{ selected := actorKey(data.ActorType, data.ActorID) }}
-	<select name="actor" class="select select-bordered select-sm max-w-md" aria-label="Actor">
+	<select name="actor" class="select select-bordered select-sm max-w-md" aria-label="Actor" { objectsFilterAutoApply(data.Preview)... }>
 		<option value="" selected?={ selected == "" }>Any actor</option>
 		{{ users := actorOptionsByType(data.ActorOptions, "user") }}
 		if len(users) > 0 {
@@ -419,7 +448,9 @@ templ objectsKnowledgeAnswer(answer, sessionID string) {
 			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
 			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
 		</div>
-		<div class="memory-md text-sm leading-relaxed">@templ.Raw(renderMarkdown(answer))</div>
+		<div class="memory-md text-sm leading-relaxed">
+			@templ.Raw(renderMarkdown(answer))
+		</div>
 		if sessionID != "" {
 			<p class="text-muted-faint mt-3 border-t border-base-200 pt-2 font-mono text-[11px]">Session { sessionID }</p>
 		}
@@ -707,7 +738,9 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 					}
 				</select>
 				<noscript>
-					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) { Continue }
+					@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonGhost, Size: ui.ButtonSM}) {
+						Continue 
+					}
 				</noscript>
 			</form>
 			if form.Error != "" {
@@ -1096,7 +1129,9 @@ templ objectRelationships(obj *GraphObject, relTypes []CompiledType, edges []Gra
 // the target via search. Posts to /objects/{id}/relationships.
 templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
 	@ui.Dialog(ui.DialogProps{ID: "object-connect-modal", BoxClass: "max-w-sm"}) {
-		@ui.DialogTitle() { Connect object }
+		@ui.DialogTitle() {
+			Connect object 
+		}
 		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
 			Link this object to another one in the knowledge graph.
 		}
@@ -1142,6 +1177,7 @@ templ objectConnectDialog(obj *GraphObject, relTypes []CompiledType) {
 // autocomplete: typing fetches /objects/search and fills the <datalist> with
 // matching object ids (labels shown as option text). Pasting an id straight
 // into the field works without JS.
+
 script openObjectConnect() {
 	var d = document.getElementById("object-connect-modal");
 	if (!d) { return; }
@@ -1215,10 +1251,10 @@ templ objectSimilarObjectsDeferred(obj *GraphObject) {
 		hx-swap="outerHTML"
 	>
 		@ui.Section("Similar objects", ui.SectionProps{
-			Margin:      "mt-6",
-			CardClass:   "overflow-hidden",
-			BodyClass:   "memory-density-flush",
-			Rows:        true,
+			Margin:    "mt-6",
+			CardClass: "overflow-hidden",
+			BodyClass: "memory-density-flush",
+			Rows:      true,
 		}) {
 			<div class="flex items-center gap-2 px-4 py-3">
 				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
@@ -1255,5 +1291,3 @@ templ similarObjectRow(obj *GraphObject, so SimilarObject) {
 		}
 	</div>
 }
-
-

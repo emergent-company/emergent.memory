@@ -455,8 +455,56 @@ func (s *Service) Get(ctx context.Context, projectID, id uuid.UUID) (*Integratio
 				out.OAuthGrantedStrategy = g
 			}
 		}
+		s.resolveLegacyTargetNames(ctx, projectID, src, out, p)
 	}
 	return out, nil
+}
+
+// resolveLegacyTargetNames fills in the display name of a legacy single-target
+// resource (Drive's `folder_id`) so the UI never renders a bare opaque id where
+// a name exists. Sources connected before canonical `folders` targets were
+// introduced persist only the id; the first folder-picker save migrates them.
+//
+// The lookup is best-effort and bounded: a provider that cannot resolve the
+// name, a credential error, or a timeout leaves the response untouched, and the
+// existing chip label (derived from the id) stays in place. The resolved name is
+// annotation-only — it is not persisted, so a read never mutates the source.
+func (s *Service) resolveLegacyTargetNames(ctx context.Context, projectID uuid.UUID, src *Source, out *Integration, p SourceProvider) {
+	if src == nil || out == nil || out.Config == nil {
+		return
+	}
+	if _, ok := out.Config["folders"]; ok {
+		return
+	}
+	folderID := configString(out.Config, "folder_id")
+	if folderID == "" {
+		return
+	}
+	resolver, ok := p.(ResourceTargetResolver)
+	if !ok {
+		return
+	}
+	withCreds, err := s.repo.GetByIDWithCredentials(ctx, src.ID, projectID)
+	if err != nil {
+		return
+	}
+	creds, err := s.decryptCredentials(withCreds.EncryptedCredentials)
+	if err != nil {
+		return
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	refs, err := resolver.ResolveResourceTargets(lookupCtx, creds, []string{folderID})
+	if err != nil || len(refs) != 1 {
+		return
+	}
+	entry := map[string]any{"folder_id": refs[0].ID, "name": refs[0].Name}
+	if driveID := refs[0].DriveID; driveID != "" {
+		entry["drive_id"] = driveID
+	}
+	cfg := cloneConfig(out.Config)
+	cfg["folders"] = []any{entry}
+	out.Config = cfg
 }
 
 // Update applies a partial update. When the request config carries credential

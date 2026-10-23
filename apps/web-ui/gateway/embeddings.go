@@ -135,6 +135,29 @@ func embeddingStatusBadge(status string) (string, ui.BadgeIntent) {
 	}
 }
 
+// embeddingStatusIcon maps an embedding lifecycle state onto a single glyph and
+// its colour, for tables that show the state as an icon plus a CSS tooltip
+// instead of a text badge. Unknown/empty states return "", "" so the caller can
+// render a dash.
+func embeddingStatusIcon(status string) (icon, class string) {
+	switch status {
+	case "embedded":
+		return "lucide--circle-check", "text-success"
+	case "pending":
+		return "lucide--clock", "text-warning"
+	case "processing":
+		return "lucide--loader-circle", "text-info"
+	case "failed":
+		return "lucide--circle-x", "text-error"
+	case "dead_letter":
+		return "lucide--circle-alert", "text-error"
+	case "missing":
+		return "lucide--circle-dashed", "text-base-content/30"
+	default:
+		return "", ""
+	}
+}
+
 // embeddingStatsZero reports whether a queue has no jobs in any state.
 func embeddingStatsZero(s EmbeddingQueueStats) bool {
 	return s.Pending == 0 && s.Processing == 0 && s.Completed == 0 && s.Failed == 0 && s.StaleFailed == 0 && s.DeadLetter == 0

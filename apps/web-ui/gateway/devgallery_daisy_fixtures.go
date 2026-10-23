@@ -340,6 +340,22 @@ var daisyFixtures = map[string]daisyFixtureSpec{
 			return ui.StatCard(ui.StatCardProps{Label: "Active sessions", Value: "12", Icon: "lucide--activity", IconColor: "bg-primary/10 text-primary"})
 		},
 	},
+	"StatsGroup": {
+		PropsType:   "[]StatsGroupItem",
+		Description: "A DaisyUI stats bar with several stat cells side by side.",
+		Render: func() templ.Component {
+			return ui.StatsGroup([]ui.StatsGroupItem{
+				{Title: "objects", Value: "1,284"},
+				{Title: "pending embeddings", Value: "12", Color: "text-warning"},
+				{Title: "failed embeddings", Value: "3", Color: "text-error"},
+			})
+		},
+	},
+	"TableActionCell": {
+		PropsType:   "—",
+		Description: "A right-aligned action cell; shown in its composed context.",
+		Render:      galleryTableFixture,
+	},
 	"TableBody": {
 		PropsType:   "—",
 		Description: "The table body wrapper; the table family, shown in its composed context.",
@@ -449,8 +465,9 @@ func galleryTableFixture() templ.Component {
 	cell := func(s string) templ.Component {
 		return withChildren(table.TableCell("", nil), templ.Raw(s))
 	}
+	action := withChildren(table.TableActionCell(), ui.IconSpan("lucide--chevron-right", "size-4"))
 	row := func(name, typ, updated string) templ.Component {
-		return withChildren(table.TableRow("", false, nil), join(cell(name), cell(typ), cell(updated)))
+		return withChildren(table.TableRow("", false, nil), join(cell(name), cell(typ), cell(updated), action))
 	}
 	head := withChildren(table.TableHead(),
 		withChildren(table.TableHeadRow(),

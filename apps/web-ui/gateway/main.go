@@ -654,6 +654,7 @@ func main() {
 	// redirect (see auth.go), but still requires a session in session mode.
 	e.GET("/dev/components", s.uiComponentGallery)
 	e.GET("/dev/components/preview/:slug", s.uiComponentPreview)
+	e.GET("/dev/components/pages/:slug", s.uiComponentPagePreview)
 
 	srv := &http.Server{
 		Addr:              "0.0.0.0:" + cfg.Port,
