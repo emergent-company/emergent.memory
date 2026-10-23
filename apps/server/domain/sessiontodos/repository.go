@@ -24,6 +24,29 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
+// sessionAccessScope is the owner-or-shared predicate SessionAccessibleQuery
+// applies, in the shape of chat's ownerOrSharedScope (#2112, #2136): an empty
+// owner means the caller carries no user identity — an ownerless, project-bound
+// device credential, which the gateway uses for the iOS session log — and such a
+// caller may see only project-scoped sessions and sessions backed by a
+// project-shared conversation.
+//
+// The empty id must never be *bound*: comparing an empty string against the
+// `c.owner_user_id` uuid column is what Postgres rejects (SQLSTATE 22P02,
+// #2141). Collapsing to the shared branches is also the correct semantics — an
+// ownerless caller owns nothing, so nothing is "its own" to see.
+//
+// The `c.id IS NULL` branch stays in both forms: it is the project-scope
+// fallback for a session with no linked conversation, not an ownership claim.
+func sessionAccessScope(ownerUserID string) (string, []any) {
+	projectScoped := "c.id IS NULL"
+	shared := "c.is_private = false"
+	if ownerUserID == "" {
+		return "(" + projectScoped + " OR " + shared + ")", nil
+	}
+	return "(" + projectScoped + " OR c.owner_user_id = ? OR " + shared + ")", []any{ownerUserID}
+}
+
 // SessionAccessibleQuery reports whether the caller (projectID, ownerUserID)
 // may access the given session. It is the single source of truth for the
 // session-ownership predicate (the chat conversation model settled in #1010)
@@ -40,12 +63,13 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 // "scoped to an agent session" model, where sessions carry only project_id).
 // A foreign or unknown session id fails closed (no row matches).
 func SessionAccessibleQuery(ctx context.Context, db bun.IDB, sessionID, projectID, ownerUserID string) (bool, error) {
+	scope, args := sessionAccessScope(ownerUserID)
 	exists, err := db.NewSelect().
 		TableExpr("kb.sessions AS s").
 		Join("LEFT JOIN kb.chat_conversations AS c ON c.session_id = s.id").
 		Where("s.id = ?", sessionID).
 		Where("s.project_id = ?", projectID).
-		Where("(c.id IS NULL OR c.owner_user_id = ? OR c.is_private = false)", ownerUserID).
+		Where(scope, args...).
 		Exists(ctx)
 	if err != nil {
 		return false, apperror.NewInternal("failed to check session access", err)
