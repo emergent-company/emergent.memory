@@ -132,18 +132,22 @@ type ObjectExtractionJob struct {
 	CompletedAt          *time.Time `bun:"completed_at"`
 	ErrorMessage         *string    `bun:"error_message"`
 	ErrorDetails         JSON       `bun:"error_details,type:jsonb"`
-	RetryCount           int        `bun:"retry_count,notnull,default:0"`
-	MaxRetries           int        `bun:"max_retries,notnull,default:3"`
-	CreatedBy            *string    `bun:"created_by,type:uuid"`
-	ReprocessingOf       *string    `bun:"reprocessing_of,type:uuid"` // ID of job being reprocessed
-	SourceType           *string    `bun:"source_type"`               // 'document', 'chunk', 'manual'
-	SourceID             *string    `bun:"source_id"`
-	SourceMetadata       JSON       `bun:"source_metadata,type:jsonb,notnull,default:'{}'"`
-	DebugInfo            JSON       `bun:"debug_info,type:jsonb"`
-	Logs                 JSONArray  `bun:"logs,type:jsonb,notnull,default:'[]'"`
-	DiscoveredTypes      JSONArray  `bun:"discovered_types,type:jsonb,default:'[]'"`
-	CreatedObjects       JSONArray  `bun:"created_objects,type:jsonb,default:'[]'"`
-	CreatedObjectIDs     []string   `bun:"created_object_ids,array,notnull,default:'{}'"`
+	// TraceID is the OpenTelemetry trace id recorded when the job starts, so the
+	// admin job-detail endpoint can fetch the job's span tree from Tempo. NULL
+	// when tracing is disabled (no-op tracer) or the job predates the column.
+	TraceID          *string   `bun:"trace_id"`
+	RetryCount       int       `bun:"retry_count,notnull,default:0"`
+	MaxRetries       int       `bun:"max_retries,notnull,default:3"`
+	CreatedBy        *string   `bun:"created_by,type:uuid"`
+	ReprocessingOf   *string   `bun:"reprocessing_of,type:uuid"` // ID of job being reprocessed
+	SourceType       *string   `bun:"source_type"`               // 'document', 'chunk', 'manual'
+	SourceID         *string   `bun:"source_id"`
+	SourceMetadata   JSON      `bun:"source_metadata,type:jsonb,notnull,default:'{}'"`
+	DebugInfo        JSON      `bun:"debug_info,type:jsonb"`
+	Logs             JSONArray `bun:"logs,type:jsonb,notnull,default:'[]'"`
+	DiscoveredTypes  JSONArray `bun:"discovered_types,type:jsonb,default:'[]'"`
+	CreatedObjects   JSONArray `bun:"created_objects,type:jsonb,default:'[]'"`
+	CreatedObjectIDs []string  `bun:"created_object_ids,array,notnull,default:'{}'"`
 	// StagingBranchID is set after extraction completes. Extracted objects land on
 	// this branch so they are invisible to main-graph searches until a reviewer
 	// merges the branch. NULL means legacy behaviour (objects written to main).

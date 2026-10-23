@@ -244,6 +244,20 @@ func (w *ObjectExtractionWorker) processSingleJob(ctx context.Context, job *Obje
 	)
 	defer span.End()
 
+	// Persist the trace id so the admin job-detail endpoint can fetch the span
+	// tree from Tempo. With tracing disabled the span context is invalid and the
+	// write is a no-op (NULL). Failure here must never fail the job.
+	if sc := span.SpanContext(); sc.IsValid() && sc.TraceID().IsValid() {
+		traceID := sc.TraceID().String()
+		if err := w.jobsService.SetTraceID(ctx, job.ID, traceID); err != nil {
+			w.log.Warn("failed to persist trace id on extraction job",
+				slog.String("job_id", job.ID),
+				logger.Error(err))
+		} else if job.TraceID == nil {
+			job.TraceID = &traceID
+		}
+	}
+
 	// Inject project ID into context so the credential resolver can look up
 	// per-project LLM provider configuration (e.g. Vertex AI credentials).
 	if job.ProjectID != "" {

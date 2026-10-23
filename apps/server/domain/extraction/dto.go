@@ -3,6 +3,7 @@ package extraction
 import (
 	"time"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/httputil"
 )
 
@@ -45,6 +46,7 @@ type ExtractionJobDTO struct {
 	DiscoveredTypes  []string               `json:"discovered_types"`
 	CreatedObjects   []string               `json:"created_objects"`
 	ObjectsCreated   int                    `json:"objects_created"`
+	RetryCount       int                    `json:"retry_count"`
 	CreatedObjectIDs []string               `json:"created_object_ids"`
 	StagingBranchID  *string                `json:"staging_branch_id,omitempty"`
 	ErrorMessage     *string                `json:"error_message,omitempty"`
@@ -55,6 +57,13 @@ type ExtractionJobDTO struct {
 	CreatedAt        time.Time              `json:"created_at"`
 	SubjectID        *string                `json:"subject_id,omitempty"`
 	UpdatedAt        time.Time              `json:"updated_at"`
+
+	// Observability linkage. TraceID is populated from the row in ToDTO for both
+	// list and detail. Spans and TraceCostUSD are filled only by the single-job
+	// handler (the list stays cheap) and omitted otherwise.
+	TraceID      *string               `json:"trace_id,omitempty"`
+	Spans        []agents.RunTraceSpan `json:"spans,omitempty"`
+	TraceCostUSD *float64              `json:"trace_cost_usd,omitempty"`
 }
 
 // CreateExtractionJobDTO is the request DTO for creating an extraction job
@@ -330,6 +339,7 @@ func (j *ObjectExtractionJob) ToDTO() *ExtractionJobDTO {
 		DiscoveredTypes:  discoveredTypes,
 		CreatedObjects:   createdObjects,
 		ObjectsCreated:   j.ObjectsCreated,
+		RetryCount:       j.RetryCount,
 		CreatedObjectIDs: createdObjectIDs,
 		StagingBranchID:  j.StagingBranchID,
 		ErrorMessage:     j.ErrorMessage,
@@ -340,5 +350,6 @@ func (j *ObjectExtractionJob) ToDTO() *ExtractionJobDTO {
 		CreatedAt:        j.CreatedAt,
 		SubjectID:        j.CreatedBy,
 		UpdatedAt:        j.UpdatedAt,
+		TraceID:          j.TraceID,
 	}
 }

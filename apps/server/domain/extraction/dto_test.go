@@ -1,6 +1,7 @@
 package extraction
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -55,5 +56,33 @@ func TestObjectExtractionJobToDTONilCreatedObjectIDs(t *testing.T) {
 	}
 	if dto.StagingBranchID != nil {
 		t.Errorf("StagingBranchID = %v, want nil", dto.StagingBranchID)
+	}
+}
+
+// TestObjectExtractionJobToDTORetryCount ensures the entity's RetryCount flows
+// through ToDTO and serialises as retry_count (without omitempty, so the gateway
+// sees 0 rather than a missing key).
+func TestObjectExtractionJobToDTORetryCount(t *testing.T) {
+	j := &ObjectExtractionJob{ID: "job1", ProjectID: "p1", RetryCount: 2}
+
+	dto := j.ToDTO()
+	if dto.RetryCount != 2 {
+		t.Fatalf("RetryCount = %d, want 2", dto.RetryCount)
+	}
+
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal DTO: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal DTO: %v", err)
+	}
+	got, ok := payload["retry_count"]
+	if !ok {
+		t.Fatalf("retry_count key missing from JSON: %s", raw)
+	}
+	if got != float64(2) {
+		t.Fatalf("retry_count = %v, want 2", got)
 	}
 }

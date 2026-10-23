@@ -1002,6 +1002,32 @@ func (s *ObjectExtractionJobsService) TriggerForDocument(ctx context.Context, pr
 	return err
 }
 
+// SetTraceID records the OpenTelemetry trace id on the job row. A write is
+// skipped when traceID is empty (tracing disabled → NULL, no-op). Called by the
+// worker right after the root span is started so the admin job-detail endpoint
+// can later fetch the job's span tree from Tempo. Failures are non-fatal to the
+// enclosing job (the caller logs and continues).
+//
+// The UPDATE has no "AND trace_id IS NULL" guard: on a retry the worker starts a
+// fresh root span, so a later attempt overwrites the previous attempt's trace id.
+// This is intentional — the detail view follows the latest attempt — not a bug.
+func (s *ObjectExtractionJobsService) SetTraceID(ctx context.Context, jobID, traceID string) error {
+	if traceID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	_, err := s.db.NewUpdate().
+		Model((*ObjectExtractionJob)(nil)).
+		Set("trace_id = ?", traceID).
+		Set("updated_at = ?", now).
+		Where("id = ?", jobID).
+		Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set trace id: %w", err)
+	}
+	return nil
+}
+
 // UpdateStagingBranchID records the staging branch that was created for this
 // extraction job. Called after the branch is successfully created so reviewers
 // can locate pending extractions via the branch.

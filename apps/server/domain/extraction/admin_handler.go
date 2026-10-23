@@ -1,26 +1,40 @@
 package extraction
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
+	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 )
 
 // AdminHandler handles HTTP requests for extraction jobs admin API
 type AdminHandler struct {
-	jobsService *ObjectExtractionJobsService
+	jobsService  *ObjectExtractionJobsService
+	tempoBaseURL string       // internal Tempo query URL; empty when tracing disabled
+	pricing      modelPricing // optional; nil when provider repo not available
 }
 
-// NewAdminHandler creates a new extraction jobs admin handler
-func NewAdminHandler(jobsService *ObjectExtractionJobsService) *AdminHandler {
-	return &AdminHandler{jobsService: jobsService}
+// modelPricing resolves a model's per-1M-token text input/output price.
+// Satisfied by *provider.Repository via the adapter in module.go. Nil (or
+// returning found=false) means the cost estimate is omitted.
+type modelPricing interface {
+	LookupModelPricing(ctx context.Context, model string) (textIn, out float64, found bool)
+}
+
+// NewAdminHandler creates a new extraction jobs admin handler. tempoBaseURL and
+// pricing are optional (empty/nil → trace enrichment is a no-op).
+func NewAdminHandler(jobsService *ObjectExtractionJobsService, tempoBaseURL string, pricing modelPricing) *AdminHandler {
+	return &AdminHandler{jobsService: jobsService, tempoBaseURL: tempoBaseURL, pricing: pricing}
 }
 
 // CreateJob handles POST /api/admin/extraction-jobs
@@ -212,7 +226,113 @@ func (h *AdminHandler) GetJob(c echo.Context) error {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, SuccessResponse(job.ToDTO()))
+	dto := job.ToDTO()
+	h.enrichTrace(c.Request().Context(), dto)
+
+	return c.JSON(http.StatusOK, SuccessResponse(dto))
+}
+
+// enrichTrace fills a single-job DTO's Spans and TraceCostUSD from Tempo when a
+// trace id is present and tracing is enabled. Any failure (unreachable Tempo,
+// missing pricing, malformed trace) leaves the fields empty and never changes
+// the response status — the trace preview is best-effort. It is called only
+// from GetJob; the list route keeps the DTOs cheap by skipping this step.
+func (h *AdminHandler) enrichTrace(ctx context.Context, dto *ExtractionJobDTO) {
+	if dto.TraceID == nil || *dto.TraceID == "" || h.tempoBaseURL == "" {
+		return
+	}
+
+	spans, _, err := agents.GetTraceSpans(ctx, h.tempoBaseURL, *dto.TraceID)
+	if err != nil || spans == nil {
+		return
+	}
+	dto.Spans = spans
+
+	if h.pricing == nil {
+		return
+	}
+
+	// Aggregate input/output tokens per model over the flattened spans, then
+	// cost each model independently against its pricing (per 1M tokens).
+	type usage struct{ in, out int64 }
+	byModel := make(map[string]*usage)
+	for _, s := range spans {
+		if s.Model == "" {
+			continue
+		}
+		u, ok := byModel[s.Model]
+		if !ok {
+			u = &usage{}
+			byModel[s.Model] = u
+		}
+		u.in += s.InputTokens
+		u.out += s.OutputTokens
+	}
+
+	const perMillion = 1_000_000.0
+	var total float64
+	resolved := false
+	for model, u := range byModel {
+		textIn, out, found := h.lookupPricing(ctx, model)
+		if !found {
+			continue
+		}
+		total += float64(u.in)/perMillion*textIn + float64(u.out)/perMillion*out
+		resolved = true
+	}
+
+	// Only surface a cost when at least one model resolved to a price.
+	if resolved {
+		cost := math.Round(total*1e6) / 1e6
+		dto.TraceCostUSD = &cost
+	}
+}
+
+// lookupPricing resolves a model's per-1M-token price, normalizing the model
+// name first. call_llm span model attributes are frequently vendor-prefixed by
+// the model factory (e.g. "openai/deepseek-v4-flash", "google/gemini-2.5-flash")
+// while kb.provider_pricing stores bare model names, so an exact match would
+// miss every row. The candidates tried in order are: the raw model, the
+// substring after the last "/", then the substring after the first "/" — first
+// hit wins, and an empty model never looks up.
+//
+// Note on approximation: the same bare model name can exist under several
+// providers (e.g. "deepseek-v4-flash" under both "deepseek" and "aliyun" with
+// different rates). GetPricingByModel returns the first match ordered by
+// provider; we accept that first-match rate rather than resolving the actual
+// provider — a deliberate approximation, not a correctness guarantee.
+func (h *AdminHandler) lookupPricing(ctx context.Context, model string) (textIn, out float64, found bool) {
+	for _, candidate := range modelCandidates(model) {
+		if textIn, out, found = h.pricing.LookupModelPricing(ctx, candidate); found {
+			return textIn, out, true
+		}
+	}
+	return 0, 0, false
+}
+
+// modelCandidates returns the ordered, deduplicated model-name candidates for a
+// pricing lookup: the raw string, then the substring after the last "/", then
+// after the first "/". An empty model yields no candidates.
+func modelCandidates(model string) []string {
+	if model == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(c string) {
+		if c != "" && !seen[c] {
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	add(model)
+	if i := strings.LastIndex(model, "/"); i >= 0 && i+1 < len(model) {
+		add(model[i+1:])
+	}
+	if i := strings.Index(model, "/"); i >= 0 && i+1 < len(model) {
+		add(model[i+1:])
+	}
+	return out
 }
 
 // UpdateJob handles PATCH /api/admin/extraction-jobs/:jobId

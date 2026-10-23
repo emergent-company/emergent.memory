@@ -285,9 +285,36 @@ func provideCachedEmbeddingService(embeds *embeddings.Service, db bun.IDB, appCf
 
 // provideAdminHandler creates the extraction jobs admin handler. The 409
 // no_generative_model contract is enforced by the shared jobs service's
-// job-creation chokepoint (issue #1555).
-func provideAdminHandler(jobsService *ObjectExtractionJobsService) *AdminHandler {
-	return NewAdminHandler(jobsService)
+// job-creation chokepoint (issue #1555). Trace preview (spans + estimated cost)
+// is wired only when tracing is enabled and a provider repo is available;
+// otherwise the handler degrades to no enrichment.
+func provideAdminHandler(jobsService *ObjectExtractionJobsService, cfg *config.Config, providerRepo *provider.Repository) *AdminHandler {
+	tempoURL := ""
+	if cfg.Otel.Enabled() {
+		tempoURL = cfg.Otel.InternalTempoQueryURL()
+	}
+	// Left as a nil interface (not a typed-nil adapter) when no provider repo is
+	// wired, so enrichTrace's nil check actually fires instead of dereferencing
+	// a nil repository.
+	var pricing modelPricing
+	if providerRepo != nil {
+		pricing = &extractionPricingAdapter{repo: providerRepo}
+	}
+	return NewAdminHandler(jobsService, tempoURL, pricing)
+}
+
+// extractionPricingAdapter wraps *provider.Repository to satisfy the modelPricing
+// interface without importing the provider package from admin_handler.go.
+type extractionPricingAdapter struct {
+	repo *provider.Repository
+}
+
+func (a *extractionPricingAdapter) LookupModelPricing(ctx context.Context, model string) (textIn, out float64, found bool) {
+	p, err := a.repo.GetPricingByModel(ctx, model)
+	if err != nil || p == nil {
+		return 0, 0, false
+	}
+	return p.TextInputPrice, p.OutputPrice, true
 }
 
 // ExtractionConfig contains configuration for all extraction services
