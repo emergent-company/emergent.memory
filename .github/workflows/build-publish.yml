@@ -65,12 +65,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # On tag pushes, detect whether apps/web-ui/** changed since the last tag.
+      # On tag pushes, detect whether apps/web-ui/** changed since the last
+      # release tag.
+      #
+      # `--match 'v[0-9]*'` is load-bearing: the repo also carries rolling
+      # lightweight tags (`cli-dev`, `mac-dev`, `dev`, `memory-appcast`) that are
+      # force-moved onto main. A bare `git describe --tags --abbrev=0 HEAD^`
+      # resolves the NEAREST tag, so a rolling tag parked on the commit right
+      # before the release bump wins over the previous `vX.Y.Z` tag. The diff
+      # then covers only the bump commit (VERSION, main.go, swagger, pbxproj) and
+      # the web-ui tree looks unchanged — v0.88.0 shipped a `web-ui:0.88.0` that
+      # was a re-alias of the 0.87.4 image. Match release tags only.
       - name: Check if changed since last tag
         id: changed
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
           if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/web-ui/ | grep -q .; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -128,17 +139,33 @@ jobs:
           cache-to: type=gha,scope=memory-web-ui,mode=max
           no-cache: true
 
-      # Unchanged tag push: re-alias the existing image to the new version tag
-      # (no rebuild — seconds instead of ~2min).
+      # Unchanged tag push: re-alias the PREVIOUS RELEASE image to the new
+      # version tag (seconds instead of ~2min).
+      #
+      # Alias `${PREV#v}`, never `:latest`: `latest` is only republished on tag
+      # pushes, so when a release is cut from a tree whose web-ui did not change
+      # the `latest` tag is still the previous release's — but if a release is
+      # ever cut without publishing `latest` (or `latest` was moved by hand) the
+      # alias silently ships an older image. Failing loudly is better than
+      # publishing a mislabelled release.
       - name: Alias unchanged image to new version
         if: steps.changed.outputs.changed == 'false'
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          PREV: ${{ steps.changed.outputs.prev }}
         run: |
           BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          docker pull "$BASE:latest"
-          docker tag "$BASE:latest" "$BASE:v${VERSION}"
-          docker tag "$BASE:latest" "$BASE:${VERSION}"
-          docker push "$BASE:v${VERSION}"
-          docker push "$BASE:${VERSION}"
+          PREV_TAG="${PREV#v}"
+          if [ -z "$PREV_TAG" ]; then
+            echo "::error::no previous release tag resolved; refusing to alias an unknown image"
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$BASE:${PREV_TAG}" >/dev/null 2>&1; then
+            echo "::error::$BASE:${PREV_TAG} does not exist, so there is nothing to alias; rebuild the image instead"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            -t "$BASE:v${VERSION}" \
+            -t "$BASE:${VERSION}" \
+            "$BASE:${PREV_TAG}"
