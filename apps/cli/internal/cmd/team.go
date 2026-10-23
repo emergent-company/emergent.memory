@@ -239,7 +239,8 @@ func initTeamCmd() {
 		"Role to assign (project_viewer, project_user, project_admin)")
 
 	// team invites flags
-	teamInvitesCmd.Flags().BoolVar(&teamInvitesJSON, "json", false, "Output as JSON")
+	teamInvitesCmd.Flags().BoolVar(&teamInvitesJSON, "json", false,
+		"Output as JSON, including each invite token (a credential)")
 
 	// team remove flags
 	teamRemoveCmd.Flags().BoolVarP(&teamRemoveYes, "yes", "y", false, "Skip confirmation prompt")
@@ -257,9 +258,15 @@ func initTeamCmd() {
 var teamInvitesCmd = &cobra.Command{
 	Use:   "invites",
 	Short: "List pending invitations",
-	Long:  "List all pending invitations sent to your account.",
-	Args:  cobra.NoArgs,
-	RunE:  runTeamInvites,
+	Long: `List all pending invitations sent to your account.
+
+The default listing does not print invitation tokens; use the token from the
+invitation email with 'memory projects team accept <token>'. --json is the one
+place this listing prints it: it renders the API response as the CLI's client
+decodes it, including a credential for each invite, so do not pipe it into logs
+or share it.`,
+	Args: cobra.NoArgs,
+	RunE: runTeamInvites,
 }
 
 var teamInvitesJSON bool
@@ -276,6 +283,12 @@ func runTeamInvites(cmd *cobra.Command, args []string) error {
 	}
 
 	if teamInvitesJSON {
+		// Deliberate, not an oversight: --json is explicit machine output and
+		// renders the API response as the SDK models it, token included. Redacting
+		// it here would make machine output lossy and diverge from the API
+		// contract, and an admin needs the token to re-send an accept link when
+		// the invitation email never arrived. The exposure is documented in the
+		// command help and pinned by TestTeamInvitesJSONIncludesToken (#2134).
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(invites)
 	}
 

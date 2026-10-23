@@ -4494,6 +4494,12 @@ List pending invitations
 
 List all pending invitations sent to your account.
 
+The default listing does not print invitation tokens; use the token from the
+invitation email with 'memory projects team accept <token>'. --json is the one
+place this listing prints it: it renders the API response as the CLI's client
+decodes it, including a credential for each invite, so do not pipe it into logs
+or share it.
+
 ```
 memory projects team invites [flags]
 ```
@@ -4502,7 +4508,7 @@ memory projects team invites [flags]
 
 ```
   -h, --help   help for invites
-      --json   Output as JSON
+      --json   Output as JSON, including each invite token (a credential)
 ```
 
 ## memory projects team list
