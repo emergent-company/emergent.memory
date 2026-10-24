@@ -80,7 +80,7 @@ func TestWebProvider_AuthIsConfigOnly(t *testing.T) {
 
 func TestWebProvider_ListResourcesEmpty(t *testing.T) {
 	p := newWebProvider(outbound.DefaultPolicy())
-	got, truncated, err := p.ListResources(context.Background(), nil, nil, "")
+	got, truncated, err := p.ListResources(context.Background(), nil, nil, "", ConnectorDeps{})
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
 	}

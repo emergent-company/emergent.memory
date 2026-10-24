@@ -35,7 +35,7 @@ func (p *listingProvider) ExtractCredentials(map[string]any) (Credentials, error
 	return Credentials{"access_token": "at"}, nil
 }
 
-func (p *listingProvider) ListResources(_ context.Context, creds Credentials, cfg map[string]any, _ string) ([]Resource, bool, error) {
+func (p *listingProvider) ListResources(_ context.Context, creds Credentials, cfg map[string]any, _ string, _ ConnectorDeps) ([]Resource, bool, error) {
 	p.listed = true
 	p.gotCreds = creds
 	p.gotCfg = cfg

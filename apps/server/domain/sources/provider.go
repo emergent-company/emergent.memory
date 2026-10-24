@@ -46,6 +46,18 @@ type ConnectorDeps struct {
 	// Extract converts binary content to text (backed by the xberg service). A
 	// provider calls it for formats it cannot decode itself.
 	Extract func(ctx context.Context, content []byte, filename, mimeType string) (string, error)
+
+	// PersistCredentials writes a rotated credential set back to the source the
+	// connector was built for, through the same encrypted store the connect flow
+	// uses. Every path that works against a saved source supplies it — the sync
+	// worker, a resource listing, a connection test — because each of them can
+	// refresh; it is nil only when there is no stored row to update (a form the
+	// user is still filling in, or a connection test on unsaved credentials).
+	// Connectors must treat it as best-effort: an authorization server that
+	// rotates refresh tokens on use (Trale/Supabase) would otherwise strand the
+	// source at the next expiry (#2091), but a failed write must not fail the work
+	// that just succeeded.
+	PersistCredentials func(ctx context.Context, creds Credentials) error
 }
 
 // Connector is the provider-neutral transport the sync worker drives: it
@@ -121,8 +133,10 @@ type SourceProvider interface {
 	// credentials (a Drive folder, a GitHub repository). It backs the
 	// post-consent resource-selection step. query is an optional name filter
 	// (a provider may ignore it); truncated reports that the provider capped
-	// the listing (more matches exist than were returned).
-	ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string) ([]Resource, bool, error)
+	// the listing (more matches exist than were returned). deps carries the
+	// credential write-back: a listing can refresh an expired token (Trale), and
+	// a rotation that is not persisted would strand the next sync (#2091).
+	ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string, deps ConnectorDeps) ([]Resource, bool, error)
 	// NewConnector builds a connector for the given decrypted credentials.
 	NewConnector(ctx context.Context, creds Credentials, deps ConnectorDeps) (Connector, error)
 }

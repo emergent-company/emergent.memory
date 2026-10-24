@@ -205,7 +205,7 @@ func TestDriveListResources_GrantRevokedMapsToReconnect(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: tc.err})
-			_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+			_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "", ConnectorDeps{})
 			if err == nil {
 				t.Fatal("ListResources(revoked grant) = nil, want an error")
 			}
@@ -232,7 +232,7 @@ func TestDriveListResources_GrantRevokedMapsToReconnect(t *testing.T) {
 func TestDriveListResources_TransientStaysRaw(t *testing.T) {
 	raw := errors.New("googleapi: got HTTP response code 503")
 	p := driveProviderWithTransport(&fakeDriveTransport{listFoldersErr: raw})
-	_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+	_, _, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "", ConnectorDeps{})
 	if !errors.Is(err, raw) {
 		t.Fatalf("error = %v, want the raw provider error", err)
 	}
@@ -250,7 +250,7 @@ func TestDriveListResources_MissingCredentialStaysRaw(t *testing.T) {
 	p := NewGoogleDriveProvider(func(context.Context, gdrive.Credentials) (DriveTransport, error) {
 		return nil, raw
 	})
-	_, _, err := p.ListResources(context.Background(), Credentials{}, nil, "")
+	_, _, err := p.ListResources(context.Background(), Credentials{}, nil, "", ConnectorDeps{})
 	if !errors.Is(err, raw) {
 		t.Fatalf("error = %v, want the raw constructor error", err)
 	}

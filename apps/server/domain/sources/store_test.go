@@ -1,6 +1,7 @@
 package sources
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -268,5 +269,81 @@ func TestSourceStore_Create_IncompleteConfig(t *testing.T) {
 	}
 	if len(blob) == 0 || strings.Contains(string(blob), "refresh-oauth") {
 		t.Error("encrypted_credentials not stored encrypted")
+	}
+}
+
+// mustCredentialBlob reads a source's encrypted credential blob directly.
+func mustCredentialBlob(t *testing.T, repo *Repository, id, project uuid.UUID) []byte {
+	t.Helper()
+	src, err := repo.GetByIDWithCredentials(context.Background(), id, project)
+	if err != nil {
+		t.Fatalf("GetByIDWithCredentials(%s) error = %v", id, err)
+	}
+	return src.EncryptedCredentials
+}
+
+// TestSourceStore_UpdateCredentials_ProjectScoped pins the write-back contract
+// the sync worker uses for rotated OAuth tokens (#2091): it replaces one
+// source's encrypted blob, rejects an empty blob, and is project-scoped so a
+// worker holding one project's job cannot write another project's credentials.
+func TestSourceStore_UpdateCredentials_ProjectScoped(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "sourcescreds")
+	t.Cleanup(tdb.Close)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	cfg := &config.Config{LLMProvider: config.LLMProviderConfig{EncryptionKey: hex.EncodeToString(key)}}
+	repo := NewRepository(tdb.DB, log)
+	svc := NewService(repo, cfg, log, NewDefaultRegistry())
+
+	projectA, projectB := uuid.New(), uuid.New()
+	created, err := svc.Create(ctx, projectA, &CreateIntegrationRequest{
+		Name:         "Drive A",
+		ProviderType: ProviderTypeGoogleDrive,
+		Config: map[string]any{
+			"folder_id":     "folder-a",
+			"mime_types":    []any{"application/pdf"},
+			"refresh_token": "refresh-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	idA := uuid.MustParse(created.ID)
+
+	if err := repo.UpdateCredentials(ctx, idA, projectA, nil); err == nil {
+		t.Error("UpdateCredentials(empty blob) = nil, want a validation error")
+	}
+
+	rotated := []byte("rotated-credential-blob")
+	if err := repo.UpdateCredentials(ctx, idA, projectA, rotated); err != nil {
+		t.Fatalf("UpdateCredentials() error = %v", err)
+	}
+	if got := mustCredentialBlob(t, repo, idA, projectA); !bytes.Equal(got, rotated) {
+		t.Errorf("stored blob = %q, want %q", got, rotated)
+	}
+
+	// A cross-project write (a job belonging to another project) must not land.
+	if err := repo.UpdateCredentials(ctx, idA, projectB, []byte("hijacked")); !errors.Is(err, apperror.ErrNotFound) {
+		t.Errorf("cross-project UpdateCredentials() error = %v, want ErrNotFound", err)
+	}
+	if got := mustCredentialBlob(t, repo, idA, projectA); !bytes.Equal(got, rotated) {
+		t.Errorf("cross-project write changed the blob to %q", got)
+	}
+
+	// Only the credential column moved: the source is still readable and named.
+	got, err := svc.Get(ctx, projectA, idA)
+	if err != nil {
+		t.Fatalf("Get() after credential write error = %v", err)
+	}
+	if got.Name != "Drive A" {
+		t.Errorf("Get().Name = %q after credential write, want %q", got.Name, "Drive A")
 	}
 }

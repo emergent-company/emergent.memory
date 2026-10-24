@@ -111,7 +111,7 @@ func (p *githubProvider) CredentialKeys() []string { return githubCredentialKeyN
 // ListResources lists the repositories the token can see so the connect flow can
 // offer a repository picker. Private repositories are included. GitHub ignores
 // the name filter and never truncates.
-func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, _ string) ([]Resource, bool, error) {
+func (p *githubProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, _ string, _ ConnectorDeps) ([]Resource, bool, error) {
 	token, _ := creds["access_token"].(string)
 	client, err := p.newClient(ctx, github.Credentials{Token: token})
 	if err != nil {

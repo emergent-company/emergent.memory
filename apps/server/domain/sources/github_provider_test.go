@@ -186,7 +186,7 @@ func TestGitHubProvider_ListResources(t *testing.T) {
 		{FullName: "acme/private-docs", Private: true},
 		{FullName: "acme/public-docs"},
 	}})
-	resources, truncated, err := p.ListResources(context.Background(), Credentials{"access_token": "at"}, nil, "")
+	resources, truncated, err := p.ListResources(context.Background(), Credentials{"access_token": "at"}, nil, "", ConnectorDeps{})
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
 	}

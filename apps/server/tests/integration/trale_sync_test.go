@@ -12,6 +12,7 @@ package integration
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -94,6 +95,27 @@ func (s *TraleSyncSuite) createSource(svc *sources.Service, resourceURL string) 
 	return created.ID
 }
 
+// createSourceWithExpiredToken stores an already-expired OAuth token set plus a
+// refresh token, so the next connector build has to refresh.
+func (s *TraleSyncSuite) createSourceWithExpiredToken(svc *sources.Service, resourceURL string) string {
+	s.T().Helper()
+	created, err := svc.Create(s.Ctx, s.projectUUID(), &sources.CreateIntegrationRequest{
+		Name:         "Trale rotating",
+		ProviderType: sources.ProviderTypeTrale,
+		Config: map[string]any{
+			"tags":           []string{"standup"},
+			"access_token":   "at-expired",
+			"refresh_token":  "rt1",
+			"expires_at":     time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+			"client_id":      "client-1",
+			"token_endpoint": resourceURL + "/token",
+			"resource":       resourceURL,
+		},
+	})
+	s.Require().NoError(err)
+	return created.ID
+}
+
 // triggerAndSync triggers a manual sync and drives it synchronously with a
 // single worker batch (RunOnce). It returns the resulting sync-job DTO.
 func (s *TraleSyncSuite) triggerAndSync(svc *sources.Service, worker *sources.SyncWorker, sourceID string) *sources.SyncJobDTO {
@@ -107,6 +129,48 @@ func (s *TraleSyncSuite) triggerAndSync(svc *sources.Service, worker *sources.Sy
 	dto, err := svc.GetSyncJob(s.Ctx, s.projectUUID(), uuid.MustParse(sourceID), uuid.MustParse(*resp.JobID))
 	s.Require().NoError(err)
 	return dto
+}
+
+// serveToken is the OAuth token endpoint. It rotates the refresh token on every
+// use and rejects a spent one, which is what Supabase (Trale's authorization
+// server) does. The lifetime is 1s — inside mcpauth.ExpirySkew — so every sync
+// job has to refresh, which is what makes the persistence observable.
+func (f *fakeTraleMCP) serveToken(w http.ResponseWriter, r *http.Request) {
+	_ = r.ParseForm()
+	presented := r.PostForm.Get("refresh_token")
+
+	f.tokenMu.Lock()
+	if f.spentTokens == nil {
+		f.spentTokens = map[string]bool{}
+	}
+	if f.spentTokens[presented] {
+		f.tokenMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token reuse detected"}`))
+		return
+	}
+	f.spentTokens[presented] = true
+	f.refreshSeen = append(f.refreshSeen, presented)
+	f.tokenSeq++
+	next := fmt.Sprintf("rt%d", f.tokenSeq)
+	f.tokenMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"access_token":  "at-" + next,
+		"refresh_token": next,
+		"token_type":    "Bearer",
+		"expires_in":    1,
+	})
+}
+
+// refreshTokensSeen returns the refresh tokens presented to the endpoint, in
+// order.
+func (f *fakeTraleMCP) refreshTokensSeen() []string {
+	f.tokenMu.Lock()
+	defer f.tokenMu.Unlock()
+	return append([]string(nil), f.refreshSeen...)
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +241,14 @@ type fakeMeetingDetail struct {
 }
 
 type fakeTraleMCP struct {
-	mu       sync.Mutex
+	mu sync.Mutex
+
+	// OAuth token endpoint state: every refresh rotates the token (#2091).
+	tokenMu     sync.Mutex
+	tokenSeq    int
+	refreshSeen []string
+	spentTokens map[string]bool
+
 	meetings []fakeMeeting
 	detail   map[string]fakeMeetingDetail
 	failList bool
@@ -188,13 +259,17 @@ type fakeTraleMCP struct {
 
 func newFakeTraleMCP(t *testing.T) (*fakeTraleMCP, *httptest.Server) {
 	t.Helper()
-	f := &fakeTraleMCP{detail: map[string]fakeMeetingDetail{}}
+	f := &fakeTraleMCP{detail: map[string]fakeMeetingDetail{}, tokenSeq: 1}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	return f, srv
 }
 
 func (f *fakeTraleMCP) serve(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/token" {
+		f.serveToken(w, r)
+		return
+	}
 	f.mu.Lock()
 	session := r.Header.Get("Mcp-Session-Id")
 	f.mu.Unlock()
@@ -595,4 +670,65 @@ func (s *TraleSyncSuite) TestSyncFailureSurfacesError() {
 	s.Require().NotNil(dto.ErrorMessage, "failed job must carry an error message")
 	s.Require().NotEmpty(*dto.ErrorMessage)
 	s.Require().Empty(s.headDocuments(sourceID), "no documents may be written on a failed enumeration")
+}
+
+// TestRotationPersistsAcrossJobs is the #2091 regression at the storage layer:
+// the worker writes the rotated token set back to the encrypted credential blob,
+// so the second job refreshes with the token the first job persisted. Without the
+// write-back it presents the spent rt1, the endpoint answers invalid_grant, and
+// the job fails with the reconnect error instead of syncing.
+func (s *TraleSyncSuite) TestRotationPersistsAcrossJobs() {
+	f, srv := newFakeTraleMCP(s.T())
+	f.seed()
+
+	svc := s.newServiceWith(sources.NewRegistry(sources.NewTraleProvider(srv.Client())))
+	sourceID := s.createSourceWithExpiredToken(svc, srv.URL)
+	worker := s.newWorker(srv)
+
+	first := s.triggerAndSync(svc, worker, sourceID)
+	s.Require().Equal(sources.SyncStatusCompleted, first.Status, "the first job must refresh and sync")
+
+	second := s.triggerAndSync(svc, worker, sourceID)
+	s.Require().Equal(sources.SyncStatusCompleted, second.Status,
+		"the second job must refresh with the token the first job persisted")
+
+	s.Require().Equal([]string{"rt1", "rt2"}, f.refreshTokensSeen(),
+		"one refresh per job, the second using the persisted rotation")
+}
+
+// TestListingAndConnectionTestPersistRotatedTokens covers the read-only paths
+// that still refresh the token: the tag picker listing and the "test connection"
+// button. Both rotate the stored token server-side, so both must write it back —
+// an unpersisted rotation there strands the next sync just as surely as a job
+// failing to persist its own (#2091 review).
+func (s *TraleSyncSuite) TestListingAndConnectionTestPersistRotatedTokens() {
+	f, srv := newFakeTraleMCP(s.T())
+	f.seed()
+
+	svc := s.newServiceWith(sources.NewRegistry(sources.NewTraleProvider(srv.Client())))
+	sourceID := s.createSourceWithExpiredToken(svc, srv.URL)
+	worker := s.newWorker(srv)
+	id := uuid.MustParse(sourceID)
+
+	// The tag picker refreshes rt1 -> rt2.
+	_, _, err := svc.ListResources(s.Ctx, s.projectUUID(), id, "")
+	s.Require().NoError(err, "the tag listing must survive a refresh")
+
+	// The next job has to present rt2, not the spent rt1.
+	dto := s.triggerAndSync(svc, worker, sourceID)
+	s.Require().Equal(sources.SyncStatusCompleted, dto.Status,
+		"the sync after a listing must use the persisted rotation")
+
+	// The connection test refreshes again; the next job must follow it.
+	resp, err := svc.TestConnection(s.Ctx, s.projectUUID(), id)
+	s.Require().NoError(err)
+	s.Require().True(resp.Success, resp.Message)
+
+	second := s.triggerAndSync(svc, worker, sourceID)
+	s.Require().Equal(sources.SyncStatusCompleted, second.Status,
+		"the sync after a connection test must use the persisted rotation")
+
+	seen := f.refreshTokensSeen()
+	s.Require().Equal([]string{"rt1", "rt2", "rt3", "rt4"}, seen,
+		"listing, sync, connection test and second sync must each refresh with the current token")
 }

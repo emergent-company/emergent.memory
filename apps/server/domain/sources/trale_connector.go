@@ -186,9 +186,10 @@ func intValue(v any) (int, bool) {
 }
 
 // traleTokenState holds the current access token and, when the stored token is
-// expired, refreshes it in-memory. Rotated tokens are intentionally NOT
-// persisted: the sync worker has no credential-write path (known limitation —
-// see docs).
+// expired, refreshes it. A successful refresh is written back through persist
+// (the worker's encrypted credential store) because the authorization server
+// rotates refresh tokens on use: a rotation kept only in memory is dead for the
+// next job, which would then ask the user to reconnect (#2091).
 type traleTokenState struct {
 	mu            sync.Mutex
 	accessToken   string
@@ -197,10 +198,15 @@ type traleTokenState struct {
 	clientID      string
 	tokenEndpoint string
 	resource      string
+	scope         string
 	http          *http.Client
+	// persist is best-effort: nil means the caller has no credential write path
+	// (a tag listing or a connection test), and an error is logged by the
+	// caller's closure rather than failing the work that just succeeded.
+	persist func(ctx context.Context, creds Credentials) error
 }
 
-func newTraleTokenState(creds traleCredentials, httpc *http.Client) *traleTokenState {
+func newTraleTokenState(creds traleCredentials, httpc *http.Client, persist func(context.Context, Credentials) error) *traleTokenState {
 	return &traleTokenState{
 		accessToken:   creds.accessToken,
 		refreshToken:  creds.refreshToken,
@@ -208,13 +214,37 @@ func newTraleTokenState(creds traleCredentials, httpc *http.Client) *traleTokenS
 		clientID:      creds.clientID,
 		tokenEndpoint: creds.tokenEndpoint,
 		resource:      creds.resource,
+		scope:         creds.scope,
 		http:          httpc,
+		persist:       persist,
 	}
 }
 
-// validAccessToken returns a non-expired access token, refreshing in-memory
-// when the stored one has expired. A refresh failure is an actionable error
-// telling the user to reconnect (the worker cannot persist rotated tokens).
+// credentialsMap renders the token state as the Credentials map the store
+// encrypts. Only the token fields change during a refresh; the client,
+// endpoint, resource and scope are carried so a later parse reproduces the same
+// configuration.
+func (t *traleTokenState) credentialsMap() Credentials {
+	m := Credentials{
+		"access_token":   t.accessToken,
+		"refresh_token":  t.refreshToken,
+		"client_id":      t.clientID,
+		"token_endpoint": t.tokenEndpoint,
+		"resource":       t.resource,
+	}
+	if t.scope != "" {
+		m["scope"] = t.scope
+	}
+	if !t.expiresAt.IsZero() {
+		m["expires_at"] = t.expiresAt.UTC().Format(time.RFC3339)
+	}
+	return m
+}
+
+// validAccessToken returns a non-expired access token, refreshing when the
+// stored one has expired. A refresh failure is an actionable error telling the
+// user to reconnect: the stored grant is dead, and no amount of retrying a
+// revoked or expired one helps.
 func (t *traleTokenState) validAccessToken(ctx context.Context) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -240,6 +270,14 @@ func (t *traleTokenState) refreshLocked(ctx context.Context) error {
 	t.expiresAt = tok.ExpiresAt(time.Now().UTC())
 	if tok.RefreshToken != "" {
 		t.refreshToken = tok.RefreshToken
+	}
+	// Persist while holding the lock so two concurrent refreshes cannot write
+	// their rotations out of order (the last write would otherwise win with a
+	// token the server has already invalidated). A failure is deliberately
+	// ignored here: the caller's persist closure logs it, and the access token
+	// just obtained is valid.
+	if t.persist != nil {
+		_ = t.persist(ctx, t.credentialsMap())
 	}
 	return nil
 }
@@ -363,11 +401,11 @@ type traleConnector struct {
 	mcp    *traleMCP
 }
 
-func newTraleConnector(creds traleCredentials, httpc *http.Client) *traleConnector {
+func newTraleConnector(creds traleCredentials, httpc *http.Client, deps ConnectorDeps) *traleConnector {
 	if httpc == nil {
 		httpc = mcpauth.OutboundHTTPClient(creds.resource)
 	}
-	toks := newTraleTokenState(creds, httpc)
+	toks := newTraleTokenState(creds, httpc, deps.PersistCredentials)
 	return &traleConnector{
 		creds: creds,
 		http:  httpc,

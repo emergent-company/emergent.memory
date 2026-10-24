@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -156,7 +157,7 @@ func newTestConnector(f *fakeMCP, srv *httptest.Server, cfg traleSyncConfig) *tr
 		clientID:      "client-123",
 		tokenEndpoint: srv.URL + "/token",
 		resource:      srv.URL,
-	}, srv.Client())
+	}, srv.Client(), ConnectorDeps{})
 	c.config = cfg
 	return c
 }
@@ -224,7 +225,7 @@ func TestTraleConnector_Enumerate_PagesUntilHasNext(t *testing.T) {
 	// A server that serves two pages via list_transcriptions (has_next true then
 	// false) drives the client's pagination loop to completion.
 	mux := newPagedMCP(t)
-	conn := newTraleConnector(traleCredentials{accessToken: "at", resource: mux.URL}, mux.Client())
+	conn := newTraleConnector(traleCredentials{accessToken: "at", resource: mux.URL}, mux.Client(), ConnectorDeps{})
 	conn.config = traleSyncConfig{tags: []string{"standup"}, backfillDays: 90}
 	items, err := conn.Enumerate(context.Background(), map[string]any{"tags": []string{"standup"}})
 	if err != nil {
@@ -441,7 +442,7 @@ func TestTraleProvider_ListResources_Tags(t *testing.T) {
 
 	p := NewTraleProvider(srv.Client()).(*traleProvider)
 	creds := Credentials{"access_token": "at", "resource": srv.URL}
-	resources, _, err := p.ListResources(context.Background(), creds, nil, "")
+	resources, _, err := p.ListResources(context.Background(), creds, nil, "", ConnectorDeps{})
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
 	}
@@ -463,12 +464,209 @@ func TestTraleConnector_ReconnectError(t *testing.T) {
 		clientID:      "client-123",
 		tokenEndpoint: "https://tok",
 		resource:      "https://res",
-	}, nil)
+	}, nil, ConnectorDeps{})
 	_, err := c.Enumerate(context.Background(), map[string]any{"tags": []string{"standup"}})
 	if err == nil {
 		t.Fatal("Enumerate(expired, no refresh) = nil, want reconnect error")
 	}
 	if !strings.Contains(err.Error(), "reconnect the source") {
 		t.Errorf("Enumerate(expired) error = %v, want actionable reconnect message", err)
+	}
+}
+
+// newTokenEndpoint is a minimal OAuth token endpoint that rotates refresh
+// tokens the way Supabase (Trale's authorization server) does: issue maps the
+// presented refresh token to the token set to return, and ok=false answers
+// invalid_grant, which is what a spent token gets. seen reports every presented
+// token in order.
+func newTokenEndpoint(t *testing.T, issue func(presented string) (access, refresh string, ok bool)) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		presented := r.PostForm.Get("refresh_token")
+		mu.Lock()
+		seen = append(seen, presented)
+		mu.Unlock()
+		access, refresh, ok := issue(presented)
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"refresh token reuse detected"}`))
+			return
+		}
+		body := map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": 3600}
+		if refresh != "" {
+			body["refresh_token"] = refresh
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), seen...)
+	}
+}
+
+// TestTraleTokenState_PersistsRotatedRefreshToken pins the write-back: a
+// successful refresh must hand the rotated pair to the credential store, with
+// the non-token fields intact and an expiry that parses back.
+func TestTraleTokenState_PersistsRotatedRefreshToken(t *testing.T) {
+	srv, seen := newTokenEndpoint(t, func(presented string) (string, string, bool) {
+		if presented != "rt1" {
+			return "", "", false
+		}
+		return "at2", "rt2", true
+	})
+	var persisted []Credentials
+	st := newTraleTokenState(traleCredentials{
+		accessToken:   "at1",
+		refreshToken:  "rt1",
+		expiresAt:     time.Now().Add(-time.Minute),
+		clientID:      "client-123",
+		tokenEndpoint: srv.URL,
+		resource:      srv.URL,
+		scope:         "mcp",
+	}, srv.Client(), func(_ context.Context, creds Credentials) error {
+		persisted = append(persisted, creds)
+		return nil
+	})
+
+	tok, err := st.validAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("validAccessToken: %v", err)
+	}
+	if tok != "at2" {
+		t.Fatalf("token = %q, want at2", tok)
+	}
+	if len(persisted) != 1 {
+		t.Fatalf("persist called %d times, want 1", len(persisted))
+	}
+	got := persisted[0]
+	if got["access_token"] != "at2" || got["refresh_token"] != "rt2" {
+		t.Errorf("persisted %v, want the rotated pair", got)
+	}
+	if got["client_id"] != "client-123" || got["resource"] != srv.URL || got["scope"] != "mcp" {
+		t.Errorf("persisting the tokens dropped the configuration fields: %v", got)
+	}
+	exp, err := time.Parse(time.RFC3339, asString(got["expires_at"]))
+	if err != nil {
+		t.Fatalf("persisted expires_at = %q: %v", got["expires_at"], err)
+	}
+	if !exp.After(time.Now()) {
+		t.Errorf("persisted expiry %s is not in the future", exp)
+	}
+
+	// The fresh token is valid, so a second call neither refreshes nor writes.
+	if _, err := st.validAccessToken(context.Background()); err != nil {
+		t.Fatalf("second validAccessToken: %v", err)
+	}
+	if len(persisted) != 1 || len(seen()) != 1 {
+		t.Errorf("persist=%d refresh=%d after reuse, want 1 and 1", len(persisted), len(seen()))
+	}
+}
+
+// TestTraleTokenState_PersistFailureKeepsTheRefreshedToken covers the other half
+// of "best-effort": a credential-store failure must not turn a successful
+// refresh into a failed sync, and the in-memory rotation must still be used.
+func TestTraleTokenState_PersistFailureKeepsTheRefreshedToken(t *testing.T) {
+	srv, seen := newTokenEndpoint(t, func(string) (string, string, bool) { return "at2", "rt2", true })
+	writes := 0
+	st := newTraleTokenState(traleCredentials{
+		accessToken:   "at1",
+		refreshToken:  "rt1",
+		expiresAt:     time.Now().Add(-time.Minute),
+		clientID:      "client-123",
+		tokenEndpoint: srv.URL,
+		resource:      srv.URL,
+	}, srv.Client(), func(context.Context, Credentials) error {
+		writes++
+		return errors.New("credential store unavailable")
+	})
+
+	tok, err := st.validAccessToken(context.Background())
+	if err != nil {
+		t.Fatalf("a failed credential write must not fail the refresh: %v", err)
+	}
+	if tok != "at2" {
+		t.Fatalf("token = %q, want at2", tok)
+	}
+	if writes != 1 {
+		t.Errorf("persist attempted %d times, want 1", writes)
+	}
+	if st.refreshToken != "rt2" {
+		t.Errorf("in-memory refresh token = %q, want the rotation rt2", st.refreshToken)
+	}
+	// Still valid, so the failure is not retried on every request.
+	if _, err := st.validAccessToken(context.Background()); err != nil {
+		t.Fatalf("second validAccessToken: %v", err)
+	}
+	if writes != 1 || len(seen()) != 1 {
+		t.Errorf("persist=%d refresh=%d, want 1 and 1", writes, len(seen()))
+	}
+}
+
+// TestTraleConnector_SyncsAcrossTheRotationBoundary is the regression test for
+// #2091: the authorization server rotates the refresh token on every use and
+// rejects the previous one, so the second job must refresh with the token the
+// first job persisted. Without the write-back the second job presents rt1 again,
+// gets invalid_grant and surfaces the reconnect error.
+func TestTraleConnector_SyncsAcrossTheRotationBoundary(t *testing.T) {
+	f, mcpSrv := newFakeMCP(t)
+	f.meetings = []traleMeeting{{
+		ID: "m1", Title: "Standup 2026-10-22", Summary: "s", Date: "2026-10-22T09:00:00Z",
+		Status: traleCompleted, ParticipantCount: 2, Tags: []any{tagObj("standup")},
+	}}
+
+	next := map[string]string{"rt1": "rt2", "rt2": "rt3"}
+	tokSrv, seen := newTokenEndpoint(t, func(presented string) (string, string, bool) {
+		rotated, ok := next[presented]
+		if !ok {
+			return "", "", false
+		}
+		return "at-" + rotated, rotated, true
+	})
+
+	// stored stands in for the encrypted credential blob: the worker's
+	// persist closure replaces it, and the next job decrypts it.
+	stored := Credentials{
+		"access_token":   "at-expired",
+		"refresh_token":  "rt1",
+		"client_id":      "client-123",
+		"token_endpoint": tokSrv.URL,
+		"resource":       mcpSrv.URL,
+	}
+	persist := func(_ context.Context, rotated Credentials) error {
+		stored = rotated
+		return nil
+	}
+
+	for job := 1; job <= 2; job++ {
+		creds, err := parseTraleCredentials(stored)
+		if err != nil {
+			t.Fatalf("job %d: parse stored credentials: %v", job, err)
+		}
+		// The access token has expired again by the time this job runs.
+		creds.expiresAt = time.Now().Add(-time.Minute)
+		conn := newTraleConnector(creds, mcpSrv.Client(), ConnectorDeps{PersistCredentials: persist})
+		items, err := conn.Enumerate(context.Background(), map[string]any{"tags": []string{"standup"}})
+		if err != nil {
+			t.Fatalf("job %d: Enumerate after rotation: %v", job, err)
+		}
+		if len(items) != 1 {
+			t.Fatalf("job %d: got %d items, want 1", job, len(items))
+		}
+	}
+
+	if got := seen(); len(got) != 2 || got[0] != "rt1" || got[1] != "rt2" {
+		t.Fatalf("refresh tokens presented = %v, want [rt1 rt2] (the second job must use the persisted rotation)", got)
+	}
+	if stored["access_token"] != "at-rt3" || stored["refresh_token"] != "rt3" {
+		t.Errorf("stored credentials = %v, want the twice-rotated pair", stored)
 	}
 }

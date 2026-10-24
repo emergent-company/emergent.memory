@@ -160,12 +160,15 @@ func (p *traleProvider) ExtractCredentials(cfg map[string]any) (Credentials, err
 
 // ListResources lists the Trale tags the connecting user can see as sync-scope
 // candidates (the tag picker backs the required `tags` config).
-func (p *traleProvider) ListResources(ctx context.Context, creds Credentials, _ map[string]any, _ string) ([]Resource, bool, error) {
+func (p *traleProvider) ListResources(ctx context.Context, creds Credentials, _ map[string]any, _ string, deps ConnectorDeps) ([]Resource, bool, error) {
 	tc, err := parseTraleCredentials(creds)
 	if err != nil {
 		return nil, false, err
 	}
-	conn := newTraleConnector(tc, p.httpClient)
+	// The tag picker can refresh an expired token, so it takes the same
+	// write-back the sync worker uses: an unpersisted rotation would strand the
+	// source at the next sync (#2091).
+	conn := newTraleConnector(tc, p.httpClient, deps)
 	tags, err := conn.listTags(ctx)
 	if err != nil {
 		return nil, false, apperror.NewValidation("list tags failed: " + err.Error())
@@ -177,12 +180,12 @@ func (p *traleProvider) ListResources(ctx context.Context, creds Credentials, _ 
 	return out, false, nil
 }
 
-func (p *traleProvider) NewConnector(ctx context.Context, creds Credentials, _ ConnectorDeps) (Connector, error) {
+func (p *traleProvider) NewConnector(ctx context.Context, creds Credentials, deps ConnectorDeps) (Connector, error) {
 	tc, err := parseTraleCredentials(creds)
 	if err != nil {
 		return nil, err
 	}
-	return newTraleConnector(tc, p.httpClient), nil
+	return newTraleConnector(tc, p.httpClient, deps), nil
 }
 
 // ---- Trale OAuth strategy ----

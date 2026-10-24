@@ -72,7 +72,7 @@ func TestGoogleDriveProvider_ListResources(t *testing.T) {
 	p := NewGoogleDriveProvider(func(context.Context, gdrive.Credentials) (DriveTransport, error) {
 		return &fakeDriveTransport{folders: []gdrive.Item{{ID: "f1", Name: "Docs"}, {ID: "f2", Name: "Archive"}}}, nil
 	})
-	resources, truncated, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "")
+	resources, truncated, err := p.ListResources(context.Background(), Credentials{"refresh_token": "rt"}, nil, "", ConnectorDeps{})
 	if err != nil {
 		t.Fatalf("ListResources() error = %v", err)
 	}

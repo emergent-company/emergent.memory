@@ -259,3 +259,16 @@ func TestCreate_RejectsMissingFolderTarget(t *testing.T) {
 		t.Errorf("Create() error = %q, want folders validation error", err)
 	}
 }
+
+// TestCredentialDeps_ZeroSourceHasNoWritePath pins the guard that keeps an
+// unsaved credential flow from attempting a write: with no source id there is
+// no row to update, so a connector must not be handed a write path at all.
+func TestCredentialDeps_ZeroSourceHasNoWritePath(t *testing.T) {
+	svc := &Service{}
+	if deps := svc.credentialDeps(uuid.New(), uuid.Nil); deps.PersistCredentials != nil {
+		t.Error("credentialDeps(zero source) supplied a write path, want none")
+	}
+	if deps := svc.credentialDeps(uuid.New(), uuid.New()); deps.PersistCredentials == nil {
+		t.Error("credentialDeps(saved source) supplied no write path, want one")
+	}
+}

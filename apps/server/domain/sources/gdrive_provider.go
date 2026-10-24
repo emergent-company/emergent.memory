@@ -217,7 +217,7 @@ func (p *googleDriveProvider) CredentialKeys() []string { return credentialKeyNa
 
 // ListResources lists the Drive folders a user may pick as a sync target.
 // query (a non-empty name filter) is threaded into the Drive listing.
-func (p *googleDriveProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string) ([]Resource, bool, error) {
+func (p *googleDriveProvider) ListResources(ctx context.Context, creds Credentials, cfg map[string]any, query string, _ ConnectorDeps) ([]Resource, bool, error) {
 	client, err := p.newClient(ctx, driveCredentials(creds))
 	if err != nil {
 		return nil, false, err

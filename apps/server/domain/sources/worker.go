@@ -186,7 +186,13 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, fmt.Errorf("decrypt credentials: %w", err))
 	}
 
-	connector, err := provider.NewConnector(ctx, creds, ConnectorDeps{Extract: w.extractText})
+	// Rotated OAuth tokens are written back so a rotating authorization server
+	// (Trale) does not need a manual reconnect at every expiry. The connector
+	// swallows a write failure — the token it just obtained is still valid, so the
+	// sync continues — and credentialDeps logs it (#2091).
+	deps := w.svc.credentialDeps(job.ProjectID, src.ID)
+	deps.Extract = w.extractText
+	connector, err := provider.NewConnector(ctx, creds, deps)
 	if err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("initialize connector: %w", err))
 	}

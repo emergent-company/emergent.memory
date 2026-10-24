@@ -217,9 +217,10 @@ Operational caveats:
   source imports exactly that account's meeting scope.
 - **25 meetings per call.** Enumeration pages through meetings 25 at a time; a large backfill takes
   several calls and nothing is silently truncated.
-- **Reconnect after a failed token refresh.** Rotated refresh tokens are not persisted in this
-  version. If a refresh fails, the source stops with an actionable error and must be reconnected from
-  **Data Sources**.
+- **Token rotation is persisted.** The authorization server rotates the refresh token on every use, and
+  the source stores the rotated token, so routine rotation never interrupts syncing. A refresh fails
+  only when the grant itself is revoked or has expired; the source then stops with an actionable error
+  and must be reconnected from **Data Sources**.
 
 ### Web (website crawl)
 

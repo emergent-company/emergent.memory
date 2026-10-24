@@ -128,6 +128,31 @@ func (r *Repository) Update(ctx context.Context, src *Source) (*Source, error) {
 	return src, nil
 }
 
+// UpdateCredentials replaces one source's encrypted credential blob. It sets a
+// single column so a write-back that happens mid-sync cannot clobber a
+// concurrent edit to the source's config or status — Update would rewrite the
+// whole row from a snapshot taken before the sync started.
+func (r *Repository) UpdateCredentials(ctx context.Context, id, projectID uuid.UUID, blob []byte) error {
+	if len(blob) == 0 {
+		return apperror.NewValidation("credentials blob is empty")
+	}
+	res, err := r.db.NewUpdate().
+		Model((*Source)(nil)).
+		Set("encrypted_credentials = ?", blob).
+		Set("updated_at = now()").
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to persist source credentials", logger.Error(err))
+		return apperror.NewDatabase("failed to persist source credentials", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return apperror.ErrNotFound
+	}
+	return nil
+}
+
 // Delete deletes a source scoped by project. A missing row (or a cross-project
 // id) resolves to not-found.
 func (r *Repository) Delete(ctx context.Context, id, projectID uuid.UUID) error {

@@ -234,7 +234,7 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 	if err != nil {
 		return nil, err
 	}
-	return s.testProviderConnection(ctx, p, creds, req.Config, unsavedCredentials)
+	return s.testProviderConnection(ctx, p, creds, req.Config, unsavedCredentials, ConnectorDeps{})
 }
 
 // ListProviderResources lists a provider's selectable sync targets (repositories,
@@ -247,7 +247,7 @@ func (s *Service) ListProviderResources(ctx context.Context, req *ProviderListRe
 	}
 	// The connect form filters suggestions client-side, so no name query is
 	// needed here; truncated is still reported for providers that cap.
-	resources, truncated, err := p.ListResources(ctx, creds, req.Config, "")
+	resources, truncated, err := p.ListResources(ctx, creds, req.Config, "", ConnectorDeps{})
 	if err != nil {
 		return nil, false, providerListError("list resources failed", err)
 	}
@@ -320,7 +320,7 @@ func (s *Service) TestConnection(ctx context.Context, projectID, id uuid.UUID) (
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
-	return s.testProviderConnection(ctx, p, creds, src.Config, storedCredentials)
+	return s.testProviderConnection(ctx, p, creds, src.Config, storedCredentials, s.credentialDeps(projectID, src.ID))
 }
 
 // credentialContext says where the credential under test came from. It decides
@@ -346,8 +346,8 @@ func connectionFailureMessage(cc credentialContext, err error) string {
 	return err.Error()
 }
 
-func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials, cfg map[string]any, cc credentialContext) (*TestConnectionResponse, error) {
-	connector, err := p.NewConnector(ctx, creds, ConnectorDeps{})
+func (s *Service) testProviderConnection(ctx context.Context, p SourceProvider, creds Credentials, cfg map[string]any, cc credentialContext, deps ConnectorDeps) (*TestConnectionResponse, error) {
+	connector, err := p.NewConnector(ctx, creds, deps)
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: "failed to initialize connector: " + err.Error()}, nil
 	}
@@ -375,7 +375,7 @@ func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID, qu
 	if err != nil {
 		return nil, false, err
 	}
-	resources, truncated, err := p.ListResources(ctx, creds, src.Config, query)
+	resources, truncated, err := p.ListResources(ctx, creds, src.Config, query, s.credentialDeps(projectID, src.ID))
 	if err != nil {
 		// providerListError passes an *apperror.Error through untouched, so a
 		// provider's actionable error (a dead Drive grant → "reconnect the
@@ -629,6 +629,37 @@ func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID) error {
 }
 
 // ---- Credential helpers ----
+
+// persistRotatedCredentials writes a rotated credential set back to a saved
+// source. Only the encrypted column moves: the row's config and status may have
+// changed since the caller read it.
+func (s *Service) persistRotatedCredentials(ctx context.Context, projectID, id uuid.UUID, creds Credentials) error {
+	blob, err := s.encryptCredentials(creds)
+	if err != nil {
+		return fmt.Errorf("encrypt rotated credentials: %w", err)
+	}
+	if err := s.repo.UpdateCredentials(ctx, id, projectID, blob); err != nil {
+		return fmt.Errorf("persist rotated credentials: %w", err)
+	}
+	return nil
+}
+
+// credentialDeps returns the connector deps for work against a saved source:
+// a rotation is persisted, and a failure is logged rather than propagated (the
+// access token the refresh just obtained is valid). A zero source id — an
+// unsaved form — yields no write path, so nothing is written.
+func (s *Service) credentialDeps(projectID, id uuid.UUID) ConnectorDeps {
+	if id == uuid.Nil {
+		return ConnectorDeps{}
+	}
+	return ConnectorDeps{PersistCredentials: func(ctx context.Context, creds Credentials) error {
+		if err := s.persistRotatedCredentials(ctx, projectID, id, creds); err != nil {
+			s.log.Warn("failed to persist rotated credentials", "source_id", id, "error", err)
+			return err
+		}
+		return nil
+	}}
+}
 
 // encryptCredentials encrypts a provider credential map into a single
 // self-contained blob using the config-sourced key.

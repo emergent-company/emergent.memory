@@ -108,7 +108,7 @@ func (p *webProvider) ValidateConfig(cfg map[string]any) error {
 
 // ListResources returns no selectable targets: the web provider has no
 // second-level selector (the start_urls list is the whole scope).
-func (p *webProvider) ListResources(context.Context, Credentials, map[string]any, string) ([]Resource, bool, error) {
+func (p *webProvider) ListResources(context.Context, Credentials, map[string]any, string, ConnectorDeps) ([]Resource, bool, error) {
 	return []Resource{}, false, nil
 }
 
