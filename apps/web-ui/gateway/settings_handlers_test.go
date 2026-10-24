@@ -1,13 +1,34 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
 )
+
+// renderedOption returns the <option> tag and label text rendered for an agent
+// id inside the <select> with the given element id. Two levels of scoping are
+// needed: "disabled" also appears in the page's own inline JS, and both agent
+// panels render the same agent ids, so a page-wide match would let the editor
+// panel satisfy a merge assertion and vice versa (#2181 review).
+func renderedOption(t *testing.T, body, selectID, id string) (tag, label string) {
+	t.Helper()
+	sel := regexp.MustCompile(`(?s)<select[^>]*id="` + regexp.QuoteMeta(selectID) + `"[^>]*>.*?</select>`).FindString(body)
+	if sel == "" {
+		t.Fatalf("no <select id=%q> rendered", selectID)
+	}
+	re := regexp.MustCompile(`<option[^>]*value="` + regexp.QuoteMeta(id) + `"[^>]*>([^<]*)</option>`)
+	m := re.FindStringSubmatch(sel)
+	if m == nil {
+		t.Fatalf("no option rendered for agent %q in <select id=%q>", id, selectID)
+	}
+	return m[0], strings.TrimSpace(m[1])
+}
 
 // TestUIProjectSettingsRoute exercises GET /settings: the project record and
 // the remember/dedup settings render; absent settings fall back to "not set".
@@ -698,12 +719,15 @@ func TestUIProjectSettingsEditorRender(t *testing.T) {
 		agents: []AgentDefinitionSummary{
 			{ID: "a9", Name: "editor-x", Enabled: true},
 			{ID: "a8", Name: "no-search", Enabled: true},
+			{ID: "a7", Name: "reader", Enabled: true},
 		},
 		defs: map[string]*AgentDefinition{
 			"a9": editorCapableDefinition("a9", "editor-x"),
 			// required tools only: eligible, but the search recommendation is
 			// reported as optional rather than gating (#2098).
 			"a8": {ID: "a8", Name: "no-search", Enabled: true, Tools: []string{"entity-create", "relationship-create"}},
+			// no write tool: visible, but it cannot be selected (#2181).
+			"a7": {ID: "a7", Name: "reader", Enabled: true, Tools: []string{"entity-query"}},
 		},
 		settings: map[string]map[string]map[string]any{
 			"editor": {"agent_id": {"agentId": "a9"}},
@@ -733,11 +757,59 @@ func TestUIProjectSettingsEditorRender(t *testing.T) {
 	}
 	// An eligible agent that grants the requirements but neither search tool is
 	// selectable and flagged optional, not disabled.
-	if !strings.Contains(body, "no-search — no entity-search, entity-edges-get (optional)") {
-		t.Error("an eligible agent missing only the recommended search tools should be flagged optional")
+	if tag, label := renderedOption(t, body, "editor-agent", "a8"); strings.Contains(tag, "disabled") {
+		t.Errorf("an eligible agent must not render disabled: %s", tag)
+	} else if !strings.Contains(label, "no entity-search, entity-edges-get (optional)") {
+		t.Errorf("the option should flag the missing search tools as optional: %q", label)
+	}
+	// An ineligible agent stays visible but disabled, naming what it lacks.
+	if tag, label := renderedOption(t, body, "editor-agent", "a7"); !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible agent must render disabled: %s", tag)
+	} else if !strings.Contains(label, "missing: entity-create or entity-update, relationship-create") {
+		t.Errorf("the ineligible option should name its missing tools: %q", label)
 	}
 	if !strings.Contains(body, "Requires entity-create or entity-update, and relationship-create.") {
 		t.Error("the panel should state the requirement")
+	}
+}
+
+// TestUIProjectSettingsFetchesEachDefinitionOnce pins the per-render definition
+// cache: the editor and merge selections annotate the same agent list, so N
+// agents must cost N GETs, not 2N — including an agent whose definition cannot
+// be loaded, whose failure is cached rather than retried by the second panel
+// (#2181).
+func TestUIProjectSettingsFetchesEachDefinitionOnce(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", Enabled: true},
+			{ID: "a2", Name: "two", Enabled: true},
+			{ID: "a3", Name: "broken", Enabled: true},
+		},
+		defErrs: map[string]error{"a3": errors.New("agent store unavailable")},
+		defs: map[string]*AgentDefinition{
+			"a1": editorCapableDefinition("a1", "one"),
+			"a2": editorCapableDefinition("a2", "two"),
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	fetches := f.definitionFetches()
+	counts := map[string]int{}
+	for _, id := range fetches {
+		counts[id]++
+	}
+	for _, id := range []string{"a1", "a2", "a3"} {
+		if counts[id] != 1 {
+			t.Errorf("definition %q fetched %d times in one render, want 1 (fetches: %v)", id, counts[id], fetches)
+		}
 	}
 }
 
@@ -882,14 +954,15 @@ func TestUIProjectSettingsMergeRender(t *testing.T) {
 			t.Errorf("merge selector missing %q", want)
 		}
 	}
-	if !strings.Contains(body, `value="a1" selected`) {
-		t.Error("stored merge agent should render selected")
+	if tag, label := renderedOption(t, body, "merge-agent", "a1"); !strings.Contains(tag, "selected") {
+		t.Errorf("stored merge agent should render selected: %s", tag)
+	} else if !strings.Contains(label, "no relationship-delete (optional)") {
+		t.Errorf("an eligible agent missing a recommended tool should say so: %q", label)
 	}
-	if !strings.Contains(body, "missing: entity-create or entity-update") {
-		t.Error("ineligible agent should show its missing tools")
-	}
-	if !strings.Contains(body, "merger — no relationship-delete (optional)") {
-		t.Error("an eligible agent missing a recommended tool should say so")
+	if tag, label := renderedOption(t, body, "merge-agent", "a2"); !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible merge agent must render disabled: %s", tag)
+	} else if !strings.Contains(label, "missing: entity-create or entity-update") {
+		t.Errorf("the ineligible merge option should name its missing tools: %q", label)
 	}
 	if strings.Contains(body, "merge-agent-warning") {
 		t.Error("a capable stored merge agent must not render a warning")
@@ -1002,11 +1075,15 @@ func TestUIProjectSettingsEditorRenderStale(t *testing.T) {
 	if !strings.Contains(body, "Object chats will fall back to another editor-capable agent") {
 		t.Error("the warning should say object chats fall back to another agent")
 	}
-	if !strings.Contains(body, `value="a2" selected`) {
-		t.Error("the stale value should stay visible as the selected option")
+	tag, label := renderedOption(t, body, "editor-agent", "a2")
+	if !strings.Contains(tag, "selected") {
+		t.Errorf("the stale value should stay visible as the selected option: %s", tag)
 	}
-	if !strings.Contains(body, "disabled") {
-		t.Error("an ineligible editor agent should render disabled")
+	if !strings.Contains(tag, "disabled") {
+		t.Errorf("an ineligible editor agent should render disabled: %s", tag)
+	}
+	if !strings.Contains(label, "missing:") {
+		t.Errorf("the ineligible option should name its missing tools: %q", label)
 	}
 }
 

@@ -1046,7 +1046,7 @@ func TestObjectChatInstruction(t *testing.T) {
 	// relationship creation stay unconditional steps, and searching is marked
 	// conditional. A regression to the old "or search for related objects as
 	// needed" wording must red this test.
-	if !strings.Contains(got, "update the object, and create relationships") {
+	if !strings.Contains(got, "create or update the object as needed, and create relationships") {
 		t.Errorf("instruction must keep the edit and relationship creation unconditional:\n%s", got)
 	}
 	if strings.Contains(got, "or search for related objects as needed") {

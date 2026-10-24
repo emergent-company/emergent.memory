@@ -344,10 +344,13 @@ func (s *Server) uiProjectSettings(c echo.Context) error {
 			data.MergeAgent = id
 		}
 	}
-	data.EditorOptions = s.agentFlowOptions(ctx, agents, editorRequirement)
+	// One definition fetch per agent per render: both flow selections annotate
+	// the same list, so a second pass would double the GETs (#2181).
+	defs := newAgentDefinitionCache(s, ctx)
+	data.EditorOptions = agentFlowOptions(agents, editorRequirement, defs)
 	data.EditorAgentWarning = agentSelectionWarning(data.EditorOptions, data.EditorAgent, data.AgentsUnavailable,
 		"editor agent", "edit objects", "Object chats will fall back to another editor-capable agent, and will not start if none exists.")
-	data.MergeOptions = s.agentFlowOptions(ctx, agents, mergeRequirement)
+	data.MergeOptions = agentFlowOptions(agents, mergeRequirement, defs)
 	data.MergeAgentWarning = agentSelectionWarning(data.MergeOptions, data.MergeAgent, data.AgentsUnavailable,
 		"merge agent", "run a merge", "Merges will fall back to another merge-capable agent, and will not start if none exists.")
 	return s.page(c, pageTitle("Project Settings"), ProjectSettingsPage(data))
@@ -378,22 +381,55 @@ func agentSelectionWarning(options []agentOption, id string, agentsUnavailable b
 	return fmt.Sprintf("The configured %s (%s) cannot %s — missing: %s. %s", noun, opt.Name, verb, detail, outcome)
 }
 
+// agentDefinitionCache loads each agent definition at most once per settings
+// render. The editor and merge selections annotate the same agent list, so
+// without the cache every definition was fetched once per flow — 2N GETs for N
+// agents (#2181).
+type agentDefinitionCache struct {
+	srv  *Server
+	ctx  context.Context
+	defs map[string]*AgentDefinition
+	errs map[string]error
+}
+
+func newAgentDefinitionCache(s *Server, ctx context.Context) *agentDefinitionCache {
+	return &agentDefinitionCache{
+		srv:  s,
+		ctx:  ctx,
+		defs: make(map[string]*AgentDefinition),
+		errs: make(map[string]error),
+	}
+}
+
+// get returns the definition for id, fetching it on first use. A failure is
+// cached too (as a nil definition plus its error), so one broken agent does not
+// cost a second request.
+func (c *agentDefinitionCache) get(id string) (*AgentDefinition, error) {
+	if def, ok := c.defs[id]; ok {
+		return def, c.errs[id]
+	}
+	def, err := c.srv.memory.GetAgentDefinition(c.ctx, id)
+	if err != nil {
+		captureError(err)
+	}
+	c.defs[id] = def
+	c.errs[id] = err
+	return def, err
+}
+
 // agentFlowOptions annotates every agent with whether it can run the flow
 // described by req. Eligibility needs the full definition (allowed/banned tools
-// and tool policies), which the list endpoint does not carry, so this is one
-// extra GET per agent — the project's agent count is small and this runs on the
-// settings page only. A failed fetch is treated as ineligible rather than
-// crashing the page.
-func (s *Server) agentFlowOptions(ctx context.Context, agents []AgentDefinitionSummary, req toolRequirement) []agentOption {
+// and tool policies), which the list endpoint does not carry, so this costs one
+// GET per agent for the whole render (see agentDefinitionCache) — the project's
+// agent count is small and this runs on the settings page only. A failed fetch
+// is treated as ineligible rather than crashing the page.
+func agentFlowOptions(agents []AgentDefinitionSummary, req toolRequirement, defs *agentDefinitionCache) []agentOption {
 	opts := make([]agentOption, 0, len(agents))
 	for _, a := range agents {
 		opt := agentOption{ID: a.ID, Name: a.Name}
-		def, err := s.memory.GetAgentDefinition(ctx, a.ID)
+		def, err := defs.get(a.ID)
 		switch {
 		case err != nil || def == nil:
-			if err != nil {
-				captureError(err)
-			}
 			opt.Detail = "agent definition unavailable"
 		default:
 			missing, recommended := agentToolEligibility(def, req)

@@ -1412,7 +1412,7 @@ func objectChatInstruction(obj *GraphObject) string {
 	writeObject(obj)
 	b.WriteString("\nSteps:\n")
 	b.WriteString("1. FIRST review the object and propose any edits: corrected or added properties, a better key or type, reworded content, or relationships worth creating.\n")
-	b.WriteString("2. THEN apply the edits with your memory tools once I confirm: update the object, and create relationships. Search for related objects first when your tools allow it.\n")
+	b.WriteString("2. THEN apply the edits with your memory tools once I confirm: create or update the object as needed, and create relationships. Search for related objects first when your tools allow it.\n")
 	return b.String()
 }
 

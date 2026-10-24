@@ -392,12 +392,6 @@ templ overrideForm() {
 	</form>
 }
 
-// editorAgentPanel edits the editor-agent selection (which agent definition
-// runs object-content edits: proposing and applying property/content changes
-// with its memory tools). The empty option is the default agent (the project's
-// IsDefault agent, else the first enabled/first agent); selecting it clears the
-// override. A stored value that no longer exists in the list is preserved as
-// an "(unlisted)" option.
 // editorAgentPanel edits the editor-agent selection (which agent definition runs
 // the object-editing chat from the object page). Like the merge selection, this
 // is validated: only agents that grant the editor tool set can be chosen.
@@ -432,8 +426,8 @@ templ editorAgentPanel(editorAgent string, options []agentOption, warning string
 }
 
 // mergeAgentPanel edits the merge-agent selection (which agent definition runs
-// the object-merge flow from the object page). Unlike the editor selection,
-// this is validated: only agents that grant the merge tool set can be chosen.
+// the object-merge flow from the object page). Like the editor selection, this
+// is validated: only agents that grant the merge tool set can be chosen.
 // Ineligible agents stay visible but disabled with their missing requirements,
 // so the page explains why an agent cannot be picked. The empty option clears
 // the override; the merge deep link then auto-selects a merge-capable agent.

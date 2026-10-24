@@ -46,6 +46,14 @@ func (f *fakeMemory) catalogCallCount(method string) int {
 	return f.catalogCalls[method]
 }
 
+// definitionFetches returns a copy of the ids passed to GetAgentDefinition, in
+// order, so a test can assert a request count without racing the handler.
+func (f *fakeMemory) definitionFetches() []string {
+	f.defMu.Lock()
+	defer f.defMu.Unlock()
+	return append([]string(nil), f.defFetches...)
+}
+
 // modelTestCall records one TestProjectModel invocation.
 type modelTestCall struct {
 	Provider  string
@@ -57,7 +65,16 @@ type modelTestCall struct {
 type fakeMemory struct {
 	agents []AgentDefinitionSummary
 	defs   map[string]*AgentDefinition // full definitions keyed by id
-	convs  []Conversation
+	// defFetches records ids passed to GetAgentDefinition, in order, so tests
+	// can pin how many definition requests a render costs (#2181). Guarded by
+	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
+	defMu      sync.Mutex
+	defFetches []string
+	// defErrs forces GetAgentDefinition to fail for an id, so a test can pin the
+	// unloadable-definition path (the fallback below otherwise synthesises a
+	// definition for every listed agent).
+	defErrs map[string]error
+	convs   []Conversation
 	// session lifecycle (chat-conversation-lifecycle).
 	convIncludeArchived bool     // last includeArchived flag received by ListConversations
 	archivedConvs       []string // conversation ids passed to ArchiveConversation, in order
@@ -603,6 +620,12 @@ func (f *fakeMemory) ListAgentDefinitions(ctx context.Context) ([]AgentDefinitio
 }
 
 func (f *fakeMemory) GetAgentDefinition(ctx context.Context, id string) (*AgentDefinition, error) {
+	f.defMu.Lock()
+	f.defFetches = append(f.defFetches, id)
+	f.defMu.Unlock()
+	if err, ok := f.defErrs[id]; ok {
+		return nil, err
+	}
 	if d, ok := f.defs[id]; ok {
 		return d, nil
 	}
