@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 )
 
 const (
@@ -225,6 +227,11 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 // readPgCredsFromEnv parses POSTGRES_USER and POSTGRES_PASSWORD from the
 // .env.local file at envPath. Falls back to ("postgres", "") if not found,
 // which matches the pgautoupgrade image's own default.
+//
+// It reads through apps/cli/internal/envfile like every other env-file reader:
+// the installer's own writer quotes a password that contains a "#", and passing
+// the quotes through to pg meant the upgrade failed to authenticate against its
+// own database (#2170). A last assignment wins, as it does for the service.
 func readPgCredsFromEnv(envPath string) (user, password string) {
 	user = "postgres"
 	password = ""
@@ -233,23 +240,11 @@ func readPgCredsFromEnv(envPath string) (user, password string) {
 	if err != nil {
 		return
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		switch parts[0] {
-		case "POSTGRES_USER":
-			if parts[1] != "" {
-				user = parts[1]
-			}
-		case "POSTGRES_PASSWORD":
-			password = parts[1]
-		}
+	if v, ok := envfile.Read(data, "POSTGRES_USER"); ok && v != "" {
+		user = v
+	}
+	if v, ok := envfile.Read(data, "POSTGRES_PASSWORD"); ok {
+		password = v
 	}
 	return
 }

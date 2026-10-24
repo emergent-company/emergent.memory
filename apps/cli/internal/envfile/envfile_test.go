@@ -365,3 +365,66 @@ func swapCreateTemp(fn func(string, string) (*os.File, error)) func() {
 	createTempFile = fn
 	return func() { createTempFile = original }
 }
+
+// Read is the read side of the writer: a caller that displays or forwards a
+// value must see what the parser sees, not the bytes on that line. The cases
+// that used to be re-implemented per caller are the ones that matter — a
+// quoted value, an inline comment, the "export " prefix, the colon form and a
+// duplicated key (#2170).
+func TestReadReturnsWhatTheParserReads(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		key     string
+		want    string
+		wantOK  bool
+	}{
+		{name: "bare", content: "A=plain\n", key: "A", want: "plain", wantOK: true},
+		{name: "single quoted", content: "A='p@ss #1'\n", key: "A", want: "p@ss #1", wantOK: true},
+		{name: "double quoted", content: "A=\"x y\"\n", key: "A", want: "x y", wantOK: true},
+		{name: "inline comment", content: "A=https://x # note\n", key: "A", want: "https://x", wantOK: true},
+		{name: "export prefix", content: "export A=v\n", key: "A", want: "v", wantOK: true},
+		{name: "colon form", content: "A: v\n", key: "A", want: "v", wantOK: true},
+		{name: "last assignment wins", content: "A=first\nA=second\n", key: "A", want: "second", wantOK: true},
+		{name: "spacing around the separator", content: "  A =  value  \n", key: "A", want: "value", wantOK: true},
+		{name: "absent key", content: "B=1\n", key: "A", want: "", wantOK: false},
+		{name: "quoted value spanning lines", content: "A='one\ntwo'\n", key: "A", want: "one\ntwo", wantOK: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := Read([]byte(tt.content), tt.key)
+			if ok != tt.wantOK {
+				t.Fatalf("Read() ok = %v, want %v", ok, tt.wantOK)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// The values Read returns for a writer-produced file must be exactly what
+// godotenv reads, for every shape the writer can emit: if these ever disagree,
+// a display path is showing something the service does not see.
+func TestReadAgreesWithGodotenvOnWriterOutput(t *testing.T) {
+	values := map[string]string{
+		"GOOGLE_API_KEY":  "AIzaSy-plain",
+		"OPENAI_BASE_URL": "https://llm.example.com/a#b",
+		"LLM_MODEL":       "'quote-leading",
+		"SECRET":          "p@ss #1",
+		"SPACED":          "  padded  ",
+	}
+	path := filepath.Join(t.TempDir(), ".env.local")
+	require.NoError(t, os.WriteFile(path, []byte("KEEP=1\n"), 0o600))
+	require.NoError(t, UpdateAll(path, values, 0o600))
+
+	content, err := os.ReadFile(path)
+	require.NoError(t, err)
+	parsed, err := godotenv.Unmarshal(string(content))
+	require.NoError(t, err)
+	for key, want := range values {
+		got, ok := Read(content, key)
+		require.True(t, ok, "Read(%q) not found in %q", key, string(content))
+		assert.Equal(t, want, got, "Read(%q) differs from the file's meaning", key)
+		assert.Equal(t, parsed[key], got, "Read(%q) differs from godotenv", key)
+	}
+	assert.Equal(t, "1", parsed["KEEP"], "the rewrite must not drop unrelated keys")
+}

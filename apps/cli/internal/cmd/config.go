@@ -205,11 +205,11 @@ var standaloneEnvDisplayKeys = []string{"GOOGLE_API_KEY", "OPENAI_BASE_URL", "OP
 // The bounds are deliberate: this is a display path, so it reports what it can
 // and never fails the command. A file godotenv parses is read through it — the
 // same grammar the service and the env-file writer use — so a value the writer
-// quoted (#2155, #2163) is shown without its quotes (#2164). One malformed
-// line makes godotenv reject the whole file, so the prefix scan below is the
-// fallback that still shows the well-formed assignments rather than nothing;
-// it strips a matching quote pair because that is the common case the parser
-// would have handled.
+// quoted (#2155, #2163) is shown without its quotes (#2164). One malformed line
+// makes godotenv reject the whole file, so the fallback is the writer's own
+// scanner (envfile.Read): it still shows the well-formed assignments, and it
+// understands quoting, inline comments and the "export " prefix, so it cannot
+// print a value the service would never see (#2170).
 func parseStandaloneEnv(content []byte) map[string]string {
 	values := make(map[string]string, len(standaloneEnvDisplayKeys))
 	if parsed, err := godotenv.Unmarshal(string(content)); err == nil {
@@ -220,28 +220,16 @@ func parseStandaloneEnv(content []byte) map[string]string {
 		}
 		return values
 	}
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		for _, key := range standaloneEnvDisplayKeys {
-			if val, ok := strings.CutPrefix(line, key+"="); ok {
-				// Last assignment wins, as it does for godotenv and
-				// `docker compose --env-file`.
-				values[key] = trimEnvQuotes(strings.TrimSpace(val))
-			}
+	// The writer's scanner, not a prefix scan: it understands the same
+	// statements (quoting, an inline "# comment", the "export " prefix, the
+	// colon form, a multi-line quoted value) and is last-wins, so the degraded
+	// path cannot print a value the service would never see (#2170).
+	for _, key := range standaloneEnvDisplayKeys {
+		if val, ok := envfile.Read(content, key); ok {
+			values[key] = val
 		}
 	}
 	return values
-}
-
-// trimEnvQuotes drops one matching quote pair, so the fallback path renders a
-// quoted value the same way the parsed path does.
-func trimEnvQuotes(s string) string {
-	if len(s) >= 2 {
-		if (s[0] == '\'' && s[len(s)-1] == '\'') || (s[0] == '"' && s[len(s)-1] == '"') {
-			return s[1 : len(s)-1]
-		}
-	}
-	return s
 }
 
 // Settable keys and their mapping for standalone .env.local

@@ -410,14 +410,15 @@ func TestConfigShowUnquotesEnvLocalValues(t *testing.T) {
 }
 
 // One malformed line makes godotenv reject the whole file. The display must
-// still show the assignments it can — unquoted — rather than print nothing or
-// fail the command (#2164).
+// still show the assignments it can — unquoted, and without a trailing comment
+// glued to the value — rather than print nothing or fail the command (#2164,
+// #2170).
 func TestConfigShowToleratesUnparseableEnvLocal(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	writeEnvLocalFixture(t, home,
-		"OPENAI_BASE_URL='https://llm.example.com'\nLLM_MODEL=\"unterminated\n", 0o600)
+		"OPENAI_BASE_URL='https://llm.example.com' # the org endpoint\nLLM_MODEL=\"unterminated\n", 0o600)
 
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	require.NoError(t, config.Save(&config.Config{ServerURL: "https://api.example.com"}, configPath))
@@ -435,4 +436,7 @@ func TestConfigShowToleratesUnparseableEnvLocal(t *testing.T) {
 
 	assert.Contains(t, stdout, "https://llm.example.com (.env.local)")
 	assert.NotContains(t, stdout, "'https://llm.example.com")
+	// The fallback reads the statement, not the line: an inline comment is not
+	// part of the value the service would see.
+	assert.NotContains(t, stdout, "the org endpoint")
 }

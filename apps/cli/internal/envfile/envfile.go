@@ -725,3 +725,45 @@ func replaceFileAtomically(path string, data []byte, mode os.FileMode) error {
 func tempNamePrefix(path string) string {
 	return "." + strings.TrimLeft(filepath.Base(path), ".") + ".tmp-"
 }
+
+// Read returns the value key has in an env file's content, the way the parser
+// the service uses reads it: the last assignment wins (godotenv and
+// `docker compose --env-file` are both last-wins), a quoted value comes back
+// without its delimiters, and an inline "# comment" is not part of the value.
+//
+// It is the read side of this package, so a caller that displays or forwards a
+// value does not re-implement the quoting: a value the writer single-quoted
+// because it contains a "#" reads back as the service sees it instead of with
+// the quotes still on (#2170).
+//
+// A quote the file never closes is reported by the scanner as "no quote
+// character", so the span keeps its opening delimiter: the value's end is not
+// knowable, and guessing it would be worse than showing the file's bytes.
+//
+// A "$" reference is not expanded and a backslash escape is not resolved — the
+// scanner exists to rewrite values, not to evaluate them. Callers that need the
+// loader's expansion, or that need to know the file is well-formed, should read
+// the file the way the service does (godotenv) and use this only where the
+// loader has rejected the file or where the value is handed to a tool that reads
+// it literally.
+func Read(content []byte, key string) (string, bool) {
+	var (
+		value string
+		found bool
+	)
+	for _, a := range scanEnvAssignments(content) {
+		if a.key != key {
+			continue
+		}
+		text := content[a.valueStart:a.valueEnd]
+		if a.quote != 0 && len(text) > 0 {
+			// A terminated quote: the span starts at the opening delimiter and
+			// ends after the closing one. (An unterminated quote is reported
+			// with no quote character at all, so this branch does not run and
+			// the raw span — opening delimiter included — is returned.)
+			text = bytes.TrimSuffix(text[1:], []byte{a.quote})
+		}
+		value, found = string(text), true
+	}
+	return value, found
+}
