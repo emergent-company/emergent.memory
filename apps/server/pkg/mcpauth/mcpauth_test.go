@@ -385,13 +385,16 @@ func TestDiscoverAndRegister_IssuerWithoutPath(t *testing.T) {
 }
 
 // TestAsMetadataCandidates pins the candidate derivation rules directly.
-func TestAsMetadataCandidates(t *testing.T) {
+func TestAuthMetadataCandidates(t *testing.T) {
 	issuerWithPath := "https://auth.example/auth/v1"
+	// RFC 8414 §3.1 and OpenID Discovery §4 both define the path-INSERTED
+	// location as canonical, so each document family's inserted form precedes
+	// its appended form.
 	pathCandidates := []string{
 		"https://auth.example/.well-known/oauth-authorization-server/auth/v1",
 		"https://auth.example/auth/v1/.well-known/oauth-authorization-server",
-		"https://auth.example/auth/v1/.well-known/openid-configuration",
 		"https://auth.example/.well-known/openid-configuration/auth/v1",
+		"https://auth.example/auth/v1/.well-known/openid-configuration",
 	}
 
 	cases := []struct {
@@ -430,19 +433,19 @@ func TestAsMetadataCandidates(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := asMetadataCandidates(tc.issuer)
+			got := authMetadataCandidates(tc.issuer, "")
 			if len(got) != len(tc.want) {
-				t.Fatalf("asMetadataCandidates(%q) = %v, want %v", tc.issuer, got, tc.want)
+				t.Fatalf("authMetadataCandidates(%q) = %v, want %v", tc.issuer, got, tc.want)
 			}
 			for i := range tc.want {
 				if got[i] != tc.want[i] {
-					t.Fatalf("asMetadataCandidates(%q)[%d] = %q, want %q (full: %v)", tc.issuer, i, got[i], tc.want[i], got)
+					t.Fatalf("authMetadataCandidates(%q)[%d] = %q, want %q (full: %v)", tc.issuer, i, got[i], tc.want[i], got)
 				}
 			}
 			if tc.notBare != "" {
 				for _, c := range got {
 					if c == tc.notBare {
-						t.Errorf("asMetadataCandidates(%q) returned the bare issuer %q", tc.issuer, c)
+						t.Errorf("authMetadataCandidates(%q) returned the bare issuer %q", tc.issuer, c)
 					}
 				}
 			}
@@ -450,8 +453,8 @@ func TestAsMetadataCandidates(t *testing.T) {
 	}
 
 	// The bare issuer must never be a candidate even when it has no path.
-	if got := asMetadataCandidates("https://auth.example"); contains(got, "https://auth.example") {
-		t.Errorf("asMetadataCandidates returned the bare origin as a candidate: %v", got)
+	if got := authMetadataCandidates("https://auth.example", ""); contains(got, "https://auth.example") {
+		t.Errorf("authMetadataCandidates returned the bare origin as a candidate: %v", got)
 	}
 }
 
@@ -564,19 +567,23 @@ func TestClient_Exchange_TokenError(t *testing.T) {
 	}
 }
 
-func TestParseResourceMetadataURL(t *testing.T) {
+func TestParseBearerChallenge(t *testing.T) {
 	cases := []struct {
 		in   string
-		want string
+		want Challenge
+		ok   bool
 	}{
-		{`Bearer resource_metadata="https://example.com/prm"`, "https://example.com/prm"},
-		{`Bearer resource_metadata="https://example.com/prm", error="invalid_token"`, "https://example.com/prm"},
-		{`Bearer error="invalid_token"`, ""},
-		{`Basic realm="x"`, ""},
+		{`Bearer resource_metadata="https://example.com/prm"`, Challenge{ResourceMetadataURL: "https://example.com/prm"}, true},
+		{`Bearer resource_metadata="https://example.com/prm", error="invalid_token"`, Challenge{ResourceMetadataURL: "https://example.com/prm"}, true},
+		{`bearer resource_metadata=https://example.com/prm, scope="mcp:connect"`, Challenge{ResourceMetadataURL: "https://example.com/prm", Scope: "mcp:connect"}, true},
+		{`Bearer authorization_uri="https://as.example/.well-known/oauth-authorization-server"`, Challenge{AuthorizationURI: "https://as.example/.well-known/oauth-authorization-server"}, true},
+		{`Bearer error="invalid_token"`, Challenge{}, false},
+		{`Basic realm="x"`, Challenge{}, false},
 	}
 	for _, tc := range cases {
-		if got := parseResourceMetadataURL(tc.in); got != tc.want {
-			t.Errorf("parseResourceMetadataURL(%q) = %q, want %q", tc.in, got, tc.want)
+		got, ok := ParseBearerChallenge(tc.in)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("ParseBearerChallenge(%q) = (%+v, %v), want (%+v, %v)", tc.in, got, ok, tc.want, tc.ok)
 		}
 	}
 }

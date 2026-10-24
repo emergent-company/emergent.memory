@@ -64,133 +64,7 @@ func TestOAuthMetadataClientIsUnwrapped(t *testing.T) {
 
 // --- WWW-Authenticate parsing ---
 
-func TestParseBearerChallenge_Figma(t *testing.T) {
-	// Verbatim from a live probe of https://mcp.figma.com/mcp.
-	header := `Bearer resource_metadata="https://mcp.figma.com/.well-known/oauth-protected-resource",scope="mcp:connect",authorization_uri="https://api.figma.com/.well-known/oauth-authorization-server"`
-
-	ch, ok := parseBearerChallenge(header)
-	if !ok {
-		t.Fatalf("parseBearerChallenge returned ok=false")
-	}
-	if ch.ResourceMetadataURL != "https://mcp.figma.com/.well-known/oauth-protected-resource" {
-		t.Errorf("ResourceMetadataURL = %q", ch.ResourceMetadataURL)
-	}
-	if ch.AuthorizationURI != "https://api.figma.com/.well-known/oauth-authorization-server" {
-		t.Errorf("AuthorizationURI = %q", ch.AuthorizationURI)
-	}
-	if ch.Scope != "mcp:connect" {
-		t.Errorf("Scope = %q", ch.Scope)
-	}
-}
-
-func TestParseBearerChallenge_TokenFormAndUnquoted(t *testing.T) {
-	ch, ok := parseBearerChallenge(`Bearer resource_metadata=https://example.test/prm`)
-	if !ok {
-		t.Fatalf("ok=false, want true")
-	}
-	if ch.ResourceMetadataURL != "https://example.test/prm" {
-		t.Errorf("ResourceMetadataURL = %q", ch.ResourceMetadataURL)
-	}
-}
-
-func TestParseBearerChallenge_Rejects(t *testing.T) {
-	cases := map[string]string{
-		"empty":            "",
-		"not bearer":       `Basic realm="x"`,
-		"bearer no params": "Bearer",
-		// A challenge with neither metadata URL nor authorization_uri cannot
-		// drive discovery, so it must not be treated as an OAuth requirement.
-		"bearer only scope": `Bearer scope="read"`,
-	}
-	for name, header := range cases {
-		t.Run(name, func(t *testing.T) {
-			if _, ok := parseBearerChallenge(header); ok {
-				t.Errorf("parseBearerChallenge(%q) = ok, want false", header)
-			}
-		})
-	}
-}
-
 // --- well-known URL helpers ---
-
-func TestIssuerFromMetadataURL(t *testing.T) {
-	cases := map[string]string{
-		"https://api.figma.com/.well-known/oauth-authorization-server":  "https://api.figma.com",
-		"https://issuer.test/.well-known/oauth-authorization-server/t1": "https://issuer.test",
-		"https://issuer.test/oauth/token":                               "",
-		"not a url":                                                     "",
-	}
-	for in, want := range cases {
-		if got := issuerFromMetadataURL(in); got != want {
-			t.Errorf("issuerFromMetadataURL(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestMetadataURLFor(t *testing.T) {
-	if got, want := metadataURLFor("https://api.figma.com/"), "https://api.figma.com/.well-known/oauth-authorization-server"; got != want {
-		t.Errorf("metadataURLFor = %q, want %q", got, want)
-	}
-}
-
-func TestMetadataURLFor_PathInsertion(t *testing.T) {
-	cases := map[string]string{
-		// Path-bearing issuer: the well-known segment is inserted between host
-		// and path (RFC 8414 §3.1).
-		"https://example.com/tenant1":  "https://example.com/.well-known/oauth-authorization-server/tenant1",
-		"https://example.com/tenant1/": "https://example.com/.well-known/oauth-authorization-server/tenant1",
-		"https://example.com/a/b":      "https://example.com/.well-known/oauth-authorization-server/a/b",
-		// Host-only issuers are unchanged.
-		"https://api.figma.com":          "https://api.figma.com/.well-known/oauth-authorization-server",
-		"https://api.figma.com/":         "https://api.figma.com/.well-known/oauth-authorization-server",
-		"https://github.com/login/oauth": "https://github.com/.well-known/oauth-authorization-server/login/oauth",
-	}
-	for in, want := range cases {
-		if got := metadataURLFor(in); got != want {
-			t.Errorf("metadataURLFor(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestOIDCMetadataURLs(t *testing.T) {
-	if got, want := oidcMetadataURLAppend("https://github.com/login/oauth"), "https://github.com/login/oauth/.well-known/openid-configuration"; got != want {
-		t.Errorf("oidcMetadataURLAppend = %q, want %q", got, want)
-	}
-	if got, want := oidcMetadataURLFor("https://github.com/login/oauth"), "https://github.com/.well-known/openid-configuration/login/oauth"; got != want {
-		t.Errorf("oidcMetadataURLFor = %q, want %q", got, want)
-	}
-}
-
-func TestAuthMetadataCandidates_DedupeAndOrder(t *testing.T) {
-	// Host-only issuer: append and path-insertion RFC 8414 forms collapse to one.
-	got := authMetadataCandidates("https://api.figma.com", "")
-	want := []string{
-		"https://api.figma.com/.well-known/oauth-authorization-server",
-		"https://api.figma.com/.well-known/openid-configuration",
-	}
-	if len(got) != len(want) {
-		t.Fatalf("candidates = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("candidates[%d] = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-func TestAuthMetadataCandidates_AuthorizationURIFirst(t *testing.T) {
-	// A well-known authorization_uri is authoritative and leads the list.
-	got := authMetadataCandidates("https://example.com/tenant1", "https://example.com/.well-known/oauth-authorization-server/tenant1")
-	if got[0] != "https://example.com/.well-known/oauth-authorization-server/tenant1" {
-		t.Errorf("candidates[0] = %q, want the authorization_uri", got[0])
-	}
-	// It must not be duplicated later in the list.
-	for i := 1; i < len(got); i++ {
-		if got[i] == got[0] {
-			t.Errorf("candidate %q duplicated at index %d", got[0], i)
-		}
-	}
-}
 
 // --- discovery ---
 
@@ -436,6 +310,24 @@ func TestRegisterClient_RejectedExcerptIsCappedAndSanitized(t *testing.T) {
 	}
 	if strings.ContainsAny(err.Error(), "\n\t\x00") {
 		t.Errorf("error message must not contain control characters: %q", err.Error())
+	}
+}
+
+// TestDiscoverAuthRequirement_RejectsBlockedMetadataURL asserts a challenge
+// cannot steer the server at internal infrastructure: a protected-resource
+// metadata URL in a blocked range is rejected before any request, and the
+// rejection surfaces through the registry's ErrOutboundURLNotAllowed sentinel
+// (mapped to a 400 by the handler).
+func TestDiscoverAuthRequirement_RejectsBlockedMetadataURL(t *testing.T) {
+	// The resource is a public IP literal, so it passes the guard without a DNS
+	// lookup; only the challenge-supplied URL is rejected.
+	ch := authChallenge{ResourceMetadataURL: "http://169.254.169.254/latest/meta-data"}
+	_, err := discoverAuthRequirement(context.Background(), "https://1.1.1.1/mcp", ch)
+	if err == nil {
+		t.Fatal("expected the blocked metadata URL to be rejected")
+	}
+	if !errors.Is(err, ErrOutboundURLNotAllowed) {
+		t.Errorf("err = %v, want ErrOutboundURLNotAllowed", err)
 	}
 }
 

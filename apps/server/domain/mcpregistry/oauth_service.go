@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/mcpauth"
 )
 
 // oauthProviderMCP is the provider value used for MCP authorize flows in the
@@ -174,29 +174,18 @@ func discoverServerAuthRequirement(ctx context.Context, server *MCPServer) (*aut
 // remote server and returns the Bearer challenge from its 401/403 response.
 // ErrOAuthNotRequired is returned when no challenge is advertised.
 func probeAuthChallenge(ctx context.Context, resourceURL string) (authChallenge, error) {
-	const initBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"memory-mcp-oauth-probe","version":"1"}}}`
-
-	client := oauthProbeHTTPClient(resourceURL)
-	client.Timeout = oauthHTTPTimeout
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, resourceURL, strings.NewReader(initBody))
+	ch, found, err := mcpauth.ProbeResource(ctx, mcpauth.ProbeConfig{
+		Resource:  resourceURL,
+		ClientFor: oauthProbeHTTPClient,
+		Validate:  oauthValidateURL,
+	})
 	if err != nil {
-		return authChallenge{}, fmt.Errorf("building probe request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-
-	resp, err := client.Do(req)
-	if err != nil {
+		if errors.Is(err, mcpauth.ErrURLNotAllowed) {
+			return authChallenge{}, fmt.Errorf("%w: %v", ErrOutboundURLNotAllowed, err)
+		}
 		return authChallenge{}, fmt.Errorf("probing MCP server: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-		return authChallenge{}, ErrOAuthNotRequired
-	}
-	ch, ok := parseBearerChallenge(resp.Header.Get("WWW-Authenticate"))
-	if !ok {
+	if !found {
 		return authChallenge{}, ErrOAuthNotRequired
 	}
 	return ch, nil

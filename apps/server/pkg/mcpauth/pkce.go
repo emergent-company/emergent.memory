@@ -2,9 +2,11 @@
 // remote MCP server protected by OAuth 2.1 with dynamic client registration
 // (RFC 7591) and PKCE (RFC 7636). It is intentionally provider-agnostic: it
 // discovers the protected-resource and authorization-server metadata, registers
-// a public client, and exchanges/refreshes tokens. Provider wiring (Trale) lives
-// in the sources domain; this package stays generic so the MCP registry can
-// adopt it later without depending on any single vendor.
+// a public client, and exchanges/refreshes tokens.
+//
+// It is the single implementation of that protocol layer. Provider wiring
+// (Trale) lives in the sources domain, and the MCP registry's connect flow
+// adapts to this package rather than carrying its own copy (#2090).
 package mcpauth
 
 import (

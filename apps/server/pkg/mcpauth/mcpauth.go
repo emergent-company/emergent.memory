@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -39,7 +40,8 @@ type Client struct {
 	Resource string
 	Scopes   []string
 
-	httpClient *http.Client
+	httpClient   *http.Client
+	clientSecret string
 }
 
 // NewClient builds a Client from an already-registered identity/endpoints. It is
@@ -81,111 +83,107 @@ func (t Tokens) ExpiresAt(now time.Time) time.Time {
 // resource:
 //
 //  1. Discover the protected-resource metadata (RFC 9728): probe the resource
-//     for a 401 Bearer challenge advertising `resource_metadata`, else fetch
+//     for a 401/403 Bearer challenge advertising `resource_metadata`, else fetch
 //     `/.well-known/oauth-protected-resource` on the resource origin.
 //  2. Resolve the authorization-server metadata (RFC 8414 / OpenID discovery)
 //     from the issuer advertised in the protected-resource metadata (or the
-//     resource origin when none is advertised).
+//     resource origin when none is advertised). See Discover.
 //  3. Register a public client via RFC 7591 dynamic client registration.
 func DiscoverAndRegister(ctx context.Context, cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.Resource) == "" {
 		return nil, fmt.Errorf("mcpauth: resource URL is required")
 	}
-	httpc := cfg.HTTPClient
-	if httpc == nil {
-		// No caller-supplied transport: enforce the SSRF guard on the resource
-		// URL and build the guarded client. When a client is injected (tests, or
-		// a caller that owns its transport), the caller is responsible for the
-		// destination's safety, so the static check is skipped.
+	var clientFor ClientFactory
+	var validate ValidateFunc
+	if cfg.HTTPClient != nil {
+		// An injected transport means the caller owns destination safety (tests,
+		// or a caller with its own policy): use it as-is and skip the static
+		// check, exactly as before.
+		clientFor = func(string) *http.Client { return cfg.HTTPClient }
+		validate = func(context.Context, string) error { return nil }
+	} else {
 		if err := validateURL(cfg.Resource); err != nil {
 			return nil, fmt.Errorf("mcpauth: resource URL rejected: %w", err)
 		}
-		httpc = OutboundHTTPClient(cfg.Resource)
 	}
 
-	prm, err := discoverProtectedResource(ctx, httpc, cfg.Resource)
+	// The probe is best-effort: a resource that does not answer with a challenge
+	// may still publish its metadata at the well-known location.
+	challenge, _, _ := ProbeResource(ctx, ProbeConfig{Resource: cfg.Resource, ClientFor: clientFor, Validate: validate})
+
+	req, err := Discover(ctx, DiscoveryConfig{
+		Resource:  cfg.Resource,
+		Challenge: challenge,
+		Scopes:    cfg.Scopes,
+		ClientFor: clientFor,
+		Validate:  validate,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("mcpauth: protected-resource discovery: %w", err)
-	}
-	resource := prm.Resource
-	if strings.TrimSpace(resource) == "" {
-		resource = cfg.Resource
+		return nil, fmt.Errorf("mcpauth: %w", err)
 	}
 
-	// authorization_servers carries an issuer identifier (RFC 9728), not a
-	// metadata URL — discoverASMetadata derives the RFC 8414 / OpenID discovery
-	// candidates from it.
-	issuer := ""
-	if len(prm.AuthorizationServers) > 0 {
-		issuer = prm.AuthorizationServers[0]
-	}
-	if strings.TrimSpace(issuer) == "" {
-		// No servers advertised: discover on the resource's own origin. This is
-		// an issuer (origin), not a pre-built well-known URL — asMetadataCandidates
-		// derives the well-known paths.
-		issuer = resourceOrigin(cfg.Resource)
-	}
-	as, err := discoverASMetadata(ctx, httpc, issuer)
-	if err != nil {
-		return nil, fmt.Errorf("mcpauth: authorization-server metadata: %w", err)
-	}
-
-	clientID, err := registerClient(ctx, httpc, as.RegistrationEndpoint, cfg)
+	identity, err := Register(ctx, RegistrationConfig{
+		RegistrationEndpoint: req.RegistrationEndpoint,
+		ClientName:           cfg.ClientName,
+		RedirectURI:          cfg.RedirectURI,
+		Scopes:               req.Scopes,
+		ClientFor:            clientFor,
+		Validate:             validate,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("mcpauth: dynamic client registration: %w", err)
 	}
 
-	scopes := cfg.Scopes
-	if len(scopes) == 0 {
-		scopes = as.ScopesSupported
+	httpc := cfg.HTTPClient
+	if httpc == nil {
+		httpc = OutboundHTTPClient(cfg.Resource)
 	}
-
 	return &Client{
-		ClientID:   clientID,
-		AuthURL:    as.AuthorizationEndpoint,
-		TokenURL:   as.TokenEndpoint,
-		Resource:   resource,
-		Scopes:     scopes,
-		httpClient: httpc,
+		ClientID:     identity.ClientID,
+		AuthURL:      req.AuthorizationEndpoint,
+		TokenURL:     req.TokenEndpoint,
+		Resource:     req.Resource,
+		Scopes:       req.Scopes,
+		httpClient:   httpc,
+		clientSecret: identity.ClientSecret,
 	}, nil
 }
 
-// Exchange redeems an authorization code for tokens (RFC 6749 §4.1.3, public
-// client, PKCE, RFC 8707 resource parameter).
+// tokenClient builds the token endpoint client for this identity. The stored
+// httpClient already carries the SSRF guard (unless the caller injected a
+// transport), so no extra static check is applied here — matching the guard
+// posture of the rest of this package.
+func (c *Client) tokenClient() *TokenClient {
+	return &TokenClient{
+		TokenEndpoint: c.TokenURL,
+		Resource:      c.Resource,
+		Identity:      Identity{ClientID: c.ClientID, ClientSecret: c.clientSecret},
+		ClientFor:     func(string) *http.Client { return c.httpClient },
+		Validate:      func(context.Context, string) error { return nil },
+	}
+}
+
+// Exchange redeems an authorization code for tokens (RFC 6749 §4.1.3, PKCE,
+// RFC 8707 resource parameter).
 func (c *Client) Exchange(ctx context.Context, code, codeVerifier, redirectURI string) (*Tokens, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, fmt.Errorf("mcpauth: client not initialised")
 	}
-	if strings.TrimSpace(code) == "" {
-		return nil, fmt.Errorf("mcpauth: authorization code is empty")
-	}
-	form := tokenForm("authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", redirectURI)
-	if codeVerifier != "" {
-		form.Set("code_verifier", codeVerifier)
-	}
-	return postToken(ctx, c.httpClient, c.TokenURL, c.ClientID, c.Resource, form)
+	return c.tokenClient().Exchange(ctx, code, codeVerifier, redirectURI)
 }
 
-// Refresh rotates a refresh token for a new token set (RFC 6749 §6, public
-// client, no secret).
+// Refresh rotates a refresh token for a new token set (RFC 6749 §6).
 func (c *Client) Refresh(ctx context.Context, refreshToken string) (*Tokens, error) {
 	if c == nil || c.httpClient == nil {
 		return nil, fmt.Errorf("mcpauth: client not initialised")
 	}
-	if strings.TrimSpace(refreshToken) == "" {
-		return nil, fmt.Errorf("mcpauth: refresh token is empty")
-	}
-	form := tokenForm("refresh_token")
-	form.Set("refresh_token", refreshToken)
-	return postToken(ctx, c.httpClient, c.TokenURL, c.ClientID, c.Resource, form)
+	return c.tokenClient().Refresh(ctx, refreshToken)
 }
 
 // resourceOrigin returns the scheme://host[:port] origin of a URL, used to
 // derive the well-known discovery endpoints on the resource's own origin.
 func resourceOrigin(raw string) string {
-	u, err := parseURL(raw)
+	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
 	}
