@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/envfile"
 )
 
 // ANSI color helpers (inline — db_diagnose has unique color patterns)
@@ -231,14 +233,12 @@ func readDiagDSNFromEnvLocal() string {
 		"POSTGRES_DB":       "emergent",
 		"POSTGRES_PORT":     "5432",
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if _, ok := vals[parts[0]]; ok && len(parts) == 2 {
-			vals[parts[0]] = parts[1]
+	for key := range vals {
+		// envfile is the writer for these files, so it owns the grammar: a
+		// password the installer quoted because it contains a "#" reaches the
+		// DSN as the service sees it, not with its quotes on (#2174).
+		if v, ok := envfile.Read(data, key); ok {
+			vals[key] = v
 		}
 	}
 	if vals["POSTGRES_PASSWORD"] == "" {

@@ -743,20 +743,13 @@ func (i *Installer) checkEnvSecrets() {
 }
 
 // missingEnvKeys returns the subset of required that content does not define
-// with a non-empty value. Formatting tolerated: comments, blank lines,
-// `export KEY=value`, and single- or double-quoted values.
+// with a non-empty value.
 func missingEnvKeys(content string, required []string) []string {
-	defined := make(map[string]bool, len(required))
-	for _, line := range strings.Split(content, "\n") {
-		key, value, ok := parseEnvLine(line)
-		if ok && value != "" {
-			defined[key] = true
-		}
-	}
+	defined := envfile.ReadAll([]byte(content))
 
 	var missing []string
 	for _, key := range required {
-		if !defined[key] {
+		if defined[key] == "" {
 			missing = append(missing, key)
 		}
 	}
@@ -765,39 +758,14 @@ func missingEnvKeys(content string, required []string) []string {
 
 // envKeySet reports whether content defines key with a non-empty value.
 func envKeySet(content, key string) bool {
-	for _, line := range strings.Split(content, "\n") {
-		if k, v, ok := parseEnvLine(line); ok && k == key && v != "" {
-			return true
-		}
-	}
-	return false
+	v, ok := envfile.Read([]byte(content), key)
+	return ok && v != ""
 }
 
 // hasLegacyMinioKeys reports whether content still carries the MinIO
 // credentials used before the object store moved to SeaweedFS.
 func hasLegacyMinioKeys(content string) bool {
 	return envKeySet(content, "MINIO_ROOT_USER") || envKeySet(content, "MINIO_ROOT_PASSWORD")
-}
-
-// parseEnvLine parses a single KEY=value line, returning ok=false for blanks,
-// comments and malformed lines.
-func parseEnvLine(line string) (key, value string, ok bool) {
-	line = strings.TrimSpace(line)
-	if line == "" || strings.HasPrefix(line, "#") {
-		return "", "", false
-	}
-	line = strings.TrimPrefix(line, "export ")
-	key, value, ok = strings.Cut(line, "=")
-	if !ok {
-		return "", "", false
-	}
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return "", "", false
-	}
-	value = strings.TrimSpace(value)
-	value = strings.Trim(value, `"'`)
-	return key, value, true
 }
 
 // Uninstall removes an Emergent installation

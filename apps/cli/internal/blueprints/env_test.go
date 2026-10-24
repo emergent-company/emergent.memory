@@ -15,6 +15,9 @@ REDDIT_CLIENT_ID=from_env_file
 QUOTED_DOUBLE="double quoted"
 QUOTED_SINGLE='single quoted'
 WITH_COMMENT=value # inline comment
+HASH_IN_QUOTES='a # b'
+MULTILINE="line one
+line two"
 `), 0644)
 	_ = os.WriteFile(dir+"/.env.local", []byte(`
 BRAVE_SEARCH_API_KEY=mybravekey123
@@ -28,6 +31,8 @@ BRAVE_SEARCH_API_KEY=mybravekey123
 		{"QUOTED_DOUBLE", "double quoted"},        // quotes stripped
 		{"QUOTED_SINGLE", "single quoted"},        // quotes stripped
 		{"WITH_COMMENT", "value"},                 // inline comment stripped
+		{"HASH_IN_QUOTES", "a # b"},               // a hash inside quotes is data
+		{"MULTILINE", "line one\nline two"},       // a quoted value may span lines
 	}
 	for _, c := range cases {
 		got := vars[c.key]

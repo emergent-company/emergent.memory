@@ -171,7 +171,7 @@ func enrichConfigFromEnvLocal(cfg *config.Config, installDir string) *config.Con
 		return cfg
 	}
 
-	envVars := parseEnvFile(string(content))
+	envVars := envfile.ReadAll(content)
 
 	if cfg.APIKey == "" {
 		if key, ok := envVars["STANDALONE_API_KEY"]; ok && key != "" {
@@ -188,23 +188,6 @@ func enrichConfigFromEnvLocal(cfg *config.Config, installDir string) *config.Con
 	}
 
 	return cfg
-}
-
-// parseEnvFile parses a .env file into a map of key=value pairs.
-func parseEnvFile(content string) map[string]string {
-	result := make(map[string]string)
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		if idx := strings.Index(line, "="); idx > 0 {
-			key := strings.TrimSpace(line[:idx])
-			value := strings.TrimSpace(line[idx+1:])
-			result[key] = value
-		}
-	}
-	return result
 }
 
 // checkConfigStandalone checks configuration, understanding that standalone
@@ -590,7 +573,7 @@ func checkLLMProvider(installDir string) checkResult {
 		}
 	}
 
-	envVars := parseEnvFile(string(content))
+	envVars := envfile.ReadAll(content)
 
 	// Check Google AI
 	if key, ok := envVars["GOOGLE_API_KEY"]; ok && key != "" {

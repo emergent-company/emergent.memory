@@ -2,6 +2,11 @@
 // that edits a key in a file a service reads goes through Update, so the quoting
 // fallback, the atomic replace with ownership preservation, and the round-trip
 // guard are not re-implemented per caller (and cannot drift apart).
+//
+// It is also the one *reader* for those files: Read and ReadAll apply the same
+// scanner, so a value this package quotes (a password with a "#", a multi-line
+// PEM key) is read back as the service sees it rather than through a second,
+// hand-rolled grammar (#2174).
 package envfile
 
 import (
@@ -747,23 +752,33 @@ func tempNamePrefix(path string) string {
 // loader has rejected the file or where the value is handed to a tool that reads
 // it literally.
 func Read(content []byte, key string) (string, bool) {
-	var (
-		value string
-		found bool
-	)
+	value, ok := ReadAll(content)[key]
+	return value, ok
+}
+
+// ReadAll returns every assignment in content, with the same rules as Read
+// applied to the whole file: the scanner's quoting, comments, "export" prefix
+// and colon form, with the last assignment of a key winning. Read is the
+// one-key form of this, so the two cannot disagree about a value.
+//
+// Like Read it does not expand "$" or resolve escapes; use godotenv where the
+// loader's evaluation is the point.
+func ReadAll(content []byte) map[string]string {
+	values := make(map[string]string, 8)
 	for _, a := range scanEnvAssignments(content) {
-		if a.key != key {
-			continue
-		}
-		text := content[a.valueStart:a.valueEnd]
-		if a.quote != 0 && len(text) > 0 {
-			// A terminated quote: the span starts at the opening delimiter and
-			// ends after the closing one. (An unterminated quote is reported
-			// with no quote character at all, so this branch does not run and
-			// the raw span — opening delimiter included — is returned.)
-			text = bytes.TrimSuffix(text[1:], []byte{a.quote})
-		}
-		value, found = string(text), true
+		values[a.key] = assignmentValue(content, a)
 	}
-	return value, found
+	return values
+}
+
+// assignmentValue is the value the parser reads for one assignment: the span
+// with its delimiters removed when the quote is terminated. An unterminated
+// quote is reported with no quote character, so the raw span — opening
+// delimiter included — is returned rather than guessed at.
+func assignmentValue(content []byte, a envAssignment) string {
+	text := content[a.valueStart:a.valueEnd]
+	if a.quote != 0 && len(text) > 0 {
+		text = bytes.TrimSuffix(text[1:], []byte{a.quote})
+	}
+	return string(text)
 }

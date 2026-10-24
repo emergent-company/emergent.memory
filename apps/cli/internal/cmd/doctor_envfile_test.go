@@ -8,6 +8,8 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/apps/cli/internal/config"
 )
 
 // updateEnvPassword rewrites a credential the user may have typed (or that was
@@ -73,4 +75,33 @@ func TestUpdateEnvPasswordRefusesAnUnrepresentableValue(t *testing.T) {
 	content, readErr := os.ReadFile(envPath)
 	require.NoError(t, readErr)
 	assert.Equal(t, before, string(content), "a refusal must leave the file byte-identical")
+}
+
+// enrichConfigFromEnvLocal fills in what the config file does not have, so it has
+// to read the file the way the service does: a quoted API key is the key itself,
+// not the key with its quotes on (#2174).
+func TestEnrichConfigFromEnvLocalUnquotesValues(t *testing.T) {
+	installDir := t.TempDir()
+	configDir := filepath.Join(installDir, "config")
+	require.NoError(t, os.MkdirAll(configDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(configDir, ".env.local"), []byte(
+		"STANDALONE_API_KEY='key # with a hash'\n"+
+			"SERVER_PORT=9000 # the standalone port\n"), 0o600))
+
+	cfg := enrichConfigFromEnvLocal(nil, installDir)
+
+	assert.Equal(t, "key # with a hash", cfg.APIKey, "a single-quoted key must lose its delimiters, not its hash")
+	assert.Equal(t, "http://localhost:9000", cfg.ServerURL, "an inline comment must not become part of the port")
+}
+
+func TestEnrichConfigFromEnvLocalKeepsTheConfigItWasGiven(t *testing.T) {
+	installDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(installDir, "config"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(installDir, "config", ".env.local"),
+		[]byte("STANDALONE_API_KEY=from-env\nSERVER_PORT=9000\n"), 0o600))
+
+	cfg := enrichConfigFromEnvLocal(&config.Config{APIKey: "from-config"}, installDir)
+
+	assert.Equal(t, "from-config", cfg.APIKey, "a value the config already has must win")
+	assert.Equal(t, "http://localhost:9000", cfg.ServerURL)
 }
