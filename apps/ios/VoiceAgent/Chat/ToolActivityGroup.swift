@@ -74,13 +74,18 @@ struct ToolActivityRun {
     /// The line as VoiceOver reads it: the count, the spoken time when the run
     /// has one, and a failure — because a closed run's rows, and their error
     /// text, are not in the transcript any more.
+    ///
+    /// Every clause resolves in `locale`, not the process locale: the parameter
+    /// is what a caller uses to speak a run in the language the rest of the
+    /// screen is reading, and a signature that only forwarded it to the time
+    /// would silently mix languages (#2125).
     func spokenLine(locale: Locale = .current) -> String {
-        var line = String(localized: "chat.tool.group.steps \(steps)")
+        var line = String(localized: "chat.tool.group.steps \(steps)", locale: locale)
         if let spoken = ToolActivityTiming.spoken(span, locale: locale) {
             line += ", \(spoken)"
         }
         if hasError {
-            line += ", \(String(localized: "chat.tool.group.a11y.failed"))"
+            line += ", \(String(localized: "chat.tool.group.a11y.failed", locale: locale))"
         }
         return line
     }
@@ -94,6 +99,44 @@ struct ToolActivityRun {
             return .running
         }
         return .idle
+    }
+}
+
+// MARK: - Line contents
+
+extension ToolActivityRun {
+    /// One thing the summary line draws, in order.
+    enum LinePiece: Hashable {
+        /// The category glyph strip — decorative, so it is the first to go.
+        case glyphStrip
+        /// How many steps the run has.
+        case steps
+        /// How long the run occupied, when that is worth showing.
+        case span
+        /// That at least one step failed.
+        case failure
+    }
+
+    /// What the summary line draws at `size`.
+    ///
+    /// The count is always there: it is the only summary a closed run has left.
+    /// The strip is dropped at accessibility text sizes, where its scaled glyphs
+    /// would take the room the count needs; the span and the failure marker
+    /// follow the run. Kept here, on the model, so the rule is testable and the
+    /// view is a one-to-one projection of it (#2125).
+    func linePieces(at size: DynamicTypeSize) -> [LinePiece] {
+        var pieces: [LinePiece] = []
+        if !size.isAccessibilitySize {
+            pieces.append(.glyphStrip)
+        }
+        pieces.append(.steps)
+        if ToolActivityTiming.text(span) != nil {
+            pieces.append(.span)
+        }
+        if hasError {
+            pieces.append(.failure)
+        }
+        return pieces
     }
 }
 
@@ -162,7 +205,18 @@ struct ToolActivityGroup: View {
 
     @Environment(\.toolActivityDisclosure) private var disclosure
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.locale) private var locale
     @ScaledMetric(relativeTo: .caption) private var iconSize: CGFloat = 14
+
+    /// Accessibility text sizes are where the summary line has to give something
+    /// up: `linePieces` drops the decorative glyph strip (the opened rows still
+    /// show every category) and the count is allowed to wrap, because the count
+    /// is the one thing this line exists to say — it is the only summary a closed
+    /// run has left (#2125).
+    private var isAccessibilitySize: Bool {
+        dynamicTypeSize.isAccessibilitySize
+    }
 
     private var run: ToolActivityRun {
         ToolActivityRun(tools: tools)
@@ -202,45 +256,71 @@ struct ToolActivityGroup: View {
             }
         } label: {
             HStack(spacing: 2 * .grid) {
-                iconStrip
-
-                Text(stepsKey)
-                    .font(MemoryFont.bodySmall)
-                    .foregroundStyle(.fg1)
-                    .lineLimit(1)
-
-                if let time = ToolActivityTiming.text(run.span) {
-                    Text(time)
-                        .font(MemoryFont.meta)
-                        .monospacedDigit()
-                        .foregroundStyle(.fg3)
-                }
-
-                if run.hasError {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(MemoryFont.meta)
-                        .foregroundStyle(.fgSerious)
-                        .accessibilityHidden(true)
+                ForEach(run.linePieces(at: dynamicTypeSize), id: \.self) { piece in
+                    switch piece {
+                    case .glyphStrip:
+                        iconStrip
+                    case .steps:
+                        stepsText
+                    case .span:
+                        spanText
+                    case .failure:
+                        failureGlyph
+                    }
                 }
 
                 Spacer(minLength: 2 * .grid)
 
-                Image(systemName: "chevron.down")
-                    .font(.caption2.weight(.semibold))
-                    .rotationEffect(.degrees(reduceMotion ? 0 : (isExpanded ? 180 : 0)))
-                    .foregroundStyle(.fg3)
-                    .accessibilityHidden(true)
+                chevron
             }
             // A tap target, not just a label, as on a step row.
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // One summary element: the glyphs and the chevron are decorative and
+        // hidden, and the count/time/failure are spoken from `spokenLine` so a
+        // closed run still announces what it contains.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: run.spokenLine()))
+        .accessibilityLabel(Text(verbatim: run.spokenLine(locale: locale)))
         .accessibilityValue(
             isExpanded ? Text("chat.tool.group.a11y.expanded") : Text("chat.tool.group.a11y.collapsed")
         )
+    }
+
+    /// The count, the one thing the line always says. It may wrap instead of
+    /// ellipsising at accessibility sizes, where a phone cannot show it beside
+    /// the chevron on a single line (#2125).
+    private var stepsText: some View {
+        Text(stepsKey)
+            .font(MemoryFont.bodySmall)
+            .foregroundStyle(.fg1)
+            .lineLimit(isAccessibilitySize ? nil : 1)
+    }
+
+    /// The run's span at its narrowest ("12s"), when it has one.
+    @ViewBuilder private var spanText: some View {
+        if let time = ToolActivityTiming.text(run.span, locale: locale) {
+            Text(verbatim: time)
+                .font(MemoryFont.meta)
+                .monospacedDigit()
+                .foregroundStyle(.fg3)
+        }
+    }
+
+    private var failureGlyph: some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(MemoryFont.meta)
+            .foregroundStyle(.fgSerious)
+            .accessibilityHidden(true)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.down")
+            .font(.caption2.weight(.semibold))
+            .rotationEffect(.degrees(reduceMotion ? 0 : (isExpanded ? 180 : 0)))
+            .foregroundStyle(.fg3)
+            .accessibilityHidden(true)
     }
 
     private var iconStrip: some View {

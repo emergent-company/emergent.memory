@@ -116,6 +116,19 @@ struct ToolActivitySpokenLineTests {
         ])
         #expect(run.spokenLine(locale: english) == "2 steps, 3 seconds, a step failed")
     }
+
+    /// The count and the failure clause resolve in the caller's locale, not the
+    /// process locale. A run with no span leaves the count as the only digits on
+    /// the line, so locale-aware digits prove which locale produced it: the
+    /// catalog ships English only today, which is exactly why nothing else would
+    /// have caught this (#2125).
+    @Test func readsTheCountInTheRequestedLocale() {
+        let running = ToolActivityRun(tools: [
+            tool("entity-search", running: true),
+            tool("web-fetch", running: true),
+        ])
+        #expect(running.spokenLine(locale: Locale(identifier: "ar_EG")).hasPrefix("٢"))
+    }
 }
 
 // MARK: - Run span
@@ -200,7 +213,8 @@ struct ToolActivityDisclosureTests {
 
 // MARK: - Fixtures
 
-private func tool(
+/// Shared with `ToolActivitySummaryLineTests`: one tool call, settled or running.
+func tool(
     _ name: String,
     running: Bool = false,
     isError: Bool = false,
