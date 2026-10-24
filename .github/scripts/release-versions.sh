@@ -15,6 +15,19 @@
 #       `git describe`: enumerate the `vX.Y.Z` tags merged into HEAD^ and
 #       version-sort them. Empty when no previous release is reachable.
 #
+#   changed PREV [HEAD]
+#       Print `true` when any input of the image built from CHANGED_DOCKERFILE
+#       changed between PREV and HEAD, `false` when none did. This is the
+#       publisher's "alias or rebuild" flag, computed from the same input set
+#       that `check` asserts against, so the two cannot disagree about what the
+#       image contains (#2169). Inputs (environment):
+#         CHANGED_DOCKERFILE  Dockerfile the image is built from   (required)
+#         CHANGED_CONTEXT     its build context, repo-relative (default: .)
+#         CHANGED_REPO        git checkout (default: .)
+#       A Dockerfile that does not exist at PREV prints `true` (the image's
+#       build definition is new). An unreadable input set fails the release
+#       rather than answering — the caller treats a non-zero as "rebuild".
+#
 #   check
 #       Assert a publisher's `changed=false` alias decision against independent
 #       signals. Exits non-zero on disagreement. Inputs (environment):
@@ -150,6 +163,10 @@ release-versions.sh — release version map + alias assertion (#2111)
 Usage:
   release-versions.sh prev-tag [CURRENT_TAG]
   release-versions.sh check        # inputs via CHECK_* env vars
+  release-versions.sh changed PREV [HEAD]
+                                   # inputs via CHANGED_* env vars; prints
+                                   # true/false for "did the image's inputs
+                                   # change since PREV"
   release-versions.sh map          # inputs via MAP_* env vars
 
 See the header of this script for the full input list and the
@@ -246,14 +263,36 @@ check_previous_map() {
 #     checkout, and RUN network fetches are pinned by their line in the file.
 dockerfile_inputs() {
   local repo="$1" ref="$2" dockerfile="$3" context="$4"
-  local content line rest token source joined
-  local -a words sources
+  local content line joined trimmed rest token source flag mode ignore payload after
+  local -a words sources kept
+  local stage
 
+  # A symlinked Dockerfile reads as its target *path*, not its instructions:
+  # `git show` returns the link text with rc 0, so the parse would find no COPY
+  # lines and silently report an empty input set. Fail closed instead (#2169).
+  mode="$(git -C "$repo" ls-tree "$ref" -- "$dockerfile" 2>/dev/null | awk '{print $1}')"
+  if [ "$mode" = "120000" ]; then
+    echo "${dockerfile} at ${ref}: is a symlink, so its instructions cannot be resolved" >&2
+    return 1
+  fi
   if ! content="$(git -C "$repo" show "${ref}:${dockerfile}" 2>/dev/null)"; then
     echo "cannot read ${dockerfile} at ${ref}: the image's own Dockerfile is not in that tree" >&2
     return 1
   fi
   printf '%s\n' "$dockerfile"
+
+  # The context's .dockerignore decides which files the build context even
+  # contains, so a change there can change the image. Conservative on purpose: a
+  # false positive costs a rebuild, a false negative ships a stale alias (#2169).
+  ignore=".dockerignore"
+  case "$context" in
+    '' | .) ;;
+    *) ignore="${context%/}/.dockerignore" ;;
+  esac
+  if [ "$ignore" != "$dockerfile" ] \
+    && git -C "$repo" cat-file -e "${ref}:${ignore}" 2>/dev/null; then
+    printf '%s\n' "$ignore"
+  fi
 
   # Dockerfile line continuations: a `\` at end of line joins the next, so a
   # COPY's sources can span lines. Joining first means the parse sees the whole
@@ -261,40 +300,77 @@ dockerfile_inputs() {
   local pending=""
   while IFS= read -r line; do
     line="${line%$'\r'}"
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    if [[ "$trimmed" == '#'* ]]; then
+      # Docker ignores a comment line wherever it appears, including inside a
+      # continuation, where it does not end the instruction. Skipping it before
+      # the continuation test also stops a comment that happens to *end* in a
+      # backslash from being joined to — and swallowing — the next instruction:
+      # a comment is never part of an instruction (#2169).
+      continue
+    fi
     if [[ "$line" == *\\ ]]; then
       pending+="${line%\\} "
       continue
     fi
-    line="${pending}${line}"
+    joined="${pending}${line}"
     pending=""
-    case "$line" in
-      '' | '#'*) continue ;;
-    esac
-    read -ra words <<<"$line"
+    joined="${joined#"${joined%%[![:space:]]*}"}"
+    [ -n "$joined" ] || continue
+    read -ra words <<<"$joined"
     case "${words[0],,}" in
       copy | add) ;;
       *) continue ;;
     esac
 
-    rest="${line#"${words[0]}"}"
+    rest="${joined#"${words[0]}"}"
     rest="${rest#"${rest%%[![:space:]]*}"}"
+
+    # Leading flags come before the sources and, for the JSON form, before the
+    # bracket: `COPY --chmod=755 ["a", "b"] dst` is a JSON copy with a flag, and
+    # detecting the form on the raw text made the source `["a",` (#2169).
+    # --from= means a cross-stage copy: the source stage's own COPY lines are in
+    # this list already, and a registry stage is pinned by the Dockerfile line.
+    stage=0
+    while [[ "$rest" == --* ]]; do
+      if [[ "$rest" != *[[:space:]]* ]]; then
+        echo "${dockerfile} at ${ref}: cannot parse '$(printf '%s' "$joined")'" >&2
+        return 1
+      fi
+      flag="${rest%%[[:space:]]*}"
+      case "$flag" in
+        --from=*) stage=1 ;;
+      esac
+      rest="${rest#*[[:space:]]}"
+      rest="${rest#"${rest%%[![:space:]]*}"}"
+    done
+    [ "$stage" -eq 0 ] || continue
+
     sources=()
     if [[ "$rest" == \[* ]]; then
-      # JSON form: COPY ["src", "dst"]
-      rest="${rest#\[}"
-      rest="${rest%\]}"
-      rest="${rest//\"/}"
-      IFS=',' read -ra words <<<"$rest"
+      # Docker's JSON form is COPY ["<src>", ..., "<dest>"]: the destination is
+      # the LAST array element, and the array closes at the last ']' of the
+      # instruction (a filename may itself contain ']' or ','). Cutting at the
+      # first bracket, or splitting the body on commas, truncated the list and
+      # lost inputs (#2169, #2175). Text after the closing bracket is ignored
+      # here when resolving inputs — Docker rejects such a line outright
+      # (parseMaybeJSONToList falls back to shell splitting, which cannot build),
+      # so there is no output to be wrong about. A body jq cannot read is
+      # refused rather than guessed.
+      after="${rest##*\]}"
+      payload="${rest%"$after"}"
+      if ! payload="$(printf '%s' "$payload" | jq -er 'if type == "array" then .[] else error("not a JSON array") end' 2>/dev/null)"; then
+        echo "${dockerfile} at ${ref}: cannot parse the JSON form of '$(printf '%s' "$joined")'" >&2
+        return 1
+      fi
+      mapfile -t words <<<"$payload"
       sources=("${words[@]}")
     else
       read -ra words <<<"$rest"
       sources=("${words[@]}")
     fi
 
-    # A cross-stage copy needs no pathspec: the source stage's inputs are in
-    # this list already. Flags carry no source.
-    local stage=0
-    local -a kept=()
+    kept=()
     for token in "${sources[@]}"; do
       token="${token#"${token%%[![:space:]]*}"}"
       token="${token%"${token##*[![:space:]]}"}"
@@ -308,7 +384,7 @@ dockerfile_inputs() {
     [ "$stage" -eq 0 ] || continue
     # The last token is the destination; everything before it is read.
     if [ "${#kept[@]}" -lt 2 ]; then
-      echo "${dockerfile} at ${ref}: cannot parse '$(printf '%s' "$line")'" >&2
+      echo "${dockerfile} at ${ref}: cannot parse '$(printf '%s' "$joined")'" >&2
       return 1
     fi
 
@@ -322,7 +398,7 @@ dockerfile_inputs() {
           echo "${dockerfile} at ${ref}: '${token}' is a build variable, so its path cannot be resolved" >&2
           return 1
           ;;
-        *..*)
+        .. | ../* | */../* | */..)
           echo "${dockerfile} at ${ref}: '${token}' escapes the build context" >&2
           return 1
           ;;
@@ -346,6 +422,46 @@ dockerfile_inputs() {
   fi
 }
 
+# run_changed PREV_TAG [HEAD_REF]: print true when any input of the image built
+# from CHANGED_DOCKERFILE changed since PREV_TAG, false when none did.
+#
+# The publisher used to decide "alias or rebuild" by diffing the service *tree*
+# (apps/server), while the image is built from deploy/self-hosted/ with the repo
+# root as its context and also contains apps/cli and the migrations. A CLI-only
+# release therefore said "unchanged", and the alias assertion (#2143) — which
+# does diff the image inputs — then refused it: fail-closed, but a legitimate
+# release turned red. Both sides use dockerfile_inputs now, so the flag and the
+# assertion agree by construction; the only remaining difference is which
+# previous tag each resolved, which is exactly what the assertion exists to
+# catch (#2169).
+run_changed() {
+  local repo="${CHANGED_REPO:-.}" prev="${1:-}" head="${2:-HEAD}"
+  local dockerfile="${CHANGED_DOCKERFILE:-}" context="${CHANGED_CONTEXT:-.}"
+  local at_prev at_head diff
+  local -a inputs=()
+
+  [ -n "$prev" ] || die "changed: a previous tag is required"
+  [ -n "$dockerfile" ] || die "changed: CHANGED_DOCKERFILE is required"
+  if ! git -C "$repo" cat-file -e "${prev}:${dockerfile}" 2>/dev/null; then
+    # The image's Dockerfile did not exist at the previous tag, so its build
+    # definition is new: there is no previous image that could be aliased.
+    echo true
+    return 0
+  fi
+  at_prev="$(dockerfile_inputs "$repo" "$prev" "$dockerfile" "$context")" \
+    || die "changed: cannot resolve the inputs of ${dockerfile} at ${prev}"
+  at_head="$(dockerfile_inputs "$repo" "$head" "$dockerfile" "$context")" \
+    || die "changed: cannot resolve the inputs of ${dockerfile} at ${head}"
+  mapfile -t inputs < <(printf '%s\n%s\n' "$at_prev" "$at_head" | awk 'NF && !seen[$0]++')
+  [ "${#inputs[@]}" -gt 0 ] || die "changed: ${dockerfile} declares no inputs"
+
+  diff="$(git -C "$repo" diff --name-only "$prev" "$head" -- "${inputs[@]}")"
+  if [ -n "$diff" ]; then
+    echo true
+  else
+    echo false
+  fi
+}
 run_check() {
   local repo="${CHECK_REPO:-.}"
   local service="${CHECK_SERVICE:-service}"
@@ -376,6 +492,12 @@ run_check() {
   local prev_release
   prev_release="$(resolve_prev_tag "$repo" "$current" "$head")"
 
+  # The image's Dockerfile and build context. Both the alias assertion (signal 2)
+  # and the changed=true warning compare the set of paths the Dockerfile copies —
+  # the same input set the publisher's `changed` computes (#2169).
+  local dockerfile="${CHECK_DOCKERFILE:-${path%/}/Dockerfile}"
+  local build_context="${CHECK_CONTEXT:-${path%/}}"
+
   if [ "$changed" = "false" ]; then
     if [ -z "$prev_release" ]; then
       warn "no previous release tag reachable from ${head}^; cannot independently verify the alias decision for ${service}. Degrading to the publisher's changed=false."
@@ -390,13 +512,18 @@ run_check() {
     fi
 
     # Signal 2: an independent diff of the *image inputs* between the previous
-    # release and HEAD — the service tree plus every path the Dockerfile copies
-    # out of the checkout, read from both refs. Computed here, not from the
-    # publisher's PREV. A path-scoped diff alone missed inputs outside the tree
+    # release and HEAD — every path the Dockerfile copies out of the checkout,
+    # read from both refs. Computed here, not from the publisher's PREV. A
+    # path-scoped diff alone missed inputs outside the tree
     # (deploy/self-hosted/entrypoint.sh, apps/cli for the server image, go.work),
     # so an image could change while the check said "alias" (#2143).
-    local dockerfile="${CHECK_DOCKERFILE:-${path%/}/Dockerfile}"
-    local build_context="${CHECK_CONTEXT:-${path%/}}"
+    #
+    # Inputs only, deliberately: the service *tree* is not compared. An image
+    # whose Dockerfile copies a subset of its tree (web-ui copies gateway/ and
+    # memory_bridge/) does not change when a file it never copies does — an e2e
+    # spec, a taskfile — so adding $path here made a legitimate alias read as a
+    # disagreement (#2175). This is also exactly what `changed` diffs, so the
+    # flag and the assertion describe the same thing.
     local prev_inputs head_inputs
     if ! prev_inputs="$(dockerfile_inputs "$repo" "$prev_release" "$dockerfile" "$build_context" 2>&1)"; then
       die "cannot verify the alias decision for ${service}: ${prev_inputs}"
@@ -407,7 +534,7 @@ run_check() {
 
     local -a inputs
     mapfile -t inputs < <(
-      { printf '%s\n' "$path" "$prev_inputs" "$head_inputs"; } \
+      { printf '%s\n' "$prev_inputs" "$head_inputs"; } \
         | sed '/^[[:space:]]*$/d' | sort -u
     )
     local stat
@@ -416,7 +543,7 @@ run_check() {
     fi
     if [ -n "$stat" ]; then
       {
-        echo "::error::alias disagreement for ${service}: changed=false, but the image inputs (${path} and everything ${dockerfile} copies) differ between ${prev_release} and ${head} (#2111, #2143)."
+        echo "::error::alias disagreement for ${service}: changed=false, but the image inputs (${dockerfile} and every path it copies) differ between ${prev_release} and ${head} (#2111, #2143)."
         printf '%s\n' "$stat"
       } >&2
       exit 1
@@ -429,12 +556,25 @@ run_check() {
     return 0
   fi
 
-  # changed=true: a rebuild of an identical tree is safe (just wasteful), so it
-  # is a warning, never a release failure.
+  # changed=true: a rebuild of an identical image is safe (just wasteful), so it
+  # is a warning, never a release failure. Compare the image inputs, not the
+  # service tree: a CLI-only change leaves apps/server untouched and does change
+  # the server image, so a tree diff would warn about a necessary rebuild (#2169).
   if [ -n "$prev_release" ]; then
-    local stat
-    if stat="$(git -C "$repo" diff --stat "$prev_release" "$head" -- "$path")" && [ -z "$stat" ]; then
-      warn "changed=true but ${path} is identical between ${prev_release} and ${head}; rebuilding is safe but unnecessary (#2111)."
+    local prev_inputs head_inputs
+    if prev_inputs="$(dockerfile_inputs "$repo" "$prev_release" "$dockerfile" "$build_context" 2>/dev/null)" \
+      && head_inputs="$(dockerfile_inputs "$repo" "$head" "$dockerfile" "$build_context" 2>/dev/null)"; then
+      local -a inputs
+      mapfile -t inputs < <(
+        { printf '%s\n' "$prev_inputs" "$head_inputs"; } \
+          | sed '/^[[:space:]]*$/d' | sort -u
+      )
+      local stat
+      if [ "${#inputs[@]}" -gt 0 ] \
+        && stat="$(git -C "$repo" diff --stat "$prev_release" "$head" -- "${inputs[@]}")" \
+        && [ -z "$stat" ]; then
+        warn "changed=true but the image inputs are identical between ${prev_release} and ${head}; rebuilding is safe but unnecessary (#2111)."
+      fi
     fi
   fi
   echo "alias=rebuild service=${service}"
@@ -699,6 +839,10 @@ case "$cmd" in
     ;;
   check)
     run_check
+    ;;
+  changed)
+    shift || true
+    run_changed "${1:-}" "${2:-HEAD}"
     ;;
   map)
     run_map

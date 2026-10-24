@@ -53,6 +53,17 @@ expect_stderr() {
   fi
 }
 
+# expect_stderr_missing <label> <substring>
+expect_stderr_missing() {
+  local label="$1" want="$2"
+  if grep -qF -- "$want" "$tmp/stderr"; then
+    bad "$label (stderr unexpectedly contains: $want)"
+    sed 's/^/       /' "$tmp/stderr" >&2
+  else
+    ok "$label"
+  fi
+}
+
 # expect_stdout <label> <substring>
 expect_stdout() {
   local label="$1" want="$2"
@@ -340,7 +351,7 @@ expect_rc "inputs: entrypoint.sh change outside CHECK_PATH is rejected" 1 \
   CHECK_CHANGED=false CHECK_PREV_TAG=v0.87.4 CHECK_CURRENT_TAG=v0.88.0 \
   "$script" check
 expect_stderr "inputs: the rejection names the Dockerfile's inputs" \
-  "the image inputs (apps/server and everything deploy/self-hosted/Dockerfile.server copies) differ"
+  "the image inputs (deploy/self-hosted/Dockerfile.server and every path it copies) differ"
 expect_stderr "inputs: the diff names the entrypoint" "deploy/self-hosted/entrypoint.sh"
 
 # A shared tree consumed by the server image (apps/cli is COPYed in) is an input
@@ -715,6 +726,212 @@ if jq -e 'all(.services[]; has("service") and has("tags") and has("version")
 else
   bad "map: an entry is missing a documented field"
 fi
+
+# ---------------------------------------------------------------------------
+# Fixture F: the publisher's changed flag and the input parser (#2169).
+#
+# `changed` must answer from the image's inputs, not from the service tree: the
+# published server image is built from deploy/self-hosted/ with the repo root as
+# its context, so apps/cli and deploy/self-hosted/* are inputs. The parser must
+# also read the shapes Docker allows — a comment inside a continuation (with a
+# "$" and a URL in its prose), the JSON form behind a flag, a `..foo` name, a
+# whitespace-only line — and fail closed on a symlinked Dockerfile.
+# ---------------------------------------------------------------------------
+changed_repo="$tmp/changed"
+new_repo "$changed_repo"
+mkdir -p "$changed_repo/apps/server" "$changed_repo/apps/cli" "$changed_repo/deploy/self-hosted" "$changed_repo/pkg"
+echo "server v1" >"$changed_repo/apps/server/main.txt"
+echo "cli v1" >"$changed_repo/apps/cli/main.txt"
+echo "wrapper v1" >"$changed_repo/deploy/self-hosted/memory-wrapper.sh"
+echo "json v1" >"$changed_repo/pkg/json-only.txt"
+cat >"$changed_repo/deploy/self-hosted/Dockerfile.server" <<'DOCKER'
+FROM scratch
+COPY apps/server \
+     # the $VERSION is baked in at build time, so this line is prose
+     # https://example.com is prose too
+     apps/cli /dest/
+COPY --chmod=755 ["pkg/json-only.txt", "deploy/self-hosted/memory-wrapper.sh", "/dest/"]
+COPY ..foo /dest/foo
+# a comment ending in a backslash \
+COPY pkg/after-comment.txt /dest/after-comment.txt
+COPY ["pkg/bracket]name.txt", "pkg/comma,name.txt", "/dest/"]
+COPY --from=build build-only.txt /dest/build-only.txt
+DOCKER
+# A whitespace-only line used to abort the parser with `words[0]: unbound
+# variable` under `set -u`.
+printf ' \n\n' >>"$changed_repo/deploy/self-hosted/Dockerfile.server"
+echo "foo v1" >"$changed_repo/..foo"
+echo "after v1" >"$changed_repo/pkg/after-comment.txt"
+echo "bracket v1" >"$changed_repo/pkg/bracket]name.txt"
+echo "comma v1" >"$changed_repo/pkg/comma,name.txt"
+# Copied only from the build stage, so it is not a context input.
+echo "build v1" >"$changed_repo/build-only.txt"
+printf 'apps/server/ignored\n' >"$changed_repo/.dockerignore"
+commit "$changed_repo" "c1 inputs"
+git -C "$changed_repo" tag v0.90.0
+
+run_changed() { # run_changed <label> <want> <prev> [head]
+  local label="$1" want="$2" prev="$3" head="${4:-HEAD}" got rc
+  set +e
+  got="$(env CHANGED_REPO="$changed_repo" \
+    CHANGED_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHANGED_CONTEXT=. \
+    "$script" changed "$prev" "$head" 2>"$tmp/stderr")"
+  rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    bad "$label (rc=$rc)"
+    sed 's/^/       /' "$tmp/stderr" >&2
+  elif [ "$got" = "$want" ]; then
+    ok "$label"
+  else
+    bad "$label (want $want, got '$got')"
+  fi
+}
+
+# The continuation comment carries a "$" and a URL: folding it into the
+# instruction would trip the build-variable/URL guards and refuse the release.
+run_changed "changed: identical inputs answer false (comment-in-continuation is not refused)" \
+  false v0.90.0
+
+echo "cli v2" >"$changed_repo/apps/cli/main.txt"
+commit "$changed_repo" "c2 cli only"
+git -C "$changed_repo" tag v0.90.1
+run_changed "changed: a CLI-only change rebuilds the server image" true v0.90.0
+
+# pkg/json-only.txt is named only by the JSON form behind --chmod; a form-blind
+# parse turned it into `["pkg/json-only.txt",` and would miss the change.
+echo "json v2" >"$changed_repo/pkg/json-only.txt"
+commit "$changed_repo" "c3 json-form source"
+git -C "$changed_repo" tag v0.90.2
+run_changed "changed: a JSON-form source behind a flag is an input" true v0.90.1
+
+echo "foo v2" >"$changed_repo/..foo"
+commit "$changed_repo" "c4 dotdot name"
+git -C "$changed_repo" tag v0.90.3
+run_changed "changed: a ..foo path is diffable, not refused" true v0.90.2
+
+printf 'apps/server/ignored\napps/cli/generated\n' >"$changed_repo/.dockerignore"
+commit "$changed_repo" "c5 dockerignore"
+git -C "$changed_repo" tag v0.90.4
+run_changed "changed: .dockerignore is an input" true v0.90.3
+
+echo "docs" >"$changed_repo/README.md"
+commit "$changed_repo" "c6 docs only"
+git -C "$changed_repo" tag v0.90.5
+run_changed "changed: a docs-only change does not rebuild" false v0.90.4
+
+# A comment that *ends* in a backslash is still a comment: it must not be joined
+# to the next instruction and swallow it.
+echo "after v2" >"$changed_repo/pkg/after-comment.txt"
+commit "$changed_repo" "c7 instruction after a backslash comment"
+git -C "$changed_repo" tag v0.90.6
+run_changed "changed: the instruction after a backslash-terminated comment is an input" true v0.90.5
+
+# The JSON form's body is JSON, not a comma split: ']' and ',' are legal in a
+# filename.
+echo "comma v2" >"$changed_repo/pkg/comma,name.txt"
+commit "$changed_repo" "c8 json comma name"
+git -C "$changed_repo" tag v0.90.7
+run_changed "changed: a JSON-form source containing a comma is an input" true v0.90.6
+
+echo "bracket v2" >"$changed_repo/pkg/bracket]name.txt"
+commit "$changed_repo" "c9 json bracket name"
+git -C "$changed_repo" tag v0.90.8
+run_changed "changed: a JSON-form source containing ']' is an input" true v0.90.7
+
+# --from= names a path in another stage, so a same-named context file is not an
+# input: changing it must not claim the image changed.
+echo "build v2" >"$changed_repo/build-only.txt"
+commit "$changed_repo" "c10 build-stage-only path"
+git -C "$changed_repo" tag v0.90.9
+run_changed "changed: a --from= source is not a context input" false v0.90.8
+
+# The changed=true warning must talk about the image, not the service tree: a
+# CLI-only release leaves apps/server untouched and still changes the server
+# image, so warning "rebuilding is unnecessary" there is wrong (#2169, #2175).
+expect_rc "check: a CLI-only rebuild is reported without a warning" 0 \
+  env CHECK_REPO="$changed_repo" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=true CHECK_PREV_TAG=v0.90.0 CHECK_CURRENT_TAG=v0.90.1 \
+  "$script" check
+expect_stderr_missing "check: a CLI-only rebuild does not warn about an identical tree" "identical"
+expect_stdout "check: a CLI-only rebuild is reported as a rebuild" "alias=rebuild"
+
+expect_rc "check: an identical image does warn" 0 \
+  env CHECK_REPO="$changed_repo" CHECK_SERVICE=server CHECK_PATH=apps/server \
+  CHECK_DOCKERFILE=deploy/self-hosted/Dockerfile.server CHECK_CONTEXT=. \
+  CHECK_CHANGED=true CHECK_PREV_TAG=v0.90.4 CHECK_CURRENT_TAG=v0.90.5 \
+  "$script" check
+expect_stderr "check: the identical-image warning names the inputs" "the image inputs are identical"
+
+# ---------------------------------------------------------------------------
+# Fixture G: the alias assertion compares image inputs, not the service tree.
+#
+# web-ui's Dockerfile copies gateway/ and memory_bridge/, so an e2e spec is not
+# an input. The publisher (correctly) aliases; the assertion must not read that
+# as a disagreement (#2175).
+# ---------------------------------------------------------------------------
+alias_repo="$tmp/alias-subset"
+new_repo "$alias_repo"
+mkdir -p "$alias_repo/apps/web-ui/gateway" "$alias_repo/apps/web-ui/tests/e2e"
+printf 'FROM scratch\nCOPY gateway/ ./gateway/\n' >"$alias_repo/apps/web-ui/Dockerfile"
+echo "gw v1" >"$alias_repo/apps/web-ui/gateway/main.go"
+echo "spec v1" >"$alias_repo/apps/web-ui/tests/e2e/a.spec.ts"
+commit "$alias_repo" "c1"
+git -C "$alias_repo" tag v0.92.0
+echo "spec v2" >"$alias_repo/apps/web-ui/tests/e2e/a.spec.ts"
+commit "$alias_repo" "c2 spec only"
+git -C "$alias_repo" tag v0.92.1
+
+expect_rc "check: an alias is accepted when only a non-input file changed" 0 \
+  env CHECK_REPO="$alias_repo" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.92.0 CHECK_CURRENT_TAG=v0.92.1 \
+  "$script" check
+expect_stdout "check: the tree-only alias is reported ok" "alias=ok"
+
+expect_rc "changed: a non-input file does not rebuild the image" 0 \
+  env CHANGED_REPO="$alias_repo" CHANGED_DOCKERFILE=apps/web-ui/Dockerfile CHANGED_CONTEXT=apps/web-ui \
+  "$script" changed v0.92.0 v0.92.1
+expect_stdout "changed: the non-input change answers false" "false"
+
+# The converse still fails closed: an input change with changed=false is a
+# disagreement.
+echo "gw v2" >"$alias_repo/apps/web-ui/gateway/main.go"
+commit "$alias_repo" "c3 gateway only"
+git -C "$alias_repo" tag v0.92.2
+expect_rc "check: an input change with changed=false is refused" 1 \
+  env CHECK_REPO="$alias_repo" CHECK_SERVICE=web-ui CHECK_PATH=apps/web-ui \
+  CHECK_CHANGED=false CHECK_PREV_TAG=v0.92.1 CHECK_CURRENT_TAG=v0.92.2 \
+  "$script" check
+expect_stderr "check: the refusal names the inputs" "the image inputs"
+
+expect_rc "changed: an input change rebuilds the image" 0 \
+  env CHANGED_REPO="$alias_repo" CHANGED_DOCKERFILE=apps/web-ui/Dockerfile CHANGED_CONTEXT=apps/web-ui \
+  "$script" changed v0.92.1 v0.92.2
+expect_stdout "changed: the input change answers true" "true"
+
+# A symlinked Dockerfile reads as its target path under `git show` (rc 0, no
+# COPY lines). The parser must refuse rather than report an empty input set.
+symlinked="$tmp/symlinked"
+new_repo "$symlinked"
+mkdir -p "$symlinked/apps"
+printf 'FROM scratch\nCOPY . .\n' >"$symlinked/apps/real.Dockerfile"
+ln -s real.Dockerfile "$symlinked/apps/Dockerfile"
+commit "$symlinked" "c1 symlink"
+git -C "$symlinked" tag v0.91.0
+expect_rc "changed: a symlinked Dockerfile fails closed" 1 \
+  env CHANGED_REPO="$symlinked" CHANGED_DOCKERFILE=apps/Dockerfile CHANGED_CONTEXT=apps \
+  "$script" changed v0.91.0
+expect_stderr "changed: the symlink refusal names the reason" "is a symlink"
+
+# A Dockerfile that did not exist at PREV means a new build definition: rebuild.
+printf 'FROM scratch\nCOPY . .\n' >"$symlinked/apps/new.Dockerfile"
+commit "$symlinked" "c2 new dockerfile"
+git -C "$symlinked" tag v0.91.1
+expect_rc "changed: a Dockerfile absent at PREV answers true" 0 \
+  env CHANGED_REPO="$symlinked" CHANGED_DOCKERFILE=apps/new.Dockerfile CHANGED_CONTEXT=apps \
+  "$script" changed v0.91.0
+expect_stdout "changed: the new-Dockerfile answer is true" "true"
 
 echo
 echo "passed: $pass, failed: $fail"

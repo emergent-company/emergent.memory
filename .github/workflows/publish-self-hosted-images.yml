@@ -39,14 +39,22 @@ jobs:
           echo "commit=$COMMIT" >> $GITHUB_OUTPUT
           echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
 
-      # On tag pushes, detect whether apps/server/** changed since the last tag.
+      # On tag pushes, detect whether the image's *inputs* changed since the last
+      # release tag. The published server image is built from
+      # deploy/self-hosted/Dockerfile.server with the repo root as its context,
+      # so apps/cli, deploy/self-hosted/* and the migrations are inputs too — a
+      # CLI-only change used to read as "unchanged" here and then be refused by
+      # the alias assertion below (#2169). Both sides use the same input set now.
       - name: Check if changed since last tag
         id: changed
         if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHANGED_DOCKERFILE: deploy/self-hosted/Dockerfile.server
+          CHANGED_CONTEXT: .
         run: |
           PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
           echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
-          if [ -n "$PREV" ] && ! git diff --name-only "$PREV" HEAD -- apps/server/ | grep -q .; then
+          if [ -n "$PREV" ] && [ "$(.github/scripts/release-versions.sh changed "$PREV" HEAD)" = "false" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
