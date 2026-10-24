@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"google.golang.org/api/googleapi"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 )
@@ -286,5 +289,61 @@ func TestDrivePickerSession_DriveFileRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "drive.file") || !strings.Contains(err.Error(), "read-only") {
 		t.Errorf("PickerSession(drive.file) error = %q, want the drive.file remediation", err)
+	}
+}
+
+// The picker runs in the browser's Google session, so a save can carry folder
+// ids that the source's own account cannot see at all. When every picked id is
+// in that state the cause is the account, not the folders, and the message must
+// say so instead of naming the first id Google refused (#2162).
+func TestDriveResolveResourceTargets_AllUnavailableIsAnAccountMismatch(t *testing.T) {
+	f := &fakeDriveTransport{getErr: &googleapi.Error{Code: http.StatusNotFound, Message: "File not found"}}
+	resolver := driveProviderWithTransport(f).(ResourceTargetResolver)
+
+	_, err := resolver.ResolveResourceTargets(context.Background(), Credentials{"refresh_token": "rt"}, []string{"f1", "f2"})
+	if err == nil {
+		t.Fatal("ResolveResourceTargets(unavailable) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), driveFoldersWrongAccount) {
+		t.Errorf("error = %q, want the account-mismatch explanation", err)
+	}
+	if strings.Contains(err.Error(), "folder f1") {
+		t.Errorf("error = %q, must not name a picked folder when the account is the cause", err)
+	}
+}
+
+// One bad id among resolvable ones is a bad pick, not a wrong account: keep the
+// specific message so the user knows which folder to remove.
+func TestDriveResolveResourceTargets_OneUnavailableKeepsTheSpecificMessage(t *testing.T) {
+	f := &fakeDriveTransport{
+		getFolders: map[string]gdrive.Folder{"f2": {ID: "f2", Name: "Contracts"}},
+		getErrByID: map[string]error{"f1": &googleapi.Error{Code: http.StatusNotFound}},
+	}
+	resolver := driveProviderWithTransport(f).(ResourceTargetResolver)
+
+	_, err := resolver.ResolveResourceTargets(context.Background(), Credentials{"refresh_token": "rt"}, []string{"f1", "f2"})
+	if err == nil {
+		t.Fatal("ResolveResourceTargets(one unavailable) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "folder f1") {
+		t.Errorf("error = %q, want it to name the inaccessible folder", err)
+	}
+	if strings.Contains(err.Error(), driveFoldersWrongAccount) {
+		t.Errorf("error = %q, must keep the specific message when some ids resolve", err)
+	}
+}
+
+// A Google outage is not evidence of a wrong account: the copy must leave the
+// user with a retry, not send them to re-pick folders that were fine.
+func TestDriveResolveResourceTargets_TransientFailureKeepsTheSpecificMessage(t *testing.T) {
+	f := &fakeDriveTransport{getErr: &googleapi.Error{Code: http.StatusServiceUnavailable}}
+	resolver := driveProviderWithTransport(f).(ResourceTargetResolver)
+
+	_, err := resolver.ResolveResourceTargets(context.Background(), Credentials{"refresh_token": "rt"}, []string{"f1"})
+	if err == nil {
+		t.Fatal("ResolveResourceTargets(503) = nil, want an error")
+	}
+	if strings.Contains(err.Error(), driveFoldersWrongAccount) {
+		t.Errorf("error = %q, must not blame the account for a 5xx", err)
 	}
 }

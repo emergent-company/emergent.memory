@@ -711,15 +711,20 @@ func (s *Server) uiDataSourceResources(c echo.Context) error {
 	} else {
 		captureError(perr)
 	}
+	// Every save on this page answers here with ?err=… (a provider that cannot
+	// resolve the picked resource, an unsupported provider, a failed save), so
+	// dropping the parameter made a failed save look like a no-op refresh. The
+	// shell already renders a flash; the page handler just never fed it (#2167).
+	flashErr := flashError(c)
 	query := c.QueryParam("q")
 	if c.QueryParam("static") == "1" {
 		resources, truncated, rerr := s.memory.ListDSResources(ctx, id, query)
 		if rerr != nil {
 			rerr = dsFormError(rerr)
 		}
-		return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPageStatic(src, providerName, query, resources, truncated, rerr, "", nil))
+		return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPageStatic(src, providerName, query, resources, truncated, rerr, "", flashErr))
 	}
-	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, query, nil, "", nil))
+	return s.page(c, pageTitle(dsSourceName(*src), "Resources"), DataSourceResourceSelectPage(src, providerName, query, nil, "", flashErr))
 }
 
 // uiDataSourceResourceList renders the deferred resource-list fragment for a
@@ -816,9 +821,6 @@ func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
 	id := c.Param("id")
 	back := "/data-sources/" + url.PathEscape(id) + "/resources"
 	resourceID := strings.TrimSpace(c.FormValue("resource_id"))
-	if resourceID == "" {
-		return redirectWithError(c, back, errors.New("resource_id is required"))
-	}
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
 		return redirectWithError(c, back, err)
@@ -827,9 +829,14 @@ func (s *Server) uiDataSourceResourceSave(c echo.Context) error {
 	// single id from a server-rendered listing: the /resources page and this form
 	// no longer exist for Drive (both bounce to ?picker=1), so a stale POST is
 	// answered on the page that owns the action instead of on a page that would
-	// bounce and drop the message.
+	// bounce and drop the message. That includes the empty-id case — answering
+	// "resource_id is required" on a page the user never sees is the #2157
+	// leftover this ordering removes (#2167).
 	if src.ProviderType == dsProviderTypeGoogleDrive {
 		return redirectWithError(c, dsPickerURL(id), errors.New("choose folders in the Drive picker to set this source's sync target"))
+	}
+	if resourceID == "" {
+		return redirectWithError(c, back, errors.New("resource_id is required"))
 	}
 	key, ok := dsResourceConfigKey(src.ProviderType)
 	if !ok {

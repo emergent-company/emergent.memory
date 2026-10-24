@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -25,6 +27,14 @@ const driveReconnectRequired = "the Google Drive connection for this source has 
 // entered and is still testing: there is no source to reconnect yet, so naming
 // one would send them looking for a control that does not exist.
 const driveUnsavedGrantRequired = "the Google Drive authorization was rejected; sign in again to grant Drive access"
+
+// driveFoldersWrongAccount is the remediation for a save whose picked folders
+// the source's account cannot see at all. The picker browses the browser's
+// Google session, so signing in as a different person yields ids that resolve
+// for that session and for nobody else; the previous message ("folder <id> is
+// not accessible") read as a bad folder choice and left the real cause
+// unexplained (#2162).
+const driveFoldersWrongAccount = "none of the selected folders can be seen by the account that connected this source; if you picked them while signed into a different Google account, pick again with the source's account (or share those folders with it)"
 
 // errDriveGrantRejected is the sentinel form of driveReconnectRequired. The
 // connector reports it verbatim (TestConnection output is shown as-is), and the
@@ -281,18 +291,51 @@ func (p *googleDriveProvider) ResolveResourceTargets(ctx context.Context, creds 
 	if err != nil {
 		return nil, err
 	}
+	// Every id is checked before deciding which error to return: the picker runs
+	// in the browser's Google session, so a save can carry ids the *source's*
+	// account cannot see at all — the wrong-account shape is "none of them
+	// resolve", and only then is the account-mismatch explanation more useful
+	// than the first id Google refused (#2162). One bad id among resolvable
+	// ones keeps the specific message, because the folder really is the problem.
 	out := make([]ResourceRef, 0, len(ids))
+	var firstErr error
+	unavailable := 0
 	for _, id := range ids {
 		folder, err := client.GetFolder(ctx, id)
 		if err != nil {
 			if isDriveGrantRejected(err) {
 				return nil, apperror.NewValidation(driveReconnectRequired)
 			}
-			return nil, apperror.NewValidation("one of the selected folders is not accessible: folder " + id + ": " + err.Error())
+			if firstErr == nil {
+				firstErr = fmt.Errorf("one of the selected folders is not accessible: folder %s: %w", id, err)
+			}
+			if driveFolderUnavailable(err) {
+				unavailable++
+			}
+			continue
 		}
 		out = append(out, ResourceRef{ID: folder.ID, Name: folder.Name, DriveID: folder.DriveID})
 	}
+	if firstErr != nil {
+		if unavailable == len(ids) {
+			return nil, apperror.NewValidation(driveFoldersWrongAccount)
+		}
+		return nil, apperror.NewValidation(firstErr.Error())
+	}
 	return out, nil
+}
+
+// driveFolderUnavailable reports whether err is Google saying this account
+// cannot see the folder at all: 404 (Drive reports a folder the caller cannot
+// read as not found) or 403 (it exists but is not readable). A 5xx, a timeout or
+// a quota error is deliberately not matched — those deserve a retry, not "you
+// picked the wrong folders".
+func driveFolderUnavailable(err error) bool {
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Code == http.StatusNotFound || apiErr.Code == http.StatusForbidden
 }
 
 // PickerSession mints a short-lived Google Picker session bound to the source's

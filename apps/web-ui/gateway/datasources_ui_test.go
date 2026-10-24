@@ -2799,3 +2799,121 @@ func TestUIDataSourceResourceList_ServerErrorStaysRedacted(t *testing.T) {
 		t.Errorf("fragment should show the redacted outage copy for a 5xx:\n%s", body)
 	}
 }
+
+// A failed save on the resource page answers with ?err=… (the picked resource
+// is not resolvable, the provider has no resource step, the save failed). The
+// page rendered without ever reading the parameter, so the redirect looked like
+// a no-op refresh and the reason was lost (#2167).
+func TestUIDataSourceResourcesRouteShowsFlashError(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Acme repo", ProviderType: "github"}},
+		dsProviders:    []DSProvider{{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth"}}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/data-sources/s1/resources?err="+url.QueryEscape("resource selection is not supported for provider github"), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "resource selection is not supported for provider github") {
+		t.Errorf("flash message missing from the resource page:\n%s", body)
+	}
+
+	// The no-JavaScript fallback renders the same shell, so it must show it too.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/data-sources/s1/resources?static=1&err="+url.QueryEscape("resource selection is not supported for provider github"), nil))
+	if body := rec.Body.String(); !strings.Contains(body, "resource selection is not supported for provider github") {
+		t.Errorf("flash message missing from the static resource page:\n%s", body)
+	}
+}
+
+// Drive answers a stale POST on the picker page. That must hold for an empty
+// resource id too: /resources bounces to the picker, so answering
+// "resource_id is required" there dropped the message the user needed (#2167).
+func TestUIDataSourceResourceSaveDriveEmptyIDAnswersOnThePicker(t *testing.T) {
+	f := &fakeMemory{dsIntegrations: []DSIntegration{{ID: "s2", ProviderType: "google_drive"}}}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/s2/resources", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/s2?picker=1&err=") {
+		t.Fatalf("location = %q, want the picker with an error flash", loc)
+	}
+	msg, err := url.QueryUnescape(strings.TrimPrefix(loc, "/data-sources/s2?picker=1&err="))
+	if err != nil {
+		t.Fatalf("decode err param: %v", err)
+	}
+	if !strings.Contains(msg, "Drive picker") {
+		t.Errorf("message = %q, want the Drive-specific remediation", msg)
+	}
+	if strings.Contains(msg, "resource_id is required") {
+		t.Errorf("message = %q, must not be the form-validation text on a page that never shows it", msg)
+	}
+	if f.dsSavedResourceID != "" {
+		t.Error("memory must not be called for a Drive save")
+	}
+}
+
+// PickerBlocked is derived from the source's effective Drive strategy. The
+// render tests inject it into a summary, so a regression that stopped setting it
+// would leave the picker offered for a drive.file source with no test failing
+// (#2167).
+func TestDSCredentialSummaryPickerBlockedFollowsDriveFileScope(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+
+	cases := []struct {
+		name string
+		src  DSIntegration
+		want bool
+	}{
+		{
+			name: "granted drive.file",
+			src:  DSIntegration{ProviderType: "google_drive", OAuthGrantedStrategy: "drive.file"},
+			want: true,
+		},
+		{
+			name: "granted drive.readonly",
+			src:  DSIntegration{ProviderType: "google_drive", OAuthGrantedStrategy: "drive.readonly"},
+			want: false,
+		},
+		{
+			name: "configured drive.file without a granted scope",
+			src:  DSIntegration{ProviderType: "google_drive", OAuthStrategy: "drive.file"},
+			want: true,
+		},
+		{
+			name: "granted scope wins over a configured drive.file",
+			src:  DSIntegration{ProviderType: "google_drive", OAuthStrategy: "drive.file", OAuthGrantedStrategy: "drive.readonly"},
+			want: false,
+		},
+		{
+			name: "other provider never blocks",
+			src:  DSIntegration{ProviderType: "github", OAuthStrategy: "drive.file"},
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			summary := s.dsCredentialSummary(context.Background(), &tc.src)
+			if summary.PickerBlocked != tc.want {
+				t.Fatalf("PickerBlocked = %v, want %v", summary.PickerBlocked, tc.want)
+			}
+			if tc.want && summary.PickerError == "" {
+				t.Error("PickerBlocked without a PickerError leaves the user with no explanation")
+			}
+			if !tc.want && summary.PickerError != "" {
+				t.Errorf("PickerError = %q, want empty when the picker is available", summary.PickerError)
+			}
+		})
+	}
+}
