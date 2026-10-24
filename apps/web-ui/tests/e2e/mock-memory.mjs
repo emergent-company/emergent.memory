@@ -1426,10 +1426,15 @@ const server = http.createServer((req, res) => {
       const unknown = ids.find((id) => !dsMockFolders[id]);
       if (unknown) {
         res.statusCode = 422;
+        // Mirrors ResolveResourceTargets (#2162): when *none* of the picked ids
+        // resolves the cause is the account the Picker ran in, not the folder.
+        const allUnknown = ids.every((id) => !dsMockFolders[id]);
         return json(res, {
           error: {
             code: "validation_error",
-            message: "one of the selected folders is not accessible: google drive: folder \"" + unknown + "\" not found",
+            message: allUnknown
+              ? "none of the selected folders can be seen by the account that connected this source; if you picked them while signed into a different Google account, pick again with the source's account (or share those folders with it)"
+              : "one of the selected folders is not accessible: google drive: folder \"" + unknown + "\" not found",
           },
         });
       }

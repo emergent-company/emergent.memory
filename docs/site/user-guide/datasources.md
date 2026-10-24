@@ -134,7 +134,8 @@ press **Choose folders** (or follow the prompt on a freshly connected source):
 - If Google asks you to sign in, use the account that connected this source. The Picker runs in
   your browser and needs a signed-in Google account — the token the server mints for the source is
   not enough on its own, and folders visible only to a different signed-in account are rejected
-  when you save.
+  when you save. Either pick again while signed in as the source's account, or share those folders
+  with it; a folder shared with the source's account saves normally.
 - Select more than one folder. Selections accumulate across Picker openings, so you can add a
   folder, close the picker, browse elsewhere, and add another.
 - Remove a folder with the **×** on its chip, then press **Save folders**.

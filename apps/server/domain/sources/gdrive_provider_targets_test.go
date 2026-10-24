@@ -347,3 +347,55 @@ func TestDriveResolveResourceTargets_TransientFailureKeepsTheSpecificMessage(t *
 		t.Errorf("error = %q, must not blame the account for a 5xx", err)
 	}
 }
+
+// A 403 is not one thing: rate limits and scope problems must not be read as
+// "you used the wrong account", while a permission reason on the file is exactly
+// that shape (#2173).
+func TestDriveFolderUnavailableClassifies403Reasons(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "404 is not found", err: &googleapi.Error{Code: http.StatusNotFound}, want: true},
+		{name: "403 insufficientFilePermissions", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "insufficientFilePermissions"}}}, want: true},
+		{name: "403 forbidden", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "forbidden"}}}, want: true},
+		{name: "403 userRateLimitExceeded is transient", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "userRateLimitExceeded"}}}, want: false},
+		{name: "403 rateLimitExceeded is transient", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "rateLimitExceeded"}}}, want: false},
+		{name: "403 dailyLimitExceeded is transient", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "dailyLimitExceeded"}}}, want: false},
+		{name: "403 insufficientPermissions is a scope problem", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "insufficientPermissions"}}}, want: false},
+		{name: "403 without a reason is not a guess", err: &googleapi.Error{Code: http.StatusForbidden}, want: false},
+		{name: "a mixed list takes the permission reason", err: &googleapi.Error{Code: http.StatusForbidden, Errors: []googleapi.ErrorItem{{Reason: "userRateLimitExceeded"}, {Reason: "insufficientFilePermissions"}}}, want: true},
+		{name: "500 is not a permission", err: &googleapi.Error{Code: http.StatusInternalServerError}, want: false},
+		{name: "a non-Google error is not matched", err: errors.New("dial tcp: timeout"), want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := driveFolderUnavailable(tc.err); got != tc.want {
+				t.Errorf("driveFolderUnavailable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// The end-to-end consequence: every picked id failing on a rate limit keeps the
+// retryable message instead of the account-mismatch copy.
+func TestDriveResolveResourceTargets_RateLimitKeepsTheRetryableMessage(t *testing.T) {
+	f := &fakeDriveTransport{getErr: &googleapi.Error{
+		Code:    http.StatusForbidden,
+		Errors:  []googleapi.ErrorItem{{Reason: "userRateLimitExceeded"}},
+		Message: "User rate limit exceeded.",
+	}}
+	resolver := driveProviderWithTransport(f).(ResourceTargetResolver)
+
+	_, err := resolver.ResolveResourceTargets(context.Background(), Credentials{"refresh_token": "rt"}, []string{"f1", "f2"})
+	if err == nil {
+		t.Fatal("ResolveResourceTargets(rate limited) = nil, want an error")
+	}
+	if strings.Contains(err.Error(), driveFoldersWrongAccount) {
+		t.Errorf("error = %q, must not blame the account for a rate limit", err)
+	}
+	if !strings.Contains(err.Error(), "rate limit") {
+		t.Errorf("error = %q, want Google's own message so the user knows to retry", err)
+	}
+}

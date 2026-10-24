@@ -326,16 +326,33 @@ func (p *googleDriveProvider) ResolveResourceTargets(ctx context.Context, creds 
 }
 
 // driveFolderUnavailable reports whether err is Google saying this account
-// cannot see the folder at all: 404 (Drive reports a folder the caller cannot
-// read as not found) or 403 (it exists but is not readable). A 5xx, a timeout or
-// a quota error is deliberately not matched — those deserve a retry, not "you
-// picked the wrong folders".
+// cannot see the folder: a 404 (Drive reports a folder the caller cannot read as
+// not found) or a 403 whose *reason* names a permission on the file.
+//
+// A 403 is not one thing (#2173). userRateLimitExceeded, rateLimitExceeded and
+// dailyLimitExceeded are transient and deserve a retry; insufficientPermissions
+// is a scope or configuration problem, where recommending a different account
+// sends the user to the wrong fix. Only the reasons that mean "this file is not
+// yours to read" count, and an unrecognised reason deliberately falls through to
+// the specific message: blaming the account on a guess is worse than a slightly
+// vague message that the user can retry.
 func driveFolderUnavailable(err error) bool {
 	var apiErr *googleapi.Error
 	if !errors.As(err, &apiErr) {
 		return false
 	}
-	return apiErr.Code == http.StatusNotFound || apiErr.Code == http.StatusForbidden
+	switch apiErr.Code {
+	case http.StatusNotFound:
+		return true
+	case http.StatusForbidden:
+		for _, item := range apiErr.Errors {
+			switch item.Reason {
+			case "insufficientFilePermissions", "forbidden":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // PickerSession mints a short-lived Google Picker session bound to the source's

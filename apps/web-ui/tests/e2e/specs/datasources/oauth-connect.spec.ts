@@ -149,7 +149,7 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-resource-needed')).toHaveCount(0);
   });
 
-  test('picker save surfaces a rejected target and keeps the selection', async ({ page }) => {
+  test('picker save surfaces an unreadable target and keeps the selection', async ({ page }) => {
     // The mock upstream resolves ids against its folder catalog and rejects an
     // unknown one, exactly as the server does against Drive. The modal must show
     // that message inline rather than closing or discarding the selection.
@@ -160,11 +160,24 @@ test.describe('provider-generic OAuth data-source connect', () => {
     const dialog = page.getByTestId('ds-folder-picker');
     await expect(dialog).toBeVisible();
 
+    // The modal seeds from the source's current selection and s1 is shared with
+    // the spec above, which saves two folders. Remove them so the only id saved
+    // is the unreadable one — the account-mismatch shape, where none of the
+    // picked folders resolves, rather than one bad id among resolvable ones.
+    for (;;) {
+      const remove = dialog.getByRole('button', { name: /^Remove / }).first();
+      if ((await remove.count()) === 0) break;
+      await remove.click();
+    }
+    await expect(dialog.getByTestId('ds-folder-picker-count')).toHaveText('0 selected');
+
     await dialog.getByTestId('ds-folder-picker-open').click();
     await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Missing Folder');
 
     await dialog.getByTestId('ds-folder-picker-save').click();
-    await expect(dialog.getByTestId('ds-folder-picker-error')).toContainText('not accessible');
+    await expect(dialog.getByTestId('ds-folder-picker-error')).toContainText(
+      'can be seen by the account',
+    );
     await expect(dialog).toBeVisible();
     await expect(dialog.getByTestId('ds-folder-picker-selected')).toContainText('Missing Folder');
     // A rejected save never navigates: the modal stays open on the source page.
