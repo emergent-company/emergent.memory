@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -999,21 +1000,23 @@ func (i *Installer) GetEnvPath() string {
 	return filepath.Join(i.config.InstallDir, "config", ".env.local")
 }
 
-// GetServerPort reads the server port from the existing .env.local file
+// GetServerPort reads the server port from the existing .env.local file.
+// envfile owns the grammar for these files (#2148, #2174): a value it quoted —
+// or one a human wrote with `export`, spaces around the separator, or a trailing
+// comment — has to resolve to the same port here, or the CLI configures and
+// health-checks a URL the server is not listening on (#2178).
 func (i *Installer) GetServerPort() int {
-	envPath := i.GetEnvPath()
-	content, err := os.ReadFile(envPath)
+	content, err := os.ReadFile(i.GetEnvPath())
 	if err != nil {
 		return 3002 // default
 	}
 
-	for _, line := range strings.Split(string(content), "\n") {
-		if strings.HasPrefix(line, "SERVER_PORT=") {
-			var port int
-			if _, err := fmt.Sscanf(line, "SERVER_PORT=%d", &port); err == nil && port > 0 {
-				return port
-			}
-		}
+	raw, ok := envfile.Read(content, "SERVER_PORT")
+	if !ok {
+		return 3002
+	}
+	if port, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && port > 0 {
+		return port
 	}
 
 	return 3002

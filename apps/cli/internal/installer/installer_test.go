@@ -588,20 +588,47 @@ func TestGetServerPort(t *testing.T) {
 		}
 	})
 
-	t.Run("reads from env file", func(t *testing.T) {
-		envPath := filepath.Join(configDir, ".env.local")
-		envContent := "SOME_VAR=value\nSERVER_PORT=9999\nOTHER=thing\n"
-		if err := os.WriteFile(envPath, []byte(envContent), 0644); err != nil {
+	envPath := filepath.Join(configDir, ".env.local")
+	writeEnv := func(t *testing.T, content string) {
+		t.Helper()
+		if err := os.WriteFile(envPath, []byte(content), 0644); err != nil {
 			t.Fatal(err)
 		}
-
+	}
+	readPort := func() int {
 		cfg := Config{InstallDir: installDir}
-		inst := New(cfg)
-		port := inst.GetServerPort()
-		if port != 9999 {
-			t.Errorf("expected port 9999, got %d", port)
-		}
-	})
+		return New(cfg).GetServerPort()
+	}
+
+	// The same file is read by the service and written by envfile; a port it
+	// would honour must not be missed here, or the CLI talks to 3002 while the
+	// server listens elsewhere (#2178).
+	cases := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"plain", "SOME_VAR=value\nSERVER_PORT=9999\nOTHER=thing\n", 9999},
+		{"export prefix", "export SERVER_PORT=8081\n", 8081},
+		{"spaces around separator", "SERVER_PORT = 8082\n", 8082},
+		{"tab indentation", "\tSERVER_PORT=8083\n", 8083},
+		{"quoted value", `SERVER_PORT="8084"`, 8084},
+		{"trailing comment", "SERVER_PORT=8085 # chosen by the operator\n", 8085},
+		{"last assignment wins", "SERVER_PORT=8086\nSERVER_PORT=8087\n", 8087},
+		{"invalid value falls back", "SERVER_PORT=not-a-port\n", 3002},
+		{"zero falls back", "SERVER_PORT=0\n", 3002},
+		{"negative falls back", "SERVER_PORT=-1\n", 3002},
+		{"absent falls back", "OTHER=8088\n", 3002},
+		{"commented out falls back", "# SERVER_PORT=8089\n", 3002},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			writeEnv(t, c.content)
+			if got := readPort(); got != c.want {
+				t.Errorf("GetServerPort() = %d, want %d", got, c.want)
+			}
+		})
+	}
 }
 
 func TestGetEnvPath(t *testing.T) {
