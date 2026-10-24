@@ -17,6 +17,9 @@ import (
 type startOAuthBody struct {
 	Config map[string]any `json:"config"`
 	Scopes []string       `json:"scopes,omitempty"`
+	// ReconnectSourceID re-runs consent for an existing source; the callback
+	// replaces that source's grant in place (#2107).
+	ReconnectSourceID string `json:"reconnectSourceId,omitempty"`
 }
 
 // StartOAuth handles GET /api/data-source-integrations/providers/:providerType/oauth/authorize.
@@ -47,9 +50,18 @@ func (h *Handler) StartOAuth(c echo.Context) error {
 	if c.Request().ContentLength > 0 {
 		_ = c.Bind(&body)
 	}
+	var reconnectID *uuid.UUID
+	if raw := strings.TrimSpace(body.ReconnectSourceID); raw != "" {
+		id, perr := uuid.Parse(raw)
+		if perr != nil {
+			return apperror.NewValidation("reconnectSourceId must be a uuid")
+		}
+		reconnectID = &id
+	}
 	resp, err := h.svc.StartOAuth(c.Request().Context(), projectID, providerType, StartOAuthRequest{
-		Config: body.Config,
-		Scopes: body.Scopes,
+		Config:            body.Config,
+		Scopes:            body.Scopes,
+		ReconnectSourceID: reconnectID,
 	})
 	if err != nil {
 		return err

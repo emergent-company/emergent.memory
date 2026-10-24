@@ -595,7 +595,7 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 	if providerType == "" {
 		return redirectWithError(c, "/data-sources/new", errors.New("providerType is required"))
 	}
-	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, nil, nil)
+	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, nil, nil, "")
 	if err != nil {
 		if isMissingDSOAuthClient(err) {
 			return s.renderDSOAuthClientMissing(c, providerType)
@@ -612,6 +612,45 @@ func (s *Server) uiDataSourceOAuthStart(c echo.Context) error {
 	// (top-level navigation) and plain browsers with a 303.
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), resp.AuthorizeURL)
 	return nil
+}
+
+// uiDataSourceReconnect re-runs OAuth consent for an existing source. The
+// provider's consent screen is the only way to repair a revoked or expired
+// grant, and the callback replaces that source's stored credential in place, so
+// the source keeps its name, sync scope and history instead of being duplicated
+// (#2107).
+func (s *Server) uiDataSourceReconnect(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	src, err := s.memory.GetDSIntegration(ctx, id)
+	if err != nil {
+		return redirectWithError(c, s.dsScoped("/data-sources", c), userFacingError(err))
+	}
+	resp, err := s.memory.StartDSOAuth(ctx, src.ProviderType, nil, nil, src.ID)
+	if err != nil {
+		if isMissingDSOAuthClient(err) {
+			return s.renderDSOAuthClientMissing(c, src.ProviderType)
+		}
+		msg := memoryHTTPErrorMessage(err)
+		if msg == "" {
+			msg = genericErrorMessage
+		}
+		return redirectWithError(c, s.dsScoped("/data-sources/"+url.PathEscape(src.ID), c), errors.New(msg))
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), resp.AuthorizeURL)
+	return nil
+}
+
+// dsProviderCanOAuth reports whether the catalog lists the provider with the
+// OAuth connect method — the only providers whose credentials can be re-minted
+// by a reconnect, so the detail page offers the action only for those.
+func dsProviderCanOAuth(providers []DSProvider, providerType string) bool {
+	for _, p := range providers {
+		if p.Type == providerType {
+			return p.DSProviderSupportsOAuth()
+		}
+	}
+	return false
 }
 
 // renderDSOAuthClientMissing renders the source-creation page with an inline
@@ -1004,6 +1043,13 @@ type dsCredentialSummary struct {
 	SettingsHref    string
 	PickerBlocked   bool
 	PickerError     string
+	// SourceID is the source this summary belongs to, so an action can target
+	// that source instead of starting a new connect flow (#2107).
+	SourceID string
+	// CanReconnect reports that the provider advertises the OAuth connect method,
+	// i.e. its grant can be re-minted by consent. A reconnect repairs the existing
+	// source in place; it never creates a second one.
+	CanReconnect bool
 }
 
 // dsCredentialSummary builds the credentials card for a source. The app details
@@ -1014,6 +1060,7 @@ type dsCredentialSummary struct {
 func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *dsCredentialSummary {
 	summary := &dsCredentialSummary{
 		ProviderName:    src.ProviderType,
+		SourceID:        src.ID,
 		AccountEmail:    dsConfigString(src.Config, "oauth_account_email"),
 		SettingsHref:    dsCredentialAppHref(src.ProviderType),
 		GrantedTone:     "warning",
@@ -1834,7 +1881,9 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), nil, nil, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
-	if providers, perr := s.memory.ListDSProviders(ctx); perr == nil {
+	var providers []DSProvider
+	if list, perr := s.memory.ListDSProviders(ctx); perr == nil {
+		providers = list
 		providerName = dsProviderLabel(dsProviderNameMap(providers), src.ProviderType)
 	} else {
 		captureError(perr)
@@ -1851,6 +1900,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	}
 	resourcePrompt := dsResourcePromptFor(src)
 	credentialSummary := s.dsCredentialSummary(ctx, src)
+	credentialSummary.CanReconnect = dsProviderCanOAuth(providers, src.ProviderType)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},
 		{key: "updated", msg: "Data source updated."},

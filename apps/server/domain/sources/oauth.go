@@ -91,6 +91,12 @@ type DynamicOAuthProvider interface {
 // in the stored source config.
 const oauthDynamicKey = "_oauth_dynamic"
 
+// oauthReconnectKey is the reserved pending-state config key under which a
+// reconnect flow carries the id of the source whose grant it replaces. It is
+// read (and stripped) at callback time: the completion updates that source's
+// stored credential in place instead of creating a second one (#2107).
+const oauthReconnectKey = "_reconnect_source_id"
+
 // dynamicOAuthToConfig serialises a discovered dynamic client into the
 // pending-state config shape (a plain JSON object).
 func dynamicOAuthToConfig(dc DynamicOAuthClient) map[string]any {

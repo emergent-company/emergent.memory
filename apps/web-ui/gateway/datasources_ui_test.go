@@ -690,6 +690,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
+	e.GET("/data-sources/:id/reconnect", s.uiDataSourceReconnect)
 	e.GET("/data-sources/:id/picker-session", s.uiDataSourcePickerSession)
 	e.POST("/data-sources/:id/sync-targets", s.uiDataSourceSyncTargetsSave)
 	e.GET("/data-sources/:id/resources", s.uiDataSourceResources)
@@ -1886,6 +1887,7 @@ func TestRenderDataSourceDetailPageDriveFileBlocked(t *testing.T) {
 	}
 	summary := &dsCredentialSummary{
 		ProviderName:  "google_drive",
+		SourceID:      "s1",
 		ScopeLabel:    "Deployment default",
 		GrantedLabel:  "Per-file access (drive.file)",
 		GrantedTone:   "warning",
@@ -1900,6 +1902,14 @@ func TestRenderDataSourceDetailPageDriveFileBlocked(t *testing.T) {
 	}
 	if !strings.Contains(html, `data-testid="ds-picker-reconnect"`) {
 		t.Error("drive.file reconnect action missing")
+	}
+	// The action repairs this source; the old target was the new-source flow,
+	// which produced a duplicate and lost the config (#2107).
+	if !strings.Contains(html, `href="/data-sources/s1/reconnect"`) {
+		t.Errorf("drive.file reconnect action does not target the source:\n%s", html)
+	}
+	if strings.Contains(html, "/data-sources/new?providerType=") {
+		t.Error("reconnect action must not link to the new-source flow")
 	}
 	if strings.Contains(html, `data-testid="ds-folder-picker"`) {
 		t.Error("drive.file source must not render the folder picker modal")
@@ -2915,5 +2925,101 @@ func TestDSCredentialSummaryPickerBlockedFollowsDriveFileScope(t *testing.T) {
 				t.Errorf("PickerError = %q, want empty when the picker is available", summary.PickerError)
 			}
 		})
+	}
+}
+
+// TestRenderDataSourceDetailPageReconnectAction asserts the credentials card
+// offers a reconnect for an OAuth provider — the only providers whose grant can
+// be re-minted by consent — and targets that source, not the new-source flow
+// (#2107).
+func TestRenderDataSourceDetailPageReconnectAction(t *testing.T) {
+	src := DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active", Config: map[string]any{}}
+	base := dsCredentialSummary{
+		ProviderName: "google_drive",
+		SourceID:     "s1",
+		Configured:   true,
+		SettingsHref: "/settings/credentials/google_drive",
+	}
+
+	reconnectable := base
+	reconnectable.CanReconnect = true
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, nil, &reconnectable, "", nil))
+	if !strings.Contains(html, `data-testid="ds-credential-reconnect"`) {
+		t.Error("OAuth source missing the reconnect action")
+	}
+	if !strings.Contains(html, `href="/data-sources/s1/reconnect"`) {
+		t.Errorf("reconnect action does not target the source:\n%s", html)
+	}
+
+	html = renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, nil, &base, "", nil))
+	if strings.Contains(html, `data-testid="ds-credential-reconnect"`) {
+		t.Error("a provider without the OAuth method must not offer a reconnect")
+	}
+}
+
+// TestUIDataSourceReconnectReusesTheSource covers the route: it reads the
+// source, then asks memory to re-mint that source's grant, and lands a failure
+// back on the source rather than the chooser (#2107).
+func TestUIDataSourceReconnectReusesTheSource(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations:       []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsOAuthAuthorizeResp: &DSOAuthAuthorizeResponse{AuthorizeURL: "https://accounts.example/authorize?state=s1"},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/reconnect", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "https://accounts.example/authorize?state=s1" {
+		t.Errorf("location = %q, want the authorize URL", loc)
+	}
+	if f.dsLastOAuthProvider != "google_drive" {
+		t.Errorf("provider = %q, want google_drive", f.dsLastOAuthProvider)
+	}
+	if f.dsLastOAuthReconnectSourceID != "s1" {
+		t.Errorf("reconnect source = %q, want s1 (a reconnect must target the source)", f.dsLastOAuthReconnectSourceID)
+	}
+	if f.dsLastOAuthConfig != nil {
+		t.Errorf("reconnect sent config %+v, want none (a reconnect does not re-enter settings)", f.dsLastOAuthConfig)
+	}
+
+	// A backend failure goes back to that source with an error flash.
+	f.dsOAuthAuthorizeErr = errTest
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/reconnect", nil))
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/data-sources/s1?err=") {
+		t.Errorf("failure location = %q, want the source detail with an error", loc)
+	}
+}
+
+// TestUIDataSourceDetailReconnectActionFollowsTheCatalog asserts the detail page
+// offers the reconnect action exactly when the provider advertises OAuth — the
+// decision comes from the catalog, not a hard-coded provider list (#2107).
+func TestUIDataSourceDetailReconnectActionFollowsTheCatalog(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `data-testid="ds-credential-reconnect"`) {
+		t.Error("an OAuth source detail page must offer a reconnect")
+	}
+
+	// The same source, with a catalog that no longer advertises OAuth: nothing
+	// can re-mint the grant, so the action must disappear rather than offer a
+	// flow that would fail.
+	f.dsProviders = []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"credentials"}}}
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
+	if strings.Contains(rec.Body.String(), `data-testid="ds-credential-reconnect"`) {
+		t.Error("a provider without the OAuth method must not offer a reconnect")
 	}
 }

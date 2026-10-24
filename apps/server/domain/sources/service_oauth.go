@@ -34,6 +34,12 @@ type StartOAuthRequest struct {
 	// when the callback creates the source.
 	Config map[string]any
 	Scopes []string
+	// ReconnectSourceID re-runs consent for an existing source instead of
+	// connecting a new one: the callback replaces that source's stored grant in
+	// place, preserving its name, config and history (#2107). Config is ignored
+	// when it is set — a reconnect repairs the credential, it does not re-enter
+	// the source's settings.
+	ReconnectSourceID *uuid.UUID
 }
 
 // StartOAuthResponse is the start result: the provider authorization URL.
@@ -56,6 +62,11 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 	if err != nil {
 		return nil, err
 	}
+	// Flow keys are reserved: only this function may set them. Without this a
+	// crafted connect body carrying a reconnect key would aim the callback at an
+	// existing source in the project, and either key would leak into the new
+	// source's stored config (#2107 review).
+	req.Config = sanitizeOAuthFlowConfig(req.Config)
 	state, err := NewOAuthState()
 	if err != nil {
 		return nil, apperror.NewInternal("generate oauth state", err)
@@ -97,6 +108,26 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 		}
 	}
 
+	// A reconnect carries the target source through the pending state so the
+	// callback can replace its grant rather than create a source. Validated here,
+	// while the caller's project scope is still known: the id arrives from the
+	// browser, so a cross-project or mismatched id must not become a flow.
+	if req.ReconnectSourceID != nil && *req.ReconnectSourceID != uuid.Nil {
+		src, serr := s.repo.GetByID(ctx, *req.ReconnectSourceID, projectID)
+		if serr != nil {
+			return nil, serr
+		}
+		if src.Provider != providerType {
+			return nil, apperror.NewValidation("source " + src.ID.String() + " is a " + src.Provider + " source, not " + providerType)
+		}
+		cfg := map[string]any{oauthReconnectKey: src.ID.String()}
+		// The callback still needs the discovered dynamic client, if any.
+		if v, ok := req.Config[oauthDynamicKey]; ok {
+			cfg[oauthDynamicKey] = v
+		}
+		req.Config = cfg
+	}
+
 	if err := s.repo.CreateOAuthPendingState(ctx, &OAuthPendingState{
 		State:        state,
 		ProjectID:    projectID,
@@ -123,6 +154,20 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 
 // withDynamicOAuthConfig returns a copy of cfg carrying the discovered dynamic
 // client under the reserved key. A nil cfg becomes a fresh map.
+// sanitizeOAuthFlowConfig returns a copy of a caller-supplied source config with
+// the reserved flow keys removed. A request may describe a source; it may never
+// join the flow's own bookkeeping.
+func sanitizeOAuthFlowConfig(cfg map[string]any) map[string]any {
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		if k == oauthReconnectKey || k == oauthDynamicKey {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
 func withDynamicOAuthConfig(cfg map[string]any, dc DynamicOAuthClient) map[string]any {
 	out := make(map[string]any, len(cfg)+1)
 	for k, v := range cfg {
@@ -221,8 +266,9 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	for k, v := range pending.Config {
 		cfg[k] = v
 	}
-	// The reserved dynamic-client key is flow state, never source config.
+	// Reserved flow keys are flow state, never source config.
 	delete(cfg, oauthDynamicKey)
+	delete(cfg, oauthReconnectKey)
 	name := "Data source"
 	if v, ok := cfg["name"].(string); ok && strings.TrimSpace(v) != "" {
 		name = v
@@ -254,6 +300,35 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		}
 	}
 
+	// A reconnect replaces the existing source's grant instead of creating a
+	// second source: only the credential blob and the connect-time metadata move,
+	// so the name, sync scope, cursor and history the user already has survive
+	// (#2107).
+	if raw, ok := pending.Config[oauthReconnectKey].(string); ok && strings.TrimSpace(raw) != "" {
+		id, perr := uuid.Parse(raw)
+		if perr != nil {
+			return nil, fail(apperror.NewValidation("oauth state carries an invalid reconnect source id"))
+		}
+		src, serr := s.repo.GetByID(ctx, id, pending.ProjectID)
+		if serr != nil {
+			return nil, fail(serr)
+		}
+		if src.Provider != pending.Provider {
+			return nil, fail(apperror.NewValidation("oauth state provider does not match the source being reconnected"))
+		}
+		meta := map[string]any{}
+		for _, k := range []string{oauthGrantedStrategyKey, oauthAccountEmailKey} {
+			if v, ok := cfg[k]; ok {
+				meta[k] = v
+			}
+		}
+		updated, rerr := s.replaceCredentials(ctx, src, creds, meta)
+		if rerr != nil {
+			return nil, fail(rerr)
+		}
+		return updated, nil
+	}
+
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
 		Name:                  name,
 		ProviderType:          pending.Provider,
@@ -266,6 +341,29 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		return nil, fail(err)
 	}
 	return integration, nil
+}
+
+// replaceCredentials installs a freshly granted credential set on an existing
+// source. The stored config is the source's own — the reconnect flow never
+// re-enters settings — and only the connect-time metadata the token exchange
+// yields (the granted scope strategy, the account email) is merged into it.
+func (s *Service) replaceCredentials(ctx context.Context, src *Source, creds Credentials, meta map[string]any) (*Integration, error) {
+	blob, err := s.encryptCredentials(creds)
+	if err != nil {
+		return nil, err
+	}
+	cfg := cloneConfig(src.Config)
+	for k, v := range meta {
+		cfg[k] = v
+	}
+	if err := s.repo.ReplaceOAuthGrant(ctx, src.ID, src.ProjectID, blob, cfg); err != nil {
+		return nil, err
+	}
+	updated, err := s.repo.GetByID(ctx, src.ID, src.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.toIntegration(updated), nil
 }
 
 // grantedStrategy resolves the scope strategy a token response actually granted

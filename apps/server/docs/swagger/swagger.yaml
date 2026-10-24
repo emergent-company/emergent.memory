@@ -9390,6 +9390,11 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      reconnectSourceId:
+        description: |-
+          ReconnectSourceID re-runs consent for an existing source; the callback
+          replaces that source's grant in place (#2107).
+        type: string
       scopes:
         items:
           type: string

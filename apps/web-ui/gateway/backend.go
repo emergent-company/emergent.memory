@@ -136,7 +136,7 @@ type MemoryBackend interface {
 	GetLatestDSSyncJob(ctx context.Context, id string) (*DSSyncJob, error)
 	GetDSSyncJob(ctx context.Context, id, jobID string) (*DSSyncJob, error)
 	CancelDSSyncJob(ctx context.Context, id, jobID string) (*DSCancelSyncJobResponse, error)
-	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string) (*DSOAuthAuthorizeResponse, error)
+	StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error)
 	ListDSOAuthClients(ctx context.Context, orgID string) ([]DSOAuthClientConfig, error)
 	GetDSOAuthClient(ctx context.Context, orgID, providerType string) (*DSOAuthClientConfig, error)
 	UpsertDSOAuthClient(ctx context.Context, orgID, providerType string, req *DSSetOAuthClientRequest) (*DSOAuthClientConfig, error)

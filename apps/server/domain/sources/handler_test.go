@@ -286,6 +286,17 @@ func (s *SourcesHandlerSuite) TestOAuthAuthorizeRequiresAuth() {
 	s.Require().Equal(http.StatusUnauthorized, resp.StatusCode, resp.String())
 }
 
+// TestOAuthAuthorizeRejectsMalformedReconnectID verifies a browser-supplied
+// reconnect source id is parsed before any flow starts: a non-uuid is a
+// validation error, not a connect flow (#2107).
+func (s *SourcesHandlerSuite) TestOAuthAuthorizeRejectsMalformedReconnectID() {
+	resp := s.Client.GET("/api/data-source-integrations/providers/google_drive/oauth/authorize",
+		testutil.WithAuth("e2e-test-user"), testutil.WithProjectID(s.ProjectID),
+		testutil.WithJSONBody(map[string]any{"reconnectSourceId": "not-a-uuid"}))
+	s.Require().Equal(http.StatusUnprocessableEntity, resp.StatusCode, resp.String())
+	s.Require().Contains(resp.String(), "reconnectSourceId")
+}
+
 // TestOAuthCallbackInvalidStateRedirects verifies an unknown/expired state lands
 // on the error path (and that the callback is reachable unauthenticated).
 func (s *SourcesHandlerSuite) TestOAuthCallbackInvalidStateRedirects() {

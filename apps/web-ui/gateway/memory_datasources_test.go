@@ -251,7 +251,7 @@ func TestStartDSOAuth(t *testing.T) {
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	resp, err := m.StartDSOAuth(context.Background(), "google_drive", map[string]any{"name": "Team Drive"}, []string{"scope-a"})
+	resp, err := m.StartDSOAuth(context.Background(), "google_drive", map[string]any{"name": "Team Drive"}, []string{"scope-a"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,6 +264,30 @@ func TestStartDSOAuth(t *testing.T) {
 	cfg, _ := gotBody["config"].(map[string]any)
 	if cfg["name"] != "Team Drive" {
 		t.Errorf("body config = %+v", gotBody)
+	}
+	if _, present := gotBody["reconnectSourceId"]; present {
+		t.Errorf("body carries reconnectSourceId %v for a connect flow", gotBody["reconnectSourceId"])
+	}
+}
+
+// TestStartDSOAuth_ReconnectCarriesTheSource asserts a reconnect asks the server
+// to re-mint the grant of a specific source (#2107) rather than opening another
+// connect flow.
+func TestStartDSOAuth_ReconnectCarriesTheSource(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"authorizeUrl":"https://accounts.example/a?state=s"}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	if _, err := m.StartDSOAuth(context.Background(), "google_drive", nil, nil, "src-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := gotBody["reconnectSourceId"].(string); got != "src-1" {
+		t.Errorf("body reconnectSourceId = %q, want src-1 (body %+v)", got, gotBody)
 	}
 }
 

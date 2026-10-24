@@ -193,17 +193,18 @@ type fakeMemory struct {
 	dsLastTriggerID   string                      // last id passed to TriggerDSSync
 	dsLastCancelJobID string                      // last job id passed to CancelDSSyncJob
 	// OAuth connect + org OAuth-client config (see memory_datasources.go).
-	dsOAuthAuthorizeResp *DSOAuthAuthorizeResponse // returned by StartDSOAuth
-	dsOAuthAuthorizeErr  error                     // StartDSOAuth failure
-	dsLastOAuthProvider  string                    // last providerType passed to StartDSOAuth
-	dsLastOAuthConfig    map[string]any            // last config passed to StartDSOAuth
-	dsOrgOAuthClients    []DSOAuthClientConfig     // returned by List/GetDSOAuthClient
-	dsOrgOAuthClientErr  error                     // any org OAuth-client method failure
-	dsUpsertedOAuthReq   *DSSetOAuthClientRequest  // last request passed to UpsertDSOAuthClient
-	dsUpsertedOAuthOrg   string                    // last org id passed to UpsertDSOAuthClient
-	dsUpsertedOAuthProv  string                    // last provider passed to UpsertDSOAuthClient
-	dsDeletedOAuthOrg    string                    // last org id passed to DeleteDSOAuthClient
-	dsDeletedOAuthProv   string                    // last provider passed to DeleteDSOAuthClient
+	dsOAuthAuthorizeResp         *DSOAuthAuthorizeResponse // returned by StartDSOAuth
+	dsOAuthAuthorizeErr          error                     // StartDSOAuth failure
+	dsLastOAuthProvider          string                    // last providerType passed to StartDSOAuth
+	dsLastOAuthConfig            map[string]any            // last config passed to StartDSOAuth
+	dsLastOAuthReconnectSourceID string                    // last reconnect source id passed to StartDSOAuth
+	dsOrgOAuthClients            []DSOAuthClientConfig     // returned by List/GetDSOAuthClient
+	dsOrgOAuthClientErr          error                     // any org OAuth-client method failure
+	dsUpsertedOAuthReq           *DSSetOAuthClientRequest  // last request passed to UpsertDSOAuthClient
+	dsUpsertedOAuthOrg           string                    // last org id passed to UpsertDSOAuthClient
+	dsUpsertedOAuthProv          string                    // last provider passed to UpsertDSOAuthClient
+	dsDeletedOAuthOrg            string                    // last org id passed to DeleteDSOAuthClient
+	dsDeletedOAuthProv           string                    // last provider passed to DeleteDSOAuthClient
 	// Project-scoped OAuth-client config (see datasources_ui.go).
 	dsProjectOAuthClients      []DSOAuthClientConfig      // returned by ListProjectDSOAuthClients
 	dsProjectOAuthClientErr    error                      // any project OAuth-client method failure
@@ -4437,9 +4438,10 @@ func (f *fakeMemory) CancelDSSyncJob(ctx context.Context, id, jobID string) (*DS
 	return &DSCancelSyncJobResponse{Success: true, Message: "cancelled"}, nil
 }
 
-func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string) (*DSOAuthAuthorizeResponse, error) {
+func (f *fakeMemory) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
 	f.dsLastOAuthProvider = providerType
 	f.dsLastOAuthConfig = config
+	f.dsLastOAuthReconnectSourceID = reconnectSourceID
 	if f.dsOAuthAuthorizeErr != nil {
 		return nil, f.dsOAuthAuthorizeErr
 	}

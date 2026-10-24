@@ -39255,6 +39255,10 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "reconnectSourceId": {
+                    "description": "ReconnectSourceID re-runs consent for an existing source; the callback\nreplaces that source's grant in place (#2107).",
+                    "type": "string"
+                },
                 "scopes": {
                     "type": "array",
                     "items": {

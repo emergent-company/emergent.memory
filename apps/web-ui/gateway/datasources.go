@@ -235,7 +235,9 @@ func (s *Server) startDSOAuth(c echo.Context) error {
 			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		}
 	}
-	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, req.Config, req.Scopes)
+	// The legacy JSON proxy has no reconnect concept: a source's grant is
+	// re-minted through the UI action, which carries the source id.
+	resp, err := s.memory.StartDSOAuth(c.Request().Context(), providerType, req.Config, req.Scopes, "")
 	if err != nil {
 		return dsError(c, err)
 	}

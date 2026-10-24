@@ -82,6 +82,9 @@ type ProviderSchema struct {
 type OAuthAuthorizeRequest struct {
 	Config map[string]interface{} `json:"config,omitempty"`
 	Scopes []string               `json:"scopes,omitempty"`
+	// ReconnectSourceID re-runs consent for an existing source; the callback
+	// replaces that source's grant in place instead of creating a new source.
+	ReconnectSourceID string `json:"reconnectSourceId,omitempty"`
 }
 
 // OAuthAuthorizeResponse is the result of starting an OAuth connect.

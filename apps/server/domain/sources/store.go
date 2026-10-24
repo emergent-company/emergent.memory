@@ -153,6 +153,37 @@ func (r *Repository) UpdateCredentials(ctx context.Context, id, projectID uuid.U
 	return nil
 }
 
+// ReplaceOAuthGrant installs a freshly granted OAuth credential on an existing
+// source: the credential blob and the connect-time config metadata are replaced
+// and the recorded error is cleared, because a dead grant is the failure a
+// reconnect resolves. Every other column — name, sync policy, status, cursor,
+// the source's own config keys — is left alone, so a reconnect cannot reset the
+// sync scope or undo a pause (#2107).
+func (r *Repository) ReplaceOAuthGrant(ctx context.Context, id, projectID uuid.UUID, blob []byte, config map[string]any) error {
+	if len(blob) == 0 {
+		return apperror.NewValidation("credentials blob is empty")
+	}
+	res, err := r.db.NewUpdate().
+		Model((*Source)(nil)).
+		Set("encrypted_credentials = ?", blob).
+		Set("config = ?", config).
+		Set("last_error = NULL").
+		Set("last_error_at = NULL").
+		Set("error_count = 0").
+		Set("updated_at = now()").
+		Where("id = ?", id).
+		Where("project_id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to replace source oauth grant", logger.Error(err))
+		return apperror.NewDatabase("failed to replace source oauth grant", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return apperror.ErrNotFound
+	}
+	return nil
+}
+
 // Delete deletes a source scoped by project. A missing row (or a cross-project
 // id) resolves to not-found.
 func (r *Repository) Delete(ctx context.Context, id, projectID uuid.UUID) error {

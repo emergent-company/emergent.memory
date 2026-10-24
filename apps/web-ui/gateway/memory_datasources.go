@@ -328,11 +328,17 @@ func (m *MemoryClient) ListDSProviders(ctx context.Context) ([]DSProvider, error
 // StartDSOAuth starts an OAuth connect for a provider: it builds the provider
 // authorization URL (state + PKCE) server-side and returns it. config is the
 // intended (non-secret) source config; scopes optionally overrides the default.
-func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string) (*DSOAuthAuthorizeResponse, error) {
+// A non-empty reconnectSourceID re-runs consent for that existing source, whose
+// grant the callback replaces in place instead of creating another source.
+func (m *MemoryClient) StartDSOAuth(ctx context.Context, providerType string, config map[string]any, scopes []string, reconnectSourceID string) (*DSOAuthAuthorizeResponse, error) {
 	path := "/api/data-source-integrations/providers/" + url.PathEscape(providerType) + "/oauth/authorize"
 	var body any
-	if len(config) > 0 || len(scopes) > 0 {
-		body = map[string]any{"config": config, "scopes": scopes}
+	if len(config) > 0 || len(scopes) > 0 || reconnectSourceID != "" {
+		payload := map[string]any{"config": config, "scopes": scopes}
+		if reconnectSourceID != "" {
+			payload["reconnectSourceId"] = reconnectSourceID
+		}
+		body = payload
 	}
 	var out DSOAuthAuthorizeResponse
 	if err := m.doH(ctx, http.MethodGet, path, body, m.documentHeaders(ctx), &out); err != nil {

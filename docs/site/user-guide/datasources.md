@@ -115,14 +115,15 @@ Google Drive has two selectable strategies, and they decide what the folder pick
 - **`drive.file`** — the app sees only files it created or that a user picked through the Google
   Picker. That grant covers the picked **object**, not its children, so a `drive.file` source
   cannot browse or sync a folder tree. Folder sync needs `drive.readonly`; the source's detail page
-  says so and links to reconnect.
+  says so and links to **Reconnect**, which re-runs consent for that same source.
 
 The strategy resolves project first, then organization, then the provider default. Leaving the
 project strategy blank inherits the organization's strategy; it does not reset to the default.
 
 Changing the strategy applies to the next consent, not to sources that are already connected — a
-source keeps the scope its token was granted with. Delete the source and connect the provider again
-after switching to `drive.readonly`.
+source keeps the scope its token was granted with. To move an existing source onto
+`drive.readonly`, switch the strategy and then press **Reconnect** on that source: consent runs
+again with the new scope and the source keeps its folders, cursor and history.
 
 ### Choosing folders in the Google Picker
 
@@ -157,6 +158,39 @@ Free-text folder ids from older clients are still accepted: the first update rew
 
 GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
 token entered when connecting the source; a token connection does not need an OAuth app.
+
+### Reconnecting a source
+
+An OAuth grant can stop working long before you want to delete the source: the user revokes the app
+in their Google or GitHub account, the refresh token expires, or the provider rotates it away. The
+sync then fails with the provider's error, and the source's **Credentials** card offers
+**Reconnect**.
+
+Consent runs again for the same source. The stored grant is replaced in place, so the source keeps
+its id, name, sync targets, cursor and sync history — the next sync resumes instead of re-importing
+everything into a second source. The connected account and the granted scope strategy are refreshed
+from the new consent, and the recorded error clears.
+
+The action follows the provider's advertised auth methods. A **web** source has no OAuth method and
+shows none. A **GitHub** source always shows it, including one connected with a personal access
+token — reconnecting replaces that token with an OAuth grant for the same source, so it needs the
+GitHub OAuth app to be configured.
+
+!!! note "Reconnect is not a new source"
+    Reconnecting never creates a second source. If you see a duplicate after a provider
+    authorization, it came from the connect flow, not from **Reconnect**.
+
+Over the API, name the source on the authorize request and the callback updates that source. The
+endpoint takes a JSON body, so send the content type with it:
+
+```bash
+curl -X GET "$MEMORY_API_URL/api/data-source-integrations/providers/google_drive/oauth/authorize" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"reconnectSourceId": "<source id>"}'
+```
+
+The response is the provider's authorize URL; without a readable body the request is treated as a
+plain connect and creates a **new** source.
 
 ### Connect GitHub with a personal access token
 
@@ -219,8 +253,8 @@ Operational caveats:
   several calls and nothing is silently truncated.
 - **Token rotation is persisted.** The authorization server rotates the refresh token on every use, and
   the source stores the rotated token, so routine rotation never interrupts syncing. A refresh fails
-  only when the grant itself is revoked or has expired; the source then stops with an actionable error
-  and must be reconnected from **Data Sources**.
+  only when the grant itself is revoked or has expired; the source then stops with an actionable error,
+  and the source's detail page offers **Reconnect** to repair the grant in place.
 
 ### Web (website crawl)
 
