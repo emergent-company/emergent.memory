@@ -108,7 +108,7 @@ func (h *Handler) CompleteOAuth(c echo.Context) error {
 		// project is unknown; the UI falls back to the caller's active scope.
 		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("oauth_error", provErr, "")))
 	}
-	integration, err := h.svc.CompleteOAuth(c.Request().Context(), providerType, c.QueryParam("state"), c.QueryParam("code"))
+	completion, err := h.svc.CompleteOAuth(c.Request().Context(), providerType, c.QueryParam("state"), c.QueryParam("code"))
 	if err != nil {
 		// Browser-facing: log the detail, land on a generic error scoped to the
 		// project the flow started from (when the state was consumed).
@@ -123,5 +123,5 @@ func (h *Handler) CompleteOAuth(c echo.Context) error {
 			slog.String("error", err.Error()))
 		return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("oauth_error", "connect_failed", projectID)))
 	}
-	return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery("connected", integration.ID, integration.ProjectID)))
+	return c.Redirect(http.StatusSeeOther, h.svc.OAuthLandingURL(oauthLandingQuery(completion.LandingKey(), completion.Integration.ID, completion.Integration.ProjectID)))
 }

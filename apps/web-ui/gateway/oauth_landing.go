@@ -37,9 +37,10 @@ const (
 
 // uiOAuthLandingDataSources maps a data-source connect callback into the
 // caller's project scope, preserving the one-shot outcome parameters that
-// /data-sources already knows how to consume.
+// /data-sources already knows how to consume. `reconnected` is the repair of an
+// existing source's grant (same landing, different message).
 func (s *Server) uiOAuthLandingDataSources(c echo.Context) error {
-	return s.oauthLanding(c, "/data-sources", "connected", "oauth_error")
+	return s.oauthLanding(c, "/data-sources", "connected", "reconnected", "oauth_error")
 }
 
 // uiOAuthLandingMCPServers maps an MCP registry connect callback into the

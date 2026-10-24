@@ -333,3 +333,19 @@ func TestOAuthLandingIsGlobal(t *testing.T) {
 		}
 	}
 }
+
+// TestOAuthLandingPreservesReconnected asserts the landing keeps the reconnect
+// outcome so the scoped page can report a repair rather than a new connection
+// (#2186).
+func TestOAuthLandingPreservesReconnected(t *testing.T) {
+	f := &fakeMemory{orgsAndProjects: oauthLandingTestTree()}
+	srv := newOAuthLandingServer(f)
+	rec := landingGet(t, srv, oauthLandingDataSourcesPath+"?reconnected=s1&scope_project=p1", &sessionContext{Sub: "u1"})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	want := "/o/o1/p/p1/data-sources?reconnected=s1"
+	if loc := rec.Header().Get("Location"); loc != want {
+		t.Errorf("location = %q, want %q", loc, want)
+	}
+}

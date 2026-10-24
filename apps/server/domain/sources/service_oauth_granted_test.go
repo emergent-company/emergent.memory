@@ -82,10 +82,11 @@ func TestCompleteOAuth_PersistsGrantedStrategy(t *testing.T) {
 				t.Fatalf("CreateOAuthPendingState() error = %v", err)
 			}
 
-			got, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, state, "code-1")
+			completion, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, state, "code-1")
 			if err != nil {
 				t.Fatalf("CompleteOAuth() error = %v", err)
 			}
+			got := completion.Integration
 			granted, present := got.Config[oauthGrantedStrategyKey].(string)
 			switch tc.want {
 			case "":

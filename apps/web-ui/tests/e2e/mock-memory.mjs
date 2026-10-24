@@ -900,7 +900,16 @@ const server = http.createServer((req, res) => {
   // /data-sources/oauth/callback, which redirects to the connected source.
   const dsAuthorizeMatch = path.match(/^\/api\/data-source-integrations\/providers\/([^/]+)\/oauth\/authorize$/);
   if (dsAuthorizeMatch && (req.method === "GET" || req.method === "POST")) {
-    return json(res, { authorizeUrl: `${GATEWAY_ORIGIN}/data-sources/oauth/callback?connected=s1` });
+    return readBody(req, (payload) => {
+      // A reconnect re-runs consent for an existing source: the callback then
+      // repairs that source and reports a renewal, so the bounce names the
+      // outcome the way the real server does.
+      const reconnect = typeof payload?.reconnectSourceId === "string" && payload.reconnectSourceId !== "";
+      const outcome = reconnect
+        ? `reconnected=${encodeURIComponent(payload.reconnectSourceId)}`
+        : "connected=s1";
+      return json(res, { authorizeUrl: `${GATEWAY_ORIGIN}/data-sources/oauth/callback?${outcome}` });
+    });
   }
 
   // --- org OAuth-client config (org-admin only; write-only secret) -----------

@@ -476,10 +476,11 @@ func dsTestMessage(resp *DSTestConnectionResponse) string {
 // --- UI handlers ---
 
 // uiDataSources renders the Data Sources list. The memory OAuth callback lands
-// on /data-sources?connected=... or ?oauth_error=... (see the server's
-// OAuthLandingURL), so those requests are delegated to the callback handler.
+// on /data-sources?connected=..., ?reconnected=... or ?oauth_error=... (see the
+// server's OAuthLandingURL), so those requests are delegated to the callback
+// handler.
 func (s *Server) uiDataSources(c echo.Context) error {
-	if c.QueryParam("connected") != "" || c.QueryParam("oauth_error") != "" {
+	if c.QueryParam("connected") != "" || c.QueryParam("reconnected") != "" || c.QueryParam("oauth_error") != "" {
 		return s.uiDataSourceOAuthCallback(c)
 	}
 	ctx := c.Request().Context()
@@ -628,14 +629,13 @@ func (s *Server) uiDataSourceReconnect(c echo.Context) error {
 	}
 	resp, err := s.memory.StartDSOAuth(ctx, src.ProviderType, nil, nil, src.ID)
 	if err != nil {
-		if isMissingDSOAuthClient(err) {
-			return s.renderDSOAuthClientMissing(c, src.ProviderType)
-		}
-		msg := memoryHTTPErrorMessage(err)
-		if msg == "" {
-			msg = genericErrorMessage
-		}
-		return redirectWithError(c, s.dsScoped("/data-sources/"+url.PathEscape(src.ID), c), errors.New(msg))
+		// A reconnect is an action on an existing source, so every failure lands
+		// there. The creation page renderDSOAuthClientMissing builds is for the
+		// new-source flow and would drop the user out of the source they were
+		// repairing (#2186). dsFormError is the same gate every other data-source
+		// form uses: the backend's own message for a 4xx, a redacted one for a 5xx
+		// or a transport failure.
+		return redirectWithError(c, s.dsScoped("/data-sources/"+url.PathEscape(src.ID), c), dsFormError(err))
 	}
 	render.RedirectAfterMutation(c.Response().Writer, c.Request(), resp.AuthorizeURL)
 	return nil
@@ -718,6 +718,12 @@ func (s *Server) uiDataSourceOAuthCallback(c echo.Context) error {
 	}
 	if connected := c.QueryParam("connected"); connected != "" {
 		render.RedirectAfterMutation(c.Response().Writer, c.Request(), s.dsScoped("/data-sources/"+url.PathEscape(connected)+"?created=1", c))
+		return nil
+	}
+	// A reconnect repairs an existing source, so it lands on that source saying
+	// what happened instead of claiming a new source was connected (#2186).
+	if reconnected := c.QueryParam("reconnected"); reconnected != "" {
+		render.RedirectAfterMutation(c.Response().Writer, c.Request(), s.dsScoped("/data-sources/"+url.PathEscape(reconnected)+"?reconnected=1", c))
 		return nil
 	}
 	return c.Redirect(http.StatusSeeOther, s.dsScoped("/data-sources", c))
@@ -1064,7 +1070,7 @@ func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *d
 		AccountEmail:    dsConfigString(src.Config, "oauth_account_email"),
 		SettingsHref:    dsCredentialAppHref(src.ProviderType),
 		GrantedTone:     "warning",
-		GrantedLabel:    "Not recorded (connected before scope tracking)",
+		GrantedLabel:    "Not reported by the provider",
 		GrantedStrategy: src.OAuthGrantedStrategy,
 	}
 	descriptions, err := s.memory.ListDSCredentials(ctx)
@@ -1903,6 +1909,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	credentialSummary.CanReconnect = dsProviderCanOAuth(providers, src.ProviderType)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},
+		{key: "reconnected", msg: "Connection renewed."},
 		{key: "updated", msg: "Data source updated."},
 		{key: "synced", msg: "Sync triggered."},
 		{key: "cancelled", msg: "Sync cancelled."},

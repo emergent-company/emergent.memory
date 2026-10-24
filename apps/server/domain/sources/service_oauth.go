@@ -152,8 +152,6 @@ func (s *Service) StartOAuth(ctx context.Context, projectID uuid.UUID, providerT
 	return &StartOAuthResponse{AuthorizeURL: authorizeURL}, nil
 }
 
-// withDynamicOAuthConfig returns a copy of cfg carrying the discovered dynamic
-// client under the reserved key. A nil cfg becomes a fresh map.
 // sanitizeOAuthFlowConfig returns a copy of a caller-supplied source config with
 // the reserved flow keys removed. A request may describe a source; it may never
 // join the flow's own bookkeeping.
@@ -168,6 +166,8 @@ func sanitizeOAuthFlowConfig(cfg map[string]any) map[string]any {
 	return out
 }
 
+// withDynamicOAuthConfig returns a copy of cfg carrying the discovered dynamic
+// client under the reserved key. A nil cfg becomes a fresh map.
 func withDynamicOAuthConfig(cfg map[string]any, dc DynamicOAuthClient) map[string]any {
 	out := make(map[string]any, len(cfg)+1)
 	for k, v := range cfg {
@@ -190,10 +190,31 @@ type OAuthConnectError struct {
 func (e *OAuthConnectError) Error() string { return e.Err.Error() }
 func (e *OAuthConnectError) Unwrap() error { return e.Err }
 
+// OAuthCompletion is the callback outcome: the source the grant now belongs to,
+// and whether the flow repaired an existing source's grant instead of creating
+// one. The landing message differs ("connected" vs "renewed"), so the fact has
+// to survive the call instead of being re-derived by the handler (#2186).
+type OAuthCompletion struct {
+	Integration *Integration
+	Reconnected bool
+}
+
+// LandingKey is the one-shot landing outcome parameter for this completion. It
+// lives here so the mapping is covered by the domain tests: the callback handler
+// only has to pass it through, and a repair can never silently land as a new
+// connection.
+func (c *OAuthCompletion) LandingKey() string {
+	if c != nil && c.Reconnected {
+		return "reconnected"
+	}
+	return "connected"
+}
+
 // CompleteOAuth consumes a pending state, exchanges the authorization code for
-// credentials, and creates the source. A state that is missing, expired, or
+// credentials, and then either creates the source or — for a reconnect — repairs
+// the existing one's grant in place. A state that is missing, expired, or
 // already consumed resolves to not-found, so a callback can never be replayed.
-func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code string) (*Integration, error) {
+func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code string) (*OAuthCompletion, error) {
 	if strings.TrimSpace(state) == "" || strings.TrimSpace(code) == "" {
 		return nil, apperror.NewValidation("code and state are required")
 	}
@@ -326,7 +347,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		if rerr != nil {
 			return nil, fail(rerr)
 		}
-		return updated, nil
+		return &OAuthCompletion{Integration: updated, Reconnected: true}, nil
 	}
 
 	integration, err := s.Create(ctx, pending.ProjectID, &CreateIntegrationRequest{
@@ -340,7 +361,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 		// a post-consume failure, so the landing keeps the flow's project.
 		return nil, fail(err)
 	}
-	return integration, nil
+	return &OAuthCompletion{Integration: integration}, nil
 }
 
 // replaceCredentials installs a freshly granted credential set on an existing
@@ -355,6 +376,15 @@ func (s *Service) replaceCredentials(ctx context.Context, src *Source, creds Cre
 	cfg := cloneConfig(src.Config)
 	for k, v := range meta {
 		cfg[k] = v
+	}
+	// The new grant may belong to a different account, or the provider may report
+	// a scope set we cannot map. A value this exchange could not supply has to
+	// clear the old one, or the card keeps describing the account and scope that
+	// just went away (#2186).
+	for _, k := range []string{oauthGrantedStrategyKey, oauthAccountEmailKey} {
+		if _, ok := meta[k]; !ok {
+			delete(cfg, k)
+		}
 	}
 	if err := s.repo.ReplaceOAuthGrant(ctx, src.ID, src.ProjectID, blob, cfg); err != nil {
 		return nil, err

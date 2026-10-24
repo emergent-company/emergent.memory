@@ -120,6 +120,23 @@ test.describe('provider-generic OAuth data-source connect', () => {
     await expect(page.getByTestId('ds-field-client_secret')).toHaveCount(0);
   });
 
+  test('reconnect repairs the seeded source instead of opening a new one', async ({ page }) => {
+    // A grant that was revoked leaves the source with an actionable error; the
+    // credentials card offers the repair, and it targets THIS source (#2107).
+    await page.goto('/data-sources/s1');
+    const reconnect = page.getByTestId('ds-credential-reconnect');
+    await expect(reconnect).toBeVisible();
+    await expect(reconnect).toHaveAttribute('href', '/data-sources/s1/reconnect');
+
+    // Consent runs again and lands back on the same source as a renewal — not on
+    // the new-source flow, and not claiming a second source was connected.
+    await reconnect.click();
+    await page.waitForURL('**/data-sources/s1?reconnected=1**');
+    await expect(page.getByTestId('page-team-drive')).toBeVisible();
+    await expect(page.getByText('Connection renewed.')).toBeVisible();
+    await expect(page.getByText('Data source connected.')).toHaveCount(0);
+  });
+
   test('OAuth-connected source picks folders in the modal and saves them', async ({ page }) => {
     await stubGooglePicker(page, [
       { id: 'folder-picked', name: 'Picked Folder' },

@@ -1456,6 +1456,16 @@ func TestUIDataSourceOAuthCallback(t *testing.T) {
 		t.Errorf("connected location = %q", loc)
 	}
 
+	// reconnected → the same source, described as a repair rather than a new one.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?reconnected=s1", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("reconnected status = %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?reconnected=1" {
+		t.Errorf("reconnected location = %q, want the source with the renewed flash", loc)
+	}
+
 	// oauth_error → redirect to the list with a real error message.
 	rec = httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/oauth/callback?oauth_error=denied", nil))
@@ -1485,6 +1495,13 @@ func TestUIDataSourceOAuthCallback(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources?connected=s1", nil))
 	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?created=1" {
 		t.Errorf("delegated callback location = %q", loc)
+	}
+
+	// A reconnect reaches the same delegated path with its own outcome key.
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources?reconnected=s1", nil))
+	if loc := rec.Header().Get("Location"); loc != "/data-sources/s1?reconnected=1" {
+		t.Errorf("delegated reconnect location = %q", loc)
 	}
 }
 
@@ -3021,5 +3038,73 @@ func TestUIDataSourceDetailReconnectActionFollowsTheCatalog(t *testing.T) {
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1", nil))
 	if strings.Contains(rec.Body.String(), `data-testid="ds-credential-reconnect"`) {
 		t.Error("a provider without the OAuth method must not offer a reconnect")
+	}
+}
+
+// TestUIDataSourceDetailRenewedFlash asserts the landing after a reconnect says
+// what happened instead of claiming a new source was connected (#2186).
+func TestUIDataSourceDetailRenewedFlash(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}},
+		dsProviders:    []DSProvider{{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1?reconnected=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Connection renewed.") {
+		t.Error("detail page missing the renewed flash")
+	}
+	if strings.Contains(body, "Data source connected.") {
+		t.Error("a reconnect must not be reported as a new connection")
+	}
+}
+
+// TestUIDataSourceReconnectMissingClientLandsOnTheSource asserts a reconnect that
+// cannot start (no OAuth client) reports the failure on the source it was aimed
+// at, not by dropping the user on the new-source page (#2186).
+func TestUIDataSourceReconnectMissingClientLandsOnTheSource(t *testing.T) {
+	f := &fakeMemory{
+		dsIntegrations: []DSIntegration{{ID: "s1", Name: "Team Drive", ProviderType: "github", Status: "active"}},
+		dsOAuthAuthorizeErr: &memoryHTTPError{
+			Status:  http.StatusUnprocessableEntity,
+			Code:    "validation_error",
+			Message: "no OAuth client configured for provider github (configure one under Organization settings → Data source OAuth clients)",
+		},
+	}
+	e := newDSUIServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/reconnect", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	loc := rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/s1?err=") {
+		t.Fatalf("location = %q, want the source detail with an error", loc)
+	}
+	if !strings.Contains(loc, "OAuth+client") {
+		t.Errorf("location = %q, want the actionable OAuth client message", loc)
+	}
+
+	// A 5xx is an upstream fault, not a user mistake: its body is redacted like
+	// every other data-source form error instead of being echoed back.
+	f.dsOAuthAuthorizeErr = &memoryHTTPError{
+		Status:  http.StatusBadGateway,
+		Code:    "internal",
+		Message: "dial tcp 172.17.0.1:8080: upstream detail",
+	}
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/data-sources/s1/reconnect", nil))
+	loc = rec.Header().Get("Location")
+	if !strings.HasPrefix(loc, "/data-sources/s1?err=") {
+		t.Fatalf("5xx location = %q, want the source detail", loc)
+	}
+	if strings.Contains(loc, "172.17.0.1") || strings.Contains(loc, "upstream+detail") {
+		t.Errorf("5xx location leaks upstream detail: %q", loc)
 	}
 }

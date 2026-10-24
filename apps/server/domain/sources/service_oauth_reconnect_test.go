@@ -24,7 +24,7 @@ import (
 // clients for Google Drive and GitHub pointing at tokenURL, and a redirect base
 // so StartOAuth can mint a flow. Two providers with a client let a test ask for
 // a reconnect of the wrong provider without failing on client resolution first.
-func newReconnectTestService(t *testing.T, db *testdb.TestDB, tokenURL string, httpClient *http.Client) *Service {
+func newReconnectTestService(t *testing.T, db *testdb.TestDB, tokenURL string, httpClient *http.Client, opts ...ServiceOption) *Service {
 	t.Helper()
 	key := make([]byte, 32)
 	for i := range key {
@@ -35,13 +35,14 @@ func newReconnectTestService(t *testing.T, db *testdb.TestDB, tokenURL string, h
 		SourceOAuth: config.SourceOAuthConfig{RedirectBaseURL: "https://api.example"},
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewService(NewRepository(db.DB, log), cfg, log, NewDefaultRegistry(),
+	base := []ServiceOption{
 		WithOAuthClients(map[string]OAuthClient{
 			ProviderTypeGoogleDrive: {ClientID: "cid", ClientSecret: "cs", TokenURL: tokenURL},
 			ProviderTypeGitHub:      {ClientID: "gh-cid", ClientSecret: "gh-cs", TokenURL: tokenURL},
 		}),
 		WithOAuthHTTPClient(httpClient),
-	)
+	}
+	return NewService(NewRepository(db.DB, log), cfg, log, NewDefaultRegistry(), append(base, opts...)...)
 }
 
 // authorizeState pulls the opaque state out of a start response's authorize URL.
@@ -110,10 +111,17 @@ func TestCompleteOAuth_ReconnectReplacesGrantInPlace(t *testing.T) {
 	}
 	state := authorizeState(t, start.AuthorizeURL)
 
-	got, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, state, "code-1")
+	completion, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, state, "code-1")
 	if err != nil {
 		t.Fatalf("CompleteOAuth(reconnect) error = %v", err)
 	}
+	if !completion.Reconnected {
+		t.Error("a reconnect must report itself as one, or the landing claims a new source was connected")
+	}
+	if key := completion.LandingKey(); key != "reconnected" {
+		t.Errorf("landing key = %q, want reconnected (the detail page would claim a new connection)", key)
+	}
+	got := completion.Integration
 
 	if got.ID != created.ID {
 		t.Errorf("reconnect returned source %q, want the existing %q", got.ID, created.ID)
@@ -295,10 +303,17 @@ func TestCompleteOAuth_ConnectIgnoresReservedFlowKeys(t *testing.T) {
 			if err != nil {
 				t.Fatalf("StartOAuth(connect) error = %v", err)
 			}
-			got, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, authorizeState(t, start.AuthorizeURL), "code-1")
+			completion, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, authorizeState(t, start.AuthorizeURL), "code-1")
 			if err != nil {
 				t.Fatalf("CompleteOAuth(connect) error = %v", err)
 			}
+			if completion.Reconnected {
+				t.Error("a connect request must not report a reconnect")
+			}
+			if key := completion.LandingKey(); key != "connected" {
+				t.Errorf("landing key = %q, want connected", key)
+			}
+			got := completion.Integration
 
 			if got.ID == victim.ID {
 				t.Fatal("a connect request with a reconnect key replaced the existing source, want a new one")
@@ -332,5 +347,66 @@ func TestCompleteOAuth_ConnectIgnoresReservedFlowKeys(t *testing.T) {
 				t.Errorf("victim refresh_token = %q, want its own rt-old", creds["refresh_token"])
 			}
 		})
+	}
+}
+
+// TestCompleteOAuth_ReconnectClearsStaleConnectMetadata asserts a reconnect does
+// not leave the previous account or scope on the source when the new exchange
+// cannot supply them: the card would otherwise describe the grant that just went
+// away (#2186).
+func TestCompleteOAuth_ReconnectClearsStaleConnectMetadata(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database integration test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "sourcesreconnectstale")
+	t.Cleanup(tdb.Close)
+
+	// A scope no strategy maps, plus an account lookup that fails: both values
+	// the reconnect would normally refresh are unavailable.
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"access_token":"at-new","refresh_token":"rt-new","expires_in":3599,"scope":"openid email","token_type":"Bearer"}`)
+	}))
+	defer tokenSrv.Close()
+
+	svc := newReconnectTestService(t, tdb, tokenSrv.URL, tokenSrv.Client(),
+		WithAccountEmailResolver(func(context.Context, string) (string, error) {
+			return "", errors.New("userinfo endpoint unavailable")
+		}))
+
+	projectID := uuid.New()
+	created, err := svc.Create(ctx, projectID, &CreateIntegrationRequest{
+		Name:         "Team drive",
+		ProviderType: ProviderTypeGoogleDrive,
+		Config: map[string]any{
+			"folder_id":             "folder-a",
+			"refresh_token":         "rt-old",
+			oauthGrantedStrategyKey: "drive.file",
+			oauthAccountEmailKey:    "old@example.com",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	srcID := uuid.MustParse(created.ID)
+
+	start, err := svc.StartOAuth(ctx, projectID, ProviderTypeGoogleDrive, StartOAuthRequest{ReconnectSourceID: &srcID})
+	if err != nil {
+		t.Fatalf("StartOAuth(reconnect) error = %v", err)
+	}
+	completion, err := svc.CompleteOAuth(ctx, ProviderTypeGoogleDrive, authorizeState(t, start.AuthorizeURL), "code-1")
+	if err != nil {
+		t.Fatalf("CompleteOAuth(reconnect) error = %v", err)
+	}
+
+	for _, k := range []string{oauthGrantedStrategyKey, oauthAccountEmailKey} {
+		if v, present := completion.Integration.Config[k]; present {
+			t.Errorf("config[%q] = %v after a reconnect that could not refresh it, want the stale value cleared", k, v)
+		}
+	}
+	// The sync scope is not connect-time metadata and must survive.
+	if folders, ok := completion.Integration.Config["folders"].([]any); !ok || len(folders) != 1 {
+		t.Errorf("config.folders = %#v, want the source's own folder", completion.Integration.Config["folders"])
 	}
 }

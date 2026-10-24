@@ -132,9 +132,13 @@ func TestTraleOAuth_DynamicFlow(t *testing.T) {
 		t.Fatal("authorize state is empty")
 	}
 
-	integ, err := svc.CompleteOAuth(ctx, ProviderTypeTrale, state, "code-1")
+	completion, err := svc.CompleteOAuth(ctx, ProviderTypeTrale, state, "code-1")
 	if err != nil {
 		t.Fatalf("CompleteOAuth() error = %v", err)
+	}
+	integ := completion.Integration
+	if completion.Reconnected {
+		t.Error("a first connect must not report a reconnect")
 	}
 
 	// The returned integration carries the non-secret config: tags preserved,
