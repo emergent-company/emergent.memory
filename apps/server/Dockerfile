@@ -38,14 +38,12 @@ COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
 # Download dependencies (cached if go.mod/go.sum unchanged)
 RUN go mod download
 
-# Copy source code
+# Copy source code. `go mod download` above runs in -mod=mod, so it would
+# silently write any hash the committed go.sum lacks; this COPY then restores
+# the committed file, and the builds below run in the default -mod=readonly.
+# go.sum is now complete (#2083), so a second download after this COPY is not
+# needed. If go.sum ever drifts again, the first build here fails first.
 COPY apps/server/ ./
-
-# The layer above resolved the dependency graph from go.mod/go.sum alone and had
-# to fill in the go.sum entries the committed file lacks; this COPY restores the
-# committed file, so resolve it again now that the whole tree is present.
-# Without this the build fails with "missing go.sum entry for go.mod file".
-RUN go mod download
 
 # Install swag at the version pinned in go.mod, so the generated spec always
 # matches the compiled swaggo/swag library.
