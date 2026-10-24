@@ -12,14 +12,13 @@ import { expectAppPage, goto } from '../../helpers/page';
 //
 // Exercised fields, both safe to change and symmetrically restorable:
 //   - project-info textarea   → POST /settings/project/project_info
-//   - editor-agent select     → POST /settings/editor
-//   - merge-agent select      → POST /settings/merge (capability-gated)
+//   - editor-agent select     → POST /settings/editor (capability-gated)
+//   - merge-agent select      → POST /settings/merge  (capability-gated)
 //
-// The editor select only lists the project's agent definitions, so the second
-// test creates a scratch `E2E Autosave Agent …` via the API, selects it, then
-// restores the original selection and deletes the agent (in cleanup, pass/fail).
-// The merge select additionally requires the merge tool set, so it is covered
-// with one capable and one toolless scratch agent.
+// Both agent selects list every agent definition but only accept agents that
+// grant the flow's tool set, so each test creates one capable and one toolless
+// scratch agent, selects the capable one, restores the original selection and
+// deletes both (in cleanup, pass/fail).
 
 const SETTINGS = '/settings';
 
@@ -119,47 +118,79 @@ test('project settings: project-info autosaves inline and persists after reload'
   }
 });
 
-test('project settings: editor-agent autosaves inline and persists after reload', async ({ page }) => {
+test('project settings: editor agent autosaves and only editor-capable agents are selectable', async ({ page }) => {
   test.setTimeout(120_000);
-  const name = `E2E Autosave Agent ${Date.now()}`;
-  let agentId = '';
+  const stamp = Date.now();
+  let capableId = '';
+  let toollessId = '';
   let original: string | null = null;
 
   try {
-    const created = await page.request.post('/api/agents', {
-      data: { name, tools: [], skills: [], config: {} },
+    // The object-editing chat needs entity-create (or -update) and
+    // relationship-create (gateway/agent_tools.go).
+    const capable = await page.request.post('/api/agents', {
+      data: {
+        name: `E2E Editor Agent ${stamp}`,
+        tools: ['entity-update', 'relationship-create'],
+        skills: [],
+        config: {},
+      },
     });
-    expect(created.ok(), `create scratch agent failed (HTTP ${created.status()})`).toBeTruthy();
-    agentId = ((await created.json()) as { id: string }).id;
+    expect(capable.ok(), `create editor-capable agent failed (HTTP ${capable.status()})`).toBeTruthy();
+    capableId = ((await capable.json()) as { id: string }).id;
+
+    const toolless = await page.request.post('/api/agents', {
+      data: { name: `E2E Toolless Editor ${stamp}`, tools: [], skills: [], config: {} },
+    });
+    expect(toolless.ok(), `create toolless agent failed (HTTP ${toolless.status()})`).toBeTruthy();
+    toollessId = ((await toolless.json()) as { id: string }).id;
 
     await goto(page, SETTINGS);
     await expectAppPage(page, /Project Settings/);
     const select = page.locator('#editor-agent');
     await expect(select).toBeVisible();
-    await expect(select.locator(`option[value="${agentId}"]`)).toHaveCount(1);
+
+    // An editor-capable agent is selectable; a toolless one is present but
+    // disabled with its missing requirements spelled out.
+    await expect(select.locator(`option[value="${capableId}"]`)).toHaveCount(1);
+    await expect(select.locator(`option[value="${capableId}"]`)).not.toHaveAttribute('disabled', '');
+    const toollessOption = select.locator(`option[value="${toollessId}"]`);
+    await expect(toollessOption).toHaveCount(1);
+    await expect(toollessOption).toHaveAttribute('disabled', '');
+    await expect(toollessOption).toContainText('missing:');
+
     original = await select.inputValue();
     await recordToasts(page);
 
     const [resp] = await Promise.all([
       waitForSave(page, '/settings/editor'),
-      select.selectOption(agentId), // select change → HTMX POST /settings/editor
+      select.selectOption(capableId), // select change → HTMX POST /settings/editor
     ]);
     await expectSavedToast(page, resp);
 
     await page.reload();
     await expectAppPage(page, /Project Settings/);
-    await expect(page.locator('#editor-agent')).toHaveValue(agentId);
+    await expect(page.locator('#editor-agent')).toHaveValue(capableId);
   } finally {
     if (original !== null) {
       await goto(page, SETTINGS);
       const select = page.locator('#editor-agent');
-      if ((await select.inputValue()) !== original) {
-        await Promise.all([waitForSave(page, '/settings/editor'), select.selectOption(original)]);
+      const originalDisabled = await select
+        .locator(`option[value="${original}"]`)
+        .evaluate((el) => (el as HTMLOptionElement).disabled)
+        .catch(() => true);
+      // A stored value that is no longer editor-capable cannot be re-selected;
+      // clear the setting instead of leaving it pointing at a scratch agent we
+      // are about to delete.
+      const restoreTo = originalDisabled ? '' : original;
+      if ((await select.inputValue()) !== restoreTo) {
+        await Promise.all([waitForSave(page, '/settings/editor'), select.selectOption(restoreTo)]);
       }
       await page.reload();
-      await expect(page.locator('#editor-agent')).toHaveValue(original);
+      await expect(page.locator('#editor-agent')).toHaveValue(restoreTo);
     }
-    if (agentId) await page.request.delete(`/api/agents/${agentId}`).catch(() => {});
+    if (capableId) await page.request.delete(`/api/agents/${capableId}`).catch(() => {});
+    if (toollessId) await page.request.delete(`/api/agents/${toollessId}`).catch(() => {});
   }
 });
 

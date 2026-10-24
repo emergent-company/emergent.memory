@@ -365,8 +365,8 @@ func TestThresholdPercentInputValueExact(t *testing.T) {
 func TestRenderProjectSettingsPageAbsent(t *testing.T) {
 	data := projectSettingsData{Project: &Project{ID: "p1", Name: "Home"}}
 	html := renderHTML(t, ProjectSettingsPage(data))
-	if !strings.Contains(html, "Object edits run on the default agent until you pick one.") {
-		t.Error("absent page missing the editor-agent default note")
+	if !strings.Contains(html, "Requires entity-create or entity-update, and relationship-create.") {
+		t.Error("absent page missing the editor-agent requirement note")
 	}
 	// budget moved to its own sub-page
 	if strings.Contains(html, `name="budget_usd"`) {

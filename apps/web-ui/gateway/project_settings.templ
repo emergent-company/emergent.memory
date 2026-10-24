@@ -87,7 +87,7 @@ templ ProjectSettingsPage(data projectSettingsData) {
 		} else {
 			@layout.Rail(settingsSubNav("general", data.ProvidersMissing), nil) {
 				@projectInfoPanel(data.Project)
-				@editorAgentPanel(data.EditorAgent, data.Agents)
+				@editorAgentPanel(data.EditorAgent, data.EditorOptions, data.EditorAgentWarning)
 				@mergeAgentPanel(data.MergeAgent, data.MergeOptions, data.MergeAgentWarning)
 				@rememberDedupPanel(data.RememberAgent, data.DedupThreshold, data.Agents)
 			}
@@ -398,27 +398,34 @@ templ overrideForm() {
 // IsDefault agent, else the first enabled/first agent); selecting it clears the
 // override. A stored value that no longer exists in the list is preserved as
 // an "(unlisted)" option.
-templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
+// editorAgentPanel edits the editor-agent selection (which agent definition runs
+// the object-editing chat from the object page). Like the merge selection, this
+// is validated: only agents that grant the editor tool set can be chosen.
+// Ineligible agents stay visible but disabled with their missing requirements,
+// so the page explains why an agent cannot be picked. The empty option clears
+// the override; the object chat then auto-selects an editor-capable agent.
+templ editorAgentPanel(editorAgent string, options []agentOption, warning string) {
 	@ui.Section("Editor agent", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
 		<div class="flex flex-col gap-4">
-			@settingsField("editor-agent", "Editor agent", "The agent that proposes and applies edits to knowledge-graph objects from the object page (correcting properties, rewording content, rewiring relationships). A wrong choice yields low-quality object changes.", "The agent definition that runs object-content edits. Empty uses the default agent.", nil) {
+			@settingsField("editor-agent", "Editor agent", "The agent that proposes and applies edits to knowledge-graph objects from the object page (correcting properties, rewording content, rewiring relationships). Only agents with the required memory tools can be selected.", "The agent definition that runs object-content edits. Empty auto-selects an editor-capable agent.", nil) {
 				<select id="editor-agent" name="editor_agent" class="select w-full" hx-post="/settings/editor" hx-trigger="change" hx-include="this" hx-swap="none">
-					<option value="" selected?={ editorAgent == "" }>None — use default agent</option>
-					for _, a := range agents {
-						<option value={ a.ID } selected?={ a.ID == editorAgent }>{ a.Name }</option>
+					<option value="" selected?={ editorAgent == "" }>None — auto-select an editor-capable agent</option>
+					for _, o := range options {
+						<option value={ o.ID } selected?={ o.ID == editorAgent } disabled?={ !o.Eligible }>{ agentOptionLabel(o, "edit objects") }</option>
 					}
-					if editorAgent != "" && !agentListedByID(agents, editorAgent) {
-						<option value={ editorAgent } selected>{ editorAgent } (unlisted)</option>
+					if editorAgent != "" && !agentOptionListed(options, editorAgent) {
+						<option value={ editorAgent } selected>{ editorAgent } (unlisted — not editor-capable)</option>
 					}
 				</select>
 			}
-			if editorAgent == "" {
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
-					Object edits run on the default agent until you pick one.
-				}
+			if warning != "" {
+				<p class="text-warning text-xs" data-testid="editor-agent-warning">{ warning }</p>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) {
+				Requires { editorCapabilityRequirement }. entity-search and entity-edges-get are recommended for finding related objects but not required. Agents missing required tools are listed but cannot be selected.
 			}
 		</div>
 	}
@@ -430,7 +437,7 @@ templ editorAgentPanel(editorAgent string, agents []AgentDefinitionSummary) {
 // Ineligible agents stay visible but disabled with their missing requirements,
 // so the page explains why an agent cannot be picked. The empty option clears
 // the override; the merge deep link then auto-selects a merge-capable agent.
-templ mergeAgentPanel(mergeAgent string, options []mergeAgentOption, warning string) {
+templ mergeAgentPanel(mergeAgent string, options []agentOption, warning string) {
 	@ui.Section("Merge agent", ui.SectionProps{
 		Margin:    "mb-6",
 		BodyClass: "memory-density-comfortable",
@@ -440,9 +447,9 @@ templ mergeAgentPanel(mergeAgent string, options []mergeAgentOption, warning str
 				<select id="merge-agent" name="merge_agent" class="select w-full" hx-post="/settings/merge" hx-trigger="change" hx-include="this" hx-swap="none">
 					<option value="" selected?={ mergeAgent == "" }>None — auto-select a merge-capable agent</option>
 					for _, o := range options {
-						<option value={ o.ID } selected?={ o.ID == mergeAgent } disabled?={ !o.Eligible }>{ mergeAgentLabel(o) }</option>
+						<option value={ o.ID } selected?={ o.ID == mergeAgent } disabled?={ !o.Eligible }>{ agentOptionLabel(o, "run a merge") }</option>
 					}
-					if mergeAgent != "" && !mergeOptionListed(options, mergeAgent) {
+					if mergeAgent != "" && !agentOptionListed(options, mergeAgent) {
 						<option value={ mergeAgent } selected>{ mergeAgent } (unlisted — not merge-capable)</option>
 					}
 				</select>

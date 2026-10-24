@@ -5,9 +5,10 @@ import (
 	"strings"
 )
 
-// The object-merge flow runs as an agent chat, so the agent it is handed to
-// must actually be able to do the work. These are the canonical built-in tool
-// names (apps/server/domain/agentcompat) that flow needs.
+// The object-merge and object-editing flows run as agent chats, so the agent
+// each one is handed to must actually be able to do the work. These are the
+// canonical built-in tool names (apps/server/domain/agentcompat) those flows
+// need.
 var (
 	// mergeWriteAnyTools: at least one is required — create the merged object,
 	// or update the surviving target in place.
@@ -18,37 +19,82 @@ var (
 	// so the settings panel can flag an otherwise-eligible agent that cannot
 	// clean up stale edges.
 	mergeRecommendedTools = []string{"relationship-delete"}
+
+	// editorWriteAnyTools: at least one is required — apply the confirmed edit,
+	// either by creating the corrected object or by updating this one in place.
+	editorWriteAnyTools = []string{"entity-create", "entity-update"}
+	// editorRequiredTools: the instruction's second step asks for relationships
+	// to be created as part of an edit, so an agent without this cannot finish.
+	editorRequiredTools = []string{"relationship-create"}
+	// editorRecommendedTools: how the agent finds related objects. Never gating
+	// (the object itself is already in the prompt), and the instruction only
+	// asks it to search when it can.
+	editorRecommendedTools = []string{"entity-search", "entity-edges-get"}
 )
 
-// agentToolEligibility reports whether def can run the object-merge flow.
-// missing lists the unmet requirements (human-readable; the write requirement
-// is reported as "entity-create or entity-update"); recommended lists the
-// non-gating tools the agent does not grant. A nil def is ineligible.
-func agentToolEligibility(def *AgentDefinition) (missing, recommended []string) {
+// toolRequirement is the tool set one agent-driven flow needs: each AnyOf group
+// is satisfied by at least one granted tool, every Required tool must be
+// granted, and Recommended tools are reported without gating.
+type toolRequirement struct {
+	AnyOf       [][]string
+	Required    []string
+	Recommended []string
+}
+
+var (
+	mergeRequirement = toolRequirement{
+		AnyOf:       [][]string{mergeWriteAnyTools},
+		Required:    mergeRequiredTools,
+		Recommended: mergeRecommendedTools,
+	}
+	editorRequirement = toolRequirement{
+		AnyOf:       [][]string{editorWriteAnyTools},
+		Required:    editorRequiredTools,
+		Recommended: editorRecommendedTools,
+	}
+)
+
+// agentToolEligibility reports whether def can run the flow described by req.
+// missing lists the unmet requirements (human-readable; an AnyOf group is
+// reported as "a, or b"); recommended lists the non-gating tools the agent does
+// not grant. A nil def is ineligible.
+func agentToolEligibility(def *AgentDefinition, req toolRequirement) (missing, recommended []string) {
 	if def == nil {
 		return []string{"agent definition unavailable"}, nil
 	}
-	hasWrite := false
-	for _, name := range mergeWriteAnyTools {
-		if agentToolGranted(def, name) {
-			hasWrite = true
-			break
+	for _, anyOf := range req.AnyOf {
+		granted := false
+		for _, name := range anyOf {
+			if agentToolGranted(def, name) {
+				granted = true
+				break
+			}
+		}
+		if !granted {
+			missing = append(missing, strings.Join(anyOf, " or "))
 		}
 	}
-	if !hasWrite {
-		missing = append(missing, strings.Join(mergeWriteAnyTools, " or "))
-	}
-	for _, name := range mergeRequiredTools {
+	for _, name := range req.Required {
 		if !agentToolGranted(def, name) {
 			missing = append(missing, name)
 		}
 	}
-	for _, name := range mergeRecommendedTools {
+	for _, name := range req.Recommended {
 		if !agentToolGranted(def, name) {
 			recommended = append(recommended, name)
 		}
 	}
 	return missing, recommended
+}
+
+// mergeAgentEligibility and editorAgentEligibility are the two flow-specific
+// entry points, so a call site cannot forget which requirement set it means.
+func mergeAgentEligibility(def *AgentDefinition) (missing, recommended []string) {
+	return agentToolEligibility(def, mergeRequirement)
+}
+
+func editorAgentEligibility(def *AgentDefinition) (missing, recommended []string) {
+	return agentToolEligibility(def, editorRequirement)
 }
 
 // agentToolGranted reports whether def grants toolName. It mirrors the
@@ -148,3 +194,6 @@ func isToolGlobPattern(s string) bool {
 // needs, shared by the settings hint, the save-rejection toast, and the
 // dead-end error on the merge deep link.
 const mergeCapabilityRequirement = "entity-create or entity-update, entity-delete, entity-edges-get, and relationship-create"
+
+// editorCapabilityRequirement is the same for the object-editing chat.
+const editorCapabilityRequirement = "entity-create or entity-update, and relationship-create"

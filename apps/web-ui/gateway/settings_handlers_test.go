@@ -71,8 +71,8 @@ func TestUIProjectSettingsRouteAbsent(t *testing.T) {
 		t.Fatalf("status %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Object edits run on the default agent until you pick one.") {
-		t.Error("absent settings route missing the editor-agent default note")
+	if !strings.Contains(body, "Requires entity-create or entity-update, and relationship-create.") {
+		t.Error("absent settings route missing the editor-agent requirement note")
 	}
 	// budget moved to its own sub-page
 	if strings.Contains(body, `name="budget_usd"`) {
@@ -627,7 +627,7 @@ func TestUIProjectSettingsRememberError(t *testing.T) {
 // POST /settings/editor): the value stores as {"agentId": id} under
 // editor/agent_id and surfaces a success toast.
 func TestUIProjectSettingsEditor(t *testing.T) {
-	f := &fakeMemory{}
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": editorCapableDefinition("a1", "editor")}}
 	s := &Server{cfg: Config{}, memory: f}
 	e := echo.New()
 	e.POST("/settings/editor", s.uiProjectSettingsEditor)
@@ -672,7 +672,10 @@ func TestUIProjectSettingsEditorClear(t *testing.T) {
 // TestUIProjectSettingsEditorError covers a rejected editor-agent write
 // returning an error toast.
 func TestUIProjectSettingsEditorError(t *testing.T) {
-	f := &fakeMemory{settingErr: errTest}
+	f := &fakeMemory{
+		defs:       map[string]*AgentDefinition{"a1": editorCapableDefinition("a1", "editor")},
+		settingErr: errTest,
+	}
 	s := &Server{cfg: Config{}, memory: f}
 	e := echo.New()
 	e.POST("/settings/editor", s.uiProjectSettingsEditor)
@@ -692,7 +695,16 @@ func TestUIProjectSettingsEditorError(t *testing.T) {
 func TestUIProjectSettingsEditorRender(t *testing.T) {
 	f := &fakeMemory{
 		project: &Project{ID: "p1", Name: "Home"},
-		agents:  []AgentDefinitionSummary{{ID: "a9", Name: "editor-x", Enabled: true}},
+		agents: []AgentDefinitionSummary{
+			{ID: "a9", Name: "editor-x", Enabled: true},
+			{ID: "a8", Name: "no-search", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a9": editorCapableDefinition("a9", "editor-x"),
+			// required tools only: eligible, but the search recommendation is
+			// reported as optional rather than gating (#2098).
+			"a8": {ID: "a8", Name: "no-search", Enabled: true, Tools: []string{"entity-create", "relationship-create"}},
+		},
 		settings: map[string]map[string]map[string]any{
 			"editor": {"agent_id": {"agentId": "a9"}},
 		},
@@ -710,7 +722,7 @@ func TestUIProjectSettingsEditorRender(t *testing.T) {
 	for _, want := range []string{
 		"Editor agent",
 		`hx-post="/settings/editor"`, `name="editor_agent"`, `hx-swap="none"`,
-		"None — use default agent",
+		"None — auto-select an editor-capable agent",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("editor selector missing %q", want)
@@ -718,6 +730,22 @@ func TestUIProjectSettingsEditorRender(t *testing.T) {
 	}
 	if !strings.Contains(body, `value="a9" selected`) {
 		t.Error("stored editor agent should render selected")
+	}
+	// An eligible agent that grants the requirements but neither search tool is
+	// selectable and flagged optional, not disabled.
+	if !strings.Contains(body, "no-search — no entity-search, entity-edges-get (optional)") {
+		t.Error("an eligible agent missing only the recommended search tools should be flagged optional")
+	}
+	if !strings.Contains(body, "Requires entity-create or entity-update, and relationship-create.") {
+		t.Error("the panel should state the requirement")
+	}
+}
+
+// editorCapableDefinition is a minimal definition that grants the editor tool set.
+func editorCapableDefinition(id, name string) *AgentDefinition {
+	return &AgentDefinition{
+		ID: id, Name: name, Enabled: true,
+		Tools: []string{"entity-update", "relationship-create", "entity-search"},
 	}
 }
 
@@ -868,33 +896,123 @@ func TestUIProjectSettingsMergeRender(t *testing.T) {
 	}
 }
 
-// TestMergeAgentWarning covers the three warning shapes, including the
-// agent-list-unavailable case that must not masquerade as "agent deleted".
-func TestMergeAgentWarning(t *testing.T) {
-	options := []mergeAgentOption{
+// TestAgentSelectionWarning covers the three warning shapes, including the
+// agent-list-unavailable case that must not masquerade as "agent deleted", and
+// that the per-flow wording is what the caller supplies rather than hard-coded.
+func TestAgentSelectionWarning(t *testing.T) {
+	options := []agentOption{
 		{ID: "a1", Name: "merger", Eligible: true},
 		{ID: "a2", Name: "toolless", Detail: "entity-delete"},
 	}
-	if got := mergeAgentWarning(options, "", false); got != "" {
+	const noun, verb, outcome = "merge agent", "run a merge", "Merges will fall back to another merge-capable agent, and will not start if none exists."
+	if got := agentSelectionWarning(options, "", false, noun, verb, outcome); got != "" {
 		t.Errorf("unset selection warning = %q, want empty", got)
 	}
-	if got := mergeAgentWarning(options, "a1", false); got != "" {
+	if got := agentSelectionWarning(options, "a1", false, noun, verb, outcome); got != "" {
 		t.Errorf("capable selection warning = %q, want empty", got)
 	}
-	if got := mergeAgentWarning(options, "a2", false); !strings.Contains(got, "missing: entity-delete") {
+	if got := agentSelectionWarning(options, "a2", false, noun, verb, outcome); !strings.Contains(got, "missing: entity-delete") {
 		t.Errorf("incapable selection warning = %q, want the missing tools", got)
 	}
-	if got := mergeAgentWarning(options, "gone", false); !strings.Contains(got, "no longer in this project") {
+	if got := agentSelectionWarning(options, "gone", false, noun, verb, outcome); !strings.Contains(got, "no longer in this project") {
 		t.Errorf("unlisted selection warning = %q, want the unlisted message", got)
 	}
-	if got := mergeAgentWarning(options, "a1", true); !strings.Contains(got, "Could not check") {
+	if got := agentSelectionWarning(options, "a1", true, noun, verb, outcome); !strings.Contains(got, "Could not check") {
 		t.Errorf("unavailable list warning = %q, want the unavailable message", got)
+	}
+	if got := agentSelectionWarning(options, "a2", false,
+		"editor agent", "edit objects", "Object chats will fall back to another editor-capable agent, and will not start if none exists."); !strings.Contains(got, "cannot edit objects") {
+		t.Errorf("editor warning = %q, want the editor verb", got)
+	}
+}
+
+// TestUIProjectSettingsEditorRejectsIncapable covers the save-time defence:
+// an agent that cannot edit objects is refused with an error toast and nothing
+// is written, even if a stale page or crafted request submits it.
+func TestUIProjectSettingsEditorRejectsIncapable(t *testing.T) {
+	f := &fakeMemory{defs: map[string]*AgentDefinition{
+		"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+	}}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=a2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "cannot edit objects") {
+		t.Errorf("incapable agent should trigger an error toast naming the flow, got %q", hdr)
+	}
+	if !strings.Contains(hdr, "relationship-create") {
+		t.Errorf("the error should name a missing tool, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("an incapable agent must not be stored, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsEditorUnknownAgent covers a submitted agent that cannot
+// be loaded (deleted since the page rendered).
+func TestUIProjectSettingsEditorUnknownAgent(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{}, memory: f}
+	e := echo.New()
+	e.POST("/settings/editor", s.uiProjectSettingsEditor)
+
+	rec := voicePost(e, "/settings/editor", "editor_agent=ghost")
+	hdr := rec.Header().Get("HX-Trigger")
+	if !strings.Contains(hdr, `"kind":"error"`) || !strings.Contains(hdr, "could not be loaded") {
+		t.Errorf("unknown agent should trigger a load error toast, got %q", hdr)
+	}
+	if f.lastSettingCat != "" {
+		t.Errorf("an unknown agent must not be stored, wrote %s/%s", f.lastSettingCat, f.lastSettingKey)
+	}
+}
+
+// TestUIProjectSettingsEditorRenderStale covers a stored editor agent that is no
+// longer capable: the selector keeps the value visible, disables the ineligible
+// rows, and explains that object chats will fall back to another agent.
+func TestUIProjectSettingsEditorRenderStale(t *testing.T) {
+	f := &fakeMemory{
+		project: &Project{ID: "p1", Name: "Home"},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "editor", Enabled: true},
+			{ID: "a2", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editorCapableDefinition("a1", "editor"),
+			"a2": {ID: "a2", Name: "toolless", Enabled: true, Tools: []string{"entity-query"}},
+		},
+		settings: map[string]map[string]map[string]any{
+			"editor": {"agent_id": {"agentId": "a2"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/settings", s.uiProjectSettings)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/settings", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "editor-agent-warning") {
+		t.Error("an incapable stored editor agent should render a warning")
+	}
+	if !strings.Contains(body, "Object chats will fall back to another editor-capable agent") {
+		t.Error("the warning should say object chats fall back to another agent")
+	}
+	if !strings.Contains(body, `value="a2" selected`) {
+		t.Error("the stale value should stay visible as the selected option")
+	}
+	if !strings.Contains(body, "disabled") {
+		t.Error("an ineligible editor agent should render disabled")
 	}
 }
 
 // TestUIProjectSettingsMergeRenderStale covers a stored merge agent that is no
 // longer capable: the selector keeps the value visible, flags it invalid, and
-// explains that merges will not start.
+// explains that merges fall back to another agent.
 func TestUIProjectSettingsMergeRenderStale(t *testing.T) {
 	f := &fakeMemory{
 		project: &Project{ID: "p1", Name: "Home"},
@@ -920,8 +1038,8 @@ func TestUIProjectSettingsMergeRenderStale(t *testing.T) {
 	if !strings.Contains(body, "merge-agent-warning") {
 		t.Error("an incapable stored merge agent should render a warning")
 	}
-	if !strings.Contains(body, "Merges will not start") {
-		t.Error("the warning should say merges will not start")
+	if !strings.Contains(body, "Merges will fall back to another merge-capable agent") {
+		t.Error("the warning should say merges fall back to another agent")
 	}
 	if !strings.Contains(body, `value="a2" selected`) {
 		t.Error("the stale value should stay visible as the selected option")

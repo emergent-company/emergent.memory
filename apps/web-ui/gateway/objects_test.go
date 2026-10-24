@@ -834,10 +834,22 @@ func TestDefaultAgentID(t *testing.T) {
 func TestResolveEditorAgentID(t *testing.T) {
 	ctx := context.Background()
 	newServer := func(f *fakeMemory) *Server { return &Server{memory: f} }
+	// The tool set an agent needs to run object edits (see editorAgentEligibility).
+	editTools := []string{"entity-update", "relationship-create"}
+	editor := func(id, name string, tools ...string) *AgentDefinition {
+		return &AgentDefinition{ID: id, Name: name, Enabled: true, Tools: tools}
+	}
 
-	// configured editor agent wins
+	// the configured editor agent wins when it is editor-capable
 	f := &fakeMemory{
-		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", IsDefault: true, Enabled: true}},
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", IsDefault: true, Enabled: true},
+			{ID: "a9", Name: "editor", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editor("a1", "one", editTools...),
+			"a9": editor("a9", "editor", editTools...),
+		},
 		settings: map[string]map[string]map[string]any{
 			"editor": {"agent_id": {"agentId": "a9"}},
 		},
@@ -846,9 +858,40 @@ func TestResolveEditorAgentID(t *testing.T) {
 		t.Errorf("configured editor agent = %q, want a9", got)
 	}
 
+	// a configured agent that cannot edit is skipped, not blindly trusted
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", IsDefault: true, Enabled: true},
+			{ID: "a9", Name: "toolless", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editor("a1", "one", editTools...),
+			"a9": editor("a9", "toolless", "entity-query"),
+		},
+		settings: map[string]map[string]map[string]any{
+			"editor": {"agent_id": {"agentId": "a9"}},
+		},
+	}
+	if got := newServer(f).resolveEditorAgentID(ctx); got != "a1" {
+		t.Errorf("incapable configured agent = %q, want the capable default a1", got)
+	}
+
+	// a stored id whose definition is gone falls back the same way
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", Enabled: true}},
+		defs:   map[string]*AgentDefinition{"a1": editor("a1", "one", editTools...)},
+		settings: map[string]map[string]map[string]any{
+			"editor": {"agent_id": {"agentId": "deleted"}},
+		},
+	}
+	if got := newServer(f).resolveEditorAgentID(ctx); got != "a1" {
+		t.Errorf("deleted configured agent = %q, want fallback a1", got)
+	}
+
 	// empty configured value falls back like an unset one
 	f = &fakeMemory{
 		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", IsDefault: true, Enabled: true}},
+		defs:   map[string]*AgentDefinition{"a1": editor("a1", "one", editTools...)},
 		settings: map[string]map[string]map[string]any{
 			"editor": {"agent_id": {"agentId": ""}},
 		},
@@ -857,20 +900,49 @@ func TestResolveEditorAgentID(t *testing.T) {
 		t.Errorf("empty configured value = %q, want fallback a1", got)
 	}
 
-	// unconfigured falls back to defaultAgentID (default → first enabled → first)
-	f = &fakeMemory{agents: []AgentDefinitionSummary{
-		{ID: "a1", Name: "one", Enabled: true},
-		{ID: "a2", Name: "two", IsDefault: true, Enabled: true},
-	}}
+	// unconfigured: default-if-capable, then first enabled capable, then first capable
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", Enabled: true},
+			{ID: "a2", Name: "two", IsDefault: true, Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editor("a1", "one", editTools...),
+			"a2": editor("a2", "two", editTools...),
+		},
+	}
 	if got := newServer(f).resolveEditorAgentID(ctx); got != "a2" {
 		t.Errorf("fallback = %q, want default agent a2", got)
 	}
-	f = &fakeMemory{agents: []AgentDefinitionSummary{
-		{ID: "a1", Name: "one", Enabled: false},
-		{ID: "a2", Name: "two", Enabled: true},
-	}}
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{
+			{ID: "a1", Name: "one", Enabled: false},
+			{ID: "a2", Name: "two", Enabled: true},
+		},
+		defs: map[string]*AgentDefinition{
+			"a1": editor("a1", "one", editTools...),
+			"a2": editor("a2", "two", editTools...),
+		},
+	}
 	if got := newServer(f).resolveEditorAgentID(ctx); got != "a2" {
 		t.Errorf("fallback = %q, want first enabled agent a2", got)
+	}
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", Enabled: false}},
+		defs:   map[string]*AgentDefinition{"a1": editor("a1", "one", editTools...)},
+	}
+	if got := newServer(f).resolveEditorAgentID(ctx); got != "a1" {
+		t.Errorf("fallback = %q, want the first capable agent a1", got)
+	}
+
+	// no capable agent at all: empty, so the chat surfaces an error instead of
+	// starting a run the agent cannot finish
+	f = &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "one", IsDefault: true, Enabled: true}},
+		defs:   map[string]*AgentDefinition{"a1": editor("a1", "one", "entity-query")},
+	}
+	if got := newServer(f).resolveEditorAgentID(ctx); got != "" {
+		t.Errorf("no capable agent = %q, want empty", got)
 	}
 	f = &fakeMemory{}
 	if got := newServer(f).resolveEditorAgentID(ctx); got != "" {
@@ -969,6 +1041,19 @@ func TestObjectChatInstruction(t *testing.T) {
 	}
 	if strings.Contains(got, "_internal") {
 		t.Error("instruction must skip internal (underscore) properties")
+	}
+	// Searches are recommended, not required (editorRequirement): the edit and
+	// relationship creation stay unconditional steps, and searching is marked
+	// conditional. A regression to the old "or search for related objects as
+	// needed" wording must red this test.
+	if !strings.Contains(got, "update the object, and create relationships") {
+		t.Errorf("instruction must keep the edit and relationship creation unconditional:\n%s", got)
+	}
+	if strings.Contains(got, "or search for related objects as needed") {
+		t.Error("instruction must not present searching as an unconditional step")
+	}
+	if !strings.Contains(got, "when your tools allow it") {
+		t.Errorf("instruction must mark searching as conditional:\n%s", got)
 	}
 }
 
@@ -2724,6 +2809,9 @@ func TestUIObjectChat(t *testing.T) {
 		agents: []AgentDefinitionSummary{
 			{ID: "a1", Name: "diane", IsDefault: true, Enabled: true},
 		},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Enabled: true, Tools: []string{"entity-update", "relationship-create"}},
+		},
 		createConvID: "conv-9",
 	}
 	_, e := newRouter(f)
@@ -2765,8 +2853,11 @@ func TestUIObjectChat(t *testing.T) {
 	if !strings.HasPrefix(loc, "/objects/o1?err=") {
 		t.Fatalf("no agent: location=%q, want /objects/o1?err=...", loc)
 	}
-	if !strings.Contains(loc, "agent") {
-		t.Errorf("no agent flash should mention creating an agent: location=%q", loc)
+	if !strings.Contains(loc, "editor-capable") {
+		t.Errorf("no agent flash should say what kind of agent is needed: location=%q", loc)
+	}
+	if !strings.Contains(loc, "relationship-create") || !strings.Contains(loc, "Project+settings") {
+		t.Errorf("no agent flash should name the required tools and point at settings: location=%q", loc)
 	}
 	if f2.convCanonicalID != "" || f2.convTitle != "" {
 		t.Errorf("conversation should not be created without an agent: canonical=%q title=%q", f2.convCanonicalID, f2.convTitle)
@@ -2774,8 +2865,11 @@ func TestUIObjectChat(t *testing.T) {
 
 	// conversation creation fails: redirect back, no 500
 	f3 := &fakeMemory{
-		objects:       []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam-lee"}},
-		agents:        []AgentDefinitionSummary{{ID: "a1", Name: "diane", IsDefault: true, Enabled: true}},
+		objects: []GraphObject{{ID: "o1", CanonicalID: "c1", Type: "person", Key: "sam-lee"}},
+		agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane", IsDefault: true, Enabled: true}},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Enabled: true, Tools: []string{"entity-update", "relationship-create"}},
+		},
 		createConvErr: fmt.Errorf("boom"),
 	}
 	_, e3 := newRouter(f3)

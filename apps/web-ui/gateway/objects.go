@@ -1184,7 +1184,7 @@ func (s *Server) uiObjectChat(c echo.Context) error {
 	}
 	agentID := s.resolveEditorAgentID(ctx)
 	if agentID == "" {
-		return redirectWithError(c, "/objects/"+url.PathEscape(id), fmt.Errorf("no agents configured — create an agent first, then come back to chat about this object"))
+		return redirectWithError(c, "/objects/"+url.PathEscape(id), fmt.Errorf("no editor-capable agent — in Project settings pick an agent with %s", editorCapabilityRequirement))
 	}
 	convID, err := s.memory.CreateObjectConversation(ctx, obj.CanonicalID, graphObjectLabel(*obj), objectChatInstruction(obj))
 	if err != nil {
@@ -1243,30 +1243,30 @@ func (s *Server) defaultAgentID(ctx context.Context) string {
 	return ""
 }
 
-// resolveEditorAgentID returns the agent to run object-content edits: the
-// configured editor agent (project setting), else the default/enabled/first
-// fallback. Empty when none resolve.
+// resolveEditorAgentID returns the agent to run object-content edits. The flow
+// needs the editor tool set (editorAgentEligibility), so an arbitrary agent is
+// not a usable answer.
 func (s *Server) resolveEditorAgentID(ctx context.Context) string {
-	if ps, perr := s.memory.GetProjectSetting(ctx, settingsEditorCategory, settingsEditorKey); perr == nil && ps != nil {
-		if id, ok := ps.Value["agentId"].(string); ok && id != "" {
-			return id
-		}
-	}
-	return s.defaultAgentID(ctx)
+	return s.resolveFlowAgentID(ctx, settingsEditorCategory, settingsEditorKey, editorRequirement)
 }
 
-// resolveMergeAgentID returns the agent to run a merge. Unlike the editor
-// selection, a merge cannot be handed to an arbitrary agent: the agent must
-// grant the merge tool set (agentToolEligibility). Resolution order:
-//
-//  1. the configured merge agent, when it is still merge-capable
-//  2. the default agent, when it is merge-capable
-//  3. the first enabled merge-capable agent
-//  4. the first merge-capable agent
-//
-// Empty when no agent qualifies, which makes uiObjectMerge surface an
-// actionable configuration error instead of starting a doomed run.
+// resolveMergeAgentID returns the agent to run a merge. It needs the merge tool
+// set (mergeAgentEligibility).
 func (s *Server) resolveMergeAgentID(ctx context.Context) string {
+	return s.resolveFlowAgentID(ctx, settingsMergeCategory, settingsMergeKey, mergeRequirement)
+}
+
+// resolveFlowAgentID returns the agent to run an agent-driven flow, where the
+// agent must grant that flow's tool set. Resolution order:
+//
+//  1. the agent stored under category/key, when it is still capable
+//  2. the default agent, when it is capable
+//  3. the first enabled capable agent
+//  4. the first capable agent
+//
+// Empty when no agent qualifies, which makes the caller surface an actionable
+// configuration error instead of starting a run the agent cannot finish.
+func (s *Server) resolveFlowAgentID(ctx context.Context, category, key string, req toolRequirement) string {
 	cache := map[string]bool{}
 	capable := func(id string) bool {
 		if id == "" {
@@ -1278,14 +1278,14 @@ func (s *Server) resolveMergeAgentID(ctx context.Context) string {
 		def, err := s.memory.GetAgentDefinition(ctx, id)
 		ok := err == nil && def != nil
 		if ok {
-			missing, _ := agentToolEligibility(def)
+			missing, _ := agentToolEligibility(def, req)
 			ok = len(missing) == 0
 		}
 		cache[id] = ok
 		return ok
 	}
 
-	if ps, perr := s.memory.GetProjectSetting(ctx, settingsMergeCategory, settingsMergeKey); perr == nil && ps != nil {
+	if ps, perr := s.memory.GetProjectSetting(ctx, category, key); perr == nil && ps != nil {
 		if id, ok := ps.Value["agentId"].(string); ok && capable(id) {
 			return id
 		}
@@ -1412,7 +1412,7 @@ func objectChatInstruction(obj *GraphObject) string {
 	writeObject(obj)
 	b.WriteString("\nSteps:\n")
 	b.WriteString("1. FIRST review the object and propose any edits: corrected or added properties, a better key or type, reworded content, or relationships worth creating.\n")
-	b.WriteString("2. THEN apply the edits with your memory tools once I confirm: update the object, create relationships, or search for related objects as needed.\n")
+	b.WriteString("2. THEN apply the edits with your memory tools once I confirm: update the object, and create relationships. Search for related objects first when your tools allow it.\n")
 	return b.String()
 }
 

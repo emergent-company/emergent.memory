@@ -194,7 +194,64 @@ func TestAgentToolEligibility(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			missing, recommended := agentToolEligibility(c.def)
+			missing, recommended := agentToolEligibility(c.def, mergeRequirement)
+			if !reflect.DeepEqual(missing, c.wantMissing) {
+				t.Errorf("missing = %v, want %v", missing, c.wantMissing)
+			}
+			if !reflect.DeepEqual(recommended, c.wantRecommended) {
+				t.Errorf("recommended = %v, want %v", recommended, c.wantRecommended)
+			}
+		})
+	}
+}
+
+// TestEditorAgentEligibility covers the object-editing requirement set: write
+// access (create or update) and relationship-create are required, the search
+// tools are only advisory (#2098).
+func TestEditorAgentEligibility(t *testing.T) {
+	cases := []struct {
+		name            string
+		def             *AgentDefinition
+		wantMissing     []string
+		wantRecommended []string
+	}{
+		{
+			name:            "write and relationships is enough",
+			def:             &AgentDefinition{Tools: []string{"entity-update", "relationship-create"}},
+			wantRecommended: []string{"entity-search", "entity-edges-get"},
+		},
+		{
+			name:            "create counts as write",
+			def:             &AgentDefinition{Tools: []string{"entity-create", "relationship-create", "entity-search", "entity-edges-get"}},
+			wantRecommended: nil,
+		},
+		{
+			name:            "no write tool",
+			def:             &AgentDefinition{Tools: []string{"relationship-create", "entity-query"}},
+			wantMissing:     []string{"entity-create or entity-update"},
+			wantRecommended: []string{"entity-search", "entity-edges-get"},
+		},
+		{
+			name:            "cannot create the relationship the instruction asks for",
+			def:             &AgentDefinition{Tools: []string{"entity-update"}},
+			wantMissing:     []string{"relationship-create"},
+			wantRecommended: []string{"entity-search", "entity-edges-get"},
+		},
+		{
+			name:            "empty tool list is ineligible",
+			def:             &AgentDefinition{},
+			wantMissing:     []string{"entity-create or entity-update", "relationship-create"},
+			wantRecommended: []string{"entity-search", "entity-edges-get"},
+		},
+		{
+			name:        "nil definition is ineligible",
+			def:         nil,
+			wantMissing: []string{"agent definition unavailable"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			missing, recommended := editorAgentEligibility(c.def)
 			if !reflect.DeepEqual(missing, c.wantMissing) {
 				t.Errorf("missing = %v, want %v", missing, c.wantMissing)
 			}
