@@ -136,6 +136,22 @@ jobs:
       - name: Swagger spec drift guard
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: bash scripts/preflight/swagger-drift.sh
+      # Go module file drift guard (#2193). apps/server/go.sum was 40 `/go.mod`
+      # hash lines short for months (#2083): a warm module cache hides that,
+      # because verification happens at download time, so only the first cold
+      # consumer — fresh container, new workstation, `docker build` — failed, with
+      # "missing go.sum entry for go.mod file". Nothing checked it; #2057 had
+      # papered one instance over with a second `go mod download` inside
+      # apps/server/Dockerfile. The script runs `go mod tidy -diff` over the
+      # modules that are clean today and fails on any diff, in go.mod or go.sum.
+      # It runs here rather than in server.yml because server.yml is
+      # path-filtered and advisory, so a guard there cannot gate. Measured cost
+      # ~0.2 s per module on a warm module cache (the guards above already warmed
+      # it); the first run on a cold runner downloads each graph once (~25 s for
+      # connector.linux, ~71 s for apps/server).
+      - name: Go module file drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/go-mod-tidy.sh
       # Preflight guards: the same checks lanes run locally before pushing —
       # stale base, migration numbering + immutability (goose panics on duplicate
       # versions; migration-number.sh delegates the immutability rule to
