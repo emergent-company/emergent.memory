@@ -1,5 +1,12 @@
 # Graph Search Object Serialization Enhancement
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Summary
 Enhanced graph search integration to return full object properties in SSE events, filtering out internal metadata fields while preserving all user-defined data.
 

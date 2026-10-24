@@ -131,6 +131,12 @@ pre-commit:
         - "apps/ios/VoiceAgent.xcodeproj/project.pbxproj"
       run: bash scripts/preflight/version-drift.sh
 
+    # A note that names the removed NestJS tree must say it is historical (#2159).
+    - name: preflight-docs-stale-paths
+      glob:
+        - "docs/**/*.md"
+      run: bash scripts/preflight/docs-stale-paths.sh
+
     # ── CLI — apps/cli ───────────────────────────────────────────────────────
     - name: cli-gofmt
       root: apps/cli

@@ -1,5 +1,12 @@
 # Enhanced Logging System
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The logging system has been upgraded to automatically include **file path, line number, and method name** in every log entry, making it easy to locate the exact source of any log message.

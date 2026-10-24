@@ -1,5 +1,12 @@
 # Dual Service Account Implementation Summary
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## ✅ Implementation Complete
 
 Successfully implemented dual service account architecture for Zitadel integration to resolve introspection 500 errors and improve security.

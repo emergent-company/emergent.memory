@@ -1,5 +1,12 @@
 # Zitadel Token Introspection - Quick Start Guide
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 **Date**: October 31, 2025  
 **Status**: Implementation Ready  
 **Related**: [Full Implementation Plan](../architecture/auth-zitadel-introspection-implementation-plan.md)

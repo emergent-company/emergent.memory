@@ -1,3 +1,10 @@
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## API Scopes
 
 Fine‑grained OAuth style scopes gate every protected operation. Endpoints declare their required scopes in the OpenAPI `x-required-scopes` extension and return `403` with a `missing_scopes` array when absent.

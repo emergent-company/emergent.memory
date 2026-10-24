@@ -1,11 +1,12 @@
 # Automatic Chat Naming System - Design Document
 
-> **Status: design note, not implemented.** This document was written against the
+> **Status: historical design note, not implemented.** This document was written against the
 > NestJS backend (`apps/server/src/...`), which has since been removed. The
 > current Go server (`apps/server/domain/chat`) takes the conversation title from
 > the client — `title` is required and capped at 512 characters — and does not
 > generate one. The task list below is therefore unstarted, not partly
 > done, and every TypeScript path in it refers to code that no longer exists.
+<!-- status: historical (pre-Go) -->
 
 ## Current State Analysis
 

@@ -1,5 +1,12 @@
 # Auto-Extraction Dynamic Object Types Fix
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 **Date:** 2025-10-20  
 **Issue:** UI showed hardcoded entity types (ActionItem, Decision, Meeting, etc.) instead of dynamically loading from active template pack schemas
 

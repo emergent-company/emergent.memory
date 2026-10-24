@@ -1,5 +1,12 @@
 # Object Status Accept Feature
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 Added the ability to accept objects individually or in bulk from the UI. Objects can be marked as "accepted" which changes their status from "draft" to "accepted".
 

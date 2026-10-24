@@ -4,6 +4,7 @@
 > `unified-search.service.ts` design described here no longer exists: the legacy
 > NestJS backend was removed in 80f4ef461 and chat plus retrieval now run in the
 > Go server. Kept as a record of the design, not as current architecture.
+<!-- status: historical (pre-Go) -->
 
 ## Overview
 

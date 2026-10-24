@@ -1,5 +1,12 @@
 # Troubleshooting External Sources
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 This guide covers common issues when importing documents from external sources and how to resolve them.
 
 ## Common Error Codes

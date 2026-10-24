@@ -1,5 +1,12 @@
 # External Sources Architecture
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The External Sources Framework provides a pluggable architecture for importing documents from various external platforms. It uses a provider-based pattern that allows easy extension for new source types.

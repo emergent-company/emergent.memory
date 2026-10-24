@@ -1,5 +1,12 @@
 # Extraction Entity-Linking E2E Tests - Design Analysis
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Summary
 
 The extraction.entity-linking E2E tests (`apps/server/tests/e2e/extraction.entity-linking.e2e.spec.ts`) are **correctly designed but require LLM API configuration** to run. They cannot be "fixed" by manual job completion because they test the **full extraction pipeline**, not just job management.

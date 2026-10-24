@@ -1,5 +1,12 @@
 # MCP Chat Integration - Revised Architecture (JSON-RPC 2.0)
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 **Date**: October 20, 2025  
 **Status**: Design Approved - Implementation Starting  
 **Previous Version**: docs/archive/integrations/mcp/MCP_CHAT_INTEGRATION_DESIGN.md (REST-based, now superseded)

@@ -1,5 +1,12 @@
 # Environment Variables Verification
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 This document describes the environment variable verification script and how to use it for configuration sanity checks.
 
 ## Overview

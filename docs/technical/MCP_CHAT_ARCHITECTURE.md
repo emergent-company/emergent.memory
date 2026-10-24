@@ -1,5 +1,12 @@
 # MCP Chat Integration - Architecture Documentation
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The MCP (Model Context Protocol) chat integration enables the chat system to automatically query schema information and inject it into LLM responses. This provides users with accurate, up-to-date schema details without manual lookups.

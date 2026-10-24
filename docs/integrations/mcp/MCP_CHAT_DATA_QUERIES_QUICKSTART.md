@@ -5,6 +5,7 @@
 > was extracted to its own repository and the server now exposes kebab-case tools
 > (`schema-version`, `entity-query`, `search-hybrid`, …). The current chat
 > surface is the `apps/web-ui` gateway (`http://localhost:8095/chat`).
+<!-- status: historical (pre-Go) -->
 
 ## The Problem
 

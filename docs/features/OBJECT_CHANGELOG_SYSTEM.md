@@ -1,5 +1,12 @@
 # Object Changelog System
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 Add changelog/version history display to ObjectDetailModal showing how objects have evolved over time, who changed them, and what changed.
 

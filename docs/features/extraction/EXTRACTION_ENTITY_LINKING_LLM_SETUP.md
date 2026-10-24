@@ -1,5 +1,12 @@
 # Extraction Entity-Linking E2E Tests - LLM Setup Guide
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The extraction entity-linking E2E tests (`apps/server/tests/e2e/extraction.entity-linking.e2e.spec.ts`) validate that the entity-linking logic works correctly within the full extraction pipeline. These tests require a configured LLM provider to run.

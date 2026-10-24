@@ -1,5 +1,12 @@
 # Scope Enforcement Disabled Mode
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The backend has scope enforcement **disabled** via the `SCOPES_DISABLED=1` environment variable. This means:

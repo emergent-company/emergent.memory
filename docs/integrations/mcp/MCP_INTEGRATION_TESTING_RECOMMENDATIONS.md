@@ -1,5 +1,12 @@
 # MCP Integration Testing Recommendations
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 **Date**: 2025-01-20  
 **Status**: Unit Testing Complete (90/90 tests), Integration Testing Deferred  
 **Coverage**: ~95% unit test coverage achieved

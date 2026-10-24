@@ -1,5 +1,12 @@
 # Auto-Discovery System - Complete Specification
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 The Auto-Discovery System enables AI-powered automatic discovery of object types and relationships from a project's knowledge base. It analyzes documents along with a project's purpose description to generate custom template packs that can be reviewed, edited, and installed.

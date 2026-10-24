@@ -1,5 +1,12 @@
 # Extraction Duplicate Key Handling
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Problem
 
 When extracting entities, the system would **fail with `object_key_exists` error** if it tried to create a graph object with a key that already exists in the database.

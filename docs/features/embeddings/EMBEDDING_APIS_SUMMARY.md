@@ -1,5 +1,12 @@
 # Embedding Generation APIs - Implementation Summary
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 ## Overview
 
 Added new REST API endpoints to trigger embedding generation/regeneration for graph objects. This allows administrators and automated systems to control when embeddings are generated without waiting for the automatic worker.

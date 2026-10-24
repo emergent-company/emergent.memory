@@ -1,5 +1,12 @@
 # Hybrid Search Score Normalization - Implementation Summary
 
+> **Status: historical design note (pre-Go).** Written against the NestJS
+> backend (`apps/server/src/...`), which has been removed; those paths no longer
+> exist. Kept for design history — check the current Go server under
+> `apps/server/` and the published docs in `docs/site/` before relying on
+> anything here.
+<!-- status: historical (pre-Go) -->
+
 **Feature**: Phase 3 Priority #4a - Score Normalization for Hybrid Search  
 **Status**: ✅ Complete  
 **Completion Date**: January 10, 2025  
