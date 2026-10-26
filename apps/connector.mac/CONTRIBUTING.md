@@ -4,8 +4,8 @@ macOS menu-bar SwiftUI app (`MemoryConnector/`). Embeds the Go `memory-connector
 engine, built from `apps/connector.linux` by `MemoryConnector/Scripts/build-engine.sh`.
 `project.yml` is XcodeGen input — the `.xcodeproj` is generated and never hand-edited.
 
-The Xcode toolchain lives on a **remote Mac** (this Linux box has no Xcode). All
-build/test tooling shells out to it over ssh; there are **no repo defaults** — see
+All build and test tooling shells out to a **remote Mac** over ssh, because the
+Xcode toolchain is expected there. There are **no repo defaults** — see
 [Target config](#target-config).
 
 ## Layout
@@ -57,7 +57,7 @@ missing variable.
 |---|---|
 | `MEMORY_MAC_HOST` | ssh target (`ssh` alias or `user@host`); empty = local-destination (tests / `--dry-run` only) |
 | `MEMORY_MAC_HOST_NAME` | selector -> resolves `MEMORY_MAC_HOST_<NAME>` (uppercased, non-alnum -> `_`) |
-| `MEMORY_MAC_HOST_<NAME>` | named-host ssh target (e.g. `MEMORY_MAC_HOST_MINI=mcj@mcj-mini`) |
+| `MEMORY_MAC_HOST_<NAME>` | named-host ssh target (e.g. `MEMORY_MAC_HOST_MINI=you@my-mini.local`) |
 | `MEMORY_MAC_PATH` | mirror dir on the Mac (`~`- or `/`-rooted, **no spaces**, NOT a git clone) |
 | `MEMORY_MAC_PATH_<NAME>` | per-host mirror dir, overrides `MEMORY_MAC_PATH` for that named host |
 | `MEMORY_MAC_ENV_FILE` | path of the env file to read (default `apps/connector.mac/.env`) — export it in the environment |
@@ -74,7 +74,7 @@ First time on a new machine:
 apps/connector.mac/Scripts/mac-setup-signing.sh
 
 # 2. from where you drive the build: set the target (or drop these in ~/.memory/mac.env)
-export MEMORY_MAC_HOST=mcj@my-mini
+export MEMORY_MAC_HOST=you@my-mini.local
 export MEMORY_MAC_PATH=~/code/mac-connector-mirror    # dedicated rsync mirror, NOT a git clone
 
 # 3. sanity, then build/test

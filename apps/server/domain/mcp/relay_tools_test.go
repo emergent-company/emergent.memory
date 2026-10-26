@@ -58,7 +58,7 @@ func TestRelaySessionTools_SkipsEntriesWithNoName(t *testing.T) {
 
 func TestRelaySessionTools_PrefixesToolNames(t *testing.T) {
 	sess := &RelaySession{
-		InstanceID: "mcj-mini",
+		InstanceID: "my-mac",
 		Tools: map[string]any{
 			"tools": []any{
 				map[string]any{
@@ -74,9 +74,9 @@ func TestRelaySessionTools_PrefixesToolNames(t *testing.T) {
 	}
 	result := relaySessionTools(sess)
 	require.Len(t, result, 2)
-	assert.Equal(t, "mcj-mini_echo_text", result[0].Name)
+	assert.Equal(t, "my-mac_echo_text", result[0].Name)
 	assert.Equal(t, "Echoes text back", result[0].Description)
-	assert.Equal(t, "mcj-mini_search_repos", result[1].Name)
+	assert.Equal(t, "my-mac_search_repos", result[1].Name)
 }
 
 func TestRelaySessionTools_PreservesInputSchema(t *testing.T) {

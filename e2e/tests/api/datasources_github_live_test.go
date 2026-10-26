@@ -10,7 +10,7 @@
 // never wired into CI: the fixture repo and tokens are operator-provided. Run
 // it against a server configured for real GitHub (the compose stack points
 // GITHUB_API_BASE_URL at the hermetic stub, so the connection test would fail
-// there). See e2e/AGENTS.md ("GitHub live data-source test").
+// there). The connection itself is verified in the hermetic suite.
 package api_test
 
 import (

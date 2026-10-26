@@ -193,11 +193,8 @@ apps/server/swiftbridge
 # auto-added by commit skill — 2026-03-09
 apps/server/VERSION
 
-# Local deployment skills (machine-specific)
-.opencode/skills/upgrade-mcj/
-
-# Apple Xcode 27 agent skills — generated locally on the Mac build host by the
-# infra repo's `task skills:export-xcode` (see the infra AGENTS.md). Apple-licensed
+# Apple Xcode 27 agent skills — generated locally on the Mac build host by our
+# local tooling. Apple-licensed
 # content (Xcode SLA §2.5/§2.7): never commit or redistribute. The exporter
 # installs to the local opencode skills dir; these entries are a guard against a
 # repo-pointed --dest.

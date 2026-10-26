@@ -14,6 +14,6 @@ Current suites:
 
 `e2e/docker-compose.yml` provisions its own ephemeral Postgres, server and
 storage per run — no host-side database setup is required. See
-[`../e2e/AGENTS.md`](../e2e/AGENTS.md) and
+[`../e2e/CONSTITUTION.md`](../e2e/CONSTITUTION.md) and
 [`../apps/web-ui/tests/e2e/README.md`](../apps/web-ui/tests/e2e/README.md) for
 the suite contracts.

@@ -25,7 +25,7 @@
 #
 # Target config (required, no repo-specific defaults — see lib/mac-remote.sh and
 # apps/connector.mac/.env.example). Set in the environment or in apps/connector.mac/.env:
-#   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini (empty string = local dest)
+#   MEMORY_MAC_HOST     SSH host, e.g. my-mini.local (empty string = local dest)
 #   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/emergent.memory-macbuild (no spaces)
 #   MEMORY_MAC_SUBTREE  Mac connector subtree (default: client/macos)
 #

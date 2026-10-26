@@ -99,7 +99,7 @@ func TestBuildCache_RelayToolCopiesOutputSchema(t *testing.T) {
 	relay := mcprelay.NewService(logger)
 	relay.Register(&mcprelay.Session{
 		ProjectID:  relayTestProjectID,
-		InstanceID: "mcj-mini-connector",
+		InstanceID: "my-mac-connector",
 		Tools: map[string]any{
 			"tools": []any{
 				map[string]any{
@@ -122,7 +122,7 @@ func TestBuildCache_RelayToolCopiesOutputSchema(t *testing.T) {
 	cache := tp.getOrBuildCache(relayTestProjectID)
 	require.NotNil(t, cache)
 
-	const prefixed = "mcj-mini-connector_reminders_list"
+	const prefixed = "my-mac-connector_reminders_list"
 	td, ok := cache.toolDefs[prefixed]
 	require.True(t, ok)
 	require.NotNil(t, td.OutputSchema, "relay pool reconstruction must copy outputSchema")

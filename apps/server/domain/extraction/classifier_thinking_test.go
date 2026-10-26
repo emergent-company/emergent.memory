@@ -90,7 +90,7 @@ func TestClassifier_ThinkingModes(t *testing.T) {
 	}{
 		{
 			name: "short user preference",
-			text: "User mcj prefers short responses and technical depth",
+			text: "User alex prefers short responses and technical depth",
 		},
 		{
 			name: "single decision fact",
@@ -98,7 +98,7 @@ func TestClassifier_ThinkingModes(t *testing.T) {
 		},
 		{
 			name: "infrastructure fact",
-			text: "Host mcj-one runs Ubuntu 22.04 and is used for all production deployments",
+			text: "Host build-01 runs Ubuntu 22.04 and is used for all production deployments",
 		},
 	}
 

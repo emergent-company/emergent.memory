@@ -149,7 +149,7 @@ func TestClassifier_PreInstalledSchema_ReuseOnly(t *testing.T) {
 		{
 			// Reproduces the exact example from the issue report.
 			name:      "short user preference statement",
-			text:      "User mcj prefers short responses and technical depth",
+			text:      "User alex prefers short responses and technical depth",
 			wantMatch: true,
 		},
 		{
@@ -172,11 +172,11 @@ func TestClassifier_PreInstalledSchema_ReuseOnly(t *testing.T) {
 			// Control: document that references many types from the schema.
 			// Should match even with the current strict prompt.
 			name: "multi-type document (control — should always match)",
-			text: "User mcj works on Project legalplant using TechStack Go and Postgres. " +
+			text: "User alex works on Project acme using TechStack Go and Postgres. " +
 				"He has a Preference for short responses and technical depth. " +
 				"A Decision was made to use the Echo framework. " +
 				"Convention: REST naming conventions must be followed. " +
-				"Service: legalplant-api runs on Host mcj-one. " +
+				"Service: acme-api runs on Host build-01. " +
 				"Procedure: deploy by running task release.",
 			wantMatch: true,
 		},

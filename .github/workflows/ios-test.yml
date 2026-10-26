@@ -2,7 +2,7 @@ name: iOS Test
 
 # `VoiceAgentTests` compiled as part of lint/release but never actually ran:
 # there was no workflow that executed the simulator unit tests (issue #1554).
-# This supplies that job on the self-hosted `mcj-mini` Mac runner, mirroring the
+# This supplies that job on the self-hosted macOS runner, mirroring the
 # Xcode-selection step from ios-release.yml. It needs macOS + a bootable
 # simulator, so it cannot run on the ubuntu lint runner.
 #

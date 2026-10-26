@@ -19,7 +19,7 @@ name: Web UI live-LLM scenarios
 #     a skip, not a false failure).
 #   E2E_TEST_USER_EMAIL / E2E_TEST_USER_PASSWORD — the Zitadel test user (no
 #     MFA) that the `setup` dependency signs in as. Canonical values are
-#     host-managed by the operator on memory-dev and are only ever referenced as
+#     host-managed by the operator on the dev host and are only ever referenced as
 #     `${{ secrets.* }}` — never inlined. They are NOT currently present in
 #     `/opt/emergent-dev/.env`; the preflight step below fails explicitly until
 #     the operator provisions the two repo secrets from the credential vault.
@@ -104,7 +104,7 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # The `memory` self-hosted runner is Arch Linux: it has no
         # apt-get, but the Chromium runtime libs and browser cache are already
         # installed on the host, so `--with-deps` (which shells out to apt) must
         # be skipped there.

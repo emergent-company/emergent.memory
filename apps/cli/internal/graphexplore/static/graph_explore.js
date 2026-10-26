@@ -130,7 +130,7 @@ function showToast(msg, duration = 2500) {
 
 // ── Clipboard helper ──────────────────────────────────────────────────────
 // Copies text to clipboard. Falls back to execCommand for non-HTTPS contexts
-// (e.g., http://mcj-one:7734 where navigator.clipboard is unavailable).
+// (e.g., http://localhost:7734 where navigator.clipboard is unavailable).
 function copyToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     return navigator.clipboard.writeText(text);

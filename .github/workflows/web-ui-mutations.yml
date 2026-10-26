@@ -24,7 +24,7 @@ name: Web UI mutations e2e
 #     skips) when either is unset, so a missing secret degrades to a red run, never
 #     a silently-green one; the preflight step below names the missing secret
 #     explicitly. The canonical values are host-managed by the operator on
-#     memory-dev and are only ever referenced here as `${{ secrets.* }}` — never
+#     the dev host and are only ever referenced here as `${{ secrets.* }}` — never
 #     inlined. NOTE: they are NOT currently present in `/opt/emergent-dev/.env`
 #     (that file has no E2E_TEST_USER_* keys), so the operator must provision the
 #     secrets from the credential vault; until then the preflight fails with the
@@ -115,7 +115,7 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # The `memory` self-hosted runner is Arch Linux: it has no
         # apt-get, but the Chromium runtime libs and browser cache are already
         # installed on the host, so `--with-deps` (which shells out to apt)
         # must be skipped there. Keep the dependency install on Debian runners.

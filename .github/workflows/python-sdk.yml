@@ -36,8 +36,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # actions/setup-python cannot resolve a version on this pool (Arch
-      # `memory-dev` reports "not found for this operating system"), so uv
+      # actions/setup-python cannot resolve a version on this pool (Arch — the
+      # Linux runner reports "not found for this operating system"), so uv
       # installs a managed interpreter and the job installs into an isolated
       # venv — no host Python toolchain required (#184, #233).
       - name: Set up Python 3.12 (uv)
@@ -69,8 +69,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # actions/setup-python cannot resolve a version on this pool (Arch
-      # `memory-dev` reports "not found for this operating system"), so uv
+      # actions/setup-python cannot resolve a version on this pool (Arch — the
+      # Linux runner reports "not found for this operating system"), so uv
       # installs a managed interpreter and the job installs into an isolated
       # venv — no host Python toolchain required (#184, #233).
       - name: Set up Python 3.12 (uv)

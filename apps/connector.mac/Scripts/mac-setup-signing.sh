@@ -15,7 +15,7 @@
 #   apps/connector.mac/Scripts/mac-setup-signing.sh
 #
 # It creates:
-#   ~/Library/Keychains/memory-dev.keychain-db       dedicated keychain
+#   ~/Library/Keychains/memory-signing.keychain-db       dedicated keychain
 #   ~/.config/memory-connector/signing.keychain.pw   keychain password (0600)
 #   ~/.config/memory-connector/signing.env           keychain path + identity (0600)
 #
@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-KEYCHAIN="$HOME/Library/Keychains/memory-dev.keychain-db"
+KEYCHAIN="$HOME/Library/Keychains/memory-signing.keychain-db"
 CONF_DIR="$HOME/.config/memory-connector"
 PW_FILE="$CONF_DIR/signing.keychain.pw"
 ENV_FILE="$CONF_DIR/signing.env"

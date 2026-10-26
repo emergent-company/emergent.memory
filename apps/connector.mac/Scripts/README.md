@@ -30,7 +30,7 @@ explicitly-set environment variable always wins over `.env`. The full template i
 |---|---|---|
 | `MEMORY_MAC_HOST` | yes¹ | SSH host of the Mac (`ssh` alias, or `user@host`). An explicitly empty value = local-destination mode (tests / `--dry-run` only). |
 | `MEMORY_MAC_HOST_NAME` | no | Selector for a named host. Resolves `MEMORY_MAC_HOST_<NAME>` where `<NAME>` is the selector uppercased with non-alphanumerics → `_`. |
-| `MEMORY_MAC_HOST_<NAME>` | no | Named-host SSH target (e.g. `MEMORY_MAC_HOST_TOOL=mcj@tool`). |
+| `MEMORY_MAC_HOST_<NAME>` | no | Named-host SSH target (e.g. `MEMORY_MAC_HOST_TOOL=you@build-mac.local`). |
 | `MEMORY_MAC_PATH` | yes² | Dedicated mirror dir on the Mac (absolute or `~`-rooted, no spaces) — must **not** be a git clone. |
 | `MEMORY_MAC_PATH_<NAME>` | no | Per-host project dir (same `<NAME>` normalization); overrides `MEMORY_MAC_PATH` when that named host is selected. |
 | `MEMORY_MAC_SUBTREE` | no | Override the per-script remote subtree (mac connector default `client/macos`). |
@@ -48,8 +48,8 @@ If you have multiple Mac build machines, define one `MEMORY_MAC_HOST_<NAME>` per
 host and select one with `MEMORY_MAC_HOST_NAME`:
 
 ```sh
-MEMORY_MAC_HOST_TOOL=mcj@tool
-MEMORY_MAC_HOST_MINI=mcj-mini
+MEMORY_MAC_HOST_TOOL=you@build-mac.local
+MEMORY_MAC_HOST_MINI=you@my-mini.local
 MEMORY_MAC_PATH_TOOL=~/code/emergent.memory-macbuild
 MEMORY_MAC_PATH_MINI=~/code/emergent.memory-macbuild.mini
 MEMORY_MAC_HOST_NAME=tool      # pick "tool" (or "mini")

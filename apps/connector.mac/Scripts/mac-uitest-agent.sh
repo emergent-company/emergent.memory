@@ -28,7 +28,7 @@
 #       bootout + remove the plist (keeps logs)
 #
 # Target config (same as mac-build.sh — see apps/connector.mac/.env.example):
-#   MEMORY_MAC_HOST     SSH host, e.g. mcj-mini
+#   MEMORY_MAC_HOST     SSH host, e.g. my-mini.local
 #   MEMORY_MAC_PATH     project dir on Mac, e.g. ~/code/emergent.memory-macbuild
 #
 # First-run caveat: the very first `run` needs a one-time on-screen Automation /

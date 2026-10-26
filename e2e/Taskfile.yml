@@ -52,8 +52,8 @@ tasks:
         if ! command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
           echo "runlog binary not found." >&2
           echo "  build it at the pinned version ({{.RUNLOG_PINNED_VERSION}}), not @latest:" >&2
-          echo "    git clone --branch {{.RUNLOG_PINNED_VERSION}} --depth 1 https://github.com/emergent-company/runlog /root/runlog" >&2
-          echo "    cd /root/runlog && GOWORK=off go build -o \$(go env GOPATH)/bin/runlog ./cmd/runlog" >&2
+          echo "    git clone --branch {{.RUNLOG_PINNED_VERSION}} --depth 1 https://github.com/emergent-company/runlog $HOME/runlog" >&2
+          echo "    cd $HOME/runlog && GOWORK=off go build -o \$(go env GOPATH)/bin/runlog ./cmd/runlog" >&2
           exit 1
         fi
 

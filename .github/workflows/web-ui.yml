@@ -150,7 +150,7 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # The `memory` self-hosted runner is Arch Linux: it has no
         # apt-get, but the Chromium runtime libs and browser cache are already
         # installed on the host, so `--with-deps` (which shells out to apt)
         # must be skipped there. Keep the dependency install on Debian runners.
@@ -230,7 +230,7 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # The `memory` self-hosted runner is Arch Linux: it has no
         # apt-get, but the Chromium runtime libs and browser cache are already
         # installed on the host, so `--with-deps` (which shells out to apt)
         # must be skipped there. Keep the dependency install on Debian runners.
@@ -298,7 +298,7 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux (mcj-one): it has no
+        # The `memory` self-hosted runner is Arch Linux: it has no
         # apt-get, but the Chromium runtime libs and browser cache are already
         # installed on the host, so `--with-deps` (which shells out to apt)
         # must be skipped there. Keep the dependency install on Debian runners.

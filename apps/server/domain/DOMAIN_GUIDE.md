@@ -8,8 +8,8 @@ This guide documents all server domain packages under `apps/server/domain/`. It 
 
 Package conventions (fx modules, Echo handlers, Bun repositories, job queues, test
 commands) are documented by the code and its tests; the server packages carry no
-contributor guide of their own. (Other apps do: `e2e/AGENTS.md` and
-`apps/connector.mac/AGENTS.md`.)
+contributor guide of their own. (Other apps do: `e2e/CONSTITUTION.md` and
+`apps/connector.mac/CONTRIBUTING.md`.)
 
 ---
 

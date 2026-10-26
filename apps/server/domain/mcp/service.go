@@ -2546,7 +2546,7 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 }
 
 // relaySessionTools converts a relay session's tools/list payload into MCP ToolDefinitions
-// with names prefixed by the instance ID (e.g. "mcj-mini_github_search_repositories").
+// with names prefixed by the instance ID (e.g. "my-mac_github_search_repositories").
 func relaySessionTools(sess *RelaySession) []ToolDefinition {
 	if sess == nil || sess.Tools == nil {
 		return nil

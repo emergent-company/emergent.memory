@@ -29,7 +29,7 @@ fi
 
 if [[ -z "$MAC_HOST" ]]; then
   mac_die "MEMORY_MAC_HOST is not set. Point it at the Mac build machine, e.g.:
-    export MEMORY_MAC_HOST=mcj-mini
+    export MEMORY_MAC_HOST=my-mini.local
   or set it in $MAC_ENV_FILE (see apps/connector.mac/.env.example)."
 fi
 

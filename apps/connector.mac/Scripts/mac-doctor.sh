@@ -12,7 +12,6 @@
 #   4. xcodebuild present + its version
 #   5. at least one usable iOS Simulator destination (needs an installed runtime)
 #   6. a code-signing team is configured (DEVELOPMENT_TEAM)
-#   7. opencode.json's xcodebuild MCP host derives from MEMORY_MAC_HOST
 #
 # All target resolution is delegated to lib/mac-remote.sh — this script only
 # reports. Env: the MEMORY_MAC_* variables (see apps/connector.mac/.env.example),
@@ -62,18 +61,6 @@ else
   ok "host: $MAC_HOST"
 fi
 ok "path: $MAC_CHECKOUT_PATH"
-
-# ---- 7. opencode MCP host derives from the same config --------------------
-# shellcheck disable=SC2154 # repo_root is set by lib/mac-remote.sh
-opencode_json="$repo_root/apps/web-ui/opencode.json"
-if [[ -f "$opencode_json" ]] && grep -q 'xcodebuild' "$opencode_json"; then
-  if grep -q '{env:MEMORY_MAC_HOST}' "$opencode_json"; then
-    ok "opencode.json: xcodebuild MCP host derives from {env:MEMORY_MAC_HOST}"
-  else
-    warn "opencode.json: xcodebuild MCP host is not derived from MEMORY_MAC_HOST"
-    printf '       -> use ["ssh", "{env:MEMORY_MAC_HOST}", ...] (see tools/README.md)\n'
-  fi
-fi
 
 if [[ -z "$MAC_HOST" ]]; then
   printf '\nmac-doctor: local-destination mode; remote checks skipped (%d warning(s))\n' "$WARN"

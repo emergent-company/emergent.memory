@@ -29,7 +29,7 @@
 #                          MEMORY_MAC_HOST_<NAME>, where <NAME> is the selector
 #                          uppercased with every non-alphanumeric -> '_'.
 #                          e.g. MEMORY_MAC_HOST_NAME=mini -> MEMORY_MAC_HOST_MINI.
-#   MEMORY_MAC_HOST_<NAME> Named-host SSH targets, e.g. MEMORY_MAC_HOST_TOOL=mcj@tool.
+#   MEMORY_MAC_HOST_<NAME> Named-host SSH targets, e.g. MEMORY_MAC_HOST_TOOL=you@build-mac.local.
 #   MEMORY_MAC_PATH        Project dir on the Mac, absolute or ~-rooted, no
 #                          spaces. Example: ~/code/emergent.memory-macbuild.
 #   MEMORY_MAC_PATH_<NAME> Optional per-host project dir; overrides
@@ -178,7 +178,7 @@ mac_resolve_target() {
     MAC_HOST="$MEMORY_MAC_HOST"
   else
     mac_die "MEMORY_MAC_HOST is not set. Point it at the Mac build machine, e.g.:
-    export MEMORY_MAC_HOST=mcj-mini
+    export MEMORY_MAC_HOST=my-mini.local
   or pick a named host, e.g.:
     export MEMORY_MAC_HOST_NAME=mini   # resolves MEMORY_MAC_HOST_MINI=<ssh-target>
   or set MEMORY_MAC_HOST (and MEMORY_MAC_PATH) in $app_dir/.env

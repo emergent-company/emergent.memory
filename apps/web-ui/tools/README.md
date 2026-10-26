@@ -75,12 +75,12 @@ repo's team `74LC88G9SC`. The release paths (`build-dmg.sh`,
 `ios-release.yml`) render a resolved `ExportOptions.plist` with that value, so a
 fork only sets the variable/secret — it never edits a tracked file.
 
-## opencode MCP
+## MCP access to the Mac build host
 
-`apps/web-ui/opencode.json` runs the `xcodebuild` MCP over `ssh` to
-`{env:MEMORY_MAC_HOST}` (opencode config variable substitution). Because opencode
-does not read `.env`, export `MEMORY_MAC_HOST` in the environment that launches
-it so the MCP and the build scripts agree; `mac-doctor.sh --check` flags drift.
+The `xcodebuild` MCP server is not checked in: point your own MCP client at it
+over `ssh` to `$MEMORY_MAC_HOST` (see the client's `mcp` config docs). Most
+clients do not read `.env`, so export `MEMORY_MAC_HOST` in the environment that
+launches the client, so the MCP and the build scripts agree.
 
 ## Fail-fast
 

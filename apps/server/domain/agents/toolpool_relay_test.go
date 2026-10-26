@@ -25,7 +25,7 @@ func buildRelayTestPool(t *testing.T) (*ToolPool, *mcprelay.Service) {
 	relay := mcprelay.NewService(logger)
 	relay.Register(&mcprelay.Session{
 		ProjectID:  relayTestProjectID,
-		InstanceID: "mcj-mini-connector",
+		InstanceID: "my-mac-connector",
 		Tools: map[string]any{
 			"tools": []any{
 				map[string]any{
@@ -47,14 +47,14 @@ func buildRelayTestPool(t *testing.T) (*ToolPool, *mcprelay.Service) {
 // TestBuildCache_RelayToolRegisteredWithInstancePrefix pins the fix for the
 // regression where relay tools were pooled under their bare MCP name
 // ("reminders_list") while agent whitelists and relay routing both use the
-// instance-prefixed form ("mcj-mini-connector_reminders_list").
+// instance-prefixed form ("my-mac-connector_reminders_list").
 func TestBuildCache_RelayToolRegisteredWithInstancePrefix(t *testing.T) {
 	tp, _ := buildRelayTestPool(t)
 
 	cache := tp.getOrBuildCache(relayTestProjectID)
 	require.NotNil(t, cache)
 
-	const prefixed = "mcj-mini-connector_reminders_list"
+	const prefixed = "my-mac-connector_reminders_list"
 
 	td, ok := cache.toolDefs[prefixed]
 	require.True(t, ok, "relay tool must be pooled under the instance-prefixed name")
@@ -63,7 +63,7 @@ func TestBuildCache_RelayToolRegisteredWithInstancePrefix(t *testing.T) {
 
 	assert.Contains(t, cache.toolNames, prefixed,
 		"prefixed relay tool must appear in the ordered pool names")
-	assert.Equal(t, "mcj-mini-connector", cache.relayToolInstance[prefixed],
+	assert.Equal(t, "my-mac-connector", cache.relayToolInstance[prefixed],
 		"prefixed relay tool must map back to its instance for routing")
 
 	assert.NotContains(t, cache.toolDefs, "reminders_list",
@@ -78,7 +78,7 @@ func TestBuildCache_RelayToolRegisteredWithInstancePrefix(t *testing.T) {
 // device's relay tools (issue #994).
 func TestCallToolRelayGate(t *testing.T) {
 	tp, _ := buildRelayTestPool(t)
-	const prefixed = "mcj-mini-connector_reminders_list"
+	const prefixed = "my-mac-connector_reminders_list"
 
 	untrustedCtx := context.Background()
 
@@ -97,7 +97,7 @@ func TestResolveTools_RelayToolPrefixedWhitelist_Selected(t *testing.T) {
 
 	agentDef := &AgentDefinition{
 		Name:  "reminders-agent",
-		Tools: []string{"mcj-mini-connector_reminders_list"},
+		Tools: []string{"my-mac-connector_reminders_list"},
 	}
 
 	tools, err := tp.ResolveTools(relayTestProjectID, agentDef, 0, DefaultMaxDepth)
@@ -111,7 +111,7 @@ func TestResolveTools_RelayToolPrefixedWhitelist_Selected(t *testing.T) {
 		names = append(names, tl.Name())
 	}
 
-	assert.Contains(t, names, "mcj-mini-connector_reminders_list",
+	assert.Contains(t, names, "my-mac-connector_reminders_list",
 		"prefixed relay whitelist entry must resolve to the wrapped ADK tool")
 	assert.NotContains(t, names, "reminders_list",
 		"bare relay name must never be offered to the model")

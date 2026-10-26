@@ -104,7 +104,7 @@ jobs:
 
       # infra #335: pin the docker-container builder this action creates for the
       # bare `docker build` / `docker compose ... --build` steps inside
-      # e2e/run_tests.sh. On memory-dev the daemon-default builder (docker
+      # e2e/run_tests.sh. On the Linux runner the daemon-default builder (docker
       # driver) hands build containers systemd-resolved's stub resolver
       # 127.0.0.53, which is unreachable from the build netns, so every network
       # `RUN` dies: `dial tcp: lookup proxy.golang.org on 127.0.0.53:53: network
@@ -466,8 +466,8 @@ jobs:
   # the host-side reaper (b4ng-link/infrastructure playbook 116).
   #
   # It reaps only the Docker daemon it lands on. The self-hosted `memory` pool
-  # spans two hosts — memory-dev-1/-2 on memory-dev and memory-mcj1/-2 on
-  # mcj-mini — with separate daemons, and the runners carry no host label to
+  # spans two hosts — the Linux runners and the macOS runners — each with its
+  # own daemon, and the runners carry no host label to
   # target one (they all expose exactly `self-hosted, Linux, X64, memory`). A
   # leftover on the other host is therefore reaped by a later attempt or run
   # whose teardown job lands there; deterministic per-host reaping needs a host

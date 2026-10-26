@@ -43,7 +43,7 @@ jobs:
           fetch-depth: 0  # mike needs full history
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
       # runner in the pool (#184, #233).
@@ -81,7 +81,7 @@ jobs:
           fetch-depth: 0
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
       # runner in the pool (#184, #233).
@@ -151,7 +151,7 @@ jobs:
           fetch-depth: 0
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch `memory-dev` runners, and their distro Python has no ensurepip,
+      # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
       # runner in the pool (#184, #233).

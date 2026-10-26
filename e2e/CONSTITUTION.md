@@ -10,7 +10,7 @@ memory ask "<your question>"
 
 The `memory ask` command connects to the built-in assistant, which has full knowledge of the Memory platform, its CLI, API, and concepts. Use it whenever you need to understand how something works.
 
-The rules below are **mandatory** for all e2e tests in this repository. Every new test must follow them. Every existing test should be migrated toward them. Skills that create, review, or verify tests must enforce them.
+The rules below are **mandatory** for all e2e tests in this repository. Every new test must follow them. Every existing test should be migrated toward them.
 
 ---
 
@@ -56,7 +56,7 @@ When HTTP is used, it must still be logged via `rl.Event()` or `rl.CLIStep()` so
 
 ### Memory binary location
 
-The `memory` CLI binary is located at `/root/.memory/bin/memory`. In tests the binary is on `PATH` (the Dockerfile and `install.sh` ensure this), so tests invoke it as plain `memory`. When invoking outside of the test harness (e.g. from agent tooling or pre-condition scripts), use the full path `/root/.memory/bin/memory`.
+The `memory` CLI binary lives at `$HOME/.memory/bin/memory` (`apps/cli/install.sh` puts it there). In tests the binary is on `PATH` (the Dockerfile and `install.sh` ensure this), so tests invoke it as plain `memory`. When invoking it outside the harness (a pre-condition script, a manual check) use the full path `$HOME/.memory/bin/memory`.
 
 ### How to check for new CLI capabilities
 
@@ -80,7 +80,7 @@ memory ask "What CLI commands are available for managing graph objects?"
 memory ask "How do I configure a Google provider for a project?"
 ```
 
-The `memory ask` command connects to the CLI assistant, which has full knowledge of the Memory platform. Use it before reading source code, searching docs, or guessing. This applies to both humans writing tests and agents generating tests.
+The `memory ask` command connects to the CLI assistant, which has full knowledge of the Memory platform. Use it before reading source code, searching docs, or guessing.
 
 For project-scoped questions (when you have a project context):
 
@@ -257,5 +257,4 @@ The DB may only be cleared when the user **explicitly requests it** (e.g. "clear
 ## Enforcement
 
 - The **runlog-verify-runs** skill (installed via `runlog skills install`) checks these rules against actual run log output.
-- The **create-e2e-test** skill (`/.opencode/skills/create-e2e-test/`) must generate tests that follow these rules.
 - Code review should flag violations of these rules.

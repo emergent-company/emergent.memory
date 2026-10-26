@@ -54,7 +54,7 @@ echo "> runs DB will be written to: $RUNS_DB_DIR/runs.db"
 # downloads the CLI/install script from GitHub.
 #
 # Buildx builder pinning (infra #335): the `memory` self-hosted runner pool spans
-# two hosts. On memory-dev the daemon-default buildx builder (docker driver)
+# two hosts. On the Linux runner the daemon-default buildx builder (docker driver)
 # hands build containers systemd-resolved's stub resolver 127.0.0.53, which is
 # unreachable from the build network namespace, so every network `RUN` dies
 # instantly: `dial tcp: lookup proxy.golang.org on 127.0.0.53:53: network is
