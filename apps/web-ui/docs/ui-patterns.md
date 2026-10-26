@@ -334,8 +334,8 @@ new chat-surface work as an opportunity to move shared markup/behaviour into
 - **Playwright e2e** — `apps/web-ui/tests/e2e/playwright.config.ts` (session mode,
   real gateway + Zitadel + memory API) owns visual/interaction coverage: navigation,
   mutations, live-LLM scenarios. Not CI-runnable; `tests/e2e/README.md` documents
-  the coverage, the `data-testid` convention (`page-<slug>` anchor), and the
-  gaps tracked in the infra repo's `openspec/changes/web-ui-e2e-coverage/`.
+  the coverage, the `data-testid` convention (`page-<slug>` anchor), and the known
+  gaps per feature area.
 
 ---
 

@@ -276,8 +276,8 @@ func (r *Restorer) fetchBackup(ctx context.Context, backupID string) (*Backup, e
 	return &backup, nil
 }
 
-// restoreOverwrite implements Decision 6 + 7: optional pre-restore snapshot,
-// then one transaction that wipes the project's rows and inserts the snapshot.
+// restoreOverwrite optionally snapshots the live project first, then wipes the
+// project's rows and inserts the backup in one transaction.
 func (r *Restorer) restoreOverwrite(ctx context.Context, job *Restore, req RestoreRequest, backup *Backup, archive *Archive) error {
 	projectID := backup.ProjectID
 
@@ -419,8 +419,8 @@ func (r *Restorer) restoredAgentIDs(archive *Archive, projectID string) ([]strin
 	return ids, nil
 }
 
-// restoreClone implements Decision 8: create a fresh project row and remap
-// every entity UUID, rewriting FKs through the remap table.
+// restoreClone creates a fresh project row and remaps every entity UUID,
+// rewriting FKs through the remap table.
 func (r *Restorer) restoreClone(ctx context.Context, job *Restore, req RestoreRequest, backup *Backup, archive *Archive) error {
 	projectID := uuid.New().String()
 	name := req.TargetProjectName

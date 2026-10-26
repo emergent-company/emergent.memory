@@ -1,7 +1,7 @@
 package integration
 
-// DocumentSourceVersionsSuite covers the data-layer foundation of OpenSpec change
-// `add-google-drive-ingestion`: the `kb.sources` / `kb.source_sync_jobs` tables
+// DocumentSourceVersionsSuite covers the data-layer foundation of document-source
+// ingestion: the `kb.sources` / `kb.source_sync_jobs` tables
 // and the `kb.documents` versioning + attribution columns added by migration
 // `00226_document_sources_versions.sql`, plus the version-aware repository
 // methods on `domain/documents`.

@@ -67,9 +67,9 @@ type tableConfig struct {
 	derived    bool // true when rows are derived in Go rather than streamed from `table`
 }
 
-// allExportTables returns the curated, ordered export surface (see openspec
-// change backup-restore, Decision 2). Order matters: it is the archive order
-// of the database/*.ndjson entries.
+// allExportTables returns the curated, ordered export surface. Order matters:
+// it is the archive order of the database/*.ndjson entries, and adding a table
+// here is a restore-compatibility decision, not a mechanical one.
 func allExportTables() []tableConfig {
 	byProject := "t.project_id = ?"
 

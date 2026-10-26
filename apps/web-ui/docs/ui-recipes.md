@@ -11,8 +11,6 @@ Companion docs (read those for the *why*, this one for the *which*):
 | Doc | Covers |
 |---|---|
 | `apps/web-ui/docs/ui-patterns.md` | page shell, PRG, htmx ownership, widget inventory, Alpine vs `data-*` |
-| `openspec/specs/web-ui-component-conventions/spec.md` (infra repo) | component-contract law |
-| `openspec/specs/inline-form-saving/spec.md` (infra repo) | auto-save behaviour requirements |
 | `apps/web-ui/tests/e2e/README.md:119` | `page-<slug>` `data-testid` convention |
 
 Paths are relative to `apps/web-ui/gateway/` unless stated. Line numbers are
@@ -255,7 +253,7 @@ swaps.
 not a toast. Debounce is canonical 700 ms, tunable in one place.
 
 **Source:** `webui/static/js/agent-settings.js:25,40,200,279`,
-`openspec/specs/inline-form-saving/spec.md` (infra repo), `agent.templ` General subpage.
+`agent.templ` General subpage.
 
 ---
 
@@ -548,7 +546,7 @@ client code uses `MemoryApp.toast(kind, message)`. Failures pass `kind="error"`.
 | `layout.detail` | `ui.templ:687,726`; `components/nav.templ:10,34,47`; `schedules.templ:197` |
 | `layout.settings-rail` | `project_settings.templ:35`; `agent.templ:39`; `components/nav.templ:34` |
 | `layout.card-grid` | `components/meta.templ:18,35,55,74`; `components/panel.templ:13` |
-| `edit.inline-autosave` | `webui/static/js/agent-settings.js:25,200,279`; `openspec/specs/inline-form-saving/spec.md` (infra repo) |
+| `edit.inline-autosave` | `webui/static/js/agent-settings.js:25,200,279`; recipe above |
 | `edit.inline-htmx` | `project_settings.templ:19,256`; `settings_handlers.go:870`; `settings_providers.go:372` |
 | `edit.form-save` | `schedules.templ:255,386`; `components/form.templ:37`; `ui.go:166,181,188`; `ui.templ:1058` |
 | `edit.modal` | `ui.templ:498,264`; `components/dialog.templ:9`; `webui/static/js/app.js:180,644,666` |

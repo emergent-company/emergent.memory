@@ -3,8 +3,7 @@ import Foundation
 import Testing
 import UIKit
 
-/// Tests for the device self-introduction manifest sent during one-time setup
-/// (OpenSpec "device-self-introduction", iOS tasks 3.2/3.3/4.2).
+/// Tests for the device self-introduction manifest sent during one-time setup.
 ///
 /// The suite is `@MainActor` because `DeviceInfo` snapshots UIKit/Foundation
 /// singletons (`UIDevice.current`, `Bundle.main`); the app target defaults new
@@ -64,7 +63,7 @@ struct DeviceInfoTests {
         #expect(DeviceInfo.modelDisplay(for: "AppleTV6,2") == "AppleTV6,2")
     }
 
-    // MARK: - MemorySetupClient payload encoding (task 4.2)
+    // MARK: - MemorySetupClient payload encoding
 
     /// The setup request body must nest the full manifest under the `device`
     /// key with the exact camelCase keys from the contract.

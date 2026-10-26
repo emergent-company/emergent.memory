@@ -1,7 +1,7 @@
 package integration
 
-// SourceSyncSuite exercises the sync lifecycle introduced by OpenSpec change
-// `add-google-drive-ingestion`: the sync worker (with a fake Drive client), the
+// SourceSyncSuite exercises the document-source sync lifecycle: the sync worker
+// (with a fake Drive client), the
 // single-active-job admission rule, stale recovery, scheduled admission, and the
 // sync REST surface. It runs against the in-process test server backed by a real
 // Postgres test database (testutil.BaseSuite); the suite skips via

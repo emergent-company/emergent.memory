@@ -6,8 +6,8 @@
 // these modules with GOWORK=off; this file is what keeps a bare `go build ./...` /
 // `go test ./...` inside e2e working locally.
 //
-// See openspec/specs/server-agent-runtime/spec.md — "E2E module SHALL be isolated
-// from the workspace build list". Modules listed here are exempt from the root
+// The e2e module SHALL stay isolated from the workspace build list. Modules
+// listed here are exempt from the root
 // coverage guard (.github/scripts/check-go-work-coverage.sh) because they are
 // covered by this workspace instead.
 go 1.25.6

@@ -2,8 +2,8 @@ package integration
 
 // DocumentSourceIngestionSuite covers the service seam (ApplySourceItem,
 // MarkSourceItemDeleted, GetVersionHistory) and the document-api delta
-// (GET /:id/versions, includeDeletedFromSource) introduced by OpenSpec change
-// `add-google-drive-ingestion`. It runs against the in-process test server
+// (GET /:id/versions, includeDeletedFromSource) of document-source ingestion.
+// It runs against the in-process test server
 // backed by a real Postgres test database (testutil.BaseSuite); the suite skips
 // via testdb.SkipOrFatal when Postgres is unreachable.
 

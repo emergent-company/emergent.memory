@@ -21,7 +21,7 @@ import (
 // This is a stateless facade over the run engine: each `data:` line is a
 // StreamResponse discriminated by member presence (`task`, `message`,
 // `statusUpdate`, `artifactUpdate`), never a `kind` field. Internal stream
-// events are translated per design.md's event map (Decision 3).
+// events are translated through the explicit event map in this file.
 
 // ---------------------------------------------------------------------------
 // Stream translator (pure, unit-testable)

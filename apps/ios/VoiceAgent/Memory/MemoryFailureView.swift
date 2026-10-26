@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// Presentation of a connection failure with a retry affordance
-/// (OpenSpec task 3.4).
+/// Presentation of a connection failure with a retry affordance.
 ///
 /// Styled on the shared token system: a serious-tinted warning badge, the card
 /// background, the medium corner radius, and the prominent button style. The

@@ -5,8 +5,8 @@ import UIKit
 /// Device self-introduction manifest sent to the gateway inside the one-time
 /// setup request body: `{"token": ..., "device": {...}}`.
 ///
-/// Every key is an optional string (see the "device-self-introduction" OpenSpec
-/// change, section 2, for the gateway contract). The raw hardware identifier in
+/// Every key is an optional string (the gateway contract in `DeviceManifest`
+/// accepts them independently). The raw hardware identifier in
 /// `modelId` is the durable discriminator; every other field is best-effort
 /// display sugar. Synthesized coding keys match the camelCase JSON keys exactly.
 struct DeviceManifest: Codable, Equatable, Sendable {

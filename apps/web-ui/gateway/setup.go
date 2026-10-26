@@ -18,7 +18,7 @@ import (
 // errSetupNoProjectScope is returned when a setup QR cannot name the project it
 // onboards. In session mode the devices page is always project-scoped, so this
 // means the request had no resolved project — fail closed rather than mint a
-// project-less QR (see the "Setup QR carries the onboarding project" spec).
+// QR that cannot say which project it onboards.
 var errSetupNoProjectScope = errors.New("setup QR requires a resolved project scope")
 
 // device is one registered device credential, as shown in the settings UI. It

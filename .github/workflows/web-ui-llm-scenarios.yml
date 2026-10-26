@@ -25,8 +25,7 @@ name: Web UI live-LLM scenarios
 #     the operator provisions the two repo secrets from the credential vault.
 on:
   schedule:
-    # 07:43 UTC daily — off the :00/:15 mark to avoid runner congestion
-    # (mirrors the openspec-archive.yml schedule pattern).
+    # 07:43 UTC daily — off the :00/:15 mark to avoid runner congestion.
     - cron: '43 7 * * *'
   workflow_dispatch:
 

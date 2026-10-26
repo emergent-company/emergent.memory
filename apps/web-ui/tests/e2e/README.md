@@ -130,7 +130,8 @@ journalctl -u playwright-ui -f   # follow (shows air reload logs)
 - air watches `tests/e2e/**` and restarts the UI server on change (`.air.toml`).
 - systemd `Restart=always` keeps air itself alive across crashes/session teardown.
 - Unit file: `tests/e2e/playwright-ui.service` (install: `cp` to `/etc/systemd/system/`, then `systemctl daemon-reload && systemctl enable --now playwright-ui`).
-- The UI is served at the dev gateway origin (tailscale serve → `127.0.0.1:8123`).
+- The UI is served at the gateway origin your `E2E_BASE_URL` points at; the unit
+  file above assumes a local reverse proxy on `127.0.0.1:8123`.
 
 ## Test-ID convention
 
@@ -379,9 +380,8 @@ detail, and invite accept/decline all require a second member in the org. The su
 has one Zitadel test user, so these stay uncovered rather than being weakened into
 page-load assertions. Seeding a second member during `setup` is the intended fix.
 
-The remaining gaps above are tracked as an OpenSpec change:
-`openspec/changes/web-ui-e2e-coverage/` (phases per feature area, with per-task
-status and the blocked items recorded in `tasks.md`).
+The remaining gaps above are listed per feature area in the coverage sections of
+this document; the blocked ones say why they stay uncovered.
 
 ## CI — hermetic JS wiring gate
 

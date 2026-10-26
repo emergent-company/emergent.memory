@@ -468,7 +468,7 @@ func TestMintSetupTokenReusesValid(t *testing.T) {
 }
 
 // TestSetupTokenSingleUseInProcess asserts the setup token is single-use on the
-// same Server. The store is in-process by design (Decision 3): a gateway
+// same Server. The store is in-process by design: a gateway
 // restart drops pending tokens and the QR is re-minted on the next devices-page
 // load, so there is no restart-survival to assert — only that a consumed token
 // cannot be claimed again.

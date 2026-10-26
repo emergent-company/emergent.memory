@@ -64,8 +64,8 @@ curl -sS -X POST "$MEMORY_SERVER_URL/api/projects/$MEMORY_PROJECT_ID/agent-queue
 - **Graph reaction** — bind the runtime agent with a `reaction` trigger on graph
   objects (e.g. a `PullRequest` object) to enqueue automatically.
 - **Cron** — a `schedule` trigger for periodic sweeps.
-- **GitHub** — planned GitHub webhook producer (see the OpenSpec change
-  `add-agent-review-queues`, phase 2).
+- **GitHub** — planned GitHub webhook producer (follows the same review-queue
+  path the graph and cron triggers use).
 
 ## Findings
 

@@ -15,8 +15,8 @@ import (
 // --- scoped URL paths: /o/{orgRef} and /o/{orgRef}/p/{projectRef} ---
 //
 // Org and project context is carried in the URL so each browser tab is
-// independently scoped and every screen is linkable (see the scoped-web-urls
-// OpenSpec change). The scope prefix is stripped before routing, so the
+// independently scoped and every screen is linkable. The scope prefix is
+// stripped before routing, so the
 // existing flat route table and handlers are reused unchanged; the resolver
 // middleware re-establishes the scope from the refs and validates it against
 // the caller's org→project access tree. The session cookie is no longer

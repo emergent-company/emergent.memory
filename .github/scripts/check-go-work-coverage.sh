@@ -7,10 +7,11 @@
 # A module is covered when either:
 #   1. the root go.work lists it, or
 #   2. the allowlisted isolated root's own go.work claims it — `isolated_roots`
-#      below, currently only e2e (see the server-agent-runtime spec, "E2E module SHALL be isolated
-#      from the workspace build list"). A deeper go.work inside the subtree does
-#      NOT count: the isolated root's workspace is the one a command run at that
-#      root resolves, so it is the one that must claim every module beneath it.
+#      below, currently only e2e: the e2e module must stay isolated from the root
+#      build list (its runlog framework pins an older ADK that does not compile
+#      against the server's). A deeper go.work inside the subtree does NOT count:
+#      the isolated root's workspace is the one a command run at that root
+#      resolves, so it is the one that must claim every module beneath it.
 # Rule 2 is deliberately opt-in by editing the list: dropping a nested go.work
 # somewhere must never be enough to escape the root build list, or an arbitrary
 # module could silently stop being built — the very drift class (#923) this

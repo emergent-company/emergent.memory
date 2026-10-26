@@ -7,9 +7,8 @@
 #
 # Monorepo layout: the app lives at apps/ios/ in this repo. On the Mac it is
 # synced into the checkout's client/ios/ subtree — the only path this script
-# owns, and the only path its --delete is allowed to touch. Everything else on
-# the Mac (client/apps/openspec, client/macos, build/DerivedData, ...) is left
-# untouched.
+# owns, and the only path its --delete is allowed to touch. Everything else in
+# the Mac checkout (client/macos, build/DerivedData, ...) is left untouched.
 #
 # Usage:
 #   tools/ios-build-mac.sh              # simulator build (CODE_SIGNING_ALLOWED=NO)

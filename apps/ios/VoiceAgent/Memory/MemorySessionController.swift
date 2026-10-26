@@ -4,7 +4,7 @@ import Combine
 import Foundation
 import LiveKit
 
-/// User-facing classification of a failed connection (OpenSpec task 3.4).
+/// User-facing classification of a failed connection.
 /// Plain enum + `LocalizedError` so the failure UI stays trivially restyleable.
 enum MemoryFailure: LocalizedError, Equatable {
     /// The token endpoint could not be reached, returned a non-2xx status,

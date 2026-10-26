@@ -11,7 +11,7 @@ import (
 )
 
 // MCPRegistryTransportUpdateSuite proves that a registered server's transport
-// may be changed after registration (spec: openspec/specs/mcp-servers-ui). The
+// may be changed after registration (the MCP server UI contract). The
 // UpdateMCPServerDTO carries a Type field; UpdateServer applies the switch and
 // clears the previous transport's connection fields so stale config never
 // leaks into the new transport.

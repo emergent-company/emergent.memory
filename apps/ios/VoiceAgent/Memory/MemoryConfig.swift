@@ -15,7 +15,7 @@ extension Notification.Name {
 /// changing a value the settings screen must recreate the controller (or
 /// relaunch the app) for the new value to take effect.
 ///
-/// # Stable API for the settings screen (OpenSpec task 3.2)
+/// # Stable API for the settings screen
 ///
 /// Bind the settings UI to these properties and their corresponding
 /// `UserDefaults` keys (`*Key` static constants). Property names are stable;

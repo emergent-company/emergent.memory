@@ -124,4 +124,4 @@ runner reuses the `build/DerivedData` the build produced, so no rebuild.
 
 - `Scripts/README.md` — full human reference for the host tooling (read first).
 - `apps/connector.linux/e2e/README.md` — darwin e2e variant details.
-- `openspec/specs/mac-connector-e2e/spec.md` — e2e capability spec.
+- `Scripts/README.md` § "Darwin engine e2e" — what the darwin suite covers.
