@@ -1,4 +1,4 @@
-// Package monitoring provides the Monitoring service client for the Emergent API SDK.
+// Package monitoring provides the Monitoring service client for the Memory API SDK.
 package monitoring
 
 import (

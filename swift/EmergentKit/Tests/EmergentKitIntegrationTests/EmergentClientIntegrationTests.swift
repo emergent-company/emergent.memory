@@ -5,7 +5,7 @@ import XCTest
 ///
 /// **Requirements to run:**
 /// - A compiled `EmergentGoCore.xcframework` (run `task server:swift:xcframework`)
-/// - A live Emergent server reachable at the URL set in the environment variable
+/// - A live Memory server reachable at the URL set in the environment variable
 ///   `EMERGENT_TEST_SERVER_URL` (default: `http://localhost:9090`)
 /// - A valid API key in `EMERGENT_TEST_API_KEY`
 ///

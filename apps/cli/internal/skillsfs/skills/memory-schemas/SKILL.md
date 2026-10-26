@@ -8,7 +8,7 @@ metadata:
 
 Manage schemas using `memory schemas`. Schemas define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
 
-> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
+> **New to Memory?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
 
 ## Rules
 

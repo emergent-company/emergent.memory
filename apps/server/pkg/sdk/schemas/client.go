@@ -1,4 +1,4 @@
-// Package schemas provides the Memory Schema service client for the Emergent API SDK.
+// Package schemas provides the Memory Schema service client for the Memory API SDK.
 // Memory Schema define reusable sets of object and relationship types that can be assigned to projects.
 package schemas
 

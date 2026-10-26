@@ -1,4 +1,4 @@
-"""Shared fixtures for the Emergent Python SDK test suite.
+"""Shared fixtures for the Memory Python SDK test suite.
 
 Every test talks to an ``httpx.MockTransport``: no network access, no live
 server.  The transport records requests so tests can assert on the URL,

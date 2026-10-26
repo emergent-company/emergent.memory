@@ -2,7 +2,7 @@ import EmergentBridge
 import Foundation
 import OSLog
 
-/// The primary Swift SDK client for the Emergent platform.
+/// The primary Swift SDK client for the Memory platform.
 ///
 /// `EmergentClient` is implemented as a Swift `actor` to guarantee thread-safe
 /// access to the underlying Go-side client handle and all internal mutable state.

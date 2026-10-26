@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents`
 
-The `documents` client manages documents stored in the Emergent platform — upload, create, retrieve, delete, and access content.
+The `documents` client manages documents stored in the Memory platform — upload, create, retrieve, delete, and access content.
 
 ## Methods
 

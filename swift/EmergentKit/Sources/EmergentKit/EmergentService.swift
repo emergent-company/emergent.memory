@@ -1,6 +1,6 @@
 import Foundation
 
-/// Protocol defining all operations available in the Emergent Swift SDK.
+/// Protocol defining all operations available in the Memory Swift SDK.
 ///
 /// `EmergentClient` is the production implementation. Conforming to this
 /// protocol in your tests lets you inject a mock without triggering the

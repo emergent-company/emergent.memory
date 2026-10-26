@@ -1,4 +1,4 @@
-// Package apidocs provides the API Docs service client for the Emergent API SDK.
+// Package apidocs provides the API Docs service client for the Memory API SDK.
 // This client accesses the built-in documentation endpoints (not OpenAPI/Swagger).
 package apidocs
 

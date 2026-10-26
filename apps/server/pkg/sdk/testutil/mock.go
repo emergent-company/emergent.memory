@@ -1,4 +1,4 @@
-// Package testutil provides testing utilities for the Emergent SDK.
+// Package testutil provides testing utilities for the Memory SDK.
 package testutil
 
 import (

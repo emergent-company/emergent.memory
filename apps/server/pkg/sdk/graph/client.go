@@ -1,4 +1,4 @@
-// Package graph provides the Graph service client for the Emergent API SDK.
+// Package graph provides the Graph service client for the Memory API SDK.
 // This includes objects, relationships, graph search, traversal, branch merge,
 // and analytics functionality.
 package graph

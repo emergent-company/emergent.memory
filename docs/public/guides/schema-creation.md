@@ -11,7 +11,7 @@ related: []
 
 # Schema Creation Guide
 
-This guide explains how to create and manage **schemas** in Emergent. Schemas define reusable definitions for entity types, relationships, UI configurations, and extraction prompts.
+This guide explains how to create and manage **schemas** in Memory. Schemas define reusable definitions for entity types, relationships, UI configurations, and extraction prompts.
 
 ## What is a Schema?
 
@@ -803,7 +803,7 @@ DELETE /api/schemas/projects/:projectId/:schemaId
 
 ## Summary
 
-**Schemas** are the foundation of structured knowledge in Emergent:
+**Schemas** are the foundation of structured knowledge in Memory:
 
 - **Define once, use everywhere** - Reusable schemas across projects
 - **Type-safe** - JSON Schema validation ensures data quality

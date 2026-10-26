@@ -1,6 +1,6 @@
 # code-memory-blueprint
 
-An [Emergent](https://emergent.company) blueprint that installs the **code-structure** schema pack into a Memory knowledge graph project. It maps the structural and architectural layer of any software codebase — what the code *is*, not the workflow of building it. Works for any language or framework (Go, TypeScript, Python, Swift, Rust, etc.).
+An [Memory](https://emergent.company) blueprint that installs the **code-structure** schema pack into a Memory knowledge graph project. It maps the structural and architectural layer of any software codebase — what the code *is*, not the workflow of building it. Works for any language or framework (Go, TypeScript, Python, Swift, Rust, etc.).
 
 ---
 
@@ -352,7 +352,7 @@ git clone https://github.com/mkucharz/code-memory-blueprint
 memory blueprints install ./code-memory-blueprint --project <project-slug>
 ```
 
-This installs the `code-structure` schema pack (24 object types, 36 relationship types) into your Emergent project. No agents or seed data are included — this is a schema-only blueprint.
+This installs the `code-structure` schema pack (24 object types, 36 relationship types) into your Memory project. No agents or seed data are included — this is a schema-only blueprint.
 
 ---
 
@@ -383,7 +383,7 @@ code-memory-blueprint/
 
 ## Prerequisites
 
-- An Emergent project with the `memory` CLI installed
+- A Memory project with the `memory` CLI installed
 - No agents, no seed data, no external MCP servers required
 
 ---

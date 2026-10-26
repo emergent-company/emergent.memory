@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Emergent Server Startup ==="
+echo "=== Memory Server Startup ==="
 
 export DB_HOST="${POSTGRES_HOST:-db}"
 export DB_PORT="${POSTGRES_PORT:-5432}"
@@ -39,5 +39,5 @@ EOF
     echo "CLI configured!"
 fi
 
-echo "Starting Emergent server..."
+echo "Starting Memory server..."
 exec /usr/local/bin/emergent-server "$@"

@@ -4,7 +4,7 @@ import Foundation
 
 /// Configuration for creating an ``EmergentClient``.
 public struct EmergentConfig: Sendable {
-    /// Full URL of the Emergent server, e.g. `"https://memory.emergent-company.ai"`.
+    /// Full URL of the Memory server, e.g. `"https://memory.emergent-company.ai"`.
     public let serverURL: String
 
     /// Authentication mode. Supported values: `"apikey"`, `"apitoken"`.
@@ -149,7 +149,7 @@ public struct ChatResponse: Codable, Sendable {
 
 // MARK: - Documents
 
-/// A document stored in the Emergent platform.
+/// A document stored in the Memory platform.
 public struct Document: Codable, Sendable {
     public let id: String
     public let filename: String

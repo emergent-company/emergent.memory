@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/mcp`
 
-The `mcp` client is a JSON-RPC 2.0 client for the Model Context Protocol (MCP) endpoint. It allows calling Emergent's built-in MCP server to invoke tools, list resources, and retrieve prompts.
+The `mcp` client is a JSON-RPC 2.0 client for the Model Context Protocol (MCP) endpoint. It allows calling Memory's built-in MCP server to invoke tools, list resources, and retrieve prompts.
 
 !!! note "Context behavior"
     `MCP.SetContext(projectID string)` — unlike other context-scoped clients, MCP only takes

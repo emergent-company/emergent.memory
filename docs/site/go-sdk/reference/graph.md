@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/graph`
 
-The `graph` client provides full access to the Emergent knowledge graph — objects, relationships, search, traversal, analytics, and branch merging.
+The `graph` client provides full access to the Memory knowledge graph — objects, relationships, search, traversal, analytics, and branch merging.
 
 !!! tip "Dual-ID Model"
     Graph objects have two IDs: `VersionID` (changes on update) and `EntityID` (stable forever).

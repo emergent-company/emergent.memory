@@ -29,7 +29,7 @@ _DEFAULT_TIMEOUT = httpx.Timeout(30.0)
 
 class BaseClient:
     """
-    Shared HTTP machinery for all Emergent sub-clients.
+    Shared HTTP machinery for all Memory sub-clients.
 
     Parameters
     ----------

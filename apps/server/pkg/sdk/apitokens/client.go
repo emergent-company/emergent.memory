@@ -1,4 +1,4 @@
-// Package apitokens provides the API Tokens service client for the Emergent API SDK.
+// Package apitokens provides the API Tokens service client for the Memory API SDK.
 package apitokens
 
 import (

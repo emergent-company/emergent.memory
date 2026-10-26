@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// TokenPrefix for Emergent API tokens
+	// TokenPrefix for Memory API tokens
 	TokenPrefix = "emt_"
 	// TokenRandomBytes is the number of random bytes in a token
 	TokenRandomBytes = 32

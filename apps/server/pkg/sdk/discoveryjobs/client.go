@@ -1,4 +1,4 @@
-// Package discoveryjobs provides the Discovery Jobs service client for the Emergent API SDK.
+// Package discoveryjobs provides the Discovery Jobs service client for the Memory API SDK.
 package discoveryjobs
 
 import (

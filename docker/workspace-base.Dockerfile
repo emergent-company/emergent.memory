@@ -1,4 +1,4 @@
-# Combined workspace base image for Emergent agent workspaces.
+# Combined workspace base image for Memory agent workspaces.
 # Provides BOTH Python and Go SDK execution tooling so that run_python and
 # run_go work out of the box in the default sandbox image.
 #

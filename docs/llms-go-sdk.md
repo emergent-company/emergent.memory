@@ -1,4 +1,4 @@
-# Emergent Go SDK — LLM Reference
+# Memory Go SDK — LLM Reference
 
 ## Module
 

@@ -6,10 +6,10 @@ metadata:
   version: "2.0"
 ---
 
-> **New to Emergent?** Load the `memory-onboard` skill first to set up the project's knowledge graph schema before querying.
+> **New to Memory?** Load the `memory-onboard` skill first to set up the project's knowledge graph schema before querying.
 > **Want to write to the graph?** Load the `memory-graph` skill to create, update, or delete objects and relationships.
 
-Query an Emergent project knowledge base using the `memory query` command.
+Query a Memory project knowledge base using the `memory query` command.
 
 ## Rules
 

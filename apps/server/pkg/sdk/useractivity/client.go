@@ -1,4 +1,4 @@
-// Package useractivity provides the User Activity service client for the Emergent API SDK.
+// Package useractivity provides the User Activity service client for the Memory API SDK.
 package useractivity
 
 import (

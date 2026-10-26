@@ -1,5 +1,5 @@
 """
-Authentication providers for the Emergent SDK.
+Authentication providers for the Memory SDK.
 
 Three modes are supported:
 

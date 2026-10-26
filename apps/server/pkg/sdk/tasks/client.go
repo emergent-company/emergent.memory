@@ -1,4 +1,4 @@
-// Package tasks provides the Tasks service client for the Emergent API SDK.
+// Package tasks provides the Tasks service client for the Memory API SDK.
 package tasks
 
 import (

@@ -1,4 +1,4 @@
-// Package branches provides the Branches service client for the Emergent API SDK.
+// Package branches provides the Branches service client for the Memory API SDK.
 package branches
 
 import (

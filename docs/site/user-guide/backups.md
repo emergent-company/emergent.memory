@@ -1,6 +1,6 @@
 # Backups
 
-Emergent Memory supports project-level backups. A backup captures the complete state of a project — graph objects, relationships, documents, and metadata — and stores it for later restoration.
+Memory supports project-level backups. A backup captures the complete state of a project — graph objects, relationships, documents, and metadata — and stores it for later restoration.
 
 ---
 

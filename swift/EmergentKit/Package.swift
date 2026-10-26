@@ -1,5 +1,5 @@
 // swift-tools-version: 5.9
-// Package.swift for EmergentKit — the Swift SDK for the Emergent platform.
+// Package.swift for EmergentKit — the Swift SDK for the Memory platform.
 //
 // Development / local build:
 //   The XCFramework binary target is referenced locally.  Run the build

@@ -1,6 +1,6 @@
 # Integrations
 
-Integrations connect Emergent Memory to third-party services at the project or organization level. This page covers the **GitHub App** integration and general **third-party integration** management.
+Integrations connect Memory to third-party services at the project or organization level. This page covers the **GitHub App** integration and general **third-party integration** management.
 
 !!! info "Data source integrations"
     For importing content from Gmail, Google Drive, ClickUp, and similar sources, see [Data Sources](datasources.md).
@@ -9,7 +9,7 @@ Integrations connect Emergent Memory to third-party services at the project or o
 
 ## GitHub App
 
-The GitHub App integration allows Emergent Memory to connect to your GitHub repositories — enabling repo-aware agents, automated knowledge extraction from code and issues, and OAuth-based repository access.
+The GitHub App integration allows Memory to connect to your GitHub repositories — enabling repo-aware agents, automated knowledge extraction from code and issues, and OAuth-based repository access.
 
 ### Connect GitHub
 

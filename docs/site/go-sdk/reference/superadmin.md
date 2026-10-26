@@ -1,6 +1,6 @@
 # superadmin
 
-Package `superadmin` provides a client for the Emergent Superadmin API.
+Package `superadmin` provides a client for the Memory Superadmin API.
 
 The superadmin client is a **non-context client** — it requires no org or project context. All methods require **superadmin privileges**. The client provides platform-wide administration: user, organization, and project management; email, embedding, extraction, document-parsing, and sync job oversight.
 

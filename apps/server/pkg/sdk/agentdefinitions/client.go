@@ -1,4 +1,4 @@
-// Package agentdefinitions provides the Agent Definitions service client for the Emergent API SDK.
+// Package agentdefinitions provides the Agent Definitions service client for the Memory API SDK.
 // Agent definitions store agent configurations (system prompts, tools, model config, visibility)
 // separately from runtime agent state. Requires authentication with admin:read and/or admin:write scopes.
 package agentdefinitions

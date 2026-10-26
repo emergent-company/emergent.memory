@@ -656,7 +656,7 @@ if [ $WAITED -ge $MAX_WAIT ]; then
 fi
 
 echo ""
-echo -e "${CYAN}Installing Emergent CLI...${NC}"
+echo -e "${CYAN}Installing Memory CLI...${NC}"
 HOST_OS=$(detect_os)
 HOST_ARCH=$(detect_arch)
 

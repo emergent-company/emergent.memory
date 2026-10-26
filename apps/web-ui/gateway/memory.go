@@ -23,7 +23,7 @@ import (
 // address space by streaming an unbounded body.
 const maxMemoryResponseBytes = 64 << 20
 
-// MemoryClient is a thin HTTP client for the Emergent Memory REST API.
+// MemoryClient is a thin HTTP client for the Memory REST API.
 // It holds no process-global credential: every request's bearer token and
 // project scope are resolved from the request's session context.
 type MemoryClient struct {

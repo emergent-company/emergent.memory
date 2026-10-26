@@ -6,7 +6,7 @@ metadata:
   version: "2.0"
 ---
 
-Manage runtime agents and agent definitions in an Emergent project using `memory agents` and `memory agent-definitions`.
+Manage runtime agents and agent definitions in a Memory project using `memory agents` and `memory agent-definitions`.
 
 ## Rules
 

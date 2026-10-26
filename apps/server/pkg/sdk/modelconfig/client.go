@@ -1,4 +1,4 @@
-// Package modelconfig provides the ModelConfig service client for the Emergent API SDK.
+// Package modelconfig provides the ModelConfig service client for the Memory API SDK.
 // It covers project-level default generative and embedding model selection.
 package modelconfig
 

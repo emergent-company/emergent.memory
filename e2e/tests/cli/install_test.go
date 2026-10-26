@@ -381,7 +381,7 @@ func TestOpencodeSeesInstalledSkills(t *testing.T) {
 }
 
 // TestCLIInstalled_ProjectsList verifies a full authenticated round-trip against
-// the Emergent server: auth setup → projects list.
+// the Memory server: auth setup → projects list.
 func TestCLIInstalled_ProjectsList(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)

@@ -230,7 +230,7 @@ func TestRegisterClient(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	identity, err := registerClient(context.Background(), srv.URL, "Emergent Memory", "https://api.example.test/cb", []string{"mcp:connect"})
+	identity, err := registerClient(context.Background(), srv.URL, "Memory", "https://api.example.test/cb", []string{"mcp:connect"})
 	if err != nil {
 		t.Fatalf("registerClient: %v", err)
 	}

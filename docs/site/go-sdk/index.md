@@ -1,6 +1,6 @@
 # Go SDK
 
-The Emergent Go SDK is a fully type-safe client library for the Emergent API, providing 29 service clients that cover the complete API surface.
+The Memory Go SDK is a fully type-safe client library for the Memory API, providing 29 service clients that cover the complete API surface.
 
 ## Installation
 

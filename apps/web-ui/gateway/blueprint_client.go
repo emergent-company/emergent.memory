@@ -7,7 +7,7 @@ import (
 	"net/url"
 )
 
-// --- blueprint API client types (mirror Emergent Memory's /api/blueprints) ---
+// --- blueprint API client types (mirror Memory's /api/blueprints) ---
 
 // BlueprintRecord mirrors memory's Blueprint entity returned by the
 // /api/blueprints endpoints. CreatedAt/UpdatedAt are kept as strings because

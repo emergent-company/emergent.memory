@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "emergent-memory"
 version = "0.2.0"
-description = "Python SDK for the Emergent Memory API"
+description = "Python SDK for the Memory API"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

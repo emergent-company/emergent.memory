@@ -1,4 +1,4 @@
-# Emergent Server with CLI — Consolidated Image
+# Memory Server with CLI — Consolidated Image
 # Includes: Go server, swagger docs, migration binary, CLI binary
 # Build context: REPOSITORY ROOT (.)
 #

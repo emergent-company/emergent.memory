@@ -40,7 +40,7 @@ var dbDiagnoseCmd = &cobra.Command{
 	Use:   "diagnose",
 	Short: "Analyse query performance via EXPLAIN ANALYZE",
 	Long: `Run EXPLAIN (ANALYZE, BUFFERS) on the most critical query patterns in
-Emergent and report slow plans, missing index usage, bad row estimates,
+Memory and report slow plans, missing index usage, bad row estimates,
 sequential scans on large tables, table bloat, and unused indexes.
 
 Connection priority (first found wins):
@@ -75,7 +75,7 @@ type diagResult struct {
 // ── entry point ───────────────────────────────────────────────────────────────
 
 func runDbDiagnose(cmd *cobra.Command, _ []string) error {
-	fmt.Printf("\n%s\n", diagColorBoldCyan("Emergent Database Diagnostics"))
+	fmt.Printf("\n%s\n", diagColorBoldCyan("Memory Database Diagnostics"))
 	fmt.Println("═══════════════════════════════════════════════════════")
 	fmt.Println()
 

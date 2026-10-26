@@ -6,9 +6,9 @@ metadata:
   version: "1.1"
 ---
 
-Manage Emergent Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's schemas, agent definitions, skills, and initial graph objects/relationships.
+Manage Memory Blueprints using `memory blueprints`. A blueprint is a directory of YAML/JSON files and JSONL seed data that declaratively describes a project's schemas, agent definitions, skills, and initial graph objects/relationships.
 
-> **New to Emergent?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
+> **New to Memory?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
 
 ## Rules
 

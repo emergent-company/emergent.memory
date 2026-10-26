@@ -1,4 +1,4 @@
-// mock-memory.mjs — STATEFUL mock of the Emergent Memory API for e2e tests.
+// mock-memory.mjs — STATEFUL mock of the Memory API for e2e tests.
 // The gateway points at this (MEMORY_URL=http://localhost:5301) so tests are
 // deterministic and never touch production memory.
 import http from "node:http";

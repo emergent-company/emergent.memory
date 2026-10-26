@@ -1,6 +1,6 @@
-# Emergent Documentation
+# Memory Documentation
 
-**Emergent** is a graph-native AI memory platform. This site documents how to use the platform, integrate with it, and build on top of it.
+**Memory** is a graph-native AI memory platform. This site documents how to use the platform, integrate with it, and build on top of it.
 
 ## Guides
 
@@ -22,7 +22,7 @@ Reference for developers integrating with or extending Memory — provider setup
 
 ### Go SDK
 
-The Go SDK provides a fully type-safe client library covering the complete Emergent API surface — 30 service clients, dual authentication, multi-tenancy, streaming SSE, and structured error handling.
+The Go SDK provides a fully type-safe client library covering the complete Memory API surface — 30 service clients, dual authentication, multi-tenancy, streaming SSE, and structured error handling.
 
 **Module:** `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`
 
@@ -35,7 +35,7 @@ The Swift surface is the `EmergentKit` package under [`swift/EmergentKit`](https
 
 ### Python SDK
 
-The Python SDK (`emergent-memory`) provides a full-featured async-capable client library for the Emergent API — 13 sub-clients, three auth modes, SSE streaming, and structured error handling.
+The Python SDK (`emergent-memory`) provides a full-featured async-capable client library for the Memory API — 13 sub-clients, three auth modes, SSE streaming, and structured error handling.
 
 **Package:** `emergent-memory` (PyPI)
 

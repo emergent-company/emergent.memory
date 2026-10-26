@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Emergent Go SDK will be documented in this file.
+All notable changes to the Memory Go SDK will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Release Notes
 
-This is the **first public release** of the Emergent Go SDK. The SDK is production-ready with:
+This is the **first public release** of the Memory Go SDK. The SDK is production-ready with:
 
 - ✅ **11 service clients** - Documents, Chunks, Search, Graph, Chat, Projects, Orgs, Users, API Tokens, Health, MCP
 - ✅ **Dual authentication** - API key (standalone) and OAuth device flow (full deployment)

@@ -1,7 +1,7 @@
 """
 MCP (Model Context Protocol) sub-client.
 
-The Emergent server exposes a JSON-RPC 2.0 MCP endpoint at
+The Memory server exposes a JSON-RPC 2.0 MCP endpoint at
 ``POST /api/mcp/rpc``.  This client wraps the protocol machinery
 and exposes the most commonly needed methods.
 

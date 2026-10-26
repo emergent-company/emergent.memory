@@ -1,6 +1,6 @@
 # Changelog
 
-The Emergent Go SDK follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+The Memory Go SDK follows [Semantic Versioning](https://semver.org/) and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 Source: [`apps/server/pkg/sdk/CHANGELOG.md`](https://github.com/emergent-company/emergent.memory/blob/main/apps/server/pkg/sdk/CHANGELOG.md)
 

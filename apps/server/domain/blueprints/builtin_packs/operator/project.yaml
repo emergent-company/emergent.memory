@@ -12,7 +12,7 @@ projectInfo: |
 
   A single general-assistant agent that operates the whole platform. It carries
   no schema — only an agent definition (prompt + tool grant) — mirroring the
-  Emergent Memory `blueprint-architect` blueprint, which ships an authoring
+  Memory `blueprint-architect` blueprint, which ships an authoring
   agent rather than object types.
 
   Key design decisions:

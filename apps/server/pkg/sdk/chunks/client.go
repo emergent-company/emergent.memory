@@ -1,4 +1,4 @@
-// Package chunks provides the Chunks service client for the Emergent API SDK.
+// Package chunks provides the Chunks service client for the Memory API SDK.
 package chunks
 
 import (

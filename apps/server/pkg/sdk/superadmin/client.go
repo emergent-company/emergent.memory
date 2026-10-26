@@ -1,4 +1,4 @@
-// Package superadmin provides the Superadmin service client for the Emergent API SDK.
+// Package superadmin provides the Superadmin service client for the Memory API SDK.
 // All endpoints require superadmin privileges.
 package superadmin
 

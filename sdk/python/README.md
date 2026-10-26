@@ -2,7 +2,7 @@
 
 [![Python SDK CI](https://github.com/emergent-company/emergent.memory/actions/workflows/python-sdk.yml/badge.svg)](https://github.com/emergent-company/emergent.memory/actions/workflows/python-sdk.yml)
 
-Python client library for the [Emergent Memory](https://emergent-company.ai) API.
+Python client library for the [Memory](https://emergent-company.ai) API.
 
 Mirrors the Go SDK at `apps/server/pkg/sdk/` and supports all three auth modes, SSE streaming, and the full range of API sub-clients.
 

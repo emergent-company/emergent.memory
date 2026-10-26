@@ -1,6 +1,6 @@
 # Knowledge Graph
 
-The knowledge graph is the core of Emergent Memory. It stores **objects** (nodes) and **relationships** (edges) in a typed, versioned, searchable graph.
+The knowledge graph is the core of Memory. It stores **objects** (nodes) and **relationships** (edges) in a typed, versioned, searchable graph.
 
 ## Concepts
 

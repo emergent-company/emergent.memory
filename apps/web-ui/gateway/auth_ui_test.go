@@ -49,7 +49,7 @@ func TestRenderLoginPage(t *testing.T) {
 	for _, want := range []string{
 		"<title>Sign in — Memory</title>",
 		"Sign in to Memory",
-		"Continue with your Emergent Memory account",
+		"Continue with your Memory account",
 		"Sign in",
 		`href="/auth/start"`,
 		`data-theme="dark"`,

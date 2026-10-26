@@ -1,6 +1,6 @@
 # apidocs
 
-Package `apidocs` provides a client for the Emergent built-in API documentation endpoints.
+Package `apidocs` provides a client for the Memory built-in API documentation endpoints.
 
 The apidocs client is a **non-context client** — it requires no org or project context. It provides access to the server's internal documentation registry: a curated index of documentation articles that can be listed, searched, and browsed by category.
 

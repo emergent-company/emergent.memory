@@ -1,6 +1,6 @@
 # Memory Python SDK Reference for LLMs
 
-Python client library for the Emergent Memory API. Package: `emergent-memory`. Source: `sdk/python/`.
+Python client library for the Memory API. Package: `emergent-memory`. Source: `sdk/python/`.
 
 **Install:** `pip install emergent-memory-sdk`
 

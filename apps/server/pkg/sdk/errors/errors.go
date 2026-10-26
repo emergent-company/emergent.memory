@@ -1,4 +1,4 @@
-// Package errors provides SDK-specific error types for the Emergent API client.
+// Package errors provides SDK-specific error types for the Memory API client.
 package errors
 
 import (
@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// Error represents an error returned by the Emergent API.
+// Error represents an error returned by the Memory API.
 type Error struct {
 	StatusCode int                    `json:"status_code"`
 	Code       string                 `json:"code"`

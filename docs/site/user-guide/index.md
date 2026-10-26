@@ -1,6 +1,6 @@
 # User Guide
 
-**Emergent Memory** is a graph-native AI knowledge platform. It lets you store, connect, and query information as a structured knowledge graph — then use AI to extract insights, answer questions, and automate workflows over that knowledge.
+**Memory** is a graph-native AI knowledge platform. It lets you store, connect, and query information as a structured knowledge graph — then use AI to extract insights, answer questions, and automate workflows over that knowledge.
 
 ## What you can do
 

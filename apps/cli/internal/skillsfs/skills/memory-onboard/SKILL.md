@@ -281,7 +281,7 @@ memory schemas compiled-types
 
 ### Step 5 — Populate the graph
 
-The recommended approach is to ingest documents and let Emergent extract objects automatically using the `extraction_guidelines` in the schema.
+The recommended approach is to ingest documents and let Memory extract objects automatically using the `extraction_guidelines` in the schema.
 
 #### Upload documents
 

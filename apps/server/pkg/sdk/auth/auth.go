@@ -1,4 +1,4 @@
-// Package auth provides authentication mechanisms for the Emergent API SDK.
+// Package auth provides authentication mechanisms for the Memory API SDK.
 package auth
 
 import (

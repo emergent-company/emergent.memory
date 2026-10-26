@@ -1,5 +1,5 @@
 // Package backups provides the Backups and Restores service client for the
-// Emergent API SDK.
+// Memory API SDK.
 package backups
 
 import (

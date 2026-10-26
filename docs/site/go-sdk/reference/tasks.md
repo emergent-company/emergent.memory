@@ -1,6 +1,6 @@
 # tasks
 
-Package `tasks` provides a client for the Emergent Tasks API.
+Package `tasks` provides a client for the Memory Tasks API.
 
 Tasks are human-review items — such as AI-generated suggestions or flagged content — that require explicit acceptance, rejection, or cancellation. They are project-scoped and tied to a review/resolution workflow.
 

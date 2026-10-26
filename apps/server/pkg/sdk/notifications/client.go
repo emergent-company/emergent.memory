@@ -1,4 +1,4 @@
-// Package notifications provides the Notifications service client for the Emergent API SDK.
+// Package notifications provides the Notifications service client for the Memory API SDK.
 package notifications
 
 import (

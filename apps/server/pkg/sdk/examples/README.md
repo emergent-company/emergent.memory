@@ -1,6 +1,6 @@
-# Emergent Go SDK Examples
+# Memory Go SDK Examples
 
-This directory contains working examples demonstrating how to use the Emergent Go SDK.
+This directory contains working examples demonstrating how to use the Memory Go SDK.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ export EMERGENT_ORG_ID="your_org_id"                # Optional
 export EMERGENT_PROJECT_ID="your_project_id"        # Optional
 ```
 
-2. **Ensure the Emergent server is running:**
+2. **Ensure the Memory server is running:**
 
 ```bash
 # Check server health
@@ -258,9 +258,9 @@ go build -o bin/projects ./projects/
 
 **"No documents found"**
 
-- Upload some documents first using the Emergent CLI or admin UI
+- Upload some documents first using the Memory CLI or admin UI
 - Ensure you're using the correct project ID
 
 ## License
 
-See the main [Emergent LICENSE](../../../../../LICENSE) file.
+See the main [Memory LICENSE](../../../../../LICENSE) file.

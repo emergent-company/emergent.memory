@@ -868,7 +868,7 @@ type MCPRegistryConfig struct {
 	// which is only correct when the API and UI share an origin.
 	OAuthLandingURL string `env:"MCP_REGISTRY_OAUTH_LANDING_URL" envDefault:""`
 	// OAuthClientName is the client_name presented at dynamic client
-	// registration. Empty defaults to "Emergent Memory".
+	// registration. Empty defaults to "Memory".
 	OAuthClientName string `env:"MCP_REGISTRY_OAUTH_CLIENT_NAME" envDefault:""`
 }
 

@@ -1,7 +1,7 @@
 // Package graphutil provides utility types for working with the dual ID model
-// of Emergent graph objects (VersionID / EntityID).
+// of Memory graph objects (VersionID / EntityID).
 //
-// Emergent graph objects have two identifiers:
+// Memory graph objects have two identifiers:
 //   - ID (VersionID): changes on every UpdateObject call — a version handle
 //   - CanonicalID (EntityID): stable, never changes after creation — the logical identity
 //

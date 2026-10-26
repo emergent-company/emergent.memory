@@ -1,6 +1,6 @@
 # Multi-Tenancy
 
-The Emergent platform is multi-tenant: resources are scoped to an **organization** and a **project**. The SDK propagates these scopes via `X-Org-ID` and `X-Project-ID` HTTP headers on every API call made through context-scoped service clients.
+The Memory platform is multi-tenant: resources are scoped to an **organization** and a **project**. The SDK propagates these scopes via `X-Org-ID` and `X-Project-ID` HTTP headers on every API call made through context-scoped service clients.
 
 ## Setting Context
 

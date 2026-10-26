@@ -1,4 +1,4 @@
-# Domain Guide — Emergent Memory Go Server
+# Domain Guide — Memory Go Server
 
 This guide documents all server domain packages under `apps/server/domain/`. It covers HTTP routes, key entities, enums/constants, and service/subsystem notes for each domain.
 

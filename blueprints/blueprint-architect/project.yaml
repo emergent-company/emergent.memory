@@ -1,7 +1,7 @@
 projectInfo: |
   # Blueprint Architect
 
-  A dedicated authoring agent that designs and emits Emergent blueprints for a
+  A dedicated authoring agent that designs and emits Memory blueprints for a
   project. Given a domain description, it designs the object types, relationship
   types, agent definitions, and seed data that capture the domain, registers the
   schema in the live project, and produces a reusable blueprint directory

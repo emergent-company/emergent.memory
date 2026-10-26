@@ -47,7 +47,7 @@ func TestA2ADTO_AgentCard_CamelCaseKeys(t *testing.T) {
 		Description: "desc",
 		Version:     "1.0.0",
 		Provider: &AgentProvider{
-			Organization: "Emergent",
+			Organization: "Memory",
 			URL:          "https://example.com",
 		},
 		SupportedInterfaces: []AgentInterface{

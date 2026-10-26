@@ -1,4 +1,4 @@
-// Package projects provides the Projects service client for the Emergent API SDK.
+// Package projects provides the Projects service client for the Memory API SDK.
 package projects
 
 import (

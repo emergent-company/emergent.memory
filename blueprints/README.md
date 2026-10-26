@@ -22,7 +22,7 @@ memory blueprints install github.com/emergent-company/emergent.memory/blueprints
 
 ### [blueprint-architect](./blueprint-architect/)
 
-A dedicated authoring agent that designs and emits Emergent blueprints — object types, relationship types, agent definitions, and seed data — for a project, registers the schema live, and produces a reusable blueprint directory.
+A dedicated authoring agent that designs and emits Memory blueprints — object types, relationship types, agent definitions, and seed data — for a project, registers the schema live, and produces a reusable blueprint directory.
 
 ```bash
 memory blueprints install github.com/emergent-company/emergent.memory/blueprints/blueprint-architect --project <slug>

@@ -120,7 +120,7 @@ func TestBraveSearch_ConfigureAndSearch(t *testing.T) {
 
 	// ── Step 6: call the MCP tool via the JSON-RPC endpoint ──────────────────
 	rl.Section("Call brave_web_search via MCP")
-	results := callBraveSearchViaMCP(t, srv, token, projectID, "Emergent Memory knowledge graph")
+	results := callBraveSearchViaMCP(t, srv, token, projectID, "Memory knowledge graph")
 	rl.Printf("search returned %d results", len(results))
 
 	if len(results) == 0 {

@@ -1,6 +1,6 @@
 # health
 
-Package `health` provides a client for the Emergent Health and Metrics APIs.
+Package `health` provides a client for the Memory Health and Metrics APIs.
 
 The health client is a **non-context client** — it requires no org or project context. It is used for infrastructure health checks (Kubernetes liveness/readiness probes), runtime diagnostics, and job queue metrics.
 

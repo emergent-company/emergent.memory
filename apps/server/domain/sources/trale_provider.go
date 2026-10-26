@@ -18,7 +18,7 @@ const (
 	traleResource   = "https://app.trale.ai/api/mcp"
 	traleAuthURL    = "https://lnzymgzwwmdgbosweuih.supabase.co/auth/v1/oauth/authorize"
 	traleTokenURL   = "https://lnzymgzwwmdgbosweuih.supabase.co/auth/v1/oauth/token"
-	traleClientName = "Emergent Memory"
+	traleClientName = "Memory"
 )
 
 // traleScopes are the OIDC scopes Trale's authorization server supports; they

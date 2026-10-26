@@ -1,5 +1,5 @@
 """
-emergent — Python SDK for the Emergent Memory API.
+emergent — Python SDK for the Memory API.
 
 Quick start
 -----------

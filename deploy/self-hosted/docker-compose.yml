@@ -174,7 +174,7 @@ services:
     depends_on:
       - server
 
-  # Emergent Go Backend
+  # Memory Go Backend
   server:
     image: ghcr.io/emergent-company/memory-server:${VERSION:-latest}
     pull_policy: always

@@ -4,7 +4,7 @@ The Go SDK supports three authentication modes, selected via `sdk.Config.Auth.Mo
 
 ## API Key Mode
 
-Used for standalone Emergent deployments. Sets the `X-API-Key` header on every request.
+Used for standalone Memory deployments. Sets the `X-API-Key` header on every request.
 
 ```go
 client, err := sdk.New(sdk.Config{
@@ -41,7 +41,7 @@ intent explicit.
 
 ## OAuth Device Flow
 
-For full Emergent deployments with OIDC/OAuth. Initiates an interactive device-code flow, then
+For full Memory deployments with OIDC/OAuth. Initiates an interactive device-code flow, then
 polls for a token and stores credentials to disk.
 
 ```go
@@ -69,7 +69,7 @@ client, err := sdk.NewWithDeviceFlow(sdk.Config{
 
 ```go
 type Config struct {
-    ServerURL  string       // Required: base URL of the Emergent server
+    ServerURL  string       // Required: base URL of the Memory server
     Auth       AuthConfig
     OrgID      string       // Optional: default organization ID
     ProjectID  string       // Optional: default project ID

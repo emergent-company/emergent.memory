@@ -1,4 +1,4 @@
-// Package orgs provides the Organizations service client for the Emergent API SDK.
+// Package orgs provides the Organizations service client for the Memory API SDK.
 package orgs
 
 import (

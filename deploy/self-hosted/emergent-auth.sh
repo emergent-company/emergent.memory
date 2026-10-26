@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Emergent Google Cloud Authentication Setup
+# Memory Google Cloud Authentication Setup
 # Guides user through setting up Google API key for embeddings
 #
 
@@ -20,7 +20,7 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-echo -e "${BOLD}Emergent - Google Cloud Setup${NC}"
+echo -e "${BOLD}Memory - Google Cloud Setup${NC}"
 echo "=============================="
 echo ""
 
@@ -229,7 +229,7 @@ echo ""
 
 echo -e "${BOLD}Step 5: Restart Services${NC}"
 echo ""
-read -p "Restart Emergent server now to apply changes? (Y/n): " -r DO_RESTART
+read -p "Restart Memory server now to apply changes? (Y/n): " -r DO_RESTART
 
 if [[ ! "$DO_RESTART" =~ ^[Nn]$ ]]; then
     if [ -f "$SCRIPT_DIR/emergent-ctl" ]; then

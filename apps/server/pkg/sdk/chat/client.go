@@ -1,4 +1,4 @@
-// Package chat provides the Chat service client for the Emergent API SDK.
+// Package chat provides the Chat service client for the Memory API SDK.
 // Supports both standard CRUD and streaming chat interactions via SSE.
 package chat
 

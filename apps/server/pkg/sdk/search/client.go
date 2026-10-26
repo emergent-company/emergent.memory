@@ -1,4 +1,4 @@
-// Package search provides the Search service client for the Emergent API SDK.
+// Package search provides the Search service client for the Memory API SDK.
 package search
 
 import (

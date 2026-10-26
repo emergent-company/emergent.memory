@@ -406,7 +406,7 @@ func buildRunGoTool(deps WorkspaceToolDeps) (tool.Tool, error) {
 Use this instead of workspace_write + workspace_bash for all Go SDK tasks.
 Pass the full Go source as the "code" parameter — no file write step needed.
 
-The sandbox has the Emergent Go SDK pre-installed. Use sdk.NewFromEnv() to connect:
+The sandbox has the Memory Go SDK pre-installed. Use sdk.NewFromEnv() to connect:
 
     package main
 

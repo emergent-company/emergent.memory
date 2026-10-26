@@ -19,7 +19,7 @@ All auth providers implement `Provider`. `Authenticate` adds credentials to an o
 
 ### APIKeyProvider
 
-Sets the `X-API-Key` header. Used for standalone Emergent deployments.
+Sets the `X-API-Key` header. Used for standalone Memory deployments.
 
 ```go
 provider := auth.NewAPIKeyProvider("your-api-key")

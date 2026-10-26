@@ -278,7 +278,7 @@ extension MemoryQRScannerView {
             let data = value.data(using: .utf8),
             let payload = try? JSONDecoder().decode(QRSetupPayload.self, from: data)
         else {
-            // Not an Memory setup code: show the error inline, keep scanning.
+            // Not a Memory setup code: show the error inline, keep scanning.
             hasDecodeError = true
             return
         }

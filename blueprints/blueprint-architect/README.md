@@ -1,6 +1,6 @@
 # Blueprint Architect
 
-A dedicated authoring agent that designs and emits Emergent blueprints for a project.
+A dedicated authoring agent that designs and emits Memory blueprints for a project.
 
 ## What it installs
 

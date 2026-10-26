@@ -4,7 +4,7 @@
 
 **Client field:** `client.Integrations`
 
-Integrations connect the Emergent platform to third-party data sources (e.g. Confluence, Notion, GitHub). Once configured, you can trigger syncs to import content as documents and graph objects.
+Integrations connect the Memory platform to third-party data sources (e.g. Confluence, Notion, GitHub). Once configured, you can trigger syncs to import content as documents and graph objects.
 
 ## Methods
 
@@ -14,7 +14,7 @@ Integrations connect the Emergent platform to third-party data sources (e.g. Con
 func (c *Client) ListAvailable(ctx context.Context) ([]AvailableIntegration, error)
 ```
 
-Returns all integration providers supported by this Emergent deployment.
+Returns all integration providers supported by this Memory deployment.
 
 `GET /api/integrations/available`
 

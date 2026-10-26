@@ -10,7 +10,7 @@
 #
 # Environment variables consumed here:
 #   CI=true               — non-interactive marker
-#   MEMORY_TEST_SERVER    — Emergent API server URL (set by docker-compose.yml)
+#   MEMORY_TEST_SERVER    — Memory API server URL (set by docker-compose.yml)
 #   TEST_LOG_DIR          — where test session logs are written (default /test-logs)
 #   TEST_RUN              — optional -run filter, e.g. TestCLIInstalled_Version
 

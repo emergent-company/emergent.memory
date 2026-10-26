@@ -1,7 +1,7 @@
 """
 Server-Sent Events (SSE) streaming support.
 
-The Emergent server streams responses as newline-delimited SSE lines in
+The Memory server streams responses as newline-delimited SSE lines in
 the format::
 
     data: {"type": "...", ...}\n\n

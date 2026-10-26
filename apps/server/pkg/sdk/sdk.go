@@ -1,4 +1,4 @@
-// Package sdk provides a Go client library for the Emergent API.
+// Package sdk provides a Go client library for the Memory API.
 //
 // The SDK supports both standalone (API key) and full deployment (OAuth) authentication modes.
 //
@@ -67,7 +67,7 @@ import (
 	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/users"
 )
 
-// Client is the main SDK client for the Emergent API.
+// Client is the main SDK client for the Memory API.
 type Client struct {
 	auth      auth.Provider
 	base      string
@@ -132,7 +132,7 @@ type AuthConfig struct {
 	Scopes    []string // Optional: OAuth device-flow scopes (defaults to auth.DefaultDeviceFlowScopes)
 }
 
-// New creates a new Emergent API client.
+// New creates a new Memory API client.
 func New(cfg Config) (*Client, error) {
 	if cfg.ServerURL == "" {
 		return nil, fmt.Errorf("ServerURL is required")
@@ -212,7 +212,7 @@ func credentialSafeRedirectPolicy() func(req *http.Request, via []*http.Request)
 	}
 }
 
-// NewFromEnv creates a new Emergent API client by auto-discovering configuration.
+// NewFromEnv creates a new Memory API client by auto-discovering configuration.
 //
 // Resolution order (highest priority wins):
 //  1. ~/.memory/config.yaml — user-level CLI config file

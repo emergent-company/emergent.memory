@@ -1,4 +1,4 @@
-// Package mcpregistry provides the MCP Server Registry client for the Emergent API SDK.
+// Package mcpregistry provides the MCP Server Registry client for the Memory API SDK.
 // It manages registered MCP servers (CRUD, tool sync, inspect) via the admin REST API.
 // Requires authentication with admin:read and/or admin:write scopes.
 package mcpregistry

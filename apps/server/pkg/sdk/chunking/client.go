@@ -1,4 +1,4 @@
-// Package chunking provides the Chunking service client for the Emergent API SDK.
+// Package chunking provides the Chunking service client for the Memory API SDK.
 // This client allows re-chunking of documents using the current chunking strategy.
 package chunking
 

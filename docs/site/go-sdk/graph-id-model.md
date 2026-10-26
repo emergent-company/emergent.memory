@@ -1,6 +1,6 @@
 # Graph ID Model
 
-Emergent graph objects have **two distinct ID fields** that serve different purposes. Understanding the difference is critical for building correct integrations.
+Memory graph objects have **two distinct ID fields** that serve different purposes. Understanding the difference is critical for building correct integrations.
 
 ## The Dual-ID Model
 

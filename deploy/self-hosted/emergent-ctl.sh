@@ -76,25 +76,25 @@ compose_cmd() {
 }
 
 cmd_start() {
-    echo -e "${BLUE}Starting Emergent services...${NC}"
+    echo -e "${BLUE}Starting Memory services...${NC}"
     compose_cmd up -d
     echo -e "${GREEN}Services started${NC}"
 }
 
 cmd_stop() {
-    echo -e "${BLUE}Stopping Emergent services...${NC}"
+    echo -e "${BLUE}Stopping Memory services...${NC}"
     compose_cmd down
     echo -e "${GREEN}Services stopped${NC}"
 }
 
 cmd_restart() {
-    echo -e "${BLUE}Restarting Emergent services...${NC}"
+    echo -e "${BLUE}Restarting Memory services...${NC}"
     compose_cmd restart
     echo -e "${GREEN}Services restarted${NC}"
 }
 
 cmd_status() {
-    echo -e "${BLUE}Emergent Service Status:${NC}"
+    echo -e "${BLUE}Memory Service Status:${NC}"
     compose_cmd ps
 }
 
@@ -134,7 +134,7 @@ cmd_shell() {
 }
 
 cmd_rebuild() {
-    echo -e "${BLUE}Rebuilding Emergent services...${NC}"
+    echo -e "${BLUE}Rebuilding Memory services...${NC}"
     compose_cmd up -d --build
     echo -e "${GREEN}Services rebuilt and started${NC}"
 }

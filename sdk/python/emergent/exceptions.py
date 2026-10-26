@@ -1,5 +1,5 @@
 """
-Exceptions raised by the Emergent SDK.
+Exceptions raised by the Memory SDK.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 
 class EmergentError(Exception):
-    """Base class for all Emergent SDK errors."""
+    """Base class for all Memory SDK errors."""
 
 
 class APIError(EmergentError):

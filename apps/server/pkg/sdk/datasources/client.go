@@ -1,4 +1,4 @@
-// Package datasources provides the Data Source Integrations client for the Emergent API SDK.
+// Package datasources provides the Data Source Integrations client for the Memory API SDK.
 // Data source integrations connect external systems (ClickUp, IMAP, Gmail, Google Drive)
 // to the knowledge base for automated document syncing.
 package datasources

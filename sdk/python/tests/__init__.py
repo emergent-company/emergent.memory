@@ -1,1 +1,1 @@
-"""Test suite for the Emergent Python SDK."""
+"""Test suite for the Memory Python SDK."""

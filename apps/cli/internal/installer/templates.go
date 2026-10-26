@@ -347,7 +347,7 @@ storage:
 // memory-workspace base sandbox image. Content mirrors docker/workspace-base.Dockerfile
 // (kept in sync manually; the file is used by the ghcr publish workflow).
 func GetWorkspaceBaseDockerfile() string {
-	return `# Combined workspace base image for Emergent agent workspaces.
+	return `# Combined workspace base image for Memory agent workspaces.
 # Provides BOTH Python and Go SDK execution tooling so that run_python and
 # run_go work out of the box in the default sandbox image.
 #

@@ -1,4 +1,4 @@
-// Package skills provides the Skills service client for the Emergent API SDK.
+// Package skills provides the Skills service client for the Memory API SDK.
 // Skills are reusable Markdown workflow instructions that agents can load on demand.
 package skills
 

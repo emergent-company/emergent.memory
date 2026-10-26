@@ -1,6 +1,6 @@
 # API Tokens
 
-API tokens let scripts, CI/CD pipelines, and third-party tools authenticate to Emergent Memory without an interactive login. Tokens are scoped to a project and carry only the permissions you grant.
+API tokens let scripts, CI/CD pipelines, and third-party tools authenticate to Memory without an interactive login. Tokens are scoped to a project and carry only the permissions you grant.
 
 ## Token format
 

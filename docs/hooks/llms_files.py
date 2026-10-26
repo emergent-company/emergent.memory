@@ -21,7 +21,7 @@ SWAGGER_UI_HTML = """\
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Emergent API Reference</title>
+  <title>Memory API Reference</title>
   <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
   <style>
     body {{ margin: 0; padding: 0; }}

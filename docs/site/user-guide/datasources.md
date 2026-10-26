@@ -1,6 +1,6 @@
 # Data Sources
 
-Data sources let you connect external systems to Emergent Memory and automatically import their content as documents. The platform periodically syncs new and updated content, keeping your knowledge graph current.
+Data sources let you connect external systems to Memory and automatically import their content as documents. The platform periodically syncs new and updated content, keeping your knowledge graph current.
 
 ## Supported providers
 

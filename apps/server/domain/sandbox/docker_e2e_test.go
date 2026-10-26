@@ -724,7 +724,7 @@ func TestDockerE2E_GitHubAppClonePushVerify(t *testing.T) {
 
 	// Step 3: Configure bot identity
 	configResult, err := p.Exec(t.Context(), result.ProviderID, &ExecRequest{
-		Command: `cd /workspace/repo && git config user.email "bot@emergent.local" && git config user.name "Emergent Bot"`,
+		Command: `cd /workspace/repo && git config user.email "bot@emergent.local" && git config user.name "Memory Bot"`,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, configResult.ExitCode)
@@ -753,7 +753,7 @@ func TestDockerE2E_GitHubAppClonePushVerify(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 0, logResult.ExitCode)
-	assert.Contains(t, logResult.Stdout, "Emergent Bot", "commit should be authored by bot")
+	assert.Contains(t, logResult.Stdout, "Memory Bot", "commit should be authored by bot")
 	assert.Contains(t, logResult.Stdout, "bot@emergent.local", "commit should have bot email")
 
 	// Cleanup: delete the remote branch

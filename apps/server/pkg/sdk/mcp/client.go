@@ -1,4 +1,4 @@
-// Package mcp provides the Model Context Protocol service client for the Emergent API SDK.
+// Package mcp provides the Model Context Protocol service client for the Memory API SDK.
 package mcp
 
 import (

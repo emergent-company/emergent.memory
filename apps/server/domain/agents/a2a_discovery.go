@@ -77,7 +77,7 @@ const A2APlatformName = "Memory"
 const A2APlatformDescription = "Memory knowledge graph agent platform"
 
 // A2AProviderOrganization is the provider organization advertised on cards.
-const A2AProviderOrganization = "Emergent"
+const A2AProviderOrganization = "Memory"
 
 // A2ABearerSchemeName is the key under which the bearer scheme is declared.
 const A2ABearerSchemeName = "memoryApiToken"

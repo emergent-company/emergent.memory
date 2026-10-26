@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/orgs`
 
-The `orgs` client manages Emergent organizations — the top-level containers for projects.
+The `orgs` client manages Memory organizations — the top-level containers for projects.
 
 ## Methods
 

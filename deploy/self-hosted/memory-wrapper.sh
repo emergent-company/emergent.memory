@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Emergent CLI Wrapper
+# Memory CLI Wrapper
 # Automatically configures environment for CLI commands
 #
 # Usage: emergent [command] [args...]

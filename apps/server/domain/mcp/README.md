@@ -1,6 +1,6 @@
 # Model Context Protocol (MCP) Server
 
-The Emergent MCP server provides AI assistants with **self-documenting, schema-aware access** to the knowledge graph via the [Model Context Protocol](https://modelcontextprotocol.io/).
+The Memory MCP server provides AI assistants with **self-documenting, schema-aware access** to the knowledge graph via the [Model Context Protocol](https://modelcontextprotocol.io/).
 
 ## Overview
 

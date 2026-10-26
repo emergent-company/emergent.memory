@@ -41,8 +41,8 @@ func newTestAS(t *testing.T, tokenStatus int, tokenBody func() map[string]any) *
 		if req["token_endpoint_auth_method"] != "none" {
 			t.Errorf("register token_endpoint_auth_method = %v, want none", req["token_endpoint_auth_method"])
 		}
-		if req["client_name"] != "Emergent Memory" {
-			t.Errorf("register client_name = %v, want %q", req["client_name"], "Emergent Memory")
+		if req["client_name"] != "Memory" {
+			t.Errorf("register client_name = %v, want %q", req["client_name"], "Memory")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
@@ -106,7 +106,7 @@ func TestDiscoverAndRegister_FullFlow(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid", "email", "profile"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -147,7 +147,7 @@ func TestDiscoverAndRegister_WellKnownFallback(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -177,7 +177,7 @@ func TestDiscoverAndRegister_DCRError(t *testing.T) {
 
 	_, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -214,7 +214,7 @@ func TestDiscoverAndRegister_AllMetadataEndpointsFail(t *testing.T) {
 
 	_, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -259,7 +259,7 @@ func TestDiscoverAndRegister_RFC8414PathInsertion(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -298,7 +298,7 @@ func TestDiscoverAndRegister_OIDCFallback(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -331,7 +331,7 @@ func TestDiscoverAndRegister_OIDCAlternate(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -371,7 +371,7 @@ func TestDiscoverAndRegister_IssuerWithoutPath(t *testing.T) {
 
 	c, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:    srv.URL + "/api/mcp",
-		ClientName:  "Emergent Memory",
+		ClientName:  "Memory",
 		Scopes:      []string{"openid"},
 		RedirectURI: "https://app.example/callback",
 		HTTPClient:  srv.Client(),
@@ -470,7 +470,7 @@ func contains(list []string, s string) bool {
 func TestDiscoverAndRegister_RejectsInternalResource(t *testing.T) {
 	_, err := DiscoverAndRegister(context.Background(), Config{
 		Resource:   "http://127.0.0.1/api/mcp",
-		ClientName: "Emergent Memory",
+		ClientName: "Memory",
 	})
 	if err == nil {
 		t.Fatal("DiscoverAndRegister() error = nil, want SSRF rejection")

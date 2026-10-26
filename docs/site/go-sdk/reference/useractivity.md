@@ -1,6 +1,6 @@
 # useractivity
 
-Package `useractivity` provides a client for the Emergent User Activity API.
+Package `useractivity` provides a client for the Memory User Activity API.
 
 The user activity client tracks recently accessed resources per user — such as documents, graphs, and agents — enabling "recently viewed" UI features and navigation shortcuts.
 

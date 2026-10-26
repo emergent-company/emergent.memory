@@ -89,7 +89,7 @@ func newSetupExecutor(orchestrator *Orchestrator, log *slog.Logger) *SetupExecut
 // For now, we pass nil as the credential provider, which means:
 // - Public repositories work fine (unauthenticated clone)
 // - Private repositories will fail (requires GitHub App integration)
-// - Git identity falls back to "Emergent Agent <agent@emergent.local>"
+// - Git identity falls back to "Memory Agent <agent@emergent.local>"
 func newCheckoutService(log *slog.Logger) *CheckoutService {
 	return NewCheckoutService(nil, log)
 }

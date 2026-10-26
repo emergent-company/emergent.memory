@@ -37,7 +37,7 @@ enum MemoryFailure: LocalizedError, Equatable {
     }
 }
 
-/// Drives an Memory voice session on the LiveKit Swift SDK's
+/// Drives a Memory voice session on the LiveKit Swift SDK's
 /// `Session`/`LocalMedia` architecture: connects + dispatches
 /// `alfred` (agent name flows through the token request), classifies
 /// connection failures with a retry affordance, and consumes Memory's

@@ -1,4 +1,4 @@
-"""Streaming client for Emergent Memory's chat API (the agent brain).
+"""Streaming client for Memory's chat API (the agent brain).
 
 The bridge does NOT run an LLM — it streams text turns through memory's
 `POST /api/chat/stream`, which drives the agent loop (prompt, model, MCP tools).

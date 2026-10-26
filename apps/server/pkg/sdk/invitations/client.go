@@ -1,4 +1,4 @@
-// Package invitations provides the project invitations client for the Emergent API SDK.
+// Package invitations provides the project invitations client for the Memory API SDK.
 package invitations
 
 import (

@@ -411,7 +411,7 @@ func fixShellPath(installDir string) error {
 		if err != nil {
 			continue // Try next candidate
 		}
-		_, err = fmt.Fprintf(f, "\n# Emergent CLI\n%s\n", pathLine)
+		_, err = fmt.Fprintf(f, "\n# Memory CLI\n%s\n", pathLine)
 		f.Close()
 		if err != nil {
 			continue
@@ -545,7 +545,7 @@ func fixShellCompletion() error {
 		if err != nil {
 			continue
 		}
-		_, err = fmt.Fprintf(f, "\n# Emergent CLI shell completion\n%s\n", completionLine)
+		_, err = fmt.Fprintf(f, "\n# Memory CLI shell completion\n%s\n", completionLine)
 		f.Close()
 		if err != nil {
 			continue

@@ -1,4 +1,4 @@
-// Package provider provides the Provider service client for the Emergent API SDK.
+// Package provider provides the Provider service client for the Memory API SDK.
 // It covers LLM provider config management, model catalog, and usage reporting.
 package provider
 

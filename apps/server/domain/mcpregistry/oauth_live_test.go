@@ -126,7 +126,7 @@ func TestFigmaRegistrationRejected_Live(t *testing.T) {
 	}
 	t.Logf("registration endpoint: %s", req.RegistrationEndpoint)
 
-	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", redirectURI, req.Scopes)
+	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Memory", redirectURI, req.Scopes)
 	if err == nil {
 		t.Fatalf("registerClient unexpectedly succeeded (client_id=%q): Figma was expected to reject the dynamic client", identity.ClientID)
 	}
@@ -169,7 +169,7 @@ func TestLinearDiscoveryDCRAuthorize_Live(t *testing.T) {
 		t.Fatal("resource identifier missing: the authorize request could not carry RFC 8707 resource")
 	}
 
-	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Emergent Memory", redirectURI, req.Scopes)
+	identity, err := registerClient(context.Background(), req.RegistrationEndpoint, "Memory", redirectURI, req.Scopes)
 	if err != nil {
 		t.Fatalf("registerClient: %v", err)
 	}

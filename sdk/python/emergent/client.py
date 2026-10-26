@@ -1,5 +1,5 @@
 """
-Root Emergent API client.
+Root Memory API client.
 
 This module provides the top-level :class:`Client` that wires together all
 sub-clients and exposes the public SDK surface.  It mirrors the Go SDK at
@@ -236,7 +236,7 @@ class Config:
     Parameters
     ----------
     server_url:
-        Root URL of the Emergent server, e.g. ``"https://memory.emergent-company.ai"``.
+        Root URL of the Memory server, e.g. ``"https://memory.emergent-company.ai"``.
     api_key:
         API key or project API token.  An ``emt_`` prefix is auto-detected and
         switches to ``APITokenProvider`` (Bearer auth) transparently.
@@ -269,7 +269,7 @@ class Config:
 
 class Client:
     """
-    Main SDK client for the Emergent API.
+    Main SDK client for the Memory API.
 
     All sub-clients are exposed as attributes:
 

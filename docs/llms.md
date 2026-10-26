@@ -1,6 +1,6 @@
 # Memory SDK Reference for LLMs
 
-Emergent is an AI memory and knowledge graph platform. It stores objects and relationships in a graph, chunks and embeds documents, and exposes a REST API for queries, agent orchestration, and LLM tracing.
+Memory is an AI memory and knowledge graph platform. It stores objects and relationships in a graph, chunks and embeds documents, and exposes a REST API for queries, agent orchestration, and LLM tracing.
 
 There are two client SDKs:
 - **Go SDK** — full-featured server-side client (`github.com/emergent-company/emergent.memory/apps/server/pkg/sdk`)

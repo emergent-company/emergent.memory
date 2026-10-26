@@ -83,7 +83,7 @@ func FreeClient(handle C.uint32_t) {
 // Client lifecycle
 // ---------------------------------------------------------------------------
 
-// CreateClient initialises an Emergent SDK client from a JSON configuration
+// CreateClient initialises a Memory SDK client from a JSON configuration
 // string and returns a numeric handle to the live client state.
 //
 // Input JSON:
@@ -148,7 +148,7 @@ func CancelOperation(operationID C.uint64_t) {
 // Async API
 // ---------------------------------------------------------------------------
 
-// HealthCheck performs an async health check against the Emergent server.
+// HealthCheck performs an async health check against the Memory server.
 //
 // Returns the operation ID. The callback receives:
 //

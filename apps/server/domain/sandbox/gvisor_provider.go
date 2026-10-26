@@ -285,7 +285,7 @@ func (p *GVisorProvider) Create(ctx context.Context, req *CreateContainerRequest
 		Mounts:        mounts,
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
 		// Ensure host.docker.internal resolves on Linux Docker (automatic on Docker Desktop).
-		// This allows workspace containers to reach the Emergent API on the host.
+		// This allows workspace containers to reach the Memory API on the host.
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	}
 

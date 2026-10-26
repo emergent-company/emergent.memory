@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// blueprintManifest mirrors Emergent Memory's BlueprintManifest JSON shape
+// blueprintManifest mirrors Memory's BlueprintManifest JSON shape
 // (apps/server/domain/blueprints/manifest.go) as consumed by POST
 // /api/blueprints and the import preview. ObjectTypes and RelationshipTypes are
 // kept as raw maps so behavioural keys (labels, embedding, extraction, ui, and

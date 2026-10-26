@@ -72,7 +72,7 @@ var dbBenchFlags struct {
 var dbBenchCmd = &cobra.Command{
 	Use:   "bench",
 	Short: "Benchmark write throughput using real IMDb data, then run EXPLAIN checks",
-	Long: `Run an end-to-end write benchmark against the Emergent HTTP API using real
+	Long: `Run an end-to-end write benchmark against the Memory HTTP API using real
 IMDb datasets (downloaded and cached to /tmp/imdb_data/). After seeding,
 EXPLAIN ANALYZE checks are run against the live database so you get
 meaningful query timing on real data.
@@ -178,7 +178,7 @@ func (r *benchReport) totalDuration() time.Duration {
 func (r *benchReport) print() {
 	fmt.Println()
 	fmt.Println("╔══════════════════════════════════════════════════════════════╗")
-	fmt.Println("║           Emergent db bench — Results                        ║")
+	fmt.Println("║           Memory db bench — Results                          ║")
 	fmt.Println("╠══════════════════════════════════════════════════════════════╣")
 	fmt.Printf("║  bench_version  %-43s║\n", r.BenchVersion)
 	fmt.Printf("║  server_version %-43s║\n", r.ServerVersion)
@@ -259,7 +259,7 @@ func runDbBench(_ *cobra.Command, _ []string) error {
 		StartedAt:     time.Now(),
 	}
 
-	fmt.Printf("\n%s\n", diagColorBoldCyan("Emergent db bench v"+benchVersion))
+	fmt.Printf("\n%s\n", diagColorBoldCyan("Memory db bench v"+benchVersion))
 	fmt.Printf("server=%s (%s)  git=%s  seed=%d  offset=%d\n\n",
 		svrURL, report.ServerVersion, report.GitCommit, dbBenchFlags.seed, dbBenchFlags.offset)
 

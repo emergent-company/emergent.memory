@@ -95,7 +95,7 @@ systemPrompt: |
 
   ## Constraints
   - You can write and update AgentDefinitionRecord objects in the graph (data layer).
-  - You CANNOT modify live Emergent agent definitions directly.
+  - You CANNOT modify live Memory agent definitions directly.
   - All proposals to change operational agent definitions must go through human approval.
   - Never retire an agent variant that is currently assigned to an in-progress task.
 

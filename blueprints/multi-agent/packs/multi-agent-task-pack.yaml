@@ -4,7 +4,7 @@ description: >
   Schema for dynamic multi-agent task management and orchestration.
   Encodes two knowledge layers: a Domain Layer (work packages, tasks, results,
   feedback) and a System Layer (agent registries, pools, experiments, KPIs,
-  janitor proposals). Designed for use with the Emergent multi-agent orchestration
+  janitor proposals). Designed for use with the Memory multi-agent orchestration
   architecture described in ../README.md (the multi-agent blueprint pack).
 author: Emergent
 license: MIT
@@ -184,7 +184,7 @@ objectTypes:
         description: Whether this agent variant is currently in active use
       operationalDefinitionId:
         type: string
-        description: ID of the corresponding Emergent agent definition (for cross-reference)
+        description: ID of the corresponding Memory agent definition (for cross-reference)
       createdAt:
         type: string
         description: ISO-8601 timestamp

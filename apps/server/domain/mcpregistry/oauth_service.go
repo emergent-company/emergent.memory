@@ -307,7 +307,7 @@ func (s *Service) oauthClientName() string {
 	if name := strings.TrimSpace(s.oauthCfg.ClientName); name != "" {
 		return name
 	}
-	return "Emergent Memory"
+	return "Memory"
 }
 
 // CompleteMCPOAuth consumes a pending authorize flow, exchanges the code, and

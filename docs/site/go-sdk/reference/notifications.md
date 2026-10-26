@@ -1,6 +1,6 @@
 # notifications
 
-Package `notifications` provides a client for the Emergent Notifications API.
+Package `notifications` provides a client for the Memory Notifications API.
 
 Notifications inform users of events such as completed jobs, system alerts, and review requests. They are scoped to the authenticated user and optionally to an organization and project.
 

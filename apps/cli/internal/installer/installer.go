@@ -769,7 +769,7 @@ func hasLegacyMinioKeys(content string) bool {
 	return envKeySet(content, "MINIO_ROOT_USER") || envKeySet(content, "MINIO_ROOT_PASSWORD")
 }
 
-// Uninstall removes an Emergent installation
+// Uninstall removes a Memory installation
 func (i *Installer) Uninstall(keepData bool) error {
 	if !i.IsInstalled() {
 		return fmt.Errorf("no installation found at %s", i.config.InstallDir)

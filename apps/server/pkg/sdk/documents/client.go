@@ -1,4 +1,4 @@
-// Package documents provides the Documents service client for the Emergent API SDK.
+// Package documents provides the Documents service client for the Memory API SDK.
 package documents
 
 import (
@@ -27,7 +27,7 @@ type Client struct {
 	projectID string
 }
 
-// Document represents a document in the Emergent API.
+// Document represents a document in the Memory API.
 type Document struct {
 	ID        string `json:"id"`
 	ProjectID string `json:"projectId"`

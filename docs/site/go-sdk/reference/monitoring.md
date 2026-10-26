@@ -1,6 +1,6 @@
 # monitoring
 
-Package `monitoring` provides a client for the Emergent Monitoring API.
+Package `monitoring` provides a client for the Memory Monitoring API.
 
 The monitoring client surfaces detailed telemetry for extraction jobs — the background processes that parse documents and populate the knowledge graph. It exposes per-job process logs, LLM call traces, and aggregated metrics.
 

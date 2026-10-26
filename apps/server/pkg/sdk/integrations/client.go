@@ -1,4 +1,4 @@
-// Package integrations provides the Integrations service client for the Emergent API SDK.
+// Package integrations provides the Integrations service client for the Memory API SDK.
 package integrations
 
 import (

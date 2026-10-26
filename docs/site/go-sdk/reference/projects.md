@@ -2,7 +2,7 @@
 
 Package `github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/projects`
 
-The `projects` client manages Emergent projects — the primary unit of organization for graph data, documents, and agents.
+The `projects` client manages Memory projects — the primary unit of organization for graph data, documents, and agents.
 
 ## Methods
 

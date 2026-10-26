@@ -1,4 +1,4 @@
-// Package schemaregistry provides the Schema Registry service client for the Emergent API SDK.
+// Package schemaregistry provides the Schema Registry service client for the Memory API SDK.
 package schemaregistry
 
 import (

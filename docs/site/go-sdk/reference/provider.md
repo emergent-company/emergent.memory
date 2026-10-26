@@ -1,6 +1,6 @@
 # provider
 
-Package `provider` provides a client for the Emergent Provider API.
+Package `provider` provides a client for the Memory Provider API.
 
 The provider client is a **non-context client** — it requires no org or project context headers. It manages LLM credentials at the organization level, the model catalog for each provider, and per-project provider policies (which credential source to use and which models to call).
 
