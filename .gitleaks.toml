@@ -144,14 +144,6 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Throwaway graph ids - run ids embedded in `tools/graph-import/*.py` seed data"
-regexes = [
-  '''e409976f-ed9b-481e-aea6-c3b30a5ffa49''',
-  '''0cf8ff96-45bb-4cc0-8d49-700896caca56''',
-  '''f9d29af5-cc31-4508-a6db-a68014db0181''',
-]
-
-[[allowlists]]
 description = "Metric names - a gate metric constant, not a credential"
 regexes = [
   '''M6_temporal_accuracy''',

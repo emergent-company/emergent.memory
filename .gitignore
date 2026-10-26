@@ -272,9 +272,14 @@ openspec/changes/graph-explorer-branch-diff/
 .opencode/package-lock.json
 
 blueprints/code-memory-blueprint/cmd/codebase/codebase
-/bench/extract-bench/
-/bench/memorybench/
-bench/domain-test/.env
+
+# Compiled blueprint tool binaries. `go build ./...` inside a tool dir drops the
+# binary next to main.go, so the name matches the directory. Add a line per tool
+# that ships one — do not broad-match `tools/*/*`, it also swallows READMEs and
+# any subdirectory a tool grows.
+blueprints/code-memory-blueprint/tools/branch-verify/branch-verify
+blueprints/code-memory-blueprint/tools/graph-sync-middleware/graph-sync-middleware
+blueprints/code-memory-blueprint/tools/graph-sync-routes/graph-sync-routes
 .server_pid
 
 # auto-added by commit skill — 2026-06-02
