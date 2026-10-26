@@ -13,6 +13,17 @@ jobs:
   tag:
     name: Create Release Tag
     runs-on: [self-hosted, linux, x64, memory]
+    # A VERSION bump does not always mean "cut a release now". `[skip release]`
+    # anywhere in the pushed commit message lands the bump without tagging,
+    # which is what a snapshot push (new repository, tag created after secrets
+    # are restored) and a re-landed bump after a failed release both need.
+    # Ordinary bumps still tag — the marker has to be deliberate.
+    #
+    # `contains()` matches the whole message, so a commit body that merely
+    # quotes the marker also skips the release. That fails safe (no tag, no
+    # release) and the skip shows in the check list; tag manually with
+    # `git tag -a vX.Y.Z && git push origin vX.Y.Z` if it was unintended.
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

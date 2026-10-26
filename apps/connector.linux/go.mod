@@ -24,3 +24,10 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 )
+
+// Build against the SDK in this checkout, like apps/cli does. The version in
+// the require block above is stale — `GOWORK=off go build ./...` resolves it
+// and fails on real API drift (sdkauth.RefreshError and
+// apitokens.APIToken.OwnedByCaller do not exist there) — so the replace makes
+// this checkout authoritative.
+replace github.com/emergent-company/emergent.memory/apps/server/pkg/sdk => ../../apps/server/pkg/sdk
