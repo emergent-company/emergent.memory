@@ -21,8 +21,8 @@ type skillRepoRule struct {
 }
 
 // skillRepoRules is the classification table for skills.Repository. It mirrors
-// the shared-authorizer seam documented in docs/security/mcp-authz-class-decision.md
-// (#1054): the REST handlers and the MCP tools must both go through the same
+// the shared-authorizer seam from #1054: the REST handlers and the MCP tools must
+// both go through the same
 // AuthorizeSkillAccess / AuthorizeSkillWrite helpers, so neither entrypoint can
 // bypass the other's gate.
 //

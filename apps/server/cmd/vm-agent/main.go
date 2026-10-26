@@ -14,7 +14,8 @@
 //   - The VM has no access to the host filesystem or network (except controlled NAT)
 //   - VMs are destroyed after use; there's no persistent attack surface
 //
-// See docs/security/SNYK_FALSE_POSITIVES.md for detailed architectural analysis.
+// The same reasoning is why static-analysis findings against this package are
+// triaged as non-issues.
 package main
 
 import (

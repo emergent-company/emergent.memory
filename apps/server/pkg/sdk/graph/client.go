@@ -62,7 +62,6 @@ func (c *Client) SetContext(orgID, projectID string) {
 //
 // When storing references to objects (e.g., for relationship creation), prefer
 // EntityID (CanonicalID) — it remains valid even after the object is updated.
-// See also docs/graph/id-model.md for the full lifecycle explanation.
 type GraphObject struct {
 	// ID is the version-specific identifier for this object. It changes on every
 	// UpdateObject call — each version gets a new, unique ID.

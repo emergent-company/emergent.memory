@@ -5,7 +5,7 @@ description: >
   Encodes two knowledge layers: a Domain Layer (work packages, tasks, results,
   feedback) and a System Layer (agent registries, pools, experiments, KPIs,
   janitor proposals). Designed for use with the Emergent multi-agent orchestration
-  architecture described in docs/multi-agent-blueprint-spec.md.
+  architecture described in ../README.md (the multi-agent blueprint pack).
 author: Emergent
 license: MIT
 

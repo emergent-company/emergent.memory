@@ -1084,7 +1084,6 @@ POST /api/projects/:projectId/mcp/share
 - `mcpUrl` is derived from the incoming request's `Host` + `X-Forwarded-Proto` headers
 - Token name defaults to `"MCP Read-Only Share — YYYY-MM-DD HH:MM:SS"` to avoid duplicate-name conflicts
 
-See `docs/guides/mcp-sharing.md` for the full user-facing guide.
 
 ---
 

@@ -87,8 +87,3 @@ unique := graphutil.UniqueByEntity(objects)
 ```
 
 See the [graphutil reference](reference/graphutil.md) for full API details.
-
-## Further Reading
-
-The internal design document at `docs/graph/id-model.md` contains lifecycle diagrams,
-`UpdateObject` footgun examples, relationship lookup guidance, and deduplication patterns.

@@ -76,12 +76,9 @@ Published documentation is available at **https://emergent-company.github.io/eme
 
 Development, deployment and environment documentation is maintained in a separate repository.
 
-Additional in-repo documentation is located in the `/docs` directory:
-
-- **/docs/features**: Detailed documentation on specific features.
-- **/docs/technical**: Deep dives into the architecture and technical implementation details.
-- **/docs/database**: Database schema documentation.
-- **/docs/site**: Source for the published documentation, built via `mkdocs.yml`.
+The published documentation lives in [`docs/site`](docs/site) and is built with
+`mkdocs.yml`. The database schema is generated from the migrations into
+[`docs/schema.dbml`](docs/schema.dbml).
 
 ## License
 

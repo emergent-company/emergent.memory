@@ -1,90 +1,66 @@
-# Public Documentation
+# Public documentation (served by `/api/docs`)
 
-This directory contains documentation files served via the `/api/docs` REST API endpoint.
+Markdown in this directory is served by the server's documentation API, indexed by
+[`index.json`](index.json).
 
-## Structure
+## Layout
 
 ```
 docs/public/
-├── guides/          # How-to guides and tutorials
-├── tutorials/       # Step-by-step tutorials
-├── examples/        # Example configurations and use cases
-├── api-reference/   # API documentation and MCP references
-└── index.json       # Metadata catalog
+├── guides/          # how-to guides (schema creation, …)
+├── api-reference/   # API / MCP references
+└── index.json       # metadata catalog
 ```
 
-## File Format
+## File format
 
-All documentation files use Markdown with YAML frontmatter:
+Each document is Markdown with YAML frontmatter:
 
 ```markdown
 ---
 id: unique-identifier
 title: Document Title
-category: guides|tutorials|examples|api-reference
-tags: [tag1, tag2, tag3]
-description: Brief description (1-2 sentences)
+category: guides|api-reference
+tags: [tag1, tag2]
+description: One or two sentences.
 lastUpdated: YYYY-MM-DD
-readTime: 15 (estimated minutes)
-related: [doc-id-1, doc-id-2]
+readTime: 15
+related: [other-doc-id]
 ---
 
-# Document content starts here...
+# Document content starts here
 ```
 
-## Adding New Documents
+## Adding a document
 
-1. Create markdown file in appropriate category directory
-2. Add YAML frontmatter with required fields
-3. Update `index.json` with document metadata
-4. Restart Go server to clear cache: `cd apps/server && make run`
+1. Put the file under `guides/` or `api-reference/`.
+2. Add the frontmatter above.
+3. Add a matching entry to `index.json` — `GET /api/docs` walks this directory,
+   but `GET /api/docs/categories` reads `index.json`, so an unlisted document is
+   served under a category the API never advertises.
+4. Restart the server: parsed documents are cached in memory and there is no hot
+   reload.
 
-## Important: Symlink Requirement
+## How the server finds this directory
 
-The Go server runs from `apps/server/` and expects docs at `docs/public/` relative to its working directory.
-
-**Setup symlink** (required):
+The service reads `docs/public` relative to its **working directory**. Run from
+`apps/server/`, that resolves to `apps/server/docs/public`, so development needs a
+symlink once per checkout:
 
 ```bash
-cd apps/server
-ln -s ../../docs docs
+ln -s ../../docs apps/server/docs
 ```
 
-This creates `apps/server/docs` pointing at the repo-root `docs/` so the server can access `docs/public/`.
+The container image does not ship this directory, so the endpoint is a
+development/self-hosted convenience rather than a hosted API surface.
 
-## Cache Behavior
+## Endpoints
 
-The Go documentation service caches parsed documents in memory for performance. **Changes to markdown files require a server restart** to be visible:
+- `GET /api/docs` — list documents with metadata
+- `GET /api/docs/:slug` — one document with its Markdown body
+- `GET /api/docs/categories` — category summary
 
 ```bash
-# Restart Go server
-cd /root/emergent/apps/server
-make run
+curl -s localhost:3002/api/docs | jq '.documents[].slug'
+curl -s localhost:3002/api/docs/schema-creation | jq -r '.content' | head
 ```
-
-There is no hot reload for the docs service - this is by design for production performance.
-
-## API Endpoints
-
-- `GET /api/docs` - List all documents with metadata
-- `GET /api/docs/:slug` - Get specific document with full markdown content
-- `GET /api/docs/categories` - Get category information
-
-## Testing
-
-```bash
-# List documents
-curl http://localhost:3002/api/docs | jq '.'
-
-# Get specific document
-curl http://localhost:3002/api/docs/template-pack-creation | jq '.title'
-
-# Get categories
-curl http://localhost:3002/api/docs/categories | jq '.categories[].name'
-```
-
-## Current Documents
-
-- **Template Pack Creation Guide** (guides) - 21KB
-- **Environment Setup Guide** (guides) - 74KB
-- **MCP Quick Reference** (api-reference) - 3.7KB

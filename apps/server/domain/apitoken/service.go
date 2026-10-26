@@ -75,7 +75,7 @@ var viewerReadOnlyScopes = map[string]bool{
 
 // platformScopes are the platform-tier scopes whose minting requires the
 // platform authority (an active superadmin_full). Bare "admin" is folded into
-// "admin:all" + platform per #1041 E1 (docs/security/mcp-authz-class-decision.md):
+// "admin:all" + platform per #1041 E1:
 // it is no longer mintable by an unprivileged caller; only a superadmin_full may
 // grant either.
 var platformScopes = map[string]bool{

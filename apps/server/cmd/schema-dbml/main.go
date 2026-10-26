@@ -1,9 +1,8 @@
-// Command schema-dbml renders docs/database/schema.dbml from a live PostgreSQL
-// catalog.
+// Command schema-dbml renders docs/schema.dbml from a live PostgreSQL catalog.
 //
-// It replaces the Nx-era `npm run db:docs:generate` documented in
-// docs/guides/database-documentation.md, which was removed with the workspace
-// tooling and left the checked-in DBML frozen at 36 tables.
+// It replaces the Nx-era `npm run db:docs:generate`; that tooling is long gone,
+// and the checked-in DBML had been frozen at 36 tables until this command
+// existed.
 //
 // The output is deterministic: tables are ordered by schema then name, columns
 // keep their catalog order, and references follow constraint order. Regenerating
@@ -29,7 +28,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-const defaultOutput = "docs/database/schema.dbml"
+const defaultOutput = "docs/schema.dbml"
 
 // schemas documents the namespaces the product owns. pg_catalog,
 // information_schema and extension-owned schemas are excluded.

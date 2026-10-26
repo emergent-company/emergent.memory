@@ -38,8 +38,8 @@ keywords    = ["emt_"]
 # Provider keys with no assignment context. The default ruleset catches an `sk-`
 # key only when it reads like an assignment (`api_key = "sk-..."`, via
 # `generic-api-key`); a bare token in prose matches nothing at any length, and no
-# provider rule knows the DeepSeek shape (`sk-` + 32 hex). One sat in
-# docs/evaluation/discovery-extraction-locomo.md that way. Keywords keep the rule
+# provider rule knows the DeepSeek shape (`sk-` + 32 hex). One sat in an
+# evaluation write-up that way. Keywords keep the rule
 # off unrelated prose; the hex-only body keeps the false-positive rate down, and
 # the global allowlists below cover test fixtures.
 [[rules]]

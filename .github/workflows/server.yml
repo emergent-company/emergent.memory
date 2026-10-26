@@ -272,7 +272,7 @@ jobs:
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
         run: |
-          # The DBML in docs/database/schema.dbml is generated from this same
+          # The DBML in docs/schema.dbml is generated from this same
           # migrated database. A migration that changes the schema must
           # regenerate it in the same PR; otherwise the document silently rots
           # the way it did after the Nx tooling was removed.

@@ -1,73 +1,32 @@
 {
   "version": "1.0.0",
-  "generated_at": "2025-02-11T09:26:57Z",
+  "generated_at": "2026-10-26T00:00:00Z",
   "categories": [
     {
       "id": "guides",
       "name": "Guides",
-      "description": "How-to guides and tutorials for using Emergent features",
+      "description": "How-to guides and tutorials for using Memory features",
       "count": 1
-    },
-    {
-      "id": "tutorials",
-      "name": "Tutorials",
-      "description": "Step-by-step tutorials for common workflows",
-      "count": 0
-    },
-    {
-      "id": "examples",
-      "name": "Examples",
-      "description": "Example templates, configurations, and use cases",
-      "count": 0
     },
     {
       "id": "api-reference",
       "name": "API Reference",
-      "description": "Complete API documentation and MCP tool references",
-      "count": 1
+      "description": "API and MCP references",
+      "count": 0
     }
   ],
   "documents": [
     {
-      "id": "template-pack-creation",
-      "slug": "template-pack-creation",
-      "title": "Template Pack Creation Guide",
+      "id": "schema-creation",
+      "slug": "schema-creation",
+      "title": "Schema Creation Guide",
       "category": "guides",
-      "path": "docs/public/guides/template-pack-creation.md",
-      "description": "Comprehensive guide for AI agents to create and manage template packs via MCP and REST API",
-      "tags": [
-        "template-packs",
-        "mcp",
-        "api",
-        "ai-agents"
-      ],
-      "lastUpdated": "2025-02-11",
+      "path": "docs/public/guides/schema-creation.md",
+      "description": "Comprehensive guide for AI agents to create and manage schemas via MCP and REST API",
+      "tags": ["schemas", "mcp", "api", "ai-agents"],
+      "lastUpdated": "2026-03-22",
       "readTime": 15,
-      "related": [
-        "mcp-quick-reference",
-        "template-pack-examples"
-      ]
-    },
-    {
-      "id": "mcp-quick-reference",
-      "slug": "mcp-quick-reference",
-      "title": "MCP Dev Manager Quick Reference",
-      "category": "api-reference",
-      "path": "docs/public/api-reference/mcp-quick-reference.md",
-      "description": "Quick reference for MCP Dev Manager tools and common development tasks",
-      "tags": [
-        "mcp",
-        "dev-manager",
-        "testing",
-        "docker",
-        "scripts",
-        "automation"
-      ],
-      "lastUpdated": "2025-02-11",
-      "readTime": 10,
-      "related": [
-        "template-pack-creation"
-      ]
+      "related": []
     }
   ]
 }

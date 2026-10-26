@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`HasRelationship` method** — Boolean check for relationship existence by type, src, and dst (accepts either ID form)
 - **`VersionID` / `EntityID` fields** — Added to `GraphObject` and `GraphRelationship` SDK types alongside deprecated `ID` / `CanonicalID`; custom `UnmarshalJSON` cross-populates all four fields regardless of which names the server sends
 - **Dual JSON field names** — Server DTOs (`GraphObjectResponse`, `GraphRelationshipResponse`, `ExpandNode`, `TraverseNode`, `AnalyticsObjectItem`, `SimilarObjectResult`) now emit both `id`/`canonical_id` and `version_id`/`entity_id` via custom `MarshalJSON`
-- **Documentation** — `docs/graph/id-model.md` with lifecycle diagrams, UpdateObject footgun examples, relationship lookup guidance, and dedup patterns; godoc on `GraphObject.ID`, `CanonicalID`, `UpdateObject`, `CreateRelationship`
+- **Documentation** — lifecycle diagrams, UpdateObject footgun examples, relationship lookup guidance and dedup patterns, plus godoc on `GraphObject.ID`, `CanonicalID`, `UpdateObject`, `CreateRelationship`
 
 ### Deprecated
 

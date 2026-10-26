@@ -45,10 +45,11 @@ if ((failed)); then
 	cat >&2 <<'EOF'
 
 Fix one of:
-  - add the banner under the heading (see docs/README.md, "The historical marker"):
+  - add the banner at the top of the note:
         > **Status: historical design note (pre-Go).** ...
         <!-- status: historical (pre-Go) -->
-  - move the note under docs/archive/ if it is a record rather than guidance
+  - keep the note out of docs/ — internal design history belongs in the
+    infrastructure repository, not next to published documentation
   - rewrite it against the Go server and drop the apps/server/src references
 EOF
 	exit 1

@@ -6,7 +6,7 @@ tags: [schemas, mcp, api, ai-agents]
 description: Comprehensive guide for AI agents to create and manage schemas via MCP and REST API
 lastUpdated: 2026-03-22
 readTime: 15
-related: [mcp-quick-reference, schema-examples]
+related: []
 ---
 
 # Schema Creation Guide
@@ -763,9 +763,9 @@ DELETE /api/schemas/projects/:projectId/:schemaId
 
 ## Related Resources
 
-- **[MCP Quick Reference](../api-reference/mcp-quick-reference.md)** - Complete MCP tool documentation
-- **[Schema Examples](../examples/schema-examples.md)** - Real-world schema examples
-- **[MCP Tools Documentation](/root/emergent/apps/server/domain/mcp/MCP_TOOLS.md)** - Detailed tool specifications
+- **[MCP servers](../../site/developer-guide/mcp-servers.md)** - connect an MCP client and see the tool surface
+- **[Blueprint schema reference](../../site/developer-guide/schema.md)** - how schemas, object types and relationships fit together
+- **[Example pack](../../../reference/togaf-core-template-pack.json)** - a complete multi-object-type schema in JSON
 
 ---
 
