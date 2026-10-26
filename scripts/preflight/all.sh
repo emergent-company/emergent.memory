@@ -7,7 +7,7 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 status=0
-for script in base-check.sh migration-number.sh gofmt-tracked.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh; do
+for script in base-check.sh migration-number.sh gofmt-tracked.sh docs-stale-paths.sh skip-census.sh mcp-authz.sh modelref-split.sh runrole-guard.sh schemadrift-guard.sh gitleaks-waivers.sh gitleaks-env-files.sh; do
   echo "==> $script"
   if bash "$dir/$script"; then
     echo "==> $script PASSED"
@@ -22,4 +22,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-echo "preflight: OK (base, migration numbering, gofmt, stale docs, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers)"
+echo "preflight: OK (base, migration numbering, gofmt, stale docs, skip census, mcp authz, modelref split, runrole guard, schemadrift, gitleaks waivers, gitleaks env files)"

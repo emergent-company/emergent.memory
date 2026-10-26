@@ -52,14 +52,23 @@ entropy     = 3.0
 # ── Global allowlists ────────────────────────────────────────────────────────
 
 
+# NOTE: there is deliberately no path allowlist for `.env` files.
+#
+# `.env` and the `.env*.example` templates are *tracked* in this repo. A path
+# allowlist for `.env*` only silences a developer's untracked `.env.local`, but
+# `gitleaks git --staged` scans staged content and CI's `gitleaks dir .` sees
+# only tracked files — so the allowlist hid exactly the files that ship, and a
+# secret committed to `.env` or `.env.example` was scanned by nothing. The
+# untracked files that motivated it are invisible to both gates anyway.
+#
+# Tracked env files are also scanned unconditionally by
+# `scripts/preflight/gitleaks-env-files.sh` (piped through `gitleaks stdin`, where
+# path allowlists cannot apply), so re-adding such an allowlist is caught.
+
+
 [[allowlists]]
 description = "Angle-bracket placeholders are never real keys — e.g. <YOUR_API_KEY>"
 regexes     = ['''<[A-Z][A-Z0-9_]{2,}>''']
-
-
-[[allowlists]]
-description = "Local env files — contain real keys intentionally, never committed"
-paths       = ['''(^|[\\/])\.env$''', '''(^|[\\/])\.env\.[A-Za-z0-9_.-]+$''']
 
 
 [[allowlists]]

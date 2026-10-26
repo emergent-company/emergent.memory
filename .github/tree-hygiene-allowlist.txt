@@ -15,3 +15,13 @@
 # scrubbing them would make the scheduled lanes unrunnable (#1901).
 .github/workflows/web-ui-mutations.yml
 .github/workflows/web-ui-llm-scenarios.yml
+
+# Private e2e blueprint fixtures. These suites apply blueprint directories that
+# live outside the repo on the build hosts (internal blueprint corpora); a fresh
+# checkout cannot run them, and the widen in #2207 surfaced the absolute paths.
+# Exempted by path — deliberately, so the leak stays visible — until #2209 makes
+# the fixtures fetchable (or deletes the suites). Remove these lines with it.
+e2e/tests/blueprints/helpers_test.go
+e2e/tests/blueprints/blueprint_project_info_test.go
+e2e/tests/blueprints/blueprint_v3_skills_test.go
+e2e/tests/tools/helpers_test.go

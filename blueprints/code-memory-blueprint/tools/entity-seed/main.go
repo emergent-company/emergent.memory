@@ -19,9 +19,10 @@ import (
 )
 
 var (
-	dryRun  = flag.Bool("dry-run", false, "print what would be created, don't write to graph")
-	domain  = flag.String("domain", "", "only process entities from this domain")
-	verbose = flag.Bool("verbose", false, "print each object as it's created")
+	dryRun   = flag.Bool("dry-run", false, "print what would be created, don't write to graph")
+	domain   = flag.String("domain", "", "only process entities from this domain")
+	verbose  = flag.Bool("verbose", false, "print each object as it's created")
+	repoRoot = flag.String("repo", ".", "path to the Memory repo root (the checkout that holds apps/server)")
 )
 
 var entityFiles = []string{
@@ -337,7 +338,7 @@ func parseEntities() []Entity {
 	fset := token.NewFileSet()
 
 	for _, path := range entityFiles {
-		fullPath := filepath.Join("/root/emergent.memory", path)
+		fullPath := filepath.Join(*repoRoot, path)
 		f, err := parser.ParseFile(fset, fullPath, nil, 0)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse %s: %v\n", path, err)

@@ -306,8 +306,9 @@ func TestProtocolEntityOnlyE2E(t *testing.T) {
 	}
 
 	// Check for ground truth and PDF files
-	groundTruthPath := "/root/doc-processing-suite/output/ground_truth/protocol/protocol-001-en.json"
-	pdfPath := "/root/doc-processing-suite/output/pdfs/protocol/protocol-001-en.pdf"
+	suiteDir := docSuiteDir(t)
+	groundTruthPath := filepath.Join(suiteDir, "output/ground_truth/protocol/protocol-001-en.json")
+	pdfPath := filepath.Join(suiteDir, "output/pdfs/protocol/protocol-001-en.pdf")
 
 	if _, err := os.Stat(groundTruthPath); os.IsNotExist(err) {
 		t.Skipf("Ground truth file not found: %s", groundTruthPath)

@@ -219,7 +219,7 @@ docs, _ := client.Documents.List(ctx, nil)
 To build all examples:
 
 ```bash
-cd /root/emergent/apps/server/pkg/sdk/examples
+cd apps/server/pkg/sdk/examples
 
 # Build basic
 go build -o bin/basic ./basic/
@@ -236,9 +236,9 @@ go build -o bin/projects ./projects/
 
 ## Next Steps
 
-- **Read the full SDK documentation:** `/root/emergent/apps/server/pkg/sdk/README.md`
+- **Read the full SDK documentation:** [`apps/server/pkg/sdk/README.md`](../README.md)
 - **Explore all service clients:** Documents, Chunks, Search, Graph, Chat, Projects, Orgs, Users, API Tokens, Health, MCP
-- **Check the test files:** `/root/emergent/apps/server/pkg/sdk/*/client_test.go` for more usage examples
+- **Check the test files:** `apps/server/pkg/sdk/*/client_test.go` for more usage examples
 
 ## Troubleshooting
 

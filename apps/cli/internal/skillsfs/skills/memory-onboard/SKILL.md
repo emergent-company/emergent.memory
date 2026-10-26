@@ -32,7 +32,7 @@ Key concepts:
 
 ### Step 1 — Understand the project
 
-> **IMPORTANT: All file exploration must be anchored to the current working directory (CWD).** Do NOT navigate to or read files from other directories (e.g., `/root/emergent.memory` or any path that isn't the user's project CWD). The project being onboarded is whatever is in the CWD.
+> **IMPORTANT: All file exploration must be anchored to the current working directory (CWD).** Do NOT navigate to or read files from other directories (e.g., a sibling checkout or any path that isn't the user's project CWD). The project being onboarded is whatever is in the CWD.
 
 First, confirm the CWD and list its contents:
 ```bash

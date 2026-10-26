@@ -71,9 +71,8 @@ in `apps/connector.mac/.env.example`.
 
 The default env file is `apps/connector.mac/.env` — per-checkout and gitignored,
 so a new git worktree does **not** inherit it (untracked files are not carried
-into a fresh worktree). If you build from worktrees (this repo uses
-`/root/emergent.memory-wt/<slug>`), point every checkout at one shared file
-instead of copying it into each one:
+into a fresh worktree). If you build from worktrees, point every checkout at one shared file instead
+of copying it into each one:
 
 ```sh
 # ~/.zshrc / ~/.bashrc

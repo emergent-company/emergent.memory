@@ -223,6 +223,22 @@ pre-commit:
         fi
         gitleaks git --staged --config .gitleaks.toml --no-banner
 
+    # Tracked env files (`.env`, `.env*.example`) are piped through `gitleaks
+    # stdin`, where path allowlists cannot apply — `--staged` above only proves
+    # the *staged* content is clean, and CI's `gitleaks dir .` only sees tracked
+    # files, so a path allowlist for `.env*` used to hide them entirely. Runs
+    # only when an env file is staged; CI runs it unconditionally via
+    # scripts/preflight/all.sh.
+    - name: preflight-gitleaks-env-files
+      glob:
+        - ".env"
+        - ".env.*"
+        - ".envrc"
+        - "**/.env"
+        - "**/.env.*"
+        - "**/.envrc"
+      run: bash scripts/preflight/gitleaks-env-files.sh
+
     - name: webui-no-generated
       run: |
         bad=$(git diff --cached --name-only --diff-filter=ACM \
