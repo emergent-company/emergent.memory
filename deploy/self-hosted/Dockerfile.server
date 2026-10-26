@@ -47,9 +47,13 @@ RUN go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' g
 # Copy source code (cache invalidation point for source changes)
 COPY apps/server/ ./
 
-# Sync go.mod/go.sum — release tags built via `git archive` can be slightly
-# out of sync, causing `go build` to fail with "updates to go.mod needed"
-RUN go mod tidy
+# Committed module files must already be tidy. This step used to be a bare
+# `go mod tidy`, which silently repaired tags whose go.mod/go.sum were out of
+# sync — that is how #309 was "fixed", and it meant a released image could be
+# built from a dependency graph the tag never contained. #2190 (complete
+# go.sum) and the CI guard scripts/preflight/go-mod-tidy.sh (#2195) remove the
+# need: `-diff` prints what is wrong and fails the build instead of repairing it.
+RUN go mod tidy -diff
 
 # Generate swagger docs (runs on build platform, not target)
 # Note: apps/server/docs may be a symlink on the host — remove it entirely first
@@ -114,9 +118,10 @@ RUN go mod download
 # Copy CLI source
 COPY apps/cli/ ./
 
-# Sync go.mod/go.sum — release tags built via `git archive` can be slightly
-# out of sync, causing `go build` to fail with "updates to go.mod needed"
-RUN go mod tidy
+# Same rule as the server stage: the committed module files are tidy (apps/cli
+# included in scripts/preflight/go-mod-tidy.sh), so `-diff` fails the build on
+# drift instead of repairing a tag whose go.mod/go.sum are out of sync.
+RUN go mod tidy -diff
 
 # Cross-compile CLI binary
 # Re-declare version args to bust cache when version changes.

@@ -36,20 +36,18 @@ root="$(git rev-parse --show-toplevel)"
 cd "$root"
 
 # Modules that must stay tidy: every module in the repo that is clean today, so
-# this is a ratchet — a module can be added, never dropped. Excluded, each
-# failing tidy for a reason that is not an incomplete go.sum file:
-#   * apps/cli — its relative `replace ... => ../../apps/server/pkg/sdk` makes
-#     tidy re-classify golang.org/x/net as indirect and drop the SDK's go.sum
-#     lines. One tidy commit fixes it; until then it stays out (#2193).
+# this is a ratchet — a module can be added, never dropped. Excluded, all
+# failing tidy because their `go` directive is stale, not because of a hash gap:
 #   * blueprints/code-memory-blueprint/tools/* — all 19 rewrite the `go`
 #     directive from 1.24 to 1.25.0, because the SDK they replace requires the
-#     newer one. A stale directive, not a hash gap, and not fixed by add-and-go.
+#     newer one. A separate, noisier change than add-and-go (#2194 follow-up).
 # e2e and its four stubs are outside go.work but tidy-clean, so they are in.
 modules=(
   apps/server
   apps/server/pkg/sdk
   apps/web-ui/gateway
   apps/connector.linux
+  apps/cli
   e2e
   e2e/stubs/github
   e2e/stubs/mailgun
