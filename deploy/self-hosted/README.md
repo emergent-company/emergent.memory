@@ -289,6 +289,9 @@ cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
 - **Port**: 3002 (accessible via Tailscale)
 - **Health**: `http://emergent:3002/health`
 - **Logs**: `./logs/server/`
+- **Built from**: `deploy/self-hosted/Dockerfile.server` — see
+  [`apps/server/VERSIONING.md`](../../apps/server/VERSIONING.md) for version
+  injection and the module-tidy check that build runs
 
 ### PostgreSQL
 

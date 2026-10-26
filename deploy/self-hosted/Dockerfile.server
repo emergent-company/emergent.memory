@@ -53,7 +53,17 @@ COPY apps/server/ ./
 # built from a dependency graph the tag never contained. #2190 (complete
 # go.sum) and the CI guard scripts/preflight/go-mod-tidy.sh (#2195) remove the
 # need: `-diff` prints what is wrong and fails the build instead of repairing it.
-RUN go mod tidy -diff
+#
+# Keep this image's Go minor in step with `.github/workflows/ci.yml`
+# (go-version): tidy output is version-sensitive, so a mismatch can pass the
+# CI guard and fail here, or pass here and mask drift the guard would catch.
+RUN go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/server/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/server, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
 
 # Generate swagger docs (runs on build platform, not target)
 # Note: apps/server/docs may be a symlink on the host — remove it entirely first
@@ -121,7 +131,13 @@ COPY apps/cli/ ./
 # Same rule as the server stage: the committed module files are tidy (apps/cli
 # included in scripts/preflight/go-mod-tidy.sh), so `-diff` fails the build on
 # drift instead of repairing a tag whose go.mod/go.sum are out of sync.
-RUN go mod tidy -diff
+RUN go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/cli/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/cli, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
 
 # Cross-compile CLI binary
 # Re-declare version args to bust cache when version changes.

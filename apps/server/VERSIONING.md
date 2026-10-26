@@ -73,15 +73,16 @@ same build args.)
 
 **Build process:**
 
-1. Generates Swagger spec from annotations
-2. Builds binary with version injection:
+1. Verifies the module files are tidy — see [Module files must be tidy](#module-files-must-be-tidy)
+2. Generates Swagger spec from annotations
+3. Builds binary with version injection:
    ```bash
    VERSION=$(git describe --tags --always)
    COMMIT=$(git rev-parse --short HEAD)
    go build -ldflags="-X github.com/emergent-company/emergent.memory/internal/version.Version=$VERSION \
                       -X github.com/emergent-company/emergent.memory/internal/version.GitCommit=$COMMIT"
    ```
-3. Binary embeds git tag at compile time
+4. Binary embeds git tag at compile time
 
 **Resulting image:**
 
@@ -90,6 +91,35 @@ migrations, then starts the server on port 3002.
 `deploy/self-hosted/docker-compose.yml` supplies both (`POSTGRES_HOST: db`).
 The version it reports is the `VERSION` build arg, so a tagged build returns
 `"v0.4.9"` from `/health` and the release version from `/openapi.json`.
+
+### Module files must be tidy
+
+Both build stages run `go mod tidy -diff` and fail the build if that prints a
+diff, instead of tidying the tree at build time (#2194). The image used to run a
+bare `go mod tidy`, so a tag whose `go.mod`/`go.sum` were out of sync still
+produced a published image — built from a dependency graph the tag never
+contained.
+
+What that means in practice:
+
+- A tag needs a tidy module set. `ci` enforces it before merge
+  (`scripts/preflight/go-mod-tidy.sh`), so a failure means the tree you are
+  building bypassed that gate, or you edited `go.mod`/`go.sum` and did not commit
+  the tidy result.
+- Your `go mod tidy` may have run on a different Go minor than this image's
+  `1.26`. Tidy output moves with the Go minor, so a mismatch can pass `ci` and
+  fail here; use the version the image pins (the comment at that step in
+  `deploy/self-hosted/Dockerfile.server` records the coupling).
+- The check applies to trees cut after #2196. Tags cut before it keep the bare
+  `go mod tidy` from their own Dockerfile, so rebuilding them still works, and
+  the images published for them are unaffected. Building *this* Dockerfile
+  against a pre-#2190 tree (incomplete `apps/server/go.sum`) fails with a
+  `go.sum` addition diff — tidy that tree and cut a new tag rather than moving
+  an existing one.
+- If the failure prints no diff, tidy never got as far as comparing: the module
+  graph or an import failed to load (network, module proxy, a missing `replace`
+  target), or a toolchain download failed. Go's own error is printed above;
+  re-running the build only helps the network case.
 
 ## Version Alignment
 
