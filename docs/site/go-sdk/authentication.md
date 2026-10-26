@@ -28,7 +28,7 @@ Project-scoped tokens with the `emt_*` prefix. Sets the `Authorization: Bearer <
 
 ```go
 client, err := sdk.New(sdk.Config{
-    ServerURL: "https://api.emergent-company.ai",
+    ServerURL: "https://memory.emergent-company.ai",
     Auth: sdk.AuthConfig{
         Mode:   "apitoken",
         APIKey: "emt_abc123...",  // always an emt_* token in this mode
@@ -46,7 +46,7 @@ polls for a token and stores credentials to disk.
 
 ```go
 client, err := sdk.NewWithDeviceFlow(sdk.Config{
-    ServerURL: "https://api.emergent-company.ai",
+    ServerURL: "https://memory.emergent-company.ai",
     Auth: sdk.AuthConfig{
         Mode:      "oauth",
         ClientID:  "emergent-sdk",

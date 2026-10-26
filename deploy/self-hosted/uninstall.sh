@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-$HOME/.emergent}"
+INSTALL_DIR="${INSTALL_DIR:-$HOME/.memory}"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -10,7 +10,7 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-echo -e "${BOLD}Emergent Standalone Uninstaller${NC}"
+echo -e "${BOLD}Memory Uninstaller${NC}"
 echo "================================"
 echo ""
 
@@ -67,9 +67,11 @@ else
 fi
 
 if [[ "$REMOVE_IMAGE" =~ ^[Yy]$ ]]; then
-    echo -e "${CYAN}Removing Docker image...${NC}"
-    docker rmi memory-server:latest 2>/dev/null || true
-    echo -e "${GREEN}Image removed.${NC}"
+    echo -e "${CYAN}Removing Docker images...${NC}"
+    docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null \
+        | grep -E '(^|/)memory-server:' \
+        | while read -r image; do docker rmi "$image" 2>/dev/null || true; done
+    echo -e "${GREEN}Images removed.${NC}"
 fi
 
 echo ""
@@ -77,7 +79,7 @@ echo -e "${CYAN}Removing installation directory...${NC}"
 rm -rf "${INSTALL_DIR}"
 
 echo ""
-echo -e "${GREEN}${BOLD}Emergent has been uninstalled.${NC}"
+echo -e "${GREEN}${BOLD}Memory has been uninstalled.${NC}"
 echo ""
 echo "To reinstall, run:"
 echo "  curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash"

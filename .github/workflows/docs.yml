@@ -120,7 +120,7 @@ jobs:
           cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
           cp docs/llms.md /tmp/llms.md
           cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
-          cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
+          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
           # gh-pages does not contain .github/, so stage the retry helper too.
           cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
           git fetch origin gh-pages
@@ -130,8 +130,8 @@ jobs:
           cp /tmp/swagger.json openapi.json
           cp /tmp/llms.md llms.md
           cp /tmp/llms-go-sdk.md llms-go-sdk.md
-          cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
-          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
+          cp /tmp/llms-python-sdk.md llms-python-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
           # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
           # publisher pushes the same branch and may land first. Run the copy
@@ -199,7 +199,7 @@ jobs:
           cp apps/server/docs/swagger/swagger.yaml /tmp/swagger.yaml
           cp docs/llms.md /tmp/llms.md
           cp docs/llms-go-sdk.md /tmp/llms-go-sdk.md
-          cp docs/llms-swift-sdk.md /tmp/llms-swift-sdk.md
+          cp docs/llms-python-sdk.md /tmp/llms-python-sdk.md
           # gh-pages does not contain .github/, so stage the retry helper too.
           cp .github/scripts/push-gh-pages-with-retry.sh /tmp/push-gh-pages-with-retry.sh
           git fetch origin gh-pages
@@ -209,8 +209,8 @@ jobs:
           cp /tmp/swagger.json openapi.json
           cp /tmp/llms.md llms.md
           cp /tmp/llms-go-sdk.md llms-go-sdk.md
-          cp /tmp/llms-swift-sdk.md llms-swift-sdk.md
-          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-swift-sdk.md
+          cp /tmp/llms-python-sdk.md llms-python-sdk.md
+          git add swagger.json swagger.yaml openapi.json llms.md llms-go-sdk.md llms-python-sdk.md
           git diff --cached --quiet || git commit -m "docs: sync root-level raw files [skip ci]"
           # Pull-rebase-and-retry, matching publish-appcast.sh: the appcast
           # publisher pushes the same branch and may land first. Run the copy

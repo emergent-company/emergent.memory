@@ -62,17 +62,17 @@ from emergent import Client
 client = Client.from_api_key("http://localhost:3012", "my-server-api-key")
 
 # --- Project API token (emt_* -> Bearer auto-detected) ---
-client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123...")
+client = Client.from_api_key("https://memory.emergent-company.ai", "emt_abc123...")
 
 # --- OAuth Bearer token ---
-client = Client.from_oauth_token("https://api.emergent-company.ai", access_token="eyJh...")
+client = Client.from_oauth_token("https://memory.emergent-company.ai", access_token="eyJh...")
 
 # --- Full config ---
 from emergent import Config
 
 client = Client(
     Config(
-        server_url="https://api.emergent-company.ai",
+        server_url="https://memory.emergent-company.ai",
         api_key="emt_abc123",
         org_id="org_1",
         project_id="proj_1",

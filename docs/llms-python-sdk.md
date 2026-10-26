@@ -12,7 +12,7 @@ Python client library for the Emergent Memory API. Package: `emergent-memory`. S
 from emergent import Client, Config
 
 # From API key (auto-detects emt_* → Bearer)
-client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123")
+client = Client.from_api_key("https://memory.emergent-company.ai", "emt_abc123")
 
 # Auto-discover from ~/.memory/config.yaml, .env.local, .env, or MEMORY_* env vars
 client = Client.from_env()
@@ -22,7 +22,7 @@ client = Client.from_env()
 
 # Full config
 client = Client(Config(
-    server_url="https://api.emergent-company.ai",
+    server_url="https://memory.emergent-company.ai",
     api_key="emt_abc123",
     org_id="org_1",
     project_id="proj_1",

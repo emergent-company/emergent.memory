@@ -19,7 +19,7 @@ You can also set context at construction time via `sdk.Config`:
 
 ```go
 client, err := sdk.New(sdk.Config{
-    ServerURL: "https://api.emergent-company.ai",
+    ServerURL: "https://memory.emergent-company.ai",
     Auth:      ...,
     OrgID:     "org_abc123",
     ProjectID: "proj_xyz789",

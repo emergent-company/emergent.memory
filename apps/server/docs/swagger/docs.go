@@ -15,7 +15,8 @@ const docTemplate = `{
             "email": "support@emergent-company.ai"
         },
         "license": {
-            "name": "Proprietary"
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
         },
         "version": "{{.Version}}"
     },
@@ -40550,7 +40551,7 @@ const docTemplate = `{
 // SwaggerInfo holds exported Swagger Info so clients can modify it
 var SwaggerInfo = &swag.Spec{
 	Version:          "0.88.1",
-	Host:             "localhost:3002",
+	Host:             "",
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
 	Title:            "Memory API",

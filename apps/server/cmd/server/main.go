@@ -6,8 +6,8 @@
 // @contact.name Memory Team
 // @contact.url https://emergent-company.ai
 // @contact.email support@emergent-company.ai
-// @license.name Proprietary
-// @host localhost:3002
+// @license.name MIT
+// @license.url https://opensource.org/licenses/MIT
 // @BasePath /
 // @schemes http https
 //

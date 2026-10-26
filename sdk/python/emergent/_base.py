@@ -36,7 +36,7 @@ class BaseClient:
     http:
         Shared :class:`httpx.Client` instance (connection-pooled).
     base_url:
-        Server root URL, e.g. ``"https://api.emergent-company.ai"``.
+        Server root URL, e.g. ``"https://memory.emergent-company.ai"``.
     auth:
         Authentication provider.
     org_id:

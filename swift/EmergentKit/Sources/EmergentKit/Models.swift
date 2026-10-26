@@ -4,7 +4,7 @@ import Foundation
 
 /// Configuration for creating an ``EmergentClient``.
 public struct EmergentConfig: Sendable {
-    /// Full URL of the Emergent server, e.g. `"https://api.emergent-company.ai"`.
+    /// Full URL of the Emergent server, e.g. `"https://memory.emergent-company.ai"`.
     public let serverURL: String
 
     /// Authentication mode. Supported values: `"apikey"`, `"apitoken"`.

@@ -13,11 +13,11 @@
             "email": "support@emergent-company.ai"
         },
         "license": {
-            "name": "Proprietary"
+            "name": "MIT",
+            "url": "https://opensource.org/licenses/MIT"
         },
         "version": "0.88.1"
     },
-    "host": "localhost:3002",
     "basePath": "/",
     "paths": {
         "/.well-known/oauth-protected-resource": {

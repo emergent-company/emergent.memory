@@ -15,12 +15,12 @@ Typical usage
     client = Client.from_api_key("http://localhost:3012", "my-server-key")
 
     # Project API token  (emt_* prefix auto-detected)
-    client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123...")
+    client = Client.from_api_key("https://memory.emergent-company.ai", "emt_abc123...")
 
     # Full config
     from emergent import Client, Config
     client = Client(Config(
-        server_url="https://api.emergent-company.ai",
+        server_url="https://memory.emergent-company.ai",
         api_key="emt_abc123",
         org_id="org_1",
         project_id="proj_1",
@@ -236,7 +236,7 @@ class Config:
     Parameters
     ----------
     server_url:
-        Root URL of the Emergent server, e.g. ``"https://api.emergent-company.ai"``.
+        Root URL of the Emergent server, e.g. ``"https://memory.emergent-company.ai"``.
     api_key:
         API key or project API token.  An ``emt_`` prefix is auto-detected and
         switches to ``APITokenProvider`` (Bearer auth) transparently.
@@ -419,7 +419,7 @@ class Client:
         Example::
 
             client = Client.from_oauth_token(
-                "https://api.emergent-company.ai",
+                "https://memory.emergent-company.ai",
                 access_token=my_token_manager.get_token(),
             )
         """

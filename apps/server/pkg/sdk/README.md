@@ -70,7 +70,7 @@ func main() {
 ```go
 // OAuth device flow - interactive authentication
 client, err := sdk.NewWithDeviceFlow(sdk.Config{
-    ServerURL: "https://api.emergent-company.ai",
+    ServerURL: "https://memory.emergent-company.ai",
     Auth: sdk.AuthConfig{
         Mode:      "oauth",
         ClientID:  "emergent-sdk",

@@ -38,7 +38,7 @@ provider := auth.NewAPITokenProvider("emt_abc123...")
 Implements OAuth 2.0 device flow with OIDC discovery and token refresh.
 
 ```go
-oidcConfig, err := auth.DiscoverOIDC("https://api.emergent-company.ai")
+oidcConfig, err := auth.DiscoverOIDC("https://memory.emergent-company.ai")
 provider := auth.NewOAuthProvider(oidcConfig, "emergent-sdk", "~/.emergent/credentials.json")
 ```
 

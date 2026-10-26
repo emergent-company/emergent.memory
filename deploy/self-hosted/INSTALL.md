@@ -1,359 +1,239 @@
-# Emergent One-Command Installation Guide
+# Installing Memory (self-hosted)
 
-## The Simplest Way to Install Emergent
-
-Copy and paste this single command into your terminal:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
-```
-
-## What Happens During Installation
-
-The installer automatically:
-
-1. ✅ **Checks prerequisites** (Docker, Docker Compose)
-2. ✅ **Downloads Emergent** (latest version)
-3. ✅ **Generates secure passwords** (PostgreSQL, object store, API key)
-4. ✅ **Creates configuration** (.env.local file)
-5. ✅ **Builds Docker images** (server with embedded CLI)
-6. ✅ **Starts all services** (API, database, storage, document processing)
-7. ✅ **Verifies health** (waits for server to be ready)
-8. ✅ **Saves credentials** (to credentials.txt)
-
-**Total time: ~2-3 minutes**
-
-## Installation Output
-
-```
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Emergent Standalone Installation
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✅ Docker detected: Docker version 24.0.7
-✅ Docker Compose detected: Docker Compose version v2.23.0
-
-📂 Installation directory: /home/user/emergent-standalone
-📦 Downloading Emergent...
-🔐 Generating secure passwords...
-📝 Creating environment configuration...
-✅ Configuration created
-
-📋 Do you have a Google API key for embeddings? (y/N): n
-⚠️  Skipping Google API key (embeddings will be disabled)
-
-🏗️  Building Docker image with embedded CLI...
-🚀 Starting services...
-⏳ Waiting for services to become healthy...
-✅ Server is healthy!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  ✅ Installation Complete!
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-📍 Installation directory: /home/user/emergent-standalone
-🌐 Server URL: http://localhost:3002
-🔑 API Key: a1b2c3d4e5f6...
-
-Quick Commands:
-  docker exec emergent-server emergent-cli projects list
-  docker exec emergent-server emergent-cli status
-```
-
-## After Installation
-
-### 1. Get Your Credentials
+One command installs the Memory server, its backing services, and the `memory`
+CLI on a single machine:
 
 ```bash
-cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
 ```
 
-Output:
+Rolling it out to a team or a server without internet access? Jump to
+[Manual installation](#manual-installation).
+
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| Docker Engine 24+ with Compose v2 | `docker compose version` must work |
+| 4 GB RAM, 10 GB disk | 2 GB RAM is enough with no local embedding model |
+| Linux or macOS | the CLI also ships for Windows; the server stack needs Docker |
+| Ports | `3002` (API/MCP), `15432` (Postgres), `18000` (extraction), `19000` (object store) |
+| curl + tar/gzip | used by the installer |
+
+No Python, Go or Node toolchain is needed — the installer pulls pre-built
+images and binaries.
+
+## What the installer does
+
+1. Checks Docker, Compose and the required tools.
+2. Pulls `ghcr.io/emergent-company/memory-server` (tag taken from `CLI_VERSION`).
+3. Generates the database password and the server API key.
+4. Writes the environment to `~/.memory/config/.env.local` and the compose
+   file to `~/.memory/docker/docker-compose.yml`.
+5. Starts the stack with `docker compose up -d` and waits for `/health`.
+6. Downloads the `memory` CLI to `~/.memory/bin/memory` and adds that directory
+   to `PATH` in your shell profile.
+7. Writes `~/.memory/config.yaml` (server URL + API key) and prints an MCP
+   client snippet.
+
+Re-running the same command upgrades in place: it keeps `~/.memory/config/`,
+the Docker volumes holding the database and object store, and your API key, and
+only swaps the server image.
+
+## What gets installed
+
+| Container | Role | Host port |
+|---|---|---|
+| `memory-server` | API + MCP server | 3002 |
+| `memory-db` | PostgreSQL 17 + pgvector | 15432 |
+| `memory-xberg` | document extraction (56+ formats) | 18000 |
+| `memory-seaweedfs` | S3-compatible object storage | 19000 |
+| `memory-storage-init` | one-shot bucket initialisation | — |
+
+These are the ports the installer writes to `~/.memory/config/.env.local`
+(`POSTGRES_PORT`, `XBERG_PORT`, `OBJECT_STORE_API_PORT`, `SERVER_PORT`); change
+them there and restart the stack.
+
+Everything lives under `~/.memory`:
 
 ```
-Emergent Standalone - Credentials
-Generated: 2026-02-06 12:00:00
-
-Server URL: http://localhost:3002
-API Key: your-generated-api-key
-
-PostgreSQL:
-  Host: localhost:15432
-  User: emergent
-  Password: your-generated-password
-  Database: emergent
-
-SeaweedFS (S3-compatible object storage):
-  API: http://localhost:19000
-  Access Key: emergent
-  Secret Key: your-generated-password
+~/.memory/
+├── bin/            memory CLI + helper scripts (emergent-ctl, emergent-auth)
+├── config/         .env.local (secrets, ports, provider keys)
+├── config.yaml     CLI config, written by the installer
+├── docker/         docker-compose.yml used by the stack
+└── version         installed version
 ```
 
-### 2. Verify Installation
+Database and object-store contents live in Docker named volumes
+(`postgres_data`, `object_store_data`) declared by that compose file, not in a
+directory under `~/.memory`.
+
+## After installation
+
+The installer prints the API key; it is also in
+`~/.memory/config/.env.local` (`STANDALONE_API_KEY`).
 
 ```bash
-# Automatic verification
-~/emergent-standalone/deploy/self-hosted/verify-install.sh
-
-# Or manually
-curl http://localhost:3002/health
-docker exec emergent-server emergent-cli projects list
+memory projects list                     # list projects (creates none)
+memory status                            # server + service health
+memory config show                       # resolved CLI configuration
+docker compose -f ~/.memory/docker/docker-compose.yml logs -f server
 ```
 
-### 3. Start Using Emergent
+Open a new terminal if `memory` is not on `PATH` yet, or add it yourself:
 
 ```bash
-# List projects
-docker exec emergent-server emergent-cli projects list
-
-# Check authentication
-docker exec emergent-server emergent-cli status
-
-# View configuration
-docker exec emergent-server emergent-cli config show
+export PATH="$HOME/.memory/bin:$PATH"
 ```
 
-## Customization Options
+### Connect an AI agent over MCP
 
-### Custom Installation Directory
+Memory is a **remote MCP server** (Streamable HTTP); there is no local stdio
+command. Point the client at the server with the project to expose:
+
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "type": "http",
+      "url": "http://localhost:3002/api/mcp",
+      "headers": {
+        "X-Project-ID": "<PROJECT_ID>",
+        "X-API-Key": "<API_KEY>"
+      }
+    }
+  }
+}
+```
+
+`memory projects list` prints the project IDs; the API key is
+`STANDALONE_API_KEY` in `~/.memory/config/.env.local` (the installer also prints
+it). `memory mcp-guide` reprints this config with the live project ID at any
+time, and also emits the OpenCode and legacy-SSE variants.
+
+### Embeddings
+
+Memory needs an embedding provider for semantic search. Either pass a key to the
+installer (`GOOGLE_API_KEY=...`) or add one later:
 
 ```bash
-INSTALL_DIR=/opt/emergent curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
+memory config set google_api_key YOUR_KEY
 ```
 
-### Custom Server Port
+Without a provider, ingestion and graph CRUD work; embeddings stay pending.
+
+## Custom configuration
+
+| Variable | Default | Effect |
+|---|---|---|
+| `INSTALL_DIR` | `~/.memory` | where binaries, config and data live |
+| `SERVER_PORT` | `3002` | host port for the API/MCP server |
+| `CLI_VERSION` | `latest` | the one version knob: CLI release *and* server image tag |
+| `MEMORY_VERSION` | `main` | branch used to download the helper scripts and `init.sql` |
+| `GOOGLE_API_KEY` | — | embedding provider key |
+| `CLIENT_ONLY` | `false` | install only the CLI against an existing server |
 
 ```bash
-SERVER_PORT=8080 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
+INSTALL_DIR=/opt/memory SERVER_PORT=8080 \
+  curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
 ```
 
-### Provide Google API Key
+Client-only install, for a workstation that talks to a shared server:
 
 ```bash
-GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
+CLIENT_ONLY=true \
+  curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
+memory login --server-url https://memory.example.com --api-key emt_...
 ```
 
-### Specific Version
+## Manual installation
+
+For a from-checkout deployment, or when you want to build the image yourself:
 
 ```bash
-EMERGENT_VERSION=v1.0.0 curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
+git clone https://github.com/emergent-company/emergent.memory.git
+cd emergent.memory/deploy/self-hosted
+
+cp .env.example .env      # set SERVER_PORT, POSTGRES_PASSWORD, STANDALONE_API_KEY
+docker compose -f docker-compose.local.yml up -d --build
+curl -s localhost:3002/health
 ```
 
-### Multiple Options
+`docker-compose.local.yml` builds the server from this repository and reads
+`.env` from this directory. It is the local-testing compose (its `server`
+service also mounts the Firecracker sandbox runtime, so the host needs
+`/dev/kvm`); the compose file the installer writes under `~/.memory/docker/`
+references the published image and has no sandbox mounts. Use the installer if
+you do not specifically want the sandbox.
+
+## Verify
 
 ```bash
-INSTALL_DIR=/opt/emergent SERVER_PORT=8080 GOOGLE_API_KEY=your-key curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
+./verify-install.sh
+# or, for a non-default layout:
+INSTALL_DIR=/opt/memory SERVER_PORT=8080 ./verify-install.sh
 ```
 
-## What Gets Installed
+It checks the compose file, the running `server` service, `/health`, and CLI
+authentication inside the container. The script lives in this directory of the
+repository — the installer does not copy it into `~/.memory/bin`.
 
-### Docker Containers
-
-| Container          | Purpose               | Port         |
-| ------------------ | --------------------- | ------------ |
-| emergent-server    | API + CLI             | 3002         |
-| emergent-db        | PostgreSQL + pgvector | 15432        |
-| emergent-seaweedfs | S3-compatible storage | 19000        |
-| emergent-xberg | Document extraction   | 18000        |
-
-### Files and Directories
-
-```
-~/emergent-standalone/
-├── .git/                       # Git repository (for updates)
-├── apps/                       # Source code
-├── tools/                      # CLI source
-├── deploy/self-hosted/
-│   ├── .env.local             # Generated configuration
-│   ├── credentials.txt        # YOUR API KEYS (keep secure!)
-│   ├── docker-compose.local.yml
-│   ├── verify-install.sh
-│   └── [documentation]
-└── [other project files]
-```
-
-## Prerequisites
-
-The installer checks for:
-
-- ✅ **Docker** (v20.10+)
-- ✅ **Docker Compose** (v2.0+)
-- ✅ **Git** (optional, for updates)
-- ✅ **curl** (to download installer)
-- ✅ **openssl** or `/dev/urandom` (for password generation)
-
-### Install Docker
-
-**Linux:**
+## Upgrade
 
 ```bash
-curl -fsSL https://get.docker.com | sh
-sudo usermod -aG docker $USER
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install-online.sh | bash
 ```
 
-**macOS:**
+The installer detects the existing installation, moves the compose file to the
+new image, and restarts the stack. To pin a release:
+`CLI_VERSION=v0.88.2`.
+
+Database migrations run automatically on server start.
+
+## Uninstall
 
 ```bash
-brew install --cask docker
+curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/uninstall.sh | bash
 ```
 
-**Windows:**
-Download from https://docs.docker.com/desktop/install/windows-install/
-
-## Common Operations
-
-### View Logs
-
-```bash
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml logs -f
-```
-
-### Stop Services
-
-```bash
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml down
-```
-
-### Restart Services
-
-```bash
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml restart
-```
-
-### Update to Latest Version
-
-```bash
-cd ~/emergent-standalone
-git pull
-cd deploy/self-hosted
-docker compose -f docker-compose.local.yml down
-./build.sh
-docker compose -f docker-compose.local.yml up -d
-```
-
-### Uninstall
-
-```bash
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml down -v
-cd ~
-rm -rf ~/emergent-standalone
-```
+The script stops the stack, then asks twice: whether to delete the Docker
+volumes (all documents and database contents) and whether to delete the server
+image. Either way it removes `~/.memory` at the end. For an unattended run set
+`REMOVE_DATA=y` / `REMOVE_IMAGE=y` in the environment.
 
 ## Troubleshooting
 
-### Installation Fails
-
-**Check Docker:**
+**Server container exits immediately**
 
 ```bash
-docker --version
-docker compose version
+docker compose -f ~/.memory/docker/docker-compose.yml logs server --tail 100
 ```
 
-**Check logs:**
+The usual causes are a port already in use (`SERVER_PORT`), insufficient memory,
+or a `~/.memory/config/.env.local` with a missing `STANDALONE_API_KEY`.
+
+**`/health` never becomes ready**
+
+Database initialisation is the slow step on a cold start; `docker compose ps`
+shows `memory-db` health. Give it 60–90 s, then check the server logs as above.
+
+**`memory` command not found**
 
 ```bash
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml logs
+export PATH="$HOME/.memory/bin:$PATH"     # then restart your shell
 ```
 
-### Server Not Responding
+**Re-running the installer after editing ports or keys**
+
+Edit `~/.memory/config/.env.local` and restart:
 
 ```bash
-# Check if running
-docker ps | grep emergent-server
-
-# View logs
-docker logs emergent-server
-
-# Restart
-cd ~/emergent-standalone/deploy/self-hosted
-docker compose -f docker-compose.local.yml restart server
+docker compose -f ~/.memory/docker/docker-compose.yml --env-file ~/.memory/config/.env.local up -d
 ```
 
-### CLI Commands Fail
+## Related
 
-```bash
-# Verify API key
-cat ~/emergent-standalone/deploy/self-hosted/credentials.txt
-
-# Test authentication
-docker exec emergent-server emergent-cli status
-
-# Check server health
-curl http://localhost:3002/health
-```
-
-### Port Already in Use
-
-Change the port:
-
-```bash
-# Edit .env.local
-cd ~/emergent-standalone/deploy/self-hosted
-nano .env.local
-# Change SERVER_PORT=3002 to SERVER_PORT=8080
-
-# Restart
-docker compose -f docker-compose.local.yml down
-docker compose -f docker-compose.local.yml up -d
-```
-
-## Security Notes
-
-### Generated Passwords
-
-The installer generates **cryptographically secure passwords** using:
-
-- `openssl rand -hex 32` (64 characters)
-- OR `/dev/urandom` fallback (64 characters)
-
-### Credentials File
-
-**IMPORTANT**: The `credentials.txt` file contains sensitive information!
-
-```bash
-# Keep it secure
-chmod 600 ~/emergent-standalone/deploy/self-hosted/credentials.txt
-
-# Back it up securely
-cp ~/emergent-standalone/deploy/self-hosted/credentials.txt ~/safe-backup-location/
-```
-
-### Network Exposure
-
-By default, services are **only accessible from localhost**:
-
-- ✅ Server: `localhost:3002` (not exposed to network)
-- ✅ PostgreSQL: `localhost:15432` (not exposed)
-- ✅ SeaweedFS: `localhost:19000` (not exposed)
-
-To expose to network, see [README.md](./README.md) Tailscale section.
-
-## Next Steps
-
-1. **Read the quick reference**: `~/emergent-standalone/deploy/self-hosted/CLI_QUICK_REFERENCE.md`
-2. **Explore CLI commands**: `docker exec emergent-server emergent-cli --help`
-3. **Create a project**: `docker exec -it emergent-server emergent-cli projects create`
-4. **Upload documents**: See [CLI_USAGE.md](./CLI_USAGE.md) for examples
-5. **Set up automation**: Use examples from CLI_USAGE.md
-
-## Support
-
-- **Documentation**: `~/emergent-standalone/deploy/self-hosted/INDEX.md`
-- **GitHub Issues**: https://github.com/emergent-company/emergent.memory/issues
-- **Verification**: `~/emergent-standalone/deploy/self-hosted/verify-install.sh`
-
----
-
-**Installation URL**:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/emergent-company/emergent.memory/main/deploy/self-hosted/install.sh | bash
-```
-
-**That's it! One command, ~3 minutes, ready to use.** 🚀
+- [README.md](./README.md) — deployment overview
+- [UPGRADING_OBJECT_STORE.md](./UPGRADING_OBJECT_STORE.md) — object-store migration
+- [../../docs/site/](../../docs/site/) — API, SDK and MCP documentation

@@ -270,7 +270,7 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
         echo ""
         echo -e "${CYAN}Next Steps:${NC}"
         echo ""
-        echo "1. Connect to an Memory server:"
+        echo "1. Connect to a Memory server:"
         echo "   memory login --server-url <SERVER_URL> --api-key <API_KEY>"
         echo ""
         echo "2. Configure MCP for your AI agent:"
@@ -279,14 +279,20 @@ if [ "${CLIENT_ONLY:-}" = "true" ] || [ "${CLIENT_ONLY:-}" = "1" ]; then
 {
   "mcpServers": {
     "memory": {
-      "command": "/path/to/memory",
-      "args": ["mcp"]
+      "type": "http",
+      "url": "<SERVER_URL>/api/mcp",
+      "headers": {
+        "X-Project-ID": "<PROJECT_ID>",
+        "X-API-Key": "<API_KEY>"
+      }
     }
   }
 }
 CLIENTMCPEOF
         echo ""
-        echo "   Replace /path/to/memory with: ${INSTALL_DIR}/bin/memory"
+        echo "   <SERVER_URL> is the server you logged into, <PROJECT_ID> comes from"
+        echo "   'memory projects list', and <API_KEY> is the key you logged in with."
+        echo "   Run 'memory mcp-guide' to print this config with live values."
         echo ""
         echo -e "${YELLOW}Note:${NC} Restart your terminal for 'memory' to be in PATH."
         echo ""
@@ -701,11 +707,11 @@ cat << MCPEOF
 {
   "mcpServers": {
     "memory": {
-      "command": "${INSTALL_DIR}/bin/memory",
-      "args": ["mcp"],
-      "env": {
-        "MEMORY_SERVER_URL": "http://localhost:${SERVER_PORT}",
-        "MEMORY_ACCOUNT_API_KEY": "${API_KEY}"
+      "type": "http",
+      "url": "http://localhost:${SERVER_PORT}/api/mcp",
+      "headers": {
+        "X-Project-ID": "<PROJECT_ID>",
+        "X-API-Key": "${API_KEY}"
       }
     }
   }
@@ -713,25 +719,15 @@ cat << MCPEOF
 MCPEOF
 echo ""
 echo -e "${YELLOW}Note:${NC} Restart your AI agent (Claude Desktop/VS Code) after adding this config."
+echo -e "${YELLOW}<PROJECT_ID>${NC} is the project to expose over MCP; list yours with:"
+echo "  memory projects list"
 echo ""
-echo -e "${CYAN}Alternative: Use CLI login for simpler config${NC}"
+echo "Memory is a remote MCP server (Streamable HTTP): there is no local stdio"
+echo "command, so every client connects over HTTP with these headers."
 echo ""
-echo "  1. Run login command (restart terminal first):"
-echo "     memory login --server-url http://localhost:${SERVER_PORT} --api-key ${API_KEY}"
+echo -e "${CYAN}Reprint this config at any time${NC}"
 echo ""
-echo "  2. Then use this simplified MCP config:"
-echo ""
-cat << 'SIMPLEEOF'
-{
-  "mcpServers": {
-    "memory": {
-      "command": "memory",
-      "args": ["mcp"]
-    }
-  }
-}
-SIMPLEEOF
-echo ""
+echo "  memory mcp-guide"
 echo -e "${CYAN}📚 Documentation:${NC} https://github.com/emergent-company/emergent.memory"
 echo ""
 

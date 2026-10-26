@@ -1,6 +1,6 @@
 #!/bin/bash
 # build-dmg.sh — Build, sign, notarize, and package the Memory macOS connector
-# app as a .dmg. Ported from emergent.memory.mac (now archived).
+# app as a .dmg.
 #
 # Usage: ./Scripts/build-dmg.sh [--notarize]
 #

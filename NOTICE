@@ -85,21 +85,35 @@ Runtime Dependencies (not compiled into binary, used at runtime):
 
 ================================================================================
 
-Bundled AI agent skills (redistributed verbatim under `.agents/skills/`):
+Bundled front-end assets (vendored upstream builds):
 
-  design-taste-frontend
-  Copyright (c) 2026 Leonxlnx
-  Licensed under the MIT License
-  https://github.com/Leonxlnx/taste-skill
-  Full licence text: .agents/skills/design-taste-frontend/LICENSE
+  htmx 4.0.0
+  apps/web-ui/gateway/webui/static/js/htmx.min.js
+  Copyright (c) Big Sky Software, Inc.
+  Licensed under the BSD 2-Clause License
+  https://github.com/bigskysoftware/htmx
 
-  web-design-guidelines
-  Copyright (c) 2025 Vercel Labs
-  Licensed under the MIT License
-  https://github.com/vercel-labs/agent-skills
-  Includes the Web Interface Guidelines vendored from
-  https://github.com/vercel-labs/web-interface-guidelines
-  Full licence text: .agents/skills/web-design-guidelines/LICENSE
+  LiveKit JavaScript client
+  apps/web-ui/gateway/webui/static/js/vendor/livekit-client.umd.js
+  Copyright (c) LiveKit, Inc.
+  Licensed under the Apache License, Version 2.0
+  https://github.com/livekit/client-sdk-js
+
+Generated bundle:
+
+  apps/server/domain/mcp/mcpremote/proxy-bundle.js is a generated build of
+  the mcp-remote CLI and the MCP TypeScript SDK (@modelcontextprotocol/sdk),
+  bundled with their transitive dependencies. Those packages are licensed
+  under the MIT License; copyright is held by Anthropic, PBC and the
+  respective package authors.
+  https://github.com/punkpeye/mcp-remote
+  https://github.com/modelcontextprotocol/typescript-sdk
+
+Derived module:
+
+  apps/connector.linux derives behavior from the Diane project. Its
+  attribution notice and the MIT license text are in
+  apps/connector.linux/NOTICE.
 
 ================================================================================
 

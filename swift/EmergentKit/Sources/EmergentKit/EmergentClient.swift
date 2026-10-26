@@ -12,7 +12,7 @@ import OSLog
 /// ### Quick start
 /// ```swift
 /// let client = try await EmergentClient(config: EmergentConfig(
-///     serverURL: "https://api.emergent-company.ai",
+///     serverURL: "https://memory.emergent-company.ai",
 ///     apiKey: "emt_your_key_here",
 ///     orgID: "org_abc",
 ///     projectID: "proj_xyz"

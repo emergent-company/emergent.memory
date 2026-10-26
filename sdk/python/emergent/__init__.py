@@ -11,10 +11,10 @@ Quick start
     client = Client.from_api_key("http://localhost:3012", "my-server-api-key")
 
     # Project API token (emt_* prefix auto-detected, uses Bearer auth)
-    client = Client.from_api_key("https://api.emergent-company.ai", "emt_abc123...")
+    client = Client.from_api_key("https://memory.emergent-company.ai", "emt_abc123...")
 
     # OAuth Bearer token
-    client = Client.from_oauth_token("https://api.emergent-company.ai", access_token)
+    client = Client.from_oauth_token("https://memory.emergent-company.ai", access_token)
 
     # Set org / project context
     client.set_context(org_id="org_1", project_id="proj_1")

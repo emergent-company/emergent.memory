@@ -31,11 +31,7 @@ The Go SDK provides a fully type-safe client library covering the complete Emerg
 
 ### Swift SDK
 
-The Swift Core layer (`EmergentAPIClient`) provides a lightweight async/await HTTP client for use in the Emergent Mac app, covering projects, graph objects, documents, agents, MCP servers, and user profile.
-
-**Source:** `emergent-company/emergent.memory.mac` — `Emergent/Core/`
-
-[Swift SDK Overview](swift-sdk/index.md){ .md-button .md-button--primary }
+The Swift surface is the `EmergentKit` package under [`swift/EmergentKit`](https://github.com/emergent-company/emergent.memory/tree/main/swift/EmergentKit), used by the iOS and Mac apps in this repository. It is not yet published as a standalone Swift Package, so it has no reference documentation on this site.
 
 ### Python SDK
 
@@ -53,13 +49,6 @@ The Python SDK (`emergent-memory`) provides a full-featured async-capable client
 
 For LLM context injection, flat markdown reference files are available:
 
-- [`docs/llms.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms.md) — Combined reference
-- [`docs/llms-go-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-go-sdk.md) — Go SDK reference
-- [`docs/llms-swift-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-swift-sdk.md) — Swift SDK reference
-- [`docs/llms-python-sdk.md`](https://github.com/emergent-company/emergent/blob/main/docs/llms-python-sdk.md) — Python SDK reference
-
----
-
-!!! note "Admin: Enable GitHub Pages"
-    This site is deployed via the `gh-pages` branch. To go live, a repo admin must enable
-    GitHub Pages once: **Settings → Pages → Source: `gh-pages` branch**.
+- [`docs/llms.md`](https://github.com/emergent-company/emergent.memory/blob/main/docs/llms.md) — Combined reference
+- [`docs/llms-go-sdk.md`](https://github.com/emergent-company/emergent.memory/blob/main/docs/llms-go-sdk.md) — Go SDK reference
+- [`docs/llms-python-sdk.md`](https://github.com/emergent-company/emergent.memory/blob/main/docs/llms-python-sdk.md) — Python SDK reference

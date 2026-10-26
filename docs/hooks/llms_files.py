@@ -4,7 +4,7 @@ MkDocs hook: copy llms reference files and swagger docs into the built site.
 Serves raw files at:
   /llms.md
   /llms-go-sdk.md
-  /llms-swift-sdk.md
+  /llms-python-sdk.md
   /swagger.json
   /swagger.yaml
   /openapi.json   (alias for swagger.json — same Swagger 2.0 content)
@@ -60,7 +60,7 @@ def on_post_build(config):
     llms_files = [
         "docs/llms.md",
         "docs/llms-go-sdk.md",
-        "docs/llms-swift-sdk.md",
+        "docs/llms-python-sdk.md",
     ]
     for rel_path in llms_files:
         src = repo_root / rel_path

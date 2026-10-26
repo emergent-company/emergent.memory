@@ -10251,7 +10251,6 @@ definitions:
     additionalProperties:
       type: string
     type: object
-host: localhost:3002
 info:
   contact:
     email: support@emergent-company.ai
@@ -10259,7 +10258,8 @@ info:
     url: https://emergent-company.ai
   description: Memory Knowledge Base API - AI-powered knowledge management system
   license:
-    name: Proprietary
+    name: MIT
+    url: https://opensource.org/licenses/MIT
   title: Memory API
   version: 0.88.1
 paths:

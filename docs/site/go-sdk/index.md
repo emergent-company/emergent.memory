@@ -46,7 +46,7 @@ import (
 
 func main() {
     client, err := sdk.New(sdk.Config{
-        ServerURL: "https://api.emergent-company.ai",
+        ServerURL: "https://memory.emergent-company.ai",
         Auth: sdk.AuthConfig{
             Mode:   "apikey",
             APIKey: "your-api-key",
