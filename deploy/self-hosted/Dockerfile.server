@@ -159,7 +159,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 # App auth; the server mints and refreshes installation tokens itself, so no
 # long-lived token is stored in config. The tarball is arch-specific but the
 # download runs on the build platform (no emulation).
-FROM --platform=$BUILDPLATFORM alpine:3.21 AS github-mcp-builder
+FROM --platform=$BUILDPLATFORM alpine:3.23 AS github-mcp-builder
 
 ARG TARGETARCH
 ARG GITHUB_MCP_SERVER_VERSION
@@ -184,17 +184,18 @@ RUN set -eux; \
     test -s /out/github-mcp-server
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.23
 
-# The PostgreSQL client major MUST match the database image major in the
-# compose files (pgvector/pgvector:pg17) because pg_dump refuses to dump a
-# server newer than itself. Override at build time with
-# --build-arg PG_CLIENT_MAJOR=<major> when the database image major changes.
+# pg_dump refuses to dump a server newer than itself, and the in-app backup
+# task hard-fails when its client major is older than the server. So the client
+# major must be >= the database image major; it does not have to equal it
+# (pg_dump 18 dumps a 17 server, which is what self-hosted installs run).
+# Override at build time with --build-arg PG_CLIENT_MAJOR=<major>.
 # PG_CLIENT_MAJOR must name a client major available in this base image's
-# package repositories (alpine:3.21 ships postgresql15/16/17-client; it does
-# NOT ship a 18 client). A newer major requires bumping the base image tag first
-# — `apk add postgresql18-client` will fail the build.
-ARG PG_CLIENT_MAJOR=17
+# package repositories (alpine:3.23 ships postgresql16/17/18-client; 3.21 had
+# 15/16/17). A newer major still requires bumping the base image tag first — the
+# apk add below fails the build rather than producing a silently older client.
+ARG PG_CLIENT_MAJOR=18
 
 # Install runtime dependencies
 # Includes Firecracker prerequisites: iptables (NAT), iproute2 (TAP), e2fsprogs (mkfs.ext4)

@@ -32,7 +32,7 @@ docker build \
   --build-arg "VERSION=$VERSION" \
   --build-arg "GIT_COMMIT=$GIT_COMMIT" \
   --build-arg "BUILD_TIME=$BUILD_TIME" \
-  --build-arg "PG_CLIENT_MAJOR=${PG_CLIENT_MAJOR:-17}" \
+  --build-arg "PG_CLIENT_MAJOR=${PG_CLIENT_MAJOR:-18}" \
   .
 
 echo
