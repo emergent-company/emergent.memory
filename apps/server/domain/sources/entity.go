@@ -44,6 +44,14 @@ const (
 	// ProviderTypeGoogleDrive syncs documents from a Google Drive folder.
 	ProviderTypeGoogleDrive = "google_drive"
 
+	// ProviderTypeGmail syncs email threads from a Gmail mailbox. It is an
+	// OAuth-only provider sharing the Google vendor/app identity with google_drive.
+	ProviderTypeGmail = "gmail"
+
+	// SourceTypeEmail is the source-type category advertised for the Gmail
+	// provider (and future email-backed providers).
+	SourceTypeEmail = "email"
+
 	// ProviderTypeGitHub syncs documentation from a GitHub repository. The
 	// provider is a readiness stub in this iteration: catalog, config schema,
 	// credential handling, and OAuth are wired, while enumeration/sync ship in a

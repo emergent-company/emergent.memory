@@ -112,6 +112,9 @@ type Config struct {
 	// GitHubSource configures the first-class GitHub data-source connector.
 	GitHubSource GitHubSourceConfig
 
+	// GmailSource configures the first-class Gmail data-source connector.
+	GmailSource GmailSourceConfig
+
 	// WebSource configures the first-class web-scraper data-source connector.
 	WebSource WebSourceConfig
 
@@ -913,6 +916,16 @@ type GitHubSourceConfig struct {
 	APIBaseURL string `env:"GITHUB_API_BASE_URL" envDefault:""`
 }
 
+// GmailSourceConfig holds the deployment-level settings for the Gmail
+// data-source connector.
+type GmailSourceConfig struct {
+	// APIBaseURL overrides the Gmail API origin (default
+	// https://gmail.googleapis.com). It exists so a hermetic test wrapper can
+	// stand in for Google; it is a deployment setting only, so a source config
+	// can never point the connector at an arbitrary host.
+	APIBaseURL string `env:"GMAIL_API_BASE_URL" envDefault:""`
+}
+
 // WebSourceConfig holds the deployment-level settings for the web-scraper
 // data-source connector. It feeds the shared outbound SSRF guard (see
 // internal/outbound.Policy) so an operator can scope which hosts the crawler is
@@ -939,24 +952,30 @@ type OAuthClientDefaults struct {
 // OAuthClientsByProvider returns the deployment-default OAuth client material
 // keyed by data-source provider type. It is the fallback layer beneath the
 // per-org client configs (design D3); adding a provider appends one entry.
+// google_drive and gmail are both backed by the one Google vendor app, so the
+// same client id/secret serves both (the app must have both APIs enabled and
+// both scopes on its consent screen).
 func (c SourceOAuthConfig) OAuthClientsByProvider() map[string]OAuthClientDefaults {
 	out := map[string]OAuthClientDefaults{}
 	if c.GoogleClientID != "" && c.GoogleClientSecret != "" {
-		out["google_drive"] = OAuthClientDefaults{ClientID: c.GoogleClientID, ClientSecret: c.GoogleClientSecret}
+		google := OAuthClientDefaults{ClientID: c.GoogleClientID, ClientSecret: c.GoogleClientSecret}
+		out["google_drive"] = google
+		out["gmail"] = google
 	}
 	return out
 }
 
 // DeploymentEnvVarHint returns the deployment-default env-var hint for a data
 // source provider's OAuth client, or "" when the provider has no deployment
-// default. Today only google_drive has one (SOURCES_OAUTH_GOOGLE_CLIENT_ID/
-// SECRET); a provider without a default gets no hint, so remediation never
-// names an unrelated provider's env vars (e.g. it must never tell a github
-// user to set the Google vars). Keep this aligned with OAuthClientsByProvider:
-// every provider with a hint must also appear there, and vice versa.
+// default. The Google-backed providers (google_drive, gmail) share
+// SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET; a provider without a default gets no
+// hint, so remediation never names an unrelated provider's env vars (e.g. it
+// must never tell a github user to set the Google vars). Keep this aligned with
+// OAuthClientsByProvider: every provider with a hint must also appear there, and
+// vice versa.
 func (c SourceOAuthConfig) DeploymentEnvVarHint(providerType string) string {
 	switch providerType {
-	case "google_drive":
+	case "google_drive", "gmail":
 		return "SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET"
 	default:
 		return ""

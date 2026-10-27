@@ -244,26 +244,29 @@ func NewRegistry(providers ...SourceProvider) *Registry {
 // using default deployment settings (api.github.com). Package-level callers and
 // tests use it; fx wires NewConfiguredRegistry instead.
 func NewDefaultRegistry() *Registry {
-	return NewRegistry(defaultProviders("", outbound.DefaultPolicy())...)
+	return NewRegistry(defaultProviders("", "", outbound.DefaultPolicy())...)
 }
 
 // NewConfiguredRegistry builds the registry of providers shipped with this
 // build, applying deployment-level settings: the GitHub API origin
 // (GITHUB_API_BASE_URL), which lets an operator point the connector at GitHub
 // Enterprise or a hermetic test wrapper without letting a source config choose
-// an endpoint, and the web crawler's outbound SSRF policy
-// (WEB_SOURCE_ALLOWED_HOSTS / WEB_SOURCE_ALLOW_PRIVATE_HOSTS).
+// an endpoint; the Gmail API origin (GMAIL_API_BASE_URL), which exists only so a
+// hermetic test wrapper can stand in for Google; and the web crawler's outbound
+// SSRF policy (WEB_SOURCE_ALLOWED_HOSTS / WEB_SOURCE_ALLOW_PRIVATE_HOSTS).
 func NewConfiguredRegistry(cfg *config.Config) *Registry {
 	baseURL := ""
+	gmailBaseURL := ""
 	webPolicy := outbound.DefaultPolicy()
 	if cfg != nil {
 		baseURL = cfg.GitHubSource.APIBaseURL
+		gmailBaseURL = cfg.GmailSource.APIBaseURL
 		webPolicy = outbound.Policy{
 			AllowedHosts: cfg.WebSource.AllowedHosts,
 			AllowPrivate: cfg.WebSource.AllowPrivate,
 		}
 	}
-	return NewRegistry(defaultProviders(baseURL, webPolicy)...)
+	return NewRegistry(defaultProviders(gmailBaseURL, baseURL, webPolicy)...)
 }
 
 // Register adds or replaces a provider by its catalog type, preserving insertion
@@ -291,13 +294,16 @@ func (r *Registry) List() []SourceProvider {
 	return out
 }
 
-// defaultProviders returns the providers registered for this build. githubBaseURL
-// is the deployment's GitHub API origin ("" means api.github.com); webPolicy is
-// the deployment's outbound SSRF policy for the web crawler (see
-// internal/outbound).
-func defaultProviders(githubBaseURL string, webPolicy outbound.Policy) []SourceProvider {
+// defaultProviders returns the providers registered for this build.
+// gmailBaseURL is the deployment's Gmail API origin ("" means the real API);
+// githubBaseURL is the deployment's GitHub API origin ("" means api.github.com);
+// webPolicy is the deployment's outbound SSRF policy for the web crawler (see
+// internal/outbound). Both base URLs are deployment settings only, so a source
+// config can never point a connector at an arbitrary host.
+func defaultProviders(gmailBaseURL, githubBaseURL string, webPolicy outbound.Policy) []SourceProvider {
 	return []SourceProvider{
 		newGoogleDriveProvider(),
+		newGmailProvider(gmailBaseURL),
 		newGitHubProvider(githubBaseURL),
 		newTraleProvider(),
 		newWebProvider(webPolicy),

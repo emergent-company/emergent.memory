@@ -340,8 +340,9 @@ func (s *Service) resolveOAuthClient(ctx context.Context, projectID uuid.UUID, p
 // missingOAuthClientError builds the validation error for a provider with no
 // OAuth client (neither org config nor deployment default). It always names the
 // provider and directs the user to the org OAuth client setting in words; the
-// deployment-env-var hint is appended only for providers that have one (today
-// google_drive only), so a github user is never told to set Google env vars.
+// deployment-env-var hint is appended only for providers that have one (the
+// Google-backed providers google_drive and gmail), so a github user is never
+// told to set Google env vars.
 func (s *Service) missingOAuthClientError(providerType string) error {
 	msg := "no OAuth client configured for provider " + providerType +
 		" (configure one under Organization settings → Data source OAuth clients)"

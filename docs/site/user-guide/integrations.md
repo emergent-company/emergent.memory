@@ -3,7 +3,7 @@
 Integrations connect Memory to third-party services at the project or organization level. This page covers the **GitHub App** integration and general **third-party integration** management.
 
 !!! info "Data source integrations"
-    For importing content from Gmail, Google Drive, ClickUp, and similar sources, see [Data Sources](datasources.md).
+    For importing content from Gmail, Google Drive, GitHub, and similar sources, see [Data Sources](datasources.md).
 
 ---
 

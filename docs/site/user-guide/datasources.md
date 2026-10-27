@@ -6,18 +6,16 @@ Data sources let you connect external systems to Memory and automatically import
 
 | Provider type | Source type | Description |
 |---|---|---|
-| `imap` | `email` | Email inbox via IMAP |
-| `gmail_oauth` | `email` | Gmail via OAuth |
 | `google_drive` | `drive` | Google Drive files and folders |
+| `gmail` | `email` | Gmail threads |
 | `github` | `repo` | GitHub repositories (OAuth or a personal access token) |
-| `clickup` | `clickup-document` | ClickUp documents and spaces |
 | `trale` | `meeting` | Trale meeting transcripts and summaries |
 | `web` | `web` | Web pages crawled from one or more start URLs |
 
-!!! note "Google Drive is OAuth-only"
-    Google Drive can only be connected via OAuth. There is no paste-a-refresh-token option. Data
-    sources that were connected before this change with a stored refresh token keep syncing and do
-    not need to be reconnected.
+!!! note "Google Drive and Gmail are OAuth-only"
+    Both Google providers can only be connected via OAuth. There is no paste-a-refresh-token option.
+    Data sources that were connected before this change with a stored refresh token keep syncing and
+    do not need to be reconnected.
 
 ---
 
@@ -83,6 +81,17 @@ For Google Drive:
 9. Create an **API key** (Credentials → Create credentials → API key) and restrict it to the
    Memory UI origin plus `https://docs.google.com/*`. Copy the key and the **project number** —
    they become the picker's **Developer key** and **App ID** in the credentials editor.
+
+For Gmail, use the same Google Cloud project and OAuth client:
+
+1. Enable the **Gmail API**.
+2. Add the `https://www.googleapis.com/auth/gmail.readonly` scope to the consent screen.
+3. Add the Gmail callback as an authorized redirect URI on the same web client:
+   `https://<api-host>/api/data-source-integrations/oauth/gmail/callback`.
+
+The Gmail scope is a Google **restricted** scope: an Internal (Workspace-only) consent screen can use
+it as-is, while an External app needs Google verification and a CASA assessment before non-test users
+can consent. See [Gmail](#gmail-email) for the operational caveats.
 
 The picker keys are stored on the OAuth client that authorizes the source, so set them on the same
 **project** or **organization** client that holds the client id. A deployment-default client is
@@ -158,6 +167,39 @@ Free-text folder ids from older clients are still accepted: the first update rew
 
 GitHub accepts either an OAuth app (the same project/organization resolution) or a personal access
 token entered when connecting the source; a token connection does not need an OAuth app.
+
+### Gmail (email)
+
+Select **Gmail** on **Data Sources → New data source** and authorize with the Google account whose mail
+you want to sync. A Gmail source ingests **one document per thread**: a Markdown document with a header
+(subject, participants, latest message, labels) and one section per message, oldest first. Message
+bodies use the plain-text part, falling back to a conversion of the HTML part; attachments are counted
+(`_N attachment(s) omitted._`) but never downloaded.
+
+| Field | Meaning |
+|---|---|
+| **Query** (`query`) | Gmail search expression selecting which threads sync. Default `in:inbox`. Examples: `label:work`, `from:alice@example.com`, `-label:spam`, `has:attachment`. |
+| **Label ids** (`label_ids`) | Optional label ids; a thread must carry every listed label. List them from the source's resources (`GET /api/data-source-integrations/{id}/resources`) or the provider catalog (`POST /api/data-source-integrations/resources`). When labels are set and no query is given, the source syncs everything carrying those labels instead of the inbox. |
+| **Since** (`since`) | Optional `YYYY-MM-DD`. Threads dated before it are never synced. The date is absolute, so the window only grows: a source never drops previously synced threads just because time passed. Gmail's `after:` filter is day-granular in the mailbox's own timezone, so a thread dated on the boundary day may be included or excluded by a few hours. |
+| **Max threads** (`max_threads`) | Enumeration ceiling per sync. Default `10000`, maximum `50000`. Nothing carries a listing cursor between syncs: each run starts again at the first page of Gmail's own (newest-first) order, so a source whose query matches more threads than the ceiling only ever ingests that first slice, and new mail pushes older threads further out. Keep each source's match set under the ceiling — tighten the query (for example `older_than:2y`) or use several sources with non-overlapping windows (for example `newer_than:2y` and `older_than:2y`). Threads near a window boundary match both queries and are ingested once per source, as two documents; and because Gmail sources never delete, a window that is later tightened keeps what it already ingested. |
+
+Change detection uses Gmail's per-thread history id: an unchanged thread is skipped without downloading
+its body, so re-syncing a large mailbox is cheap. A thread that gains a message or changes labels is
+re-read, and produces a new document version only when its text actually changed.
+
+!!! warning "Gmail scope and Google verification"
+    The connector requests `gmail.readonly`, a Google **restricted** scope. A Google Cloud project whose
+    consent screen is **Internal** (Workspace-only) can use it without review; an **External** app needs
+    Google verification and a CASA assessment before non-test users can consent. While the consent
+    screen is in **Testing**, Google expires refresh tokens after 7 days, so a source needs reconnecting
+    weekly. Enable the **Gmail API**, add the scope, and register the callback
+    `https://<api-host>/api/data-source-integrations/oauth/gmail/callback` — see
+    [Create the app in the vendor console](#create-the-app-in-the-vendor-console).
+
+!!! note "Deleted mail is not detected in this version"
+    A Gmail sync is a filtered view of a live mailbox: a thread absent from it may have been archived,
+    relabelled, or moved out of the query rather than deleted. Gmail sources therefore never mark
+    documents deleted-from-source. Deletion detection via the mailbox history is a follow-up.
 
 ### Reconnecting a source
 
@@ -292,11 +334,12 @@ document. It connects with **config only** — no credentials are collected or s
     Content-Type: application/json
 
     {
-      "name": "Team Gmail",
-      "providerType": "gmail_oauth",
+      "name": "Team inbox",
+      "providerType": "gmail",
       "sourceType": "email",
       "syncMode": "recurring",
-      "syncIntervalMinutes": 60
+      "syncIntervalMinutes": 60,
+      "config": { "query": "in:inbox -label:spam" }
     }
     ```
 
@@ -307,14 +350,17 @@ After creation you will be redirected (or given a URL) to complete the OAuth flo
 ```http
 POST /api/data-source-integrations/test-config
 {
-  "providerType": "imap",
+  "providerType": "web",
   "config": {
-    "host": "imap.example.com",
-    "port": 993,
-    "username": "user@example.com",
-    "password": "..."
+    "start_urls": ["https://docs.example.com/"]
   }
 }
+```
+
+A saved source can be tested without resending config:
+
+```http
+POST /api/data-source-integrations/{id}/test-connection
 ```
 
 ---
@@ -324,8 +370,8 @@ POST /api/data-source-integrations/test-config
 | Field | Description |
 |---|---|
 | `name` | Display name for this integration |
-| `providerType` | The provider: `imap`, `gmail_oauth`, `google_drive`, `github`, `clickup` |
-| `sourceType` | Category of content: `email`, `drive`, `repo`, `clickup-document` |
+| `providerType` | The provider: `google_drive`, `gmail`, `github`, `trale`, `web` |
+| `sourceType` | Category of content: `drive`, `email`, `repo`, `meeting`, `web` |
 | `syncMode` | `manual` (trigger explicitly) or `recurring` (automatic on interval) |
 | `syncIntervalMinutes` | Minutes between automatic syncs (for `recurring` mode) |
 | `status` | `active` · `error` · `disabled` |

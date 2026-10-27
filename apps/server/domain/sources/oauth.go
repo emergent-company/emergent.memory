@@ -184,9 +184,12 @@ const (
 // stay advertised.
 var driveScopeStrategies = []ScopeStrategy{ScopeStrategyDriveReadonly, ScopeStrategyDriveFile}
 
-// googleOAuthStrategy implements OAuthStrategy for google_drive.
+// googleOAuthStrategy implements OAuthStrategy for Google-backed providers
+// (google_drive, gmail). They share the protocol, the authorize/token endpoints,
+// and the offline+consent refresh-token trick; only the requested scope differs,
+// so each provider constructs the strategy with its own default scope.
 type googleOAuthStrategy struct {
-	// scope is the default requested Drive scope; defaults to drive.readonly.
+	// scope is the default requested scope.
 	scope string
 }
 
@@ -194,11 +197,18 @@ func newGoogleOAuthStrategy() *googleOAuthStrategy {
 	return &googleOAuthStrategy{scope: googleDriveReadonly}
 }
 
+// newGmailOAuthStrategy is the Gmail provider's Google strategy: same flow,
+// Gmail's readonly scope.
+func newGmailOAuthStrategy() *googleOAuthStrategy {
+	return &googleOAuthStrategy{scope: gmailReadonlyScope}
+}
+
 func (s *googleOAuthStrategy) DefaultScopes() []string { return []string{s.scope} }
 
-// ScopesForStrategy maps an org-selected Drive strategy to its scope set. The
-// empty strategy resolves to the provider default (drive.readonly), not
-// drive.file, so a client with no strategy can still list the drive.
+// ScopesForStrategy maps an org-selected Drive strategy to its scope set. Only
+// Drive advertises ScopeStrategies (the Google vendor app supports both Drive
+// scopes); Gmail's scope is fixed, so its provider never implements that
+// interface and this method is never reached for a Gmail source.
 func (s *googleOAuthStrategy) ScopesForStrategy(strategy string) ([]string, bool) {
 	switch strategy {
 	case string(ScopeStrategyDriveReadonly), "":
