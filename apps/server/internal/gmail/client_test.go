@@ -1,19 +1,23 @@
 package gmail
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	gapi "google.golang.org/api/gmail/v1"
 )
 
-// newTestClient builds a Client pointed at a fake Gmail API endpoint.
+// newTestClient builds a Client pointed at a fake Gmail API endpoint. Backoff is
+// compressed so a retry-path test does not sleep seconds.
 func newTestClient(t *testing.T, handler http.Handler) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
@@ -25,7 +29,7 @@ func newTestClient(t *testing.T, handler http.Handler) *Client {
 	if err != nil {
 		t.Fatalf("NewWithHTTPClient: %v", err)
 	}
-	return c
+	return c.WithConfig(Config{RetryBaseDelay: time.Millisecond})
 }
 
 // listPage is one page of a threads.list response.
@@ -343,5 +347,190 @@ func TestMessageDateFallsBackToInternalDate(t *testing.T) {
 	want := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("date = %v, want %v", got, want)
+	}
+}
+
+// TestListThreadsRetriesThrottledResponse pins the backoff loop: a 429 is
+// retried in place (honouring a zero-second Retry-After) and the page that
+// follows succeeds, so a quota-bound backfill converges instead of failing the
+// item until the next scheduled sync.
+func TestListThreadsRetriesThrottledResponse(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) <= 2 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"code":429,"message":"Rate Limit Exceeded","errors":[{"reason":"rateLimitExceeded"}]}}`))
+			return
+		}
+		_, _ = w.Write([]byte(listPage([]string{"t1"}, []uint64{7}, "")))
+	}))
+
+	refs, _, err := c.ListThreads(t.Context(), ListOptions{})
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if len(refs) != 1 || refs[0].ID != "t1" {
+		t.Fatalf("refs = %+v, want the page that followed the throttles", refs)
+	}
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Fatalf("calls = %d, want 3 (two throttles then success)", got)
+	}
+}
+
+// TestListThreadsDoesNotRetryClientError keeps a terminal 400 from being retried:
+// the request will never succeed, and retrying only delays the error.
+func TestListThreadsDoesNotRetryClientError(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"Invalid q value"}}`))
+	}))
+
+	if _, _, err := c.ListThreads(t.Context(), ListOptions{}); err == nil {
+		t.Fatal("ListThreads returned nil error for a 400")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("calls = %d, want 1 (a 400 is terminal)", got)
+	}
+}
+
+// TestListThreadsGivesUpAfterMaxAttempts bounds the retry loop.
+func TestListThreadsGivesUpAfterMaxAttempts(t *testing.T) {
+	var calls int32
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":503,"message":"backend"}}`))
+	}))
+
+	if _, _, err := c.ListThreads(t.Context(), ListOptions{}); err == nil {
+		t.Fatal("ListThreads returned nil error after exhausting attempts")
+	}
+	if got, want := atomic.LoadInt32(&calls), int32(DefaultMaxAttempts); got != want {
+		t.Fatalf("calls = %d, want %d", got, want)
+	}
+}
+
+func TestRetryable(t *testing.T) {
+	apiErr := func(code int, reasons ...string) error {
+		e := &googleapi.Error{Code: code}
+		for _, r := range reasons {
+			e.Errors = append(e.Errors, googleapi.ErrorItem{Reason: r})
+		}
+		return e
+	}
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"429", apiErr(http.StatusTooManyRequests), true},
+		{"500", apiErr(http.StatusInternalServerError), true},
+		{"503", apiErr(http.StatusServiceUnavailable), true},
+		{"403 rateLimitExceeded", apiErr(http.StatusForbidden, "rateLimitExceeded"), true},
+		{"403 userRateLimitExceeded", apiErr(http.StatusForbidden, "userRateLimitExceeded"), true},
+		{"403 insufficientPermissions", apiErr(http.StatusForbidden, "insufficientPermissions"), false},
+		{"400", apiErr(http.StatusBadRequest), false},
+		{"401", apiErr(http.StatusUnauthorized), false},
+		{"plain error", errors.New("boom"), false},
+	}
+	for _, tc := range tests {
+		if got := retryable(tc.err); got != tc.want {
+			t.Errorf("%s: retryable = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRetryAfterIsCappedAndParsed(t *testing.T) {
+	withHeader := func(v string) error {
+		h := http.Header{}
+		h.Set("Retry-After", v)
+		return &googleapi.Error{Code: http.StatusTooManyRequests, Header: h}
+	}
+	if wait, ok := retryAfter(withHeader("7")); !ok || wait != 7*time.Second {
+		t.Fatalf("retryAfter(7) = %v/%v, want 7s", wait, ok)
+	}
+	if wait, ok := retryAfter(withHeader("3600")); !ok || wait != MaxRetryDelay {
+		t.Fatalf("retryAfter(3600) = %v/%v, want the %v cap", wait, ok, MaxRetryDelay)
+	}
+	if _, ok := retryAfter(withHeader("soon")); ok {
+		t.Fatal("retryAfter accepted a non-numeric hint")
+	}
+	if _, ok := retryAfter(errors.New("boom")); ok {
+		t.Fatal("retryAfter read a hint from a non-API error")
+	}
+}
+
+// TestListThreadsWindowBounds pins the backfill window encoding: After replaces
+// Since (the walk owns the window) and Before adds the upper bound.
+func TestListThreadsWindowBounds(t *testing.T) {
+	var gotQuery string
+	c := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		_, _ = w.Write([]byte(listPage([]string{"t1"}, []uint64{1}, "")))
+	}))
+
+	_, _, err := c.ListThreads(t.Context(), ListOptions{
+		Query:  "in:inbox",
+		Since:  time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		After:  time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		Before: time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if want := "in:inbox after:2024/06/01 before:2024/07/01"; gotQuery != want {
+		t.Fatalf("q = %q, want %q (window overrides the source since)", gotQuery, want)
+	}
+}
+
+// TestNewWithConfigServesRefreshGrantLocally covers the hermetic seam: with a
+// TokenEndpoint override the client mints its access token from that server and
+// sends it to the API, so a stub deployment never reaches Google.
+func TestNewWithConfigServesRefreshGrantLocally(t *testing.T) {
+	var tokenCalls int32
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenCalls, 1)
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("token form: %v", err)
+		}
+		if got := r.PostFormValue("grant_type"); got != "refresh_token" {
+			t.Errorf("grant_type = %q, want refresh_token", got)
+		}
+		if got := r.PostFormValue("refresh_token"); got != "rt" {
+			t.Errorf("refresh_token = %q, want rt", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"seam-token","token_type":"Bearer","expires_in":3600}`))
+	}))
+	defer tokenSrv.Close()
+
+	var authHeader string
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(listPage([]string{"t1"}, []uint64{1}, "")))
+	}))
+	defer apiSrv.Close()
+
+	cfg := DefaultConfig()
+	cfg.TokenEndpoint = tokenSrv.URL
+	c, err := NewWithConfig(t.Context(),
+		Credentials{ClientID: "cid", ClientSecret: "cs", RefreshToken: "rt"},
+		cfg,
+		option.WithEndpoint(apiSrv.URL),
+	)
+	if err != nil {
+		t.Fatalf("NewWithConfig: %v", err)
+	}
+	if _, _, err := c.ListThreads(t.Context(), ListOptions{}); err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if authHeader != "Bearer seam-token" {
+		t.Fatalf("Authorization = %q, want the locally minted token", authHeader)
+	}
+	if atomic.LoadInt32(&tokenCalls) == 0 {
+		t.Fatal("token endpoint was never called; the seam is not wired")
 	}
 }

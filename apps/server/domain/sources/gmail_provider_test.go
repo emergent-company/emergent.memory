@@ -2,6 +2,7 @@ package sources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func (f *fakeGmailTransport) TestConnection(_ context.Context) error {
 }
 
 // gmailProviderWith builds the Gmail provider over a fake transport.
-func gmailProviderWith(f *fakeGmailTransport) SourceProvider {
+func gmailProviderWith(f GmailTransport) SourceProvider {
 	return NewGmailProvider(func(context.Context, gmail.Credentials) (GmailTransport, error) {
 		return f, nil
 	})
@@ -75,7 +76,7 @@ func gmailTestCredentials() Credentials {
 }
 
 func TestGmailProviderCatalog(t *testing.T) {
-	p := newGmailProvider("")
+	p := newGmailProvider("", "")
 	cat := p.Catalog()
 
 	if cat.Type != ProviderTypeGmail {
@@ -104,7 +105,7 @@ func TestGmailProviderCatalog(t *testing.T) {
 }
 
 func TestGmailProviderSchema(t *testing.T) {
-	schema := newGmailProvider("").ConfigSchema()
+	schema := newGmailProvider("", "").ConfigSchema()
 	for _, key := range []string{"query", "label_ids", "since", "max_threads"} {
 		if _, ok := schema.Properties[key]; !ok {
 			t.Errorf("schema missing %q", key)
@@ -116,7 +117,7 @@ func TestGmailProviderSchema(t *testing.T) {
 }
 
 func TestGmailValidateConfig(t *testing.T) {
-	p := newGmailProvider("")
+	p := newGmailProvider("", "")
 	tests := []struct {
 		name    string
 		cfg     map[string]any
@@ -214,7 +215,7 @@ func TestGmailLabelScopePrecedence(t *testing.T) {
 }
 
 func TestGmailExtractCredentials(t *testing.T) {
-	p := newGmailProvider("")
+	p := newGmailProvider("", "")
 
 	creds, err := p.ExtractCredentials(map[string]any{
 		"refresh_token": "rt",
@@ -244,7 +245,7 @@ func TestGmailExtractCredentials(t *testing.T) {
 }
 
 func TestGmailSyncIntervalBounds(t *testing.T) {
-	var provider any = newGmailProvider("")
+	var provider any = newGmailProvider("", "")
 	p, ok := provider.(SyncIntervalBoundsProvider)
 	if !ok {
 		t.Fatal("gmail provider does not implement SyncIntervalBoundsProvider")
@@ -515,7 +516,7 @@ func TestGmailThreadNameTruncates(t *testing.T) {
 }
 
 func TestGmailOAuthStrategyScopes(t *testing.T) {
-	strategy, ok := newGmailProvider("").OAuth()
+	strategy, ok := newGmailProvider("", "").OAuth()
 	if !ok {
 		t.Fatal("gmail provider has no OAuth strategy")
 	}
@@ -540,4 +541,414 @@ func contains(haystack []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// windowGmailTransport answers each ListThreads call from a scripted batch, in
+// call order, and records the options so a test can assert the window maths.
+type windowGmailTransport struct {
+	batches [][]gmail.ThreadRef
+	truncs  []bool
+	err     error
+	calls   []gmail.ListOptions
+}
+
+func (w *windowGmailTransport) ListThreads(_ context.Context, opts gmail.ListOptions) ([]gmail.ThreadRef, bool, error) {
+	w.calls = append(w.calls, opts)
+	if w.err != nil {
+		return nil, false, w.err
+	}
+	i := len(w.calls) - 1
+	var refs []gmail.ThreadRef
+	if i < len(w.batches) {
+		refs = w.batches[i]
+	}
+	var truncated bool
+	if i < len(w.truncs) {
+		truncated = w.truncs[i]
+	}
+	return refs, truncated, nil
+}
+
+func (w *windowGmailTransport) GetThread(_ context.Context, _ string) (*gmail.Thread, error) {
+	return &gmail.Thread{}, nil
+}
+
+func (w *windowGmailTransport) ListLabels(_ context.Context) ([]gmail.Label, error) { return nil, nil }
+
+func (w *windowGmailTransport) TestConnection(_ context.Context) error { return nil }
+
+func newWindowConnector(t *testing.T, f GmailTransport) CursorConnector {
+	t.Helper()
+	conn, err := gmailProviderWith(f).NewConnector(context.Background(), gmailTestCredentials(), ConnectorDeps{})
+	if err != nil {
+		t.Fatalf("NewConnector: %v", err)
+	}
+	cc, ok := conn.(CursorConnector)
+	if !ok {
+		t.Fatal("gmail connector does not implement CursorConnector")
+	}
+	return cc
+}
+
+// TestGmailBackfillWalksOlderWindows is the coverage-ceiling fix: a capped head
+// listing starts an older window in the same sync, and the persisted watermark
+// describes the calendar region the walk has covered.
+func TestGmailBackfillWalksOlderWindows(t *testing.T) {
+	today := gmailDay(time.Now().UTC())
+	// A since date bounds the floor a few windows out, so the walk terminates
+	// inside this sync and the assertions can name the whole sequence.
+	since := today.AddDate(0, 0, -75)
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{
+			{{ID: "new", HistoryID: 3}},                            // head
+			{{ID: "new", HistoryID: 3}, {ID: "old", HistoryID: 2}}, // window 1
+		},
+		truncs: []bool{true, false},
+	}
+	conn := newWindowConnector(t, f)
+
+	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{
+		"max_threads": float64(500),
+		"since":       since.Format("2006-01-02"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "new" || items[1].ID != "old" {
+		t.Fatalf("items = %+v, want the head plus the backfill thread, deduped", items)
+	}
+	if len(f.calls) < 2 {
+		t.Fatalf("list calls = %d, want a head pass plus a backfill window", len(f.calls))
+	}
+	window := f.calls[1]
+	if !window.Before.Equal(today) {
+		t.Errorf("first window before = %v, want today (%v)", window.Before, today)
+	}
+	if want := today.AddDate(0, 0, -gmailBackfillWindowDays); !window.After.Equal(want) {
+		t.Errorf("first window after = %v, want %v", window.After, want)
+	}
+	if window.MaxThreads != 500 {
+		t.Errorf("window max = %d, want the sync ceiling", window.MaxThreads)
+	}
+	if !window.Since.IsZero() {
+		t.Errorf("window carried Since %v; the window owns the date range", window.Since)
+	}
+	if second := f.calls[2]; !second.After.Before(window.After) {
+		t.Errorf("second window after = %v; windows must move backwards", second.After)
+	}
+
+	// Walking a region with no mail is cheap and bounded: the sync reaches the
+	// since floor and marks the source complete.
+	if complete, _ := cursor[gmailCursorCompleteKey].(bool); !complete {
+		t.Error("cursor does not report completion after reaching the since floor")
+	}
+	if got, want := cursor[gmailCursorBoundaryKey], since.Format("2006-01-02"); got != want {
+		t.Errorf("cursor boundary = %v, want the floor %q", got, want)
+	}
+	if days, _ := toInt(cursor[gmailCursorWindowKey]); days != gmailBackfillWindowDays {
+		t.Errorf("cursor window days = %d, want the default", days)
+	}
+	if cursor[gmailCursorScopeKey] == "" {
+		t.Error("cursor carries no scope fingerprint")
+	}
+}
+
+// TestGmailBackfillResumesFromWatermark proves the cursor changes what the next
+// sync lists: a persisted boundary is the window's upper bound, so coverage
+// continues instead of restarting at the newest thread.
+func TestGmailBackfillResumesFromWatermark(t *testing.T) {
+	boundary := time.Date(2024, 5, 6, 0, 0, 0, 0, time.UTC)
+	cursor := map[string]any{
+		gmailCursorScopeKey:    gmailScopeFingerprint(gmailConfig{Query: gmailDefaultQuery}),
+		gmailCursorBoundaryKey: boundary.Format("2006-01-02"),
+		gmailCursorWindowKey:   float64(30),
+	}
+	// Both passes truncate, which stops the walk at the persisted window and
+	// keeps the test's expectation independent of the floor.
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{{{ID: "new"}}, {{ID: "older"}}},
+		truncs:  []bool{true, true},
+	}
+	conn := newWindowConnector(t, f)
+
+	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, cursor)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(f.calls) != 2 {
+		t.Fatalf("list calls = %d, want head + one window", len(f.calls))
+	}
+	if got := f.calls[1].Before; !got.Equal(boundary) {
+		t.Fatalf("window before = %v, want the persisted boundary %v", got, boundary)
+	}
+	if got, want := f.calls[1].After, boundary.AddDate(0, 0, -30); !got.Equal(want) {
+		t.Fatalf("window after = %v, want %v", got, want)
+	}
+	// A truncated window holds the boundary and narrows the next attempt.
+	if got, _ := next[gmailCursorBoundaryKey].(string); got != boundary.Format("2006-01-02") {
+		t.Errorf("next boundary = %q, want it held at %q", got, boundary.Format("2006-01-02"))
+	}
+	if days, _ := toInt(next[gmailCursorWindowKey]); days != 15 {
+		t.Errorf("next window days = %d, want 15 after a truncated window", days)
+	}
+}
+
+// TestGmailBackfillCompletesOnWholeScope pins the common case: a mailbox smaller
+// than the ceiling is fully covered by the head listing, so no window is walked
+// and the watermark is marked complete.
+func TestGmailBackfillCompletesOnWholeScope(t *testing.T) {
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{{{ID: "a"}, {ID: "b"}}},
+		truncs:  []bool{false},
+	}
+	conn := newWindowConnector(t, f)
+
+	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %+v", items)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("list calls = %d, want the head only", len(f.calls))
+	}
+	if complete, _ := cursor[gmailCursorCompleteKey].(bool); !complete {
+		t.Error("cursor does not report completion for an untruncated listing")
+	}
+	if got, want := cursor[gmailCursorBoundaryKey], gmailBackfillFloor(time.Time{}).Format("2006-01-02"); got != want {
+		t.Errorf("boundary = %v, want the floor %q", got, want)
+	}
+}
+
+// TestGmailBackfillResetsOnScopeChange keeps a narrowed or widened query from
+// inheriting a watermark that described a different mailbox region.
+func TestGmailBackfillResetsOnScopeChange(t *testing.T) {
+	today := gmailDay(time.Now().UTC())
+	stale := map[string]any{
+		gmailCursorScopeKey:    "a-different-query\x1f\x1f",
+		gmailCursorBoundaryKey: today.AddDate(0, 0, -400).Format("2006-01-02"),
+		gmailCursorWindowKey:   float64(7),
+	}
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{{{ID: "a"}}, {{ID: "b"}}},
+		truncs:  []bool{true, false},
+	}
+	conn := newWindowConnector(t, f)
+
+	_, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"query": "to:me"}, stale)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(f.calls) < 2 {
+		t.Fatalf("list calls = %d", len(f.calls))
+	}
+	if got := f.calls[1].Before.Format("2006-01-02"); got != today.Format("2006-01-02") {
+		t.Errorf("window before = %q, want a fresh walk at today", got)
+	}
+	if days, _ := toInt(cursor[gmailCursorWindowKey]); days != gmailBackfillWindowDays {
+		t.Errorf("window days = %d, want the default after a scope reset", days)
+	}
+	if cursor[gmailCursorScopeKey] == stale[gmailCursorScopeKey] {
+		t.Error("cursor kept the stale scope fingerprint")
+	}
+}
+
+// TestGmailBackfillShrinksTruncatedWindow keeps a window that exceeds the sync
+// ceiling from stalling the walk: the boundary holds and the next attempt uses a
+// narrower window.
+func TestGmailBackfillShrinksTruncatedWindow(t *testing.T) {
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{
+			{{ID: "head"}},
+			{{ID: "w1"}, {ID: "w2"}},
+		},
+		truncs: []bool{true, true},
+	}
+	conn := newWindowConnector(t, f)
+
+	_, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"max_threads": float64(2)}, nil)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if days, _ := toInt(cursor[gmailCursorWindowKey]); days != gmailBackfillWindowDays/2 {
+		t.Errorf("window days = %d, want %d after a truncated window", days, gmailBackfillWindowDays/2)
+	}
+	if got, want := cursor[gmailCursorBoundaryKey], gmailDay(time.Now().UTC()).Format("2006-01-02"); got != want {
+		t.Errorf("boundary = %v, want %q (a truncated window must not advance)", got, want)
+	}
+	if complete, _ := cursor[gmailCursorCompleteKey].(bool); complete {
+		t.Error("cursor reports completion after a truncated window")
+	}
+}
+
+// TestGmailBackfillStopsAtSinceFloor bounds the walk: with since set to the
+// newest day there is nothing older in scope, so the watermark completes without
+// walking a window past the floor.
+func TestGmailBackfillStopsAtSinceFloor(t *testing.T) {
+	today := gmailDay(time.Now().UTC())
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{{{ID: "head"}}},
+		truncs:  []bool{true},
+	}
+	conn := newWindowConnector(t, f)
+
+	items, cursor, err := conn.EnumerateWithCursor(context.Background(), map[string]any{"since": today.Format("2006-01-02")}, nil)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "head" {
+		t.Fatalf("items = %+v", items)
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("list calls = %d, want no window below the since floor", len(f.calls))
+	}
+	if complete, _ := cursor[gmailCursorCompleteKey].(bool); !complete {
+		t.Error("cursor does not report completion at the since floor")
+	}
+	window, ok := toInt(cursor[gmailCursorWindowKey])
+	if !ok || window != gmailBackfillWindowDays {
+		t.Errorf("window days = %v, want the default", cursor[gmailCursorWindowKey])
+	}
+}
+
+// TestGmailBackfillErrorIsActionable keeps the reconnect remediation on a
+// window listing too, not just the head pass, and leaves a transient failure
+// retryable.
+func TestGmailBackfillErrorIsActionable(t *testing.T) {
+	revoked := &oauth2.RetrieveError{ErrorCode: "invalid_grant"}
+	conn := newWindowConnector(t, &fakeGmailTransport{listErr: revoked})
+	_, _, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	if err == nil {
+		t.Fatal("EnumerateWithCursor returned nil error for a failed listing")
+	}
+	if !strings.Contains(err.Error(), "reconnect the source") {
+		t.Errorf("error = %v, want the reconnect remediation for a revoked grant", err)
+	}
+
+	transient := errors.New("gmail: list threads: 503 backend unavailable")
+	conn = newWindowConnector(t, &fakeGmailTransport{listErr: transient})
+	_, _, err = conn.EnumerateWithCursor(context.Background(), map[string]any{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("error = %v, want the transient failure passed through unchanged", err)
+	}
+}
+
+// TestGmailScopeFingerprintDistinguishesScope pins what invalidates a watermark.
+func TestGmailScopeFingerprintDistinguishesScope(t *testing.T) {
+	base := gmailConfig{Query: "in:inbox"}
+	since := gmailConfig{Query: "in:inbox", Since: time.Date(2024, 5, 6, 0, 0, 0, 0, time.UTC)}
+	labels := gmailConfig{Query: "in:inbox", LabelIDs: []string{"INBOX"}}
+	other := gmailConfig{Query: "label:work"}
+	seen := map[string]string{
+		"base":   gmailScopeFingerprint(base),
+		"since":  gmailScopeFingerprint(since),
+		"labels": gmailScopeFingerprint(labels),
+		"other":  gmailScopeFingerprint(other),
+	}
+	for a, fa := range seen {
+		for b, fb := range seen {
+			if a != b && fa == fb {
+				t.Errorf("%s and %s share fingerprint %q", a, b, fa)
+			}
+		}
+	}
+}
+
+// TestGmailBackfillFloor covers the two floors: the source's since date, or
+// Gmail's launch day when the source has no since.
+func TestGmailBackfillFloor(t *testing.T) {
+	since := time.Date(2025, 2, 3, 15, 4, 5, 0, time.UTC)
+	if got, want := gmailBackfillFloor(since), time.Date(2025, 2, 3, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("floor(since) = %v, want %v", got, want)
+	}
+	if got, want := gmailBackfillFloor(time.Time{}), time.Date(2004, 4, 1, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("floor(zero) = %v, want Gmail's launch day %v", got, want)
+	}
+}
+
+// TestGmailBackfillRestartsAfterOutgrowingCeiling is the sticky-flag regression:
+// a source that was fully covered and later grows past the ceiling must resume
+// the walk, not trust a completion that no longer holds.
+func TestGmailBackfillRestartsAfterOutgrowingCeiling(t *testing.T) {
+	today := gmailDay(time.Now().UTC())
+	complete := map[string]any{
+		gmailCursorScopeKey:    gmailScopeFingerprint(gmailConfig{Query: gmailDefaultQuery}),
+		gmailCursorBoundaryKey: gmailBackfillFloor(time.Time{}).Format("2006-01-02"),
+		gmailCursorWindowKey:   float64(30),
+		gmailCursorCompleteKey: true,
+	}
+	f := &windowGmailTransport{
+		batches: [][]gmail.ThreadRef{{{ID: "new"}}, {{ID: "older"}}},
+		truncs:  []bool{true, true},
+	}
+	conn := newWindowConnector(t, f)
+
+	_, next, err := conn.EnumerateWithCursor(context.Background(), map[string]any{}, complete)
+	if err != nil {
+		t.Fatalf("EnumerateWithCursor: %v", err)
+	}
+	if len(f.calls) != 2 {
+		t.Fatalf("list calls = %d, want the head plus a restarted window", len(f.calls))
+	}
+	if got := f.calls[1].Before; !got.Equal(today) {
+		t.Errorf("restarted window before = %v, want today (%v)", got, today)
+	}
+	if done, _ := next[gmailCursorCompleteKey].(bool); done {
+		t.Error("cursor still reports completion after the head pass was capped again")
+	}
+}
+
+// TestGmailCursorSurvivesJSONRoundTrip pins the waternmak's storage shape: the
+// cursor row is jsonb, so a persisted window width comes back as float64.
+func TestGmailCursorSurvivesJSONRoundTrip(t *testing.T) {
+	original := gmailBackfill{
+		Scope:      "in:inbox\x1f\x1f",
+		Boundary:   time.Date(2024, 7, 8, 0, 0, 0, 0, time.UTC),
+		WindowDays: 15,
+		Complete:   false,
+	}
+	raw, err := json.Marshal(original.cursor())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	stored := map[string]any{}
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := gmailBackfillFrom(stored, original.Scope, time.Now().UTC())
+	if got.Scope != original.Scope || !got.Boundary.Equal(original.Boundary) ||
+		got.WindowDays != original.WindowDays || got.Complete != original.Complete {
+		t.Fatalf("round trip = %+v, want %+v", got, original)
+	}
+}
+
+// TestGmailCorruptCursorRestartsWalk never fails a sync on a bad cursor row: an
+// unreadable boundary restarts the walk, and an unreadable window width falls
+// back to the default without discarding a readable boundary.
+func TestGmailCorruptCursorRestartsWalk(t *testing.T) {
+	now := time.Date(2025, 3, 4, 9, 0, 0, 0, time.UTC)
+	kept := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		cursor   map[string]any
+		boundary time.Time
+	}{
+		{"nil", nil, gmailDay(now)},
+		{"missing keys", map[string]any{gmailCursorScopeKey: "s"}, gmailDay(now)},
+		{"bad boundary", map[string]any{gmailCursorScopeKey: "s", gmailCursorBoundaryKey: "yesterday"}, gmailDay(now)},
+		{"bad window", map[string]any{gmailCursorScopeKey: "s", gmailCursorBoundaryKey: "2024-01-01", gmailCursorWindowKey: "wide"}, kept},
+		{"zero window", map[string]any{gmailCursorScopeKey: "s", gmailCursorBoundaryKey: "2024-01-01", gmailCursorWindowKey: float64(0)}, kept},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := gmailBackfillFrom(tc.cursor, "s", now)
+			if !got.Boundary.Equal(tc.boundary) {
+				t.Errorf("boundary = %v, want %v", got.Boundary, tc.boundary)
+			}
+			if got.WindowDays != gmailBackfillWindowDays {
+				t.Errorf("window days = %d, want the default", got.WindowDays)
+			}
+		})
+	}
 }

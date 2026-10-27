@@ -3137,3 +3137,60 @@ func TestDSArrayFieldPlaceholderMentionsTheFieldKind(t *testing.T) {
 		}
 	}
 }
+
+// TestDSCredentialSummaryGrantedScope covers the granted-scope badge. Gmail has
+// no scope strategy (its connect always authorizes gmail.readonly), so a healthy
+// source used to render the amber "not reported" warning (#2218).
+func TestDSCredentialSummaryGrantedScope(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+
+	cases := []struct {
+		name      string
+		src       DSIntegration
+		wantLabel string
+		wantTone  string
+		wantKey   string
+	}{
+		{
+			name:      "gmail reports its fixed scope",
+			src:       DSIntegration{ProviderType: "gmail"},
+			wantLabel: "Read-only Gmail access (gmail.readonly)",
+			wantTone:  "success",
+			wantKey:   "gmail.readonly",
+		},
+		{
+			name:      "gmail keeps its fixed scope when a strategy was recorded",
+			src:       DSIntegration{ProviderType: "gmail", OAuthStrategy: "gmail.readonly"},
+			wantLabel: "Read-only Gmail access (gmail.readonly)",
+			wantTone:  "success",
+			wantKey:   "gmail.readonly",
+		},
+		{
+			name:      "drive.readonly stays a success",
+			src:       DSIntegration{ProviderType: "google_drive", OAuthGrantedStrategy: "drive.readonly"},
+			wantLabel: "Read-only Drive access (drive.readonly)",
+			wantTone:  "success",
+			wantKey:   "drive.readonly",
+		},
+		{
+			name:      "an unmapped provider still warns",
+			src:       DSIntegration{ProviderType: "github"},
+			wantLabel: "Not reported by the provider",
+			wantTone:  "warning",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			summary := s.dsCredentialSummary(context.Background(), &tc.src)
+			if summary.GrantedLabel != tc.wantLabel {
+				t.Errorf("GrantedLabel = %q, want %q", summary.GrantedLabel, tc.wantLabel)
+			}
+			if summary.GrantedTone != tc.wantTone {
+				t.Errorf("GrantedTone = %q, want %q", summary.GrantedTone, tc.wantTone)
+			}
+			if summary.GrantedStrategy != tc.wantKey {
+				t.Errorf("GrantedStrategy = %q, want %q", summary.GrantedStrategy, tc.wantKey)
+			}
+		})
+	}
+}

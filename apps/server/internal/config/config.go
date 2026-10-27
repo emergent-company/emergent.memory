@@ -924,6 +924,12 @@ type GmailSourceConfig struct {
 	// stand in for Google; it is a deployment setting only, so a source config
 	// can never point the connector at an arbitrary host.
 	APIBaseURL string `env:"GMAIL_API_BASE_URL" envDefault:""`
+	// TokenURL overrides the OAuth2 token endpoint used to refresh a Gmail
+	// source's access token (default https://oauth2.googleapis.com/token). It
+	// completes the hermetic seam APIBaseURL starts: a test wrapper that serves
+	// the Gmail API must also serve the refresh grant, or the client still
+	// reaches Google. Deployment setting only, never source-configurable.
+	TokenURL string `env:"GMAIL_TOKEN_URL" envDefault:""`
 }
 
 // WebSourceConfig holds the deployment-level settings for the web-scraper

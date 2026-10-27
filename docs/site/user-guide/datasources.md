@@ -181,11 +181,27 @@ bodies use the plain-text part, falling back to a conversion of the HTML part; a
 | **Query** (`query`) | Gmail search expression selecting which threads sync. Default `in:inbox`. Examples: `label:work`, `from:alice@example.com`, `-label:spam`, `has:attachment`. |
 | **Label ids** (`label_ids`) | Optional label ids; a thread must carry every listed label. List them from the source's resources (`GET /api/data-source-integrations/{id}/resources`) or the provider catalog (`POST /api/data-source-integrations/resources`). When labels are set and no query is given, the source syncs everything carrying those labels instead of the inbox. |
 | **Since** (`since`) | Optional `YYYY-MM-DD`. Threads dated before it are never synced. The date is absolute, so the window only grows: a source never drops previously synced threads just because time passed. Gmail's `after:` filter is day-granular in the mailbox's own timezone, so a thread dated on the boundary day may be included or excluded by a few hours. |
-| **Max threads** (`max_threads`) | Enumeration ceiling per sync. Default `10000`, maximum `50000`. Nothing carries a listing cursor between syncs: each run starts again at the first page of Gmail's own (newest-first) order, so a source whose query matches more threads than the ceiling only ever ingests that first slice, and new mail pushes older threads further out. Keep each source's match set under the ceiling — tighten the query (for example `older_than:2y`) or use several sources with non-overlapping windows (for example `newer_than:2y` and `older_than:2y`). Threads near a window boundary match both queries and are ingested once per source, as two documents; and because Gmail sources never delete, a window that is later tightened keeps what it already ingested. |
+| **Max threads** (`max_threads`) | Ceiling for one pass. Default `10000`, maximum `50000`. Every sync lists the newest matching threads; when the query matches more than the ceiling, older threads are **backfilled** a calendar window at a time on later syncs (see below), so a large mailbox is eventually covered instead of only ever contributing its newest slice. |
+
+A capped listing is not a dead end. The sync that hits the ceiling starts walking older windows
+(30 days at a time, narrowing when a window is larger than one sync may ingest) and stores a coverage
+watermark in the source's cursor. Each following sync continues from that watermark — head first, so
+new mail still arrives immediately — until the walk reaches the `since` floor (or, without a `since`,
+Gmail's earliest possible date). Because every window overlaps the next by a day, re-listing a thread
+costs only a skipped revision, never a gap — the one exception is a day holding more matching threads
+than `max_threads`, which is capped exactly as a capped listing always was. A sync whose threads fail
+to fetch leaves the watermark where it was, so that window is re-listed and the failures retried; and
+because a Gmail source never deletes, a window you later tightened keeps what it already ingested.
+
+Windows are calendar ranges, not listing pages, so a modified old thread is picked up when its window
+is next re-listed rather than on the very next sync.
 
 Change detection uses Gmail's per-thread history id: an unchanged thread is skipped without downloading
 its body, so re-syncing a large mailbox is cheap. A thread that gains a message or changes labels is
-re-read, and produces a new document version only when its text actually changed.
+re-read, and produces a new document version only when its text actually changed. Gmail bills
+`threads.list` at 10 units and `threads.get` at 120 units (the connector requests full threads) against
+6,000 units per minute per user, so a rate-limited call is retried with exponential backoff — honouring
+`Retry-After` — instead of failing the thread until the next scheduled sync.
 
 !!! warning "Gmail scope and Google verification"
     The connector requests `gmail.readonly`, a Google **restricted** scope. A Google Cloud project whose

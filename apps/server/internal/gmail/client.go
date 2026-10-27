@@ -18,12 +18,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	gapi "google.golang.org/api/gmail/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
@@ -55,21 +57,15 @@ const (
 // Credentials holds the OAuth2 client credentials and refresh token for a Gmail
 // source. It is never stored in plaintext (the sources domain encrypts the
 // credential map at rest).
+//
+// There is no scope field: the connector requests ReadonlyScope at connect time
+// and Google's refresh grant is bound to the scope the user already approved, so
+// a per-source scope would be cosmetic. The stored credential map may still
+// carry a `scope` key written by an OAuth callback; this client ignores it.
 type Credentials struct {
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
 	RefreshToken string `json:"refresh_token"`
-	// Scope is the OAuth2 scope the refresh token was authorized for. Empty
-	// falls back to ReadonlyScope (only reachable for a hand-seeded source).
-	Scope string `json:"scope,omitempty"`
-}
-
-// requestedScope resolves the OAuth2 scope for a credential.
-func requestedScope(scope string) string {
-	if strings.TrimSpace(scope) != "" {
-		return scope
-	}
-	return ReadonlyScope
 }
 
 // ThreadRef is one entry from a thread listing. HistoryID is Gmail's
@@ -118,15 +114,38 @@ type Label struct {
 type Config struct {
 	// MaxBodyBytes is the per-message decoded-body cap.
 	MaxBodyBytes int64
-	// RequestTimeout is the per-call timeout.
+	// RequestTimeout is the per-call timeout (one HTTP attempt).
 	RequestTimeout time.Duration
+	// TokenEndpoint overrides Google's OAuth2 token endpoint. It exists so a
+	// hermetic test can serve the refresh grant locally
+	// (GMAIL_TOKEN_URL); empty means Google's real endpoint.
+	TokenEndpoint string
+	// MaxAttempts bounds one API call including retries (default 4). Retries
+	// apply only to responses that can succeed on a later attempt: 429, 5xx, and
+	// Google's 403 rate-limit reasons. A 4xx client error fails on attempt one.
+	MaxAttempts int
+	// RetryBaseDelay is the first backoff delay, doubling per attempt up to
+	// MaxRetryDelay (default 1s). Tests set it to a few milliseconds.
+	RetryBaseDelay time.Duration
 }
+
+// DefaultRetryBaseDelay is the first backoff delay for a retryable API error.
+const DefaultRetryBaseDelay = time.Second
+
+// DefaultMaxAttempts is the attempt ceiling for one API call, retries included.
+const DefaultMaxAttempts = 4
+
+// MaxRetryDelay caps a single backoff wait, including a server-supplied
+// Retry-After, so one throttled call cannot stall a sync for minutes.
+const MaxRetryDelay = 30 * time.Second
 
 // DefaultConfig returns the defaults used when Config fields are unset.
 func DefaultConfig() Config {
 	return Config{
 		MaxBodyBytes:   DefaultMaxBodyBytes,
 		RequestTimeout: DefaultRequestTimeout,
+		MaxAttempts:    DefaultMaxAttempts,
+		RetryBaseDelay: DefaultRetryBaseDelay,
 	}
 }
 
@@ -140,20 +159,36 @@ type Client struct {
 // (e.g. option.WithEndpoint) are appended after the credential-backed HTTP
 // client.
 func New(ctx context.Context, creds Credentials, opts ...option.ClientOption) (*Client, error) {
+	return NewWithConfig(ctx, creds, DefaultConfig(), opts...)
+}
+
+// NewWithConfig builds a Client like New and applies cfg. A non-empty
+// cfg.TokenEndpoint replaces Google's token endpoint so a hermetic test can
+// serve the refresh grant itself; the API origin is still redirected with
+// option.WithEndpoint.
+func NewWithConfig(ctx context.Context, creds Credentials, cfg Config, opts ...option.ClientOption) (*Client, error) {
 	if strings.TrimSpace(creds.RefreshToken) == "" {
 		return nil, errors.New("gmail: refresh token is required")
 	}
 
+	endpoint := google.Endpoint
+	if strings.TrimSpace(cfg.TokenEndpoint) != "" {
+		endpoint.TokenURL = strings.TrimSpace(cfg.TokenEndpoint)
+	}
 	oauthCfg := oauth2.Config{
 		ClientID:     creds.ClientID,
 		ClientSecret: creds.ClientSecret,
-		Endpoint:     google.Endpoint,
-		Scopes:       []string{requestedScope(creds.Scope)},
+		Endpoint:     endpoint,
+		Scopes:       []string{ReadonlyScope},
 	}
 	tokenSource := oauthCfg.TokenSource(ctx, &oauth2.Token{RefreshToken: creds.RefreshToken})
 	hc := oauth2.NewClient(ctx, tokenSource)
 
-	return newClient(ctx, hc, opts...)
+	client, err := newClient(ctx, hc, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return client.WithConfig(cfg), nil
 }
 
 // NewWithHTTPClient builds a Client from an already-configured *http.Client (no
@@ -184,8 +219,100 @@ func (c *Client) WithConfig(cfg Config) *Client {
 	if cfg.RequestTimeout <= 0 {
 		cfg.RequestTimeout = DefaultRequestTimeout
 	}
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = DefaultMaxAttempts
+	}
+	if cfg.RetryBaseDelay <= 0 {
+		cfg.RetryBaseDelay = DefaultRetryBaseDelay
+	}
 	c.cfg = cfg
 	return c
+}
+
+// call runs one API operation with a per-attempt timeout and bounded
+// exponential backoff. Gmail is quota-bound (threads.get costs 40 units, 120
+// with format=full, against 6,000 units/minute/user), so a large backfill
+// inevitably meets 429/403 rate-limit responses; retrying in place makes it
+// converge instead of failing each item until the next scheduled sync.
+//
+// Retries are limited to errors that can succeed later: 429, 5xx, and Google's
+// rate-limit 403 reasons. A 4xx client error (bad request, auth failure) fails
+// immediately — retrying it only delays the report. A server-supplied
+// Retry-After is honoured up to MaxRetryDelay.
+func (c *Client) call(ctx context.Context, fn func(context.Context) error) error {
+	delay := c.cfg.RetryBaseDelay
+	var lastErr error
+	for attempt := 1; attempt <= c.cfg.MaxAttempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
+		lastErr = fn(attemptCtx)
+		cancel()
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == c.cfg.MaxAttempts || !retryable(lastErr) {
+			return lastErr
+		}
+		wait := delay
+		if after, ok := retryAfter(lastErr); ok {
+			wait = after
+		}
+		select {
+		case <-ctx.Done():
+			// The caller's deadline or cancellation outranks the retry: return
+			// the response that made us consider retrying, not just ctx.Err().
+			return lastErr
+		case <-time.After(wait):
+		}
+		if delay *= 2; delay > MaxRetryDelay {
+			delay = MaxRetryDelay
+		}
+	}
+	return lastErr
+}
+
+// retryable reports whether err is a throttle or transient server failure.
+func retryable(err error) bool {
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	switch {
+	case apiErr.Code == http.StatusTooManyRequests:
+		return true
+	case apiErr.Code >= 500 && apiErr.Code <= 599:
+		return true
+	case apiErr.Code == http.StatusForbidden:
+		// Google reports daily/per-user quota exhaustion as 403 with a
+		// rate-limit reason. Any other 403 (scope or permission) is terminal.
+		for _, e := range apiErr.Errors {
+			if e.Reason == "rateLimitExceeded" || e.Reason == "userRateLimitExceeded" {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// retryAfter returns the server's Retry-After hint, capped at MaxRetryDelay.
+func retryAfter(err error) (time.Duration, bool) {
+	var apiErr *googleapi.Error
+	if !errors.As(err, &apiErr) || apiErr.Header == nil {
+		return 0, false
+	}
+	raw := strings.TrimSpace(apiErr.Header.Get("Retry-After"))
+	if raw == "" {
+		return 0, false
+	}
+	secs, convErr := strconv.Atoi(raw)
+	if convErr != nil || secs < 0 {
+		return 0, false
+	}
+	wait := time.Duration(secs) * time.Second
+	if wait > MaxRetryDelay {
+		wait = MaxRetryDelay
+	}
+	return wait, true
 }
 
 // ListOptions is the enumeration scope for ListThreads.
@@ -199,6 +326,13 @@ type ListOptions struct {
 	// comes from a source's absolute `since` date, so the window only grows and
 	// never drops previously ingested threads out of scope.
 	Since time.Time
+	// After, when non-zero, replaces Since as the `after:` bound. The backfill
+	// walk uses it to list one bounded window at a time; wherever it is set the
+	// caller owns the window, so Since must not narrow or widen it.
+	After time.Time
+	// Before, when non-zero, bounds the window from above as a `before:`
+	// clause. Only the backfill walk sets it.
+	Before time.Time
 	// MaxThreads caps the enumeration. Zero means DefaultMaxThreads.
 	MaxThreads int
 }
@@ -216,24 +350,27 @@ func (c *Client) ListThreads(ctx context.Context, opts ListOptions) (refs []Thre
 
 	pageToken := ""
 	for {
-		pageCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
-		call := c.svc.Users.Threads.List("me").MaxResults(pageSize).Context(pageCtx)
-		if query != "" {
-			call = call.Q(query)
-		}
-		if len(opts.LabelIDs) > 0 {
-			call = call.LabelIds(opts.LabelIDs...)
-		}
-		if pageToken != "" {
-			call = call.PageToken(pageToken)
-		}
-		resp, callErr := call.Do()
-		cancel()
-		if callErr != nil {
+		var resp *gapi.ListThreadsResponse
+		err := c.call(ctx, func(callCtx context.Context) error {
+			call := c.svc.Users.Threads.List("me").MaxResults(pageSize).Context(callCtx)
+			if query != "" {
+				call = call.Q(query)
+			}
+			if len(opts.LabelIDs) > 0 {
+				call = call.LabelIds(opts.LabelIDs...)
+			}
+			if pageToken != "" {
+				call = call.PageToken(pageToken)
+			}
+			var callErr error
+			resp, callErr = call.Do()
+			return callErr
+		})
+		if err != nil {
 			// A page failure after some results is an error, not a partial
 			// success: the caller must see the enumeration as failed so it does
 			// not advance change-detection state on an incomplete view.
-			return nil, false, fmt.Errorf("gmail: list threads: %w", callErr)
+			return nil, false, fmt.Errorf("gmail: list threads: %w", err)
 		}
 
 		for i, t := range resp.Threads {
@@ -255,16 +392,24 @@ func (c *Client) ListThreads(ctx context.Context, opts ListOptions) (refs []Thre
 	}
 }
 
-// buildQuery folds the label filter date window into a Gmail search expression.
-// The listing's Q supports `after:` with a YYYY/MM/DD date, which Gmail
-// interprets in the account's timezone.
+// buildQuery folds the date window and label filter into a Gmail search
+// expression. The listing's Q supports `after:`/`before:` with a YYYY/MM/DD
+// date, which Gmail interprets in the account's timezone; both operators are
+// day-granular, so a caller walking windows must overlap by a day to avoid
+// dropping threads that share the boundary date.
 func buildQuery(opts ListOptions) string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if q := strings.TrimSpace(opts.Query); q != "" {
 		parts = append(parts, q)
 	}
-	if !opts.Since.IsZero() {
+	switch {
+	case !opts.After.IsZero():
+		parts = append(parts, "after:"+opts.After.UTC().Format("2006/01/02"))
+	case !opts.Since.IsZero():
 		parts = append(parts, "after:"+opts.Since.UTC().Format("2006/01/02"))
+	}
+	if !opts.Before.IsZero() {
+		parts = append(parts, "before:"+opts.Before.UTC().Format("2006/01/02"))
 	}
 	return strings.Join(parts, " ")
 }
@@ -274,9 +419,12 @@ func (c *Client) GetThread(ctx context.Context, id string) (*Thread, error) {
 	if strings.TrimSpace(id) == "" {
 		return nil, errors.New("gmail: thread id is required")
 	}
-	callCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
-	defer cancel()
-	raw, err := c.svc.Users.Threads.Get("me", id).Format("full").Context(callCtx).Do()
+	var raw *gapi.Thread
+	err := c.call(ctx, func(callCtx context.Context) error {
+		var callErr error
+		raw, callErr = c.svc.Users.Threads.Get("me", id).Format("full").Context(callCtx).Do()
+		return callErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("gmail: get thread %s: %w", id, err)
 	}
@@ -286,9 +434,12 @@ func (c *Client) GetThread(ctx context.Context, id string) (*Thread, error) {
 // ListLabels returns the account's labels (system and user), for the connect
 // form's resource picker.
 func (c *Client) ListLabels(ctx context.Context) ([]Label, error) {
-	callCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
-	defer cancel()
-	resp, err := c.svc.Users.Labels.List("me").Context(callCtx).Do()
+	var resp *gapi.ListLabelsResponse
+	err := c.call(ctx, func(callCtx context.Context) error {
+		var callErr error
+		resp, callErr = c.svc.Users.Labels.List("me").Context(callCtx).Do()
+		return callErr
+	})
 	if err != nil {
 		return nil, fmt.Errorf("gmail: list labels: %w", err)
 	}
@@ -305,9 +456,11 @@ func (c *Client) ListLabels(ctx context.Context) ([]Label, error) {
 // TestConnection performs a bounded identity call to validate the credentials
 // and that the token carries a scope the Gmail API accepts.
 func (c *Client) TestConnection(ctx context.Context) error {
-	callCtx, cancel := context.WithTimeout(ctx, c.cfg.RequestTimeout)
-	defer cancel()
-	if _, err := c.svc.Users.GetProfile("me").Context(callCtx).Do(); err != nil {
+	err := c.call(ctx, func(callCtx context.Context) error {
+		_, callErr := c.svc.Users.GetProfile("me").Context(callCtx).Do()
+		return callErr
+	})
+	if err != nil {
 		return fmt.Errorf("gmail: connection test: %w", err)
 	}
 	return nil

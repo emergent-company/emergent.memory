@@ -167,6 +167,31 @@ func (w *SyncWorker) RunOnce(ctx context.Context) error {
 	return nil
 }
 
+// buildSourceCursor composes the row's cursor map: the worker's own counters plus
+// the connector's resume point.
+//
+// Connector state is merged, never substituted, because both live in the same
+// jsonb row. It is also only *advanced* when every item applied: an item that
+// failed to fetch or apply is retried on the next sync, which re-lists the
+// window it came from. Advancing past it would mark that window covered and lose
+// the item permanently — for a chunked connector that is a silent data hole,
+// and since a Gmail backfill window is quota-bound, item failures are the normal
+// case rather than an edge one. prev is the stored cursor, so a failed batch
+// keeps the resume point the source already had.
+func buildSourceCursor(prev, next map[string]any, total, failed int, now time.Time) map[string]any {
+	cursor := make(map[string]any, len(next)+2)
+	source := next
+	if failed > 0 {
+		source = prev
+	}
+	for k, v := range source {
+		cursor[k] = v
+	}
+	cursor["total_items"] = total
+	cursor["synced_at"] = now.Format(time.RFC3339)
+	return cursor
+}
+
 // ProcessJob drives a single (already-processing) job to a terminal state.
 func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	jobLog := w.log.With("job_id", job.ID, "source_id", job.SourceID)
@@ -216,7 +241,18 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, err)
 	}
 
-	items, err := connector.Enumerate(ctx, src.Config)
+	// A connector that walks its source in chunks returns the cursor to persist
+	// after this batch applies; one that enumerates in a single pass (every other
+	// provider today) keeps the worker's own cursor shape. Passing the stored
+	// cursor is what makes a capped or interrupted enumeration resume instead of
+	// restarting at the newest item.
+	var nextCursor map[string]any
+	var items []SourceItem
+	if cc, ok := connector.(CursorConnector); ok {
+		items, nextCursor, err = cc.EnumerateWithCursor(ctx, src.Config, src.Cursor)
+	} else {
+		items, err = connector.Enumerate(ctx, src.Config)
+	}
 	if err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("enumerate source: %w", err))
 	}
@@ -354,7 +390,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 
 	// Advance the source cursor/last_synced_at only after a successful batch.
 	now := time.Now().UTC()
-	cursor := map[string]any{"total_items": len(items), "synced_at": now.Format(time.RFC3339)}
+	cursor := buildSourceCursor(src.Cursor, nextCursor, len(items), failed, now)
 	if err := w.svc.repo.AdvanceSourceCursor(ctx, job.ProjectID, job.SourceID, cursor, now); err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("advance source cursor: %w", err))
 	}

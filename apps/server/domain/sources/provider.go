@@ -76,6 +76,15 @@ type Connector interface {
 	TestConnection(ctx context.Context, cfg map[string]any) error
 }
 
+// CursorConnector is implemented by a connector whose enumeration is chunked
+// across syncs and therefore needs to remember where it stopped. The worker
+// passes the source row's stored cursor and persists the returned one after the
+// batch applies, so an interrupted or capped sync resumes instead of restarting.
+// A connector that does not implement it is enumerated from scratch each run.
+type CursorConnector interface {
+	EnumerateWithCursor(ctx context.Context, cfg map[string]any, cursor map[string]any) (items []SourceItem, nextCursor map[string]any, err error)
+}
+
 // Resource is a provider-neutral selectable sync target (a Drive folder, a
 // GitHub repository) returned by a provider's resource listing (design D7).
 type Resource struct {
@@ -244,29 +253,32 @@ func NewRegistry(providers ...SourceProvider) *Registry {
 // using default deployment settings (api.github.com). Package-level callers and
 // tests use it; fx wires NewConfiguredRegistry instead.
 func NewDefaultRegistry() *Registry {
-	return NewRegistry(defaultProviders("", "", outbound.DefaultPolicy())...)
+	return NewRegistry(defaultProviders("", "", "", outbound.DefaultPolicy())...)
 }
 
 // NewConfiguredRegistry builds the registry of providers shipped with this
 // build, applying deployment-level settings: the GitHub API origin
 // (GITHUB_API_BASE_URL), which lets an operator point the connector at GitHub
 // Enterprise or a hermetic test wrapper without letting a source config choose
-// an endpoint; the Gmail API origin (GMAIL_API_BASE_URL), which exists only so a
-// hermetic test wrapper can stand in for Google; and the web crawler's outbound
-// SSRF policy (WEB_SOURCE_ALLOWED_HOSTS / WEB_SOURCE_ALLOW_PRIVATE_HOSTS).
+// an endpoint; the Gmail API origin (GMAIL_API_BASE_URL) and token endpoint
+// (GMAIL_TOKEN_URL), which exist only so a hermetic test wrapper can stand in
+// for Google; and the web crawler's outbound SSRF policy (WEB_SOURCE_ALLOWED_HOSTS
+// / WEB_SOURCE_ALLOW_PRIVATE_HOSTS).
 func NewConfiguredRegistry(cfg *config.Config) *Registry {
 	baseURL := ""
 	gmailBaseURL := ""
+	gmailTokenURL := ""
 	webPolicy := outbound.DefaultPolicy()
 	if cfg != nil {
 		baseURL = cfg.GitHubSource.APIBaseURL
 		gmailBaseURL = cfg.GmailSource.APIBaseURL
+		gmailTokenURL = cfg.GmailSource.TokenURL
 		webPolicy = outbound.Policy{
 			AllowedHosts: cfg.WebSource.AllowedHosts,
 			AllowPrivate: cfg.WebSource.AllowPrivate,
 		}
 	}
-	return NewRegistry(defaultProviders(gmailBaseURL, baseURL, webPolicy)...)
+	return NewRegistry(defaultProviders(gmailBaseURL, gmailTokenURL, baseURL, webPolicy)...)
 }
 
 // Register adds or replaces a provider by its catalog type, preserving insertion
@@ -296,14 +308,15 @@ func (r *Registry) List() []SourceProvider {
 
 // defaultProviders returns the providers registered for this build.
 // gmailBaseURL is the deployment's Gmail API origin ("" means the real API);
-// githubBaseURL is the deployment's GitHub API origin ("" means api.github.com);
-// webPolicy is the deployment's outbound SSRF policy for the web crawler (see
-// internal/outbound). Both base URLs are deployment settings only, so a source
-// config can never point a connector at an arbitrary host.
-func defaultProviders(gmailBaseURL, githubBaseURL string, webPolicy outbound.Policy) []SourceProvider {
+// gmailTokenURL is the deployment's OAuth2 token endpoint for the Gmail refresh
+// grant ("" means Google's); githubBaseURL is the deployment's GitHub API origin
+// ("" means api.github.com); webPolicy is the deployment's outbound SSRF policy
+// for the web crawler (see internal/outbound). The URLs are deployment settings
+// only, so a source config can never point a connector at an arbitrary host.
+func defaultProviders(gmailBaseURL, gmailTokenURL, githubBaseURL string, webPolicy outbound.Policy) []SourceProvider {
 	return []SourceProvider{
 		newGoogleDriveProvider(),
-		newGmailProvider(gmailBaseURL),
+		newGmailProvider(gmailBaseURL, gmailTokenURL),
 		newGitHubProvider(githubBaseURL),
 		newTraleProvider(),
 		newWebProvider(webPolicy),

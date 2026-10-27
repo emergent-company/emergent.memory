@@ -45,18 +45,20 @@ type gmailProvider struct {
 	newClient func(ctx context.Context, creds gmail.Credentials) (GmailTransport, error)
 }
 
-// newGmailProvider builds the Gmail provider. apiBaseURL is the deployment's
-// Gmail API origin ("" means the real API); it exists so a hermetic test
-// wrapper can stand in for Google without letting a source config choose an
-// endpoint.
-func newGmailProvider(apiBaseURL string) *gmailProvider {
+// newGmailProvider builds the Gmail provider. apiBaseURL and tokenBaseURL are
+// deployment-level test seams (GMAIL_API_BASE_URL / GMAIL_TOKEN_URL): they point
+// the API and the OAuth2 refresh grant at a hermetic stand-in for Google, and a
+// source config can never choose either.
+func newGmailProvider(apiBaseURL, tokenBaseURL string) *gmailProvider {
 	return &gmailProvider{
 		newClient: func(ctx context.Context, creds gmail.Credentials) (GmailTransport, error) {
 			var opts []option.ClientOption
 			if apiBaseURL != "" {
 				opts = append(opts, option.WithEndpoint(apiBaseURL))
 			}
-			return gmail.New(ctx, creds, opts...)
+			cfg := gmail.DefaultConfig()
+			cfg.TokenEndpoint = tokenBaseURL
+			return gmail.NewWithConfig(ctx, creds, cfg, opts...)
 		},
 	}
 }
@@ -103,7 +105,7 @@ func (p *gmailProvider) ConfigSchema() ProviderSchema {
 			},
 			"max_threads": map[string]any{
 				"type":        "integer",
-				"description": fmt.Sprintf("Maximum threads to enumerate per sync. Gmail lists newest first and the sync restarts from the newest thread every run, so a mailbox with more matching threads than this ceiling contributes only its newest ones. Default %d; ceiling %d.", gmail.DefaultMaxThreads, gmail.MaxThreadsLimit),
+				"description": fmt.Sprintf("Maximum threads one pass enumerates: the newest threads listed on every sync, and the budget for the backfill windows that sync walks. A mailbox holding more than this is backfilled window by window on successive syncs until the whole scope is covered. Default %d; ceiling %d.", gmail.DefaultMaxThreads, gmail.MaxThreadsLimit),
 			},
 		},
 	}
@@ -192,14 +194,14 @@ func (p *gmailProvider) SyncIntervalBounds() (int, int) {
 }
 
 // gmailCredentials projects the opaque credential map onto the client's typed
-// credential struct. The stored scope (granted at connect) is carried through so
-// the client refreshes with the scope it was authorized for.
+// credential struct. The scope is not carried through: Gmail connect always
+// requests gmail.readonly, and Google's refresh grant is bound to the scope the
+// user approved, so a per-source scope would be cosmetic.
 func gmailCredentials(creds Credentials) gmail.Credentials {
 	c, _ := creds["client_id"].(string)
 	s, _ := creds["client_secret"].(string)
 	r, _ := creds["refresh_token"].(string)
-	scope, _ := creds["scope"].(string)
-	return gmail.Credentials{ClientID: c, ClientSecret: s, RefreshToken: r, Scope: scope}
+	return gmail.Credentials{ClientID: c, ClientSecret: s, RefreshToken: r}
 }
 
 // gmailConnector implements Connector over a Gmail transport.
@@ -208,33 +210,264 @@ type gmailConnector struct {
 	deps   ConnectorDeps
 }
 
+// Keys the connector persists in the source cursor row. They share the map with
+// the worker's total_items/synced_at, and the gmail_ prefix keeps a
+// provider-neutral reader from mistaking them for worker state.
+const (
+	gmailCursorScopeKey    = "gmail_scope"
+	gmailCursorBoundaryKey = "gmail_boundary"
+	gmailCursorWindowKey   = "gmail_window_days"
+	gmailCursorCompleteKey = "gmail_backfill_complete"
+)
+
+const (
+	// gmailBackfillWindowDays is the starting backfill window. Gmail's after:/
+	// before: operators are day-granular, so a calendar window is the finest
+	// range the listing can express.
+	gmailBackfillWindowDays = 30
+	// gmailMinBackfillWindowDays is the narrowest window the walk uses when a
+	// window is larger than one sync may ingest.
+	gmailMinBackfillWindowDays = 1
+	// gmailInitialItemCap keeps the first allocation bounded; a source may raise
+	// max_threads to 50,000.
+	gmailInitialItemCap = 1024
+	// gmailMaxWindowsPerSync bounds how far one sync walks a mail-free stretch.
+	// Without it a source with no mail for years would issue hundreds of
+	// listings in one job and could be cancelled before the cursor advances,
+	// which would restart the same stretch forever. 60 windows is about five
+	// years at the default width, for roughly 600 quota units.
+	gmailMaxWindowsPerSync = 60
+)
+
+// gmailBackfill is the persisted coverage watermark: the newest day not yet
+// covered by the walk (Boundary), the window width to try next, and whether the
+// walk reached the floor. Scope is the fingerprint of the config that produced
+// it — a changed query, label set, or since date invalidates the watermark,
+// because a different scope has different coverage.
+type gmailBackfill struct {
+	Scope      string
+	Boundary   time.Time
+	WindowDays int
+	Complete   bool
+}
+
+// Enumerate lists the newest threads in scope. It is the cursor-free entry
+// point (a connection test or a one-off enumeration); the sync worker drives
+// EnumerateWithCursor so the backfill state survives across runs.
 func (c *gmailConnector) Enumerate(ctx context.Context, cfg map[string]any) ([]SourceItem, error) {
+	items, _, err := c.EnumerateWithCursor(ctx, cfg, nil)
+	return items, err
+}
+
+// EnumerateWithCursor walks the source's threads in two passes and returns the
+// cursor state to persist.
+//
+// The head pass lists the newest threads in scope — exactly what v1 did — so new
+// mail and recent thread activity land on every sync. When that listing is
+// capped, older windows are walked in the same sync from the persisted
+// watermark, and the watermark advances window by window across syncs until it
+// reaches the floor. That makes a mailbox larger than max_threads eventually
+// fully covered instead of only ever contributing its newest slice.
+//
+// A window costs one listing whatever it contains, so the walk continues through
+// empty stretches (a gap in the mailbox) up to gmailMaxWindowsPerSync per sync.
+//
+// The returned cursor is nil-free and complete: the worker merges it into the
+// source row after the batch is applied, so an interrupted sync re-walks the
+// same window and loses nothing (unchanged threads are skipped by revision).
+func (c *gmailConnector) EnumerateWithCursor(ctx context.Context, cfg map[string]any, cursor map[string]any) ([]SourceItem, map[string]any, error) {
 	parsed, err := parseGmailConfig(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	// The listing's truncated flag is intentionally not surfaced to the worker
-	// (see EnumerationComplete): a capped listing and a scope the user narrowed
-	// both mean "absent is not deleted" for an email source.
-	refs, _, err := c.client.ListThreads(ctx, gmail.ListOptions{
+	state := gmailBackfillFrom(cursor, gmailScopeFingerprint(parsed), time.Now().UTC())
+	floor := gmailBackfillFloor(parsed.Since)
+
+	seen := make(map[string]bool, gmailInitialItemCap)
+	out := make([]SourceItem, 0, gmailInitialItemCap)
+
+	refs, truncated, err := c.client.ListThreads(ctx, gmail.ListOptions{
 		Query:      parsed.Query,
 		LabelIDs:   parsed.LabelIDs,
 		Since:      parsed.Since,
 		MaxThreads: parsed.MaxThreads,
 	})
 	if err != nil {
-		return nil, gmailGrantOrRaw(err)
+		return nil, nil, gmailGrantOrRaw(err)
 	}
-	out := make([]SourceItem, len(refs))
-	for i, ref := range refs {
-		out[i] = SourceItem{
+	out = appendGmailItems(out, seen, refs)
+
+	switch {
+	case !truncated:
+		// The head pass saw every thread in scope: there is nothing older left
+		// to walk, so the source is fully covered from the first sync.
+		state.Complete = true
+		state.Boundary = floor
+	case state.Complete:
+		// The mailbox outgrew the ceiling since its last full pass, so the
+		// stored completion no longer proves coverage: a sticky flag would mean
+		// a source that was once small never backfills again. Restart the walk.
+		state = newGmailBackfill(state.Scope, time.Now().UTC())
+	}
+
+	budget := parsed.MaxThreads
+	windows := 0
+	for !state.Complete && budget > 0 && windows < gmailMaxWindowsPerSync {
+		windows++
+		start := state.Boundary.AddDate(0, 0, -state.WindowDays)
+		if start.Before(floor) {
+			start = floor
+		}
+		if !start.Before(state.Boundary) {
+			state.Complete = true
+			state.Boundary = floor
+			break
+		}
+
+		refs, truncated, err := c.client.ListThreads(ctx, gmail.ListOptions{
+			Query:      parsed.Query,
+			LabelIDs:   parsed.LabelIDs,
+			After:      start,
+			Before:     state.Boundary,
+			MaxThreads: budget,
+		})
+		if err != nil {
+			return nil, nil, gmailGrantOrRaw(err)
+		}
+		out = appendGmailItems(out, seen, refs)
+		budget -= len(refs)
+
+		if truncated {
+			// The window holds more threads than one sync may ingest. Keep what
+			// was listed but do not advance past it; narrow the window so
+			// successive syncs converge instead of re-listing the same block.
+			if state.WindowDays > gmailMinBackfillWindowDays {
+				state.WindowDays /= 2
+				if state.WindowDays < gmailMinBackfillWindowDays {
+					state.WindowDays = gmailMinBackfillWindowDays
+				}
+			} else {
+				// A single day above the ceiling: accept the cap for that day —
+				// the same truncation v1 applied to the whole listing — and step
+				// past it so the walk always makes progress.
+				state.Boundary = start
+				if !state.Boundary.After(floor) {
+					state.Complete = true
+					state.Boundary = floor
+				}
+			}
+			break
+		}
+
+		// Overlap the next window by one day. after:/before: are day-granular, so
+		// a thread dated exactly on the boundary may be listed by either side;
+		// re-listing it is free (the worker skips an unchanged revision), while
+		// dropping it would be a permanent gap.
+		next := start.AddDate(0, 0, 1)
+		if !next.Before(state.Boundary) {
+			next = state.Boundary.AddDate(0, 0, -1)
+		}
+		state.Boundary = next
+		if !state.Boundary.After(floor) {
+			state.Complete = true
+			state.Boundary = floor
+		}
+	}
+
+	return out, state.cursor(), nil
+}
+
+// appendGmailItems converts a listing batch into source items, keeping the first
+// occurrence of a thread id. The head pass and the first backfill window
+// overlap, so duplicates are expected.
+func appendGmailItems(out []SourceItem, seen map[string]bool, refs []gmail.ThreadRef) []SourceItem {
+	for _, ref := range refs {
+		if ref.ID == "" || seen[ref.ID] {
+			continue
+		}
+		seen[ref.ID] = true
+		out = append(out, SourceItem{
 			ID:         ref.ID,
 			Name:       gmailThreadName(ref),
 			MimeType:   "text/markdown",
 			RevisionID: gmailRevision(ref),
-		}
+		})
 	}
-	return out, nil
+	return out
+}
+
+// newGmailBackfill starts a walk at today: the head pass already covers the
+// newest threads, and the first window re-lists them (free, deduped) before
+// reaching older ones.
+func newGmailBackfill(scope string, now time.Time) gmailBackfill {
+	return gmailBackfill{
+		Scope:      scope,
+		Boundary:   gmailDay(now),
+		WindowDays: gmailBackfillWindowDays,
+	}
+}
+
+// gmailBackfillFrom reads the persisted watermark, falling back to a fresh walk
+// when the cursor is empty, names another scope, or cannot be parsed. A corrupt
+// or stale cursor must never fail a sync: the worst case is re-walking coverage
+// the source already has, which the revision check makes cheap.
+func gmailBackfillFrom(cursor map[string]any, scope string, now time.Time) gmailBackfill {
+	fresh := newGmailBackfill(scope, now)
+	if len(cursor) == 0 {
+		return fresh
+	}
+	if got, _ := cursor[gmailCursorScopeKey].(string); got != scope {
+		return fresh
+	}
+	raw, _ := cursor[gmailCursorBoundaryKey].(string)
+	boundary, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return fresh
+	}
+	fresh.Boundary = boundary
+	if days, ok := toInt(cursor[gmailCursorWindowKey]); ok && days >= gmailMinBackfillWindowDays && days <= gmailBackfillWindowDays {
+		fresh.WindowDays = days
+	}
+	if complete, _ := cursor[gmailCursorCompleteKey].(bool); complete {
+		fresh.Complete = true
+	}
+	return fresh
+}
+
+// cursor projects the watermark into the source cursor map.
+func (s gmailBackfill) cursor() map[string]any {
+	return map[string]any{
+		gmailCursorScopeKey:    s.Scope,
+		gmailCursorBoundaryKey: s.Boundary.Format("2006-01-02"),
+		gmailCursorWindowKey:   s.WindowDays,
+		gmailCursorCompleteKey: s.Complete,
+	}
+}
+
+// gmailScopeFingerprint identifies the coverage scope a watermark belongs to.
+// Two syncs with the same fingerprint cover the same mailbox region.
+func gmailScopeFingerprint(c gmailConfig) string {
+	since := ""
+	if !c.Since.IsZero() {
+		since = gmailDay(c.Since).Format("2006-01-02")
+	}
+	return strings.Join([]string{c.Query, strings.Join(c.LabelIDs, ","), since}, "\x1f")
+}
+
+// gmailBackfillFloor is the oldest day the walk visits: the source's own since
+// date when set, else Gmail's launch day (2004-04-01) — no mailbox can hold mail
+// older than that, so the walk terminates deterministically in either case.
+func gmailBackfillFloor(since time.Time) time.Time {
+	if !since.IsZero() {
+		return gmailDay(since)
+	}
+	return time.Date(2004, 4, 1, 0, 0, 0, 0, time.UTC)
+}
+
+// gmailDay truncates a timestamp to its UTC calendar day, the unit Gmail's
+// after:/before: operators work in.
+func gmailDay(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 func (c *gmailConnector) Fetch(ctx context.Context, item SourceItem) (content, mimeType string, err error) {

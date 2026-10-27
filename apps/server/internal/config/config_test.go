@@ -602,3 +602,36 @@ func TestShutdownAndPoolDefaults(t *testing.T) {
 		})
 	}
 }
+
+// TestSourceOAuthConfigGoogleProvidersShareDeploymentApp pins the provider map
+// that backs "Gmail reuses the deployment Google app": both Google-backed
+// providers resolve the one deployment client and the one env-var hint, and a
+// half-configured app yields neither (a client id without its secret cannot
+// authorize).
+func TestSourceOAuthConfigGoogleProvidersShareDeploymentApp(t *testing.T) {
+	cfg := SourceOAuthConfig{GoogleClientID: "cid", GoogleClientSecret: "cs"}
+	byProvider := cfg.OAuthClientsByProvider()
+	for _, providerType := range []string{"google_drive", "gmail"} {
+		got, ok := byProvider[providerType]
+		if !ok {
+			t.Fatalf("OAuthClientsByProvider() has no %q entry", providerType)
+		}
+		if got.ClientID != "cid" || got.ClientSecret != "cs" {
+			t.Errorf("%s client = %+v, want the deployment Google app", providerType, got)
+		}
+		if hint := cfg.DeploymentEnvVarHint(providerType); hint != "SOURCES_OAUTH_GOOGLE_CLIENT_ID/SECRET" {
+			t.Errorf("DeploymentEnvVarHint(%q) = %q", providerType, hint)
+		}
+	}
+	if len(byProvider) != 2 {
+		t.Errorf("providers = %v, want exactly the two Google providers", byProvider)
+	}
+
+	partial := SourceOAuthConfig{GoogleClientID: "cid"}
+	if got := partial.OAuthClientsByProvider(); len(got) != 0 {
+		t.Errorf("OAuthClientsByProvider() = %v for a client id without a secret, want empty", got)
+	}
+	if hint := partial.DeploymentEnvVarHint("github"); hint != "" {
+		t.Errorf("DeploymentEnvVarHint(github) = %q, want empty", hint)
+	}
+}

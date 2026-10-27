@@ -1078,6 +1078,22 @@ type dsCredentialSummary struct {
 	CanReconnect bool
 }
 
+// dsFixedScope is the OAuth scope a provider always requests, with the label the
+// credentials card shows for it.
+type dsFixedScope struct {
+	Strategy string
+	Label    string
+}
+
+// dsFixedScopeByProvider covers the providers whose connect flow offers no scope
+// choice: their sources carry no granted strategy (there is nothing to select),
+// so without this table a healthy source rendered the amber "not reported"
+// badge. A provider belongs here only when its connect always authorizes exactly
+// one scope.
+var dsFixedScopeByProvider = map[string]dsFixedScope{
+	"gmail": {Strategy: "gmail.readonly", Label: "Read-only Gmail access (gmail.readonly)"},
+}
+
 // dsCredentialSummary builds the credentials card for a source. The app details
 // are member-readable server data (never secrets); the account email is the
 // best-effort value captured at connect. A lookup failure degrades to the
@@ -1141,6 +1157,12 @@ func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *d
 	case "drive.file":
 		summary.GrantedLabel = "Per-file access (drive.file)"
 		summary.GrantedTone = "warning"
+	default:
+		if fixed, ok := dsFixedScopeByProvider[src.ProviderType]; ok {
+			summary.GrantedLabel = fixed.Label
+			summary.GrantedTone = "success"
+			summary.GrantedStrategy = fixed.Strategy
+		}
 	}
 	if dsDriveFileScope(src) {
 		summary.PickerBlocked = true
