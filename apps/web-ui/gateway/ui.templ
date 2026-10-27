@@ -138,7 +138,11 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 					</main>
 				</div>
 				if assistantAgent != "" {
-					@sidePanel(agents, assistantAgent)
+					@sidePanel(agents, assistantAgent, sidePanelScope{
+						OrgID:     currentOrgID(currentProject, activeOrg),
+						ProjectID: currentProjectID(currentProject),
+						UserID:    currentUserID(user),
+					})
 				}
 				<!-- Global read-only object preview, opened from inline chat
 				     references. Sibling of sidePanel and outside #main-content so

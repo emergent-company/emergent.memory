@@ -4,14 +4,26 @@ import (
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
+// sidePanelScope is the tenancy the drawer's persisted conversation belongs to.
+// sidepanel.js keys its localStorage transcript by these values plus the
+// assistant agent id, so a transcript can never reappear in another project,
+// org or signed-in user session.
+type sidePanelScope struct {
+	OrgID     string
+	ProjectID string
+	UserID    string
+}
+
 // sidePanel renders the global assistant conversation drawer. It lives
 // OUTSIDE #main-content in appShell, so HTMX sidebar navigation (which only
 // swaps #main-content) never touches its DOM — the open/closed state and any
 // in-flight conversation survive in-app navigation. sidepanel.js drives
 // open/close, the /api/chat SSE stream, and localStorage persistence.
 // assistantAgent is the configured assistant agent ID; the panel only renders
-// when it is non-empty (see appShell).
-templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
+// when it is non-empty (see appShell). The scope data attributes are the
+// single source of truth for which tenancy the persisted transcript belongs
+// to — sidepanel.js never trusts a stored payload's own claim.
+templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string, scope sidePanelScope) {
 	<div id="sidepanel-root">
 		<!-- Clicking the backdrop closes the drawer (data-action, handled by
 		     sidepanel.js via document delegation so it survives swaps). -->
@@ -23,6 +35,9 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string) {
 			aria-hidden="true"
 			inert
 			data-agent-id={ assistantAgent }
+			data-org-id={ scope.OrgID }
+			data-project-id={ scope.ProjectID }
+			data-user-id={ scope.UserID }
 		>
 			<!-- Drag-to-resize grip on the left edge. Width is driven by
 			     sidepanel.js (single source of truth, persisted). -->

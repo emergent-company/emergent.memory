@@ -2,7 +2,9 @@
    A persistent right-hand drawer hosted by the app shell. It lives OUTSIDE
    #main-content, so HTMX sidebar navigation never destroys it: open/closed
    state and any in-flight stream survive in-app navigation. On a full page
-   reload the conversationId + transcript are restored from localStorage.
+   reload the conversationId + transcript are restored from localStorage,
+   scoped by org + project + user + assistant agent so a transcript is never
+   shown in a tenancy it does not belong to.
 
    Streaming reuses the same /api/chat SSE contract as chat.js (meta / html /
    mcp_tool / question / error / done frames) — no backend changes needed.
@@ -11,7 +13,13 @@
 (function () {
   "use strict";
 
-  var LS_KEY = "memory.sidepanel.v1";
+  // Persisted in-flight conversation. The key is scoped by org + project +
+  // user + assistant agent, all read from the panel's server-rendered data
+  // attributes — never from the stored payload itself. A browser-global key
+  // (memory.sidepanel.v1, retired below) showed one project's transcript in
+  // any other project whose assistant drawer had just been configured.
+  var LS_PREFIX = "memory.sidepanel.v2";
+  var LS_KEY_LEGACY = "memory.sidepanel.v1";
 
   var panel = null, backdrop = null, log = null, messages = null, empty = null;
   var input = null, sendBtn = null, stopBtn = null, form = null;
@@ -602,9 +610,36 @@
 
   /* ---------- localStorage persistence ---------- */
 
+  // panelScope reads the tenancy the drawer is mounted for. These attributes
+  // are server-rendered from the request's session (sidepanel.templ), so they
+  // cannot be influenced by whatever a stored payload claims to be.
+  function panelScope() {
+    return {
+      orgId: panel ? panel.getAttribute("data-org-id") || "" : "",
+      projectId: panel ? panel.getAttribute("data-project-id") || "" : "",
+      userId: panel ? panel.getAttribute("data-user-id") || "" : "",
+      agentId: assistantAgent || "",
+    };
+  }
+
+  function storageKey(scope) {
+    var parts = [scope.orgId, scope.projectId, scope.userId, scope.agentId];
+    for (var i = 0; i < parts.length; i++) parts[i] = encodeURIComponent(parts[i]);
+    return LS_PREFIX + "." + parts.join(".");
+  }
+
+  function sameScope(a, b) {
+    if (!a || !b) return false;
+    return a.orgId === b.orgId && a.projectId === b.projectId &&
+      a.userId === b.userId && a.agentId === b.agentId;
+  }
+
   function persist() {
+    if (!panel) return;
+    var scope = panelScope();
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({
+      localStorage.setItem(storageKey(scope), JSON.stringify({
+        scope: scope,
         conversationId: conversationId,
         history: history.slice(-80),
       }));
@@ -612,11 +647,24 @@
   }
 
   function restore() {
+    var scope = panelScope();
+    // The pre-scope key held one transcript for the whole browser and cannot
+    // be attributed to a project, org or user — drop it instead of adopting it.
+    try { localStorage.removeItem(LS_KEY_LEGACY); } catch (e) { /* unavailable */ }
+
+    var key = storageKey(scope);
     var st = null;
     try {
-      st = JSON.parse(localStorage.getItem(LS_KEY) || "null");
+      st = JSON.parse(localStorage.getItem(key) || "null");
     } catch (e) { st = null; }
-    if (!st) return;
+    // Belt and braces: a payload that does not match the live scope (renamed
+    // key, hand-edited storage) is discarded rather than rendered.
+    if (!st || !sameScope(st.scope, scope)) {
+      if (st) {
+        try { localStorage.removeItem(key); } catch (e) { /* unavailable */ }
+      }
+      return;
+    }
 
     conversationId = st.conversationId || "";
     history = Array.isArray(st.history) ? st.history : [];

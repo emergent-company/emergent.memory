@@ -39,7 +39,7 @@ func openingTagForID(html, id string) string {
 // actually skips the panel and lands on the next control is only observable in a
 // browser (or jsdom), not in a Go string assertion.
 func TestSidePanelClosedIsInert(t *testing.T) {
-	html := renderHTML(t, sidePanel(nil, "assistant-agent"))
+	html := renderHTML(t, sidePanel(nil, "assistant-agent", sidePanelScope{}))
 	tag := openingTagForID(html, "sidepanel-panel")
 	if tag == "" {
 		t.Fatalf("sidepanel-panel not rendered:\n%s", html)
@@ -47,6 +47,57 @@ func TestSidePanelClosedIsInert(t *testing.T) {
 	for _, want := range []string{`inert`, `aria-hidden="true"`, `translate-x-full`} {
 		if !strings.Contains(tag, want) {
 			t.Errorf("closed #sidepanel-panel tag missing %q: %s", want, tag)
+		}
+	}
+}
+
+// TestSidePanelRendersScope pins the tenancy data attributes the client keys its
+// persisted transcript by. Without them sidepanel.js cannot tell which project,
+// org or user a stored conversation belongs to, which is exactly how one
+// project's transcript came back in another project's drawer.
+func TestSidePanelRendersScope(t *testing.T) {
+	scope := sidePanelScope{OrgID: "org-1", ProjectID: "proj-1", UserID: "user-1"}
+	html := renderHTML(t, sidePanel(nil, "assistant-agent", scope))
+	tag := openingTagForID(html, "sidepanel-panel")
+	if tag == "" {
+		t.Fatalf("sidepanel-panel not rendered:\n%s", html)
+	}
+	for _, want := range []string{
+		`data-agent-id="assistant-agent"`,
+		`data-org-id="org-1"`,
+		`data-project-id="proj-1"`,
+		`data-user-id="user-1"`,
+	} {
+		if !strings.Contains(tag, want) {
+			t.Errorf("#sidepanel-panel tag missing %q: %s", want, tag)
+		}
+	}
+}
+
+// TestSidePanelStorageScopeWiring pins the client half of the contract:
+// sidepanel.js must key its persisted conversation off the panel's own scope
+// attributes (not a browser-global key) and must drop a payload whose scope
+// does not match the live one. It also retires the unscoped v1 key, whose
+// payload cannot be attributed to a tenancy and would otherwise keep
+// resurfacing in unrelated projects.
+func TestSidePanelStorageScopeWiring(t *testing.T) {
+	src, err := os.ReadFile("webui/static/js/sidepanel.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	for _, want := range []string{
+		`var LS_PREFIX = "memory.sidepanel.v2";`,
+		`var LS_KEY_LEGACY = "memory.sidepanel.v1";`,
+		`panel.getAttribute("data-project-id")`,
+		`panel.getAttribute("data-org-id")`,
+		`panel.getAttribute("data-user-id")`,
+		`function sameScope(a, b)`,
+		`if (!st || !sameScope(st.scope, scope))`,
+		`localStorage.removeItem(LS_KEY_LEGACY)`,
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("sidepanel.js missing %q", want)
 		}
 	}
 }

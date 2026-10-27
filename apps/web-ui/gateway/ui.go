@@ -471,6 +471,16 @@ func currentOrgID(p *ProjectRef, activeOrg *Org) string {
 	return ""
 }
 
+// currentUserID returns the signed-in account's stable id for shell-level
+// scope propagation (e.g. the assistant drawer's localStorage key), or "" in
+// dev / API-key mode where no user session exists.
+func currentUserID(u *currentUser) string {
+	if u == nil {
+		return ""
+	}
+	return u.Sub
+}
+
 // currentUser is the signed-in identity shown in the account menu.
 type currentUser struct {
 	Name    string

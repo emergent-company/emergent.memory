@@ -9,6 +9,12 @@ import (
 func (s *Server) getConversation(c echo.Context) error {
 	out, err := s.memory.GetConversation(c.Request().Context(), c.Param("id"))
 	if err != nil {
+		// A conversation from another project, or a deleted one, is a 404 —
+		// not a memory outage. Mapping it to 502 made a stale client-side
+		// conversation id read as "memory service unavailable".
+		if isSessionNotFound(err) {
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "conversation not found"})
+		}
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}

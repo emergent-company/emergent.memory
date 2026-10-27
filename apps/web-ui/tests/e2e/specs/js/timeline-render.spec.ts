@@ -444,7 +444,7 @@ const SIDEPANEL_SKELETON = `<!doctype html>
 <body>
 <div id="sidepanel-root">
   <div id="sidepanel-backdrop" class="hidden"></div>
-  <aside id="sidepanel-panel" data-agent-id="assistant" class="translate-x-full" inert aria-hidden="true">
+  <aside id="sidepanel-panel" data-agent-id="assistant" data-org-id="org-1" data-project-id="proj-1" data-user-id="user-1" class="translate-x-full" inert aria-hidden="true">
     <div id="sidepanel-resize"></div>
     <button id="sidepanel-width-toggle" aria-pressed="false"></button>
     <div id="sidepanel-session-picker"><span id="sidepanel-session-label">New session</span><ul id="sidepanel-session-menu"></ul></div>
@@ -478,9 +478,15 @@ test.describe('shared timeline renderer — side panel surface (sidepanel.js)', 
 
     // Seed the persisted session so sidepanel's init() → restore() →
     // loadSession() fetches the server transcript and calls renderHistoryItems.
+    // sidepanel.js scopes its key by org + project + user + assistant agent
+    // (its data attributes), so the seed mirrors the skeleton's scope exactly.
     await page.evaluate(
       ({ convId, items }) => {
-        localStorage.setItem('memory.sidepanel.v1', JSON.stringify({ conversationId: convId, history: [] }));
+        const scope = { orgId: 'org-1', projectId: 'proj-1', userId: 'user-1', agentId: 'assistant' };
+        const key = ['memory.sidepanel.v2', scope.orgId, scope.projectId, scope.userId, scope.agentId]
+          .map((part, i) => (i === 0 ? part : encodeURIComponent(part)))
+          .join('.');
+        localStorage.setItem(key, JSON.stringify({ scope, conversationId: convId, history: [] }));
         localStorage.removeItem('memory.sidepanel.width.v1');
         const w = window as unknown as StubWindow;
         w.fetch = function (url) {
