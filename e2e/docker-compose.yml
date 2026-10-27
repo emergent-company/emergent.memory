@@ -125,6 +125,28 @@ services:
       start_period: 5s
 
   # ─────────────────────────────────────────────────────────────────────────
+  # Stub Gmail API — impersonates Gmail v1 (thread listing with q/after/before,
+  # thread fetch with base64url MIME parts, labels, profile) plus the OAuth2
+  # refresh grant at /token, so the Gmail data-source connector can be exercised
+  # end to end without a Google account, credentials, or egress. The server's
+  # GMAIL_API_BASE_URL and GMAIL_TOKEN_URL point here; host-run API tests seed
+  # the mailbox and inject throttles through the /_control routes.
+  # ─────────────────────────────────────────────────────────────────────────
+  gmail-stub:
+    build:
+      context: ./stubs/gmail
+    ports:
+      # Ephemeral loopback binding: host-run API tests discover the port with
+      # `docker compose port gmail-stub 8080`, so parallel jobs never collide.
+      - "127.0.0.1::8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 5s
+
+  # ─────────────────────────────────────────────────────────────────────────
   # Stub website — a hermetic small site (link following, robots.txt, 404/500,
   # redirect, PDF) so the web data-source connector can be exercised end to end
   # without a real site or egress. The server reaches it as http://web-stub:8080
@@ -200,6 +222,8 @@ services:
         condition: service_healthy
       github-stub:
         condition: service_healthy
+      gmail-stub:
+        condition: service_healthy
       web-stub:
         condition: service_healthy
       mailpit:
@@ -243,6 +267,11 @@ services:
       # The API origin is a deployment setting (never per source), so this is
       # what lets the connector target the stub instead of api.github.com.
       GITHUB_API_BASE_URL: "http://github-stub:8080"
+      # Point the Gmail data-source connector at the local Gmail stub: the API
+      # origin and the OAuth2 refresh grant are both deployment settings, so a
+      # sync never reaches Google.
+      GMAIL_API_BASE_URL: "http://gmail-stub:8080"
+      GMAIL_TOKEN_URL: "http://gmail-stub:8080/token"
       # Web-scraper data-source deployment policy (feeds internal/outbound's
       # SSRF guard). AllowedHosts names the hermetic stub host, which lives on the
       # compose bridge network (RFC1918 private space): an allow-listed host is
@@ -315,9 +344,10 @@ services:
       # Only set in the Mailgun-transport run; empty by default so the
       # Mailgun invite-email test skips when the stack runs in SMTP mode.
       MAILGUN_STUB_URL: "${E2E_MAILGUN_STUB_URL:-}"
-      # The GitHub data-source test seeds/mutates the private-repo stub through
-      # its /_control routes; empty outside the api job so the test skips.
+      # The GitHub and Gmail data-source tests seed/mutate their stub through
+      # its /_control routes; empty outside the api job so the tests skip.
       GITHUB_STUB_URL: "${E2E_GITHUB_STUB_URL:-}"
+      GMAIL_STUB_URL: "${E2E_GMAIL_STUB_URL:-}"
       WEB_STUB_URL: "${E2E_WEB_STUB_URL:-}"
       # The image ships e2e/go.work (the module's own workspace). Run the suite
       # in module mode, exactly as before that file existed — the module's own

@@ -233,7 +233,7 @@ func TestGitHubDataSource_LiveSyncAndVersion(t *testing.T) {
 	}
 
 	// ── First sync: two documents, each chunked ─────────────────────────────
-	jobID := triggerGitHubSync(t, rl, projectID, sourceID)
+	jobID := triggerDataSourceSync(t, rl, projectID, sourceID)
 	job := waitForSyncJob(t, rl, projectID, sourceID, jobID)
 	if job.TotalItems != 2 || job.SuccessfulItems != 2 || job.FailedItems != 0 {
 		t.Fatalf("first sync = total:%d successful:%d failed:%d, want 2/2/0",
@@ -261,7 +261,7 @@ func TestGitHubDataSource_LiveSyncAndVersion(t *testing.T) {
 	// ── Commit a new revision of one file, sync again ───────────────────────
 	githubLivePutFile(t, apiBase, repo, writeToken, branch, guidePath, "# Guide\n\nVersion two.\n", guideSHA)
 
-	jobID = triggerGitHubSync(t, rl, projectID, sourceID)
+	jobID = triggerDataSourceSync(t, rl, projectID, sourceID)
 	job = waitForSyncJob(t, rl, projectID, sourceID, jobID)
 	if job.TotalItems != 2 {
 		t.Fatalf("second sync total = %d, want 2", job.TotalItems)

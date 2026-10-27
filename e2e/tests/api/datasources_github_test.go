@@ -22,9 +22,9 @@ import (
 
 const (
 	githubStubToken = "e2e-github-token"
-	// githubSyncTimeout covers the worker's 5s poll interval plus ingestion and
+	// dataSourceSyncTimeout covers the worker's 5s poll interval plus ingestion and
 	// chunking for a handful of documents.
-	githubSyncTimeout = 90 * time.Second
+	dataSourceSyncTimeout = 90 * time.Second
 )
 
 // skipWithoutGitHubStub returns the trimmed GITHUB_STUB_URL, skipping the test
@@ -133,8 +133,9 @@ type sourceDocument struct {
 	Chunks           int    `json:"chunks"`
 }
 
-// triggerGitHubSync admits a manual sync job and returns its id.
-func triggerGitHubSync(t *testing.T, rl *runLog, projectID, sourceID string) string {
+// triggerDataSourceSync admits a manual sync job and returns its id. It is
+// shared by every data-source suite (GitHub, Gmail, web).
+func triggerDataSourceSync(t *testing.T, rl *runLog, projectID, sourceID string) string {
 	t.Helper()
 	resp := doAPILogged(t, rl, "POST", "/api/data-source-integrations/"+sourceID+"/sync", e2eTestToken(), projectID, nil)
 	body := mustStatus(t, resp, http.StatusOK)
@@ -154,7 +155,7 @@ func triggerGitHubSync(t *testing.T, rl *runLog, projectID, sourceID string) str
 func waitForSyncJob(t *testing.T, rl *runLog, projectID, sourceID, jobID string) dataSourceSyncJob {
 	t.Helper()
 	path := fmt.Sprintf("/api/data-source-integrations/%s/sync-jobs/%s", sourceID, jobID)
-	deadline := time.Now().Add(githubSyncTimeout)
+	deadline := time.Now().Add(dataSourceSyncTimeout)
 	var last dataSourceSyncJob
 	for time.Now().Before(deadline) {
 		resp := doAPI(t, "GET", path, e2eTestToken(), projectID, nil)
@@ -181,7 +182,7 @@ func waitForSyncJob(t *testing.T, rl *runLog, projectID, sourceID, jobID string)
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("sync job %s did not finish within %s (last status %q)", jobID, githubSyncTimeout, last.Status)
+	t.Fatalf("sync job %s did not finish within %s (last status %q)", jobID, dataSourceSyncTimeout, last.Status)
 	return last
 }
 
@@ -300,7 +301,7 @@ func TestGitHubDataSource_SyncAndVersion(t *testing.T) {
 	}
 
 	// ── First sync: three documents, each chunked ───────────────────────────
-	jobID := triggerGitHubSync(t, rl, projectID, sourceID)
+	jobID := triggerDataSourceSync(t, rl, projectID, sourceID)
 	job := waitForSyncJob(t, rl, projectID, sourceID, jobID)
 	if job.TotalItems != 3 || job.SuccessfulItems != 3 || job.FailedItems != 0 {
 		t.Fatalf("first sync = total:%d successful:%d failed:%d, want 3/3/0",
@@ -330,7 +331,7 @@ func TestGitHubDataSource_SyncAndVersion(t *testing.T) {
 	// ── Change one file, sync again ─────────────────────────────────────────
 	upsertGitHubFile(t, stub, repo, "docs/guide.md", "# Guide\n\nInstall the thing.\n\nVersion two.\n")
 
-	jobID = triggerGitHubSync(t, rl, projectID, sourceID)
+	jobID = triggerDataSourceSync(t, rl, projectID, sourceID)
 	job = waitForSyncJob(t, rl, projectID, sourceID, jobID)
 	if job.TotalItems != 3 {
 		t.Fatalf("second sync total = %d, want 3", job.TotalItems)

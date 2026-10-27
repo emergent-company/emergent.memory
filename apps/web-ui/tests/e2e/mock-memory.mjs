@@ -253,6 +253,18 @@ const dsProviders = [
     strategies: ["drive.file", "drive.readonly"],
   },
   {
+    type: "gmail",
+    name: "Gmail",
+    description: "Sync email threads from a Gmail mailbox into your knowledge base.",
+    sourceType: "email",
+    vendor: "google",
+    vendorName: "Google",
+    available: true,
+    // OAuth-only like Drive, and with exactly one scope: the connect card must
+    // never render a pasted-credential action or a scope picker.
+    authMethods: ["oauth"],
+  },
+  {
     type: "github",
     name: "GitHub",
     description: "Sync documentation from a GitHub repository.",
@@ -311,6 +323,15 @@ const dsSchemas = {
       },
       mime_types: { type: "array", items: { type: "string" } },
       recursive: { type: "boolean" },
+    },
+  },
+  gmail: {
+    type: "gmail",
+    properties: {
+      query: { type: "string", description: 'Gmail search expression selecting which threads to sync (default "in:inbox").' },
+      label_ids: { type: "array", items: { type: "string" }, description: "Optional label ids; a thread must carry every listed label." },
+      since: { type: "string", description: "Optional start date (YYYY-MM-DD). Threads dated before it are never synced." },
+      max_threads: { type: "integer", description: "Maximum threads one pass enumerates (default 10000; ceiling 50000)." },
     },
   },
   github: {
@@ -435,6 +456,29 @@ let dsSources = [
       updatedAt: "2026-09-01T00:00:00Z",
     },
     config: {},
+  },
+  {
+    // Fixed-scope, OAuth-only source (Gmail): the credentials card must show
+    // the provider's single read-only scope instead of "Not reported by the
+    // provider", and the edit form exposes config fields with no secret input.
+    row: {
+      id: "s2",
+      projectId: "p1",
+      name: "Support Mailbox",
+      providerType: "gmail",
+      sourceType: "email",
+      syncMode: "manual",
+      syncIntervalMinutes: 60,
+      oauthStrategy: "",
+      oauthGrantedStrategy: "",
+      lastSyncedAt: null,
+      nextSyncAt: null,
+      status: "active",
+      errorCount: 0,
+      createdAt: "2026-09-02T00:00:00Z",
+      updatedAt: "2026-09-02T00:00:00Z",
+    },
+    config: { query: "in:inbox", max_threads: 5000 },
   },
 ]; // [{ row, config }] — the full config (incl. credentials) is server-side only; dsIntegration returns a stripped copy.
 let dsJobsBySource = {}; // sourceId -> [job], newest first.

@@ -263,8 +263,9 @@ jobs:
           SERVER_PORT=$(docker compose port test-emergent-server 3002 | head -1 | awk -F: '{print $NF}' || true)
           MAILPIT_PORT=$(docker compose port mailpit 8025 | head -1 | awk -F: '{print $NF}' || true)
           GITHUB_STUB_PORT=$(docker compose port github-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
-          if [ -z "$SERVER_PORT" ] || [ -z "$MAILPIT_PORT" ] || [ -z "$GITHUB_STUB_PORT" ]; then
-            echo "::error::could not resolve published host ports (server='$SERVER_PORT' mailpit='$MAILPIT_PORT' github-stub='$GITHUB_STUB_PORT')"
+          GMAIL_STUB_PORT=$(docker compose port gmail-stub 8080 | head -1 | awk -F: '{print $NF}' || true)
+          if [ -z "$SERVER_PORT" ] || [ -z "$MAILPIT_PORT" ] || [ -z "$GITHUB_STUB_PORT" ] || [ -z "$GMAIL_STUB_PORT" ]; then
+            echo "::error::could not resolve published host ports (server='$SERVER_PORT' mailpit='$MAILPIT_PORT' github-stub='$GITHUB_STUB_PORT' gmail-stub='$GMAIL_STUB_PORT')"
             docker compose ps
             exit 1
           fi
@@ -272,8 +273,9 @@ jobs:
             echo "MEMORY_TEST_SERVER=http://127.0.0.1:${SERVER_PORT}"
             echo "MAILPIT_BASE_URL=http://127.0.0.1:${MAILPIT_PORT}"
             echo "GITHUB_STUB_URL=http://127.0.0.1:${GITHUB_STUB_PORT}"
+            echo "GMAIL_STUB_URL=http://127.0.0.1:${GMAIL_STUB_PORT}"
           } >> "$GITHUB_ENV"
-          echo "Resolved server=http://127.0.0.1:${SERVER_PORT} mailpit=127.0.0.1:${MAILPIT_PORT} github-stub=127.0.0.1:${GITHUB_STUB_PORT}"
+          echo "Resolved server=http://127.0.0.1:${SERVER_PORT} mailpit=127.0.0.1:${MAILPIT_PORT} github-stub=127.0.0.1:${GITHUB_STUB_PORT} gmail-stub=127.0.0.1:${GMAIL_STUB_PORT}"
           for i in $(seq 1 30); do
             if curl -sf "http://127.0.0.1:${SERVER_PORT}/health" > /dev/null 2>&1; then
               echo "Server is healthy"
