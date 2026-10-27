@@ -2,6 +2,7 @@ package webcrawl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -768,6 +769,9 @@ func TestCrawlInvalidSeedIsNotHardFailure(t *testing.T) {
 	if len(res.Errors) != 1 {
 		t.Fatalf("errors = %d, want 1 (the invalid seed)", len(res.Errors))
 	}
+	if !res.Errors[0].Advisory {
+		t.Error("invalid seed error Advisory = false, want true (an invalid seed must not be reported as the crawl's blocking failure)")
+	}
 	if len(res.Pages) != 1 {
 		t.Fatalf("pages = %d, want 1 (the valid seed still crawled)", len(res.Pages))
 	}
@@ -779,5 +783,55 @@ func TestCrawlInvalidSeedIsNotHardFailure(t *testing.T) {
 func TestCrawlNilFetcherFails(t *testing.T) {
 	if _, err := Crawl(context.Background(), nil, Options{}); err == nil {
 		t.Error("nil fetcher must return an error")
+	}
+}
+
+// blockedFetcher refuses every request, standing in for the outbound SSRF guard.
+type blockedFetcher struct{ err error }
+
+func (f blockedFetcher) Get(context.Context, string) (*Response, error) { return nil, f.err }
+
+// TestCrawlBlockedSeedAdvisorySplit pins the split the source connector relies on
+// when it reports a refused seed: the robots.txt fail-open warning is recorded
+// first but is advisory, while the seed's own refusal is the blocking error.
+func TestCrawlBlockedSeedAdvisorySplit(t *testing.T) {
+	suppressSleep(t)
+	blocked := errors.New("web: blocked URL: URL host 169.254.169.254 is in a disallowed address range")
+
+	res, err := Crawl(context.Background(), blockedFetcher{err: blocked}, Options{
+		Seeds:         []string{"http://169.254.169.254/"},
+		CrawlMode:     CrawlModePagesOnly,
+		RespectRobots: true,
+	})
+	if err != nil {
+		t.Fatalf("Crawl must not hard-fail when every fetch is refused: %v", err)
+	}
+	if len(res.Pages) != 0 {
+		t.Fatalf("pages = %d, want 0", len(res.Pages))
+	}
+	if len(res.Errors) < 2 {
+		t.Fatalf("errors = %d, want at least 2 (robots warning + seed refusal)", len(res.Errors))
+	}
+	if first := res.Errors[0]; !first.Advisory || !strings.Contains(first.Err.Error(), "robots.txt") {
+		t.Errorf("Errors[0] = %+v, want the advisory robots.txt warning first", first)
+	}
+	var blocking *PageError
+	for i := range res.Errors {
+		if !res.Errors[i].Advisory {
+			blocking = &res.Errors[i]
+			break
+		}
+	}
+	if blocking == nil {
+		t.Fatal("no non-advisory error recorded for the refused seed")
+	}
+	if blocking.URL != "http://169.254.169.254/" {
+		t.Errorf("blocking error URL = %q, want the refused seed", blocking.URL)
+	}
+	if !strings.Contains(blocking.Err.Error(), "disallowed address range") {
+		t.Errorf("blocking error = %v, want the outbound refusal", blocking.Err)
+	}
+	if res.Complete {
+		t.Error("Complete = true, want false (the seed could not be fetched)")
 	}
 }

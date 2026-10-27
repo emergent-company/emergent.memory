@@ -488,3 +488,33 @@ func TestWebConnector_TestConnection(t *testing.T) {
 		}
 	})
 }
+
+// TestWebConnector_EnumerateBlockedSeedReportsSeedError is the failure-reporting
+// contract for a refused start URL: the sync error must name the seed and the
+// policy refusal, not the advisory robots.txt fail-open warning that is recorded
+// first when the fetcher refuses every request.
+func TestWebConnector_EnumerateBlockedSeedReportsSeedError(t *testing.T) {
+	conn := newWebConnector(outbound.Policy{}, webUserAgent, ConnectorDeps{})
+
+	_, err := conn.Enumerate(context.Background(), map[string]any{
+		"start_urls": []any{"http://169.254.169.254/"},
+		"max_depth":  0,
+		"max_pages":  1,
+	})
+	if err == nil {
+		t.Fatal("Enumerate() error = nil, want the refused seed reported")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "crawl produced no pages") {
+		t.Errorf("error = %q, want the no-pages wrapper", msg)
+	}
+	if !strings.Contains(msg, "http://169.254.169.254/") {
+		t.Errorf("error = %q, want the refused start URL named", msg)
+	}
+	if !strings.Contains(msg, "disallowed address range") {
+		t.Errorf("error = %q, want the outbound policy refusal", msg)
+	}
+	if strings.Contains(msg, "robots.txt") {
+		t.Errorf("error = %q, must not blame the advisory robots.txt warning for a refused seed", msg)
+	}
+}

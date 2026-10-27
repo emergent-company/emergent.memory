@@ -197,6 +197,7 @@ func (r *Repository) MarkSyncJobCompleted(ctx context.Context, jobID uuid.UUID, 
 	_, err := r.db.NewUpdate().
 		Model((*SyncJob)(nil)).
 		Set("status = ?", SyncStatusCompleted).
+		Set("current_phase = NULL").
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Set("status_message = ?", message).
@@ -228,13 +229,15 @@ func (r *Repository) RecordSyncJobErrorDetail(ctx context.Context, jobID uuid.UU
 // MarkSyncJobFailed transitions a job to terminal failed, recording the
 // structured error (message + per-item errors) and incrementing attempt_count.
 // Ingested items are left intact; the scheduler re-admits the source because
-// last_synced_at was not advanced.
+// last_synced_at was not advanced. The phase is cleared: a failed job is not
+// still "enumerating", and a stale phase in the UI contradicts the status.
 func (r *Repository) MarkSyncJobFailed(ctx context.Context, jobID uuid.UUID, errMsg string, errDetail map[string]any) error {
 	q := r.db.NewUpdate().
 		Model((*SyncJob)(nil)).
 		Set("status = ?", SyncStatusFailed).
 		Set("attempt_count = attempt_count + 1").
 		Set("last_error = ?", errMsg).
+		Set("current_phase = NULL").
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID)
@@ -253,6 +256,7 @@ func (r *Repository) MarkSyncJobCancelled(ctx context.Context, jobID uuid.UUID, 
 	_, err := r.db.NewUpdate().
 		Model((*SyncJob)(nil)).
 		Set("status = ?", SyncStatusCancelled).
+		Set("current_phase = NULL").
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Set("status_message = ?", message).
@@ -271,6 +275,7 @@ func (r *Repository) CancelSyncJob(ctx context.Context, projectID, sourceID, job
 	res, err := r.db.NewUpdate().
 		Model((*SyncJob)(nil)).
 		Set("status = ?", SyncStatusCancelled).
+		Set("current_phase = NULL").
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).

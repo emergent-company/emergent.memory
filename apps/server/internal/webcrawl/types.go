@@ -89,6 +89,12 @@ type PageError struct {
 	URL   string
 	Depth int
 	Err   error
+	// Advisory marks an entry the crawl tolerates without treating the URL as
+	// failed: a robots.txt fail-open warning or a malformed seed. Advisory
+	// entries stay in Errors so callers can log them, but they are not the
+	// reason a crawl produced nothing — callers reporting a hard failure should
+	// pick the first non-advisory entry.
+	Advisory bool
 }
 
 func (e PageError) Error() string {

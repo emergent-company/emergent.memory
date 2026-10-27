@@ -82,7 +82,7 @@ func Crawl(ctx context.Context, f Fetcher, o Options) (*Result, error) {
 	for _, seed := range o.Seeds {
 		canonical, err := Canonical(seed, nil)
 		if err != nil {
-			res.Errors = append(res.Errors, PageError{URL: seed, Err: fmt.Errorf("invalid seed: %w", err)})
+			res.Errors = append(res.Errors, PageError{URL: seed, Err: fmt.Errorf("invalid seed: %w", err), Advisory: true})
 			continue
 		}
 		if seen[canonical] {
@@ -154,7 +154,7 @@ func Crawl(ctx context.Context, f Fetcher, o Options) (*Result, error) {
 		if o.RespectRobots {
 			allowed, warn := robots.check(ctx, f, o, originOf(curURL), curURL.Path)
 			if warn != nil {
-				res.Errors = append(res.Errors, PageError{URL: cur.canonical, Err: warn})
+				res.Errors = append(res.Errors, PageError{URL: cur.canonical, Err: warn, Advisory: true})
 			}
 			if !allowed {
 				continue

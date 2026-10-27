@@ -147,10 +147,26 @@ func (c *webConnector) Enumerate(ctx context.Context, cfg map[string]any) ([]Sou
 	// every page errored): fail the enumeration rather than silently syncing
 	// zero. A site whose pages all returned 404/410 produces tombstones, not
 	// page errors, and is a legitimate (deleting) empty enumeration.
+	//
+	// Report the first *blocking* error: advisory entries (a robots.txt
+	// fail-open warning, a malformed seed) must not be blamed for the failure —
+	// when a seed is refused by the outbound policy the robots warning is
+	// recorded first, and surfacing it alone would hide the real cause.
 	if len(items) == 0 && len(result.Errors) > 0 {
-		return nil, fmt.Errorf("web: crawl produced no pages: %v", result.Errors[0].Err)
+		return nil, fmt.Errorf("web: crawl produced no pages: %w", blockingError(result.Errors))
 	}
 	return items, nil
+}
+
+// blockingError returns the first non-advisory crawl error, falling back to the
+// first recorded entry when every error is advisory.
+func blockingError(errs []webcrawl.PageError) error {
+	for _, e := range errs {
+		if !e.Advisory {
+			return e
+		}
+	}
+	return errs[0]
 }
 
 // Fetch serves an item's text content from the crawl result cache. A body that
