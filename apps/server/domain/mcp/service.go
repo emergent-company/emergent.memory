@@ -907,6 +907,21 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:         "graph-branch-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get a single branch by name or UUID.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name (e.g. \"plan/my-feature\") or UUID",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
 			Name:         "graph-branch-create",
 			OutputSchema: objectOutputSchema(),
 			Description:  "Create a new branch in the project.",
@@ -930,6 +945,29 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:         "graph-branch-update",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Rename a branch and/or change its description. At least one of name or description is required.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to update",
+					},
+					"name": {
+						Type:        "string",
+						Description: "New branch name. Must be unique within the project.",
+					},
+					"description": {
+						Type:        "string",
+						Description: "New human-readable description",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
 			Name:         "graph-branch-merge",
 			OutputSchema: objectOutputSchema(),
 			Description:  "Merge a source branch into the main graph (or a target branch). By default performs a dry-run; set execute=true to apply.",
@@ -950,10 +988,56 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 					},
 					"conflict_strategy": {
 						Type:        "string",
-						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior).",
+						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior). Ignored when policy is set.",
+					},
+					"policy": {
+						Type:        "string",
+						Description: "Named merge preset: \"manual\" (pure diff, no automatic conflict or similarity resolution — use with execute=false to compare a branch against its target), \"enrich\" (default), \"enrich_no_sim\", \"theirs\", \"mine\", \"mine_no_sim\", \"suggest\", \"partial\". Takes precedence over conflict_strategy.",
 					},
 				},
 				Required: []string{"source_branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-merge-readiness",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Check whether a branch is ready to merge: counts its objects and how many still await embeddings. Merging while embeddings are pending can miss near-duplicate detection.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to check",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-fork",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Fork a branch: create a new branch and bulk-copy the source branch's current objects and relationships into it. Use to snapshot the main graph or a branch before making changes.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name for the new branch (e.g. \"plan/my-feature\")",
+					},
+					"source_branch": {
+						Type:        "string",
+						Description: "Optional source branch name or UUID to fork from. Omit (or pass \"main\") to fork the main graph.",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Optional human-readable description for the new branch",
+					},
+					"filter_types": {
+						Type:        "array",
+						Description: "Optional list of entity type names to copy. If omitted, every object is copied.",
+					},
+				},
+				Required: []string{"name"},
 			},
 		},
 		{
@@ -1703,10 +1787,14 @@ var toolRequiredScope = map[string]string{
 	"relationship-update": "graph:write",
 	"relationship-delete": "graph:write",
 	// Branches
-	"graph-branch-list":   "branches:read",
-	"graph-branch-create": "branches:write",
-	"graph-branch-merge":  "branches:write",
-	"graph-branch-delete": "branches:write",
+	"graph-branch-list":            "branches:read",
+	"graph-branch-get":             "branches:read",
+	"graph-branch-create":          "branches:write",
+	"graph-branch-update":          "branches:write",
+	"graph-branch-merge":           "branches:write",
+	"graph-branch-merge-readiness": "branches:read",
+	"graph-branch-fork":            "branches:write",
+	"graph-branch-delete":          "branches:write",
 	// Search
 	"search-hybrid":   "search",
 	"search-semantic": "search",
@@ -2271,10 +2359,18 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeSessionTodoUpdate(ctx, projectID, args)
 	case "graph-branch-list":
 		return s.executeGraphBranchList(ctx, projectID)
+	case "graph-branch-get":
+		return s.executeGraphBranchGet(ctx, projectID, args)
 	case "graph-branch-create":
 		return s.executeGraphBranchCreate(ctx, projectID, args)
+	case "graph-branch-update":
+		return s.executeGraphBranchUpdate(ctx, projectID, args)
 	case "graph-branch-merge":
 		return s.executeGraphBranchMerge(ctx, projectID, args)
+	case "graph-branch-merge-readiness":
+		return s.executeGraphBranchMergeReadiness(ctx, projectID, args)
+	case "graph-branch-fork":
+		return s.executeGraphBranchFork(ctx, projectID, args)
 	case "graph-branch-delete":
 		return s.executeGraphBranchDelete(ctx, projectID, args)
 	case "search-hybrid":
@@ -4429,6 +4525,28 @@ func (s *Service) executeGraphBranchList(ctx context.Context, projectID string) 
 	})
 }
 
+// executeGraphBranchGet returns a single branch by name or UUID.
+func (s *Service) executeGraphBranchGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	branch, err := s.branchSvc.GetByID(ctx, branchID.String(), projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"branch": branch,
+	})
+}
+
 // executeGraphBranchCreate creates a new branch in the project.
 func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
 	if s.branchSvc == nil {
@@ -4459,8 +4577,67 @@ func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string
 	})
 }
 
-// executeGraphBranchMerge merges a source branch into main (or a target branch).
+// branchUpdateRequest builds the PATCH payload from MCP arguments. Only string
+// values select a field: a missing or JSON null description leaves it untouched
+// (a null would otherwise decode as "" and wipe the stored description), while
+// an explicit "" clears it — the same distinction the REST *string DTO makes.
+func branchUpdateRequest(args map[string]any) (*branches.UpdateBranchRequest, error) {
+	req := &branches.UpdateBranchRequest{}
+	if name, ok := args["name"].(string); ok && name != "" {
+		req.Name = &name
+	}
+	if desc, ok := args["description"].(string); ok {
+		req.Description = &desc
+	}
+	if req.Name == nil && req.Description == nil {
+		return nil, fmt.Errorf("at least one of name or description is required")
+	}
+	return req, nil
+}
+
+// executeGraphBranchUpdate renames a branch and/or changes its description.
+func (s *Service) executeGraphBranchUpdate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	req, err := branchUpdateRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	updated, err := s.branchSvc.Update(ctx, branchID.String(), projectID, req)
+	if err != nil {
+		return nil, fmt.Errorf("update branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"branch":  updated,
+		"message": fmt.Sprintf("Branch %q updated", branchRef),
+	})
+}
+
+// branchMergeOptions extracts the merge option arguments. policy takes
+// precedence over the legacy conflict_strategy inside the graph service.
+func branchMergeOptions(args map[string]any) (execute bool, policy, conflictStrategy string) {
+	execute, _ = args["execute"].(bool)
+	policy, _ = args["policy"].(string)
+	conflictStrategy, _ = args["conflict_strategy"].(string)
+	return execute, policy, conflictStrategy
+}
+
+// executeGraphBranchMerge merges a source branch into the main graph (or a
+// target branch). execute=false doubles as the compare/diff view.
 func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
 	projectUUID, err := uuid.Parse(projectID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid project_id: %w", err)
@@ -4473,7 +4650,7 @@ func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string,
 	if err != nil || srcID == nil {
 		return nil, fmt.Errorf("resolve source_branch: %w", err)
 	}
-	execute, _ := args["execute"].(bool)
+	execute, policy, conflictStrategy := branchMergeOptions(args)
 
 	var targetBranchID *uuid.UUID
 	if tgtRef, ok := args["target_branch"].(string); ok && tgtRef != "" {
@@ -4486,7 +4663,8 @@ func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string,
 	req := &graph.BranchMergeRequest{
 		SourceBranchID:   *srcID,
 		Execute:          execute,
-		ConflictStrategy: func() string { s, _ := args["conflict_strategy"].(string); return s }(),
+		Policy:           policy,
+		ConflictStrategy: conflictStrategy,
 	}
 	result, err := s.graphService.MergeBranch(ctx, projectUUID, targetBranchID, req)
 	if err != nil {
@@ -4494,6 +4672,97 @@ func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string,
 	}
 	return s.wrapResult(map[string]any{
 		"result": result,
+	})
+}
+
+// executeGraphBranchMergeReadiness reports how many of a branch's objects are
+// still waiting on embeddings, which is the gate the REST merge-readiness
+// endpoint exposes.
+func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	total, pending, err := s.graphService.BranchMergeReadiness(ctx, projectUUID, *branchID)
+	if err != nil {
+		return nil, fmt.Errorf("merge readiness: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"ready":              pending == 0,
+		"total_objects":      total,
+		"pending_embeddings": pending,
+	})
+}
+
+// forkBranchRequest builds a fork request from MCP arguments. filter_types
+// accepts both the JSON-decoded []any and, for in-process callers that build
+// arguments in Go, a []string — otherwise a typed slice would silently fall
+// through to a full-graph copy.
+func forkBranchRequest(args map[string]any) (*graph.ForkBranchRequest, error) {
+	name, _ := args["name"].(string)
+	if name == "" {
+		return nil, fmt.Errorf("missing required parameter: name")
+	}
+	req := &graph.ForkBranchRequest{Name: name}
+	if desc, ok := args["description"].(string); ok && desc != "" {
+		req.Description = &desc
+	}
+	switch types := args["filter_types"].(type) {
+	case []any:
+		for _, t := range types {
+			if str, ok := t.(string); ok && str != "" {
+				req.FilterTypes = append(req.FilterTypes, str)
+			}
+		}
+	case []string:
+		for _, str := range types {
+			if str != "" {
+				req.FilterTypes = append(req.FilterTypes, str)
+			}
+		}
+	}
+	return req, nil
+}
+
+// executeGraphBranchFork creates a branch and bulk-copies the source branch's
+// current objects and relationships into it.
+func (s *Service) executeGraphBranchFork(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	req, err := forkBranchRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	var sourceBranchID *uuid.UUID
+	if srcRef, ok := args["source_branch"].(string); ok && srcRef != "" && srcRef != "main" && srcRef != "null" {
+		sourceBranchID, err = s.resolveBranchID(ctx, projectID, srcRef)
+		if err != nil || sourceBranchID == nil {
+			return nil, fmt.Errorf("resolve source_branch: %w", err)
+		}
+	}
+	result, err := s.graphService.ForkBranch(ctx, projectUUID, sourceBranchID, req)
+	if err != nil {
+		return nil, fmt.Errorf("fork branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"result":  result,
 	})
 }
 

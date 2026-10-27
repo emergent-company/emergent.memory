@@ -52,7 +52,7 @@ var Groups = []Group{
 	{ID: GroupSchemaRead, Label: "Schema · Read", Description: "Read schemas and entity type definitions."},
 	{ID: GroupSchemaWrite, Label: "Schema · Write", Description: "Create, update, or delete schemas and entity types."},
 	{ID: GroupSchemaMigrate, Label: "Schema · Migrate", Description: "Preview, execute, and roll back schema migrations."},
-	{ID: GroupBranches, Label: "Branches", Description: "List, create, merge, and delete graph branches."},
+	{ID: GroupBranches, Label: "Branches", Description: "List, get, create, update, fork, merge, and delete graph branches."},
 	{ID: GroupJournal, Label: "Journal", Description: "Read and write journal entries."},
 	{ID: GroupDocuments, Label: "Documents", Description: "Read and write project documents."},
 	{ID: GroupSkills, Label: "Skills", Description: "Read and manage skills."},

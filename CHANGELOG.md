@@ -44,6 +44,21 @@ removing it. The deprecated `ZITADEL_OIDC_DEFAULT_SCOPES` and
 
 ### Added
 
+**MCP branch tool parity** (2026-10-27)
+
+The MCP tool surface now covers the branch operations the REST API already
+exposed, so agents no longer need to fall back to HTTP for branch inspection or
+forking:
+
+- `graph-branch-get` — fetch one branch by name or UUID (`branches:read`)
+- `graph-branch-update` — rename a branch and/or change its description (`branches:write`)
+- `graph-branch-merge-readiness` — object and pending-embedding counts that gate a merge (`branches:read`)
+- `graph-branch-fork` — create a branch and bulk-copy a source branch's objects and relationships, optionally filtered by entity type (`branches:write`)
+- `graph-branch-merge` gained a `policy` argument; `policy=manual` with `execute=false` is the REST compare/diff view
+
+Branch-mutating additions (`update`, `fork`) are also in the default dangerous
+tool set for share links.
+
 **Recent Items Page** (2025-12-15)
 
 New "Recent" page that displays recently accessed documents and objects, enabling quick access to frequently used items.

@@ -308,6 +308,7 @@ var defaultDangerousShareTools = []string{
 	"finalize-discovery",
 	"agent-hook-create", "agent-hook-delete",
 	"graph-branch-create", "graph-branch-delete", "graph-branch-merge",
+	"graph-branch-update", "graph-branch-fork",
 	"forget",
 }
 

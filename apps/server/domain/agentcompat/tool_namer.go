@@ -41,10 +41,14 @@ var internalToolNames = map[string]struct{}{
 	"graph-traverse": {},
 
 	// ── Branches ────────────────────────────────────────────────────────────
-	"graph-branch-list":   {},
-	"graph-branch-create": {},
-	"graph-branch-merge":  {},
-	"graph-branch-delete": {},
+	"graph-branch-list":            {},
+	"graph-branch-get":             {},
+	"graph-branch-create":          {},
+	"graph-branch-update":          {},
+	"graph-branch-merge":           {},
+	"graph-branch-merge-readiness": {},
+	"graph-branch-fork":            {},
+	"graph-branch-delete":          {},
 
 	// ── Schema ──────────────────────────────────────────────────────────────
 	"schema-version":              {},

@@ -97,16 +97,20 @@ func TestSessionGroupMembership(t *testing.T) {
 
 func TestGroupForTool_ScopeDerived(t *testing.T) {
 	cases := map[string]string{
-		"entity-search":          "graph-read",
-		"entity-create":          "graph-write",
-		"entity-delete":          "graph-write",
-		"schema-get":             "schema-read",
-		"schema-create":          "schema-write",
-		"schema-migrate-execute": "schema-migrate",
-		"graph-branch-create":    "branches",
-		"search-hybrid":          "search",
-		"journal-list":           "journal",
-		"journal-add-note":       "journal",
+		"entity-search":                "graph-read",
+		"entity-create":                "graph-write",
+		"entity-delete":                "graph-write",
+		"schema-get":                   "schema-read",
+		"schema-create":                "schema-write",
+		"schema-migrate-execute":       "schema-migrate",
+		"graph-branch-create":          "branches",
+		"graph-branch-get":             "branches",
+		"graph-branch-update":          "branches",
+		"graph-branch-fork":            "branches",
+		"graph-branch-merge-readiness": "branches",
+		"search-hybrid":                "search",
+		"journal-list":                 "journal",
+		"journal-add-note":             "journal",
 	}
 	for tool, want := range cases {
 		if got := GroupForTool(tool); got != want {
