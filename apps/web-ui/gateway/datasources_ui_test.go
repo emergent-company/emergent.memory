@@ -3108,3 +3108,32 @@ func TestUIDataSourceReconnectMissingClientLandsOnTheSource(t *testing.T) {
 		t.Errorf("5xx location leaks upstream detail: %q", loc)
 	}
 }
+
+// TestDSArrayFieldPlaceholderMentionsTheFieldKind pins the fix for the shared
+// array-field hint. Every array field used to advertise "One MIME type per
+// line", which is only true for the drive provider's mime_types — the web
+// provider's start_urls and its include/exclude globs showed the same text.
+func TestDSArrayFieldPlaceholderMentionsTheFieldKind(t *testing.T) {
+	cases := map[string]string{
+		"mime_types":    "MIME type",
+		"start_urls":    "URL",
+		"include_globs": "glob",
+		"exclude_globs": "glob",
+		"paths":         "path",
+	}
+	for key, want := range cases {
+		if got := dsArrayFieldPlaceholder(key); !strings.Contains(got, want) {
+			t.Errorf("dsArrayFieldPlaceholder(%q) = %q, want it to mention %q", key, got, want)
+		}
+	}
+	if got := dsArrayFieldPlaceholder("some_future_array"); got != "One value per line" {
+		t.Errorf("dsArrayFieldPlaceholder(unknown) = %q, want the neutral fallback", got)
+	}
+	// The regression this fixes: a non-MIME array field must never borrow the
+	// MIME hint.
+	for _, key := range []string{"start_urls", "include_globs", "paths", "some_future_array"} {
+		if got := dsArrayFieldPlaceholder(key); strings.Contains(got, "MIME") {
+			t.Errorf("dsArrayFieldPlaceholder(%q) = %q, want no MIME hint", key, got)
+		}
+	}
+}

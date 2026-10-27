@@ -533,7 +533,7 @@ templ dsConfigFieldInput(f dsConfigField) {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
 			}
 			if f.Type == "array" {
-				<textarea id={ f.Key } name={ f.Key } rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid={ "ds-field-" + f.Key } placeholder="One MIME type per line">{ f.Value }</textarea>
+				<textarea id={ f.Key } name={ f.Key } rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid={ "ds-field-" + f.Key } placeholder={ dsArrayFieldPlaceholder(f.Key) }>{ f.Value }</textarea>
 			} else {
 				<input id={ f.Key } name={ f.Key } type="text" class="input input-bordered w-full" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
 			}

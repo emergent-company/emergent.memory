@@ -46,6 +46,26 @@ var dsConfigFieldOrder = []string{
 	"client_id", "client_secret", "refresh_token",
 }
 
+// dsArrayFieldPlaceholder returns the entry hint shown in a multi-value field's
+// textarea. Providers differ — the web provider takes start URLs and path globs,
+// the drive provider takes MIME types — so the hint is derived from the field
+// key and an unknown array property falls back to neutral wording. It used to
+// be the hardcoded "One MIME type per line" on every array field, which was
+// simply wrong outside the drive form.
+func dsArrayFieldPlaceholder(key string) string {
+	switch {
+	case strings.Contains(key, "mime"):
+		return "One MIME type per line"
+	case strings.Contains(key, "url"):
+		return "One URL per line"
+	case strings.Contains(key, "glob"):
+		return "One path glob per line (e.g. /docs/**)"
+	case strings.Contains(key, "path"):
+		return "One path per line"
+	}
+	return "One value per line"
+}
+
 // dsConfigFields splits a provider schema into config fields and credential
 // fields (the write-only OAuth2 material), in a stable order. cfg carries a
 // source's non-secret config values (nil for the connect form); non-credential
