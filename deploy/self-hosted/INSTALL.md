@@ -45,7 +45,7 @@ only swaps the server image.
 | Container | Role | Host port |
 |---|---|---|
 | `memory-server` | API + MCP server | 3002 |
-| `memory-db` | PostgreSQL 17 + pgvector | 15432 |
+| `memory-db` | PostgreSQL 18 + pgvector | 15432 |
 | `memory-xberg` | document extraction (56+ formats) | 18000 |
 | `memory-seaweedfs` | S3-compatible object storage | 19000 |
 | `memory-storage-init` | one-shot bucket initialisation | — |

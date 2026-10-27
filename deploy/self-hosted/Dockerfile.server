@@ -188,8 +188,8 @@ FROM alpine:3.23
 
 # pg_dump refuses to dump a server newer than itself, and the in-app backup
 # task hard-fails when its client major is older than the server. So the client
-# major must be >= the database image major; it does not have to equal it
-# (pg_dump 18 dumps a 17 server, which is what self-hosted installs run).
+# major must be >= the database image major; it does not have to equal it,
+# and both are 18 since the database image moved to pg18.
 # Override at build time with --build-arg PG_CLIENT_MAJOR=<major>.
 # PG_CLIENT_MAJOR must name a client major available in this base image's
 # package repositories (alpine:3.23 ships postgresql16/17/18-client; 3.21 had

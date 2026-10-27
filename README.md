@@ -8,7 +8,7 @@ Knowledge graph platform for ingesting, storing, and querying structured knowled
 ## Technologies
 
 - **Backend:** Go (1.25+)
-- **Database:** PostgreSQL 16 with pgvector
+- **Database:** PostgreSQL 18 with pgvector
 - **Authentication:** Zitadel (OIDC)
 - **CLI:** Go (memory-cli)
 - **Automation:** Taskfile

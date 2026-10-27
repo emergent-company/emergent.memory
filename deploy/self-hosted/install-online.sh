@@ -472,7 +472,7 @@ echo -e "${CYAN}Generating Docker Compose file...${NC}"
 cat > "${INSTALL_DIR}/docker/docker-compose.yml" <<EOF
 services:
   db:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg18-trixie
     container_name: memory-db
     restart: unless-stopped
     # Docker's default /dev/shm (64 MB) is too small for a parallel HNSW index
@@ -482,6 +482,10 @@ services:
       POSTGRES_USER: \${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: \${POSTGRES_DB:-emergent}
+      # PostgreSQL 18 moved the default data directory to
+      # /var/lib/postgresql/<major>/docker; PGDATA keeps the pre-18 layout that
+      # existing volumes and pg_upgrade expect.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro

@@ -21,7 +21,7 @@ This document provides comprehensive guidance for developing, deploying, and deb
 ### Prerequisites
 
 - Go 1.26.6+ — the version declared in `apps/server/go.mod` and the workspace `go.work` (installed at `/usr/local/go/bin/go`)
-- PostgreSQL 17 with pgvector extension
+- PostgreSQL 17 or newer with the pgvector extension (the self-hosted installer deploys 18)
 - Docker (for dependencies)
 
 ### Quick Start

@@ -488,7 +488,7 @@ func TestWriteDockerCompose(t *testing.T) {
 		"memory-seaweedfs",
 		"memory-storage-init",
 		"memory-xberg",
-		"pgvector/pgvector:pg17",
+		PostgresImage,
 		"ghcr.io/xberg-io/xberg:1.3.0",
 		ObjectStoreImage,
 		StorageInitEntrypoint,

@@ -15,8 +15,11 @@
 services:
   db:
     # PG_CLIENT_MAJOR in Dockerfile.server must be >= this image major (pg_dump
-    # cannot dump a newer server); self-hosted installs stay on 17 here.
-    image: pgvector/pgvector:pg17
+    # cannot dump a newer server). Both are 18 today; the trixie variant is
+    # deliberate — pgautoupgrade's 18 images are trixie-based and pg_upgrade
+    # rebuilds indexes with their libc (see PostgresImage in
+    # apps/cli/internal/installer/templates.go).
+    image: pgvector/pgvector:pg18-trixie
     # Docker's default /dev/shm (64 MB) is too small for a parallel HNSW index
     # build; migration 00164 fails with SQLSTATE 53100 without this.
     shm_size: 1gb
@@ -24,6 +27,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-emergent}
+      # PostgreSQL 18 moved the default data directory to
+      # /var/lib/postgresql/<major>/docker; PGDATA keeps the pre-18 layout that
+      # existing volumes and pg_upgrade expect.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro

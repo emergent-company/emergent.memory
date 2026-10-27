@@ -65,3 +65,22 @@ func TestReadPgCredsFromEnvDefaults(t *testing.T) {
 		t.Errorf("empty POSTGRES_PASSWORD = %q, want empty", password)
 	}
 }
+
+// refreshCollationVersions builds `ALTER DATABASE <name> REFRESH COLLATION
+// VERSION` from catalog output, so the name must survive quoting rather than
+// becoming SQL. Postgres allows spaces, quotes and keywords in database names.
+func TestQuoteIdent(t *testing.T) {
+	cases := map[string]string{
+		"emergent":  `"emergent"`,
+		"postgres":  `"postgres"`,
+		"app db":    `"app db"`,
+		`we"ird`:    `"we""ird"`,
+		"select":    `"select"`,
+		"a.b; DROP": `"a.b; DROP"`,
+	}
+	for in, want := range cases {
+		if got := quoteIdent(in); got != want {
+			t.Errorf("quoteIdent(%q) = %s, want %s", in, got, want)
+		}
+	}
+}

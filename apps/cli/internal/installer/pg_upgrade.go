@@ -1,6 +1,7 @@
 package installer
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,8 +16,12 @@ import (
 
 const (
 	// pgUpgradeImage is the Docker image used to perform the in-place pg_upgrade.
-	// It handles the full pg_upgrade orchestration from pg16 → pg17 automatically.
-	pgUpgradeImage = "pgautoupgrade/pgautoupgrade:17-bookworm"
+	// It bundles the server binaries for every older major (9.5 through 17), so a
+	// cluster on 16 or 17 upgrades to 18 in a single hop without an intermediate
+	// step. Keep its distro in step with PostgresImage: pg_upgrade rebuilds every
+	// index with this image's libc, so a mismatch would leave the data ordered by
+	// a collation the runtime image does not have.
+	pgUpgradeImage = "pgautoupgrade/pgautoupgrade:18-trixie"
 
 	// pgVolumeBaseName is the logical volume name declared in docker-compose.yml.
 	// Docker Compose prepends the project name to produce the real Docker volume name,
@@ -147,19 +152,52 @@ func detectPostgresVersion(composePath string) (int, string, error) {
 }
 
 // RunPostgresUpgrade performs an in-place major-version upgrade of the
-// postgres data volume from pg16 to pg17 using pgautoupgrade.
+// postgres data volume to PostgresMajorVersion using pgautoupgrade.
 //
 // It:
 //  1. Stops the db service so no writes occur during upgrade
-//  2. Pulls the pgautoupgrade image
+//  2. Pulls the pgautoupgrade image and builds the derived image that carries
+//     the pgvector extension (see buildUpgradeImage)
 //  3. Runs the upgrade container against the data volume
 //     — passes POSTGRES_USER/PASSWORD so pg_upgrade uses the correct superuser
-//  4. Streams progress to the output writer
+//     — pins PGDATA to the volume's legacy layout (see PGDATA in the compose
+//     template: the 18 image defaults elsewhere and the mount would be ignored)
+//  4. Verifies the volume really is on the target major, and puts the previous
+//     cluster back if the upgrade failed (see restorePreviousCluster)
+//  5. Streams progress to the output writer
 //
 // The caller (Upgrade) is responsible for starting services back up afterwards.
-func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string) error {
+//
+// The bool reports whether the volume ended up on PostgresMajorVersion, which is
+// what tells the caller which compose file can start it: after a failure the old
+// major means the previous image works, while a failure *after* the upgrade step
+// (for example during the container's final reindex) leaves 18 data that the old
+// image refuses to open.
+func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string) (bool, error) {
+	i.output.Step("Pulling PostgreSQL upgrade image (%s)...", pgUpgradeImage)
+	pullCmd := exec.Command("docker", "pull", pgUpgradeImage)
+	pullCmd.Stdout = os.Stdout
+	pullCmd.Stderr = os.Stderr
+	if err := pullCmd.Run(); err != nil {
+		return false, fmt.Errorf("failed to pull upgrade image: %w", err)
+	}
+	i.output.Success("Base upgrade image ready")
+
+	// The upstream image ships server binaries but no extensions, while
+	// pg_upgrade aborts when a library the old cluster uses is missing from the
+	// new installation. Memory's database always has pgvector, so the upgrade
+	// runs from a derived image that adds it. Built before the database stops:
+	// a registry or apt failure then costs no downtime.
+	i.output.Step("Preparing the upgrade image (this may take a minute)...")
+	upgradeImage, err := i.buildUpgradeImage()
+	if err != nil {
+		return false, fmt.Errorf("prepare upgrade image: %w", err)
+	}
+	i.output.Success("Upgrade image ready")
+
+	// Stop only the db service to avoid disrupting seaweedfs/xberg
+	// unnecessarily, and only once the upgrade can actually run.
 	i.output.Step("Stopping database for upgrade...")
-	// Stop only the db service to avoid disrupting seaweedfs/xberg unnecessarily.
 	stopCmd := exec.Command("docker", "compose",
 		"-f", docker.composePath(),
 		"--env-file", docker.envPath(),
@@ -172,15 +210,6 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 	} else {
 		i.output.Success("Database stopped")
 	}
-
-	i.output.Step("Pulling PostgreSQL upgrade image (%s)...", pgUpgradeImage)
-	pullCmd := exec.Command("docker", "pull", pgUpgradeImage)
-	pullCmd.Stdout = os.Stdout
-	pullCmd.Stderr = os.Stderr
-	if err := pullCmd.Run(); err != nil {
-		return fmt.Errorf("failed to pull upgrade image: %w", err)
-	}
-	i.output.Success("Upgrade image ready")
 
 	i.output.Step("Running pg_upgrade (this may take a minute)...")
 	i.output.Info("Data volume: %s", volumeName)
@@ -209,19 +238,240 @@ func (i *Installer) RunPostgresUpgrade(docker *DockerManager, volumeName string)
 	upgradeCmd := exec.Command("docker", "run", "--rm",
 		"-v", volumeName+":/var/lib/postgresql/data",
 		"-e", "PGAUTO_ONESHOT=yes",
+		// The upgrade image is built on the 18 layout, where the default data
+		// directory is /var/lib/postgresql/18/docker. Point it at the mount, or
+		// the attached volume is ignored and the upgrade runs on an empty
+		// cluster — which the image reports as success (exit 0).
+		"-e", "PGDATA=/var/lib/postgresql/data",
 		"-e", "POSTGRES_USER="+pgUser,
 		"-e", "POSTGRES_PASSWORD="+pgPass,
-		pgUpgradeImage,
+		upgradeImage,
 	)
 	upgradeCmd.Stdout = os.Stdout
 	upgradeCmd.Stderr = os.Stderr
 
 	if err := upgradeCmd.Run(); err != nil {
-		return fmt.Errorf("pg_upgrade failed: %w\n\nYour original data is intact. Check the output above for details.", err)
+		if _, restoreErr := i.restorePreviousCluster(volumeName); restoreErr != nil {
+			i.output.Error("The pre-upgrade cluster is still in the volume's old/ directory and could not be moved back automatically: %v", restoreErr)
+			i.output.Error("Do not start the server until it is restored; the volume's old/ directory holds your data.")
+			return false, fmt.Errorf("pg_upgrade failed: %w", err)
+		}
+		return i.reportUpgradeFailure(volumeName, err)
 	}
 
-	i.output.Success("pg_upgrade completed — database upgraded to PostgreSQL 17")
+	// A container that exits 0 has not necessarily upgraded anything: with a
+	// PGDATA that holds no cluster it prints "No existing Postgres data
+	// directory found" and exits successfully. The volume is the source of
+	// truth, so check it before declaring success.
+	upgradedMajor, err := volumePgVersion(volumeName)
+	if err != nil {
+		restored, restoreErr := i.restorePreviousCluster(volumeName)
+		switch {
+		case restoreErr != nil:
+			i.output.Error("Could not restore the previous cluster: %v", restoreErr)
+		case restored:
+			i.output.Warn("The previous data has been restored.")
+		}
+		return false, fmt.Errorf("verify upgraded volume: %w", err)
+	}
+	if upgradedMajor != PostgresMajorVersion {
+		restored, restoreErr := i.restorePreviousCluster(volumeName)
+		if restoreErr != nil {
+			i.output.Error("Could not restore the previous cluster: %v", restoreErr)
+			return false, fmt.Errorf("pg_upgrade left the volume on PostgreSQL %d instead of %d", upgradedMajor, PostgresMajorVersion)
+		}
+		if restored {
+			i.output.Warn("The previous data has been restored.")
+		}
+		return false, fmt.Errorf("pg_upgrade did not run: the volume is still on PostgreSQL %d, not %d", upgradedMajor, PostgresMajorVersion)
+	}
+
+	i.output.Success("pg_upgrade completed — database upgraded to PostgreSQL %d", PostgresMajorVersion)
+	return true, nil
+}
+
+// reportUpgradeFailure is the tail of the failure path once the previous
+// cluster has already been restored: it says what state the volume is in, so a
+// failure that happened *after* the upgrade step (the container can exit
+// non-zero during its final reindex) is not reported as "your old data is back"
+// when the data is already on the new major.
+func (i *Installer) reportUpgradeFailure(volumeName string, cause error) (bool, error) {
+	major, err := volumePgVersion(volumeName)
+	switch {
+	case err != nil:
+		i.output.Warn("Could not read the data volume's version after the failure: %v", err)
+	case major == PostgresMajorVersion:
+		i.output.Warn("The data volume is already on PostgreSQL %d; the container failed after the upgrade step.", major)
+		i.output.Warn("Re-run `memory upgrade` to finish — the server is left on the new version.")
+		return true, fmt.Errorf("pg_upgrade failed after the data reached PostgreSQL %d: %w", major, cause)
+	default:
+		i.output.Warn("Your original data is intact and has been restored — PostgreSQL %d will start as before.", major)
+	}
+	return false, fmt.Errorf("pg_upgrade failed: %w", cause)
+}
+
+// pgUpgradeLocalImage is the tag the derived upgrade image is built under. It
+// is rebuilt on every upgrade so a new target major cannot reuse a stale image.
+const pgUpgradeLocalImage = "emergent-memory-pg-upgrade"
+
+// buildUpgradeImage derives the upgrade image from pgUpgradeImage and adds the
+// pgvector extension for the target major.
+//
+// pg_upgrade's "Checking for presence of required libraries" step fails when a
+// loadable library the old cluster references is missing from the new
+// installation, and the upstream image ships no extensions at all. Every
+// Memory database has pgvector (deploy/self-hosted/init.sql creates it), so
+// upgrading without this step fails on a real install with
+//
+//	could not load library "$libdir/vector"
+//
+// The package comes from the PGDG repository the base image is already
+// configured with, so the build needs registry and apt access — the same
+// network the image pull above needs.
+func (i *Installer) buildUpgradeImage() (string, error) {
+	tag := fmt.Sprintf("%s:%d", pgUpgradeLocalImage, PostgresMajorVersion)
+
+	dir, err := os.MkdirTemp("", "memory-pg-upgrade-")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	dockerfile := fmt.Sprintf(`FROM %s
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-%d-pgvector \
+ && rm -rf /var/lib/apt/lists/*
+`, pgUpgradeImage, PostgresMajorVersion)
+
+	dockerfilePath := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0o644); err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command("docker", "build", "-t", tag, "-f", dockerfilePath, dir)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir = dir
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("build %s from %s: %w (needs access to the image registry and the PGDG apt repository)", tag, pgUpgradeImage, err)
+	}
+	return tag, nil
+}
+
+// volumePgVersion reads PG_VERSION from the data volume.
+func volumePgVersion(volumeName string) (int, error) {
+	out, err := exec.Command("docker", "run", "--rm",
+		"-v", volumeName+":/data:ro",
+		"alpine:3.21",
+		"cat", "/data/PG_VERSION",
+	).Output()
+	if err != nil {
+		return 0, fmt.Errorf("read PG_VERSION from %s: %w", volumeName, err)
+	}
+	return strconv.Atoi(strings.TrimSpace(string(out)))
+}
+
+// restorePreviousCluster puts the pre-upgrade cluster back at the volume root
+// so the previous compose file can start it again.
+//
+// A failed pg_upgrade leaves the volume as old/ (the original cluster) plus
+// new/ (a partial target cluster) with no PG_VERSION at the root. The restored
+// compose file then points an older postgres at a non-empty directory without
+// one, and it crash-loops on
+//
+//	initdb: directory "/var/lib/postgresql/data" exists but is not empty
+//
+// so recovery is part of the failure path, not an afterthought. It is a no-op
+// when there is nothing to restore.
+func (i *Installer) restorePreviousCluster(volumeName string) (bool, error) {
+	const script = `
+set -e
+cd /pgdata
+rm -rf new
+rm -f upgrade_in_progress.lock
+[ -d old ] || exit 0
+
+for f in old/* old/.[!.]*; do
+  [ -e "$f" ] || continue
+  mv "$f" .
+done
+rmdir old
+echo restored
+`
+	out, err := exec.Command("docker", "run", "--rm",
+		"-v", volumeName+":/pgdata",
+		"alpine:3.21",
+		"sh", "-c", script,
+	).CombinedOutput()
+	if err != nil {
+		return false, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	// The script prints "restored" only when it actually moved a cluster back.
+	return strings.Contains(string(out), "restored"), nil
+}
+
+// refreshCollationVersions records the running image's collation version on
+// every database after a major upgrade.
+//
+// pg_upgrade rebuilds the indexes inside the upgrade image and copies each
+// database's recorded collation version from the old cluster. When the base
+// distro moved (a bookworm 16/17 install upgraded by the trixie 18 image), the
+// copies record the old glibc and every connection logs
+//
+//	WARNING: database "emergent" has a collation version mismatch
+//
+// even though the indexes were just rebuilt against the collation now in use.
+// REFRESH COLLATION VERSION is the documented fix and is exactly right here:
+// it records the truth for objects built by this image. It is a no-op when the
+// versions already agree, so a same-distro upgrade costs nothing.
+//
+// Best effort: a failure is reported and the upgrade still succeeds.
+func (i *Installer) refreshCollationVersions(docker *DockerManager) error {
+	pgUser, _ := readPgCredsFromEnv(docker.envPath())
+
+	dbListCmd := exec.Command("docker", "compose",
+		"-f", docker.composePath(),
+		"--env-file", docker.envPath(),
+		"exec", "-T", "db",
+		"psql", "-U", pgUser, "-d", "postgres", "-Atc",
+		// template0 is skipped: it is not connectable and refreshing it buys
+		// nothing. template1 is included so databases created from it later
+		// inherit the current version.
+		"SELECT datname FROM pg_database WHERE datname <> 'template0'",
+	)
+	// stdout only: the mismatch we are about to fix is printed on stderr, and
+	// merging the two would turn WARNING/DETAIL/HINT lines into database names.
+	var stderr bytes.Buffer
+	dbListCmd.Stderr = &stderr
+	dbList, err := dbListCmd.Output()
+	if err != nil {
+		return fmt.Errorf("list databases: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	for _, db := range strings.Split(strings.TrimSpace(string(dbList)), "\n") {
+		db = strings.TrimSpace(db)
+		if db == "" {
+			continue
+		}
+		// %I quoting happens server-side; the name never reaches a shell.
+		stmt := fmt.Sprintf("ALTER DATABASE %s REFRESH COLLATION VERSION",
+			quoteIdent(db))
+		out, err := exec.Command("docker", "compose",
+			"-f", docker.composePath(),
+			"--env-file", docker.envPath(),
+			"exec", "-T", "db",
+			"psql", "-U", pgUser, "-d", "postgres", "-c", stmt,
+		).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("refresh collation version on %q: %w: %s", db, err, strings.TrimSpace(string(out)))
+		}
+	}
 	return nil
+}
+
+// quoteIdent quotes a Postgres identifier the way %I would.
+func quoteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // readPgCredsFromEnv parses POSTGRES_USER and POSTGRES_PASSWORD from the

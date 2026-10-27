@@ -180,7 +180,7 @@ func TestGetDockerComposeTemplate(t *testing.T) {
 	requiredStrings := []string{
 		"services:",
 		"db:",
-		"pgvector/pgvector:pg17",
+		PostgresImage,
 		"ghcr.io/xberg-io/xberg:1.3.0",
 		ObjectStoreImage,
 		"seaweedfs:",

@@ -300,10 +300,10 @@ func checkDiagVersion(dsn string) diagResult {
 	}
 	major := 0
 	fmt.Sscanf(out, "PostgreSQL %d", &major) //nolint:errcheck
-	if major < 17 {
+	if major < 18 {
 		fmt.Println("WARN")
 		return diagResult{name: "PostgreSQL version", status: "warn",
-			message: fmt.Sprintf("%s\n  → Upgrade to PostgreSQL 17 for best performance (run: memory upgrade)", strings.SplitN(out, " on ", 2)[0])}
+			message: fmt.Sprintf("%s\n  → Upgrade to PostgreSQL 18 for best performance (run: memory upgrade)", strings.SplitN(out, " on ", 2)[0])}
 	}
 	fmt.Println("OK")
 	return diagResult{name: "PostgreSQL version", status: "pass", message: strings.SplitN(out, " on ", 2)[0]}

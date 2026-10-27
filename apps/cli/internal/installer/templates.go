@@ -11,11 +11,20 @@ const (
 
 	// PostgresImage is the pgvector-enabled PostgreSQL image used for all deployments.
 	// Bumping this constant is the single source of truth for the postgres version.
-	PostgresImage = "pgvector/pgvector:pg17"
+	//
+	// Deliberately the Debian trixie variant. The in-place upgrade runs
+	// pgautoupgrade, whose Postgres 18 images are trixie-based, and pg_upgrade
+	// rebuilds every index with the *upgrade* image's libc. Pairing a bookworm
+	// runtime with a trixie upgrade image would leave the indexes ordered by a
+	// collation the running server does not use, and a 2.36 -> 2.41 glibc bump
+	// would also strand `pg_collation.collversion` on the old version. Keeping
+	// both sides on the same distro keeps the cluster internally consistent.
+	// pgUpgradeImage's comment states the same constraint from the other side.
+	PostgresImage = "pgvector/pgvector:pg18-trixie"
 
 	// PostgresMajorVersion is the expected major version after install/upgrade.
 	// Used by the upgrade flow to decide whether pg_upgrade is needed.
-	PostgresMajorVersion = 17
+	PostgresMajorVersion = 18
 
 	// WorkspaceBaseImage is the default agent sandbox base image (alpine + dev tools).
 	// Must match docker/workspace-base.Dockerfile, which the publish workflow builds.
@@ -104,6 +113,13 @@ func GetDockerComposeTemplateWithVersion(version string) string {
       POSTGRES_USER: ${POSTGRES_USER:-emergent}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
       POSTGRES_DB: ${POSTGRES_DB:-emergent}
+      # PostgreSQL 18 moved the default data directory to
+      # /var/lib/postgresql/<major>/docker. Without an explicit PGDATA the
+      # entrypoint refuses to start when the volume is mounted at the legacy
+      # path, and a fresh install would initialise outside the volume — the
+      # data would silently live in the container layer. Pinning PGDATA keeps
+      # the pre-18 layout that existing volumes and pg_upgrade expect.
+      PGDATA: /var/lib/postgresql/data
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro

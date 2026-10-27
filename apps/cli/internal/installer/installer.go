@@ -590,13 +590,19 @@ func (i *Installer) Upgrade(version string) error {
 		i.output.Info("Detected PostgreSQL %d on disk (volume: %s), target is PostgreSQL %d", currentPgVersion, pgVolumeName, PostgresMajorVersion)
 		i.output.Step("Performing automatic PostgreSQL major-version upgrade...")
 		fmt.Println()
-		if err := i.RunPostgresUpgrade(docker, pgVolumeName); err != nil {
-			// Restore the old compose file so the user can still start their
-			// original pg16 instance and nothing is broken.
-			if restoreErr := copyFile(backupPath, composePath); restoreErr == nil {
-				i.output.Warn("Restored docker-compose.yml from backup after failed pg_upgrade")
+		upgraded, upgradeErr := i.RunPostgresUpgrade(docker, pgVolumeName)
+		if upgradeErr != nil {
+			// Put the previous compose file back only when the volume is still on
+			// the old major. A failure after the upgrade step leaves 18 data that
+			// a pre-18 image refuses to open (it rejects settings it does not know,
+			// e.g. autovacuum_worker_slots), so restoring the old file there would
+			// turn one error into a crash loop.
+			if !upgraded {
+				if restoreErr := copyFile(backupPath, composePath); restoreErr == nil {
+					i.output.Warn("Restored docker-compose.yml from backup after failed pg_upgrade")
+				}
 			}
-			return fmt.Errorf("PostgreSQL upgrade failed: %w", err)
+			return fmt.Errorf("PostgreSQL upgrade failed: %w", upgradeErr)
 		}
 		fmt.Println()
 	} else if currentPgVersion == PostgresMajorVersion {
@@ -634,6 +640,21 @@ func (i *Installer) Upgrade(version string) error {
 		i.output.Warn("Health check timeout - services may still be starting")
 	} else {
 		i.output.Success("Server is healthy!")
+	}
+
+	// Record the running image's collation version on each database (see
+	// refreshCollationVersions). The major upgrade rebuilt every index inside
+	// the upgrade image, so a mismatch left behind by the distro move would be
+	// logged on every connection. Done on every upgrade rather than only when
+	// this run migrated the volume: it is a no-op when the versions agree, and
+	// that is exactly what heals the case where the upgrade container failed
+	// after moving the data and the user re-ran `memory upgrade`.
+	i.output.Step("Refreshing collation versions...")
+	if err := i.refreshCollationVersions(docker); err != nil {
+		i.output.Warn("Could not refresh collation versions: %v", err)
+		i.output.Warn("The database is usable; silence the warning with `ALTER DATABASE <name> REFRESH COLLATION VERSION`.")
+	} else {
+		i.output.Success("Collation versions refreshed")
 	}
 
 	// Build sandbox images required by the agent (non-fatal if Docker unavailable).
