@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 )
@@ -113,6 +114,51 @@ func TestDatabaseBackupTaskAcquireLock_RefusesCrossProcessOverlap(t *testing.T) 
 	if secondRelease != nil {
 		secondRelease()
 		t.Fatal("second acquire succeeded; DB-level guard did not refuse cross-process overlap")
+	}
+}
+
+// TestDatabaseBackupTaskRun_RecordSurvivesRetention is the regression test for
+// runs that deleted their own output: the terminal UPDATE wrote the struct's
+// zero created_at, so the retention sweep in the same run matched the row it had
+// just created and removed it — and its object — leaving kb.database_backups
+// empty and /health reporting "no backups recorded yet" forever.
+func TestDatabaseBackupTaskRun_RecordSurvivesRetention(t *testing.T) {
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "skipping database-backed test in short mode")
+	}
+	ctx := context.Background()
+	tdb := testdb.SetupTestDBOrFail(t, ctx, "backup_retention")
+	defer tdb.Close()
+
+	task := &DatabaseBackupTask{db: tdb.DB, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// A run that "uploads" nothing: no storage key is set, so retention has no
+	// object to delete and the assertion below is about the record alone.
+	var id string
+	task.backupFn = func(_ context.Context, record *DatabaseBackup) error {
+		id = record.ID
+		return nil
+	}
+
+	if err := task.Run(ctx); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if id == "" {
+		t.Fatal("insert did not populate the record id")
+	}
+
+	var rec DatabaseBackup
+	if err := tdb.DB.NewSelect().Model(&rec).Where("id = ?", id).Scan(ctx); err != nil {
+		t.Fatalf("backup record %s is gone after its own run: the retention sweep deleted it (created_at was written as the zero value): %v", id, err)
+	}
+	if rec.Status != "completed" {
+		t.Errorf("record status = %q, want completed", rec.Status)
+	}
+	if rec.CompletedAt == nil {
+		t.Error("completed_at should be set on a completed run")
+	}
+	if age := time.Since(rec.CreatedAt); rec.CreatedAt.IsZero() || age < 0 || age > 5*time.Minute {
+		t.Errorf("created_at = %v (%v ago), want ~now: a zero/old value is what retention matched", rec.CreatedAt, age)
 	}
 }
 

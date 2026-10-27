@@ -121,13 +121,17 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 	t.log.Info("starting database backup")
 	start := time.Now()
 
-	// 1. Insert a running record
+	// 1. Insert a running record. Read `created_at` back with the id: it is a
+	// column default, so leaving the struct's zero value in place would make the
+	// terminal UPDATE below persist `0001-01-01`, which step 4's retention sweep
+	// then treats as an ancient row and deletes — together with its object (see
+	// the RecordSurvivesRetention test).
 	now := time.Now()
 	record := &DatabaseBackup{
 		Status:    "running",
 		StartedAt: &now,
 	}
-	if _, err := t.db.NewInsert().Model(record).Returning("id").Exec(ctx); err != nil {
+	if _, err := t.db.NewInsert().Model(record).Returning("id, created_at").Exec(ctx); err != nil {
 		return fmt.Errorf("insert backup record: %w", err)
 	}
 
@@ -166,7 +170,13 @@ func (t *DatabaseBackupTask) Run(ctx context.Context) error {
 
 	resultCtx, resultCancel := context.WithTimeout(context.WithoutCancel(ctx), dbBackupResultTimeout)
 	defer resultCancel()
-	if _, err := t.db.NewUpdate().Model(record).WherePK().Exec(resultCtx); err != nil {
+	// The column list is explicit on purpose: bun writes every struct field by
+	// default, so any field the struct did not read back (created_at) would be
+	// overwritten with its zero value — which is exactly how a run used to
+	// delete the record it had just written.
+	if _, err := t.db.NewUpdate().Model(record).
+		Column("status", "completed_at", "error", "storage_key", "size_bytes").
+		WherePK().Exec(resultCtx); err != nil {
 		t.log.Error("failed to update backup record",
 			slog.String("id", record.ID),
 			slog.String("error", err.Error()),
@@ -314,7 +324,8 @@ func (t *DatabaseBackupTask) runBackup(ctx context.Context, record *DatabaseBack
 	// Per-run unique key: the timestamp alone is only second-level precision and
 	// the scheduler has no skip-if-running guard, so overlapping runs could share
 	// a key and a failed run's cleanup could delete another run's object.
-	// record.ID is populated by the Returning("id") insert in Run.
+	// record.ID is populated by the `Returning("id, created_at")` insert in Run
+	// (one SQL fragment: bun treats a second argument as a bind parameter).
 	key := fmt.Sprintf("database-backups/%s-%s.dump", time.Now().UTC().Format("2006-01-02_15-04-05"), record.ID)
 
 	// Build pg_dump command
