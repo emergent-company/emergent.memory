@@ -192,20 +192,28 @@ func actorTypeLabel(actorType string) string {
 }
 
 // objectActorOption is one selectable identity in the generic browser's actor
-// filter: the (actor_type, actor_id) pair plus a human label. Project members
-// become "user" options and agent definitions become "agent" options, so the
-// filter lists real actors instead of asking for a pasted UUID.
+// filter: the (actor_type, actor_id) pair plus a human label and the appearance
+// the picker renders beside it. Project members become "user" options and agent
+// definitions become "agent" options, so the filter lists real actors instead of
+// asking for a pasted UUID.
 type objectActorOption struct {
 	Type  string // "user" | "agent"
 	ID    string
 	Label string
+
+	// AvatarURL is a project member's profile picture. Empty renders initials.
+	AvatarURL string
+	// Icon and Color are an agent's declared appearance (its uiConfig), rendered
+	// as the agent's glyph; both empty fall back to the generic bot glyph.
+	Icon  string
+	Color string
 }
 
-// actorKey encodes an actor option as the one value the actor <select> submits:
+// actorKey encodes an actor option as the one value the actor picker submits:
 // "<actor_type>:<actor_id>". Carrying the pair in a single value is what keeps
 // it consistent — the server rejects actor_id without actor_type, and a single
 // control cannot submit one without the other. An incomplete pair encodes to
-// "" (the "Any actor" option).
+// "" (the "Any actor" row).
 func actorKey(actorType, actorID string) string {
 	if actorType == "" || actorID == "" {
 		return ""
@@ -213,7 +221,7 @@ func actorKey(actorType, actorID string) string {
 	return actorType + ":" + actorID
 }
 
-// splitActorKey decodes the combined actor <select> value back into a normalized
+// splitActorKey decodes the combined actor picker value back into a normalized
 // (actor_type, actor_id) pair. A missing separator or unknown actor type yields
 // the empty pair, which clears the filter.
 func splitActorKey(key string) (actorType, actorID string) {
@@ -231,12 +239,29 @@ func actorOptionsByType(options []objectActorOption, actorType string) []objectA
 	})
 }
 
-// actorOptionPresent reports whether the (actorType, actorID) pair is among the
-// loaded actor options, i.e. whether the select can render it as a real option.
-func actorOptionPresent(options []objectActorOption, actorType, actorID string) bool {
-	return slices.ContainsFunc(options, func(o objectActorOption) bool {
-		return o.Type == actorType && o.ID == actorID
-	})
+// actorOptionOf returns the loaded option for the (actorType, actorID) pair, so
+// the picker's closed state can borrow the same avatar the option row renders.
+func actorOptionOf(options []objectActorOption, actorType, actorID string) (objectActorOption, bool) {
+	for _, o := range options {
+		if o.Type == actorType && o.ID == actorID {
+			return o, true
+		}
+	}
+	return objectActorOption{}, false
+}
+
+// actorOptionLabel is the display label for the active actor: the loaded option's
+// label when there is one, otherwise a type + truncated id fallback so a former
+// member or a URL-supplied pair still reads as an active filter instead of
+// resetting to "Any actor".
+func actorOptionLabel(options []objectActorOption, actorType, actorID string) string {
+	if o, ok := actorOptionOf(options, actorType, actorID); ok {
+		return o.Label
+	}
+	if actorType == "" || actorID == "" {
+		return "Any actor"
+	}
+	return actorTypeLabel(actorType) + " · " + shortActorID(actorID)
 }
 
 // shortActorID is the label suffix for an active actor that is not among the
@@ -317,10 +342,21 @@ func (s *Server) loadObjectActorOptions(ctx context.Context, data *objectsPageDa
 
 	options := make([]objectActorOption, 0, len(members)+len(agents))
 	for _, m := range members {
-		options = append(options, objectActorOption{Type: "user", ID: m.ID, Label: memberActorLabel(m)})
+		options = append(options, objectActorOption{
+			Type:      "user",
+			ID:        m.ID,
+			Label:     memberActorLabel(m),
+			AvatarURL: strings.TrimSpace(m.AvatarURL),
+		})
 	}
 	for _, a := range agents {
-		options = append(options, objectActorOption{Type: "agent", ID: a.ID, Label: a.Name})
+		options = append(options, objectActorOption{
+			Type:  "agent",
+			ID:    a.ID,
+			Label: a.Name,
+			Icon:  agentIcon(a.UIConfig),
+			Color: agentColor(a.UIConfig),
+		})
 	}
 	data.ActorOptions = options
 }
@@ -403,7 +439,7 @@ func (s *Server) uiObjects(c echo.Context) error {
 // to rows whose actor id is NULL — not a usable "any user/agent" filter — so an
 // incomplete pair is dropped rather than forwarded.
 //
-// The generic browser's actor <select> submits the pair as one combined `actor`
+// The generic browser's actor picker submits the pair as one combined `actor`
 // value ("<type>:<id>"); explicit actor_type/actor_id params (the agent-scoped
 // view's hidden inputs, pagination links, and bookmarks) keep working too.
 func objectActorFilter(c echo.Context) (actorType, actorID string) {

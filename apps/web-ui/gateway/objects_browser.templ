@@ -145,9 +145,9 @@ templ objectsBrowserStatsDeferred(data objectsPageData) {
 
 // objectsBrowserToolbar puts search and filters in one card: the search form
 // keeps the split mode button (mode rides on the submit button), and the filter
-// form keeps its auto-submitting selects. They stay two forms because a single
-// form cannot carry both a submitted search mode and a filter change without
-// dropping one of them.
+// form applies each control on change (the actor picker applies on pick). They
+// stay two forms because a single form cannot carry both a submitted search mode
+// and a filter change without dropping one of them.
 templ objectsBrowserToolbar(data objectsPageData) {
 	{{
 		searchAction := "/objects"
@@ -165,7 +165,7 @@ templ objectsBrowserToolbar(data objectsPageData) {
 				<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsPreviewGuards(data.Preview)... }>
 					@objectsSearchControls(data)
 				</form>
-				<form id="objects-filters-form" class="border-base-content/10 flex min-w-0 flex-wrap items-center gap-2 border-t pt-3" method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
+				<form id="objects-filters-form" class="border-base-content/10 flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2 border-t pt-3" method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
 					@objectsFilterControls(data)
 				</form>
 			</div>
@@ -225,6 +225,10 @@ templ objectsBrowserTable(data objectsPageData) {
 // objectsBrowserTableHead renders the column headers. The leading and trailing
 // checkbox/chevron columns are raw <th> because TableHeadCell owns its class
 // list and cannot carry the width utility.
+//
+// There is no Type column: the type rides above the object id in the Object cell
+// ("task · #9f1c0a2e"), where it reads as the object's identity rather than as a
+// second, mostly-repeated column.
 templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
 	@table.TableHead() {
 		@table.TableHeadRow() {
@@ -239,7 +243,6 @@ templ objectsBrowserTableHead(data objectsPageData, search, unified bool) {
 				/>
 			</th>
 			@table.TableHeadCell("Object")
-			@table.TableHeadCell("Type")
 			if !unified {
 				@table.TableHeadCell("Status")
 				@table.TableHeadCell("Embedding")
@@ -323,17 +326,14 @@ templ objectsBrowserRow(r objectsBrowserRowView, search, unified bool) {
 				x-model="sel"
 			/>
 		}
-		@table.TableCell("max-w-[26rem]", nil) {
+		@table.TableCell("max-w-[30rem]", nil) {
 			<div class="flex min-w-0 items-center gap-3">
 				@typeIconTile(r.UI.Icon, r.UI.Color)
 				<div class="min-w-0">
-					<div class="text-muted-faint truncate font-mono text-[11px]">{ shortID(r.ID) }</div>
+					@objectsObjectMeta(r)
 					<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:text-primary block truncate text-sm font-medium hover:underline">{ r.Label }</a>
 				</div>
 			</div>
-		}
-		@table.TableCell("", nil) {
-			<span class="text-muted text-xs">{ r.Type }</span>
 		}
 		if !unified {
 			@table.TableCell("", nil) {
@@ -391,6 +391,27 @@ templ objectsBrowserRow(r objectsBrowserRowView, search, unified bool) {
 	</tr>
 }
 
+// objectsObjectMeta is the identity line above an object's name: its type, a dot
+// tinted with the type's declared colour, and the short id ("task · #9f1c0a2e").
+// The type lives here instead of in its own column so the row reads as one
+// identity, and the name below stays the row's single loud line.
+templ objectsObjectMeta(r objectsBrowserRowView) {
+	{{
+		dotAttrs := templ.Attributes{
+			"class":       "bg-base-content/25 size-1.5 shrink-0 rounded-full",
+			"aria-hidden": "true",
+		}
+		if style := typeDotStyle(r.UI.Color); style != "" {
+			dotAttrs["style"] = style
+		}
+	}}
+	<div class="text-muted-faint flex min-w-0 items-center gap-1.5 font-mono text-[11px]">
+		<span class="truncate">{ r.Type }</span>
+		<span { dotAttrs... }></span>
+		<span class="shrink-0">#{ objectShortID(r.ID) }</span>
+	</div>
+}
+
 // objectsBrowserMobileRows is the small-screen browse list: one compact card
 // per object with the same type accent and badges as the table row. Selection
 // stays a table affordance; the mobile list is for opening objects.
@@ -401,9 +422,9 @@ templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
 				<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:bg-base-200/40 flex items-start gap-3 px-4 py-3 transition-colors">
 					@typeIconTile(r.UI.Icon, r.UI.Color)
 					<div class="min-w-0 flex-1">
+						@objectsObjectMeta(r)
 						<div class="truncate text-sm font-medium">{ r.Label }</div>
 						<div class="mt-1 flex flex-wrap items-center gap-1">
-							<span class="text-muted-faint text-xs">{ r.Type }</span>
 							if !unified {
 								if r.Status != "" {
 									@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{

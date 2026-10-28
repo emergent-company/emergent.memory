@@ -239,8 +239,12 @@ func objectsBrowserSampleData(order string) objectsPageData {
 		ActorOptions: []objectActorOption{
 			{Type: "user", ID: "u-1", Label: "Dana Whitfield"},
 			{Type: "user", ID: "u-2", Label: "Sam Lee"},
-			{Type: "agent", ID: "a-1", Label: "memory-agent"},
+			{Type: "agent", ID: "a-1", Label: "memory-agent", Icon: "database", Color: "#2563EB"},
 		},
-		Preview: true,
+		// Render the picker in its active state so the preview shows an actor's
+		// avatar in the closed control and the provenance toggle beside it.
+		ActorType: "agent",
+		ActorID:   "a-1",
+		Preview:   true,
 	}
 }

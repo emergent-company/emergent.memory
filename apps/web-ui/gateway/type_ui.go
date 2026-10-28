@@ -203,3 +203,14 @@ func typeColorStyle(color string) string {
 		";background-color:color-mix(in oklch," + c + " 10%,transparent)" +
 		";border-color:color-mix(in oklch," + c + " 15%,transparent)"
 }
+
+// typeDotStyle returns the inline style for the small separator dot that sits
+// between an object's type and its id: the type's declared color as a solid
+// fill. Empty when the type declares nothing, so the caller's muted default
+// class still reads as a dot rather than disappearing.
+func typeDotStyle(color string) string {
+	if c := strings.TrimSpace(color); c != "" {
+		return "background-color:" + c
+	}
+	return ""
+}

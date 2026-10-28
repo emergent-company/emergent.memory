@@ -169,6 +169,16 @@ func newObjectsBrowserRow(o GraphObject, typeUIByType map[string]typeUI, score f
 	}
 }
 
+// objectShortID is the id fragment shown above an object's name: the first
+// segment of a UUID ("9f1c0a2e"), so the fragment never ends mid-segment with a
+// dangling hyphen the way shortID's flat 10-character cut can.
+func objectShortID(id string) string {
+	if len(id) > 8 && id[8] == '-' {
+		return id[:8]
+	}
+	return shortID(id)
+}
+
 // firstLabels returns at most n labels, so a row with many labels stays one
 // line; the caller renders a "+N" chip for the remainder.
 func firstLabels(labels []string, n int) []string {

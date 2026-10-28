@@ -94,8 +94,8 @@ func TestRenderObjectsPage(t *testing.T) {
 
 // TestRenderObjectsProvenanceFilter covers the actor provenance controls on the
 // generic browser: a "Created by / Updated by / Any" mode toggle and a single
-// actor select listing real project members (Users) and agent definitions
-// (Agents), whose option value encodes the whole (actor_type, actor_id) pair.
+// actor picker listing real project members (Users) and agent definitions
+// (Agents), where every row submits the whole (actor_type, actor_id) pair.
 // Copy is plain object wording — never a memory concept.
 func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
@@ -111,12 +111,16 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	for _, want := range []string{
 		`name="provenance"`, `value="any"`, `value="created"`, `value="updated"`,
 		"Any", "Created by", "Updated by",
-		`aria-label="Provenance"`,
-		`name="actor"`, `aria-label="Actor"`, "Any actor",
-		`<optgroup label="Users">`, `<optgroup label="Agents">`,
+		// Each filter control is named by its own legend.
+		`>Provenance</legend>`, `>Actor</legend>`,
+		`name="actor"`, `aria-haspopup="menu"`, "Any actor",
+		`role="group" aria-label="Users"`, `role="group" aria-label="Agents"`,
 		"Sam Lee", "diane",
-		`value="user:u1"`,
-		`value="agent:11111111-1111-1111-1111-111111111111" selected`,
+		`name="actor" value="user:u1"`,
+		`name="actor" value="agent:11111111-1111-1111-1111-111111111111"`,
+		// The active actor is checked and shown in the closed control.
+		`aria-checked="true"`,
+		`aria-label="Actor: diane"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("provenance filter missing %q", want)
@@ -129,27 +133,30 @@ func TestRenderObjectsProvenanceFilter(t *testing.T) {
 	if got := strings.Count(html, `name="provenance" value="created" checked`); got != 1 {
 		t.Errorf("active provenance mode not checked: %d", got)
 	}
-	// The free-text actor-id input is gone: actors are chosen from the dropdown.
+	// The free-text actor-id input is gone: actors are chosen from the picker.
 	if strings.Contains(html, `aria-label="Actor id"`) {
-		t.Error("actor id text input should be replaced by the actor dropdown")
+		t.Error("actor id text input should be replaced by the actor picker")
 	}
 
-	// The actor select is always available; without a selection it stays on
+	// The actor picker is always available; without a selection it stays on
 	// "Any actor" and applies nothing.
 	noActor := renderHTML(t, ObjectsPage(objectsPageData{
 		Objects: []GraphObject{{ID: "o1", Type: "note"}},
 	}))
-	if !strings.Contains(noActor, `aria-label="Actor"`) {
-		t.Error("actor select should always render in the browse filter")
+	if !strings.Contains(noActor, `aria-label="Actor: Any actor"`) {
+		t.Error("actor picker should always render in the browse filter")
 	}
-	if !strings.Contains(noActor, `value="" selected`) {
-		t.Error("empty actor select should select the Any actor option")
+	if !strings.Contains(noActor, `name="actor" value=""`) {
+		t.Error("empty actor picker must offer the Any actor row")
+	}
+	if !strings.Contains(noActor, `aria-checked="true"`) {
+		t.Error("Any actor must render as the checked row when no actor is active")
 	}
 }
 
 // TestRenderObjectsActorFilterFallbackOption pins that an active actor pair
 // which is not among the loaded options (a former member, or one passed by URL)
-// still renders as a selected option, so the control reflects the active filter
+// still renders in the closed control, so the filter reflects the active state
 // instead of silently resetting to "Any actor".
 func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
 	html := renderHTML(t, ObjectsPage(objectsPageData{
@@ -157,10 +164,21 @@ func TestRenderObjectsActorFilterFallbackOption(t *testing.T) {
 		ActorType: "user",
 		ActorID:   "deadbeef-0000-0000-0000-000000000000",
 	}))
-	for _, want := range []string{`value="user:deadbeef-0000-0000-0000-000000000000" selected`, "User"} {
+	for _, want := range []string{
+		// The closed control states the active identity…
+		"User · deadbeef",
+		`aria-label="Actor: User · deadbeef`,
+		// …and clearing the filter stays available.
+		`name="actor" value=""`,
+	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("fallback actor option missing %q", want)
+			t.Errorf("fallback actor state missing %q", want)
 		}
+	}
+	// An identity that is not in the loaded list has no row to pick (it is
+	// already active); only the closed control names it.
+	if strings.Contains(html, `value="user:deadbeef-0000-0000-0000-000000000000"`) {
+		t.Error("an unknown actor must not be offered as a pickable row")
 	}
 }
 

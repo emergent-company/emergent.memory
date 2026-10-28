@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -57,16 +58,25 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 		}
 	}
 
-	// Browse rows keep the status/type/embedding signals.
+	// Browse rows keep the status/embedding signals. The type is not a column:
+	// it rides above the object id in the Object cell.
 	for _, want := range []string{
 		`data-status="in_progress"`,
 		`uppercase">Status<`,
 		`uppercase">Embedding<`,
 		`>Created</span>`,
+		`>task<`,
+		`#9f1c0a2e`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("browse table missing %q", want)
 		}
+	}
+	if strings.Contains(html, `uppercase">Type<`) {
+		t.Error("browse table must not render a Type column; the type belongs in the Object cell")
+	}
+	if strings.Index(html, "#9f1c0a2e") > strings.Index(html, ">Ship the objects browser table</a>") {
+		t.Error("the object's type and id must sit above its name")
 	}
 	if strings.Contains(html, `uppercase">Score<`) {
 		t.Error("browse table must not render the search-only Score column")
@@ -315,8 +325,15 @@ func TestObjectsBrowserSortHeader(t *testing.T) {
 	if !strings.Contains(html, `aria-sort="descending"`) {
 		t.Error("the default browse order is newest-first, so Created must render aria-sort=descending")
 	}
-	if !strings.Contains(html, `href="?order=asc"`) {
-		t.Error("the sort link must toggle to ascending with a query-only href")
+	// A query-only href: it resolves against the current document, so the same
+	// header works on /objects, the agent-scoped route, and the preview iframe.
+	// One href carries the active filter and the toggled order together, so
+	// sorting cannot silently widen the list.
+	if !regexp.MustCompile(`href="\?[^"]*actor_type=agent[^"]*order=asc`).MatchString(html) {
+		t.Error("the sort link must carry the active actor filter and toggle to ascending in one href")
+	}
+	if !strings.Contains(html, "actor_type=agent") {
+		t.Error("the sort link must carry the active actor filter so sorting never widens the list")
 	}
 
 	// Right-aligned column: the indicator leads the label, not the other way round.
@@ -389,8 +406,15 @@ func TestObjectsFiltersApplyOnChange(t *testing.T) {
 	html := renderHTML(t, ObjectsBrowserPage(live))
 	form := formBlock(t, html, "objects-filters-form")
 
-	if strings.Contains(form, `type="submit"`) {
+	// No Apply button: the only submit controls are the actor menu's options,
+	// which carry the value they set. Branch/type/provenance apply on change.
+	if strings.Contains(strings.Replace(form, actorFilterBlock(t, html), "", 1), `type="submit"`) {
 		t.Error("filter form must not carry a submit button; every control applies itself")
+	}
+	// The actor picker's options are the one submit path, and each carries the
+	// whole pair as its value.
+	if !strings.Contains(form, `name="actor" value="user:u-1"`) {
+		t.Error("the actor picker must submit its actor as one value")
 	}
 	if got := strings.Count(form, `onchange="this.form.submit()"`); got < 3 {
 		t.Errorf("want every filter select to apply on change, got %d auto-submits", got)
@@ -408,6 +432,125 @@ func TestObjectsFiltersApplyOnChange(t *testing.T) {
 	}
 	if !strings.Contains(previewForm, `onsubmit="return false"`) {
 		t.Error("preview filters must keep the inert submit guard")
+	}
+}
+
+// TestObjectsBrowserFilterControlsAreLabelled pins the filter row's shape: every
+// control is named by its own legend instead of a shared "Filter" caption, so
+// the bar explains which control narrows what.
+func TestObjectsBrowserFilterControlsAreLabelled(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	form := formBlock(t, html, "objects-filters-form")
+
+	for _, legend := range []string{"Branch", "Type", "Provenance", "Actor"} {
+		if want := `<legend class="fieldset-legend">` + legend + `</legend>`; !strings.Contains(form, want) {
+			t.Errorf("filter row missing the %q label (%s)", legend, want)
+		}
+	}
+	if strings.Contains(form, ">Filter<") {
+		t.Error("filter row must not carry a shared Filter caption once every control is labelled")
+	}
+	// The label sits above the control it names.
+	labelAt := strings.Index(form, `<legend class="fieldset-legend">Branch</legend>`)
+	selectAt := strings.Index(form, `name="branch"`)
+	if labelAt < 0 || selectAt < 0 || labelAt > selectAt {
+		t.Error("the Branch label must precede the branch control")
+	}
+}
+
+// TestObjectsActorFilterListsIdentities pins the actor picker: real identities
+// grouped under Users/Agents with their avatars, "Any actor" set apart by a
+// divider, and every row a submit button carrying the whole (type, id) pair.
+func TestObjectsActorFilterListsIdentities(t *testing.T) {
+	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	picker := actorFilterBlock(t, html)
+
+	// The closed control shows the active actor's identity, not just a key.
+	if !strings.Contains(picker, "memory-agent") {
+		t.Error("the actor control must show the active actor's label")
+	}
+	if !strings.Contains(picker, "lucide--database") {
+		t.Error("an agent's avatar is its declared glyph")
+	}
+
+	// Every option submits the pair as one value.
+	for _, want := range []string{
+		`name="actor" value="agent:a-1"`,
+		`name="actor" value="user:u-1"`,
+		`name="actor" value=""`,
+	} {
+		if !strings.Contains(picker, want) {
+			t.Errorf("actor picker missing option %q", want)
+		}
+	}
+	// Groups are announced as groups (not just visual captions), and a separator
+	// marks where "Any actor" ends and the identities begin.
+	for _, want := range []string{
+		`role="group" aria-label="Users"`,
+		`role="group" aria-label="Agents"`,
+		`role="separator"`,
+	} {
+		if !strings.Contains(picker, want) {
+			t.Errorf("actor picker missing %q", want)
+		}
+	}
+	// Members are people: they get an avatar (initials here), not a glyph. Both
+	// marks are decorative — the row's label already names the actor.
+	for _, want := range []string{
+		`data-actor-avatar="user"`,
+		`data-actor-avatar="agent"`,
+	} {
+		if !strings.Contains(picker, want) {
+			t.Errorf("actor picker missing the %q mark", want)
+		}
+	}
+	// Attribute order is not the contract; the pairing is.
+	decorativeUser := regexp.MustCompile(`<[^>]*data-actor-avatar="user"[^>]*aria-hidden="true"|<[^>]*aria-hidden="true"[^>]*data-actor-avatar="user"`)
+	if !decorativeUser.MatchString(picker) {
+		t.Error("the member avatar must be decorative: its label already names the actor")
+	}
+	if !strings.Contains(picker, `aria-checked="true"`) {
+		t.Error("the active actor must render as checked")
+	}
+
+	// An actor that is not in the loaded lists still shows as the active filter.
+	unknown := objectsBrowserSampleData("")
+	unknown.ActorOptions = nil
+	if got := renderHTML(t, ObjectsBrowserPage(unknown)); !strings.Contains(got, "Agent · a-1") {
+		t.Error("an unknown active actor must still render its type and short id")
+	}
+}
+
+// actorFilterBlock returns the HTML of the actor picker (its dropdown root).
+func actorFilterBlock(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, `data-testid="objects-actor-filter"`)
+	if start < 0 {
+		t.Fatal("actor picker not found")
+	}
+	open := strings.LastIndex(html[:start], "<div")
+	if open < 0 {
+		t.Fatal("actor picker has no opening tag")
+	}
+	end := strings.Index(html[open:], `</ul>`)
+	if end < 0 {
+		t.Fatal("actor picker menu is not closed")
+	}
+	return html[open : open+end]
+}
+
+// TestObjectShortID pins the id fragment above an object name: a UUID shows its
+// first segment instead of a flat cut that ends mid-segment with a hyphen.
+func TestObjectShortID(t *testing.T) {
+	for in, want := range map[string]string{
+		"9f1c0a2e-6b41-4c8d-9a2f-0e7d3b5a1c22": "9f1c0a2e",
+		"c8e2d5a1-4b96-4f30-a7d8-9e1c2b6f4a03": "c8e2d5a1",
+		"short":                                "short",
+		"project-atlas-2026":                   "project-at",
+	} {
+		if got := objectShortID(in); got != want {
+			t.Errorf("objectShortID(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

@@ -258,10 +258,10 @@ templ objectsSearchControls(data objectsPageData) {
 	}
 }
 
-// objectsFilters renders the browse filter bar: a provenance mode toggle
-// (Any / Created by / Updated by), an actor type + actor id pair, and the
-// type/branch dropdowns. An active query/mode is preserved via hidden inputs so
-// filtering while searching doesn't drop it.
+// objectsFilters renders the browse filter bar: the branch and type dropdowns,
+// an actor picker, and the provenance mode toggle (Any / Created by / Updated
+// by). An active query/mode is preserved via hidden inputs so filtering while
+// searching doesn't drop it.
 //
 // The provenance and actor controls are browse-only: the server's search
 // endpoints do not accept the actor filter, so they are hidden in search mode
@@ -270,7 +270,7 @@ templ objectsSearchControls(data objectsPageData) {
 // On the agent-scoped view the actor pair is fixed to the agent, so it rides
 // along as hidden inputs and the filter form posts back to the agent's route.
 templ objectsFilters(data objectsPageData) {
-	<form class="mb-6 flex flex-wrap items-center gap-2" method="get" action={ templ.URL(objectsTargetURL(data)) }>
+	<form class="mb-6 flex flex-wrap items-end gap-x-3 gap-y-2" method="get" action={ templ.URL(objectsTargetURL(data)) }>
 		@objectsFilterControls(data)
 	</form>
 }
@@ -284,17 +284,18 @@ func objectsTargetURL(data objectsPageData) string {
 	return "/objects"
 }
 
-// objectsFilterControls holds the filter form's controls: the provenance mode
-// toggle, the actor pair, and the type/branch dropdowns. Every control applies
-// itself on change — there is no Apply button, because a control that reloads
-// the list anyway makes a second "confirm" step pure ceremony. It is shared by
-// the standalone filter bar and the objects browser toolbar.
+// objectsFilterControls holds the filter form's controls: the branch and type
+// dropdowns, the provenance toggle, and the actor picker. Every control applies
+// itself — the selects and radios on change, the actor picker on pick — so there
+// is no Apply button: a control that reloads the list anyway makes a second
+// "confirm" step pure ceremony. It is shared by the standalone filter bar and
+// the objects browser toolbar.
+//
+// Every control sits under a form.FormControl legend. The named fields are what
+// make a filter row readable at a glance; a leading "Filter" caption cannot say
+// which control narrows what.
 templ objectsFilterControls(data objectsPageData) {
 	{{ scoped := data.AgentID != "" }}
-	<span class="text-muted-faint flex items-center gap-1.5">
-		@ui.IconSpan("lucide--sliders-horizontal", "size-3.5 shrink-0")
-		<span class="text-xs font-medium">Filter</span>
-	</span>
 	if data.Query != "" {
 		<input type="hidden" name="q" value={ data.Query }/>
 		<input type="hidden" name="mode" value={ data.Mode }/>
@@ -309,27 +310,38 @@ templ objectsFilterControls(data objectsPageData) {
 		}
 	}
 	if len(data.Branches) > 0 {
-		<select name="branch" class="select select-bordered select-sm" aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
-			<option value="" selected?={ data.BranchID == "" }>Main branch</option>
-			for _, b := range data.Branches {
-				<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
-			}
-		</select>
+		@fm.FormControl("objects-filter-branch", "Branch", fm.LabelAbove, "", "", nil) {
+			<select id="objects-filter-branch" name="branch" class="select select-bordered select-sm" aria-label="Branch" { objectsFilterAutoApply(data.Preview)... }>
+				<option value="" selected?={ data.BranchID == "" }>Main branch</option>
+				for _, b := range data.Branches {
+					<option value={ b.ID } selected?={ b.ID == data.BranchID }>{ b.Name }</option>
+				}
+			</select>
+		}
 	}
 	if len(data.Types) > 0 {
-		<select name="type" class="select select-bordered select-sm" aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
-			<option value="">All types</option>
-			for _, t := range data.Types {
-				<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
-			}
-		</select>
+		@fm.FormControl("objects-filter-type", "Type", fm.LabelAbove, "", "", nil) {
+			<select id="objects-filter-type" name="type" class="select select-bordered select-sm" aria-label="Object type" { objectsFilterAutoApply(data.Preview)... }>
+				<option value="">All types</option>
+				for _, t := range data.Types {
+					<option value={ t } selected?={ t == data.TypeFilter }>{ t }</option>
+				}
+			</select>
+		}
 	}
 	if data.Query == "" {
 		if data.ActorType != "" {
-			@objectsProvenanceFilter(data)
+			@fm.FormControl("objects-filter-provenance", "Provenance", fm.LabelAbove, "", "", nil) {
+				@objectsProvenanceFilter(data)
+			}
 		}
 		if !scoped {
-			@objectsActorFilter(data)
+			// "Actor", not "Created by": the provenance toggle already carries a
+			// Created by radio, and two controls with that name in one row read as
+			// one filter.
+			@fm.FormControl("objects-filter-actor", "Actor", fm.LabelAbove, "", "", nil) {
+				@objectsActorFilter(data)
+			}
 		}
 	}
 }
@@ -337,9 +349,10 @@ templ objectsFilterControls(data objectsPageData) {
 // objectsProvenanceFilter is the "Created by / Updated by / Any" provenance
 // toggle: a joined group of radio buttons, each auto-submitting the filter form
 // on change so the list re-narrows without extra chrome. The labels are plain
-// (Any / Created by / Updated by) and never name a memory concept.
+// (Any / Created by / Updated by) and never name a memory concept. The group's
+// accessible name comes from the FormControl legend that wraps it.
 templ objectsProvenanceFilter(data objectsPageData) {
-	<div class="join" role="group" aria-label="Provenance">
+	<div class="join">
 		for _, m := range objectProvenanceModes() {
 			{{
 				extra := "join-item"
@@ -366,38 +379,138 @@ templ objectsProvenanceFilter(data objectsPageData) {
 	</div>
 }
 
-// objectsActorFilter narrows the browse list to one actor's provenance. A single
-// select lists real actors — the project's members grouped under "Users" and its
-// agent definitions under "Agents" — so the user picks an identity instead of
-// pasting a UUID. Each option's value encodes the whole (actor_type, actor_id)
-// pair as "<type>:<id>", so the two can never be submitted out of sync (the
-// server rejects actor_id without actor_type). An active pair that is not in the
-// loaded lists (a former member, or a filter passed by URL) still renders as a
-// selected option so the control reflects the active filter.
+// objectsActorFilter narrows the browse list to one actor's provenance. The
+// control is a menu of real identities — the project's members under "Users"
+// (their avatar) and its agent definitions under "Agents" (their declared
+// glyph) — because a native <select> cannot render an avatar per option.
+//
+// Every row is a submit button carrying the whole (actor_type, actor_id) pair as
+// the `actor` value, so the two can never be submitted out of sync (the server
+// rejects actor_id without actor_type) and picking an identity needs no script:
+// the form submits like any other control in the bar. An active pair that is not
+// in the loaded lists (a former member, or a filter passed by URL) still renders
+// in the closed state so the control reflects the active filter.
+//
+// "Any actor" sits above a divider instead of inside either group: it is not an
+// identity, it clears the filter, and listing it among the people would read as
+// one more of them.
 templ objectsActorFilter(data objectsPageData) {
-	{{ selected := actorKey(data.ActorType, data.ActorID) }}
-	<select name="actor" class="select select-bordered select-sm max-w-md" aria-label="Actor" { objectsFilterAutoApply(data.Preview)... }>
-		<option value="" selected?={ selected == "" }>Any actor</option>
-		{{ users := actorOptionsByType(data.ActorOptions, "user") }}
-		if len(users) > 0 {
-			<optgroup label="Users">
-				for _, o := range users {
-					<option value={ actorKey(o.Type, o.ID) } selected?={ selected == actorKey(o.Type, o.ID) }>{ o.Label }</option>
-				}
-			</optgroup>
+	{{
+		selected := actorKey(data.ActorType, data.ActorID)
+		users := actorOptionsByType(data.ActorOptions, "user")
+		agents := actorOptionsByType(data.ActorOptions, "agent")
+		current, known := actorOptionOf(data.ActorOptions, data.ActorType, data.ActorID)
+	}}
+	@ui.Dropdown(ui.DropdownBottom, templ.Attributes{"data-testid": "objects-actor-filter"}) {
+		<div
+			tabindex="0"
+			role="button"
+			aria-haspopup="menu"
+			aria-label={ "Actor: " + actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }
+			class="input input-bordered input-sm flex w-64 cursor-pointer items-center gap-2 text-left"
+		>
+			if selected != "" && known {
+				@objectsActorAvatar(current)
+			} else {
+				<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full">
+					@ui.IconSpan("lucide--users", "size-3.5")
+				</span>
+			}
+			<span class="truncate">{ actorOptionLabel(data.ActorOptions, data.ActorType, data.ActorID) }</span>
+			@ui.IconSpan("lucide--chevron-down", "ml-auto size-3.5 shrink-0 opacity-60")
+		</div>
+		@ui.DropdownMenu(templ.Attributes{"aria-label": "Actor", "class": "w-72"}) {
+			<li role="none">
+				<button
+					type="submit"
+					name="actor"
+					value=""
+					role="menuitemradio"
+					aria-checked={ strconv.FormatBool(selected == "") }
+					class={ "min-w-0 text-left", templ.KV("menu-active", selected == "") }
+				>
+					<span class="flex min-w-0 items-center gap-2">
+						<span class="bg-base-200 text-base-content/60 inline-flex size-6 shrink-0 items-center justify-center rounded-full">
+							@ui.IconSpan("lucide--users", "size-3.5")
+						</span>
+						<span class="min-w-0 truncate">Any actor</span>
+						if selected == "" {
+							@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+						}
+					</span>
+				</button>
+			</li>
+			// An empty <li> is daisyUI's menu divider (background + .1 opacity);
+			// the opacity utility restores it to a line you can actually see.
+			<li role="separator" class="bg-base-content/20 opacity-100 my-1 h-px"></li>
+			if len(users) > 0 {
+				@objectsActorGroup("Users", users, selected)
+			}
+			if len(agents) > 0 {
+				@objectsActorGroup("Agents", agents, selected)
+			}
 		}
-		{{ agents := actorOptionsByType(data.ActorOptions, "agent") }}
-		if len(agents) > 0 {
-			<optgroup label="Agents">
-				for _, o := range agents {
-					<option value={ actorKey(o.Type, o.ID) } selected?={ selected == actorKey(o.Type, o.ID) }>{ o.Label }</option>
-				}
-			</optgroup>
+	}
+}
+
+// objectsActorGroup is one identity group in the actor menu: a name the group is
+// announced by, and one radio row per actor. The group carries the role (not the
+// caption) so assistive tech reports a boundary between members and agents
+// instead of a flat run of radios; the caption is visual only, because the group
+// itself is already named.
+templ objectsActorGroup(label string, options []objectActorOption, selected string) {
+	<li role="group" aria-label={ label }>
+		<span class="menu-title text-muted-faint text-[11px] font-semibold tracking-wide uppercase" aria-hidden="true">{ label }</span>
+		for _, o := range options {
+			@objectsActorOptionItem(o, selected)
 		}
-		if selected != "" && !actorOptionPresent(data.ActorOptions, data.ActorType, data.ActorID) {
-			<option value={ selected } selected>{ actorTypeLabel(data.ActorType) + " · " + shortActorID(data.ActorID) }</option>
-		}
-	</select>
+	</li>
+}
+
+// objectsActorOptionItem is one selectable identity in the actor picker: the
+// actor's avatar or declared glyph, its label, and a check on the active row.
+templ objectsActorOptionItem(o objectActorOption, selected string) {
+	{{ key := actorKey(o.Type, o.ID)
+		active := selected == key }}
+	<button
+		type="submit"
+		name="actor"
+		value={ key }
+		role="menuitemradio"
+		aria-checked={ strconv.FormatBool(active) }
+		class={ "min-w-0 text-left", templ.KV("menu-active", active) }
+	>
+		<span class="flex min-w-0 items-center gap-2">
+			@objectsActorAvatar(o)
+			<span class="min-w-0 truncate">{ o.Label }</span>
+			if active {
+				@ui.IconSpan("lucide--check", "ml-auto size-4 shrink-0 text-primary")
+			}
+		</span>
+	</button>
+}
+
+// objectsActorAvatar renders one actor's identity mark: a project member's
+// picture (or initials) and an agent's declared glyph tinted with its colour.
+//
+// The mark is decorative in both branches: the row's label already names the
+// actor, so an unpainted avatar would make the accessible name read "DW Dana
+// Whitfield" (or nothing at all) depending on which branch rendered it.
+templ objectsActorAvatar(o objectActorOption) {
+	if o.Type == "user" {
+		<span class="flex shrink-0 items-center" aria-hidden="true" data-actor-avatar="user">
+			@ui.AvatarFull(ui.AvatarProps{
+				Name:     o.Label,
+				Src:      o.AvatarURL,
+				Size:     ui.AvatarSize6,
+				Fallback: ui.AvatarFallbackInitials,
+			})
+		</span>
+	} else {
+		<span class="bg-base-200 text-base-content/70 inline-flex size-6 shrink-0 items-center justify-center rounded-full" aria-hidden="true" data-actor-avatar="agent">
+			@agentInlineGlyph(o.Icon, o.Color)
+		</span>
+	}
 }
 
 // objectsKnowledge renders the "Ask the graph" RAG Q&A box as a distinct card:
