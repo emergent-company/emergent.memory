@@ -99,6 +99,19 @@ func memoryErrorDisposition(status int) (capture bool, level sentry.Level) {
 	}
 }
 
+// shouldCaptureMemoryError reports whether a memory failure belongs in Sentry.
+// It applies memoryErrorDisposition, with one exception: a 401 from the
+// conversation poller is an expired or revoked session credential, not a
+// gateway defect. The poller closes the stream so the browser re-authenticates;
+// capturing the dead token every few seconds only floods Sentry with noise.
+func shouldCaptureMemoryError(ctx context.Context, status int) bool {
+	capture, _ := memoryErrorDisposition(status)
+	if status == http.StatusUnauthorized && backgroundPollFrom(ctx) {
+		return false
+	}
+	return capture
+}
+
 // captureMemoryError reports a memory REST API failure to Sentry, tagging the
 // event with the request context (method, path, HTTP status).
 //

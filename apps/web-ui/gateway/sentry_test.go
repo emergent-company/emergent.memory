@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"testing"
@@ -126,4 +127,32 @@ func TestCaptureHelpersNoClientWithNoDSN(t *testing.T) {
 	captureError(errors.New("boom"))
 	captureMemoryError(http.MethodGet, "/api/chat/123/history", http.StatusInternalServerError, errors.New("boom"))
 	capturePollFailure(errors.New("boom"))
+}
+
+// TestShouldCaptureMemoryError asserts the reporting policy: a foreground 401
+// is still captured, but the conversation poller's 401 is expected session
+// expiry (the poller closes the stream instead) and must not flood Sentry.
+// Other statuses keep their normal disposition in the background too.
+func TestShouldCaptureMemoryError(t *testing.T) {
+	bg := withBackgroundPoll(context.Background())
+
+	tests := []struct {
+		name   string
+		ctx    context.Context
+		status int
+		want   bool
+	}{
+		{name: "foreground 401", ctx: context.Background(), status: http.StatusUnauthorized, want: true},
+		{name: "background 401", ctx: bg, status: http.StatusUnauthorized, want: false},
+		{name: "background 403", ctx: bg, status: http.StatusForbidden, want: true},
+		{name: "background 5xx", ctx: bg, status: http.StatusBadGateway, want: true},
+		{name: "background 4xx", ctx: bg, status: http.StatusBadRequest, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldCaptureMemoryError(tt.ctx, tt.status); got != tt.want {
+				t.Fatalf("shouldCaptureMemoryError(%s, %d) = %v, want %v", tt.name, tt.status, got, tt.want)
+			}
+		})
+	}
 }

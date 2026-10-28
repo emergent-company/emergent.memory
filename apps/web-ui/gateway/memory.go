@@ -469,7 +469,9 @@ func (m *MemoryClient) doWithPolicy(ctx context.Context, method, path string, bo
 			// like API keys) so real causes surface even when Sentry is
 			// unconfigured.
 			log.Printf("memory API error: %s %s -> %d: %s", method, path, status, truncateString(string(raw), 2048))
-			captureMemoryError(method, path, status, attemptErr(err))
+			if shouldCaptureMemoryError(ctx, status) {
+				captureMemoryError(method, path, status, attemptErr(err))
+			}
 		}
 		return hdr, attemptErr(err)
 	}

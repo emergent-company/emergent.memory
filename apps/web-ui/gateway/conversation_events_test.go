@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -561,5 +562,125 @@ func TestHubPollerRunScopeBroadcastsOnStatusOnlyTransition(t *testing.T) {
 		}
 	default:
 		t.Error("a run status-only transition must re-broadcast a refresh frame (#1204 run scope)")
+	}
+}
+
+// authRejectingMemory rejects one session token with a 401, simulating a
+// credential revoked before its ExpiresAt (ordinary expiry is covered by the
+// proactive sessionExpired check).
+type authRejectingMemory struct {
+	*fakeMemory
+	token string
+}
+
+func (m *authRejectingMemory) reject(ctx context.Context) error {
+	if sc, ok := sessionContextFrom(ctx); ok && sc.Token == m.token {
+		return &memoryHTTPError{Status: http.StatusUnauthorized, Code: "invalid_token", Message: "Invalid or expired token"}
+	}
+	return nil
+}
+
+func (m *authRejectingMemory) ListAgentQuestions(ctx context.Context) ([]AgentQuestionItem, error) {
+	return nil, m.reject(ctx)
+}
+
+func (m *authRejectingMemory) ListToolApprovals(ctx context.Context) ([]ToolApprovalItem, error) {
+	return nil, m.reject(ctx)
+}
+
+func (m *authRejectingMemory) GetConversationHistory(ctx context.Context, id string) (*ConversationHistory, error) {
+	return &ConversationHistory{ConversationID: id}, nil
+}
+
+// TestHubPollerDropsExpiredSession asserts the poller never makes a memory call
+// with a credential whose access token has expired. It closes that session's
+// streams so EventSource reconnects through the auth middleware, which
+// refreshes the cookie — instead of polling memory with a dead token forever
+// (the Sentry MEMORY-UI-26/27/28/29 401 storm).
+func TestHubPollerDropsExpiredSession(t *testing.T) {
+	m := &hubRecordingMemory{fakeMemory: &fakeMemory{}}
+	s := newHubTestServer(m)
+
+	expired := &sessionContext{
+		Token:     "tok-expired",
+		ProjectID: "proj-1",
+		Sub:       "user-1",
+		ExpiresAt: time.Now().Add(-time.Minute).Unix(),
+	}
+	live := &sessionContext{
+		Token:     "tok-live",
+		ProjectID: "proj-2",
+		Sub:       "user-2",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	chExpired := s.hub.subscribe("c-expired", expired)
+	chLive := s.hub.subscribe("c-live", live)
+	defer s.hub.unsubscribe("c-live", chLive)
+
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+
+	// The expired stream is closed and its conversation is forgotten.
+	select {
+	case _, ok := <-chExpired:
+		if ok {
+			t.Error("expired session stream received a frame, want a closed channel")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expired session stream was not closed")
+	}
+	if _, ok := s.hub.subscribedConvs()["c-expired"]; ok {
+		t.Error("expired session conversation must be dropped from the hub")
+	}
+	// The live session keeps polling.
+	if _, ok := s.hub.subscribedConvs()["c-live"]; !ok {
+		t.Error("live session conversation must stay subscribed")
+	}
+	// No memory call may have used the expired token.
+	history, questions, approvals := m.contexts()
+	for _, ctx := range append(append(history, questions...), approvals...) {
+		if sc, ok := sessionContextFrom(ctx); ok && sc.Token == "tok-expired" {
+			t.Errorf("poller made a memory call with the expired token: %+v", sc)
+		}
+	}
+}
+
+// TestHubPollerDropsSessionOn401 asserts a 401 from the snapshot calls tears
+// down only the affected session's streams: the credential was revoked, so
+// retrying it every 1.5s cannot succeed and only floods Sentry.
+func TestHubPollerDropsSessionOn401(t *testing.T) {
+	m := &authRejectingMemory{fakeMemory: &fakeMemory{}, token: "tok-revoked"}
+	s := newHubTestServer(m)
+
+	revoked := &sessionContext{
+		Token:     "tok-revoked",
+		ProjectID: "proj-1",
+		Sub:       "user-1",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	live := &sessionContext{
+		Token:     "tok-live",
+		ProjectID: "proj-2",
+		Sub:       "user-2",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	chRevoked := s.hub.subscribe("c-revoked", revoked)
+	chLive := s.hub.subscribe("c-live", live)
+	defer s.hub.unsubscribe("c-live", chLive)
+
+	s.broadcastConversationChanges(context.Background(), s.hub.subscribedConvs())
+
+	select {
+	case _, ok := <-chRevoked:
+		if ok {
+			t.Error("revoked session stream received a frame, want a closed channel")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("revoked session stream was not closed")
+	}
+	if _, ok := s.hub.subscribedConvs()["c-revoked"]; ok {
+		t.Error("revoked session conversation must be dropped from the hub")
+	}
+	if _, ok := s.hub.subscribedConvs()["c-live"]; !ok {
+		t.Error("unaffected session must stay subscribed")
 	}
 }

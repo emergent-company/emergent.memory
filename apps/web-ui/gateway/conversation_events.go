@@ -104,6 +104,31 @@ func pollLogContext(conversationID string, sc *sessionContext) string {
 	return fmt.Sprintf("conversation=%s project=%s", conversationID, project)
 }
 
+// backgroundPollKey marks a memory call made by the conversation poller.
+type backgroundPollKey struct{}
+
+// withBackgroundPoll marks ctx as a background poll. The memory client uses
+// this to keep an expected 401 (an expired or revoked session credential) out
+// of Sentry: the poller closes the stream and lets the browser re-authenticate
+// instead of treating the dead token as a gateway defect.
+func withBackgroundPoll(ctx context.Context) context.Context {
+	return context.WithValue(ctx, backgroundPollKey{}, true)
+}
+
+// backgroundPollFrom reports whether ctx belongs to the conversation poller.
+func backgroundPollFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(backgroundPollKey{}).(bool)
+	return v
+}
+
+// sessionExpired reports whether a captured web-session credential is past its
+// access-token expiry. Device credentials carry no ExpiresAt (they are
+// introspected per request), and a nil sc is a no-session/dev subscriber, so
+// neither is pre-emptively dropped here.
+func sessionExpired(sc *sessionContext, now time.Time) bool {
+	return sc != nil && !sc.Device && sc.ExpiresAt > 0 && now.Unix() >= sc.ExpiresAt
+}
+
 // shouldCapturePollFailure reports whether a poll failure for key should be
 // reported to Sentry now, and records the capture. The first failure of a new
 // streak is always reported; while the streak continues, reports are limited to
@@ -170,13 +195,45 @@ func (h *conversationHub) unsubscribe(id string, ch chan []byte) {
 			delete(h.lastFrame, id)
 		}
 	}
-	if h.subscriberCountLocked() == 0 && h.pollerRunning {
-		if h.pollerCancel != nil {
-			h.pollerCancel()
-		}
-		h.pollerRunning = false
-		h.pollerCancel = nil
+	h.stopPollerIfIdleLocked()
+}
+
+// stopPollerIfIdleLocked cancels the single poller when no subscribers remain.
+// Callers must hold h.mu.
+func (h *conversationHub) stopPollerIfIdleLocked() {
+	if h.subscriberCountLocked() != 0 || !h.pollerRunning {
+		return
 	}
+	if h.pollerCancel != nil {
+		h.pollerCancel()
+	}
+	h.pollerRunning = false
+	h.pollerCancel = nil
+}
+
+// dropSession closes every subscriber stream for one session identity and
+// forgets its conversation state. It is called when the captured session
+// credential has expired or been rejected: ending the streams is what makes
+// EventSource reconnect through the auth middleware, which silently refreshes
+// the session cookie (or sends the user to login). Channels are removed from
+// subs before being closed, so a concurrent broadcast can never send on a
+// closed channel.
+func (h *conversationHub) dropSession(key string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id, cs := range h.subs {
+		if sessionKey(cs.sc) != key {
+			continue
+		}
+		delete(h.subs, id)
+		delete(h.last, id)
+		delete(h.lastFrame, id)
+		delete(h.pollFailures, pollFailureKey(cs.sc))
+		for ch := range cs.chans {
+			close(ch)
+		}
+	}
+	h.stopPollerIfIdleLocked()
 }
 
 func (h *conversationHub) subscriberCountLocked() int {
@@ -419,10 +476,23 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 	}
 	for _, ids := range groups {
 		sc := convs[ids[0]]
+		// A background poll must not outlive the session credential it captured
+		// when the SSE stream opened. The stream is long-lived, so the access
+		// token can expire while it stays connected; polling on would hammer
+		// memory with a dead token (and Sentry with 401s) until the browser
+		// happens to reconnect. Close this session's streams instead: the
+		// browser's EventSource reconnects, the auth middleware refreshes the
+		// session cookie, and the poller resumes with a fresh token.
+		if sessionExpired(sc, time.Now()) {
+			log.Printf("conversation poll: session credential expired (%s); closing stream for re-auth", pollLogContext(ids[0], sc))
+			s.hub.dropSession(sessionKey(sc))
+			continue
+		}
 		cctx := ctx
 		if sc != nil {
 			cctx = withSessionContext(ctx, sc)
 		}
+		cctx = withBackgroundPoll(cctx)
 		// The poll loop is a 1.5s self-healing tick, so a failed snapshot is
 		// logged and retried on the next tick. A sustained failure is still
 		// reported (rate-limited) so a multi-hour outage is observable.
@@ -433,6 +503,15 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 		approvals, aErr := s.memory.ListToolApprovals(cctx)
 		if aErr != nil {
 			log.Printf("conversation poll: list tool approvals (%s): %v", pollLogContext(ids[0], sc), aErr)
+		}
+		// A 401 on a live session means the credential was revoked (ordinary
+		// expiry is covered above). Stop polling this session and close its
+		// streams so the browser re-authenticates, instead of retrying the dead
+		// token every 1.5s forever.
+		if sc != nil && !sc.Device && (isMemoryStatus(qErr, http.StatusUnauthorized) || isMemoryStatus(aErr, http.StatusUnauthorized)) {
+			log.Printf("conversation poll: session credential rejected (%s); closing stream for re-auth", pollLogContext(ids[0], sc))
+			s.hub.dropSession(sessionKey(sc))
+			continue
 		}
 		key := pollFailureKey(sc)
 		if pollErr := errors.Join(qErr, aErr); pollErr != nil {
@@ -448,6 +527,7 @@ func (s *Server) broadcastConversationChanges(ctx context.Context, convs map[str
 			if groupSC != nil {
 				cc = withSessionContext(ctx, groupSC)
 			}
+			cc = withBackgroundPoll(cc)
 			var st *conversationRunState
 			var err error
 			if isRunScope(id) {
@@ -662,7 +742,13 @@ func (s *Server) streamEvents(c echo.Context, key string) error {
 				return nil
 			}
 			flusher.Flush()
-		case msg := <-ch:
+		case msg, ok := <-ch:
+			if !ok {
+				// The hub closed this subscription to force a re-auth (expired
+				// or revoked session). Ending the response makes EventSource
+				// reconnect through the auth middleware.
+				return nil
+			}
 			if _, err := io.WriteString(w, "data: "+string(msg)+"\n\n"); err != nil {
 				return nil
 			}
