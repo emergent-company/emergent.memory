@@ -170,6 +170,12 @@ type MemoryBackend interface {
 	// ListBoardRuns lists the project's object-driven (board/work) runs.
 	ListBoardRuns(ctx context.Context, limit int) ([]BoardRun, error)
 	UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error)
+	// DeleteGraphObject soft-deletes one object on the given branch (empty = main
+	// branch; branch history keeps the versions). BulkUpdateStatus sets one status
+	// across up to 100 objects in a single call; both sit behind the objects
+	// browser's selection bar.
+	DeleteGraphObject(ctx context.Context, id, branchID string) error
+	BulkUpdateStatus(ctx context.Context, ids []string, status string) (*BulkUpdateStatusResponse, error)
 	CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error)
 	CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error
 	SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error)

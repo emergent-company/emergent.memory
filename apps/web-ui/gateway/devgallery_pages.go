@@ -45,7 +45,7 @@ func galleryPagePreviews() []GalleryPagePreview {
 			Description: "Table layout with row selection and grouped actions, a one-line search/filter toolbar, a single stats strip, and \"Ask the graph\" behind a header dialog. Sample data; selection and the bulk bar are live.",
 			Height:      "1080px",
 			Body: func(q url.Values) templ.Component {
-				return ObjectsBrowserPage(objectsBrowserSampleData(q.Get("order")))
+				return ObjectsPage(objectsBrowserSampleData(q.Get("order")))
 			},
 		},
 		{
@@ -53,7 +53,7 @@ func galleryPagePreviews() []GalleryPagePreview {
 			Name:        "Objects browser — search results",
 			Description: "The same table in unified search mode: rows keep their type accent and labels, gain a relevance score, and drop the status/embedding/created columns the unified endpoint cannot fill.",
 			Height:      "760px",
-			Body:        func(url.Values) templ.Component { return ObjectsBrowserPage(objectsBrowserSearchSampleData()) },
+			Body:        func(url.Values) templ.Component { return ObjectsPage(objectsBrowserSearchSampleData()) },
 		},
 	}
 }

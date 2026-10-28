@@ -6,27 +6,25 @@ import (
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
 	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
 	table "github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
-// --- Objects browser (table layout prototype) ---
+// --- Objects browser ---
 //
-// This file holds the reworked objects browser: a wide table with row
-// selection and a grouped action bar, one compact toolbar card that stacks the
-// search field over a single filter line, a single stats strip instead of three
-// stat cards, and "Ask the graph" behind a header dialog instead of a
-// permanent card.
+// The objects page: a wide table with row selection and a grouped action bar,
+// one compact toolbar card that stacks the search field over a single filter
+// line, a single stats strip instead of three stat cards, and "Ask the graph"
+// behind a header dialog instead of a permanent card.
 //
-// It is deliberately separate from ObjectsPage while the layout is under
-// review: the dev gallery renders ObjectsBrowserPage with sample data at
-// /dev/components/pages/objects. Once signed off, ObjectsPage delegates to
-// these components (keeping the agent-scoped header and the deferred stats
-// fetch) and the old list markup is removed.
+// data.Preview marks a dev-gallery render: pagination, search submission, and
+// bulk mutations render without their live wiring (no hx-* attributes, no
+// backend form action) so the sample page stays inert.
 
-// ObjectsBrowserPage renders the full objects browser surface. It is composed
-// into the dev gallery's page-preview document; the real ObjectsPage will
-// render the same components with live data.
+// ObjectsPage renders the objects browser surface. The agent-scoped view
+// (data.AgentID) keeps its own header and omits the stats, the global search and
+// the Q&A dialog: those are project-wide surfaces the agent route cannot scope.
 //
 // The outer x-data carries the selection model shared by the visible checkbox
 // column, the bulk action bar, and the bulk dialogs. Selection is Alpine-only
@@ -34,21 +32,32 @@ import (
 // no `name` and are never submitted: each dialog form submits the selection as
 // one comma-separated `ids` value. That keeps table rows out of any form and
 // lets htmx-appended rows work without re-registering anything.
-templ ObjectsBrowserPage(data objectsPageData) {
+templ ObjectsPage(data objectsPageData) {
 	@layout.Container(layout.ContainerSize("max-w-[100rem]"), nil) {
 		<div x-data={ objectsBrowserSelectionJS }>
-			@objectsBrowserHeader(data)
-			if data.Query == "" {
-				@objectsBrowserStats(data)
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			if data.AgentID != "" {
+				@objectsAgentHeader(data)
+			} else {
+				@objectsBrowserHeader(data)
 			}
-			@objectsBrowserToolbar(data)
-			if data.Query != "" {
-				@objectsBrowserResultsNote(data)
+			if data.LoadErr != nil {
+				@pageError("Failed to load objects", data.LoadErr)
+			} else {
+				if data.Query == "" && data.AgentID == "" {
+					@objectsBrowserStats(data)
+				}
+				@objectsBrowserToolbar(data)
+				if data.Query != "" {
+					@objectsBrowserResultsNote(data)
+				}
+				@objectsBrowserTable(data)
+				@objectsBrowserBulkBar()
+				@objectsBrowserBulkDialogs(data)
+				if data.AgentID == "" {
+					@objectsBrowserKnowledgeDialog(data)
+				}
 			}
-			@objectsBrowserTable(data)
-			@objectsBrowserBulkBar()
-			@objectsBrowserBulkDialogs(data)
-			@objectsBrowserKnowledgeDialog(data)
 		</div>
 	}
 }
@@ -148,6 +157,10 @@ templ objectsBrowserStatsDeferred(data objectsPageData) {
 // form applies each control on change (the actor picker applies on pick). They
 // stay two forms because a single form cannot carry both a submitted search mode
 // and a filter change without dropping one of them.
+//
+// The agent-scoped view has no search form (the server's search endpoints cannot
+// be provenance-scoped), so its card is the filter line alone and the divider
+// that separates the two rows goes with it.
 templ objectsBrowserToolbar(data objectsPageData) {
 	{{
 		searchAction := "/objects"
@@ -158,14 +171,21 @@ templ objectsBrowserToolbar(data objectsPageData) {
 			searchAction = "#"
 			filterAction = "#"
 		}
+		searching := data.AgentID == ""
+		filterClass := "flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2"
+		if searching {
+			filterClass = "border-base-content/10 border-t pt-3 " + filterClass
+		}
 	}}
 	<div class="mb-4">
 		@components.PanelCard("", nil, "p-3 sm:p-4") {
 			<div class="flex flex-col gap-3">
-				<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsPreviewGuards(data.Preview)... }>
-					@objectsSearchControls(data)
-				</form>
-				<form id="objects-filters-form" class="border-base-content/10 flex min-w-0 flex-wrap items-end gap-x-3 gap-y-2 border-t pt-3" method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
+				if searching {
+					<form id="objects-search-form" class="min-w-0" method="get" action={ templ.URL(searchAction) } { objectsPreviewGuards(data.Preview)... }>
+						@objectsSearchControls(data)
+					</form>
+				}
+				<form id="objects-filters-form" class={ filterClass } method="get" action={ templ.URL(filterAction) } { objectsPreviewGuards(data.Preview)... }>
 					@objectsFilterControls(data)
 				</form>
 			</div>
@@ -417,36 +437,44 @@ templ objectsObjectMeta(r objectsBrowserRowView) {
 // stays a table affordance; the mobile list is for opening objects.
 templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
 	@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
-		<div class="divide-base-200 divide-y">
+		<div id="objects-mobile-list" class="divide-base-200 divide-y">
 			for _, r := range rows {
-				<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:bg-base-200/40 flex items-start gap-3 px-4 py-3 transition-colors">
-					@typeIconTile(r.UI.Icon, r.UI.Color)
-					<div class="min-w-0 flex-1">
-						@objectsObjectMeta(r)
-						<div class="truncate text-sm font-medium">{ r.Label }</div>
-						<div class="mt-1 flex flex-wrap items-center gap-1">
-							if !unified {
-								if r.Status != "" {
-									@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
-										Size:  ui.BadgeSizeXS,
-										Dot:   true,
-										Attrs: templ.Attributes{"data-status": r.Status},
-									})
-								}
-								if r.EmbeddingLabel != "" {
-									@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
-								}
-							}
-							for _, l := range firstLabels(r.Labels, 2) {
-								@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
-							}
-						</div>
-					</div>
-					@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
-				</a>
+				@objectsBrowserMobileRow(r, unified)
 			}
 		</div>
 	}
+}
+
+// objectsBrowserMobileRow is one mobile card. It is its own component so the
+// "Load more" fragment can append cards as well as table rows: the table is
+// hidden on small screens, so paginating only #objects-list would load rows no
+// phone can see.
+templ objectsBrowserMobileRow(r objectsBrowserRowView, unified bool) {
+	<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:bg-base-200/40 flex items-start gap-3 px-4 py-3 transition-colors">
+		@typeIconTile(r.UI.Icon, r.UI.Color)
+		<div class="min-w-0 flex-1">
+			@objectsObjectMeta(r)
+			<div class="truncate text-sm font-medium">{ r.Label }</div>
+			<div class="mt-1 flex flex-wrap items-center gap-1">
+				if !unified {
+					if r.Status != "" {
+						@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeXS,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": r.Status},
+						})
+					}
+					if r.EmbeddingLabel != "" {
+						@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
+					}
+				}
+				for _, l := range firstLabels(r.Labels, 2) {
+					@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+				}
+			</div>
+		</div>
+		@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
+	</a>
 }
 
 // objectsBrowserFooter sits below the table: the sort note on the left and the
@@ -500,6 +528,71 @@ templ objectsBrowserLoadMoreButton(data objectsPageData) {
 	}) {
 		Load more
 	}
+}
+
+// objectsBrowserRowsPartial is the HTMX fragment returned by /objects/partial:
+// the next page's rows (appended to #objects-list), the same page's mobile cards
+// (appended to #objects-mobile-list — the table is hidden on small screens, so
+// paginating only the table would load rows a phone cannot see), and a
+// replacement load-more slot.
+templ objectsBrowserRowsPartial(data objectsPageData) {
+	{{
+		search := data.Query != ""
+		unified := search && data.Mode == "unified"
+		rows := objectsBrowserRows(data)
+	}}
+	for _, r := range rows {
+		@objectsBrowserRow(r, search, unified)
+	}
+	<div id="objects-mobile-list" hx-swap-oob="beforeend">
+		for _, r := range rows {
+			@objectsBrowserMobileRow(r, unified)
+		}
+	</div>
+	<div id="objects-load-more" hx-swap-oob="true">
+		if data.HasMore {
+			@objectsBrowserLoadMoreButton(data)
+		}
+	</div>
+}
+
+// objectsKnowledgeAnswer renders a grounded answer as sanitized markdown using
+// the shared .memory-md prose styles, with the conversation id as a muted
+// caption when the stream reported one. It is the HTMX response the "Ask the
+// graph" dialog swaps into #objects-knowledge-answer.
+templ objectsKnowledgeAnswer(answer, sessionID string) {
+	@components.PanelCard("memory-rise", nil, "p-4") {
+		<div class="mb-2 flex items-center gap-2">
+			@ui.IconSpan("lucide--sparkles", "size-3.5 shrink-0 text-accent")
+			<span class="text-muted-faint text-xs font-medium tracking-wide uppercase">Answer</span>
+		</div>
+		<div class="memory-md text-sm leading-relaxed">
+			@templ.Raw(renderMarkdown(answer))
+		</div>
+		if sessionID != "" {
+			<p class="text-muted-faint mt-3 border-t border-base-content/10 pt-2 font-mono text-[11px]">Session { sessionID }</p>
+		}
+	}
+}
+
+// objectsKnowledgeError renders the inline error state for a failed Q&A.
+templ objectsKnowledgeError(err error) {
+	<div class="border-error/25 bg-error/10 text-error rounded-box flex items-center gap-2 border px-3 py-2 text-sm" role="alert">
+		@ui.IconSpan("lucide--triangle-alert", "size-4 shrink-0")
+		<span>Could not get an answer. Try again in a moment.</span>
+	</div>
+}
+
+// objectsAgentHeader is the agent-scoped objects view's header: a breadcrumb
+// back through the agent, with the provenance-scoped subtitle.
+templ objectsAgentHeader(data objectsPageData) {
+	@detailHeader(
+		crumbsActive(nav.Crumbs("Agents", "/agents", data.AgentName, "/agents/"+url.PathEscape(data.AgentID), "Objects")),
+		"",
+		"Objects",
+		objectsScopeDescription(data.AgentName),
+		detailHeaderOpts{Margin: "mb-6"},
+	)
 }
 
 // objectsBrowserBulkBar is the grouped action bar for the current selection:
@@ -576,7 +669,7 @@ templ objectsBrowserBulkDialogs(data objectsPageData) {
 	{{ action := objectsBulkAction(data) }}
 	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-label-add-dialog", BoxClass: "max-w-md"}) {
 		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
-			@objectsBulkFormFields("label_add")
+			@objectsBulkFormFields(data, "label_add")
 			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
 				Add label
 			}
@@ -599,7 +692,7 @@ templ objectsBrowserBulkDialogs(data objectsPageData) {
 	}
 	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-label-remove-dialog", BoxClass: "max-w-md"}) {
 		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
-			@objectsBulkFormFields("label_remove")
+			@objectsBulkFormFields(data, "label_remove")
 			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
 				Remove label
 			}
@@ -622,7 +715,7 @@ templ objectsBrowserBulkDialogs(data objectsPageData) {
 	}
 	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-status-dialog", BoxClass: "max-w-md"}) {
 		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
-			@objectsBulkFormFields("status")
+			@objectsBulkFormFields(data, "status")
 			@ui.DialogTitle(ui.DialogTitleProps{Size: ui.DialogTitleSizeMD}) {
 				Set status
 			}
@@ -650,7 +743,7 @@ templ objectsBrowserBulkDialogs(data objectsPageData) {
 	}
 	@ui.Dialog(ui.DialogProps{ID: "objects-bulk-delete-dialog", BoxClass: "max-w-md"}) {
 		<form method="post" action={ templ.URL(action) } class="flex flex-col gap-3" { objectsPreviewGuards(data.Preview)... }>
-			@objectsBulkFormFields("delete")
+			@objectsBulkFormFields(data, "delete")
 			<div class="flex items-start gap-3">
 				@ui.IconTile("lucide--trash-2", ui.IconTileProps{Tone: "error"})
 				<div class="min-w-0">
@@ -683,12 +776,19 @@ templ objectsBrowserBulkDialogs(data objectsPageData) {
 }
 
 // objectsBulkFormFields is the per-dialog hidden prefix: the selected ids as one
-// comma-separated value (kept in sync by the Alpine model) plus the action the
-// handler dispatches on. Every bulk dialog carries its own copy so each submits
-// as an independent form.
-templ objectsBulkFormFields(actionValue string) {
+// comma-separated value (kept in sync by the Alpine model), the action the
+// handler dispatches on, the branch the page is filtered to, and the filtered
+// page to return to. Every bulk dialog carries its own copy so each submits as
+// an independent form.
+//
+// `branch` is not decoration: delete resolves the object on that branch, and
+// without it the endpoint removes the MAIN head while the branch-scoped list
+// still shows the object.
+templ objectsBulkFormFields(data objectsPageData, actionValue string) {
 	<input type="hidden" name="ids" :value="sel.join(',')"/>
 	<input type="hidden" name="action" value={ actionValue }/>
+	<input type="hidden" name="branch" value={ data.BranchID }/>
+	<input type="hidden" name="back" value={ objectsBulkBackURL(data) }/>
 }
 
 // objectsBrowserKnowledgeDialog is the "Ask the graph" Q&A, moved off the page

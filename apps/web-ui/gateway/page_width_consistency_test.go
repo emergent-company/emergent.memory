@@ -166,30 +166,46 @@ func firstClassContaining(html, needle string) string {
 	return ""
 }
 
-// TestAgentsAndObjectsSharePageContainer covers the reported bug directly:
-// /agents and /objects must render the same outermost page container class
-// (width + gutter), so the two pages no longer disagree on content width.
-func TestAgentsAndObjectsSharePageContainer(t *testing.T) {
+// objectsContainerClass is the objects browser's container: the same centered
+// gutter as pageContainerClass, but a much wider cap. The page is a data table
+// (selection column, object, status, embeddings, labels, created, chevron) and
+// max-w-6xl forced the object and label columns to truncate first.
+const objectsContainerClass = "mx-auto p-6 lg:p-8 max-w-[100rem]"
+
+// TestObjectsBrowserWidthIsDeliberate pins the one page that deliberately does
+// not use pageContainerClass. The previous rule (agents and objects sharing a
+// container) existed because /objects was accidentally narrower than every other
+// page (max-w-4xl); the table redesign widened it on purpose, so the rule now
+// states the exception instead of pretending the widths match: agents stays at
+// ContainerLG, both objects routes take the wide cap.
+//
+// Both objects routes are checked because they render the same page: the agent
+// objects view must not jump width when opened from /agents.
+func TestObjectsBrowserWidthIsDeliberate(t *testing.T) {
 	agentsHTML := renderHTML(t, AgentsPage(
 		[]AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
 		nil, "", nil,
 	))
-	objectsHTML := renderHTML(t, ObjectsPage(objectsPageData{
-		Objects: []GraphObject{{ID: "o1", Type: "person"}},
-		Types:   []string{"person"},
-	}))
-
-	agentsClass := firstClass(agentsHTML)
-	objectsClass := firstClass(objectsHTML)
-
-	if agentsClass != pageContainerClass {
-		t.Errorf("/agents page container = %q, want %q", agentsClass, pageContainerClass)
+	if got := firstClass(agentsHTML); got != pageContainerClass {
+		t.Errorf("/agents page container = %q, want %q", got, pageContainerClass)
 	}
-	if objectsClass != pageContainerClass {
-		t.Errorf("/objects page container = %q, want %q", objectsClass, pageContainerClass)
+
+	pages := map[string]string{
+		"project": renderHTML(t, ObjectsPage(objectsPageData{
+			Objects: []GraphObject{{ID: "o1", Type: "person"}},
+			Types:   []string{"person"},
+		})),
+		"agent": renderHTML(t, ObjectsPage(objectsPageData{
+			AgentID:   "a1",
+			AgentName: "diane",
+			Objects:   []GraphObject{{ID: "o1", Type: "person"}},
+			Types:     []string{"person"},
+		})),
 	}
-	if agentsClass != objectsClass {
-		t.Errorf("page container width differs: /agents=%q /objects=%q", agentsClass, objectsClass)
+	for name, html := range pages {
+		if got := firstClass(html); got != objectsContainerClass {
+			t.Errorf("/objects (%s) page container = %q, want %q", name, got, objectsContainerClass)
+		}
 	}
 }
 

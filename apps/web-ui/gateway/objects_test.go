@@ -1306,7 +1306,7 @@ func TestRenderObjectsPageStatsUnavailable(t *testing.T) {
 		Objects: []GraphObject{{ID: "o1", Type: "person", Key: "sam-lee"}},
 		Stats:   &objectsStats{TotalErr: errTest, EmbedErr: errTest},
 	}))
-	for _, want := range []string{"—", `title="Unavailable"`} {
+	for _, want := range []string{"—", "unavailable"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("unavailable stats missing %q in:\n%s", want, html)
 		}

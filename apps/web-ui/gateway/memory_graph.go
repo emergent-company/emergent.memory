@@ -78,6 +78,30 @@ type UpdateObjectRequest struct {
 	BranchID      *string        `json:"branch_id,omitempty"`
 }
 
+// BulkUpdateStatusRequest sets one status across many objects
+// (POST /api/graph/objects/bulk-update-status). The server caps IDs at 100 per
+// call, so callers chunk.
+type BulkUpdateStatusRequest struct {
+	IDs    []string `json:"ids"`
+	Status string   `json:"status"`
+}
+
+// BulkUpdateStatusResponse reports the per-object outcome of a bulk status
+// update: Success + Failed is the number of ids sent, and Results carries the
+// reason for each failure.
+type BulkUpdateStatusResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateStatusResult `json:"results"`
+}
+
+// BulkUpdateStatusResult is one object's outcome in a bulk status update.
+type BulkUpdateStatusResult struct {
+	ID      string  `json:"id"`
+	Success bool    `json:"success"`
+	Error   *string `json:"error,omitempty"`
+}
+
 // CreateRelationshipRequest creates a graph relationship (edge).
 type CreateRelationshipRequest struct {
 	Type       string         `json:"type"`
@@ -322,6 +346,36 @@ func (m *MemoryClient) UpdateObject(ctx context.Context, id string, req *UpdateO
 func (m *MemoryClient) CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error) {
 	var out GraphObject
 	if err := m.doH(ctx, http.MethodPost, "/api/graph/objects", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteGraphObject soft-deletes a graph object (DELETE /api/graph/objects/:id).
+// The object's versions stay in branch history, so the delete is restorable from
+// its branch.
+//
+// branchID scopes the delete to that branch: the endpoint resolves the canonical
+// object's HEAD on the named branch and tombstones it there, leaving main
+// untouched. Omitting it deletes the MAIN head, which is why callers acting on a
+// branch-filtered view must pass the branch — otherwise the list still shows the
+// object (it is alive on that branch) while main has lost it.
+func (m *MemoryClient) DeleteGraphObject(ctx context.Context, id, branchID string) error {
+	path := "/api/graph/objects/" + url.PathEscape(id)
+	if branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(branchID)
+	}
+	var out map[string]string
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), &out)
+}
+
+// BulkUpdateStatus sets one status across many objects in one call
+// (POST /api/graph/objects/bulk-update-status). The server accepts at most 100
+// ids per request.
+func (m *MemoryClient) BulkUpdateStatus(ctx context.Context, ids []string, status string) (*BulkUpdateStatusResponse, error) {
+	var out BulkUpdateStatusResponse
+	req := BulkUpdateStatusRequest{IDs: ids, Status: status}
+	if err := m.doH(ctx, http.MethodPost, "/api/graph/objects/bulk-update-status", req, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/url"
+	"strings"
 
 	"github.com/a-h/templ"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -106,6 +107,14 @@ func objectsBulkAction(data objectsPageData) string {
 		return "#"
 	}
 	return "/objects/bulk"
+}
+
+// objectsBulkBackURL is the page a bulk dialog returns to after the mutation:
+// the current view with its filters and order, so the reload lands where the
+// selection was made instead of resetting to the unfiltered list. The cursor is
+// deliberately not carried — the list starts over at the newest page.
+func objectsBulkBackURL(data objectsPageData) string {
+	return strings.TrimSuffix(objectsTargetURL(data)+objectsSortHref(data, data.Order), "?")
 }
 
 // objectsBrowserRowView is one row of the objects table, flattened from either a

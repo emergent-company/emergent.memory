@@ -251,6 +251,13 @@ type fakeMemory struct {
 	createObjectResult         *GraphObject               // returned by CreateObject
 	createObjectErr            error                      // CreateObject failure
 	lastCreateObjectReq        *CreateObjectRequest       // last request passed to CreateObject
+	bulkDeleteErr              error                      // DeleteGraphObject failure
+	deletedObjectIDs           []string                   // ids passed to DeleteGraphObject, in order
+	deletedObjectBranches      []string                   // branch args passed to DeleteGraphObject, in order
+	bulkStatusErr              error                      // BulkUpdateStatus failure
+	bulkStatusResult           *BulkUpdateStatusResponse  // returned by BulkUpdateStatus (nil → Success: len(ids))
+	bulkStatusIDs              []string                   // ids passed to BulkUpdateStatus, in order
+	bulkStatusValue            string                     // status passed to BulkUpdateStatus
 	createRelErr               error                      // CreateRelationship failure
 	lastCreateRelReq           *CreateRelationshipRequest // last request passed to CreateRelationship
 	ftsResults                 []GraphObject              // returned by SearchObjectsFTS
@@ -1406,6 +1413,31 @@ func (f *fakeMemory) CreateObject(ctx context.Context, req *CreateObjectRequest)
 		return f.createObjectResult, nil
 	}
 	return &GraphObject{ID: "new-obj"}, nil
+}
+
+// DeleteGraphObject records the deleted id and the branch it was scoped to;
+// bulkDeleteErr forces a failure.
+func (f *fakeMemory) DeleteGraphObject(ctx context.Context, id, branchID string) error {
+	if f.bulkDeleteErr != nil {
+		return f.bulkDeleteErr
+	}
+	f.deletedObjectIDs = append(f.deletedObjectIDs, id)
+	f.deletedObjectBranches = append(f.deletedObjectBranches, branchID)
+	return nil
+}
+
+// BulkUpdateStatus records the last chunk and status; bulkStatusErr forces a
+// failure, and bulkStatusResult overrides the success/failed counts.
+func (f *fakeMemory) BulkUpdateStatus(ctx context.Context, ids []string, status string) (*BulkUpdateStatusResponse, error) {
+	if f.bulkStatusErr != nil {
+		return nil, f.bulkStatusErr
+	}
+	f.bulkStatusIDs = append(f.bulkStatusIDs, ids...)
+	f.bulkStatusValue = status
+	if f.bulkStatusResult != nil {
+		return f.bulkStatusResult, nil
+	}
+	return &BulkUpdateStatusResponse{Success: len(ids)}, nil
 }
 
 func (f *fakeMemory) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error {

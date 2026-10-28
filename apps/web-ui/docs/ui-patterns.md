@@ -63,7 +63,7 @@ their children must forward into `nav.PageHeading`'s `Actions` slot and templ
 components clear children context before the body runs (`ui.templ:596-600`,
 `ui.templ:651-658`).
 
-**Known divergence — `objectDetailHeader`** (`objects.templ:829`) is the one
+**Known divergence — `objectDetailHeader`** (`objects.templ:647`) is the one
 detail header not built on `detailHeader`. It hand-rolls breadcrumbs + title row
 because it needs a type chip/badges *before* the `h1` and `nav.PageHeading`'s
 `Leading` slot renders above the breadcrumbs, not inline. The **convention** is
@@ -78,6 +78,12 @@ opts over forking another header.
 Canonical mutation shape: `form → POST → 303 → GET with a query flag →
 flashToasts`. Flags are `?updated=1`, `?created=1`, `?deleted=1` (etc.); errors
 ride `?err=<urlencoded>`.
+
+Bulk actions carry the action and its counts instead of a single flag: the objects
+selection bar redirects with
+`?bulk=<label_add|label_remove|status|delete>&bulk_n=<applied>&bulk_f=<failed>`,
+and `objectsBulkFlash` (`objects_bulk.go`) builds the toast, so a partial failure
+reports what did change instead of failing the whole request.
 
 **Helpers** (all in `ui.go` unless noted):
 
@@ -181,9 +187,10 @@ Legend: L0 = go-daisy primitive, L3 = page-local helper.
 | Toasts | `ui.ToastQueueWithProps` (`ui.templ:80`) + `flashToast` (`ui.go:163`) | L0 | Alpine queue; add/dismiss/countdown; `error` toasts are persistent (`duration 0`) with a close button, others auto-dismiss + click-to-dismiss |
 | Command palette | `ui.CommandPalette` (`spotlight.templ:48`, go-daisy `command-palette_templ.go:49`) | L0 | `⌘K` modal; rows htmx-nav + uncheck `#spotlight-toggle` |
 | Popover (row action menus) | `ui.Popover` (go-daisy `popover_templ.go:75`); `org_context.templ:80,445-457` | L0 | `window.goDaisy.popover.closeAll()` runtime |
-| CSS-only dropdowns | `ui.Dropdown` (go-daisy `dropdown_templ.go:31`); project switcher `auth_ui.templ:180`, account menu `account_menu.templ:13`, search-mode split button `objects.templ:201`, objects actor picker `objects.templ:397` | L0 | focus/focus-within; no JS, no truthful `aria-expanded` |
-| Search-mode split button | `objects.templ:182-230` + `objectsSearchModes` (`objects.go:448`) | L3 | `role="menuitemradio"` + `aria-checked`; submits `name="mode"` |
-| Actor picker (objects filter) | `objectsActorFilter` (`objects.templ:397`), groups `objectsActorGroup` (`objects.templ:461`), rows `objectsActorOptionItem` (`objects.templ:472`), mark `objectsActorAvatar` | L3 | `ui.Dropdown` menu; `role="group"` per Users/Agents, `role="separator"` before them; each row submits `name="actor"` as `<type>:<id>` so the pair cannot desync; avatars are decorative (`aria-hidden`) |
+| CSS-only dropdowns | `ui.Dropdown` (go-daisy `dropdown_templ.go:31`); project switcher `auth_ui.templ:180`, account menu `account_menu.templ:13`, search-mode split button `objects.templ:34`, objects actor picker `objects.templ:225` | L0 | focus/focus-within; no JS, no truthful `aria-expanded` |
+| Search-mode split button | `objects.templ:34-100` + `objectsSearchModes` (`objects.go:665`) | L3 | `role="menuitemradio"` + `aria-checked`; submits `name="mode"` |
+| Actor picker (objects filter) | `objectsActorFilter` (`objects.templ:225`), groups `objectsActorGroup` (`objects.templ:289`), rows `objectsActorOptionItem` (`objects.templ:300`), mark `objectsActorAvatar` (`objects.templ:327`) | L3 | `ui.Dropdown` menu; `role="group"` per Users/Agents, `role="separator"` before them; each row submits `name="actor"` as `<type>:<id>` so the pair cannot desync; avatars are decorative (`aria-hidden`) |
+| Objects bulk selection | `objectsBrowserBulkBar` (`objects_browser.templ:602`) + `objectsBrowserBulkDialogs` (`objects_browser.templ:668`), model `objectsBrowserSelectionJS` (`objects_browser.go:19`) | L3 | Alpine `sel` array on the page root; row checkboxes carry no `name`; each dialog owns its own `<form>` and submits the selection as one CSV `ids` to `POST /objects/bulk` |
 | autogrow + char-count | `app.js:488-567` (`data-autogrow`, `data-char-counter`) | vanilla `data-*` | delegated on `document`, re-run on `htmx:after:swap` |
 | Schema property rows | `app.js:591-614` (`data-add-property` / `data-remove-property`) | vanilla `data-*` | clones a `<template>` row |
 | Generic dialog open/close | `app.js:573-589` (`data-dialog-open` / `data-dialog-close`) | vanilla `data-*` | `showModal()` / `close()` |

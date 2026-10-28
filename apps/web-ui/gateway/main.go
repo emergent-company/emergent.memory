@@ -423,6 +423,10 @@ func main() {
 	e.GET("/objects/search", s.uiObjectSearch)
 	e.GET("/objects/new", s.uiObjectNew)
 	e.POST("/objects/knowledge", s.uiObjectsKnowledge)
+	// The selection bar's bulk actions (label add/remove, status, delete) share one
+	// endpoint and discriminate on the `action` field. Registered before the
+	// /objects/:id routes so the static segment wins over the id pattern.
+	e.POST("/objects/bulk", s.uiObjectsBulk)
 	e.GET("/objects/:id", s.uiObject)
 	e.GET("/objects/:id/preview", s.uiObjectPreviewPartial)
 	e.GET("/objects/:id/history", s.uiObjectHistoryPartial)

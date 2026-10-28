@@ -15,7 +15,7 @@ import (
 // selection state, and four self-contained dialog forms that each submit the
 // selection once.
 func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 
 	for _, want := range []string{
 		`data-testid="objects-table"`,
@@ -106,7 +106,7 @@ func TestObjectsBrowserTableRendersSelectionSurface(t *testing.T) {
 	// …and the live page keeps submitting for real.
 	live := objectsBrowserSampleData("")
 	live.Preview = false
-	liveHTML := renderHTML(t, ObjectsBrowserPage(live))
+	liveHTML := renderHTML(t, ObjectsPage(live))
 	if strings.Contains(liveHTML, `onsubmit="return false"`) {
 		t.Error("live page must not carry preview submit guards")
 	}
@@ -136,7 +136,7 @@ func formBlock(t *testing.T, html, id string) string {
 // validation inspected the closed dialogs too, so the empty required label and
 // status fields blocked Delete.
 func TestObjectsBrowserBulkDialogsValidateIndependently(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 
 	deleteBlock := dialogBlock(t, html, "objects-bulk-delete-dialog")
 	if strings.Contains(deleteBlock, "required") {
@@ -183,7 +183,7 @@ func dialogBlock(t *testing.T, html, id string) string {
 // around the preview cannot reach a backend.
 func TestObjectsBrowserPreviewIsInert(t *testing.T) {
 	data := objectsBrowserSampleData("")
-	html := renderHTML(t, ObjectsBrowserPage(data))
+	html := renderHTML(t, ObjectsPage(data))
 
 	if !data.Preview {
 		t.Fatal("sample data must set Preview")
@@ -202,7 +202,7 @@ func TestObjectsBrowserPreviewIsInert(t *testing.T) {
 	// The same components keep their live wiring outside preview mode.
 	live := objectsBrowserSampleData("")
 	live.Preview = false
-	liveHTML := renderHTML(t, ObjectsBrowserPage(live))
+	liveHTML := renderHTML(t, ObjectsPage(live))
 	for _, want := range []string{
 		`hx-get="/objects/partial`,
 		`hx-post="/objects/knowledge"`,
@@ -218,7 +218,7 @@ func TestObjectsBrowserPreviewIsInert(t *testing.T) {
 // set: unified search hits carry no status, embedding, or created_at, so the
 // table drops those columns instead of rendering a column of dashes.
 func TestObjectsBrowserUnifiedDropsUnavailableColumns(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSearchSampleData()))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSearchSampleData()))
 
 	if !strings.Contains(html, `uppercase">Score<`) {
 		t.Error("search table must render the Score column")
@@ -237,7 +237,7 @@ func TestObjectsBrowserUnifiedDropsUnavailableColumns(t *testing.T) {
 // grouped digits instead of three stat cards, and the unavailable state as an
 // em dash rather than a number.
 func TestObjectsBrowserStatsStrip(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 	if !strings.Contains(html, ">1,284<") {
 		t.Errorf("stats strip must group digits, got:\n%s", html)
 	}
@@ -247,7 +247,7 @@ func TestObjectsBrowserStatsStrip(t *testing.T) {
 		TotalErr: errTestUnavailable{},
 		EmbedErr: errTestUnavailable{},
 	}
-	html = renderHTML(t, ObjectsBrowserPage(unavailable))
+	html = renderHTML(t, ObjectsPage(unavailable))
 	if strings.Count(html, `>—</div>`) < 3 {
 		t.Errorf("unavailable stats must render three em dashes, got:\n%s", html)
 	}
@@ -320,7 +320,7 @@ func TestUIComponentPagePreview(t *testing.T) {
 // a narrowing.
 func TestObjectsBrowserSortHeader(t *testing.T) {
 	data := objectsBrowserSampleData("")
-	html := renderHTML(t, ObjectsBrowserPage(data))
+	html := renderHTML(t, ObjectsPage(data))
 
 	if !strings.Contains(html, `aria-sort="descending"`) {
 		t.Error("the default browse order is newest-first, so Created must render aria-sort=descending")
@@ -346,7 +346,7 @@ func TestObjectsBrowserSortHeader(t *testing.T) {
 		t.Error("indicator must precede the label on a right-aligned column")
 	}
 
-	ascHTML := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("asc")))
+	ascHTML := renderHTML(t, ObjectsPage(objectsBrowserSampleData("asc")))
 	if !strings.Contains(ascHTML, `aria-sort="ascending"`) {
 		t.Error("ascending order must render aria-sort=ascending")
 	}
@@ -403,7 +403,7 @@ func TestObjectsBrowserSampleDataHonoursOrder(t *testing.T) {
 func TestObjectsFiltersApplyOnChange(t *testing.T) {
 	live := objectsBrowserSampleData("asc")
 	live.Preview = false
-	html := renderHTML(t, ObjectsBrowserPage(live))
+	html := renderHTML(t, ObjectsPage(live))
 	form := formBlock(t, html, "objects-filters-form")
 
 	// No Apply button: the only submit controls are the actor menu's options,
@@ -426,7 +426,7 @@ func TestObjectsFiltersApplyOnChange(t *testing.T) {
 	// The gallery preview keeps every control live but must not navigate its
 	// iframe: form.submit() bypasses the preview's onsubmit guard, so the
 	// handler is not rendered there at all.
-	previewForm := formBlock(t, renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("asc"))), "objects-filters-form")
+	previewForm := formBlock(t, renderHTML(t, ObjectsPage(objectsBrowserSampleData("asc"))), "objects-filters-form")
 	if strings.Contains(previewForm, `onchange="this.form.submit()"`) {
 		t.Error("preview filters must not auto-submit; a submit would navigate the iframe")
 	}
@@ -439,7 +439,7 @@ func TestObjectsFiltersApplyOnChange(t *testing.T) {
 // control is named by its own legend instead of a shared "Filter" caption, so
 // the bar explains which control narrows what.
 func TestObjectsBrowserFilterControlsAreLabelled(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 	form := formBlock(t, html, "objects-filters-form")
 
 	for _, legend := range []string{"Branch", "Type", "Provenance", "Actor"} {
@@ -462,7 +462,7 @@ func TestObjectsBrowserFilterControlsAreLabelled(t *testing.T) {
 // grouped under Users/Agents with their avatars, "Any actor" set apart by a
 // divider, and every row a submit button carrying the whole (type, id) pair.
 func TestObjectsActorFilterListsIdentities(t *testing.T) {
-	html := renderHTML(t, ObjectsBrowserPage(objectsBrowserSampleData("")))
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
 	picker := actorFilterBlock(t, html)
 
 	// The closed control shows the active actor's identity, not just a key.
@@ -516,7 +516,7 @@ func TestObjectsActorFilterListsIdentities(t *testing.T) {
 	// An actor that is not in the loaded lists still shows as the active filter.
 	unknown := objectsBrowserSampleData("")
 	unknown.ActorOptions = nil
-	if got := renderHTML(t, ObjectsBrowserPage(unknown)); !strings.Contains(got, "Agent · a-1") {
+	if got := renderHTML(t, ObjectsPage(unknown)); !strings.Contains(got, "Agent · a-1") {
 		t.Error("an unknown active actor must still render its type and short id")
 	}
 }
@@ -566,7 +566,7 @@ func TestObjectsBrowserSearchHeaderIsNotSortable(t *testing.T) {
 	}
 	data.Objects = nil
 
-	html := renderHTML(t, ObjectsBrowserPage(data))
+	html := renderHTML(t, ObjectsPage(data))
 	if strings.Contains(html, "aria-sort") {
 		t.Error("search results must not render a sortable header")
 	}
@@ -583,5 +583,92 @@ func TestObjectsPartialURLKeepsSort(t *testing.T) {
 	}
 	if got := objectsPartialURL(objectsBrowserSampleData("")); strings.Contains(got, "order=") {
 		t.Errorf("partial URL must not carry the default order, got %q", got)
+	}
+}
+
+// TestObjectsPageAgentScopeOmitsProjectSurfaces pins the agent-scoped view: it
+// reuses the same table and filters, but the project-wide surfaces (global
+// search, the stats strip, the Q&A dialog) are absent because the server's
+// search endpoints cannot be provenance-scoped to one agent.
+func TestObjectsPageAgentScopeOmitsProjectSurfaces(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		AgentID:   "a1",
+		AgentName: "diane",
+		Objects:   []GraphObject{{ID: "o1", Type: "person", Key: "Sam"}},
+		Types:     []string{"person"},
+		Stats:     &objectsStats{TotalObjects: 3},
+	}))
+
+	for _, unwanted := range []string{
+		`id="objects-search-form"`,
+		`id="objects-stats"`,
+		`id="objects-knowledge-answer"`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("agent-scoped view must omit %q", unwanted)
+		}
+	}
+	for _, want := range []string{
+		`id="objects-filters-form"`,
+		`id="objects-table"`,
+		`href="/agents/a1"`,
+		`name="actor_type"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("agent-scoped view missing %q", want)
+		}
+	}
+}
+
+// TestObjectsPageBulkFormsCarryReturnPath pins the redirect target each bulk
+// dialog posts: the filtered page the selection was made on, so a bulk action
+// reloads the same view instead of resetting to the unfiltered list.
+func TestObjectsPageBulkFormsCarryReturnPath(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsPageData{
+		TypeFilter: "task",
+		Order:      "asc",
+		BranchID:   "b-objs",
+		Objects:    []GraphObject{{ID: "o1", Type: "task", Key: "One"}},
+		Types:      []string{"task"},
+	}))
+
+	if got := strings.Count(html, `name="back"`); got != 4 {
+		t.Fatalf("back inputs = %d, want one per bulk dialog (4)", got)
+	}
+	if !strings.Contains(html, `value="/objects?branch=b-objs&amp;order=asc&amp;type=task"`) {
+		t.Errorf("back input must carry the current filters, got:\n%s", html)
+	}
+	// Delete resolves the object on the page's branch; without this field it
+	// would tombstone the main head and leave the object in the branch view. The
+	// filter forms carry a `branch` hidden input too, so assert inside each dialog.
+	for _, id := range []string{
+		"objects-bulk-label-add-dialog",
+		"objects-bulk-label-remove-dialog",
+		"objects-bulk-status-dialog",
+		"objects-bulk-delete-dialog",
+	} {
+		if block := dialogBlock(t, html, id); !strings.Contains(block, `name="branch" value="b-objs"`) {
+			t.Errorf("%s must carry the page's branch", id)
+		}
+	}
+}
+
+// TestObjectsBrowserRowsPartialAppendsBothLists pins the HTMX fragment: the
+// table is hidden on small screens, so a page of results has to append table
+// rows AND mobile cards, or a phone's "Load more" would load invisible rows.
+func TestObjectsBrowserRowsPartialAppendsBothLists(t *testing.T) {
+	data := objectsBrowserSampleData("")
+	data.Preview = false
+	html := renderHTML(t, objectsBrowserRowsPartial(data))
+
+	for _, want := range []string{
+		`<tr`,
+		`id="objects-mobile-list" hx-swap-oob="beforeend"`,
+		`id="objects-load-more" hx-swap-oob="true"`,
+		`hx-get="/objects/partial`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rows partial missing %q", want)
+		}
 	}
 }

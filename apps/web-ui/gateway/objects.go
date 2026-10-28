@@ -80,6 +80,11 @@ type objectsPageData struct {
 	// backend form action) so the sample page stays inert. Always false in the
 	// real handlers.
 	Preview bool
+
+	// FlashMsg/FlashErr carry post-redirect-get feedback (a bulk action's result,
+	// or its failure) into the page's toasts.
+	FlashMsg string
+	FlashErr error
 }
 
 // listParams builds the graph-object list query for this page's active filters
@@ -396,6 +401,8 @@ func (s *Server) uiObjects(c echo.Context) error {
 		ActorID:    actorID,
 		Provenance: effectiveObjectProvenance(c.QueryParam("provenance"), actorType),
 		Order:      normalizeObjectOrder(c.QueryParam("order")),
+		FlashMsg:   objectsBulkFlash(c),
+		FlashErr:   flashError(c),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -478,6 +485,8 @@ func (s *Server) uiAgentObjects(c echo.Context) error {
 		TypeFilter: c.QueryParam("type"),
 		BranchID:   c.QueryParam("branch"),
 		Order:      normalizeObjectOrder(c.QueryParam("order")),
+		FlashMsg:   objectsBulkFlash(c),
+		FlashErr:   flashError(c),
 	}
 	s.loadObjectFilterOptions(ctx, &data)
 
@@ -505,7 +514,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 
 	// Search mode has no cursor pagination (it renders the top 25 only).
 	if query != "" {
-		renderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(objectsPageData{}))
+		renderPartial(c.Response().Writer, c.Request(), objectsBrowserRowsPartial(objectsPageData{}))
 		return nil
 	}
 
@@ -529,7 +538,7 @@ func (s *Server) uiObjectsPartial(c echo.Context) error {
 		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 	}
 
-	renderPartial(c.Response().Writer, c.Request(), objectsRowsPartial(data))
+	renderPartial(c.Response().Writer, c.Request(), objectsBrowserRowsPartial(data))
 	return nil
 }
 
@@ -612,7 +621,7 @@ func (s *Server) uiObjectsStatsPartial(c echo.Context) error {
 		stats.PendingEmbed = progress.Objects.Pending
 		stats.FailedEmbed = progress.Objects.Failed
 	}
-	renderPartial(c.Response().Writer, c.Request(), objectsStatsSection(stats))
+	renderPartial(c.Response().Writer, c.Request(), objectsBrowserStats(objectsPageData{Stats: &stats}))
 	return nil
 }
 
