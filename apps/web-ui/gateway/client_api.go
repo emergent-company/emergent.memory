@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -26,6 +27,7 @@ func (s *Server) projectConfig(c echo.Context) error {
 	ctx := c.Request().Context()
 	ps, err := s.memory.GetProjectSetting(ctx, voiceCategory, voiceKeyEnabled)
 	if err != nil {
+		log.Printf("project config: memory service unavailable: %v", err)
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}
@@ -62,6 +64,7 @@ func (s *Server) listSessions(c echo.Context) error {
 	ctx := c.Request().Context()
 	list, err := s.memory.ListConversations(ctx, false)
 	if err != nil {
+		log.Printf("session list: memory service unavailable: %v", err)
 		captureError(err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "memory service unavailable"})
 	}

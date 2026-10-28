@@ -35,6 +35,14 @@ func captureError(err error) {
 	if err == nil {
 		return
 	}
+	// A pure 502 is an upstream deploy/upgrade window (memory or the MCP
+	// registry restarting), not a gateway defect. Handlers commonly map every
+	// memory failure to a 502 response, so suppress it here rather than
+	// relying on each call site to remember. A joined error with a non-502
+	// failure is still captured.
+	if onlyBadGateway(err) {
+		return
+	}
 	// Context cancellation is the expected signal when a request is aborted
 	// (client navigated away, server shutting down, poller torn down). It is
 	// not a defect and must not be reported to Sentry as one.
@@ -83,7 +91,10 @@ func normalizePathTemplate(path string) string {
 //
 //   - status 0 (transport error) is captured at error level;
 //   - 401/403 (bad/missing credentials) at warning level;
-//   - any 5xx at error level;
+//   - 502 is an upstream deploy/upgrade window (memory or the MCP registry
+//     restarting), not a gateway defect: not captured (the 502 response and
+//     request log remain);
+//   - every other 5xx at error level;
 //   - every other 4xx is a client input/config error, not a gateway defect,
 //     and is not captured (the caller still logs it).
 func memoryErrorDisposition(status int) (capture bool, level sentry.Level) {
@@ -92,6 +103,8 @@ func memoryErrorDisposition(status int) (capture bool, level sentry.Level) {
 		return true, sentry.LevelError
 	case status == http.StatusUnauthorized, status == http.StatusForbidden:
 		return true, sentry.LevelWarning
+	case status == http.StatusBadGateway:
+		return false, sentry.LevelInfo
 	case status >= 500:
 		return true, sentry.LevelError
 	default:
@@ -119,7 +132,9 @@ func shouldCaptureMemoryError(ctx context.Context, status int) bool {
 //   - 4xx other than 401/403 are client data/config errors, not gateway
 //     defects: callers log them, but they are NOT captured.
 //   - 401/403 are captured at warning level (usually a bad key or config).
-//   - 5xx and transport errors (status 0) are captured at error level.
+//   - 5xx other than 502, plus transport errors (status 0), are captured at
+//     error level; 502 is an upstream deploy/upgrade window and is not
+//     captured.
 //
 // Captured events carry a stable fingerprint keyed by the normalized path
 // template, so the same failure across many entities/instances groups into a
@@ -155,6 +170,33 @@ func captureMemoryError(method, path string, status int, err error) {
 	})
 }
 
+// onlyBadGateway reports whether err is made up exclusively of 502 failures.
+// A joined error with any non-502 failure is still reportable; a pure 502 is an
+// upstream restart/upgrade window and should not open an issue.
+func onlyBadGateway(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		any := false
+		for _, child := range joined.Unwrap() {
+			if child == nil {
+				continue
+			}
+			any = true
+			if !onlyBadGateway(child) {
+				return false
+			}
+		}
+		return any
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		return onlyBadGateway(unwrapped)
+	}
+	var httpErr *memoryHTTPError
+	return errors.As(err, &httpErr) && httpErr.Status == http.StatusBadGateway
+}
+
 // capturePollFailure reports a sustained background conversation-poll failure
 // to Sentry. The 1.5s poll loop is self-healing, so callers rate-limit this to
 // the start of a failure streak and then at most once per 5 minutes. It is
@@ -163,6 +205,12 @@ func captureMemoryError(method, path string, status int, err error) {
 // into one issue.
 func capturePollFailure(err error) {
 	if err == nil {
+		return
+	}
+	// A 502-only failure is an upstream restart/upgrade window. The poll loop
+	// retries, and a sustained failure that includes a non-502 error is still
+	// reported on a later tick, so the upgrade itself should not open an issue.
+	if onlyBadGateway(err) {
 		return
 	}
 	hub := sentry.CurrentHub()
@@ -197,15 +245,18 @@ func sentryRecoverMiddleware() echo.MiddlewareFunc {
 }
 
 // sentryErrorMiddleware reports handler errors to Sentry: every non-HTTP
-// error and every HTTP error with status >= 500. The error is returned
-// unchanged so existing client-facing behavior is preserved.
+// error and every HTTP error with status >= 500, except 502. A 502 is what an
+// upstream restart/upgrade looks like from here (the memory server or the MCP
+// registry), not a gateway defect, so it is returned to the client and left to
+// the request log rather than captured. The error is returned unchanged so
+// existing client-facing behavior is preserved.
 func sentryErrorMiddleware() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			err := next(c)
 			if err != nil {
 				if httpErr, ok := err.(*echo.HTTPError); ok {
-					if httpErr.Code >= 500 {
+					if httpErr.Code >= 500 && httpErr.Code != http.StatusBadGateway {
 						captureError(err)
 					}
 				} else {

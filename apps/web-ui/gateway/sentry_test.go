@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/getsentry/sentry-go"
+	"github.com/labstack/echo/v4"
 )
 
 func TestNormalizePathTemplate(t *testing.T) {
@@ -96,7 +100,7 @@ func TestMemoryErrorDisposition(t *testing.T) {
 		{status: http.StatusUnauthorized, wantCapture: true, wantLevel: sentry.LevelWarning},
 		{status: http.StatusForbidden, wantCapture: true, wantLevel: sentry.LevelWarning},
 		{status: http.StatusInternalServerError, wantCapture: true, wantLevel: sentry.LevelError},
-		{status: http.StatusBadGateway, wantCapture: true, wantLevel: sentry.LevelError},
+		{status: http.StatusBadGateway, wantCapture: false, wantLevel: sentry.LevelInfo},
 		{status: http.StatusServiceUnavailable, wantCapture: true, wantLevel: sentry.LevelError},
 		{status: http.StatusGatewayTimeout, wantCapture: true, wantLevel: sentry.LevelError},
 	}
@@ -145,7 +149,8 @@ func TestShouldCaptureMemoryError(t *testing.T) {
 		{name: "foreground 401", ctx: context.Background(), status: http.StatusUnauthorized, want: true},
 		{name: "background 401", ctx: bg, status: http.StatusUnauthorized, want: false},
 		{name: "background 403", ctx: bg, status: http.StatusForbidden, want: true},
-		{name: "background 5xx", ctx: bg, status: http.StatusBadGateway, want: true},
+		{name: "background 502", ctx: bg, status: http.StatusBadGateway, want: false},
+		{name: "background 5xx", ctx: bg, status: http.StatusServiceUnavailable, want: true},
 		{name: "background 4xx", ctx: bg, status: http.StatusBadRequest, want: false},
 	}
 	for _, tt := range tests {
@@ -154,5 +159,133 @@ func TestShouldCaptureMemoryError(t *testing.T) {
 				t.Fatalf("shouldCaptureMemoryError(%s, %d) = %v, want %v", tt.name, tt.status, got, tt.want)
 			}
 		})
+	}
+}
+
+// recordingTransport captures Sentry events in-process so policy tests do not
+// need a network or a DSN-backed project.
+type recordingTransport struct {
+	mu     sync.Mutex
+	events []*sentry.Event
+}
+
+func (t *recordingTransport) Flush(time.Duration) bool              { return true }
+func (t *recordingTransport) FlushWithContext(context.Context) bool { return true }
+func (t *recordingTransport) Configure(sentry.ClientOptions)        {}
+func (t *recordingTransport) Close()                                {}
+func (t *recordingTransport) SendEvent(e *sentry.Event) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.events = append(t.events, e)
+}
+func (t *recordingTransport) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.events)
+}
+
+// bindRecordingSentry binds an in-process Sentry client to the global hub for
+// the duration of the test and returns its transport.
+func bindRecordingSentry(t *testing.T) *recordingTransport {
+	t.Helper()
+	transport := &recordingTransport{}
+	client, err := sentry.NewClient(sentry.ClientOptions{
+		Dsn:       "https://public@example.com/1",
+		Transport: transport,
+	})
+	if err != nil {
+		t.Fatalf("sentry.NewClient: %v", err)
+	}
+	prev := sentry.CurrentHub().Client()
+	sentry.CurrentHub().BindClient(client)
+	t.Cleanup(func() { sentry.CurrentHub().BindClient(prev) })
+	return transport
+}
+
+// TestSentryErrorMiddlewareSkipsBadGateway guards the 502 policy: a 502 is an
+// upstream restart/upgrade window (memory server or MCP registry), so it is
+// returned to the client and left to the request log rather than captured. A
+// real 500 is still captured.
+func TestSentryErrorMiddlewareSkipsBadGateway(t *testing.T) {
+	transport := bindRecordingSentry(t)
+
+	call := func(status int) {
+		e := echo.New()
+		c := e.NewContext(httptest.NewRequest(http.MethodGet, "/", nil), httptest.NewRecorder())
+		h := sentryErrorMiddleware()(func(echo.Context) error {
+			return echo.NewHTTPError(status, "upstream")
+		})
+		if err := h(c); err == nil {
+			t.Fatalf("status %d: middleware swallowed the handler error", status)
+		}
+	}
+
+	call(http.StatusBadGateway)
+	if got := transport.count(); got != 0 {
+		t.Fatalf("502 must not be captured, got %d events", got)
+	}
+	call(http.StatusInternalServerError)
+	if got := transport.count(); got != 1 {
+		t.Fatalf("500 must be captured, got %d events", got)
+	}
+}
+
+// TestCapturePollFailureSkipsBadGateway guards the same 502 policy for the
+// sustained-poll reporter: an upgrade must not open an issue, while a real
+// sustained upstream failure is still reported.
+func TestCapturePollFailureSkipsBadGateway(t *testing.T) {
+	transport := bindRecordingSentry(t)
+
+	capturePollFailure(&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"})
+	if got := transport.count(); got != 0 {
+		t.Fatalf("502 must not be captured, got %d events", got)
+	}
+	capturePollFailure(&memoryHTTPError{Status: http.StatusServiceUnavailable, Message: "upstream"})
+	if got := transport.count(); got != 1 {
+		t.Fatalf("503 must be captured, got %d events", got)
+	}
+
+	// A joined error that includes a real failure is still reported.
+	capturePollFailure(errors.Join(
+		&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"},
+		&memoryHTTPError{Status: http.StatusServiceUnavailable, Message: "upstream"},
+	))
+	if got := transport.count(); got != 2 {
+		t.Fatalf("joined 502+503 must be captured, got %d events", got)
+	}
+	// A pure-502 joined error is still just an upgrade window.
+	capturePollFailure(errors.Join(
+		&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"},
+		&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"},
+	))
+	if got := transport.count(); got != 2 {
+		t.Fatalf("joined 502+502 must not be captured, got %d events", got)
+	}
+}
+
+// TestCaptureErrorSkipsBadGateway guards the global policy: captureError drops
+// a pure upstream 502, but still reports 503, transport failures, and a joined
+// error that contains a non-502 failure.
+func TestCaptureErrorSkipsBadGateway(t *testing.T) {
+	transport := bindRecordingSentry(t)
+
+	captureError(&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"})
+	if got := transport.count(); got != 0 {
+		t.Fatalf("502 must not be captured, got %d events", got)
+	}
+	captureError(&memoryHTTPError{Status: http.StatusServiceUnavailable, Message: "upstream"})
+	if got := transport.count(); got != 1 {
+		t.Fatalf("503 must be captured, got %d events", got)
+	}
+	captureError(errors.New("dial tcp: connection refused"))
+	if got := transport.count(); got != 2 {
+		t.Fatalf("transport error must be captured, got %d events", got)
+	}
+	captureError(errors.Join(
+		&memoryHTTPError{Status: http.StatusBadGateway, Message: "upstream"},
+		&memoryHTTPError{Status: http.StatusServiceUnavailable, Message: "upstream"},
+	))
+	if got := transport.count(); got != 3 {
+		t.Fatalf("joined 502+503 must be captured, got %d events", got)
 	}
 }
