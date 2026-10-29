@@ -2417,6 +2417,61 @@
           }
         }
       }
+    },
+    "sessions.detail.result.raw.show": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show raw JSON"
+          }
+        }
+      }
+    },
+    "sessions.detail.result.raw.hide": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide raw JSON"
+          }
+        }
+      }
+    },
+    "sessions.detail.result.more %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "…and %lld more"
+          }
+        }
+      }
+    },
+    "sessions.detail.result.truncated %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "…%lld more lines"
+          }
+        }
+      }
+    },
+    "sessions.detail.result.characters %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "…%lld more characters"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

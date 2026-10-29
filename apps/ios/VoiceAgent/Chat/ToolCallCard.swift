@@ -18,6 +18,10 @@ struct ToolCallInfo: Identifiable, Equatable {
     var startedAt: Date?
     /// How long the call ran, once its result settled. Nil while running.
     var duration: TimeInterval?
+    /// What the result says, in readable form, parsed once when the call is
+    /// built — never while the chat scrolls. Nil for a running call, an empty
+    /// result, or a payload with no shape worth reading.
+    let presentation: ToolResultPresentation?
 
     init(
         id: String,
@@ -37,6 +41,7 @@ struct ToolCallInfo: Identifiable, Equatable {
         self.isRunning = isRunning
         self.startedAt = startedAt
         self.duration = duration
+        presentation = ToolResultPresentation.parse(result)
     }
 
     /// The category that decides this row's verb and icon.
@@ -164,8 +169,8 @@ struct ToolCallRow: View {
                     if let arguments = tool.arguments, !arguments.isEmpty {
                         detailBlock("sessions.detail.arguments", text: arguments)
                     }
-                    if let result = tool.result, !result.isEmpty {
-                        detailBlock("sessions.detail.result", text: result)
+                    if let presentation = tool.presentation {
+                        ToolResultBody(presentation: presentation)
                     }
                 }
                 .padding(.leading, 4 * .grid)

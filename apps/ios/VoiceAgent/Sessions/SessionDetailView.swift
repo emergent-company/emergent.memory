@@ -14,6 +14,12 @@ struct SessionDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var store = SessionDetailStore()
 
+    /// The flattened timeline, built once when a load finishes. Hoisting it out
+    /// of the view body is what keeps a settled step's readable result derived
+    /// once: a computed property would re-parse every row the stack
+    /// materialises while scrolling.
+    @State private var items: [TimelineItem] = []
+
     var body: some View {
         VStack(spacing: 0) {
             ScreenHeader(
@@ -33,7 +39,7 @@ struct SessionDetailView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationBarBackButtonHidden(true)
         #endif
-            .task(id: "session-detail-load") { await store.load(room: room) }
+            .task(id: "session-detail-load") { await load() }
     }
 
     // MARK: - Content
@@ -58,10 +64,16 @@ struct SessionDetailView: View {
 
     // MARK: - Timeline
 
+    private func load() async {
+        await store.load(room: room)
+        items = Self.timelineItems(from: store.records)
+    }
+
     /// Chronological items: user/assistant turn groups and tool-call records.
-    private var items: [TimelineItem] {
+    /// Runs once per load, so each tool result is parsed once, not per scroll.
+    private static func timelineItems(from records: [SessionRecord]) -> [TimelineItem] {
         var result: [TimelineItem] = []
-        for record in store.records {
+        for record in records {
             switch record.kind {
             case "turn":
                 guard let role = record.role, let text = record.text, !text.isEmpty else { continue }
@@ -71,8 +83,9 @@ struct SessionDetailView: View {
                     result.append(.turn(role: role, text: text))
                 }
             case "tools_executed":
-                if record.calls?.isEmpty == false || record.outputs?.isEmpty == false {
-                    result.append(.tools(record))
+                let tools = record.toolCallDisplay
+                if !tools.isEmpty {
+                    result.append(.tools(tools: tools, isError: record.isError == true))
                 }
             default:
                 continue
@@ -88,21 +101,21 @@ struct SessionDetailView: View {
                     switch item {
                     case let .turn(role, text):
                         TurnBubble(role: role, text: text)
-                    case let .tools(record):
-                        ToolCallsCard(tools: record.toolCallDisplay, isError: record.isError == true)
+                    case let .tools(tools, isError):
+                        ToolCallsCard(tools: tools, isError: isError)
                     }
                 }
             }
             .padding(4 * .grid)
         }
-        .refreshable { await store.load(room: room) }
+        .refreshable { await load() }
     }
 
     // MARK: - Timeline items
 
     private enum TimelineItem {
         case turn(role: String, text: String)
-        case tools(SessionRecord)
+        case tools(tools: [ToolCallInfo], isError: Bool)
     }
 }
 
