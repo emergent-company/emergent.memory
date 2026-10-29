@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,8 +61,9 @@ func TestBlueprintMultiAgent_Install(t *testing.T) {
 	t.Cleanup(func() { deleteProjectViaExec(t, home, projectID, projectName) })
 
 	rl.Section("Step 3 — Apply blueprint")
-	out := mustRunCLIInDirWithHome(t, "", home, "blueprints", blueprintURL, "--project", projectName)
-	rl.CLI("memory blueprints "+blueprintURL+" --project "+projectName, out)
+	blueprintDir := framework.BlueprintFixtureDir(t, "workspace-memory-blueprint")
+	out := mustRunCLIInDirWithHome(t, "", home, "blueprints", blueprintDir, "--project", projectName)
+	rl.CLI("memory blueprints "+blueprintDir+" --project "+projectName, out)
 
 	rl.Section("Step 4 — Assert expected resources")
 	expectedItems := []string{

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
 // TestBlueprintProjectInfo_Install verifies that when a blueprint directory
@@ -18,7 +20,8 @@ import (
 // Steps:
 //  1. Authenticate against the test server.
 //  2. Create a dedicated ephemeral project.
-//  3. Run `memory blueprints /root/files-memory-blueprint --project <name>`.
+//  3. Run `memory blueprints <MEMORY_TEST_BLUEPRINTS_DIR>/files-memory-blueprint
+//     --project <name>`.
 //  4. Fetch the project via GET /api/projects/<id> and assert project_info is
 //     non-empty and contains expected content from the blueprint's project.yaml.
 //  5. Delete the project on cleanup.
@@ -34,7 +37,7 @@ func TestBlueprintProjectInfo_Install(t *testing.T) {
 	logStatusPreamble(t)
 	skipIfServerDown(t, rl)
 
-	const blueprintPath = "/root/blueprints/files-memory-blueprint"
+	blueprintPath := framework.BlueprintFixtureDir(t, "files-memory-blueprint")
 
 	home := t.TempDir()
 	srv := serverURL()

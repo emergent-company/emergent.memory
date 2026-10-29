@@ -2,7 +2,7 @@
 
 End-to-end tests for the [Memory](https://github.com/emergent-company/emergent.memory) CLI.
 
-These tests run inside a Docker container where the `memory` binary is built from the checked-out source and installed under `$HOME/.memory/bin` — the same destination `apps/cli/install.sh` uses. The repo is private, so the image does not fetch the install script or a release from GitHub; it validates CLI behaviour against a live Memory server.
+These tests run inside a Docker container where the `memory` binary is built from the checked-out source and installed under `$HOME/.memory/bin` — the same destination `apps/cli/install.sh` uses. The image builds from the tree under test rather than fetching a released binary, so it validates the CLI as it exists in that checkout against a live Memory server.
 
 [![E2E Tests](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml/badge.svg)](https://github.com/emergent-company/emergent.memory/e2e/actions/workflows/e2e.yml)
 
@@ -14,6 +14,7 @@ These tests run inside a Docker container where the `memory` binary is built fro
 | `MEMORY_SERVER_IMAGE` | `ghcr.io/emergent-company/memory-server:latest` | Docker image used for the test server in the full-stack Docker Compose run. |
 | `MEMORY_PROD_TEST_TOKEN` | _(none)_ | Pre-issued API token for production smoke tests. Must be set as a repository secret in CI. When absent all `TestProduction_*` tests are skipped. |
 | `TEST_RUN` | _(none)_ | Optional `-run` filter passed to `go test`. Example: `TEST_RUN=TestCLIInstalled_Version`. When unset, all tests run. |
+| `MEMORY_TEST_BLUEPRINTS_DIR` | _(none)_ | Directory holding the blueprint fixture corpora that `tests/blueprints` and `tests/tools` apply (one subdirectory per blueprint, e.g. `workspace-memory-blueprint`). The corpora are not part of this repo; when the variable is unset — or names a directory without the fixture — those suites skip instead of failing. |
 
 ## Local usage
 

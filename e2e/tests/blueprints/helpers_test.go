@@ -25,11 +25,6 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
-	blueprintURL = "/root/blueprints/workspace-memory-blueprint"
-
-	// blueprintAINewsPath is the local path to the AI news blueprint directory.
-	blueprintAINewsPath = "/root/blueprints/ai-news-memory-blueprint"
-
 	// blueprintModel is the model name pinned inside the blueprint YAML files.
 	blueprintModel = "google/gemini-3.1-flash-lite-preview"
 
@@ -51,18 +46,12 @@ const (
 		"The script must print the current temperature in Celsius. " +
 		"Use only the standard library plus the requests package."
 
-	// blueprintV2URL is the local path to the v2 blueprint directory.
-	blueprintV2URL = "/root/blueprints/workspace-memory-blueprint-v2"
-
 	// blueprintV2Model is the model name pinned inside the v2 blueprint YAML files.
 	blueprintV2Model = "google/gemini-3.1-flash-lite-preview"
 
 	// v2OrchestratorTimeout is the maximum time to wait for the v2 orchestrator.
 	// Must stay well below `go test -timeout 10m`.
 	v2OrchestratorTimeout = 8 * time.Minute
-
-	// blueprintV3URL is the local path to the v3 blueprint directory.
-	blueprintV3URL = "/root/blueprints/workspace-memory-blueprint-v3"
 
 	// blueprintV3Model is the model name pinned inside the v3 blueprint YAML files.
 	blueprintV3Model = "google/gemini-3.1-flash-lite-preview"
@@ -694,19 +683,15 @@ func getOrgIDForProject(t *testing.T, srv, token, projectID string) string {
 // AI News blueprint helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-// skipIfNoBlueprintKey skips the test if key is not set in the blueprint env
-// files (blueprintAINewsPath/.env / .env.local) or the shell environment.
-func skipIfNoBlueprintKey(t *testing.T, rl *framework.RunLog, key, serviceName string) {
-	t.Helper()
-	if framework.BlueprintEnvVar(blueprintAINewsPath, key) == "" {
-		framework.DoSkipf(t, rl, "%s not set in %s/.env.local or environment — skipping (set %s to run)",
-			key, blueprintAINewsPath, key)
-	}
-}
-
-// blueprintEnvVar looks up key from blueprint env files, falling back to os.Getenv.
+// blueprintEnvVar looks up key from the AI-news blueprint's env files when that
+// fixture corpus is present, falling back to the process environment. The
+// corpus is not part of this repo (#2209), so the fallback is the normal path on
+// a fresh checkout.
 func blueprintEnvVar(key string) string {
-	return framework.BlueprintEnvVar(blueprintAINewsPath, key)
+	if dir, ok := framework.LookupBlueprintFixture("ai-news-memory-blueprint"); ok {
+		return framework.BlueprintEnvVar(dir, key)
+	}
+	return os.Getenv(key)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

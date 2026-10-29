@@ -25,12 +25,6 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 const (
-	// blueprintURL is the local path to the workspace-memory-blueprint directory.
-	blueprintURL = "/root/workspace-memory-blueprint"
-
-	// taskCLIDir is the source directory for the task-cli tool.
-	taskCLIDir = "/root/workspace-memory-blueprint/tools/task-cli"
-
 	// pollInterval is how often to re-check WorkPackage/agent status.
 	pollInterval = 5 * time.Second
 )

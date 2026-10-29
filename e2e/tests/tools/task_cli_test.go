@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
 // TestTaskCLI_BlueprintWorkflow installs the multi-agent blueprint into a fresh
@@ -69,12 +71,13 @@ func TestTaskCLI_BlueprintWorkflow(t *testing.T) {
 
 	// ── Step 3: Install blueprint ────────────────────────────────────────────
 	rl.Section("Install blueprint")
+	blueprintDir := framework.BlueprintFixtureDir(t, "workspace-memory-blueprint")
 	blueprintOut := mustRunCLIInDirWithHome(t, "", home,
-		"blueprints", blueprintURL,
+		"blueprints", blueprintDir,
 		"--project", projectName,
 		"--upgrade",
 	)
-	rl.CLI("memory blueprints "+blueprintURL+" --project "+projectName+" --upgrade", blueprintOut)
+	rl.CLI("memory blueprints "+blueprintDir+" --project "+projectName+" --upgrade", blueprintOut)
 	if strings.Contains(blueprintOut, "errors") && !strings.Contains(blueprintOut, "0 errors") {
 		rl.Failf("blueprint install reported errors:\n%s", blueprintOut)
 	}
@@ -84,7 +87,7 @@ func TestTaskCLI_BlueprintWorkflow(t *testing.T) {
 	rl.Section("Build task-cli")
 	taskCLIBin := filepath.Join(t.TempDir(), "task-cli")
 	buildCmd := exec.Command("go", "build", "-o", taskCLIBin, ".")
-	buildCmd.Dir = taskCLIDir
+	buildCmd.Dir = filepath.Join(blueprintDir, "tools", "task-cli")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		t.Skipf("could not build task-cli: %v\n%s", err, out)
 	}

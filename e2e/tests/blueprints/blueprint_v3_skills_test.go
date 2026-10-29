@@ -9,11 +9,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	framework "github.com/emergent-company/emergent.memory/e2e/framework"
 )
 
-// TestBlueprintV3_SkillsInstalled verifies that running `memory blueprints
-// /root/workspace-memory-blueprint-v3` creates the five agent-role skills
-// defined in its skills/ directory.
+// TestBlueprintV3_SkillsInstalled verifies that applying the
+// workspace-memory-blueprint-v3 fixture (resolved from
+// MEMORY_TEST_BLUEPRINTS_DIR) creates the five agent-role skills defined in its
+// skills/ directory.
 //
 // Steps:
 //  1. Authenticate and create an ephemeral project.
@@ -33,7 +36,7 @@ func TestBlueprintV3_SkillsInstalled(t *testing.T) {
 	logStatusPreamble(t)
 	skipIfServerDown(t, rl)
 
-	const blueprintPath = "/root/blueprints/workspace-memory-blueprint-v3"
+	blueprintPath := framework.BlueprintFixtureDir(t, "workspace-memory-blueprint-v3")
 
 	expectedSkills := []string{
 		"research-workflow",
@@ -116,7 +119,7 @@ func TestBlueprintV3_SkillsUpgrade(t *testing.T) {
 	logStatusPreamble(t)
 	skipIfServerDown(t, rl)
 
-	const blueprintPath = "/root/blueprints/workspace-memory-blueprint-v3"
+	blueprintPath := framework.BlueprintFixtureDir(t, "workspace-memory-blueprint-v3")
 
 	home := t.TempDir()
 	srv := serverURL()
