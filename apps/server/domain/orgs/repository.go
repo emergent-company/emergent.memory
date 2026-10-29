@@ -281,6 +281,12 @@ func (r *Repository) ListMembers(ctx context.Context, orgID string) ([]OrgMember
 		ColumnExpr("up.last_name").
 		ColumnExpr("om.role").
 		ColumnExpr("om.created_at AS joined_at").
+		ColumnExpr(`(
+			SELECT MAX(a.last_seen_at)
+			FROM kb.user_activity_daily AS a
+			WHERE a.user_id = om.user_id
+			  AND a.organization_id = om.organization_id
+		) AS last_active_at`).
 		Join("INNER JOIN core.user_profiles AS up ON up.id = om.user_id").
 		Join(`LEFT JOIN LATERAL (
 			SELECT email FROM core.user_emails

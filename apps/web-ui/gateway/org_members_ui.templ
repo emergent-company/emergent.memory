@@ -258,6 +258,7 @@ templ membersBody(data membersPageData) {
 						@table.TableHeadRow() {
 							@table.TableHeadCell("Member")
 							@table.TableHeadCell("Role")
+							@table.TableHeadCell("Activity")
 							@table.TableHeadCell("Since")
 							@table.TableHeadCell("")
 						}
@@ -294,6 +295,9 @@ templ memberRow(m ProjectMemberDto, base string, removable bool) {
 		}
 		@table.TableCell("", nil) {
 			@roleBadge(m.Role)
+		}
+		@table.TableCell("", nil) {
+			@memberActivityIndicator(m.LastActiveAt, m.ActivityTier)
 		}
 		@table.TableCell("", nil) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(m.JoinedAt) }</span>
@@ -389,6 +393,9 @@ templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 		}
 		@table.TableCell("", nil) {
 			@roleBadge(inv.Role)
+		}
+		@table.TableCell("", nil) {
+			@pendingActivityIndicator()
 		}
 		@table.TableCell("", nil) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(inv.CreatedAt) }</span>

@@ -180,6 +180,11 @@ type OrgMemberDto struct {
 	LastName    *string `json:"lastName,omitempty"`
 	Role        string  `json:"role"` // org_admin | org_member
 	JoinedAt    string  `json:"joinedAt"`
+
+	// Activity (member-activity capability). lastActiveAt is omitted when the
+	// member has never been observed; activityTier is always populated.
+	LastActiveAt *string `json:"lastActiveAt,omitempty"`
+	ActivityTier string  `json:"activityTier,omitempty"`
 }
 
 // ListOrgMembers lists members of an org (GET /api/orgs/{id}/members). Bare
@@ -252,11 +257,19 @@ type ProjectMemberDto struct {
 	AvatarURL   string `json:"avatarUrl"`
 	Role        string `json:"role"` // project_admin | project_user
 	JoinedAt    string `json:"joinedAt"`
+
+	// Activity (member-activity capability). Only populated for admins; a plain
+	// member receives the list without these fields.
+	LastActiveAt  *string `json:"lastActiveAt,omitempty"`
+	ActivityTier  string  `json:"activityTier,omitempty"`
+	ActivityScore int     `json:"activityScore,omitempty"`
 }
 
 // ListMembers lists members of the active project (GET /api/projects/{id}/members).
 func (m *MemoryClient) ListMembers(ctx context.Context) ([]ProjectMemberDto, error) {
-	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/members"
+	// stats=true asks for the member-activity fields; the server drops them for
+	// callers without project/org admin authority.
+	path := "/api/projects/" + url.PathEscape(m.projectIDFor(ctx)) + "/members?stats=true"
 	var out []ProjectMemberDto
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
@@ -471,4 +484,50 @@ func (m *MemoryClient) SearchUsers(ctx context.Context, email string) ([]UserSea
 		return nil, err
 	}
 	return out.Users, nil
+}
+
+// PresenceEntryDto is one online member from GET /api/events/presence.
+type PresenceEntryDto struct {
+	UserID       string `json:"userId"`
+	ProjectID    string `json:"projectId,omitempty"`
+	LastActivity string `json:"lastActivity"`
+}
+
+// PresenceDto is the live presence payload for a project or organization.
+type PresenceDto struct {
+	OnlineNow int                `json:"onlineNow"`
+	Entries   []PresenceEntryDto `json:"entries"`
+}
+
+// GetProjectPresence returns the live presence for the active project. Presence
+// is best-effort in the UI: callers treat an error as "nobody online".
+func (m *MemoryClient) GetProjectPresence(ctx context.Context) (*PresenceDto, error) {
+	path := "/api/events/presence?projectId=" + url.QueryEscape(m.projectIDFor(ctx))
+	var out PresenceDto
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetOrgPresence returns the live presence for an organization (org_admin only).
+func (m *MemoryClient) GetOrgPresence(ctx context.Context, orgID string) (*PresenceDto, error) {
+	path := "/api/events/presence?orgId=" + url.QueryEscape(orgID)
+	var out PresenceDto
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// presenceSet indexes a presence payload by user id.
+func presenceSet(p *PresenceDto) map[string]string {
+	if p == nil {
+		return nil
+	}
+	out := make(map[string]string, len(p.Entries))
+	for _, e := range p.Entries {
+		out[e.UserID] = e.LastActivity
+	}
+	return out
 }

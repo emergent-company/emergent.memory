@@ -63,8 +63,10 @@ type modelTestCall struct {
 
 // fakeMemory is an in-memory MemoryBackend for tests.
 type fakeMemory struct {
-	agents []AgentDefinitionSummary
-	defs   map[string]*AgentDefinition // full definitions keyed by id
+	orgPresence     *PresenceDto
+	projectPresence *PresenceDto
+	agents          []AgentDefinitionSummary
+	defs            map[string]*AgentDefinition // full definitions keyed by id
 	// defFetches records ids passed to GetAgentDefinition, in order, so tests
 	// can pin how many definition requests a render costs (#2181). Guarded by
 	// defMu: chatModelWarnings fetches definitions from concurrent goroutines.
@@ -3654,6 +3656,14 @@ func (f *fakeMemory) DeleteOrg(ctx context.Context, orgID string) error {
 
 func (f *fakeMemory) ListOrgMembers(ctx context.Context, orgID string) ([]OrgMemberDto, error) {
 	return f.orgMembers, nil
+}
+
+func (f *fakeMemory) GetOrgPresence(ctx context.Context, orgID string) (*PresenceDto, error) {
+	return f.orgPresence, nil
+}
+
+func (f *fakeMemory) GetProjectPresence(ctx context.Context) (*PresenceDto, error) {
+	return f.projectPresence, nil
 }
 
 func (f *fakeMemory) ListOrgToolSettings(ctx context.Context, orgID string) ([]OrgToolSettingDto, error) {

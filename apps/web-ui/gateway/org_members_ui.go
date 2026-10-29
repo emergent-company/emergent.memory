@@ -250,6 +250,10 @@ func (s *Server) loadMembersData(c echo.Context, data *membersPageData) {
 		data.LoadErr = userFacingError(err)
 	} else {
 		data.Members = members
+		// Live presence is best-effort; a failure leaves the persisted tiers.
+		if presence, perr := s.memory.GetProjectPresence(ctx); perr == nil {
+			markOnlineProject(data.Members, presenceSet(presence))
+		}
 	}
 	invites, err := s.memory.ListInvites(ctx)
 	if err != nil {

@@ -1,0 +1,32 @@
+package main
+
+import (
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// memberActivityIndicator renders the member-activity cell: a tier badge with a
+// status dot plus the relative last-seen time. It is the single rendering of
+// the indicator used by both org and project member tables.
+templ memberActivityIndicator(lastActiveAt *string, tier string) {
+	<div class="flex items-center gap-2 whitespace-nowrap">
+		@components.StatusBadge(activityTierLabel(tier), activityTierIntent(tier), "", components.StatusBadgeOpts{
+			Style: ui.BadgeStyleSoft,
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
+		})
+		<span class="text-muted text-xs">{ activityRel(lastActiveAt) }</span>
+	</div>
+}
+
+// pendingActivityIndicator fills the activity column for a pending invitation
+// so the table stays aligned: an invite has no member activity yet.
+templ pendingActivityIndicator() {
+	<div class="flex items-center gap-2 whitespace-nowrap">
+		@components.StatusBadge("Pending", ui.BadgeGhost, "", components.StatusBadgeOpts{
+			Size: ui.BadgeSizeXS,
+			Dot:  true,
+		})
+		<span class="text-muted-faint text-xs">Not accepted</span>
+	</div>
+}

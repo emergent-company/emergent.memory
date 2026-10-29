@@ -333,7 +333,7 @@ func (h *Handler) ListMembers(c echo.Context) error {
 		return err
 	}
 
-	members, err := h.svc.ListMembers(c.Request().Context(), projectID, includeStats)
+	members, err := h.svc.ListMembers(c.Request().Context(), projectID, includeStats, user.ID)
 	if err != nil {
 		return err
 	}

@@ -3316,6 +3316,24 @@ definitions:
           type: string
         type: array
     type: object
+  domain_events.PresenceEntry:
+    properties:
+      lastActivity:
+        type: string
+      projectId:
+        type: string
+      userId:
+        type: string
+    type: object
+  domain_events.PresenceResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/domain_events.PresenceEntry'
+        type: array
+      onlineNow:
+        type: integer
+    type: object
   domain_extraction.ChunkEmbeddingQueueStats:
     properties:
       completed:
@@ -6252,6 +6270,11 @@ definitions:
     type: object
   domain_orgs.OrgMemberDTO:
     properties:
+      activityTier:
+        description: |-
+          ActivityTier is the recency bucket derived from LastActiveAt
+          (active | occasional | dormant | never).
+        type: string
       displayName:
         type: string
       email:
@@ -6261,6 +6284,11 @@ definitions:
       id:
         type: string
       joinedAt:
+        type: string
+      lastActiveAt:
+        description: |-
+          LastActiveAt is the newest observed authenticated request for this
+          member in this organization. Nil means no activity has been recorded.
         type: string
       lastName:
         type: string
@@ -6426,6 +6454,17 @@ definitions:
     type: object
   domain_projects.ProjectMemberDTO:
     properties:
+      actionCount:
+        type: integer
+      activeDays:
+        type: integer
+      activityScore:
+        type: integer
+      activityTier:
+        description: |-
+          Activity fields are populated only when the caller asked for stats AND
+          holds project/org admin authority (member-activity capability).
+        type: string
       avatarUrl:
         type: string
       displayName:
@@ -6442,6 +6481,8 @@ definitions:
         type: string
       lastName:
         type: string
+      requestCount:
+        type: integer
       role:
         type: string
     type: object
@@ -10133,6 +10174,63 @@ definitions:
       role:
         type: string
     type: object
+  domain_useractivity.ActivityResponse:
+    properties:
+      members:
+        items:
+          $ref: '#/definitions/domain_useractivity.MemberActivityDTO'
+        type: array
+      rangeDays:
+        type: integer
+    type: object
+  domain_useractivity.MemberActivityDTO:
+    properties:
+      actionCount:
+        type: integer
+      activeDays:
+        type: integer
+      activityScore:
+        type: integer
+      activityTier:
+        type: string
+      displayName:
+        type: string
+      email:
+        type: string
+      firstName:
+        type: string
+      joinedAt:
+        type: string
+      lastActionAt:
+        type: string
+      lastActiveAt:
+        type: string
+      lastName:
+        type: string
+      requestCount:
+        type: integer
+      role:
+        type: string
+      userId:
+        type: string
+    type: object
+  domain_useractivity.MyActivityResponse:
+    properties:
+      actionCount:
+        type: integer
+      activeDays:
+        type: integer
+      activityScore:
+        type: integer
+      activityTier:
+        type: string
+      lastActiveAt:
+        type: string
+      rangeDays:
+        type: integer
+      requestCount:
+        type: integer
+    type: object
   domain_useractivity.RecentItemResponse:
     properties:
       accessedAt:
@@ -13525,6 +13623,43 @@ paths:
       summary: Get active SSE connection count
       tags:
       - events
+  /api/events/presence:
+    get:
+      description: Returns members with a recent SSE heartbeat for a project or an
+        organization. Project scope requires project access; org scope requires org_admin.
+      parameters:
+      - description: Project ID (UUID)
+        in: query
+        name: projectId
+        type: string
+      - description: Organization ID (UUID)
+        in: query
+        name: orgId
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_events.PresenceResponse'
+        "400":
+          description: Missing scope
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get live member presence
+      tags:
+      - events
   /api/events/stream:
     get:
       description: Establish Server-Sent Events (SSE) connection to receive real-time
@@ -16482,6 +16617,31 @@ paths:
       summary: Execute Model Context Protocol JSON-RPC 2.0 requests
       tags:
       - mcp
+  /api/me/activity:
+    get:
+      description: Returns the authenticated user's own last-seen, action counts,
+        tier and score. Never exposes other members.
+      parameters:
+      - description: 'Window: 7d, 30d (default) or 90d'
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_useractivity.MyActivityResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get my activity summary
+      tags:
+      - user-activity
   /api/metrics/jobs:
     get:
       description: Returns processing pipeline metrics. The effective project is resolved
@@ -17536,6 +17696,40 @@ paths:
       summary: Update organization
       tags:
       - organizations
+  /api/orgs/{id}/activity:
+    get:
+      description: Returns per-member last-seen, action counts, tier and score for
+        the requested window. Requires org_admin.
+      parameters:
+      - description: Organization ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Window: 7d, 30d (default) or 90d'
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_useractivity.ActivityResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Rank organization members by activity
+      tags:
+      - user-activity
   /api/orgs/{id}/members:
     get:
       description: Returns all members of an organization with their roles
@@ -18090,6 +18284,40 @@ paths:
       summary: Update project
       tags:
       - projects
+  /api/projects/{id}/activity:
+    get:
+      description: Returns per-member last-seen, action counts, tier and score for
+        the requested window. Requires project_admin or org_admin.
+      parameters:
+      - description: Project ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 'Window: 7d, 30d (default) or 90d'
+        in: query
+        name: range
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_useractivity.ActivityResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Rank project members by activity
+      tags:
+      - user-activity
   /api/projects/{id}/embeddings/progress:
     get:
       description: Returns pending/processing/completed/failed counts for graph object

@@ -4835,6 +4835,63 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/events/presence": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns members with a recent SSE heartbeat for a project or an organization. Project scope requires project access; org scope requires org_admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "events"
+                ],
+                "summary": "Get live member presence",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "projectId",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "orgId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_events.PresenceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing scope",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/events/stream": {
             "get": {
                 "security": [
@@ -9282,6 +9339,45 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/me/activity": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the authenticated user's own last-seen, action counts, tier and score. Never exposes other members.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-activity"
+                ],
+                "summary": "Get my activity summary",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Window: 7d, 30d (default) or 90d",
+                        "name": "range",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_useractivity.MyActivityResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/metrics/jobs": {
             "get": {
                 "security": [
@@ -10881,6 +10977,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/orgs/{id}/activity": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns per-member last-seen, action counts, tier and score for the requested window. Requires org_admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-activity"
+                ],
+                "summary": "Rank organization members by activity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Organization ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Window: 7d, 30d (default) or 90d",
+                        "name": "range",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_useractivity.ActivityResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/orgs/{id}/members": {
             "get": {
                 "security": [
@@ -11757,6 +11905,58 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/projects/{id}/activity": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns per-member last-seen, action counts, tier and score for the requested window. Requires project_admin or org_admin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "user-activity"
+                ],
+                "summary": "Rank project members by activity",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Window: 7d, 30d (default) or 90d",
+                        "name": "range",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_useractivity.ActivityResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
                         }
@@ -30810,6 +31010,34 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_events.PresenceEntry": {
+            "type": "object",
+            "properties": {
+                "lastActivity": {
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_events.PresenceResponse": {
+            "type": "object",
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_events.PresenceEntry"
+                    }
+                },
+                "onlineNow": {
+                    "type": "integer"
+                }
+            }
+        },
         "domain_extraction.ChunkEmbeddingQueueStats": {
             "type": "object",
             "properties": {
@@ -35040,6 +35268,10 @@ const docTemplate = `{
         "domain_orgs.OrgMemberDTO": {
             "type": "object",
             "properties": {
+                "activityTier": {
+                    "description": "ActivityTier is the recency bucket derived from LastActiveAt\n(active | occasional | dormant | never).",
+                    "type": "string"
+                },
                 "displayName": {
                     "type": "string"
                 },
@@ -35053,6 +35285,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "joinedAt": {
+                    "type": "string"
+                },
+                "lastActiveAt": {
+                    "description": "LastActiveAt is the newest observed authenticated request for this\nmember in this organization. Nil means no activity has been recorded.",
                     "type": "string"
                 },
                 "lastName": {
@@ -35280,6 +35516,19 @@ const docTemplate = `{
         "domain_projects.ProjectMemberDTO": {
             "type": "object",
             "properties": {
+                "actionCount": {
+                    "type": "integer"
+                },
+                "activeDays": {
+                    "type": "integer"
+                },
+                "activityScore": {
+                    "type": "integer"
+                },
+                "activityTier": {
+                    "description": "Activity fields are populated only when the caller asked for stats AND\nholds project/org admin authority (member-activity capability).",
+                    "type": "string"
+                },
                 "avatarUrl": {
                     "type": "string"
                 },
@@ -35303,6 +35552,9 @@ const docTemplate = `{
                 },
                 "lastName": {
                     "type": "string"
+                },
+                "requestCount": {
+                    "type": "integer"
                 },
                 "role": {
                     "type": "string"
@@ -40634,6 +40886,93 @@ const docTemplate = `{
                 },
                 "role": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_useractivity.ActivityResponse": {
+            "type": "object",
+            "properties": {
+                "members": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_useractivity.MemberActivityDTO"
+                    }
+                },
+                "rangeDays": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_useractivity.MemberActivityDTO": {
+            "type": "object",
+            "properties": {
+                "actionCount": {
+                    "type": "integer"
+                },
+                "activeDays": {
+                    "type": "integer"
+                },
+                "activityScore": {
+                    "type": "integer"
+                },
+                "activityTier": {
+                    "type": "string"
+                },
+                "displayName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "firstName": {
+                    "type": "string"
+                },
+                "joinedAt": {
+                    "type": "string"
+                },
+                "lastActionAt": {
+                    "type": "string"
+                },
+                "lastActiveAt": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "requestCount": {
+                    "type": "integer"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_useractivity.MyActivityResponse": {
+            "type": "object",
+            "properties": {
+                "actionCount": {
+                    "type": "integer"
+                },
+                "activeDays": {
+                    "type": "integer"
+                },
+                "activityScore": {
+                    "type": "integer"
+                },
+                "activityTier": {
+                    "type": "string"
+                },
+                "lastActiveAt": {
+                    "type": "string"
+                },
+                "rangeDays": {
+                    "type": "integer"
+                },
+                "requestCount": {
+                    "type": "integer"
                 }
             }
         },

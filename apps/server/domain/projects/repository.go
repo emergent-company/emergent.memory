@@ -489,12 +489,32 @@ func (r *Repository) ListMembers(ctx context.Context, projectID string, includeS
 
 	if includeStats {
 		q = q.ColumnExpr(`(
-			SELECT MAX(at.last_used_at)
-			FROM core.api_tokens at
-			WHERE at.user_id = pm.user_id
-			  AND at.project_id = pm.project_id
-			  AND at.revoked_at IS NULL
-		) AS last_active_at`)
+			SELECT MAX(a.last_seen_at)
+			FROM kb.user_activity_daily a
+			WHERE a.user_id = pm.user_id
+			  AND a.project_id = pm.project_id
+		) AS last_active_at`).
+			ColumnExpr(`COALESCE((
+				SELECT SUM(a.request_count)
+				FROM kb.user_activity_daily a
+				WHERE a.user_id = pm.user_id
+				  AND a.project_id = pm.project_id
+				  AND a.day >= CURRENT_DATE - 29
+			), 0) AS request_count`).
+			ColumnExpr(`COALESCE((
+				SELECT SUM(a.action_count)
+				FROM kb.user_activity_daily a
+				WHERE a.user_id = pm.user_id
+				  AND a.project_id = pm.project_id
+				  AND a.day >= CURRENT_DATE - 29
+			), 0) AS action_count`).
+			ColumnExpr(`COALESCE((
+				SELECT COUNT(DISTINCT a.day)
+				FROM kb.user_activity_daily a
+				WHERE a.user_id = pm.user_id
+				  AND a.project_id = pm.project_id
+				  AND a.day >= CURRENT_DATE - 29
+			), 0) AS active_days`)
 	}
 
 	err := q.Scan(ctx, &members)

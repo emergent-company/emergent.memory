@@ -47,6 +47,13 @@ type OrgMemberDTO struct {
 	LastName    *string `json:"lastName,omitempty"`
 	Role        string  `json:"role"`
 	JoinedAt    string  `json:"joinedAt"`
+
+	// LastActiveAt is the newest observed authenticated request for this
+	// member in this organization. Nil means no activity has been recorded.
+	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
+	// ActivityTier is the recency bucket derived from LastActiveAt
+	// (active | occasional | dormant | never).
+	ActivityTier string `json:"activityTier,omitempty"`
 }
 
 // CreateOrgRequest is the request body for creating an organization

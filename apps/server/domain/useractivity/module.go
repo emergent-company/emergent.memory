@@ -10,4 +10,5 @@ var Module = fx.Module("useractivity",
 	fx.Provide(NewService),
 	fx.Provide(NewHandler),
 	fx.Invoke(RegisterRoutes),
+	fx.Invoke(RegisterActivityJobs),
 )

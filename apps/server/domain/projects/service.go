@@ -13,7 +13,9 @@ import (
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -562,7 +564,7 @@ func (s *Service) CancelDeletion(ctx context.Context, id string) error {
 
 // ListMembers returns all members of a project.
 // When includeStats is true, each member includes lastActiveAt from their API tokens.
-func (s *Service) ListMembers(ctx context.Context, projectID string, includeStats bool) ([]ProjectMemberDTO, error) {
+func (s *Service) ListMembers(ctx context.Context, projectID string, includeStats bool, actorID string) ([]ProjectMemberDTO, error) {
 	if !isValidUUID(projectID) {
 		return nil, apperror.New(400, "invalid-uuid", "projectId must be a valid UUID")
 	}
@@ -576,7 +578,44 @@ func (s *Service) ListMembers(ctx context.Context, projectID string, includeStat
 		return nil, apperror.ErrNotFound.WithMessage("Project not found")
 	}
 
-	return s.repo.ListMembers(ctx, projectID, includeStats)
+	// Cross-member activity is admin-only. A plain member still gets the list,
+	// just without the activity columns (member-activity capability).
+	if includeStats && !s.canSeeMemberActivity(ctx, project, actorID) {
+		includeStats = false
+	}
+
+	members, err := s.repo.ListMembers(ctx, projectID, includeStats)
+	if err != nil {
+		return nil, err
+	}
+	if includeStats {
+		now := time.Now().UTC()
+		for i := range members {
+			members[i].ActivityTier = activity.TierFor(members[i].LastActiveAt, false, now)
+			members[i].ActivityScore = activity.Score(members[i].RequestCount, members[i].ActionCount, members[i].ActiveDays)
+		}
+	}
+	return members, nil
+}
+
+// canSeeMemberActivity reports whether actorID is a project admin or an admin
+// of the project's owning organization.
+func (s *Service) canSeeMemberActivity(ctx context.Context, project *Project, actorID string) bool {
+	if project == nil || actorID == "" {
+		return false
+	}
+	ok, err := auth.CanAdministerProject(ctx, s.repo.db, project.ID, actorID)
+	if err != nil {
+		return false
+	}
+	if ok {
+		return true
+	}
+	if project.OrganizationID == "" {
+		return false
+	}
+	ok, err = auth.CanAdministerOrg(ctx, s.repo.db, project.OrganizationID, actorID)
+	return err == nil && ok
 }
 
 // RemoveMember removes a member from a project

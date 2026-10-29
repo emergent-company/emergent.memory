@@ -136,6 +136,10 @@ type Middleware struct {
 	// tokenUsage records last_used_at for validated emt_* tokens (throttled,
 	// non-blocking; see tokenUsageTracker). Nil-safe when unset.
 	tokenUsage *tokenUsageTracker
+
+	// activity records member last-seen / daily activity buckets (throttled,
+	// non-blocking; see activityTracker). Nil-safe when unset.
+	activity *activityTracker
 }
 
 // MiddlewareParams holds the dependencies for creating the auth middleware.
@@ -158,6 +162,7 @@ func NewMiddleware(p MiddlewareParams) *Middleware {
 		zitadelSvc:       NewZitadelService(p.DB, p.Cfg, p.Log),
 		autoProvisionSvc: p.AutoProvisionSvc,
 		tokenUsage:       newTokenUsageTracker(p.DB, p.Log.With(logger.Scope("auth"))),
+		activity:         newActivityTracker(p.DB, p.Log.With(logger.Scope("auth"))),
 	}
 
 	// Set up debug token for development
@@ -470,6 +475,16 @@ func (m *Middleware) RequireAuth() echo.MiddlewareFunc {
 				// parameter and verify membership server-side.
 				user.OrgID = ""
 			}
+
+			// Record member activity for the member-activity indicators. Only
+			// attribute a project when the middleware resolved it to an owning
+			// organization, so a forged X-Project-ID cannot bump another
+			// project's counters. Best-effort and throttled; never blocks.
+			activityProjectID := ""
+			if projectOrgID != "" {
+				activityProjectID = projectIDForOrg
+			}
+			m.activity.touch(user.ID, user.OrgID, activityProjectID)
 
 			// Store user in Echo context (for handler-layer access via GetUser(c))
 			c.Set(string(UserContextKey), user)

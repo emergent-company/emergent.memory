@@ -4,9 +4,11 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"go.uber.org/fx"
 
+	"github.com/emergent-company/emergent.memory/pkg/activity"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
@@ -202,5 +204,13 @@ func (s *Service) ListMembers(ctx context.Context, orgID, userID string) ([]OrgM
 	if err := s.requireOrgAdmin(ctx, orgID, userID); err != nil {
 		return nil, err
 	}
-	return s.repo.ListMembers(ctx, orgID)
+	members, err := s.repo.ListMembers(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	for i := range members {
+		members[i].ActivityTier = activity.TierFor(members[i].LastActiveAt, false, now)
+	}
+	return members, nil
 }

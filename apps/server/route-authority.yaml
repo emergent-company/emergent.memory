@@ -638,6 +638,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/events/presence
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/events/stream
       level: auth
       note: RequireAuth
@@ -974,6 +978,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
     - method: GET
+      path: /api/me/activity
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/metrics/jobs
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember
@@ -1078,6 +1086,10 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/orgs/:id/activity
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/orgs/:id/members
       level: auth
       note: RequireAuth
@@ -1133,6 +1145,10 @@ routes:
       path: /api/projects/:id
       level: auth
       note: RequireAuth, RequireAPITokenScopes(projects:read)
+    - method: GET
+      path: /api/projects/:id/activity
+      level: auth
+      note: RequireAuth
     - method: GET
       path: /api/projects/:id/embeddings/progress
       level: auth

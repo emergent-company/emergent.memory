@@ -16,4 +16,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.GET("/recent/:type", h.GetRecentByType)
 	g.DELETE("/recent", h.DeleteAll)
 	g.DELETE("/recent/:type/:resourceId", h.DeleteByResource)
+
+	// Member activity indicators. Org and project rankings are admin-gated in
+	// the service layer; /me/activity is self-only.
+	api := e.Group("/api")
+	api.Use(authMiddleware.RequireAuth())
+	api.GET("/orgs/:id/activity", h.OrgActivity)
+	api.GET("/projects/:id/activity", h.ProjectActivity)
+	api.GET("/me/activity", h.MyActivity)
 }

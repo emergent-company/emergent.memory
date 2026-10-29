@@ -274,6 +274,8 @@ type MemoryBackend interface {
 	UpdateOrg(ctx context.Context, orgID, name string) (*Org, error)
 	DeleteOrg(ctx context.Context, orgID string) error
 	ListOrgMembers(ctx context.Context, orgID string) ([]OrgMemberDto, error)
+	GetOrgPresence(ctx context.Context, orgID string) (*PresenceDto, error)
+	GetProjectPresence(ctx context.Context) (*PresenceDto, error)
 	ListOrgToolSettings(ctx context.Context, orgID string) ([]OrgToolSettingDto, error)
 	UpsertOrgToolSetting(ctx context.Context, orgID, toolName string, in UpsertOrgToolSettingInput) (*OrgToolSettingDto, error)
 	DeleteOrgToolSetting(ctx context.Context, orgID, toolName string) error

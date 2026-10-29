@@ -102,9 +102,11 @@ func TestOAuthClientConfigMigrationUpDown(t *testing.T) {
 	// a column to it, 00238 adds blueprint model overrides, and 00239 adds a
 	// project_id column), so step back one at a time rather than assuming a
 	// fixed rollback depth. The bound is a safety cap well above the current
-	// head→00232 distance, not the expected depth.
+	// head→00232 distance, not the expected depth. It must stay comfortably
+	// above the number of migrations between head and 00232: a new head
+	// migration otherwise exhausts the cap before the drop is reached.
 	dropped := false
-	for range 20 {
+	for range 40 {
 		if err := goose.DownContext(ctx, sqlDB, "."); err != nil {
 			t.Fatalf("roll back one migration: %v", err)
 		}

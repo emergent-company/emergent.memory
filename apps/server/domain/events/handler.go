@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/uptrace/bun"
+	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -28,6 +30,7 @@ type Handler struct {
 	svc         *Service
 	log         *slog.Logger
 	auth        *auth.Middleware
+	db          bun.IDB
 	connections map[string]*SSEConnection
 	connMu      sync.RWMutex
 
@@ -53,6 +56,25 @@ func NewHandler(svc *Service, log *slog.Logger, authMiddleware *auth.Middleware)
 	go h.heartbeatLoop()
 
 	return h
+}
+
+// NewHandlerFx builds the handler for fx, adding the database handle used by
+// the admin-gated presence endpoint. The direct NewHandler constructor stays
+// database-free so existing tests keep working.
+func NewHandlerFx(p HandlerParams) *Handler {
+	h := NewHandler(p.Svc, p.Log, p.Auth)
+	h.db = p.DB
+	return h
+}
+
+// HandlerParams are the fx dependencies for the events handler.
+type HandlerParams struct {
+	fx.In
+
+	Svc  *Service
+	Log  *slog.Logger
+	Auth *auth.Middleware
+	DB   bun.IDB `optional:"true"`
 }
 
 // Stop stops the handler and cleans up resources

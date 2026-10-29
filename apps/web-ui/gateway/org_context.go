@@ -347,6 +347,11 @@ func (s *Server) uiOrgMembers(c echo.Context) error {
 	}
 	data.Org = org
 	data.Members = members
+	// Live presence is best-effort: a failed fetch still renders the persisted
+	// activity tiers.
+	if presence, perr := s.memory.GetOrgPresence(c.Request().Context(), org.ID); perr == nil {
+		markOnlineOrg(data.Members, presenceSet(presence))
+	}
 	return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 }
 

@@ -2514,6 +2514,27 @@ Table "kb"."tasks" {
   }
 }
 
+Table "kb"."user_activity_daily" {
+  "id" uuid [pk, note: 'Deterministic UUID over (day,user_id,organization_id,project_id) for idempotent upserts']
+  "day" date [not null]
+  "user_id" uuid [not null]
+  "organization_id" uuid
+  "project_id" uuid
+  "request_count" integer [not null, default: 0]
+  "action_count" integer [not null, default: 0]
+  "last_seen_at" timestamptz
+  "last_action_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (organization_id, day) [name: "idx_user_activity_daily_org_day"]
+    (project_id, day) [name: "idx_user_activity_daily_project_day"]
+    (user_id, day) [name: "idx_user_activity_daily_user_day"]
+  }
+}
+// kb.user_activity_daily: Per-user daily activity rollup for org/project member activity indicators
+
 Table "kb"."user_recent_items" {
   "id" uuid [pk, default: `gen_random_uuid()`]
   "user_id" text [not null]
@@ -2717,3 +2738,6 @@ Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
 Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"
 Ref: "kb"."tasks"."project_id" > "kb"."projects"."id"
+Ref: "kb"."user_activity_daily"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."user_activity_daily"."project_id" > "kb"."projects"."id"
+Ref: "kb"."user_activity_daily"."user_id" > "core"."user_profiles"."id"

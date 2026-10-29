@@ -147,6 +147,14 @@ type ProjectMemberDTO struct {
 	Role         string     `json:"role"`
 	JoinedAt     time.Time  `json:"joinedAt"`
 	LastActiveAt *time.Time `json:"lastActiveAt,omitempty"`
+
+	// Activity fields are populated only when the caller asked for stats AND
+	// holds project/org admin authority (member-activity capability).
+	ActivityTier  string `json:"activityTier,omitempty"`
+	ActivityScore int    `json:"activityScore,omitempty"`
+	ActiveDays    int64  `json:"activeDays,omitempty"`
+	RequestCount  int64  `json:"requestCount,omitempty"`
+	ActionCount   int64  `json:"actionCount,omitempty"`
 }
 
 // UpdateMemberRoleRequest is the request body for changing a project member's role.

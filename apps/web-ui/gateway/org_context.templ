@@ -674,6 +674,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 							@table.TableHeadRow() {
 								@table.TableHeadCell("Member")
 								@table.TableHeadCell("Role")
+								@table.TableHeadCell("Activity")
 								@table.TableHeadCell("Since")
 							}
 						}
@@ -714,6 +715,9 @@ templ orgMemberRow(m OrgMemberDto) {
 		}
 		@table.TableCell("", nil) {
 			@roleBadge(m.Role)
+		}
+		@table.TableCell("", nil) {
+			@memberActivityIndicator(m.LastActiveAt, m.ActivityTier)
 		}
 		@table.TableCell("", nil) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(m.JoinedAt) }</span>

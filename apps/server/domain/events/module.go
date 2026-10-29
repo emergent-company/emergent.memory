@@ -13,7 +13,7 @@ import (
 // Module provides the events domain
 var Module = fx.Module("events",
 	fx.Provide(NewService),
-	fx.Provide(NewHandler),
+	fx.Provide(NewHandlerFx),
 	fx.Invoke(RegisterRoutes),
 	fx.Invoke(RegisterLifecycle),
 )
@@ -40,6 +40,7 @@ func RegisterRoutesManual(e *echo.Echo, h *Handler, authMiddleware *auth.Middlew
 	events.GET("/stream", h.HandleStream)
 	events.GET("/stream/account", h.HandleUserStream)
 	events.GET("/connections/count", h.HandleConnectionsCount)
+	events.GET("/presence", h.HandlePresence)
 }
 
 // LifecycleParams are the dependencies for lifecycle hooks
