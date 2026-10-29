@@ -2,11 +2,11 @@
 # entrypoint.sh — installs the memory CLI built from the checked-out source,
 # then runs the Go test suite.
 #
-# The repository is private, so this script no longer fetches install.sh from
-# raw.githubusercontent.com (that returned 404 unauthenticated). Instead the
-# Dockerfile builds the `memory` binary from apps/cli and stages it at
-# /opt/memory/memory; this script installs it into $HOME/.memory/bin — the exact
-# destination install.sh uses — and then runs `memory version`.
+# This script does not fetch install.sh from raw.githubusercontent.com: the CLI
+# under test is the one built from the source in the tree. The Dockerfile builds
+# the `memory` binary from apps/cli and stages it at /opt/memory/memory; this
+# script installs it into $HOME/.memory/bin — the exact destination install.sh
+# uses — and then runs `memory version`.
 #
 # Environment variables consumed here:
 #   CI=true               — non-interactive marker

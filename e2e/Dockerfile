@@ -1,15 +1,15 @@
 # Test container for the memory CLI installation tests.
 #
 # The memory CLI is built from the checked-out repo source in a Docker stage —
-# it is NOT downloaded from GitHub. The repository is private, so the previous
-# approach (curl the install script from raw.githubusercontent.com and download
-# the latest GitHub release) failed unauthenticated with `curl: (22) ... 404`.
+# it is NOT downloaded from GitHub. The tests must exercise the code in the tree,
+# so an install script or a release binary fetched from GitHub would be the wrong
+# artefact to validate even when that fetch succeeds.
 #
 # Stage 1 (cli-builder) compiles apps/cli using the same source layout as
 # deploy/self-hosted/Dockerfile.server. The test-runner stage stages the binary
 # at /opt/memory/memory; entrypoint.sh installs it into $HOME/.memory/bin — the
 # same destination install.sh uses — so the install step and PATH wiring stay
-# faithful while the private-repo network dependency is gone.
+# faithful while the network dependency is gone.
 #
 # The container runs against a live Memory server injected via MEMORY_TEST_SERVER
 # at runtime (see docker-compose.yml).

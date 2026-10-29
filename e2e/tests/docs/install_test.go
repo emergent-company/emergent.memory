@@ -121,10 +121,9 @@ func TestDocInstall_BinaryInMemoryBinDir(t *testing.T) {
 // Install script verification (read from the local checkout)
 //
 // These tests read the install scripts from the checked-out repository rather
-// than fetching them from raw.githubusercontent.com. The repository is private,
-// so unauthenticated raw fetches return 404, and the entrypoint no longer
-// depends on that URL either (e2e/entrypoint.sh installs the CLI built from
-// source).
+// than fetching them from raw.githubusercontent.com: the scripts under test are
+// the ones in the tree. The entrypoint does not depend on that URL either
+// (e2e/entrypoint.sh installs the CLI built from source).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // repoFile walks up from the current working directory to locate a path
@@ -198,7 +197,7 @@ func TestDocInstall_RootInstallScriptBinaryName(t *testing.T) {
 // (apps/cli/install.sh) exists in the local checkout and installs the "memory"
 // binary into ~/.memory/bin.  It replaces the previous raw.githubusercontent.com
 // fetch of tools/cli/install.sh — a path that never existed — and, like the
-// entrypoint, no longer depends on an unauthenticated private-repo fetch.
+// entrypoint, reads the script from the tree instead of fetching it.
 func TestDocInstall_CliInstallScriptExists(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)

@@ -179,7 +179,7 @@ func (d *DockerManager) WaitForHealth(port int, timeoutSeconds int) error {
 // gitTokenEnv is the name of an environment variable holding a GitHub token
 // (e.g. "GH_TOKEN" or "GITHUB_TOKEN"); when non-empty it is passed to the
 // build as the github_token BuildKit secret so the Dockerfile can clone the
-// private memory repo. Empty means no secret is passed (unauthenticated).
+// memory repo authenticated. Empty means no secret is passed (unauthenticated).
 func (d *DockerManager) BuildSandboxImages(dockerfileContent, imageName, gitTokenEnv string) error {
 	contentHash := dockerfileContentHash(dockerfileContent)
 	if d.imageHasDockerfileHash(imageName, contentHash) {

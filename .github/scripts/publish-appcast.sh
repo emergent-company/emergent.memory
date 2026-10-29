@@ -2,13 +2,15 @@
 # Publish a built Sparkle feed (appcast.xml + update archives) to the public
 # GitHub Pages site.
 #
-# Why Pages and not the GitHub release: the repository is PRIVATE, so release
-# assets are NOT reachable without credentials — an unauthenticated fetch of
-# https://github.com/<repo>/releases/download/<tag>/<asset> returns 404. Sparkle
-# fetches SUFeedURL with no credentials, so the feed MUST live on a public host.
-# This repo's docs site (https://<org>.github.io/<repo>/) is public and served
-# from the `gh-pages` branch, so the feed is published under
-# `appcast/<channel>/` there.
+# Why Pages and not a release asset: SUFeedURL is baked into every shipped
+# build, so it must never change, and each channel needs one permanent path.
+# `releases/latest/download/<asset>` skips prereleases, so it cannot serve the
+# dev channel, and the rolling `mac-dev` release is deleted and recreated on
+# every dev build, so its asset URL 404s in that window. The docs site
+# (https://<org>.github.io/<repo>/) is served from `gh-pages` and gives one fixed
+# path per channel, so the feed is published under `appcast/<channel>/` there.
+# The `memory-appcast` and `mac-dev` releases are only an archive store for
+# generate_appcast.
 #
 # Usage: publish-appcast.sh <channel: stable|dev> <marketing-version> <source-dir>
 #   source-dir must contain appcast.xml and the Memory-*.dmg (+ optional *.delta)

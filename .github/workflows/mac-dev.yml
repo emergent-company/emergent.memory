@@ -208,8 +208,8 @@ jobs:
             --notes "Rolling mac app dev build. Commit: ${GITHUB_SHA}"
 
       - name: Publish feed to public GitHub Pages
-        # The app fetches the feed unauthenticated; private release assets 404,
-        # so the feed + DMG must be served from the public Pages site.
+        # The feed and DMG are served from the Pages site so each channel has one
+        # fixed URL, which is what shipped builds keep pointing at.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MARKETING: ${{ steps.version.outputs.marketing }}

@@ -209,8 +209,8 @@ jobs:
           # Generate the appcast. The EdDSA private key (base64 of the 32-byte
           # seed) is piped to stdin and must never be echoed. Deltas (if any)
           # are emitted alongside appcast.xml by generate_appcast. The download
-          # URL prefix points at the PUBLIC Pages host (the private release
-          # assets are not anonymously reachable, which Sparkle requires).
+          # URL prefix points at the Pages host: SUFeedURL is baked into every
+          # shipped build, so the feed path must be permanent per channel.
           printf '%s' "$SPARKLE_PRIVATE_KEY" | "$GENERATE_APPCAST" \
             --download-url-prefix "https://emergent-company.github.io/emergent.memory/appcast/stable/" \
             --ed-key-file - \
@@ -219,8 +219,8 @@ jobs:
           echo "Appcast generated at $UPDATES_DIR/appcast.xml"
 
       - name: Publish Sparkle appcast
-        # Private rolling release kept only as an archive store for
-        # generate_appcast (previous archives for deltas/ordering).
+        # Rolling release kept only as an archive store for generate_appcast
+        # (previous archives for deltas/ordering). Sparkle never fetches it.
         if: startsWith(github.ref, 'refs/tags/v')
         working-directory: apps/connector.mac
         env:
@@ -234,8 +234,8 @@ jobs:
           gh release upload memory-appcast "${ASSETS[@]}" --clobber
 
       - name: Publish feed to public GitHub Pages
-        # The app fetches the feed unauthenticated; private release assets 404,
-        # so the feed + DMG must be served from the public Pages site.
+        # The feed and DMG are served from the Pages site so each channel has one
+        # fixed URL, which is what shipped builds keep pointing at.
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

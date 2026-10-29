@@ -45,15 +45,16 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Sparkle 2 auto-update configuration. The feed MUST be publicly
-	     reachable without credentials: the repository is private, so GitHub
-	     release assets return 404 to an unauthenticated fetch (Sparkle cannot
-	     authenticate). The feed is therefore hosted on the public GitHub Pages
-	     docs site (gh-pages branch) under appcast/<channel>/, and the URLs are
-	     permanent so an install several releases behind still resolves the
-	     newest archive. The public EdDSA key pairs with the private key held
-	     only in the release pipeline. Sandbox XPC keys are intentionally absent
-	     — the app is not sandboxed. -->
+	<!-- Sparkle 2 auto-update configuration. SUFeedURL is baked into every
+	     shipped build, so it must never change, and each channel needs one
+	     permanent path: releases/latest/download/ skips prereleases so it cannot
+	     serve the dev channel, and the rolling mac-dev release is deleted and
+	     recreated on every dev build. The feed is therefore hosted on the GitHub
+	     Pages docs site (gh-pages branch) under appcast/<channel>/, which gives one
+	     fixed path per channel and still resolves for an install several releases
+	     behind. The public EdDSA key pairs with the private key held only in the
+	     release pipeline. Sandbox XPC keys are intentionally absent — the app is
+	     not sandboxed. -->
 	<key>SUFeedURL</key>
 	<string>https://emergent-company.github.io/emergent.memory/appcast/stable/appcast.xml</string>
 	<!-- Per-channel feed URLs for the in-app update-channel switch. The updater

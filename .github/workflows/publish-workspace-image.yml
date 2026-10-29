@@ -60,8 +60,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # github_token lets the Dockerfile clone the private memory repo at
-          # build time; contents:read + GITHUB_TOKEN can read it. build-push-action
+          # github_token lets the Dockerfile clone the memory repo at build time
+          # with credentials; contents:read + GITHUB_TOKEN can read it. build-push-action
           # exposes each secret entry to `RUN --mount=type=secret,id=github_token`.
           secrets: |
             github_token=${{ secrets.GITHUB_TOKEN }}

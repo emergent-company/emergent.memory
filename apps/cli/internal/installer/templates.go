@@ -405,18 +405,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the emergent-memory Python SDK from the (PRIVATE) memory repo.
+# Install the emergent-memory Python SDK from the memory repo.
 # --break-system-packages is required on Debian bookworm (PEP 668 externally
 # managed environment). requests/pydantic/python-dateutil are common deps.
 #
-# The repo is private, so the git fetch needs a credential. An optional
-# BuildKit secret (id=github_token) carries a GitHub token: CI passes
-# secrets.GITHUB_TOKEN (see publish-workspace-image.yml) and the CLI passes
-# GH_TOKEN/GITHUB_TOKEN when present. The token is written to ~/.netrc only for
-# the duration of this RUN and removed before the layer ends, so it never
-# persists into the image. When the secret is absent (public forks, no-token
-# CLI builds) the fetch proceeds unauthenticated and git reports its own auth
-# error for a private repo.
+# An optional BuildKit secret (id=github_token) carries a GitHub token: CI
+# passes secrets.GITHUB_TOKEN (see publish-workspace-image.yml) and the CLI
+# passes GH_TOKEN/GITHUB_TOKEN when present. The clone URL below is a literal
+# pointing at emergent-company/emergent.memory, and no ARG or --build-arg can
+# retarget it, so whether the credential is needed is a property of that
+# repository: required while it is private, unnecessary once it is public
+# (#2197). The token is written to ~/.netrc only for the duration of this RUN
+# and removed before the layer ends, so it never persists into the image.
 RUN --mount=type=secret,id=github_token,required=false \
     if [ -f /run/secrets/github_token ]; then \
         printf 'machine github.com login x-access-token password %s\n' "$(cat /run/secrets/github_token)" > ~/.netrc && chmod 600 ~/.netrc; \
@@ -550,9 +550,9 @@ if __name__ == "__main__":
 PYEOF
 RUN chmod +x /usr/local/bin/pyrunner.py
 
-# Clone the (PRIVATE) Memory repo and extract the Go SDK source, using a
-# sparse checkout to avoid pulling the entire repo. Same optional github_token
-# secret as the pip step above (netrc credential removed before the layer ends).
+# Clone the Memory repo and extract the Go SDK source, using a sparse checkout
+# to avoid pulling the entire repo. Same optional github_token secret as the pip
+# step above (netrc credential removed before the layer ends).
 RUN --mount=type=secret,id=github_token,required=false \
     if [ -f /run/secrets/github_token ]; then \
         printf 'machine github.com login x-access-token password %s\n' "$(cat /run/secrets/github_token)" > ~/.netrc && chmod 600 ~/.netrc; \

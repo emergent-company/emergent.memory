@@ -118,8 +118,9 @@ fi
 
 # Per-channel Sparkle feed URL. Written into the exported app's Info.plist below
 # (before it is re-signed) so the bundled default feed matches the channel.
-# MUST be the PUBLIC Pages host: the repo is private, so release-asset URLs
-# return 404 to Sparkle's unauthenticated fetch.
+# MUST be a fixed path on the Pages host: SUFeedURL is baked into every shipped
+# build, releases/latest/download/ skips prereleases (so it cannot serve the dev
+# channel), and the rolling mac-dev release is recreated on every build.
 case "$CHANNEL" in
     stable) FEED_URL="https://emergent-company.github.io/emergent.memory/appcast/stable/appcast.xml" ;;
     dev)    FEED_URL="https://emergent-company.github.io/emergent.memory/appcast/dev/appcast.xml" ;;
