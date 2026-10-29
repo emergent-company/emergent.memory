@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { goto } from '../../helpers/page';
+import { addObjectLabel } from '../../helpers/objects';
 
 // Regression coverage for the object detail edit form. The gateway shell is
 // hx-boosted (SPA-style in-page navigation), so assertions must target the URL
@@ -11,6 +12,10 @@ import { goto } from '../../helpers/page';
 // HX-Trigger header under hx-boost), and (c) actually persist the edit so it
 // survives a full reload. Before the fix, an errored save redirected silently
 // with no toast and no saved data — indistinguishable from a no-op.
+//
+// Person declares no workflow (no boardEnabled / allowedStatuses), so the
+// built-in workflow-status field must not render for it; this spec also pins
+// that absence and persists edits through Key and Labels instead.
 async function createPerson(page: import('@playwright/test').Page, key: string): Promise<void> {
   await goto(page, '/objects/new');
   await page.locator('select[name="type"]').selectOption('Person');
@@ -22,16 +27,18 @@ async function createPerson(page: import('@playwright/test').Page, key: string):
 
 test('edit form save persists changes and shows a success toast', async ({ page }) => {
   const key = `e2e-edit-${Date.now()}`;
-  // Person is not board-enabled, but the status field is still a constrained
-  // select of the canonical work statuses, so edit it through the option value
-  // (Playwright's fill() rejects a <select>).
-  const status = 'review';
+  const renamed = `${key}-edited`;
 
   await createPerson(page, key);
   await expect(page.locator('#object-key')).toHaveValue(key);
 
-  // Edit the Status field and save.
-  await page.locator('#object-status').selectOption(status);
+  // A type with no workflow renders no built-in status control at all.
+  await expect(page.locator('#object-status')).toHaveCount(0);
+  await expect(page.locator('select[name="status"]')).toHaveCount(0);
+
+  // Edit the key and add a label, then save.
+  await page.locator('#object-key').fill(renamed);
+  await addObjectLabel(page, 'e2e-edited');
   await page.getByRole('button', { name: 'Save changes' }).click();
 
   // PRG: the boosted POST redirects to the detail page with ?updated=1 (the
@@ -46,12 +53,13 @@ test('edit form save persists changes and shows a success toast', async ({ page 
     })
     .toBeTruthy();
 
-  // The submitted value is persisted on the resulting page…
-  await expect(page.locator('#object-status')).toHaveValue(status);
-  await expect(page.locator('#object-key')).toHaveValue(key);
+  // The submitted values are persisted on the resulting page…
+  await expect(page.locator('#object-key')).toHaveValue(renamed);
+  await expect(page.locator('.badge', { hasText: 'e2e-edited' }).first()).toBeVisible();
 
-  // …and survives a full reload (server round-trip, not client state).
+  // …and survive a full reload (server round-trip, not client state).
   await page.reload();
-  await expect(page.locator('#object-status')).toHaveValue(status);
-  await expect(page.locator('#object-key')).toHaveValue(key);
+  await expect(page.locator('#object-key')).toHaveValue(renamed);
+  await expect(page.locator('.badge', { hasText: 'e2e-edited' }).first()).toBeVisible();
+  await expect(page.locator('#object-status')).toHaveCount(0);
 });

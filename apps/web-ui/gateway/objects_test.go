@@ -628,7 +628,11 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 		{Name: "works_with", Label: "Works with", SourceType: "person", TargetType: "person"},
 		{Name: "located_in", Label: "Located in", SourceType: "place", TargetType: "place"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
+	// person derives from no compiled type here, so a board-enabled control is
+	// supplied explicitly to exercise the workflow-status field (the only status
+	// editor for a type that declares a workflow).
+	status := objectStatusControlFor([]CompiledType{{Name: "person", BoardEnabled: true}}, "person")
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, status, nil))
 
 	// properties form: common fields + one input per property
 	for _, want := range []string{
@@ -1948,6 +1952,9 @@ func TestUIObjectStatusDropdownWiring(t *testing.T) {
 		if !strings.Contains(body, `value="in_progress" selected`) {
 			t.Errorf("detail current status not selected in:\n%s", body)
 		}
+		if !strings.Contains(body, "Workflow status") {
+			t.Errorf("detail status field should be labelled Workflow status in:\n%s", body)
+		}
 	})
 
 	t.Run("create page selects the board statuses", func(t *testing.T) {
@@ -1967,27 +1974,22 @@ func TestUIObjectStatusDropdownWiring(t *testing.T) {
 		}
 	})
 
-	t.Run("type with no board config also gets the canonical select (user report)", func(t *testing.T) {
+	t.Run("type with no workflow renders no status field (user report)", func(t *testing.T) {
 		f.objects = append(f.objects, GraphObject{ID: "o2", CanonicalID: "o2", Type: "Note", Key: "n1", Status: "anything"})
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o2", nil))
 		body := rec.Body.String()
-		if !strings.Contains(body, `<select id="object-status" name="status"`) {
-			t.Fatalf("no-board-config detail page should render a status select in:\n%s", body)
+		if strings.Contains(body, `id="object-status"`) || strings.Contains(body, `name="status"`) {
+			t.Fatalf("no-workflow type must not render a built-in status field in:\n%s", body)
 		}
-		for _, opt := range boardStatusOrder {
-			if !strings.Contains(body, `value="`+opt+`"`) {
-				t.Errorf("detail select missing canonical option %q in:\n%s", opt, body)
-			}
-		}
-		if !strings.Contains(body, `<option value="anything" selected>`) {
-			t.Errorf("off-list stored status should be preserved in:\n%s", body)
+		if strings.Contains(body, "Workflow status") {
+			t.Errorf("no-workflow type must not render the workflow-status label in:\n%s", body)
 		}
 	})
 }
 
 func TestUIObjectCreate(t *testing.T) {
-	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", Properties: json.RawMessage(`{"first_name":{"type":"string"},"active":{"type":"boolean"},"tags":{"type":"array"}}`)}}}
+	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{{Name: "person", BoardEnabled: true, Properties: json.RawMessage(`{"first_name":{"type":"string"},"active":{"type":"boolean"},"tags":{"type":"array"}}`)}}}
 	newServer := func(f *fakeMemory) *Server { return &Server{cfg: Config{DefaultAgent: "memory"}, memory: f} }
 	post := func(e *echo.Echo, form url.Values) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/objects", strings.NewReader(form.Encode()))
@@ -2181,10 +2183,10 @@ func TestRenderObjectCreatePage(t *testing.T) {
 
 	t.Run("renders the type selector and TagList labels input", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Key: "k", Status: "s", Labels: []string{"vip"}, Props: map[string][]string{"first_name": {"Sam"}}}
-		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, []string{"vip", "urgent"}, nil, nil))
+		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, []string{"vip", "urgent"}, nil, objectStatusControlFor(objectTypes, "person")))
 		for _, want := range []string{
 			"New object", `name="type"`, "Pick a type…", "Person", "task",
-			`name="key"`, `name="status"`, `value="k"`, "Create object", `action="/objects"`,
+			`name="key"`, `value="k"`, "Create object", `action="/objects"`,
 			// labels are a chip TagList, not a comma-separated text input
 			"Labels/Tags", "Comma-separated labels.",
 			`id="object-labels"`, `placeholder="Add a label..."`,
@@ -2197,6 +2199,11 @@ func TestRenderObjectCreatePage(t *testing.T) {
 			if !strings.Contains(html, want) {
 				t.Errorf("create page missing %q", want)
 			}
+		}
+		// The person type declares no workflow, so no built-in status field is
+		// rendered — its schema has no status property either.
+		if strings.Contains(html, `id="object-status"`) {
+			t.Error("a type with no workflow must not render the built-in status field")
 		}
 		if strings.Contains(html, "No object types available") {
 			t.Error("empty-types guidance should not render when types exist")
@@ -2267,37 +2274,42 @@ func TestRenderObjectCreatePage(t *testing.T) {
 	})
 }
 
-// TestObjectStatusOptions pins the option-source rules for the built-in status
-// field: a type uses its declared AllowedStatuses when present, otherwise the
-// canonical board order. That fallback applies to a type with no board config
-// too (the user-reported `Task` shape: no boardEnabled/allowedStatuses), so the
-// form still gets a populated select rather than a free-form text input.
-// Returns nil only when no type is selected.
-func TestObjectStatusOptions(t *testing.T) {
+// TestObjectStatusControl pins the visibility and option-source rules for the
+// built-in workflow-status field: a type gets the field only when it declares a
+// workflow (boardEnabled or allowedStatuses). Declared allowedStatuses win; a
+// board-enabled type with none falls back to the canonical board order. A type
+// with no declaration has no workflow status — its own `status` schema property,
+// when it has one, is edited with the rest of its properties — so no field is
+// rendered for it, for an unknown type, or before a type is picked.
+func TestObjectStatusControl(t *testing.T) {
 	boardWithStatuses := []CompiledType{{
 		Name: "Task", BoardEnabled: true,
 		AllowedStatuses: []string{"triage", "doing", "done"},
 	}}
 	boardWithoutStatuses := []CompiledType{{Name: "Task", BoardEnabled: true}}
-	// The user-reported shape: a work type whose registry row declares neither
-	// boardEnabled nor allowedStatuses, yet is projected onto the board via the
-	// canonical-lane fallback.
-	noBoardConfig := []CompiledType{{Name: "Task"}}
+	// The user-reported shape: a type whose registry row declares neither
+	// boardEnabled nor allowedStatuses, so it has no workflow status to set.
+	noWorkflow := []CompiledType{{Name: "Scenario"}}
 
-	if got := objectStatusOptions(boardWithStatuses, "Task"); !slices.Equal(got, []string{"triage", "doing", "done"}) {
-		t.Errorf("declared statuses = %v, want [triage doing done]", got)
+	ctrl := objectStatusControlFor(boardWithStatuses, "Task")
+	if !ctrl.Show || !slices.Equal(ctrl.Options, []string{"triage", "doing", "done"}) {
+		t.Errorf("declared statuses control = %+v, want shown with [triage doing done]", ctrl)
 	}
-	if got := objectStatusOptions(boardWithoutStatuses, "Task"); !slices.Equal(got, boardStatusOrder) {
-		t.Errorf("board canonical fallback = %v, want %v", got, boardStatusOrder)
+	ctrl = objectStatusControlFor(boardWithoutStatuses, "Task")
+	if !ctrl.Show || !slices.Equal(ctrl.Options, boardStatusOrder) {
+		t.Errorf("board canonical fallback control = %+v, want shown with %v", ctrl, boardStatusOrder)
 	}
-	if got := objectStatusOptions(noBoardConfig, "Task"); !slices.Equal(got, boardStatusOrder) {
-		t.Errorf("no-board-config fallback = %v, want %v", got, boardStatusOrder)
+	if ctrl = objectStatusControlFor(noWorkflow, "Scenario"); ctrl.Show || len(ctrl.Options) > 0 {
+		t.Errorf("no-workflow type control = %+v, want hidden", ctrl)
 	}
-	if got := objectStatusOptions(noBoardConfig, "Unknown"); !slices.Equal(got, boardStatusOrder) {
-		t.Errorf("unknown type options = %v, want canonical %v", got, boardStatusOrder)
+	if ctrl = objectStatusControlFor(noWorkflow, "Unknown"); ctrl.Show {
+		t.Errorf("unknown type control = %+v, want hidden", ctrl)
 	}
-	if got := objectStatusOptions(boardWithStatuses, ""); got != nil {
-		t.Errorf("no type selected options = %v, want nil", got)
+	if ctrl = objectStatusControlFor(boardWithStatuses, ""); ctrl.Show {
+		t.Errorf("no type selected control = %+v, want hidden", ctrl)
+	}
+	if ctrl = objectStatusControlUnavailable(); !ctrl.Show || !ctrl.Free {
+		t.Errorf("degraded control = %+v, want shown as free text", ctrl)
 	}
 
 	// A shadowed (losing) declaration listed before the effective override must
@@ -2306,21 +2318,23 @@ func TestObjectStatusOptions(t *testing.T) {
 		{Name: "Task", Shadowed: true, AllowedStatuses: []string{"stale"}},
 		{Name: "Task", AllowedStatuses: []string{"triage", "doing"}},
 	}
-	if got := objectStatusOptions(shadowedFirst, "Task"); !slices.Equal(got, []string{"triage", "doing"}) {
-		t.Errorf("shadowed declaration leaked: options = %v, want [triage doing]", got)
+	if ctrl = objectStatusControlFor(shadowedFirst, "Task"); !slices.Equal(ctrl.Options, []string{"triage", "doing"}) {
+		t.Errorf("shadowed declaration leaked: options = %v, want [triage doing]", ctrl.Options)
 	}
 }
 
-// TestObjectStatusField pins the rendered control: types get a native select of
-// their work statuses with the current value selected (and a stored value
-// outside the set preserved), including a type with no board config (the
-// user-reported `Task` shape).
+// TestObjectStatusField pins the rendered control: a type that declares a
+// workflow gets a native select labelled "Workflow status", with the current
+// value selected and a stored value outside the set preserved. A type that
+// declares no workflow renders no status field at all — its own `status` schema
+// property (when it has one) is the status editor.
 func TestObjectStatusField(t *testing.T) {
 	boardStatuses := []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
 
 	renderSelect := func(current string) string {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
-		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, boardStatuses, nil))
+		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
+		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil))
 	}
 
 	t.Run("edit page renders a select of the allowed statuses", func(t *testing.T) {
@@ -2338,6 +2352,9 @@ func TestObjectStatusField(t *testing.T) {
 		}
 		if !strings.Contains(html, "In progress") {
 			t.Errorf("status labels should be humanised in:\n%s", html)
+		}
+		if !strings.Contains(html, "Workflow status") {
+			t.Errorf("status field should be labelled Workflow status in:\n%s", html)
 		}
 		if strings.Contains(html, `name="status" type="text"`) {
 			t.Errorf("board type should not render a text input in:\n%s", html)
@@ -2366,7 +2383,7 @@ func TestObjectStatusField(t *testing.T) {
 	t.Run("create page renders the same status select", func(t *testing.T) {
 		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
 		form := objectCreateForm{Type: "Task", Status: "in_progress"}
-		html := renderHTML(t, ObjectCreatePage(objectTypes, nil, form, nil, nil, objectStatusOptions(objectTypes, "Task")))
+		html := renderHTML(t, ObjectCreatePage(objectTypes, nil, form, nil, nil, objectStatusControlFor(objectTypes, "Task")))
 		if !strings.Contains(html, `<select id="object-status" name="status"`) {
 			t.Fatalf("create page missing status select in:\n%s", html)
 		}
@@ -2378,37 +2395,67 @@ func TestObjectStatusField(t *testing.T) {
 		if !strings.Contains(html, `value="in_progress" selected`) {
 			t.Errorf("create current status not marked selected in:\n%s", html)
 		}
+		if !strings.Contains(html, "Workflow status") {
+			t.Errorf("create status field should be labelled Workflow status in:\n%s", html)
+		}
 	})
 
-	t.Run("type with no board config renders the canonical select (user report)", func(t *testing.T) {
-		// Registry row declares neither boardEnabled nor allowedStatuses, yet the
-		// type is shown on the board via the canonical-lane fallback. The form
-		// must offer the canonical statuses, not a free-form text input.
-		objectTypes := []CompiledType{{Name: "Task"}}
+	t.Run("type with no workflow renders no status field (user report)", func(t *testing.T) {
+		// A Scenario declares a typed `status` enum property but no board config:
+		// the built-in workflow field must be absent, and the typed property is
+		// the status editor.
+		obj := &GraphObject{ID: "o1", Type: "Scenario", Key: "S-005", Properties: map[string]any{"status": "proposed"}}
+		objectTypes := []CompiledType{{
+			Name:       "Scenario",
+			Properties: json.RawMessage(`{"status":{"type":"string","enum":["proposed","active","archived"]}}`),
+		}}
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil))
+		if strings.Contains(html, `id="object-status"`) {
+			t.Errorf("no-workflow type must not render the built-in status field in:\n%s", html)
+		}
+		if strings.Contains(html, "Workflow status") {
+			t.Errorf("no-workflow type must not render the workflow-status label in:\n%s", html)
+		}
+		if !strings.Contains(html, `name="prop_status"`) {
+			t.Errorf("the declared status property should render as the status editor in:\n%s", html)
+		}
+
+		createHTML := renderHTML(t, ObjectCreatePage(objectTypes, compiledTypePropertyDefs(objectTypes, "Scenario"), objectCreateForm{Type: "Scenario"}, nil, nil, objectStatusControlFor(objectTypes, "Scenario")))
+		if strings.Contains(createHTML, `id="object-status"`) {
+			t.Errorf("no-workflow type must not render the built-in status field on create in:\n%s", createHTML)
+		}
+	})
+
+	t.Run("detail handler degrades to text when compiled types fail to load", func(t *testing.T) {
+		// The handler (not just the component) must pick the degraded control
+		// when GetCompiledTypes fails, otherwise a stored status silently
+		// disappears from the edit form.
+		f := &fakeMemory{
+			blueprintErr: errTest,
+			objects:      []GraphObject{{ID: "o1", CanonicalID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}},
+		}
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.GET("/objects/:id", s.uiObject)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/o1", nil))
+		body := rec.Body.String()
+		if !strings.Contains(body, `name="status" type="text"`) {
+			t.Fatalf("unavailable schema should fall back to a text status input:\n%s", body)
+		}
+		if !strings.Contains(body, `value="in_progress"`) {
+			t.Errorf("degraded control should keep the stored value:\n%s", body)
+		}
+	})
+
+	t.Run("degraded edit form keeps the value editable as text", func(t *testing.T) {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task"), nil))
-		if !strings.Contains(html, `<select id="object-status" name="status"`) {
-			t.Fatalf("no-board-config type should render a status select in:\n%s", html)
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil))
+		if !strings.Contains(html, `name="status" type="text"`) {
+			t.Errorf("unavailable schema should fall back to a text input in:\n%s", html)
 		}
-		for _, opt := range boardStatuses {
-			if !strings.Contains(html, `value="`+opt+`"`) {
-				t.Errorf("status select missing canonical option %q in:\n%s", opt, html)
-			}
-		}
-		if !strings.Contains(html, `value="in_progress" selected`) {
-			t.Errorf("current status not marked selected in:\n%s", html)
-		}
-		if strings.Contains(html, `name="status" type="text"`) {
-			t.Errorf("no-board-config type should not render a text input in:\n%s", html)
-		}
-	})
-
-	t.Run("off-list stored value still preserved for no-board-config type", func(t *testing.T) {
-		objectTypes := []CompiledType{{Name: "Task"}}
-		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "pending"}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusOptions(objectTypes, "Task"), nil))
-		if !strings.Contains(html, `<option value="pending" selected>`) {
-			t.Errorf("off-list status should be kept as a selected option in:\n%s", html)
+		if !strings.Contains(html, `value="in_progress"`) {
+			t.Errorf("degraded control should keep the stored value in:\n%s", html)
 		}
 	})
 }
@@ -2424,7 +2471,7 @@ func TestCompiledTypePropertyDefs(t *testing.T) {
 	got := compiledTypePropertyDefs(objectTypes, "person")
 	want := []objectPropertyDef{
 		{Name: "age", Type: "number"},
-		{Name: "first_name", Type: "string"},
+		{Name: "first_name", Type: "string", Description: "First name"},
 		{Name: "zeta", Type: "string"},
 	}
 	if len(got) != len(want) {
@@ -2465,8 +2512,8 @@ func TestCompiledTypePropertyDefs(t *testing.T) {
 	// property schema without a type field → def with empty Type
 	notyped := []CompiledType{{Name: "t", Properties: json.RawMessage(`{"title":{"description":"x"}}`)}}
 	got2 := compiledTypePropertyDefs(notyped, "t")
-	if len(got2) != 1 || got2[0].Name != "title" || got2[0].Type != "" {
-		t.Errorf("untyped prop = %+v, want {title }", got2)
+	if len(got2) != 1 || got2[0].Name != "title" || got2[0].Type != "" || got2[0].Description != "x" {
+		t.Errorf("untyped prop = %+v, want {title  description x}", got2)
 	}
 
 	// non-object Properties JSON → nil

@@ -119,10 +119,16 @@ templ objectPreviewDrawer() {
 
 // objectPreviewContent is the read-only object summary swapped into
 // #object-preview-body: a scannable identity header (icon + type + display
-// label) and the object's values laid out as label→value rows — never inputs.
+// label) and the object's values laid out as labelled fields — never inputs.
 // typeUIByType carries the compiled types' declared ui accent so the header
 // icon matches the rest of the UI; relLabel, when set, is the humanised
 // relationship type the reference carried.
+//
+// The fields are split into two panels so platform data and schema data never
+// blur together: "Properties" carries the built-in graph fields (key, workflow
+// status, assignee, version, created, id) — the workflow-status row appears only
+// for a type that declares a workflow — and "<Type> Properties" carries the
+// type's own schema properties, each with its schema description.
 //
 // actions, when non-nil, is rendered into #object-preview-actions-slot at the
 // foot of the summary. This is the documented extension point for surface-
@@ -130,10 +136,12 @@ templ objectPreviewDrawer() {
 // merged "Activity" thread); chat previews pass nil and stay read-only.
 //
 // Empty values still render (de-emphasised with a muted em dash) so the shape of
-// every property is visible; each row carries data-empty="true" so a future
+// every field is visible; each row carries data-empty="true" so a future
 // "hide empties" toggle can fold them without a markup change.
-templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string, actions templ.Component) {
+templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string, schema objectPreviewSchema, actions templ.Component) {
 	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	{{ builtins := objectPreviewBuiltinFields(obj, schema.HasWorkflow) }}
+	{{ typeFields := objectPreviewTypeFields(*obj, schema) }}
 	<div class="flex flex-col gap-5 p-4">
 		<div class="flex items-start gap-3">
 			@typeIconTile(tui.Icon, tui.Color)
@@ -171,15 +179,18 @@ templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, rel
 		</div>
 
 		@objectPreviewSection("Properties") {
-			{{ props := objectPreviewProperties(*obj) }}
-			if len(props) == 0 {
-				@ui.EmptyNote() {
-					No properties recorded.
+			<dl class="divide-base-content/10 flex flex-col divide-y">
+				for _, f := range builtins {
+					@objectPreviewFieldRow(f)
 				}
-			} else {
+			</dl>
+		}
+
+		if len(typeFields) > 0 {
+			@objectPreviewSection(schema.typePanelTitle()) {
 				<dl class="divide-base-content/10 flex flex-col divide-y">
-					for _, p := range props {
-						@objectPreviewRow(p.Key, p.Value, p.Value == "")
+					for _, f := range typeFields {
+						@objectPreviewFieldRow(f)
 					}
 				</dl>
 			}
@@ -237,17 +248,29 @@ templ objectPreviewSection(title string) {
 	</section>
 }
 
-// objectPreviewRow renders one label→value row of the summary. A value that is
-// empty ("" or the em dash placeholder) is visually de-emphasised and its row
-// is tagged data-empty="true" for a future fold-empties toggle.
-templ objectPreviewRow(label string, value string, empty bool) {
-	<div class="flex flex-col gap-0.5 py-2 sm:flex-row sm:gap-3" data-preview-field data-empty?={ empty }>
-		<dt class="text-muted w-full shrink-0 text-xs font-medium sm:w-36">{ label }</dt>
-		<dd class={ "min-w-0 grow text-sm break-words", templ.KV("text-muted-faint font-mono", empty), templ.KV("font-mono", label == "ID" && !empty) }>
-			if empty {
+// objectPreviewFieldRow renders one field of the summary: the label, the
+// schema description beneath it (type properties only — built-ins have no
+// schema prose), and the value. A value that is empty ("") is visually
+// de-emphasised and its row is tagged data-empty="true" for a future
+// fold-empties toggle. The raw property name, when set, is the label's tooltip
+// because the visible label is humanised.
+templ objectPreviewFieldRow(f objectPreviewField) {
+	<div class="flex flex-col gap-0.5 py-2" data-preview-field data-empty?={ f.Empty }>
+		<dt class="text-muted text-xs font-medium">
+			if f.Name != "" {
+				<span title={ f.Name }>{ f.Label }</span>
+			} else {
+				{ f.Label }
+			}
+			if f.Description != "" {
+				<span class="text-muted-faint mt-0.5 block text-[11px] leading-snug">{ f.Description }</span>
+			}
+		</dt>
+		<dd class={ "min-w-0 text-sm break-words", templ.KV("text-muted-faint font-mono", f.Empty), templ.KV("font-mono", f.Mono && !f.Empty) }>
+			if f.Empty {
 				—
 			} else {
-				{ value }
+				{ f.Value }
 			}
 		</dd>
 	</div>

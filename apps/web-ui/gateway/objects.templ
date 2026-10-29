@@ -410,11 +410,14 @@ templ objectsBrowseEmpty() {
 
 // ObjectCreatePage renders the create-object form: a type selector constrained
 // to the project's compiled object types, then (once a type is picked) inputs
-// for key, status, labels, and the selected type's schema-defined properties
-// (each rendered with a widget matching its declared data type). Labels and
-// array/object properties use a chip TagList; labelSuggestions feeds the
-// labels input's autocomplete from existing labels in the graph.
-templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error, statusOptions []string) {
+// for key, workflow status, labels, and the selected type's schema-defined
+// properties (each rendered with a widget matching its declared data type).
+// Labels and array/object properties use a chip TagList; labelSuggestions feeds
+// the labels input's autocomplete from existing labels in the graph. status
+// carries the type's resolved workflow-status control; a type that declares no
+// workflow renders no status field (its own `status` property, when it has one,
+// is edited with the rest of its properties).
+templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef, form objectCreateForm, labelSuggestions []string, loadErr error, status *objectStatusControl) {
 	if loadErr != nil {
 		<div class={ pageFormChromeClass }>
 			@pageError("Failed to load object types", loadErr)
@@ -470,8 +473,10 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 							@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
 								<input id="object-key" name="key" type="text" value={ form.Key } class="input w-full"/>
 							}
-							@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
-								@objectStatusField("object-status", form.Status, statusOptions)
+							if status != nil && status.Show {
+								@fm.FormControl("object-status", "Workflow status", fm.LabelAbove, "", "", nil) {
+									@objectStatusField("object-status", form.Status, status)
+								}
 							}
 							@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels.", "", nil) {
 								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
@@ -499,29 +504,29 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 	}
 }
 
-// objectStatusField renders the built-in `status` control of the object
-// create/edit forms. A type gets a native select of its work statuses — the
-// declared `allowedStatuses` when present, otherwise the canonical board order
-// — so the picker is populated even for a type with no board config (its
-// objects still appear on the board through the canonical-lane fallback). A
-// stored value outside the option set (agent-written data is not constrained)
-// is kept as an extra selected option so saving never drops it. The text input
-// is retained only when no options are available (compiled types unavailable on
-// the edit form).
-templ objectStatusField(id string, current string, options []string) {
-	if len(options) > 0 {
+// objectStatusField renders the built-in workflow-status control of the object
+// create/edit forms. A type that declares a workflow gets a native select of
+// its work statuses — the declared `allowedStatuses` when present, otherwise
+// the canonical board order. A stored value outside the option set
+// (agent-written data is not constrained) is kept as an extra selected option
+// so saving never drops it. Free is the degraded edit-form render where the
+// compiled types could not be loaded: the stored value stays editable as a text
+// input. ctrl.Show is checked by the caller, so this component never renders
+// for a type without a workflow.
+templ objectStatusField(id string, current string, ctrl *objectStatusControl) {
+	if ctrl != nil && len(ctrl.Options) > 0 {
 		<select id={ id } name="status" class="select w-full">
 			if current == "" {
 				<option value="" selected>Pick…</option>
 			}
-			for _, opt := range options {
+			for _, opt := range ctrl.Options {
 				<option value={ opt } selected?={ current == opt }>{ boardStatusLabel(opt) }</option>
 			}
-			if current != "" && !slices.Contains(options, current) {
+			if current != "" && !slices.Contains(ctrl.Options, current) {
 				<option value={ current } selected>{ current }</option>
 			}
 		</select>
-	} else {
+	} else if ctrl != nil && ctrl.Free {
 		<input id={ id } name="status" type="text" value={ current } class="input w-full"/>
 	}
 }
@@ -605,7 +610,7 @@ templ longTextarea(name string, value string) {
 // declared ui accents (icon/color) so the header chip can render the object
 // type's icon. trail is an optional origin trail (e.g. a document's extraction
 // history); when nil the header renders Objects > <object>.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, statusOptions []string, trail []nav.BreadcrumbItem) {
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem) {
 	@flashToasts(flashMsg, flashErr)
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
@@ -613,7 +618,7 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 		} else {
 			@objectDetailHeader(obj, branch, typeUIByType, trail)
 			@objectSourceCard(sources)
-			@objectPropertiesCard(obj, propDefs, labelSuggestions, statusOptions)
+			@objectPropertiesCard(obj, propDefs, labelSuggestions, status)
 			@objectRelationships(obj, relTypes, edges, related)
 			if similar != nil {
 				@objectSimilarObjects(obj, similar)
@@ -758,9 +763,13 @@ templ objectSourceRow(src objectSource) {
 }
 
 // objectPropertiesCard renders the editable property form: common fields
-// (key, status, labels) then one input per stored property (prop_<key>).
-// POST /objects/{id} delta-merges the submitted fields.
-templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string, statusOptions []string) {
+// (key, workflow status, labels) then one input per stored property
+// (prop_<key>). The workflow-status field is rendered only for a type that
+// declares a workflow — status carries the resolved control, and a
+// no-workflow type edits its own `status` schema property (when it has one)
+// like any other property. POST /objects/{id} delta-merges the submitted
+// fields.
+templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string, status *objectStatusControl) {
 	@ui.Section("Properties", ui.SectionProps{
 		Margin:    "mt-6",
 		BodyClass: "memory-density-comfortable",
@@ -769,8 +778,10 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
 				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
 			}
-			@fm.FormControl("object-status", "Status", fm.LabelAbove, "", "", nil) {
-				@objectStatusField("object-status", obj.Status, statusOptions)
+			if status != nil && status.Show {
+				@fm.FormControl("object-status", "Workflow status", fm.LabelAbove, "", "", nil) {
+					@objectStatusField("object-status", obj.Status, status)
+				}
 			}
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
 				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})

@@ -745,12 +745,17 @@ func (s *Server) uiObject(c echo.Context) error {
 	var relTypes []CompiledType
 	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
-	var statusOptions []string
+	var statusControl *objectStatusControl
 	if compiled != nil {
 		relTypes = compiled.RelationshipTypes
 		propDefs = compiledTypePropertyDefs(compiled.ObjectTypes, obj.Type)
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
-		statusOptions = objectStatusOptions(compiled.ObjectTypes, obj.Type)
+		statusControl = objectStatusControlFor(compiled.ObjectTypes, obj.Type)
+	} else {
+		// The schema could not be loaded, so we cannot tell whether the type
+		// declares a workflow; keep the stored status editable rather than
+		// dropping the field.
+		statusControl = objectStatusControlUnavailable()
 	}
 
 	related := s.loadRelatedObjects(ctx, obj, edges)
@@ -763,7 +768,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (issue #1096): it is not fetched here. The detail page renders the section
 	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
 	// never hold the page render again. nil similar triggers that deferred path.
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusOptions, trail))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusControl, trail))
 }
 
 // objectOriginTrail resolves an optional ?from= breadcrumb origin into a trail.
@@ -968,13 +973,15 @@ func objectTypeDisplayName(t CompiledType) string {
 // widget; Widget is an explicit schema hint ("textarea" for free-form long
 // text, "input" to force a single line) that overrides the default only for
 // string-ish properties; Enum, when declared, renders a native select of the
-// allowed values. The schema carries these losslessly from the pack through
-// the compiled-types view.
+// allowed values. Description is the schema's own prose for the property and is
+// used by the read-only object preview, not by the input widgets. The schema
+// carries these losslessly from the pack through the compiled-types view.
 type objectPropertyDef struct {
-	Name   string
-	Type   string
-	Widget string
-	Enum   []string
+	Name        string
+	Type        string
+	Widget      string
+	Enum        []string
+	Description string
 }
 
 // indexedFormValues collects base[0], base[1], … from the submitted form
@@ -1036,14 +1043,16 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 		}
 		def := objectPropertyDef{Name: k}
 		var meta struct {
-			Type   string   `json:"type"`
-			Widget string   `json:"widget"`
-			Enum   []string `json:"enum"`
+			Type        string   `json:"type"`
+			Widget      string   `json:"widget"`
+			Enum        []string `json:"enum"`
+			Description string   `json:"description"`
 		}
 		if json.Unmarshal(raw, &meta) == nil {
 			def.Type = meta.Type
 			def.Widget = meta.Widget
 			def.Enum = meta.Enum
+			def.Description = meta.Description
 		}
 		out = append(out, def)
 	}
@@ -1051,16 +1060,30 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 	return out
 }
 
-// objectStatusOptions returns the work-status options for an object type's
-// built-in `status` field: the type's declared AllowedStatuses when present,
-// otherwise the canonical board order. Every type that reaches the form gets a
-// populated picker — including a type with no board config, whose objects are
-// still projected onto the board through the canonical-lane fallback — so the
-// status field is never a free-form text input. Returns nil only when no type
-// is selected, where the create form renders no status field at all.
-func objectStatusOptions(objectTypes []CompiledType, typeName string) []string {
+// objectStatusControl is the built-in workflow-status field of the object
+// create/edit forms. Show is false for a type that declares no workflow, in
+// which case no status field is rendered at all; Options carries the statuses
+// the type accepts (declared allowedStatuses, else the canonical board order);
+// Free marks the degraded edit-form render where compiled types could not be
+// loaded, so the stored value stays editable through a text input.
+type objectStatusControl struct {
+	Show    bool
+	Free    bool
+	Options []string
+}
+
+// objectStatusControlFor resolves the workflow-status control for an object
+// type. A type declares a workflow when its registry row is board-enabled or
+// lists allowedStatuses; only a declaring type gets the built-in field, and it
+// is labelled "Workflow status". The canonical board order is the option set
+// for a board-enabled type with no explicit allowedStatuses. A type with no
+// declaration has no workflow status to set — its own `status` schema property
+// (when it has one) is edited with the rest of its properties — so no field is
+// rendered. An unknown type name resolves to no field: there is no declaration
+// to honour.
+func objectStatusControlFor(objectTypes []CompiledType, typeName string) *objectStatusControl {
 	if typeName == "" {
-		return nil
+		return &objectStatusControl{}
 	}
 	// Iterate the visible view so a shadowed (losing) declaration cannot leak
 	// stale statuses for an overridden type — same rule as every other
@@ -1070,11 +1093,22 @@ func objectStatusOptions(objectTypes []CompiledType, typeName string) []string {
 			continue
 		}
 		if len(t.AllowedStatuses) > 0 {
-			return t.AllowedStatuses
+			return &objectStatusControl{Show: true, Options: t.AllowedStatuses}
 		}
-		return boardStatusOrder
+		if t.BoardEnabled {
+			return &objectStatusControl{Show: true, Options: boardStatusOrder}
+		}
+		return &objectStatusControl{}
 	}
-	return boardStatusOrder
+	return &objectStatusControl{}
+}
+
+// objectStatusControlUnavailable is the edit form's degraded control when the
+// compiled types could not be loaded: the schema cannot say whether the type
+// declares a workflow, so the stored status stays visible and editable as a
+// free-form value rather than silently disappearing.
+func objectStatusControlUnavailable() *objectStatusControl {
+	return &objectStatusControl{Show: true, Free: true}
 }
 
 // uiObjectNew renders the create-object form, driven by the project's compiled
@@ -1091,7 +1125,7 @@ func (s *Server) uiObjectNew(c echo.Context) error {
 	}
 	selectedType := c.QueryParam("type")
 	propDefs := compiledTypePropertyDefs(objectTypes, selectedType)
-	return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, propDefs, objectCreateForm{Type: selectedType}, s.objectLabelSuggestions(ctx), nil, objectStatusOptions(objectTypes, selectedType)))
+	return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, propDefs, objectCreateForm{Type: selectedType}, s.objectLabelSuggestions(ctx), nil, objectStatusControlFor(objectTypes, selectedType)))
 }
 
 // uiObjectCreate creates an object from the create form and redirects to the
@@ -1150,7 +1184,7 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 
 	render := func(errMsg string) error {
 		form.Error = errMsg
-		return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, compiledTypePropertyDefs(objectTypes, form.Type), form, suggestions, nil, objectStatusOptions(objectTypes, form.Type)))
+		return s.page(c, pageTitle("New object"), ObjectCreatePage(objectTypes, compiledTypePropertyDefs(objectTypes, form.Type), form, suggestions, nil, objectStatusControlFor(objectTypes, form.Type)))
 	}
 
 	if form.Type == "" {

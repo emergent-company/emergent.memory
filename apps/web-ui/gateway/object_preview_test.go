@@ -10,11 +10,14 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// TestObjectPreviewProperties pins the property-list contract: sorted by key,
-// internal (underscore) names dropped, the mirrored "status" key dropped (it is
-// already rendered once in the header badge), and — unlike graphObjectProperties
-// — empty values retained so the preview shows the object's full shape.
-func TestObjectPreviewProperties(t *testing.T) {
+// TestObjectPreviewStoredProperties pins the stored-property contract: sorted
+// by key, internal (underscore) names dropped, and — unlike
+// graphObjectProperties — empty values retained so the preview shows the full
+// shape of the object. The mirrored "status" key is kept here: whether the
+// drawer renders it depends on whether the type declares a workflow, which is
+// objectPreviewTypeFields' rule (a workflow type shows it as the built-in
+// Workflow status row instead).
+func TestObjectPreviewStoredProperties(t *testing.T) {
 	obj := GraphObject{
 		Properties: map[string]any{
 			"_internal": "hidden",
@@ -25,11 +28,12 @@ func TestObjectPreviewProperties(t *testing.T) {
 			"status":    "in_progress",
 		},
 	}
-	got := objectPreviewProperties(obj)
+	got := objectPreviewStoredProperties(obj)
 	want := []propertyKV{
 		{Key: "alpha", Value: "first"},
 		{Key: "count", Value: "3"},
 		{Key: "empty", Value: ""},
+		{Key: "status", Value: "in_progress"},
 		{Key: "zeta", Value: "a, b"},
 	}
 	if len(got) != len(want) {
@@ -77,7 +81,11 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 			"extra":   "",
 		},
 	}
-	html := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+		TypeLabel:   "Note",
+		HasWorkflow: true,
+		Properties:  []objectPropertyDef{{Name: "summary", Description: "One-line summary."}},
+	}, nil))
 
 	for _, want := range []string{
 		`id="object-preview-heading"`,
@@ -88,10 +96,14 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 		`data-empty`,
 		`my-note`,
 		`A short note`,
-		`active`,
+		`Workflow status`,
+		`Active`,
+		`One-line summary.`,
 		`alpha`,
 		`beta`,
 		`11111111-1111-1111-1111-111111111111`,
+		`>Properties</h4>`,
+		`>Note Properties</h4>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("preview content missing %q\n%s", want, html)
@@ -102,11 +114,100 @@ func TestObjectPreviewContentIsReadOnly(t *testing.T) {
 			t.Errorf("preview content must be read-only, found %q", bad)
 		}
 	}
-	// The Details section (type/key/status/created/id) is gone — identity
-	// metadata lives in the header, not as duplicated property rows.
-	for _, gone := range []string{">Details<", ">Created<"} {
-		if strings.Contains(html, gone) {
-			t.Errorf("preview content must not render the removed Details rows, found %q", gone)
+	// The built-in fields live in the "Properties" panel and the type's schema
+	// fields in their own "<Type> Properties" panel; the removed Details section
+	// must not come back as a third panel.
+	if strings.Contains(html, ">Details<") {
+		t.Errorf("preview content must not render the removed Details section:\n%s", html)
+	}
+}
+
+// TestObjectPreviewStatusPlacement pins where an object's status is read: a
+// type that declares a workflow shows the built-in "Workflow status" row and
+// does not repeat the mirrored status property in its type panel; a type with
+// no workflow shows its own declared status property in the type panel and no
+// workflow row (the Scenario shape that prompted the fix).
+func TestObjectPreviewStatusPlacement(t *testing.T) {
+	t.Run("workflow type shows the workflow-status row only", func(t *testing.T) {
+		obj := &GraphObject{
+			Type: "Task", Key: "T-1", Status: "in_progress",
+			Properties: map[string]any{"status": "in_progress", "title": "Do it"},
+		}
+		html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+			TypeLabel:   "Task",
+			HasWorkflow: true,
+			Properties:  []objectPropertyDef{{Name: "status"}, {Name: "title"}},
+		}, nil))
+		if !strings.Contains(html, "Workflow status") {
+			t.Errorf("workflow type should render the Workflow status row:\n%s", html)
+		}
+		if strings.Contains(html, `title="status"`) {
+			t.Errorf("mirrored status property must not repeat in the type panel:\n%s", html)
+		}
+		if !strings.Contains(html, "Do it") {
+			t.Errorf("type property missing:\n%s", html)
+		}
+	})
+
+	t.Run("workflow type with an empty column keeps the stored property", func(t *testing.T) {
+		// The server does not mirror properties.status into the column on every
+		// write path; a value set on the property must not be hidden just because
+		// the type declares a workflow.
+		obj := &GraphObject{Type: "Task", Key: "T-2", Properties: map[string]any{"status": "review"}}
+		html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+			TypeLabel:   "Task",
+			HasWorkflow: true,
+			Properties:  []objectPropertyDef{{Name: "status"}},
+		}, nil))
+		if !strings.Contains(html, `title="status"`) {
+			t.Errorf("stored status property must render when the column is empty:\n%s", html)
+		}
+		if !strings.Contains(html, "review") {
+			t.Errorf("stored status value missing:\n%s", html)
+		}
+	})
+
+	t.Run("no-workflow type shows the declared status property", func(t *testing.T) {
+		obj := &GraphObject{
+			Type: "Scenario", Key: "S-005",
+			Properties: map[string]any{"status": "proposed"},
+		}
+		html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{
+			TypeLabel:  "Scenario",
+			Properties: []objectPropertyDef{{Name: "status", Description: "Lifecycle state."}},
+		}, nil))
+		if strings.Contains(html, "Workflow status") {
+			t.Errorf("no-workflow type must not render a Workflow status row:\n%s", html)
+		}
+		if !strings.Contains(html, "proposed") {
+			t.Errorf("declared status property should be shown:\n%s", html)
+		}
+		if !strings.Contains(html, `title="status"`) {
+			t.Errorf("status property should keep its raw name as tooltip:\n%s", html)
+		}
+		if !strings.Contains(html, ">Scenario Properties</h4>") {
+			t.Errorf("type panel title missing:\n%s", html)
+		}
+		if !strings.Contains(html, "Lifecycle state.") {
+			t.Errorf("schema description should be shown under the field label:\n%s", html)
+		}
+	})
+}
+
+// TestObjectPreviewFieldLabel pins the humanised field label used by the type
+// panel, with the raw schema name kept separately as the row tooltip.
+func TestObjectPreviewFieldLabel(t *testing.T) {
+	cases := map[string]string{
+		"status":      "Status",
+		"entry_point": "Entry point",
+		"first-name":  "First name",
+		"a.b":         "A b",
+		"état":        "État",
+		"":            "",
+	}
+	for in, want := range cases {
+		if got := objectPreviewFieldLabel(in); got != want {
+			t.Errorf("objectPreviewFieldLabel(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
@@ -144,7 +245,7 @@ func TestObjectPreviewCanonicalIDCopySource(t *testing.T) {
 		Type:        "note",
 		Key:         "k",
 	}
-	html := renderHTML(t, objectPreviewContent(withCanonical, nil, "", nil))
+	html := renderHTML(t, objectPreviewContent(withCanonical, nil, "", objectPreviewSchema{}, nil))
 	if got := srOnlySpanText(t, html); got != "canonical-123" {
 		t.Errorf("sr-only span = %q, want canonical id", got)
 	}
@@ -153,7 +254,7 @@ func TestObjectPreviewCanonicalIDCopySource(t *testing.T) {
 	}
 
 	withoutCanonical := &GraphObject{ID: "version-row-id", Type: "note", Key: "k"}
-	html2 := renderHTML(t, objectPreviewContent(withoutCanonical, nil, "", nil))
+	html2 := renderHTML(t, objectPreviewContent(withoutCanonical, nil, "", objectPreviewSchema{}, nil))
 	if got := srOnlySpanText(t, html2); got != "version-row-id" {
 		t.Errorf("sr-only span fallback = %q, want version row id", got)
 	}
@@ -170,11 +271,11 @@ func TestObjectPreviewCanonicalIDCopySource(t *testing.T) {
 // context line carried through from a /objects/<src>#relationship-<rel> ref.
 func TestObjectPreviewContentRelationshipLabel(t *testing.T) {
 	obj := &GraphObject{ID: "abc", Type: "note", Key: "k"}
-	withRel := renderHTML(t, objectPreviewContent(obj, nil, "cites", nil))
+	withRel := renderHTML(t, objectPreviewContent(obj, nil, "cites", objectPreviewSchema{}, nil))
 	if !strings.Contains(withRel, "Referenced via") || !strings.Contains(withRel, "cites") {
 		t.Errorf("relationship context missing:\n%s", withRel)
 	}
-	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
+	withoutRel := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{}, nil))
 	if strings.Contains(withoutRel, "Referenced via") {
 		t.Errorf("relationship context should be omitted when absent:\n%s", withoutRel)
 	}
@@ -277,7 +378,7 @@ func TestObjectPreviewStatusHumanised(t *testing.T) {
 		Key:    "my-note",
 		Status: "in_progress",
 	}
-	html := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{}, nil))
 
 	if !strings.Contains(html, "In progress") {
 		t.Errorf("status should be humanised to 'In progress':\n%s", html)
@@ -486,7 +587,7 @@ func TestObjectPreviewChangesToleratesUnexpectedShape(t *testing.T) {
 // scoped to /objects/:id/history.
 func TestObjectPreviewHistoryLazySection(t *testing.T) {
 	obj := &GraphObject{ID: "abc", Type: "note", Key: "k", Status: "ready"}
-	html := renderHTML(t, objectPreviewContent(obj, nil, "", nil))
+	html := renderHTML(t, objectPreviewContent(obj, nil, "", objectPreviewSchema{}, nil))
 	for _, want := range []string{
 		`data-testid="object-preview-history-slot"`,
 		`hx-get="/objects/abc/history"`,
