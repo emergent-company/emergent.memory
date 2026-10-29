@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 
@@ -25,6 +26,15 @@ const oauthGrantedStrategyKey = "oauth_granted_strategy"
 // provider account's email, captured best-effort at connect. It is non-secret
 // metadata (used to show which account a source syncs), not a credential.
 const oauthAccountEmailKey = "oauth_account_email"
+
+// oauthGrantedScopesKey is the reserved config key holding the scope set the
+// token response actually granted, in the provider's own words (space-delimited
+// in the response, stored as a list). Non-secret: it is display metadata on the
+// source read, and for a provider that declares no selectable scope strategies
+// (Trale) it is the only grant detail there is to show. Deliberately NOT a
+// credential key, so it is never extracted as credential material from
+// user-submitted config; edits preserve it.
+const oauthGrantedScopesKey = "oauth_granted_scopes"
 
 // StartOAuthRequest carries the inputs for starting an OAuth connect.
 type StartOAuthRequest struct {
@@ -308,6 +318,13 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 	if granted := grantedStrategy(p, creds); granted != "" {
 		cfg[oauthGrantedStrategyKey] = granted
 	}
+	// Persist the granted scope set verbatim. Unlike the strategy — which only
+	// exists for providers with selectable scope strategies — this is what the
+	// provider actually issued, and for a self-registering provider it is the
+	// only grant detail the read can report.
+	if scopes := grantedScopes(creds); len(scopes) > 0 {
+		cfg[oauthGrantedScopesKey] = scopes
+	}
 	// Capture which Google account authorized the source while the exchange's
 	// short-lived access token is still available. Best-effort: a failed lookup
 	// must never fail the connect, and the value is display metadata only.
@@ -338,7 +355,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, providerType, state, code s
 			return nil, fail(apperror.NewValidation("oauth state provider does not match the source being reconnected"))
 		}
 		meta := map[string]any{}
-		for _, k := range []string{oauthGrantedStrategyKey, oauthAccountEmailKey} {
+		for _, k := range []string{oauthGrantedStrategyKey, oauthGrantedScopesKey, oauthAccountEmailKey} {
 			if v, ok := cfg[k]; ok {
 				meta[k] = v
 			}
@@ -381,7 +398,7 @@ func (s *Service) replaceCredentials(ctx context.Context, src *Source, creds Cre
 	// a scope set we cannot map. A value this exchange could not supply has to
 	// clear the old one, or the card keeps describing the account and scope that
 	// just went away (#2186).
-	for _, k := range []string{oauthGrantedStrategyKey, oauthAccountEmailKey} {
+	for _, k := range []string{oauthGrantedStrategyKey, oauthGrantedScopesKey, oauthAccountEmailKey} {
 		if _, ok := meta[k]; !ok {
 			delete(cfg, k)
 		}
@@ -412,6 +429,33 @@ func grantedStrategy(p SourceProvider, creds Credentials) string {
 		return ""
 	}
 	return ss.StrategyForScopes(scopes)
+}
+
+// grantedScopes resolves the scope set a token response actually granted from
+// its raw scope string (creds["scope"]), preserving the provider's order and
+// dropping duplicates. Unlike grantedStrategy it applies to every provider,
+// strategy-aware or not: it is what the provider issued, not what we mapped.
+func grantedScopes(creds Credentials) []string {
+	raw, _ := creds["scope"].(string)
+	// RFC 6749 §3.3 uses space-delimited scope sets, but OAuth 2.0 servers also
+	// answer with the comma-delimited form GitHub uses ("repo,read:org"), so both
+	// separators are accepted rather than storing one compound entry.
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, s := range fields {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }
 
 // oauthRedirectURI builds the provider callback URL from the configured base.

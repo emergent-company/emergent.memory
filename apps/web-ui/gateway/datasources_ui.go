@@ -30,8 +30,17 @@ type dsConfigField struct {
 	Type        string // "string", "array", "boolean", "integer"
 	Required    bool
 	Widget      string // "resource" | "ref" | "" (plain text) from x-ui-widget
-	Value       string // prefilled text value (string/array); blank for the connect form
-	Checked     bool   // prefilled checkbox state
+	// LoadLabel is the provider's own copy for the widget's load action
+	// ("Load tags"), from x-ui-load-label. Empty means the gateway's default for
+	// the widget, so a provider that does not describe the action keeps working.
+	LoadLabel string
+	Value     string // prefilled text value (string/array); blank for the connect form
+	Checked   bool   // prefilled checkbox state
+	// SourceID is the saved source this field belongs to, so its suggestions can
+	// be listed through the source's stored credentials instead of asking the
+	// browser to re-submit them (the edit form never carries credential inputs).
+	// Empty on the connect form, where the credentials are still unsaved.
+	SourceID string
 }
 
 // dsConfigFieldOrder fixes the render order of the known config keys; any
@@ -97,6 +106,9 @@ func dsConfigFields(schema *DSProviderSchema, cfg map[string]any) (configFields,
 		}
 		if w, ok := prop["x-ui-widget"].(string); ok {
 			f.Widget = w
+		}
+		if l, ok := prop["x-ui-load-label"].(string); ok {
+			f.LoadLabel = strings.TrimSpace(l)
 		}
 		// The server merges credential fields into the schema marked
 		// writeOnly; the shared key list is the fallback for older schemas.
@@ -307,34 +319,71 @@ func dsSettingsConfigFields(fields []dsConfigField) []dsConfigField {
 	return out
 }
 
+// dsSyncOptionsNote is the settings card's explanatory line. It names only the
+// concerns the provider actually has: the folder note is Drive-specific, and the
+// credential note only applies when the provider declares write-only credential
+// fields (an OAuth-only, self-registering provider declares none).
+func dsSyncOptionsNote(configFields, credentialFields []dsConfigField) string {
+	var parts []string
+	for _, f := range configFields {
+		if f.dsIsFolderPicker() {
+			parts = append(parts, "Filter types and recursion apply to every selected folder.")
+			break
+		}
+	}
+	if len(credentialFields) > 0 {
+		parts = append(parts, "Credential fields are write-only and never shown.")
+	}
+	return strings.Join(parts, " ")
+}
+
 // dsOptionsListID is the datalist id the field's suggestions are written to.
 func (f dsConfigField) dsOptionsListID() string { return "ds-options-" + f.Key }
 
 // dsPickerID is the swap target for the field's load button.
 func (f dsConfigField) dsPickerID() string { return "ds-picker-" + f.Key }
 
-// dsLoadPath is the gateway endpoint that lists the field's suggestions.
+// dsLoadPath is the gateway endpoint that lists the field's suggestions. A saved
+// source lists through its own stored credentials (the edit form carries none),
+// except for the ref widget, whose listing depends on the repository currently
+// typed into the form and must therefore use the unsaved-config endpoint.
 func (f dsConfigField) dsLoadPath() string {
+	if f.Widget == "resource" && f.SourceID != "" {
+		return "/data-sources/" + url.PathEscape(f.SourceID) + "/field-options"
+	}
 	if f.Widget == "ref" {
 		return "/data-sources/refs"
 	}
 	return "/data-sources/repos"
 }
 
-// dsLoadLabel is the load button's copy.
+// dsLoadLabel is the load button's copy: the provider's own word when the schema
+// declares one, else the widget default.
 func (f dsConfigField) dsLoadLabel() string {
+	if f.LoadLabel != "" {
+		return f.LoadLabel
+	}
 	if f.Widget == "ref" {
 		return "Load branches and tags"
 	}
-	return "Load repositories"
+	if f.Key == "repo" {
+		return "Load repositories"
+	}
+	return "Load suggestions"
 }
 
-// dsLoadTestID is the load button's stable test id.
+// dsLoadTestID is the load button's stable test id. The repo/ref widgets keep
+// their historical ids; every other field gets one derived from its key, so a
+// provider-named widget has a stable handle.
 func (f dsConfigField) dsLoadTestID() string {
-	if f.Widget == "ref" {
+	switch {
+	case f.Widget == "ref":
 		return "ds-load-refs"
+	case f.Key == "repo":
+		return "ds-load-repos"
+	default:
+		return "ds-load-" + f.Key
 	}
-	return "ds-load-repos"
 }
 
 // dsOptionLabel renders a suggestion's option text: refs carry their kind so a
@@ -1074,14 +1123,24 @@ type dsCredentialSummary struct {
 	ClientID        string // short, display form
 	ClientIDFull    string
 	AccountEmail    string
+	AccountLabel    string // "Trale account" / "Google account" / "Account"
 	GrantedStrategy string
 	GrantedLabel    string
-	GrantedTone     string // "success" | "warning"
+	GrantedTone     string // "success" | "warning" | "neutral"
 	Configured      bool
 	LookupFailed    bool
 	SettingsHref    string
 	PickerBlocked   bool
 	PickerError     string
+	// SelfRegistering reports that the provider registers its own OAuth client
+	// at connect (RFC 7591). There is no admin app to resolve and no editor to
+	// link, so the card reports the automatic client instead of "not configured".
+	SelfRegistering bool
+	// ProviderUnknown reports that the catalog did not resolve this provider's
+	// entry (a failed or empty catalog read). Without it the card would claim a
+	// static app is missing for a provider that needs none, which is the exact
+	// symptom of #2213 — so the "set one up" warning is suppressed instead.
+	ProviderUnknown bool
 	// SourceID is the source this summary belongs to, so an action can target
 	// that source instead of starting a new connect flow (#2107).
 	SourceID string
@@ -1107,28 +1166,41 @@ var dsFixedScopeByProvider = map[string]dsFixedScope{
 	"gmail": {Strategy: "gmail.readonly", Label: "Read-only Gmail access (gmail.readonly)"},
 }
 
-// dsCredentialSummary builds the credentials card for a source. The app details
-// are member-readable server data (never secrets); the account email is the
-// best-effort value captured at connect. A lookup failure degrades to the
-// account/scope fields the source read already carries rather than failing the
-// detail page.
-func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *dsCredentialSummary {
-	summary := &dsCredentialSummary{
-		ProviderName:    src.ProviderType,
-		SourceID:        src.ID,
-		AccountEmail:    dsConfigString(src.Config, "oauth_account_email"),
-		SettingsHref:    dsCredentialAppHref(src.ProviderType),
-		GrantedTone:     "warning",
-		GrantedLabel:    "Not reported by the provider",
-		GrantedStrategy: src.OAuthGrantedStrategy,
+// dsProviderEntry returns the catalog entry for a provider type, or nil when the
+// catalog did not load or does not list it.
+func dsProviderEntry(providers []DSProvider, providerType string) *DSProvider {
+	for i := range providers {
+		if providers[i].Type == providerType {
+			return &providers[i]
+		}
 	}
+	return nil
+}
+
+// dsAccountRowLabel is the credentials card's label for the authenticated
+// account, named after the vendor that owns it rather than hard-coded to Google.
+func dsAccountRowLabel(p *DSProvider) string {
+	if p != nil {
+		for _, name := range []string{p.VendorName, p.Name} {
+			if name = strings.TrimSpace(name); name != "" {
+				return name + " account"
+			}
+		}
+	}
+	return "Account"
+}
+
+// addCredentialAppDetails fills the OAuth-app columns of the credentials card
+// from the credentials API: which app is resolved, at which scope, and its
+// (short) client id. A lookup failure is recorded instead of failing the page.
+func (s *Server) addCredentialAppDetails(ctx context.Context, summary *dsCredentialSummary) {
 	descriptions, err := s.memory.ListDSCredentials(ctx)
 	if err != nil {
 		captureError(err)
 		summary.LookupFailed = true
 	}
 	for _, d := range descriptions {
-		if d.ProviderType != src.ProviderType {
+		if d.ProviderType != summary.ProviderName {
 			continue
 		}
 		summary.ScopeKey = d.ResolvedScope
@@ -1159,10 +1231,50 @@ func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *d
 			summary.ScopeLabel = "Not configured"
 		}
 	}
+}
+
+// dsCredentialSummary builds the credentials card for a source. The app details
+// are member-readable server data (never secrets); the account email is the
+// best-effort value captured at connect. A lookup failure degrades to the
+// account/scope fields the source read already carries rather than failing the
+// detail page.
+func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration, provider *DSProvider) *dsCredentialSummary {
+	summary := &dsCredentialSummary{
+		ProviderName: src.ProviderType,
+		SourceID:     src.ID,
+		AccountEmail: dsConfigString(src.Config, "oauth_account_email"),
+		AccountLabel: dsAccountRowLabel(provider),
+		SettingsHref: dsCredentialAppHref(src.ProviderType),
+		// Nothing recorded is neutral, not a fault: an older source simply has no
+		// grant metadata, and Test connection is what checks the grant. The badge
+		// is overwritten below when the source's strategy, the provider's single
+		// fixed scope, or a recorded scope set says more.
+		GrantedTone:     "neutral",
+		GrantedLabel:    "Not recorded at connect",
+		GrantedStrategy: src.OAuthGrantedStrategy,
+		ProviderUnknown: provider == nil,
+	}
+	// A self-registering provider (Trale) registers its OAuth client through
+	// RFC 7591 at connect time: there is no admin app to resolve, nothing to set
+	// up, and no editor to link. Reporting "not configured" here would send the
+	// user after a control that does not exist.
+	if provider != nil && provider.DSProviderSelfRegistering() {
+		summary.SelfRegistering = true
+		summary.ScopeLabel = "Registered at connect"
+		summary.Configured = true
+		summary.SettingsHref = ""
+	}
+	// A self-registering provider has no app to resolve, so skipping the lookup
+	// keeps a credentials-API failure from surfacing as a fault on a source that
+	// does not depend on it.
+	if !summary.SelfRegistering {
+		s.addCredentialAppDetails(ctx, summary)
+	}
 	effective := src.OAuthGrantedStrategy
 	if effective == "" {
 		effective = src.OAuthStrategy
 	}
+	strategyMatched := true
 	switch effective {
 	case "drive.readonly":
 		summary.GrantedLabel = "Read-only Drive access (drive.readonly)"
@@ -1175,6 +1287,17 @@ func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration) *d
 			summary.GrantedLabel = fixed.Label
 			summary.GrantedTone = "success"
 			summary.GrantedStrategy = fixed.Strategy
+		} else {
+			strategyMatched = false
+		}
+	}
+	if !strategyMatched {
+		// A provider without selectable scope strategies reports the scope set it
+		// actually granted (captured at connect) instead of a mapped strategy; the
+		// neutral default stands when nothing was recorded.
+		if scopes := dsConfigStrings(src.Config, dsOAuthGrantedScopesKey); len(scopes) > 0 {
+			summary.GrantedLabel = strings.Join(scopes, " ")
+			summary.GrantedTone = "success"
 		}
 	}
 	if dsDriveFileScope(src) {
@@ -1758,6 +1881,30 @@ func dsStrategyOptions(p DSProvider, current string) []string {
 	return p.Strategies
 }
 
+// dsOAuthGrantedScopesKey is the non-secret config key the server writes at
+// connect with the scope set the token response actually granted (see
+// oauthGrantedScopesKey in the sources domain). It is the only grant detail a
+// provider without selectable scope strategies can report.
+const dsOAuthGrantedScopesKey = "oauth_granted_scopes"
+
+// dsConfigStrings reads a stored list value from a non-secret config map (JSON
+// arrays decode to []any), dropping blank entries.
+func dsConfigStrings(cfg map[string]any, key string) []string {
+	switch v := cfg[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // dsConfigString reads a string value from a non-secret config map, returning ""
 // when absent or not a string.
 func dsConfigString(cfg map[string]any, key string) string {
@@ -1865,6 +2012,20 @@ func (s *Server) uiDataSourceRefs(c echo.Context) error {
 	})
 }
 
+// uiDataSourceFieldOptions lists a saved source's selectable config values
+// through the source's STORED credentials and renders them as clickable
+// suggestions. The edit form never carries credential inputs, so the
+// unsaved-config endpoints (/data-sources/repos|refs) cannot list for it.
+func (s *Server) uiDataSourceFieldOptions(c echo.Context) error {
+	ctx := c.Request().Context()
+	items, truncated, err := s.memory.ListDSResources(ctx, c.Param("id"), "")
+	if err != nil {
+		err = dsFormError(err)
+	}
+	renderPartial(c.Response().Writer, c.Request(), DSResourceSuggestionsPartial(items, truncated, err))
+	return nil
+}
+
 // uiDataSourceOptions renders a field's suggestion list for the connect form.
 // The field key comes from the button that triggered the request (hx-vals), so
 // a provider may name its widget field anything; defaultFieldKey is the
@@ -1957,8 +2118,13 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	if schema, serr := s.memory.GetDSProviderSchema(ctx, src.ProviderType); serr == nil {
 		configFields, credentialFields = dsConfigFields(schema, src.Config)
 	}
+	// A saved source's suggestions list through its stored credentials; the
+	// connect form (no source yet) keeps the unsaved-config endpoints.
+	for i := range configFields {
+		configFields[i].SourceID = src.ID
+	}
 	resourcePrompt := dsResourcePromptFor(src)
-	credentialSummary := s.dsCredentialSummary(ctx, src)
+	credentialSummary := s.dsCredentialSummary(ctx, src, dsProviderEntry(providers, src.ProviderType))
 	credentialSummary.CanReconnect = dsProviderCanOAuth(providers, src.ProviderType)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},

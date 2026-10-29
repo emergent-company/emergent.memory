@@ -39,6 +39,20 @@ func TestTraleProvider_ConfigSchema_RequiresTags(t *testing.T) {
 			t.Errorf("schema.Properties missing %q", key)
 		}
 	}
+
+	// The gateway renders the picker's action from the schema, so the provider
+	// (not the UI) owns the copy: a multi-value tag scope must not be labelled
+	// "Load repositories".
+	tags, ok := schema.Properties["tags"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema.Properties[tags] = %T, want a property map", schema.Properties["tags"])
+	}
+	if got := tags["x-ui-load-label"]; got != "Load tags" {
+		t.Errorf("tags[x-ui-load-label] = %v, want %q", got, "Load tags")
+	}
+	if got := tags["x-ui-widget"]; got != "resource" {
+		t.Errorf("tags[x-ui-widget] = %v, want resource", got)
+	}
 }
 
 func TestTraleProvider_AuthMethodsAndKeys(t *testing.T) {

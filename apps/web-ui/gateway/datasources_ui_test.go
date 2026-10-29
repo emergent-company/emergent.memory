@@ -687,6 +687,7 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
 	e.POST("/data-sources/repos", s.uiDataSourceRepos)
 	e.POST("/data-sources/refs", s.uiDataSourceRefs)
+	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)
@@ -2043,7 +2044,7 @@ func TestDSCredentialSummaryDistinguishesLookupFailure(t *testing.T) {
 	src := &DSIntegration{ID: "s1", ProviderType: "google_drive"}
 
 	failed := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{dsErr: &memoryHTTPError{Status: http.StatusInternalServerError, Message: "credentials unavailable"}}}
-	failedSummary := failed.dsCredentialSummary(context.Background(), src)
+	failedSummary := failed.dsCredentialSummary(context.Background(), src, nil)
 	if failedSummary.ScopeLabel != "Could not load credentials" {
 		t.Errorf("ScopeLabel after a lookup failure = %q, want %q", failedSummary.ScopeLabel, "Could not load credentials")
 	}
@@ -2057,8 +2058,12 @@ func TestDSCredentialSummaryDistinguishesLookupFailure(t *testing.T) {
 		t.Error("a lookup failure must not advise creating an OAuth app")
 	}
 
+	// The catalog knows this provider but no app is resolved for it, which is the
+	// case the "set one up" advice is for (a nil entry means the catalog itself
+	// failed to load, covered by TestDSDetailPageOmitsTheMissingAppWarningWhenTheCatalogIsUnknown).
+	drive := DSProvider{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}
 	empty := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
-	emptySummary := empty.dsCredentialSummary(context.Background(), src)
+	emptySummary := empty.dsCredentialSummary(context.Background(), src, &drive)
 	if emptySummary.ScopeLabel != "Not configured" {
 		t.Errorf("ScopeLabel with no client = %q, want %q", emptySummary.ScopeLabel, "Not configured")
 	}
@@ -2931,7 +2936,7 @@ func TestDSCredentialSummaryPickerBlockedFollowsDriveFileScope(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			summary := s.dsCredentialSummary(context.Background(), &tc.src)
+			summary := s.dsCredentialSummary(context.Background(), &tc.src, nil)
 			if summary.PickerBlocked != tc.want {
 				t.Fatalf("PickerBlocked = %v, want %v", summary.PickerBlocked, tc.want)
 			}
@@ -3138,6 +3143,70 @@ func TestDSArrayFieldPlaceholderMentionsTheFieldKind(t *testing.T) {
 	}
 }
 
+// TestDSCredentialSummarySelfRegistering asserts a self-registering provider
+// (Trale) is never reported as "no OAuth app": the client is registered at
+// connect, so the card names the automatic client, labels the account after the
+// provider's vendor, reports the granted scopes, and offers no settings link
+// (there is no editor to open — the app editor filters this provider out).
+func TestDSCredentialSummarySelfRegistering(t *testing.T) {
+	trale := DSProvider{Type: "trale", Name: "Trale", VendorName: "Trale", AuthMethods: []string{"oauth"}, SelfRegistering: true}
+	src := &DSIntegration{
+		ID:           "t1",
+		ProviderType: "trale",
+		Status:       "active",
+		Config: map[string]any{
+			dsOAuthGrantedScopesKey: []any{"openid", "email", "profile"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	summary := s.dsCredentialSummary(context.Background(), src, &trale)
+	// The handler sets this from the catalog; the card offers the repair action
+	// for every provider that advertises OAuth.
+	summary.CanReconnect = true
+
+	if !summary.SelfRegistering {
+		t.Error("SelfRegistering = false, want true for a self-registering provider")
+	}
+	if summary.ScopeLabel != "Registered at connect" {
+		t.Errorf("ScopeLabel = %q, want %q", summary.ScopeLabel, "Registered at connect")
+	}
+	if !summary.Configured {
+		t.Error("Configured = false, want true: there is nothing for the user to set up")
+	}
+	if summary.SettingsHref != "" {
+		t.Errorf("SettingsHref = %q, want empty (the provider has no app editor)", summary.SettingsHref)
+	}
+	if summary.AccountLabel != "Trale account" {
+		t.Errorf("AccountLabel = %q, want %q", summary.AccountLabel, "Trale account")
+	}
+	if summary.GrantedLabel != "openid email profile" || summary.GrantedTone != "success" {
+		t.Errorf("granted = %q/%q, want the recorded scopes on a success tone", summary.GrantedLabel, summary.GrantedTone)
+	}
+
+	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil))
+	for _, want := range []string{
+		"Registered at connect",
+		"Public client registered automatically",
+		"Trale account",
+		"openid email profile",
+		`data-testid="ds-credential-reconnect"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("detail page missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"ds-credential-missing",
+		"Set one up in credential settings",
+		"Open credential settings",
+		"Google account",
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("detail page contains %q, which is wrong for a self-registering provider", unwanted)
+		}
+	}
+}
+
 // TestDSCredentialSummaryGrantedScope covers the granted-scope badge. Gmail has
 // no scope strategy (its connect always authorizes gmail.readonly), so a healthy
 // source used to render the amber "not reported" warning (#2218).
@@ -3173,15 +3242,23 @@ func TestDSCredentialSummaryGrantedScope(t *testing.T) {
 			wantKey:   "drive.readonly",
 		},
 		{
-			name:      "an unmapped provider still warns",
+			name:      "an unmapped provider with no recorded grant stays neutral",
 			src:       DSIntegration{ProviderType: "github"},
-			wantLabel: "Not reported by the provider",
-			wantTone:  "warning",
+			wantLabel: "Not recorded at connect",
+			wantTone:  "neutral",
+		},
+		{
+			name: "a static-app provider reports the scopes it recorded",
+			src: DSIntegration{ProviderType: "github", Config: map[string]any{
+				dsOAuthGrantedScopesKey: []any{"repo", "read:org"},
+			}},
+			wantLabel: "repo read:org",
+			wantTone:  "success",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			summary := s.dsCredentialSummary(context.Background(), &tc.src)
+			summary := s.dsCredentialSummary(context.Background(), &tc.src, nil)
 			if summary.GrantedLabel != tc.wantLabel {
 				t.Errorf("GrantedLabel = %q, want %q", summary.GrantedLabel, tc.wantLabel)
 			}
@@ -3192,5 +3269,244 @@ func TestDSCredentialSummaryGrantedScope(t *testing.T) {
 				t.Errorf("GrantedStrategy = %q, want %q", summary.GrantedStrategy, tc.wantKey)
 			}
 		})
+	}
+}
+
+// TestDSCredentialSummarySelfRegisteringWithoutScopes asserts an older source
+// with no recorded grant is reported neutrally — not as a provider that failed
+// to report anything, and never with a warning tone.
+func TestDSCredentialSummarySelfRegisteringWithoutScopes(t *testing.T) {
+	trale := DSProvider{Type: "trale", Name: "Trale", VendorName: "Trale", AuthMethods: []string{"oauth"}, SelfRegistering: true}
+	src := &DSIntegration{ID: "t1", ProviderType: "trale", Config: map[string]any{}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+
+	summary := s.dsCredentialSummary(context.Background(), src, &trale)
+	if summary.GrantedLabel != "Not recorded at connect" {
+		t.Errorf("GrantedLabel = %q, want %q", summary.GrantedLabel, "Not recorded at connect")
+	}
+	if summary.GrantedTone != "neutral" {
+		t.Errorf("GrantedTone = %q, want neutral", summary.GrantedTone)
+	}
+	if strings.Contains(renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil)), "ds-credential-missing") {
+		t.Error("a source without grant metadata must not advertise setting an app up")
+	}
+}
+
+// TestDSConfigFieldPickerSavedSource asserts a saved source's suggestion listing
+// goes through its stored credentials instead of the unsaved-config endpoints,
+// that the ref widget keeps the form-scoped endpoint, and that the load copy
+// follows the schema before any widget default.
+func TestDSConfigFieldPickerSavedSource(t *testing.T) {
+	tags := dsConfigField{Key: "tags", Type: "array", Widget: "resource", SourceID: "t1", LoadLabel: "Load tags"}
+	if got := tags.dsLoadPath(); got != "/data-sources/t1/field-options" {
+		t.Errorf("saved resource load path = %q, want the field-options route", got)
+	}
+	if got := tags.dsLoadLabel(); got != "Load tags" {
+		t.Errorf("load label = %q, want the schema's copy", got)
+	}
+	if got := tags.dsLoadTestID(); got != "ds-load-tags" {
+		t.Errorf("load testid = %q, want ds-load-tags", got)
+	}
+
+	// The connect form has no source yet: credentials are still unsaved.
+	unsaved := dsConfigField{Key: "tags", Type: "array", Widget: "resource"}
+	if got := unsaved.dsLoadPath(); got != "/data-sources/repos" {
+		t.Errorf("unsaved resource load path = %q, want /data-sources/repos", got)
+	}
+	if got := unsaved.dsLoadLabel(); got != "Load suggestions" {
+		t.Errorf("unsaved load label = %q, want the generic copy", got)
+	}
+
+	// A ref depends on the repository typed into the form, so it stays on the
+	// unsaved-config endpoint even for a saved source.
+	ref := dsConfigField{Key: "ref", Type: "string", Widget: "ref", SourceID: "s1"}
+	if got := ref.dsLoadPath(); got != "/data-sources/refs" {
+		t.Errorf("ref load path = %q, want /data-sources/refs", got)
+	}
+	if got := ref.dsLoadLabel(); got != "Load branches and tags" {
+		t.Errorf("ref load label = %q, want the ref copy", got)
+	}
+
+	// GitHub's repo field keeps its historical copy and test id.
+	repo := dsConfigField{Key: "repo", Type: "string", Widget: "resource", SourceID: "s1"}
+	if got := repo.dsLoadLabel(); got != "Load repositories" {
+		t.Errorf("repo load label = %q, want the repo copy", got)
+	}
+	if got := repo.dsLoadTestID(); got != "ds-load-repos" {
+		t.Errorf("repo load testid = %q, want ds-load-repos", got)
+	}
+}
+
+// TestDSConfigFieldArrayPickerRendersTextarea asserts a multi-value picker field
+// is a textarea that a clicked suggestion can append to, not a single-line input
+// whose datalist selection would replace the values already chosen.
+func TestDSConfigFieldArrayPickerRendersTextarea(t *testing.T) {
+	html := renderHTML(t, dsConfigFieldInputs([]dsConfigField{{
+		Key:       "tags",
+		Label:     "Tags",
+		Type:      "array",
+		Widget:    "resource",
+		Required:  true,
+		LoadLabel: "Load tags",
+		SourceID:  "t1",
+		Value:     "standup",
+	}}))
+	for _, want := range []string{
+		`<textarea id="tags" name="tags"`,
+		`data-ds-picker-input="true"`,
+		`data-ds-picker-scope="true"`,
+		`data-testid="ds-load-tags"`,
+		"Load tags",
+		`hx-post="/data-sources/t1/field-options"`,
+		"standup",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("array picker missing %q:\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, "<datalist") {
+		t.Error("array picker must not render a datalist: a click would replace every chosen value")
+	}
+}
+
+// TestUIDataSourceFieldOptionsRoute asserts the saved-source listing route reads
+// through ListDSResources (stored credentials) and renders clickable chips.
+func TestUIDataSourceFieldOptionsRoute(t *testing.T) {
+	f := &fakeMemory{dsResources: []DSResource{{ID: "standup", Name: "Standup", Type: "tag"}}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	body := url.Values{"fieldKey": {"tags"}}.Encode()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/t1/field-options", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if f.dsResourcesCallCount != 1 {
+		t.Errorf("ListDSResources calls = %d, want exactly one", f.dsResourcesCallCount)
+	}
+	for _, want := range []string{`data-ds-suggest="standup"`, `data-testid="ds-suggestion"`, `data-testid="ds-options-chips"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("field-options response missing %q:\n%s", want, rec.Body.String())
+		}
+	}
+}
+
+// TestUIDataSourceFieldOptionsRouteFailureIsInline asserts a failed listing is
+// swapped in as an inline message that leaves the field editable: the partial
+// answers 200 so htmx replaces the region instead of dropping the response.
+func TestUIDataSourceFieldOptionsRouteFailureIsInline(t *testing.T) {
+	f := &fakeMemory{dsResourcesErr: &memoryHTTPError{Status: http.StatusBadGateway, Message: "trale is unreachable"}}
+	e := newDSUIServer(f)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/data-sources/t1/field-options", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 so the partial swaps inline; body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="ds-options-error"`) {
+		t.Errorf("failure response missing the inline error region:\n%s", body)
+	}
+	if !strings.Contains(body, "temporarily unavailable") {
+		t.Errorf("failure response hides the reason:\n%s", body)
+	}
+	if strings.Contains(body, "ds-suggestion") {
+		t.Errorf("failure response renders suggestions:\n%s", body)
+	}
+}
+
+// TestDSSyncOptionsNote asserts the settings card explains only the concerns the
+// provider actually has: the folder sentence is Drive-specific and the
+// credential sentence needs write-only credential fields.
+func TestDSSyncOptionsNote(t *testing.T) {
+	folders := []dsConfigField{{Key: "folders", Widget: "folders"}}
+	creds := []dsConfigField{{Key: "refresh_token", Type: "string"}}
+	tags := []dsConfigField{{Key: "tags", Type: "array", Widget: "resource"}}
+
+	if got := dsSyncOptionsNote(folders, creds); !strings.Contains(got, "every selected folder") || !strings.Contains(got, "write-only") {
+		t.Errorf("drive note = %q, want both sentences", got)
+	}
+	if got := dsSyncOptionsNote(tags, nil); got != "" {
+		t.Errorf("self-registering note = %q, want empty", got)
+	}
+	if got := dsSyncOptionsNote(nil, creds); got != "Credential fields are write-only and never shown." {
+		t.Errorf("credential-only note = %q", got)
+	}
+}
+
+// TestDSDetailPageRendersTheProviderSpecificSyncNote is the render-level guard
+// for the settings copy. dsEditCard is handed the folder-filtered fields
+// (folders are edited by the picker modal, not a text field), so a note computed
+// from what the card receives would never see a folder widget and the Drive
+// sentence would silently disappear.
+func TestDSDetailPageRendersTheProviderSpecificSyncNote(t *testing.T) {
+	drive := DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}
+	config, creds := dsConfigFields(testDSSchema(), nil)
+	driveHTML := renderHTML(t, DataSourceDetailPage(&drive, "Google Drive", config, creds, nil, nil, nil, nil, "", nil))
+	if !strings.Contains(driveHTML, "every selected folder") {
+		t.Error("Drive detail page lost the folder note")
+	}
+	if !strings.Contains(driveHTML, "write-only") {
+		t.Error("Drive detail page lost the credential note")
+	}
+
+	// A provider with neither a folder widget nor credential fields (Trale, the
+	// web crawler) must get no note at all.
+	bare := DSIntegration{ID: "t1", Name: "Standups", ProviderType: "trale", Status: "active"}
+	bareFields, bareCreds := dsConfigFields(webSchema(), nil)
+	if note := dsSyncOptionsNote(bareFields, bareCreds); note != "" {
+		t.Fatalf("note = %q, want empty (no folders, no credential fields)", note)
+	}
+	summary := &dsCredentialSummary{ProviderName: "trale", SourceID: "t1", AccountLabel: "Trale account", SelfRegistering: true, Configured: true, CanReconnect: true, GrantedTone: "neutral", GrantedLabel: "Not recorded at connect"}
+	bareHTML := renderHTML(t, DataSourceDetailPage(&bare, "Trale", bareFields, bareCreds, nil, nil, nil, summary, "", nil))
+	for _, unwanted := range []string{"every selected folder", "write-only"} {
+		if strings.Contains(bareHTML, unwanted) {
+			t.Errorf("detail page of a folder-less provider contains Drive copy %q", unwanted)
+		}
+	}
+}
+
+// TestDSDetailPageOmitsTheMissingAppWarningWhenTheCatalogIsUnknown asserts a
+// failed catalog read degrades quietly: with no provider entry the card cannot
+// tell whether an app is needed, and claiming "set one up" was the #2213
+// symptom for a provider that registers its own client.
+func TestDSDetailPageOmitsTheMissingAppWarningWhenTheCatalogIsUnknown(t *testing.T) {
+	src := &DSIntegration{ID: "t1", Name: "Standups", ProviderType: "trale", Status: "active"}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{}}
+	summary := s.dsCredentialSummary(context.Background(), src, nil)
+	if !summary.ProviderUnknown {
+		t.Error("ProviderUnknown = false for a nil catalog entry")
+	}
+	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil))
+	if strings.Contains(html, "ds-credential-missing") {
+		t.Error("unknown provider still renders the \"set one up\" warning")
+	}
+}
+
+// TestDSCredentialSummarySelfRegisteringSkipsCredentialsLookup asserts the card
+// for a self-registering provider does not depend on the credentials API: a
+// lookup failure there is not this source's fault, and reporting it would point
+// the user at an app that does not exist.
+func TestDSCredentialSummarySelfRegisteringSkipsCredentialsLookup(t *testing.T) {
+	trale := DSProvider{Type: "trale", Name: "Trale", VendorName: "Trale", AuthMethods: []string{"oauth"}, SelfRegistering: true}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{dsErr: &memoryHTTPError{Status: http.StatusBadGateway, Message: "boom"}}}
+
+	summary := s.dsCredentialSummary(context.Background(), &DSIntegration{ID: "t1", ProviderType: "trale"}, &trale)
+	if summary.LookupFailed {
+		t.Error("LookupFailed = true for a self-registering provider, want false (it has no app to look up)")
+	}
+	if summary.ScopeLabel != "Registered at connect" {
+		t.Errorf("ScopeLabel = %q, want the registered-client label", summary.ScopeLabel)
+	}
+
+	// A provider that does depend on a resolved app still reports the failure.
+	drive := DSProvider{Type: "google_drive", Name: "Google Drive", VendorName: "Google", AuthMethods: []string{"oauth"}}
+	driveSummary := s.dsCredentialSummary(context.Background(), &DSIntegration{ID: "d1", ProviderType: "google_drive"}, &drive)
+	if !driveSummary.LookupFailed {
+		t.Error("LookupFailed = false for a static-app provider, want true")
 	}
 }

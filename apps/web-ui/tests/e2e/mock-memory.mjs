@@ -359,7 +359,7 @@ const dsSchemas = {
   trale: {
     type: "trale",
     properties: {
-      tags: { type: "array", items: { type: "string" }, "x-ui-widget": "resource", description: "Trale tag slugs to sync (ANY match)." },
+      tags: { type: "array", items: { type: "string" }, "x-ui-widget": "resource", "x-ui-load-label": "Load tags", description: "Trale tag slugs to sync (ANY match)." },
       name_pattern: { type: "string", description: "Optional Go RE2 regular expression matched against the meeting title; non-matching meetings are skipped." },
       include_transcript: { type: "boolean", description: "Include the speaker-tagged transcript in the imported document. Default false (summary only)." },
       backfill_days: { type: "integer", description: "How many days back to sync. Default 90." },
@@ -511,6 +511,28 @@ const dsIntegration = (src) => {
     if (!dsCredentialKeys.includes(k)) config[k] = v;
   }
   return { ...src.row, config };
+};
+
+// dsProviderResources is the credential-scoped listing shared by the connect
+// form (POST /resources, token in the body) and a saved source's own picker
+// (GET /:id/resources, STORED credential — the edit form never carries one).
+const dsProviderResources = (providerType) => {
+  if (providerType === "trale") {
+    // Trale's resource listing is the tag picker backing the required `tags`
+    // scope (mirrors ListResources on trale_provider.go).
+    return [
+      { id: "standup", name: "Standup", type: "tag" },
+      { id: "planning", name: "Planning", type: "tag" },
+      { id: "one-on-one", name: "One-on-one", type: "tag" },
+    ];
+  }
+  if (providerType === "github") {
+    return [
+      { id: "acme/private-docs", name: "acme/private-docs", type: "repo" },
+      { id: "acme/public-docs", name: "acme/public-docs", type: "repo" },
+    ];
+  }
+  return [];
 };
 
 // re2Incompatibility approximates the Go RE2 restriction set the server applies
@@ -1161,23 +1183,20 @@ const server = http.createServer((req, res) => {
   // in the body and is never stored; only identifiers come back.
   if (path === "/api/data-source-integrations/resources" && req.method === "POST") {
     return readBody(req, (payload) => {
-      if (payload.providerType === "trale") {
-        // Trale's resource listing is the tag picker backing the required
-        // `tags` scope (mirrors ListResources on trale_provider.go).
-        return json(res, [
-          { id: "standup", name: "Standup", type: "tag" },
-          { id: "planning", name: "Planning", type: "tag" },
-          { id: "one-on-one", name: "One-on-one", type: "tag" },
-        ]);
-      }
-      if (payload.providerType !== "github") {
-        return json(res, []);
-      }
-      return json(res, [
-        { id: "acme/private-docs", name: "acme/private-docs", type: "repo" },
-        { id: "acme/public-docs", name: "acme/public-docs", type: "repo" },
-      ]);
+      return json(res, dsProviderResources(payload.providerType));
     });
+  }
+
+  // Saved-source listing: the gateway's picker for a source already connected
+  // lists through its stored credential, so no token travels in the request.
+  const dsSavedResourcesMatch = path.match(/^\/api\/data-source-integrations\/([^/]+)\/resources$/);
+  if (dsSavedResourcesMatch && req.method === "GET") {
+    const src = dsSources.find((s) => s.row.id === dsSavedResourcesMatch[1]);
+    if (!src) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "source not found" } });
+    }
+    return json(res, dsProviderResources(src.row.providerType));
   }
 
   // Credential-scoped ref listing for the connect form's ref picker.
@@ -1295,6 +1314,12 @@ const server = http.createServer((req, res) => {
         createdAt: now,
         updatedAt: now,
       };
+      // A source created through the API carries no grant metadata: the server
+      // records `oauth_granted_scopes` in the OAuth callback, and `scope` is a
+      // write-only credential here (stripped on read). The mock must not invent a
+      // grant from it, or the e2e would assert a value the real server never
+      // produces. The credentials card therefore reports its neutral
+      // "not recorded at connect" state for a source created this way.
       const src = { row, config: payload.config || {} };
       dsSources.push(src);
       res.statusCode = 201;

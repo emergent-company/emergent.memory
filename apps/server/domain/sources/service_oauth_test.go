@@ -109,3 +109,36 @@ func TestOAuthLandingQuery(t *testing.T) {
 		t.Fatalf("oauthLandingQuery(escaping) = %q", got)
 	}
 }
+
+// TestGrantedScopes pins the grant-scope capture used for providers that declare
+// no selectable scope strategies: the provider's own words, in order, deduped.
+func TestGrantedScopes(t *testing.T) {
+	cases := []struct {
+		name  string
+		creds Credentials
+		want  []string
+	}{
+		{name: "missing", creds: Credentials{}, want: nil},
+		{name: "empty", creds: Credentials{"scope": "  "}, want: nil},
+		{name: "non-string", creds: Credentials{"scope": 42}, want: nil},
+		{name: "space delimited", creds: Credentials{"scope": "openid email profile"}, want: []string{"openid", "email", "profile"}},
+		{name: "dedupes and trims", creds: Credentials{"scope": " openid  openid\temail "}, want: []string{"openid", "email"}},
+		// GitHub answers with the comma-delimited form, which must not become one
+		// compound entry on the credentials card.
+		{name: "comma delimited", creds: Credentials{"scope": "repo,read:org,gist"}, want: []string{"repo", "read:org", "gist"}},
+		{name: "mixed separators", creds: Credentials{"scope": "repo, read:org\tuser"}, want: []string{"repo", "read:org", "user"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := grantedScopes(tc.creds)
+			if len(got) != len(tc.want) {
+				t.Fatalf("grantedScopes(%v) = %#v, want %#v", tc.creds, got, tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Fatalf("grantedScopes(%v) = %#v, want %#v", tc.creds, got, tc.want)
+				}
+			}
+		})
+	}
+}

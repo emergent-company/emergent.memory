@@ -79,10 +79,11 @@ func (p *traleProvider) ConfigSchema() ProviderSchema {
 		Type: ProviderTypeTrale,
 		Properties: map[string]any{
 			"tags": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Trale tag slugs to sync (ANY match). Meetings tagged with any of these are imported.",
-				"x-ui-widget": "resource",
+				"type":            "array",
+				"items":           map[string]any{"type": "string"},
+				"description":     "Trale tag slugs to sync (ANY match). Meetings tagged with any of these are imported.",
+				"x-ui-widget":     "resource",
+				"x-ui-load-label": "Load tags",
 			},
 			"name_pattern": map[string]any{
 				"type":        "string",

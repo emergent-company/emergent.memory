@@ -48,7 +48,7 @@ type Service struct {
 // than the settings form. An update that does not submit them preserves the
 // stored value instead of replacing it, so a name/interval save never clears a
 // source's folder targets, granted scope, or account email.
-var carriedConfigKeys = []string{"folders", oauthGrantedStrategyKey, oauthAccountEmailKey}
+var carriedConfigKeys = []string{"folders", oauthGrantedStrategyKey, oauthGrantedScopesKey, oauthAccountEmailKey}
 
 // cloneConfig shallow-copies a config map so normalization cannot mutate the
 // caller's map (which may be the persisted struct or a request body).

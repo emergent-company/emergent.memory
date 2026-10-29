@@ -404,6 +404,7 @@ func main() {
 	e.POST("/data-sources/test-config", s.uiDataSourceTestConfig)
 	e.POST("/data-sources/repos", s.uiDataSourceRepos)
 	e.POST("/data-sources/refs", s.uiDataSourceRefs)
+	e.POST("/data-sources/:id/field-options", s.uiDataSourceFieldOptions)
 	e.GET("/data-sources/oauth/start", s.uiDataSourceOAuthStart)
 	e.GET("/data-sources/oauth/callback", s.uiDataSourceOAuthCallback)
 	e.GET("/data-sources/:id", s.uiDataSourceDetail)

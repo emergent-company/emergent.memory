@@ -204,4 +204,71 @@ test.describe('Trale data source', () => {
     const resp = await page.goto('/settings/credentials/trale');
     expect(resp?.status()).toBe(404);
   });
+
+  test('reports the self-registered client and an honest grant, with no app set-up affordance', async ({
+    page,
+  }) => {
+    // A connected Trale source used to claim "No OAuth app is resolved…" and
+    // link to a credential page that 404s, while labelling the account "Google
+    // account" and the grant "Not reported by the provider". None of that is
+    // actionable for a provider that registers its own client (RFC 7591).
+    const src = await createTraleSource(page, { name: `e2e-trale-${Date.now()}` });
+    try {
+      const card = page.getByTestId('ds-credentials-card');
+      await expect(card).toBeVisible();
+
+      await expect(page.getByTestId('ds-credential-scope')).toHaveText('Registered at connect');
+      await expect(card).toContainText('Public client registered automatically');
+
+      // The account row is named after the provider's vendor, not Google.
+      await expect(card.locator('dt', { hasText: 'Trale account' })).toBeVisible();
+
+      // A source created through the API carries no grant metadata (the OAuth
+      // callback records it), so the card says so neutrally instead of claiming
+      // the provider failed to report a grant. The recorded-scope rendering is
+      // covered by the gateway tests, which can build that config.
+      await expect(card).toContainText('Not recorded at connect');
+      await expect(card).not.toContainText('Not reported by the provider');
+      await expect(card).not.toContainText('openid email profile');
+
+      // No dead end: no "set one up" warning and no link to the 404ing editor.
+      await expect(page.getByTestId('ds-credential-missing')).toHaveCount(0);
+      await expect(page.getByTestId('ds-credential-settings-link')).toHaveCount(0);
+      // The repair action that does exist is still offered.
+      await expect(page.getByTestId('ds-credential-reconnect')).toBeVisible();
+    } finally {
+      await deleteDriveSource(page, src.id);
+    }
+  });
+
+  test('the tags picker lists the saved source’s tags and appends to them', async ({ page }) => {
+    // The picker used to be labelled "Load repositories" and to fail with
+    // "config.access_token is required": it posted the edit form, which carries
+    // no credential. A saved source must list through its STORED grant.
+    const src = await createTraleSource(page, { name: `e2e-trale-${Date.now()}` });
+    try {
+      const tags = page.getByTestId('ds-field-tags');
+      await expect(tags).toHaveValue('standup');
+
+      const load = page.getByTestId('ds-load-tags');
+      await expect(load).toHaveText('Load tags');
+      await load.click();
+
+      const chips = page.getByTestId('ds-options-chips');
+      await expect(chips).toBeVisible();
+      await expect(page.getByTestId('ds-options-error')).toHaveCount(0);
+
+      // Appending keeps the value already chosen: a datalist click would have
+      // replaced it.
+      await chips.getByRole('button', { name: /Planning/ }).click();
+      await expect(tags).toHaveValue(/standup[\s\S]*planning/);
+
+      // The appended value is a real config value, not just text in the field.
+      await page.getByRole('button', { name: 'Save changes' }).click();
+      await page.waitForURL(/updated=1/);
+      await expect(page.getByTestId('ds-field-tags')).toHaveValue(/standup[\s\S]*planning/);
+    } finally {
+      await deleteDriveSource(page, src.id);
+    }
+  });
 });

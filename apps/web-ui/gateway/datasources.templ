@@ -491,18 +491,61 @@ templ dsConfigFieldInput(f dsConfigField) {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
 			}
 		</div>
-	} else if f.dsIsPicker() {
-		<div class="flex flex-col gap-1 sm:col-span-2">
-			<label class="text-sm font-medium" for={ f.Key }>{ f.Label }
+	} else if f.dsIsPicker() && f.Type == "array" && f.SourceID != "" {
+		{{
+			/* An array field collects several values, so the picker appends a
+			   clicked suggestion to the textarea instead of replacing the whole
+			   value the way an input + datalist would. */
+		}}
+		<div class="flex flex-col gap-1 sm:col-span-2" data-ds-picker-scope="true">
+			<label class="text-sm font-medium" for={ f.Key }>
+				{ f.Label }
 				if f.Required {
 					<span class="text-error" aria-hidden="true">*</span>
 				}
 			</label>
 			if f.Description != "" {
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					{ f.Description }
+				}
 			}
 			<div class="flex flex-col gap-2 sm:flex-row">
-				<input id={ f.Key } name={ f.Key } type="text" list={ f.dsOptionsListID() } class="input w-full" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
+				<textarea id={ f.Key } name={ f.Key } rows="2" class="textarea w-full font-mono text-xs" data-ds-picker-input="true" data-testid={ "ds-field-" + f.Key } placeholder={ dsArrayFieldPlaceholder(f.Key) }>{ f.Value }</textarea>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--list",
+					Attrs: templ.Attributes{
+						"data-testid": f.dsLoadTestID(),
+						"hx-post":     f.dsLoadPath(),
+						"hx-vals":     `{"fieldKey":"` + f.Key + `"}`,
+						"hx-include":  "closest form",
+						"hx-target":   "#" + f.dsPickerID(),
+						"hx-swap":     "innerHTML",
+						"class":       "shrink-0",
+					},
+				}) {
+					{ f.dsLoadLabel() }
+				}
+			</div>
+			<div id={ f.dsPickerID() } data-testid={ f.dsPickerID() }></div>
+		</div>
+	} else if f.dsIsPicker() {
+		<div class="flex flex-col gap-1 sm:col-span-2" data-ds-picker-scope="true">
+			<label class="text-sm font-medium" for={ f.Key }>
+				{ f.Label }
+				if f.Required {
+					<span class="text-error" aria-hidden="true">*</span>
+				}
+			</label>
+			if f.Description != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					{ f.Description }
+				}
+			}
+			<div class="flex flex-col gap-2 sm:flex-row">
+				<input id={ f.Key } name={ f.Key } type="text" list={ f.dsOptionsListID() } class="input w-full" data-ds-picker-input="true" data-testid={ "ds-field-" + f.Key } value={ f.Value }/>
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeButton,
 					Variant: ui.ButtonOutline,
@@ -555,6 +598,36 @@ templ DSOptionsPartial(fieldKey string, items []DSResource, truncated bool, err 
 			}
 		</datalist>
 		<div class="text-xs opacity-70" data-testid="ds-options-status">{ dsOptionsStatus(len(items), truncated) }</div>
+	}
+}
+
+// DSResourceSuggestionsPartial is the swap result for a SAVED source's config
+// picker: the values are listed through the source's stored credentials and
+// rendered as one-click suggestions. Clicking one sets a single-value field or
+// appends to an array field (js/datasource-config-picker.js), so a multi-value
+// scope never has its selection replaced.
+templ DSResourceSuggestionsPartial(items []DSResource, truncated bool, err error) {
+	if err != nil {
+		<div class="text-sm text-error" data-testid="ds-options-error">{ err.Error() }</div>
+	} else if len(items) == 0 {
+		<div class="text-xs opacity-70" data-testid="ds-options-status">No suggestions were returned. You can still type a value.</div>
+	} else {
+		<div class="flex flex-wrap items-center gap-1.5" data-testid="ds-options-chips">
+			<span class="text-xs opacity-70">{ dsOptionsStatus(len(items), truncated) }</span>
+			for _, item := range items {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonXS,
+					Attrs: templ.Attributes{
+						"data-ds-suggest": item.ID,
+						"data-testid":     "ds-suggestion",
+					},
+				}) {
+					{ dsOptionLabel(item) }
+				}
+			}
+		</div>
 	}
 }
 
@@ -629,7 +702,8 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			if credentialSummary != nil {
 				@dsCredentialCard(*credentialSummary)
 			}
-			@dsEditCard(src, dsSettingsConfigFields(configFields), credentialFields)
+			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields)
+			<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-config-picker.js")) }></script>
 			@dsSyncHistory(src.ID, jobs)
 			if src.ProviderType == dsProviderTypeGoogleDrive && (credentialSummary == nil || !credentialSummary.PickerBlocked) {
 				@dsFolderPickerModal(src)
@@ -791,15 +865,24 @@ templ dsCredentialCard(summary dsCredentialSummary) {
 			<dl class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
 				<div>
 					<dt class="text-xs font-medium uppercase tracking-wide text-muted">OAuth app</dt>
-					<dd class="mt-1 text-sm font-medium" data-testid="ds-credential-scope">{ summary.ScopeLabel }</dd>
-					if summary.ClientID != "" {
-						<dd class="mt-1">
-							<code class="text-xs" data-testid="ds-credential-client-id">{ summary.ClientID }</code>
-						</dd>
+					if summary.SelfRegistering {
+						{{
+							/* A self-registering provider registers its own public client at
+							   connect time, so there is no app to resolve or configure. */
+						}}
+						<dd class="mt-1 text-sm font-medium" data-testid="ds-credential-scope">{ summary.ScopeLabel }</dd>
+						<dd class="mt-1 text-xs text-muted">Public client registered automatically during connect (RFC 7591 + PKCE). Nothing to configure.</dd>
+					} else {
+						<dd class="mt-1 text-sm font-medium" data-testid="ds-credential-scope">{ summary.ScopeLabel }</dd>
+						if summary.ClientID != "" {
+							<dd class="mt-1">
+								<code class="text-xs" data-testid="ds-credential-client-id">{ summary.ClientID }</code>
+							</dd>
+						}
 					}
 				</div>
 				<div>
-					<dt class="text-xs font-medium uppercase tracking-wide text-muted">Google account</dt>
+					<dt class="text-xs font-medium uppercase tracking-wide text-muted">{ summary.AccountLabel }</dt>
 					<dd class="mt-1 text-sm" data-testid="ds-credential-account">{ dsCredentialValue(summary.AccountEmail) }</dd>
 					<dd class="mt-1 text-xs text-muted">Captured when the source was connected.</dd>
 				</div>
@@ -813,12 +896,23 @@ templ dsCredentialCard(summary dsCredentialSummary) {
 								Size:    ui.BadgeSizeSM,
 								Icon:    "lucide--shield-check",
 							})
-						} else {
+						} else if summary.GrantedTone == "warning" {
 							@ui.Badge(ui.BadgeProps{
 								Label:   summary.GrantedLabel,
 								Variant: ui.BadgeWarning,
 								Size:    ui.BadgeSizeSM,
 								Icon:    "lucide--shield-alert",
+							})
+						} else {
+							{{
+								/* Neutral: nothing is wrong, there is simply no grant
+								   metadata recorded for this source. */
+							}}
+							@ui.Badge(ui.BadgeProps{
+								Label:   summary.GrantedLabel,
+								Variant: ui.BadgeNeutral,
+								Size:    ui.BadgeSizeSM,
+								Icon:    "lucide--shield",
 							})
 						}
 					</dd>
@@ -826,19 +920,21 @@ templ dsCredentialCard(summary dsCredentialSummary) {
 			</dl>
 			if summary.LookupFailed {
 				<p class="mt-3 text-sm text-warning" data-testid="ds-credential-lookup-failed">The credential settings could not be loaded. Reload the page, or open credential settings to check the OAuth app.</p>
-			} else if !summary.Configured {
+			} else if !summary.Configured && !summary.SelfRegistering && !summary.ProviderUnknown {
 				<p class="mt-3 text-sm text-warning" data-testid="ds-credential-missing">No OAuth app is resolved for this provider. Set one up in credential settings before connecting.</p>
 			}
 			<div class="mt-3 flex flex-wrap items-center gap-2">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    summary.SettingsHref,
-					Variant: ui.ButtonOutline,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--settings",
-					Attrs:   templ.Attributes{"data-testid": "ds-credential-settings-link"},
-				}) {
-					Open credential settings
+				if !summary.SelfRegistering {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    summary.SettingsHref,
+						Variant: ui.ButtonOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--settings",
+						Attrs:   templ.Attributes{"data-testid": "ds-credential-settings-link"},
+					}) {
+						Open credential settings
+					}
 				}
 				if summary.CanReconnect {
 					// A revoked or expired grant can only be repaired by consent, so
@@ -1022,7 +1118,7 @@ templ dsConnectionCard(src *DSIntegration) {
 	}
 }
 
-templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigField) {
+templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFields []dsConfigField) {
 	@components.PanelCard("", nil) {
 		<h2 class="text-base font-semibold">Settings</h2>
 		<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/update") } data-testid="ds-edit-form" class="mt-3 flex flex-col gap-4">
@@ -1036,7 +1132,11 @@ templ dsEditCard(src *DSIntegration, configFields, credentialFields []dsConfigFi
 			</div>
 			<div>
 				<h3 class="text-sm font-semibold">Sync options</h3>
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Filter types and recursion apply to every selected folder. Credential fields are write-only and never shown. }
+				if syncNote != "" {
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						{ syncNote }
+					}
+				}
 				<div class="mt-3">
 					@dsConfigFieldInputs(configFields)
 				</div>

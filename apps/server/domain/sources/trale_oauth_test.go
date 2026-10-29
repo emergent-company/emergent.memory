@@ -153,6 +153,16 @@ func TestTraleOAuth_DynamicFlow(t *testing.T) {
 		t.Errorf("integration.Config has client_secret: %+v", integ.Config)
 	}
 
+	// The granted scope set is recorded verbatim so the read can report the
+	// grant: Trale declares no selectable scope strategies, so there is no
+	// granted strategy to map and the scopes are the only grant detail there is.
+	if got := stringSlice(integ.Config[oauthGrantedScopesKey]); len(got) != 3 || got[0] != "openid" || got[1] != "email" || got[2] != "profile" {
+		t.Errorf("integration.Config[%s] = %#v, want [openid email profile]", oauthGrantedScopesKey, integ.Config[oauthGrantedScopesKey])
+	}
+	if _, present := integ.Config[oauthGrantedStrategyKey]; present {
+		t.Errorf("integration.Config has %s for a strategy-less provider: %+v", oauthGrantedStrategyKey, integ.Config)
+	}
+
 	// Inspect the stored credential blob: token set + client material present,
 	// no client secret (Trale registers a public client).
 	src, err := repo.GetByIDWithCredentials(ctx, uuid.MustParse(integ.ID), projectID)

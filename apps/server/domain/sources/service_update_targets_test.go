@@ -49,6 +49,7 @@ func TestUpdate_PreservesCarriedConfigKeys(t *testing.T) {
 			"folders":               []any{map[string]any{"folder_id": "f1", "name": "Reports", "drive_id": "d1"}},
 			"mime_types":            []any{"application/pdf"},
 			oauthGrantedStrategyKey: string(ScopeStrategyDriveReadonly),
+			oauthGrantedScopesKey:   []any{"https://www.googleapis.com/auth/drive.readonly"},
 			oauthAccountEmailKey:    "ops@example.com",
 		},
 	})
@@ -82,6 +83,9 @@ func TestUpdate_PreservesCarriedConfigKeys(t *testing.T) {
 	}
 	if got := updated.Config[oauthAccountEmailKey]; got != "ops@example.com" {
 		t.Errorf("%s = %v, want the account email preserved", oauthAccountEmailKey, got)
+	}
+	if scopes, ok := updated.Config[oauthGrantedScopesKey].([]any); !ok || len(scopes) != 1 || scopes[0] != "https://www.googleapis.com/auth/drive.readonly" {
+		t.Errorf("%s = %#v, want the granted scopes preserved", oauthGrantedScopesKey, updated.Config[oauthGrantedScopesKey])
 	}
 	// Submitted keys still replace the stored ones.
 	if mimeTypes, ok := updated.Config["mime_types"].([]any); !ok || len(mimeTypes) != 1 || mimeTypes[0] != "text/plain" {

@@ -143,7 +143,7 @@ func TestCompleteOAuth_ReconnectReplacesGrantInPlace(t *testing.T) {
 	// read returns.
 	gotCfg := make(map[string]any, len(got.Config))
 	for k, v := range got.Config {
-		if k == oauthGrantedStrategyKey {
+		if k == oauthGrantedStrategyKey || k == oauthGrantedScopesKey {
 			continue // recorded by the new grant
 		}
 		gotCfg[k] = v
@@ -155,6 +155,11 @@ func TestCompleteOAuth_ReconnectReplacesGrantInPlace(t *testing.T) {
 	}
 	if got.Config[oauthGrantedStrategyKey] != string(ScopeStrategyDriveReadonly) {
 		t.Errorf("config[%q] = %v, want %q from the new token response", oauthGrantedStrategyKey, got.Config[oauthGrantedStrategyKey], ScopeStrategyDriveReadonly)
+	}
+	// The reconnect replaces the recorded grant: the scope set comes from the new
+	// token response, not from the dead one.
+	if scopes := stringSlice(got.Config[oauthGrantedScopesKey]); len(scopes) != 1 || scopes[0] != googleDriveReadonly {
+		t.Errorf("config[%q] = %#v, want [%s] from the new token response", oauthGrantedScopesKey, got.Config[oauthGrantedScopesKey], googleDriveReadonly)
 	}
 	if _, present := got.Config[oauthReconnectKey]; present {
 		t.Error("reconnect id leaked into the source config")
