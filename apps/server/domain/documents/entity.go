@@ -1,6 +1,8 @@
 package documents
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -92,6 +94,75 @@ const (
 	SourceStatusDeletedFromSource = "deleted_from_source"
 )
 
+// Document status filter buckets. The derived processing status has six states;
+// clients filter on four, each a group of those states. The groups are disjoint
+// because they are defined as a partition of the CASE that produces the status
+// (see processingStatusExpr), not as independent predicates.
+const (
+	StatusBucketProcessing = "processing"
+	StatusBucketReady      = "ready"
+	StatusBucketExtracted  = "extracted"
+	StatusBucketFailed     = "failed"
+)
+
+// statusBucketStates maps each filter bucket to the derived states it covers.
+// Every state belongs to exactly one bucket.
+var statusBucketStates = map[string][]string{
+	StatusBucketProcessing: {"converting", "extracting"},
+	StatusBucketReady:      {"ready_for_extraction"},
+	StatusBucketExtracted:  {"completed"},
+	StatusBucketFailed:     {"conversion_failed", "extraction_failed"},
+}
+
+// Document list sort keys and directions.
+const (
+	SortCreated = "created"
+	SortUpdated = "updated"
+
+	OrderAsc  = "asc"
+	OrderDesc = "desc"
+)
+
+// NormalizeStatusBucket validates a status filter value. An empty value means
+// "no status filter" and is returned as-is; anything outside the bucket
+// vocabulary is an error so a typo cannot silently look like a working filter.
+func NormalizeStatusBucket(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", nil
+	}
+	if _, ok := statusBucketStates[s]; !ok {
+		return "", fmt.Errorf("status must be one of %s, %s, %s, %s", StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed)
+	}
+	return s, nil
+}
+
+// NormalizeSort validates a sort key, defaulting to created.
+func NormalizeSort(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	switch s {
+	case "":
+		return SortCreated, nil
+	case SortCreated, SortUpdated:
+		return s, nil
+	default:
+		return "", fmt.Errorf("sort must be one of %s, %s", SortCreated, SortUpdated)
+	}
+}
+
+// NormalizeOrder validates a sort direction, defaulting to descending.
+func NormalizeOrder(raw string) (string, error) {
+	o := strings.ToLower(strings.TrimSpace(raw))
+	switch o {
+	case "":
+		return OrderDesc, nil
+	case OrderAsc, OrderDesc:
+		return o, nil
+	default:
+		return "", fmt.Errorf("order must be one of %s, %s", OrderAsc, OrderDesc)
+	}
+}
+
 // ListParams contains parameters for listing documents
 type ListParams struct {
 	ProjectID        string
@@ -100,9 +171,71 @@ type ListParams struct {
 	SourceType       *string
 	RootOnly         bool
 	ParentDocumentID *string
+	// Status filters on the derived processing status, using a bucket from
+	// statusBucketStates. Empty means no status filter.
+	Status string
+	// Query is a case-insensitive substring match over the document's filename
+	// and source URL. Empty means no search.
+	Query string
+	// Sort is SortCreated or SortUpdated; Order is OrderAsc or OrderDesc.
+	// Empty values are defaulted by normalized().
+	Sort  string
+	Order string
 	// IncludeDeletedFromSource, when true, includes documents whose
 	// source_status is 'deleted_from_source'. Default listings exclude them.
 	IncludeDeletedFromSource bool
+}
+
+// normalized applies the default sort and order. It does not validate: callers
+// that accept user input validate first (NormalizeSort/NormalizeOrder) so the
+// invalid value becomes a 400 rather than a silent default.
+func (p ListParams) normalized() ListParams {
+	if p.Sort == "" {
+		p.Sort = SortCreated
+	}
+	if p.Order == "" {
+		p.Order = OrderDesc
+	}
+	return p
+}
+
+// StatusCounts is the per-status breakdown returned with every listing. All is
+// the total ignoring the status filter; each bucket counts the documents the
+// other filters (search, source, visibility) matched.
+type StatusCounts struct {
+	All        int `json:"all"`
+	Processing int `json:"processing"`
+	Ready      int `json:"ready"`
+	Extracted  int `json:"extracted"`
+	Failed     int `json:"failed"`
+}
+
+func (c *StatusCounts) add(status string, n int) {
+	c.All += n
+	switch bucketForState(status) {
+	case StatusBucketProcessing:
+		c.Processing += n
+	case StatusBucketReady:
+		c.Ready += n
+	case StatusBucketExtracted:
+		c.Extracted += n
+	case StatusBucketFailed:
+		c.Failed += n
+	}
+}
+
+// bucketForState resolves a derived processing status to its filter bucket, or
+// "" when the state is unknown (such a row counts toward All only). The buckets
+// are a partition, so the first match is the only match.
+func bucketForState(status string) string {
+	for bucket, states := range statusBucketStates {
+		for _, state := range states {
+			if state == status {
+				return bucket
+			}
+		}
+	}
+	return ""
 }
 
 // DocumentVersion is a summary of a single document version for the history
@@ -151,17 +284,31 @@ type ApplySourceItemResult struct {
 	Skipped    bool // identical parsed text; no new version
 }
 
-// Cursor represents pagination cursor
+// Cursor represents pagination cursor. It is a keyset over (sort value, id):
+// Sort names the key it was minted for, Value is that key's value at the last
+// returned row, and ID breaks ties.
 type Cursor struct {
-	CreatedAt time.Time `json:"createdAt"`
-	ID        string    `json:"id"`
+	Sort  string    `json:"sort,omitempty"`
+	Value time.Time `json:"value,omitempty"`
+	ID    string    `json:"id"`
+	// CreatedAt is the pre-sort-key cursor field. Cursors minted before the
+	// sort discriminator existed carry only this; ParseCursor normalizes them
+	// to Sort=created, Value=CreatedAt. It is a pointer so new cursors omit it
+	// from their JSON instead of emitting a zero timestamp.
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
 }
 
 // ListResult contains the result of listing documents
 type ListResult struct {
-	Documents  []Document `json:"documents"`
-	Total      int        `json:"total"`
-	NextCursor *string    `json:"next_cursor,omitempty"`
+	Documents []Document `json:"documents"`
+	// Total is the number of documents matching every filter, including the
+	// status filter.
+	Total int `json:"total"`
+	// StatusCounts breaks the result down by derived status. It ignores the
+	// status filter (so a client can render stable filter counts) but honours
+	// the search and source filters.
+	StatusCounts StatusCounts `json:"statusCounts"`
+	NextCursor   *string      `json:"next_cursor,omitempty"`
 }
 
 // CreateDocumentRequest is the request body for creating a document

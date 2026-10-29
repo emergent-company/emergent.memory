@@ -382,6 +382,7 @@ func main() {
 	e.GET("/partial/chat-rail", s.uiChatRail)
 	e.GET("/partial/chat-todos", s.uiChatTodos)
 	e.GET("/documents", s.uiDocuments)
+	e.GET("/documents/partial", s.uiDocumentsPartial)
 	e.GET("/documents/:id", s.uiDocument)
 	e.GET("/documents/:id/chunks", s.uiDocumentChunks)
 	e.GET("/documents/:id/extractions", s.uiDocumentExtractions)

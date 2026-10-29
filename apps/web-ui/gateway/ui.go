@@ -1288,24 +1288,6 @@ func documentStatusIntent(status string) ui.BadgeIntent {
 	}
 }
 
-// uiDocuments renders the documents page: a list of ingested documents plus an
-// upload form. ?uploaded=1 surfaces an upload success message, ?err=1 an upload
-// failure.
-func (s *Server) uiDocuments(c echo.Context) error {
-	docs, cursor, err := s.memory.ListDocuments(c.Request().Context(), "")
-	flashMsg := flashFromQuery(c, []flashParam{
-		{key: "uploaded", msg: "Document uploaded."},
-		{key: "duplicate", msg: "Document already exists (identical content)."},
-		{key: "deleted", msg: "Document deleted."},
-	})
-	flashErr := flashError(c)
-	var loadErr error
-	if err != nil {
-		loadErr = userFacingError(err)
-	}
-	return s.page(c, pageTitle("Documents"), DocumentsPage(docs, cursor, loadErr, flashMsg, flashErr))
-}
-
 // uiDocument renders a document's Overview sub-page: metadata, the extraction
 // trigger, and a preview of the original file. Chunks and extraction history
 // live on their own sub-routes; a failed preview fetch degrades only the

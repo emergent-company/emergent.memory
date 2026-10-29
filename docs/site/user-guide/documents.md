@@ -57,6 +57,8 @@ After upload the document enters a **conversion pipeline**: the file is parsed, 
 | `embeddedChunks` | Number of chunks with embeddings (ready for semantic search) |
 | `totalChars` | Total character count across all chunks |
 | `extractionStatus` | Status of AI entity extraction (if auto-extraction is enabled) |
+| `processingStatus` | One derived state for the whole pipeline (see [Document status](#document-status)) |
+| `version` | `1` for an original, `N` for the Nth revision of a data-source document |
 
 ---
 
@@ -71,6 +73,73 @@ After upload the document enters a **conversion pipeline**: the file is parsed, 
     ```http
     GET /api/documents?projectId={id}&limit=50
     ```
+
+The listing is cursor-paginated and returns the page's documents, the total
+number of documents matching the filters, a per-status breakdown, and the
+cursor of the next page:
+
+```json
+{
+  "documents": [ { "id": "doc_1", "filename": "report.pdf", "processingStatus": "completed", "version": 1 } ],
+  "total": 137,
+  "statusCounts": { "all": 137, "processing": 4, "ready": 18, "extracted": 112, "failed": 3 },
+  "next_cursor": "eyJzb3J0IjoiY3JlYXRlZCIs..."
+}
+```
+
+### Query parameters
+
+| Parameter | Values | Description |
+|---|---|---|
+| `limit` | 1–500 (default 100) | Page size |
+| `cursor` | opaque string | Next-page cursor from the previous response. Must be used with the same `sort` |
+| `status` | `processing` · `ready` · `extracted` · `failed` | One status bucket (omit for all) |
+| `sourceType` | `upload`, `drive`, `repo`, `email`, `meeting`, `web` | Only documents from that source kind; `upload` means files uploaded directly |
+| `q` | text (≤ 200 characters) | Case-insensitive match over the file name and the source URL; `%` and `_` are matched literally. Document *content* is not searched — use [Search](knowledge-graph.md) for that |
+| `sort` | `created` (default) · `updated` | Timestamp to order by |
+| `order` | `desc` (default) · `asc` | Direction |
+
+Pagination is keyset-based, so pages stay stable while documents are being
+added: pass `next_cursor` back as `cursor` until it comes back empty. Changing
+`sort` invalidates a cursor — request the first page again (a mismatch returns
+`400`).
+
+`total` counts every document the filters match, the status filter included.
+`statusCounts` deliberately ignores `status` while honouring `q` and
+`sourceType`, so a UI can render the tabs and their counts without the active
+tab changing the other numbers. Its `all` entry is therefore the same as `total`
+only when no status filter is set.
+
+### Document status
+
+`processingStatus` folds conversion and extraction into one state, so a client
+does not have to combine the two raw statuses:
+
+| Value | Meaning | Bucket |
+|---|---|---|
+| `converting` | File is being parsed into text | `processing` |
+| `extracting` | Chunks are ready, AI extraction is running | `processing` |
+| `ready_for_extraction` | Text and embeddings are ready; extraction has not started | `ready` |
+| `completed` | Text, embeddings and extraction are all done | `extracted` |
+| `conversion_failed` | Parsing failed | `failed` |
+| `extraction_failed` | AI extraction failed | `failed` |
+
+### Browsing documents in the web UI
+
+**Knowledge → Documents** shows the same dataset with controls on top:
+
+- a **stats strip** with the project's document total and the per-status counts,
+- **status tabs** (All, Processing, Ready, Extracted, Failed) that keep the active search, source and sort,
+- a **source filter** listing the source kinds the project actually has,
+- **search** over file names and source URLs,
+- **sorting** on the Created and Updated column headers (click again to flip),
+- a **Load more** button that appends the next page without losing the filters.
+
+The header count is the number of documents matching every active filter — the
+project total when none is set — never just the length of the current page. The
+stats strip and the tab counts describe the search and source population, so
+selecting a status tab does not shift the other numbers. On narrow screens the
+table is replaced by a card list carrying the same fields.
 
 ---
 

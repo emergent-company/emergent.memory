@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -30,7 +31,7 @@ func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
 	}
 }
 
-// List retrieves documents with pagination and filtering
+// List retrieves documents with pagination and filtering.
 func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, error) {
 	// Default limit
 	if params.Limit <= 0 {
@@ -39,10 +40,88 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 	if params.Limit > 500 {
 		params.Limit = 500
 	}
+	params = params.normalized()
 
-	// Build base query with RLS context via project_id
-	// Use explicit column selection to include computed fields via subqueries
-	query := r.db.NewSelect().
+	// The handler validates both of these and answers 400; re-checking here keeps
+	// a future caller from getting a silently unfiltered page (an unknown bucket
+	// would drop the filter) or a page walked with the wrong comparison (a cursor
+	// from the other sort).
+	if params.Status != "" {
+		if _, ok := statusBucketStates[params.Status]; !ok {
+			return nil, fmt.Errorf("list documents: unknown status bucket %q", params.Status)
+		}
+	}
+	if params.Cursor != nil && params.Cursor.Sort != "" && params.Cursor.Sort != params.Sort {
+		return nil, fmt.Errorf("list documents: cursor was minted for sort %q, not %q", params.Cursor.Sort, params.Sort)
+	}
+
+	query := applyListFilters(r.listQueryBase(), params)
+
+	// Apply the keyset cursor on the active sort key. The direction flips the
+	// comparison: descending reads backwards from the cursor, ascending forward.
+	sortColumn := "d.created_at"
+	if params.Sort == SortUpdated {
+		sortColumn = "d.updated_at"
+	}
+	if params.Cursor != nil {
+		op := "<"
+		if params.Order == OrderAsc {
+			op = ">"
+		}
+		query = query.Where(fmt.Sprintf("(%s, d.id) %s (?, ?)", sortColumn, op), params.Cursor.Value, params.Cursor.ID)
+	}
+
+	// Order by the sort key and id for a stable keyset.
+	direction := "DESC"
+	if params.Order == OrderAsc {
+		direction = "ASC"
+	}
+	query = query.Order(fmt.Sprintf("%s %s", sortColumn, direction), "d.id "+direction).
+		Limit(params.Limit + 1) // +1 to detect if there are more
+
+	documents := []Document{}
+	if err := query.Scan(ctx, &documents); err != nil {
+		return nil, fmt.Errorf("list documents: %w", err)
+	}
+
+	// Check if there are more results
+	var nextCursor *string
+	if len(documents) > params.Limit {
+		documents = documents[:params.Limit]
+		last := documents[len(documents)-1]
+		sortValue := last.CreatedAt
+		if params.Sort == SortUpdated {
+			sortValue = last.UpdatedAt
+		}
+		encoded, err := encodeCursor(Cursor{Sort: params.Sort, Value: sortValue, ID: last.ID})
+		if err != nil {
+			return nil, err
+		}
+		nextCursor = &encoded
+	}
+
+	total, err := r.count(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	counts, err := r.statusCounts(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ListResult{
+		Documents:    documents,
+		Total:        total,
+		StatusCounts: counts,
+		NextCursor:   nextCursor,
+	}, nil
+}
+
+// listQueryBase returns the listing select with its computed columns and the
+// filters every listing carries, before caller-specific filters are applied.
+func (r *Repository) listQueryBase() *bun.SelectQuery {
+	return r.db.NewSelect().
 		TableExpr("kb.documents AS d").
 		ColumnExpr("d.*").
 		ColumnExpr("COALESCE(LENGTH(d.content), 0) AS total_chars").
@@ -52,8 +131,15 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		ColumnExpr(processingStatusSQL()).
 		ColumnExpr(lastExtractionAtSQL()).
 		ColumnExpr(extractionObjectsCreatedSQL()).
-		ColumnExpr(extractionRelationshipsCreatedSQL()).
-		Where("d.project_id = ?", params.ProjectID)
+		ColumnExpr(extractionRelationshipsCreatedSQL())
+}
+
+// applyListFilters applies the filters shared by the listing, its total count and
+// the status breakdown. It exists so a new filter cannot land in one of those
+// queries and be forgotten in the others — the three used to duplicate this
+// block.
+func applyListFilters(query *bun.SelectQuery, params ListParams) *bun.SelectQuery {
+	query = query.Where("d.project_id = ?", params.ProjectID)
 
 	// Listings are HEAD-only: a versioned document's superseded rows are history
 	// and are only returned by the version-history endpoint. Without this filter
@@ -66,7 +152,6 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		query = query.Where("d.source_status <> ?", SourceStatusDeletedFromSource)
 	}
 
-	// Apply filters
 	if params.SourceType != nil {
 		query = query.Where("d.source_type = ?", *params.SourceType)
 	}
@@ -77,65 +162,106 @@ func (r *Repository) List(ctx context.Context, params ListParams) (*ListResult, 
 		query = query.Where("d.parent_document_id = ?", *params.ParentDocumentID)
 	}
 
-	// Apply cursor-based pagination
-	if params.Cursor != nil {
-		query = query.Where("(d.created_at, d.id) < (?, ?)", params.Cursor.CreatedAt, params.Cursor.ID)
+	// Metadata search. Source documents may have no filename at all, so the
+	// source URL is matched too: it is the string a user recognises for those
+	// rows. Matching is ILIKE with the pattern's wildcards escaped, so a literal
+	// % or _ in a filename cannot turn into a wildcard.
+	if params.Query != "" {
+		pattern := "%" + escapeLikePattern(params.Query) + "%"
+		query = query.Where(
+			"(COALESCE(d.filename, '') ILIKE ? ESCAPE '\\' OR COALESCE(d.source_url, '') ILIKE ? ESCAPE '\\')",
+			pattern, pattern,
+		)
 	}
 
-	// Get total count (without pagination)
-	countQuery := r.db.NewSelect().
-		Model((*Document)(nil)).
-		Where("project_id = ?", params.ProjectID).
-		Where("supersedes_id IS NULL")
-
-	if !params.IncludeDeletedFromSource {
-		countQuery = countQuery.Where("source_status <> ?", SourceStatusDeletedFromSource)
-	}
-
-	if params.SourceType != nil {
-		countQuery = countQuery.Where("source_type = ?", *params.SourceType)
-	}
-	if params.RootOnly {
-		countQuery = countQuery.Where("parent_document_id IS NULL")
-	}
-	if params.ParentDocumentID != nil {
-		countQuery = countQuery.Where("parent_document_id = ?", *params.ParentDocumentID)
-	}
-
-	total, err := countQuery.Count(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("count documents: %w", err)
-	}
-
-	// Order by created_at DESC, id DESC for cursor pagination
-	query = query.Order("d.created_at DESC", "d.id DESC").
-		Limit(params.Limit + 1) // +1 to detect if there are more
-
-	documents := []Document{}
-	if err := query.Scan(ctx, &documents); err != nil {
-		return nil, fmt.Errorf("list documents: %w", err)
-	}
-
-	// Check if there are more results
-	var nextCursor *string
-	if len(documents) > params.Limit {
-		// There are more results - create cursor from last item we're returning
-		documents = documents[:params.Limit]
-		lastDoc := documents[len(documents)-1]
-		cursor := Cursor{
-			CreatedAt: lastDoc.CreatedAt,
-			ID:        lastDoc.ID,
+	// Status filter. The derived status is a single value per row, so filtering
+	// its CASE output by the bucket's state set is exactly the four-bucket
+	// partition. Qualifying the expression (rather than re-deriving conditions)
+	// keeps the filter, the count and the rendered badge in agreement.
+	if params.Status != "" {
+		if states, ok := statusBucketStates[params.Status]; ok {
+			query = query.Where("("+processingStatusExpr()+") IN (?)", bun.In(states))
 		}
-		cursorJSON, _ := json.Marshal(cursor)
-		encoded := base64.URLEncoding.EncodeToString(cursorJSON)
-		nextCursor = &encoded
 	}
 
-	return &ListResult{
-		Documents:  documents,
-		Total:      total,
-		NextCursor: nextCursor,
-	}, nil
+	return query
+}
+
+// count returns the number of documents matching every filter, status included.
+func (r *Repository) count(ctx context.Context, params ListParams) (int, error) {
+	query := applyListFilters(r.db.NewSelect().TableExpr("kb.documents AS d"), params)
+	total, err := query.Count(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("count documents: %w", err)
+	}
+	return total, nil
+}
+
+// statusCountsRow is one (derived status, count) pair from the breakdown query.
+type statusCountsRow struct {
+	Status string `bun:"status"`
+	Count  int    `bun:"count"`
+}
+
+// statusCounts aggregates the derived status over the filtered population,
+// deliberately ignoring the status filter so filter counts stay stable while a
+// status is selected. The search and source filters do apply, so narrowing the
+// list narrows the counts with it.
+func (r *Repository) statusCounts(ctx context.Context, params ListParams) (StatusCounts, error) {
+	params.Status = ""
+	var out StatusCounts
+
+	rows := []statusCountsRow{}
+	query := applyListFilters(r.db.NewSelect().TableExpr("kb.documents AS d"), params).
+		ColumnExpr("(" + processingStatusExpr() + ") AS status").
+		ColumnExpr("COUNT(*)::int AS count").
+		GroupExpr("status")
+	if err := query.Scan(ctx, &rows); err != nil {
+		return out, fmt.Errorf("count documents by status: %w", err)
+	}
+	for _, row := range rows {
+		out.add(row.Status, row.Count)
+	}
+	return out, nil
+}
+
+// escapeLikePattern escapes the LIKE metacharacters in a user-supplied search
+// term so it matches literally. The ILIKE predicates pair this with
+// `ESCAPE '\'`.
+func escapeLikePattern(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '\\', '%', '_':
+			b.WriteRune('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// MaxDocumentSearchTerm caps the search term accepted by the listing.
+const MaxDocumentSearchTerm = 200
+
+// NormalizeDocumentSearch trims a search term and caps its length so a pasted
+// document cannot become an unbounded LIKE pattern. Empty or whitespace-only
+// input means "no search".
+func NormalizeDocumentSearch(raw string) string {
+	s := strings.TrimSpace(raw)
+	if r := []rune(s); len(r) > MaxDocumentSearchTerm {
+		s = string(r[:MaxDocumentSearchTerm])
+	}
+	return s
+}
+
+// encodeCursor renders a cursor as the opaque token the API returns.
+func encodeCursor(cursor Cursor) (string, error) {
+	data, err := json.Marshal(cursor)
+	if err != nil {
+		return "", fmt.Errorf("encode cursor: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(data), nil
 }
 
 // GetByID retrieves a single document by ID
@@ -218,7 +344,9 @@ func (r *Repository) GetByContentHash(ctx context.Context, projectID, contentHas
 	return &doc, nil
 }
 
-// GetDistinctSourceTypes returns all distinct source types with document counts for a project
+// GetDistinctSourceTypes returns all distinct source types with document counts for a project.
+// The population matches a default listing (HEAD-only, documents removed at the
+// source excluded) so the counts line up with the rows a client can see.
 func (r *Repository) GetDistinctSourceTypes(ctx context.Context, projectID string) ([]SourceTypeWithCount, error) {
 	var results []SourceTypeWithCount
 	err := r.db.NewSelect().
@@ -227,6 +355,7 @@ func (r *Repository) GetDistinctSourceTypes(ctx context.Context, projectID strin
 		Where("project_id = ?", projectID).
 		Where("source_type IS NOT NULL").
 		Where("supersedes_id IS NULL").
+		Where("source_status <> ?", SourceStatusDeletedFromSource).
 		GroupExpr("source_type").
 		OrderExpr("count DESC").
 		Scan(ctx, &results)
@@ -1013,7 +1142,10 @@ func (r *Repository) BulkDeleteWithCascade(ctx context.Context, projectID string
 	return summary, notFound, nil
 }
 
-// ParseCursor decodes a base64-encoded cursor
+// ParseCursor decodes a base64-encoded cursor and normalizes it to the keyset
+// form. Cursors minted before the sort discriminator existed carry only
+// createdAt + id; those are read as sort=created cursors so links created before
+// a deploy keep working.
 func ParseCursor(encoded string) (*Cursor, error) {
 	if encoded == "" {
 		return nil, nil
@@ -1028,6 +1160,22 @@ func ParseCursor(encoded string) (*Cursor, error) {
 	if err := json.Unmarshal(data, &cursor); err != nil {
 		return nil, fmt.Errorf("invalid cursor format: %w", err)
 	}
+
+	if cursor.Sort == "" {
+		if cursor.CreatedAt == nil {
+			return nil, fmt.Errorf("invalid cursor: missing sort key")
+		}
+		cursor.Sort = SortCreated
+		cursor.Value = *cursor.CreatedAt
+	}
+	if cursor.Sort != SortCreated && cursor.Sort != SortUpdated {
+		return nil, fmt.Errorf("invalid cursor: unknown sort %q", cursor.Sort)
+	}
+	if cursor.ID == "" || cursor.Value.IsZero() {
+		return nil, fmt.Errorf("invalid cursor: incomplete keyset")
+	}
+	// The legacy field is normalized away so callers never branch on it.
+	cursor.CreatedAt = nil
 
 	return &cursor, nil
 }
@@ -1424,6 +1572,15 @@ func (r *Repository) UpdateContentAndStatus(ctx context.Context, documentID, con
 // from conversion_status, document_parsing_jobs, and object_extraction_jobs.
 // Precedence: converting > conversion_failed > extracting > extraction_failed > completed > ready_for_extraction
 func processingStatusSQL() string {
+	return processingStatusExpr() + " AS processing_status"
+}
+
+// processingStatusExpr returns the derived-status CASE without its column alias,
+// so the same expression can be used in projections, WHERE clauses and GROUP BY
+// aggregates. Every consumer shares this one definition: a status filter or a
+// status count derived from a hand-written copy would inevitably disagree with
+// the badge the row renders.
+func processingStatusExpr() string {
 	return `CASE
 		WHEN EXISTS (
 			SELECT 1 FROM kb.document_parsing_jobs dpj
@@ -1443,7 +1600,7 @@ func processingStatusSQL() string {
 			WHERE oej3.document_id = d.id ORDER BY oej3.created_at DESC LIMIT 1
 		) = 'completed' THEN 'completed'
 		ELSE 'ready_for_extraction'
-	END AS processing_status`
+	END`
 }
 
 // lastExtractionAtSQL returns the completion timestamp of the most recent completed extraction job

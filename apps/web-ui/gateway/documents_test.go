@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,44 +21,68 @@ import (
 
 func TestListDocuments(t *testing.T) {
 	var gotPath, gotLimit, gotCursor, gotProject string
+	var gotQuery url.Values
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
 		gotLimit = r.URL.Query().Get("limit")
 		gotCursor = r.URL.Query().Get("cursor")
 		gotProject = r.Header.Get("X-Project-ID")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"documents":[
-			{"id":"d1","filename":"Spec.md","mimeType":"text/markdown","chunks":12,"embeddedChunks":10,"extractionStatus":"completed","objectsCreated":15,"createdAt":"2026-08-26T10:00:00Z"},
+			{"id":"d1","filename":"Spec.md","mimeType":"text/markdown","chunks":12,"embeddedChunks":10,"extractionStatus":"completed","processingStatus":"completed","version":2,"objectsCreated":15,"createdAt":"2026-08-26T10:00:00Z","updatedAt":"2026-08-27T10:00:00Z"},
 			{"id":"d2","filename":"notes.txt","chunks":3,"extractionStatus":"pending","createdAt":"2026-08-26T11:00:00Z"}
-		],"total":2,"next_cursor":"abc123"}`)
+		],"total":37,"statusCounts":{"all":37,"processing":4,"ready":20,"extracted":10,"failed":3},"next_cursor":"abc123"}`)
 	}))
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj-1")
-	docs, cursor, err := m.ListDocuments(context.Background(), "abc123")
+	page, err := m.ListDocuments(context.Background(), DocumentListParams{
+		Query:      "spec",
+		Status:     "extracted",
+		SourceType: "upload",
+		Sort:       "updated",
+		Order:      "asc",
+		Cursor:     "abc123",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotPath != "/api/documents" {
 		t.Errorf("path = %q", gotPath)
 	}
-	if gotLimit != "100" {
-		t.Errorf("limit = %q, want 100", gotLimit)
+	if gotLimit != "50" {
+		t.Errorf("limit = %q, want the default page size 50", gotLimit)
 	}
 	if gotCursor != "abc123" {
 		t.Errorf("cursor = %q, want abc123", gotCursor)
 	}
+	if gotQuery.Get("q") != "spec" || gotQuery.Get("status") != "extracted" || gotQuery.Get("sourceType") != "upload" {
+		t.Errorf("filter params = %v", gotQuery)
+	}
+	if gotQuery.Get("sort") != "updated" || gotQuery.Get("order") != "asc" {
+		t.Errorf("sort params = %v", gotQuery)
+	}
 	if gotProject != "proj-1" {
 		t.Errorf("X-Project-ID = %q, want proj-1", gotProject)
 	}
-	if cursor != "abc123" {
-		t.Errorf("next cursor = %q, want abc123", cursor)
+	if page.NextCursor != "abc123" {
+		t.Errorf("next cursor = %q, want abc123", page.NextCursor)
 	}
-	if len(docs) != 2 {
-		t.Fatalf("got %d docs, want 2", len(docs))
+	if page.Total != 37 {
+		t.Errorf("total = %d, want 37", page.Total)
 	}
-	if docs[0].Filename != "Spec.md" || docs[0].Chunks != 12 || docs[0].ExtractionStatus != "completed" || docs[0].ObjectsCreated != 15 {
-		t.Errorf("doc0 = %+v", docs[0])
+	if page.StatusCounts != (DocumentStatusCounts{All: 37, Processing: 4, Ready: 20, Extracted: 10, Failed: 3}) {
+		t.Errorf("status counts = %+v", page.StatusCounts)
+	}
+	if len(page.Documents) != 2 {
+		t.Fatalf("got %d docs, want 2", len(page.Documents))
+	}
+	if page.Documents[0].Filename != "Spec.md" || page.Documents[0].Chunks != 12 || page.Documents[0].ExtractionStatus != "completed" || page.Documents[0].ObjectsCreated != 15 {
+		t.Errorf("doc0 = %+v", page.Documents[0])
+	}
+	if page.Documents[0].Version != 2 || page.Documents[0].ProcessingStatus != "completed" {
+		t.Errorf("doc0 version/status = %d/%q", page.Documents[0].Version, page.Documents[0].ProcessingStatus)
 	}
 }
 
@@ -68,8 +93,30 @@ func TestListDocumentsError(t *testing.T) {
 	}))
 	defer srv.Close()
 	m := NewMemoryClient(srv.URL, "proj")
-	if _, _, err := m.ListDocuments(context.Background(), ""); err == nil {
+	if _, err := m.ListDocuments(context.Background(), DocumentListParams{}); err == nil {
 		t.Fatal("want error, got nil")
+	}
+}
+
+func TestListDocumentSourceTypes(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"sourceTypes":[{"sourceType":"upload","count":12},{"sourceType":"drive","count":3}]}`)
+	}))
+	defer srv.Close()
+
+	m := NewMemoryClient(srv.URL, "proj")
+	types, err := m.ListDocumentSourceTypes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/api/documents/source-types" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if len(types) != 2 || types[0].SourceType != "upload" || types[0].Count != 12 || types[1].SourceType != "drive" {
+		t.Errorf("source types = %+v", types)
 	}
 }
 
@@ -488,15 +535,35 @@ func TestDocumentsRequireAPIKey(t *testing.T) {
 
 // --- UI render ---
 
-func TestRenderDocumentsPage(t *testing.T) {
-	docs := []Document{
-		{ID: "d1", Filename: "Spec.md", Chunks: 12, ExtractionStatus: "completed", CreatedAt: "2026-08-26T10:00:00Z"},
-		{ID: "d2", Filename: "notes.txt", Chunks: 3, ExtractionStatus: "pending", CreatedAt: "2026-08-26T11:00:00Z"},
+// documentsTestPage is a two-row page with one document of each provenance,
+// real counts, and a further page behind a cursor.
+func documentsTestPage() documentPageData {
+	return documentPageData{
+		Sort:       documentSortCreated,
+		Order:      documentOrderDesc,
+		Total:      37,
+		Counts:     DocumentStatusCounts{All: 37, Processing: 4, Ready: 20, Extracted: 10, Failed: 3},
+		NextCursor: "abc123",
+		HasMore:    true,
+		Sources: []documentSourceOption{
+			{Value: "upload", Label: "Uploaded", Count: 34},
+			{Value: "drive", Label: "Google Drive", Count: 3},
+		},
+		Rows: []documentRow{
+			{ID: "d1", Name: "Spec.md", Chunks: 12, Status: "completed", Versions: 2, Source: "Uploaded", CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-27T10:00:00Z"},
+			{ID: "d2", Name: "notes.txt", Chunks: 3, Status: "ready_for_extraction", Versions: 1, Source: "Google Drive", CreatedAt: "2026-08-26T11:00:00Z", UpdatedAt: "2026-08-26T11:00:00Z"},
+		},
 	}
-	html := renderHTML(t, DocumentsPage(docs, "", nil, "", nil))
+}
+
+func TestRenderDocumentsPage(t *testing.T) {
+	data := documentsTestPage()
+	html := renderHTML(t, DocumentsPage(data))
 	for _, want := range []string{
 		"Documents", "Spec.md", "notes.txt", "12 chunks", "3 chunks",
-		"completed", "pending", `href="/documents/d1"`, `name="file"`, `enctype="multipart/form-data"`,
+		// status labels are the user-facing names of the derived states
+		"Extracted", "Ready",
+		`href="/documents/d1"`, `name="file"`, `enctype="multipart/form-data"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("documents page missing %q", want)
@@ -511,49 +578,157 @@ func TestRenderDocumentsPage(t *testing.T) {
 			t.Errorf("documents page missing %q", want)
 		}
 	}
+}
 
-	htmlDeleted := renderHTML(t, DocumentsPage(nil, "", nil, "Document deleted.", nil))
-	if !strings.Contains(htmlDeleted, "Document deleted.") {
-		t.Error("delete flash missing")
+// TestRenderDocumentsBrowser pins the browser's contract: a truthful header
+// count, the stats strip, the status tabs with counts, the table and the mobile
+// card list, the columns the API already returns, and a load-more control that
+// carries the active view.
+func TestRenderDocumentsBrowser(t *testing.T) {
+	data := documentsTestPage()
+	html := renderHTML(t, DocumentsPage(data))
+
+	for _, want := range []string{
+		// header count is the project total, not the page's row count
+		`data-testid="documents-count"`,
+		"37 documents",
+		`data-testid="documents-stats"`,
+		`data-testid="documents-status-tabs"`,
+		`data-testid="documents-table"`,
+		`id="documents-list"`,
+		`id="documents-mobile-list"`,
+		// columns from the API that the old row hid
+		"Versions", "Source", "Updated",
+		"Google Drive",
+		`data-status="completed"`,
+		// status tabs carry counts and the filter state
+		`href="/documents?status=failed"`,
+		`data-status="failed"`,
+		// sort headers: created is active (desc), updated links to it
+		`aria-sort="descending"`,
+		`href="/documents?sort=updated"`,
+		// load more carries the cursor and the active view
+		`data-testid="documents-load-more"`,
+		`hx-target="#documents-list"`,
+		`hx-swap="beforeend"`,
+		`/documents/partial?cursor=abc123`,
+		"Newest first",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("documents browser missing %q", want)
+		}
 	}
 
-	htmlEmpty := renderHTML(t, DocumentsPage(nil, "", nil, "", nil))
-	if !strings.Contains(htmlEmpty, "No documents yet") {
-		t.Error("empty state missing")
-	}
-
-	htmlErr := renderHTML(t, DocumentsPage(nil, "", errTest, "", nil))
-	if !strings.Contains(htmlErr, "Failed to load documents") {
-		t.Error("error state missing")
-	}
-
-	htmlFlash := renderHTML(t, DocumentsPage(nil, "", nil, "", errTest))
-	if !strings.Contains(htmlFlash, "backend unreachable") {
-		t.Error("upload flash should render the real error, missing")
-	}
-
-	htmlUploaded := renderHTML(t, DocumentsPage(nil, "", nil, "Document uploaded.", nil))
-	if !strings.Contains(htmlUploaded, "Document uploaded.") {
-		t.Error("upload success flash missing")
+	// No further page: no load-more trigger.
+	data.HasMore = false
+	data.NextCursor = ""
+	lastPage := renderHTML(t, DocumentsPage(data))
+	if strings.Contains(lastPage, `data-testid="documents-load-more"`) {
+		t.Error("load more rendered on the last page")
 	}
 }
 
-// TestRenderDocumentsUploadPicker pins the upload-form contract: the form is
-// tagged for the picker wiring, and the page ships the script that opens the
-// file dialog when Upload is pressed with no file chosen. The listener must be
-// registered in the capture phase (`, true`) and stop propagation — otherwise
-// htmx's boosted-form submit handler, attached to the form, fires first and the
-// empty multipart request still reaches the API.
-func TestRenderDocumentsUploadPicker(t *testing.T) {
-	html := renderHTML(t, DocumentsPage(nil, "", nil, "", nil))
+// TestRenderDocumentsFilterState pins that the controls echo the active state:
+// an active search, status, source and sort survive in the form's hidden inputs
+// and in the tab/sort links, so narrowing never silently drops a filter.
+func TestRenderDocumentsFilterState(t *testing.T) {
+	data := documentsTestPage()
+	data.Query = "spec"
+	data.Status = documentStatusFailed
+	data.SourceType = "drive"
+	data.Sort = documentSortUpdated
+	data.Order = documentOrderAsc
+
+	html := renderHTML(t, DocumentsPage(data))
 	for _, want := range []string{
-		`data-document-upload`, `enctype="multipart/form-data"`, `name="file"`,
-		`__documentsUploadInit`, `form.matches('[data-document-upload]')`,
-		`event.preventDefault()`, `event.stopPropagation()`, `input.click()`, `}, true);`,
+		`name="q" value="spec"`,
+		`name="status" value="failed"`,
+		`q=spec&amp;sourceType=drive&amp;status=failed`, // the Failed tab keeps every other filter
+		`aria-sort="ascending"`,
+		"Least recently updated first",
 	} {
 		if !strings.Contains(html, want) {
-			t.Errorf("upload picker wiring missing %q", want)
+			t.Errorf("filter state missing %q", want)
 		}
+	}
+	// The source filter's options come from the project's own source types.
+	if !strings.Contains(html, `value="drive" selected`) {
+		t.Error("active source not selected in the source filter")
+	}
+}
+
+func TestRenderDocumentsEmptyStates(t *testing.T) {
+	empty := renderHTML(t, DocumentsPage(documentPageData{Sort: documentSortCreated, Order: documentOrderDesc}))
+	if !strings.Contains(empty, "No documents yet") {
+		t.Error("empty state missing")
+	}
+	if strings.Contains(empty, "No documents match") {
+		t.Error("unfiltered empty state should not claim a filter matched nothing")
+	}
+
+	filtered := renderHTML(t, DocumentsPage(documentPageData{Query: "zzz", Sort: documentSortCreated, Order: documentOrderDesc}))
+	if !strings.Contains(filtered, "No documents match") {
+		t.Error("filtered empty state missing")
+	}
+	if strings.Contains(filtered, "No documents yet") {
+		t.Error("filtered empty state must not claim the project has no documents")
+	}
+	if !strings.Contains(filtered, `data-testid="documents-clear-filters"`) {
+		t.Error("filtered empty state should offer to clear the filters")
+	}
+	if !strings.Contains(filtered, `data-document-upload`) {
+		t.Error("upload form should stay usable in the filtered empty state")
+	}
+}
+
+func TestRenderDocumentsLoadError(t *testing.T) {
+	html := renderHTML(t, DocumentsPage(documentPageData{Sort: documentSortCreated, Order: documentOrderDesc, LoadErr: errTest}))
+	if !strings.Contains(html, "Failed to load documents") {
+		t.Error("error state missing")
+	}
+	if strings.Contains(html, `data-testid="documents-stats"`) {
+		t.Error("a failed fetch must not render zeroed statistics")
+	}
+}
+
+func TestRenderDocumentsFlashes(t *testing.T) {
+	data := documentsTestPage()
+	data.FlashMsg = "Document uploaded."
+	if html := renderHTML(t, DocumentsPage(data)); !strings.Contains(html, "Document uploaded.") {
+		t.Error("upload success flash missing")
+	}
+
+	data = documentsTestPage()
+	data.FlashErr = errTest
+	if html := renderHTML(t, DocumentsPage(data)); !strings.Contains(html, "backend unreachable") {
+		t.Error("upload flash should render the real error, missing")
+	}
+}
+
+// TestRenderDocumentsRowsPartial pins the pagination fragment: rows appended
+// into #documents-list, the same rows OOB-appended to the mobile list, and a
+// replacement load-more slot that disappears on the final page.
+func TestRenderDocumentsRowsPartial(t *testing.T) {
+	data := documentsTestPage()
+	html := renderHTML(t, documentsRowsPartial(data))
+	for _, want := range []string{
+		`data-document-id="d1"`,
+		`data-document-id="d2"`,
+		`id="documents-mobile-list"`,
+		`hx-swap-oob="beforeend"`,
+		`id="documents-load-more"`,
+		`hx-swap-oob="true"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rows partial missing %q", want)
+		}
+	}
+
+	data.HasMore = false
+	data.NextCursor = ""
+	html = renderHTML(t, documentsRowsPartial(data))
+	if strings.Contains(html, `data-testid="documents-load-more"`) {
+		t.Error("rows partial should drop the load-more trigger on the last page")
 	}
 }
 

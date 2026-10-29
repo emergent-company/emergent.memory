@@ -59,7 +59,7 @@ func patternBudget() []patternBudgetEntry {
 		{pattern: patternSurfaceOpacity, file: "blueprints.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "board.templ", count: 3, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "chat.templ", count: 1, note: "normalise to bg-base-200/40"},
-		{pattern: patternSurfaceOpacity, file: "documents.templ", count: 4, note: "normalise to bg-base-200/40"},
+		{pattern: patternSurfaceOpacity, file: "documents.templ", count: 2, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "documents_chunks.templ", count: 1, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "embeddings.templ", count: 4, note: "normalise to bg-base-200/40"},
 		{pattern: patternSurfaceOpacity, file: "inbox.templ", count: 1, note: "normalise to bg-base-200/40"},

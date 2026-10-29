@@ -310,7 +310,7 @@ func TestSessionContextCredentialResolution(t *testing.T) {
 
 	// (a) No session context: no bearer token is sent (the upstream rejects it
 	// with 401), but the configured project still scopes the request.
-	if _, _, err := m.ListDocuments(context.Background(), ""); err != nil {
+	if _, err := m.ListDocuments(context.Background(), DocumentListParams{}); err != nil {
 		t.Fatal(err)
 	}
 	if got.auth != "Bearer" {
@@ -325,7 +325,7 @@ func TestSessionContextCredentialResolution(t *testing.T) {
 		Token:     "sess-token",
 		ProjectID: "sess-project",
 	})
-	if _, _, err := m.ListDocuments(sessCtx, ""); err != nil {
+	if _, err := m.ListDocuments(sessCtx, DocumentListParams{}); err != nil {
 		t.Fatal(err)
 	}
 	if got.auth != "Bearer sess-token" {
@@ -346,7 +346,7 @@ func TestSessionContextCredentialResolution(t *testing.T) {
 	// (c) Partial session context: an empty token field yields no bearer, while
 	// the project comes from the session.
 	partialCtx := withSessionContext(context.Background(), &sessionContext{ProjectID: "only-proj"})
-	if _, _, err := m.ListDocuments(partialCtx, ""); err != nil {
+	if _, err := m.ListDocuments(partialCtx, DocumentListParams{}); err != nil {
 		t.Fatal(err)
 	}
 	if got.auth != "Bearer" {

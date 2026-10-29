@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 )
 
 // --- documents ---
@@ -29,6 +30,9 @@ type Document struct {
 	ProcessingStatus     string `json:"processingStatus"`
 	ObjectsCreated       int    `json:"objectsCreated"`
 	RelationshipsCreated int    `json:"relationshipsCreated"`
+	// Version is the document's version number: 1 for an original, N for the
+	// Nth revision of a source document.
+	Version int `json:"version"`
 
 	// Source provenance (document-versioning / document-api): present on
 	// documents ingested from a data source. SourceStatus is "active" or
@@ -63,22 +67,99 @@ func (m *MemoryClient) documentHeaders(ctx context.Context) map[string]string {
 	return map[string]string{"X-Project-ID": m.projectIDFor(ctx)}
 }
 
-// ListDocuments lists the project's documents with cursor pagination, returning
-// the documents and the next-page cursor (empty when there are no more).
-func (m *MemoryClient) ListDocuments(ctx context.Context, cursor string) ([]Document, string, error) {
-	path := "/api/documents?limit=100"
-	if cursor != "" {
-		path += "&cursor=" + url.QueryEscape(cursor)
+// DocumentListParams is one request for a page of the documents listing. The
+// zero value is the default view: newest-first, no filters or search. Values are
+// validated server-side; the gateway normalizes them before sending so an
+// out-of-vocabulary query parameter never reaches the API.
+type DocumentListParams struct {
+	Query      string // case-insensitive match over filename and source URL
+	Status     string // processing|ready|extracted|failed, "" for all
+	SourceType string // "upload", a data-source type, or "" for all
+	Sort       string // created|updated
+	Order      string // asc|desc
+	Cursor     string
+	Limit      int
+}
+
+// DocumentStatusCounts is the API's per-status breakdown. All ignores the status
+// filter; the buckets honour the search and source filters, so the tabs stay
+// stable while one is selected.
+type DocumentStatusCounts struct {
+	All        int `json:"all"`
+	Processing int `json:"processing"`
+	Ready      int `json:"ready"`
+	Extracted  int `json:"extracted"`
+	Failed     int `json:"failed"`
+}
+
+// DocumentPage is one page of the documents listing.
+type DocumentPage struct {
+	Documents    []Document
+	Total        int
+	StatusCounts DocumentStatusCounts
+	NextCursor   string
+}
+
+// ListDocuments lists the project's documents with filtering, search, sorting
+// and cursor pagination.
+func (m *MemoryClient) ListDocuments(ctx context.Context, params DocumentListParams) (*DocumentPage, error) {
+	if params.Limit <= 0 {
+		params.Limit = documentPageSize
+	}
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(params.Limit))
+	if params.Query != "" {
+		q.Set("q", params.Query)
+	}
+	if params.Status != "" {
+		q.Set("status", params.Status)
+	}
+	if params.SourceType != "" {
+		q.Set("sourceType", params.SourceType)
+	}
+	if params.Sort != "" {
+		q.Set("sort", params.Sort)
+	}
+	if params.Order != "" {
+		q.Set("order", params.Order)
+	}
+	if params.Cursor != "" {
+		q.Set("cursor", params.Cursor)
 	}
 	var out struct {
-		Documents  []Document `json:"documents"`
-		Total      int        `json:"total"`
-		NextCursor string     `json:"next_cursor"`
+		Documents    []Document           `json:"documents"`
+		Total        int                  `json:"total"`
+		StatusCounts DocumentStatusCounts `json:"statusCounts"`
+		NextCursor   string               `json:"next_cursor"`
 	}
-	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
-		return nil, "", err
+	if err := m.doH(ctx, http.MethodGet, "/api/documents?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
 	}
-	return out.Documents, out.NextCursor, nil
+	return &DocumentPage{
+		Documents:    out.Documents,
+		Total:        out.Total,
+		StatusCounts: out.StatusCounts,
+		NextCursor:   out.NextCursor,
+	}, nil
+}
+
+// DocumentSourceType is one provenance value present in the project, with the
+// number of documents behind it. It backs the source filter's options.
+type DocumentSourceType struct {
+	SourceType string `json:"sourceType"`
+	Count      int    `json:"count"`
+}
+
+// ListDocumentSourceTypes lists the document source types present in the
+// project with their counts (GET /api/documents/source-types).
+func (m *MemoryClient) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
+	var out struct {
+		SourceTypes []DocumentSourceType `json:"sourceTypes"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/documents/source-types", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.SourceTypes, nil
 }
 
 // GetDocument fetches a single document by id.

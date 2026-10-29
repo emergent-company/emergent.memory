@@ -102,7 +102,8 @@ type MemoryBackend interface {
 	ListRelaySessions(ctx context.Context) ([]RelaySession, error)
 	GetRelaySessionTools(ctx context.Context, instanceID string) ([]RelayTool, error)
 	ListModels(ctx context.Context) ([]Model, error)
-	ListDocuments(ctx context.Context, cursor string) ([]Document, string, error)
+	ListDocuments(ctx context.Context, params DocumentListParams) (*DocumentPage, error)
+	ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error)
 	GetDocument(ctx context.Context, id string) (*Document, error)
 	DeleteDocument(ctx context.Context, id string) error
 	ListChunks(ctx context.Context, documentID string) ([]Chunk, error)

@@ -3844,7 +3844,7 @@ const docTemplate = `{
                         "bearerAuth": []
                     }
                 ],
-                "description": "List all documents for the project with optional filtering and pagination",
+                "description": "List all documents for the project with optional filtering, search, sorting and pagination. total honours every filter including status; statusCounts ignores status but honours search and sourceType.",
                 "consumes": [
                     "application/json"
                 ],
@@ -3873,7 +3873,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Pagination cursor (opaque, from previous response)",
+                        "description": "Pagination cursor (opaque, from previous response; must match the requested sort)",
                         "name": "cursor",
                         "in": "query"
                     },
@@ -3881,6 +3881,46 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by source type",
                         "name": "sourceType",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "processing",
+                            "ready",
+                            "extracted",
+                            "failed"
+                        ],
+                        "type": "string",
+                        "description": "Filter by derived status bucket",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Case-insensitive substring match over filename and source URL",
+                        "name": "q",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "created",
+                            "updated"
+                        ],
+                        "type": "string",
+                        "default": "created",
+                        "description": "Sort key",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "asc",
+                            "desc"
+                        ],
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort direction",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -30343,7 +30383,16 @@ const docTemplate = `{
                 "next_cursor": {
                     "type": "string"
                 },
+                "statusCounts": {
+                    "description": "StatusCounts breaks the result down by derived status. It ignores the\nstatus filter (so a client can render stable filter counts) but honours\nthe search and source filters.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_documents.StatusCounts"
+                        }
+                    ]
+                },
                 "total": {
+                    "description": "Total is the number of documents matching every filter, including the\nstatus filter.",
                     "type": "integer"
                 }
             }
@@ -30356,6 +30405,26 @@ const docTemplate = `{
                 },
                 "sourceType": {
                     "type": "string"
+                }
+            }
+        },
+        "domain_documents.StatusCounts": {
+            "type": "object",
+            "properties": {
+                "all": {
+                    "type": "integer"
+                },
+                "extracted": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "processing": {
+                    "type": "integer"
+                },
+                "ready": {
+                    "type": "integer"
                 }
             }
         },

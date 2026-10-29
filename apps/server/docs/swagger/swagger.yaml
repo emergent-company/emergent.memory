@@ -3195,7 +3195,17 @@ definitions:
         type: array
       next_cursor:
         type: string
+      statusCounts:
+        allOf:
+        - $ref: '#/definitions/domain_documents.StatusCounts'
+        description: |-
+          StatusCounts breaks the result down by derived status. It ignores the
+          status filter (so a client can render stable filter counts) but honours
+          the search and source filters.
       total:
+        description: |-
+          Total is the number of documents matching every filter, including the
+          status filter.
         type: integer
     type: object
   domain_documents.SourceTypeWithCount:
@@ -3204,6 +3214,19 @@ definitions:
         type: integer
       sourceType:
         type: string
+    type: object
+  domain_documents.StatusCounts:
+    properties:
+      all:
+        type: integer
+      extracted:
+        type: integer
+      failed:
+        type: integer
+      processing:
+        type: integer
+      ready:
+        type: integer
     type: object
   domain_embeddingpolicies.CreateRequest:
     properties:
@@ -12830,8 +12853,9 @@ paths:
     get:
       consumes:
       - application/json
-      description: List all documents for the project with optional filtering and
-        pagination
+      description: List all documents for the project with optional filtering, search,
+        sorting and pagination. total honours every filter including status; statusCounts
+        ignores status but honours search and sourceType.
       parameters:
       - description: Project ID
         in: header
@@ -12844,13 +12868,43 @@ paths:
         minimum: 1
         name: limit
         type: integer
-      - description: Pagination cursor (opaque, from previous response)
+      - description: Pagination cursor (opaque, from previous response; must match
+          the requested sort)
         in: query
         name: cursor
         type: string
       - description: Filter by source type
         in: query
         name: sourceType
+        type: string
+      - description: Filter by derived status bucket
+        enum:
+        - processing
+        - ready
+        - extracted
+        - failed
+        in: query
+        name: status
+        type: string
+      - description: Case-insensitive substring match over filename and source URL
+        in: query
+        name: q
+        type: string
+      - default: created
+        description: Sort key
+        enum:
+        - created
+        - updated
+        in: query
+        name: sort
+        type: string
+      - default: desc
+        description: Sort direction
+        enum:
+        - asc
+        - desc
+        in: query
+        name: order
         type: string
       - description: Filter to root documents only (no parent)
         in: query

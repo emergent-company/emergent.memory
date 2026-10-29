@@ -1,6 +1,9 @@
 package documents
 
 import (
+	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -532,34 +535,49 @@ func TestParseCursor(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:    "valid cursor",
+			name:    "legacy cursor normalizes to the created keyset",
 			encoded: "eyJjcmVhdGVkQXQiOiIyMDI0LTAxLTE1VDEwOjMwOjAwWiIsImlkIjoiZG9jLTEyMyJ9",
 			want: &Cursor{
-				CreatedAt: testTime,
-				ID:        "doc-123",
+				Sort:  SortCreated,
+				Value: testTime,
+				ID:    "doc-123",
 			},
 			wantErr: false,
 		},
 		{
+			name:    "keyset cursor keeps its sort",
+			encoded: "eyJzb3J0IjoidXBkYXRlZCIsInZhbHVlIjoiMjAyNC0wMS0xNVQxMDozMDowMFoiLCJpZCI6ImRvYy0xMjMifQ==",
+			want: &Cursor{
+				Sort:  SortUpdated,
+				Value: testTime,
+				ID:    "doc-123",
+			},
+			wantErr: false,
+		},
+		{
+			name:    "unknown sort is rejected",
+			encoded: "eyJzb3J0IjoiZmlsZW5hbWUiLCJ2YWx1ZSI6IjIwMjQtMDEtMTVUMTA6MzA6MDBaIiwiaWQiOiJkb2MtMTIzIn0=",
+			wantErr: true,
+		},
+		{
+			name:    "missing keyset is rejected",
+			encoded: "e30=", // "{}" in base64
+			wantErr: true,
+		},
+		{
+			name:    "sort without a value is rejected",
+			encoded: "eyJzb3J0IjoiY3JlYXRlZCIsImlkIjoiZG9jLTEyMyJ9",
+			wantErr: true,
+		},
+		{
 			name:    "invalid base64 encoding",
 			encoded: "not-valid-base64!!!",
-			want:    nil,
 			wantErr: true,
 		},
 		{
 			name:    "valid base64 but invalid JSON",
 			encoded: "bm90LWpzb24=", // "not-json" in base64
-			want:    nil,
 			wantErr: true,
-		},
-		{
-			name:    "valid base64 but empty JSON object",
-			encoded: "e30=", // "{}" in base64
-			want: &Cursor{
-				CreatedAt: time.Time{},
-				ID:        "",
-			},
-			wantErr: false,
 		},
 	}
 
@@ -574,11 +592,145 @@ func TestParseCursor(t *testing.T) {
 
 			if tt.want == nil {
 				assert.Nil(t, got)
-			} else {
-				assert.NotNil(t, got)
-				assert.Equal(t, tt.want.ID, got.ID)
-				assert.Equal(t, tt.want.CreatedAt.UTC(), got.CreatedAt.UTC())
+				return
 			}
+			assert.NotNil(t, got)
+			assert.Equal(t, tt.want.Sort, got.Sort)
+			assert.Equal(t, tt.want.ID, got.ID)
+			assert.True(t, tt.want.Value.Equal(got.Value), "value: want %s, got %s", tt.want.Value, got.Value)
+			assert.Nil(t, got.CreatedAt, "legacy field should be normalized away")
 		})
+	}
+}
+
+func TestCursorRoundTrip(t *testing.T) {
+	at := time.Date(2026, 10, 28, 9, 12, 0, 0, time.UTC)
+	for _, sortKey := range []string{SortCreated, SortUpdated} {
+		encoded, err := encodeCursor(Cursor{Sort: sortKey, Value: at, ID: "doc-1"})
+		if err != nil {
+			t.Fatalf("encodeCursor: %v", err)
+		}
+		got, err := ParseCursor(encoded)
+		if err != nil {
+			t.Fatalf("ParseCursor: %v", err)
+		}
+		assert.Equal(t, sortKey, got.Sort)
+		assert.Equal(t, "doc-1", got.ID)
+		assert.True(t, at.Equal(got.Value))
+	}
+}
+
+func TestNormalizeStatusBucket(t *testing.T) {
+	for _, bucket := range []string{StatusBucketProcessing, StatusBucketReady, StatusBucketExtracted, StatusBucketFailed} {
+		got, err := NormalizeStatusBucket(" " + strings.ToUpper(bucket) + " ")
+		assert.NoError(t, err)
+		assert.Equal(t, bucket, got)
+	}
+	got, err := NormalizeStatusBucket("")
+	assert.NoError(t, err)
+	assert.Empty(t, got)
+
+	if _, err := NormalizeStatusBucket("pendings"); err == nil {
+		t.Fatal("expected an error for an unknown bucket")
+	}
+}
+
+func TestNormalizeSortAndOrder(t *testing.T) {
+	sortKey, err := NormalizeSort("")
+	assert.NoError(t, err)
+	assert.Equal(t, SortCreated, sortKey)
+
+	sortKey, err = NormalizeSort("UPDATED")
+	assert.NoError(t, err)
+	assert.Equal(t, SortUpdated, sortKey)
+
+	if _, err := NormalizeSort("filename"); err == nil {
+		t.Fatal("expected an error for an unknown sort key")
+	}
+
+	order, err := NormalizeOrder("")
+	assert.NoError(t, err)
+	assert.Equal(t, OrderDesc, order)
+
+	order, err = NormalizeOrder("ASC")
+	assert.NoError(t, err)
+	assert.Equal(t, OrderAsc, order)
+
+	if _, err := NormalizeOrder("sideways"); err == nil {
+		t.Fatal("expected an error for an unknown order")
+	}
+}
+
+// TestStatusBucketsPartitionEveryState pins the bucket mapping to the six states
+// the derived-status CASE can produce: every state belongs to exactly one bucket.
+// A state added to the CASE without a bucket would silently vanish from the
+// filter and the counts, so it is spelled out here rather than inferred.
+func TestStatusBucketsPartitionEveryState(t *testing.T) {
+	states := []string{"converting", "conversion_failed", "extracting", "extraction_failed", "completed", "ready_for_extraction"}
+	seen := map[string]string{}
+	for bucket, bucketStates := range statusBucketStates {
+		for _, state := range bucketStates {
+			if prev, dup := seen[state]; dup {
+				t.Fatalf("state %q is in both %q and %q", state, prev, bucket)
+			}
+			seen[state] = bucket
+		}
+	}
+	for _, state := range states {
+		if _, ok := seen[state]; !ok {
+			t.Fatalf("state %q is in no bucket", state)
+		}
+	}
+	if len(seen) != len(states) {
+		t.Fatalf("buckets cover %d states, CASE produces %d", len(seen), len(states))
+	}
+}
+
+func TestNormalizeDocumentSearch(t *testing.T) {
+	assert.Equal(t, "spec", NormalizeDocumentSearch("  spec  "))
+	assert.Empty(t, NormalizeDocumentSearch("   "))
+
+	long := strings.Repeat("a", MaxDocumentSearchTerm+50)
+	assert.Len(t, []rune(NormalizeDocumentSearch(long)), MaxDocumentSearchTerm)
+}
+
+func TestEscapeLikePattern(t *testing.T) {
+	assert.Equal(t, `100\%\_done\\x`, escapeLikePattern(`100%_done\x`))
+	assert.Equal(t, "plain", escapeLikePattern("plain"))
+}
+
+func TestStatusCountsAdd(t *testing.T) {
+	var c StatusCounts
+	c.add("converting", 2)
+	c.add("extracting", 1)
+	c.add("ready_for_extraction", 5)
+	c.add("completed", 7)
+	c.add("conversion_failed", 1)
+	c.add("extraction_failed", 2)
+	c.add("some_future_state", 3) // counted in All, in no bucket
+
+	assert.Equal(t, 21, c.All)
+	assert.Equal(t, 3, c.Processing)
+	assert.Equal(t, 5, c.Ready)
+	assert.Equal(t, 7, c.Extracted)
+	assert.Equal(t, 3, c.Failed)
+}
+
+// TestListRejectsUnknownStatusAndMismatchedCursor pins the repository's own
+// guards. The HTTP handler already answers 400 for both, but a direct caller
+// (a job, a future exporter) must not get a silently unfiltered page from an
+// unknown bucket, nor a page walked with the wrong keyset comparison.
+func TestListRejectsUnknownStatusAndMismatchedCursor(t *testing.T) {
+	repo := NewRepository(nil, slog.Default())
+
+	_, err := repo.List(context.Background(), ListParams{ProjectID: "p1", Status: "done"})
+	if err == nil || !strings.Contains(err.Error(), "unknown status bucket") {
+		t.Fatalf("unknown status: err = %v, want unknown status bucket", err)
+	}
+
+	cursor := &Cursor{Sort: SortUpdated, Value: time.Now(), ID: "d1"}
+	_, err = repo.List(context.Background(), ListParams{ProjectID: "p1", Sort: SortCreated, Cursor: cursor})
+	if err == nil || !strings.Contains(err.Error(), "cursor was minted for sort") {
+		t.Fatalf("mismatched cursor: err = %v, want a sort-mismatch error", err)
 	}
 }

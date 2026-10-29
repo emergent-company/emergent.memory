@@ -65,14 +65,18 @@ func NewHandler(
 
 // List handles GET /api/documents
 // @Summary      List documents
-// @Description  List all documents for the project with optional filtering and pagination
+// @Description  List all documents for the project with optional filtering, search, sorting and pagination. total honours every filter including status; statusCounts ignores status but honours search and sourceType.
 // @Tags         documents
 // @Accept       json
 // @Produce      json
 // @Param        X-Project-ID header string true "Project ID"
 // @Param        limit query int false "Maximum number of results (1-500)" minimum(1) maximum(500)
-// @Param        cursor query string false "Pagination cursor (opaque, from previous response)"
+// @Param        cursor query string false "Pagination cursor (opaque, from previous response; must match the requested sort)"
 // @Param        sourceType query string false "Filter by source type"
+// @Param        status query string false "Filter by derived status bucket" Enums(processing, ready, extracted, failed)
+// @Param        q query string false "Case-insensitive substring match over filename and source URL"
+// @Param        sort query string false "Sort key" Enums(created, updated) default(created)
+// @Param        order query string false "Sort direction" Enums(asc, desc) default(desc)
 // @Param        rootOnly query bool false "Filter to root documents only (no parent)"
 // @Param        parentDocumentId query string false "Filter by parent document ID"
 // @Success      200 {object} ListResult
@@ -101,11 +105,39 @@ func (h *Handler) List(c echo.Context) error {
 		params.Limit = limit
 	}
 
-	// Cursor
+	// Sort and direction. Both are validated vocabularies: an unrecognised value
+	// is rejected rather than silently falling back, so a typo cannot look like a
+	// working control.
+	sortKey, err := NormalizeSort(c.QueryParam("sort"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+	order, err := NormalizeOrder(c.QueryParam("order"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+	params.Sort = sortKey
+	params.Order = order
+
+	// Status bucket
+	status, err := NormalizeStatusBucket(c.QueryParam("status"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage(err.Error())
+	}
+	params.Status = status
+
+	// Search term (trimmed and length-capped)
+	params.Query = NormalizeDocumentSearch(c.QueryParam("q"))
+
+	// Cursor. A cursor minted for a different sort key would page with the wrong
+	// comparison and silently skip or repeat rows, so the mismatch is refused.
 	if cursorStr := c.QueryParam("cursor"); cursorStr != "" {
 		cursor, err := ParseCursor(cursorStr)
 		if err != nil {
 			return apperror.ErrBadRequest.WithMessage("invalid cursor")
+		}
+		if cursor.Sort != params.Sort {
+			return apperror.ErrBadRequest.WithMessage("cursor does not match the requested sort")
 		}
 		params.Cursor = cursor
 	}

@@ -6,40 +6,60 @@ import (
 	"strconv"
 
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	fm "github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
+	table "github.com/emergent-company/go-daisy/components/table"
 	ui "github.com/emergent-company/go-daisy/components/ui"
 )
 
 // --- Documents ---
 
-// DocumentsPage renders the document browser: a list of ingested documents
-// plus an upload form. A failed list fetch renders the whole-page error state;
-// a failed upload surfaces as flashErr, a successful one as flashMsg.
-templ DocumentsPage(documents []Document, nextCursor string, loadErr error, flashMsg string, flashErr error) {
+// DocumentsPage renders the document browser: a stats strip, status tabs,
+// search/filter/sort controls, and one page of the listing as a table at md+
+// (a card list below md), plus the upload form. A failed list fetch renders the
+// whole-page error state; a failed upload surfaces as flashErr, a successful one
+// as flashMsg.
+templ DocumentsPage(data documentPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
-		@documentsHeader(len(documents), loadErr == nil)
-		if loadErr != nil {
-			@pageError("Failed to load documents", loadErr)
+		@documentsHeader(data.Total, data.LoadErr == nil)
+		if data.LoadErr != nil {
+			@pageError("Failed to load documents", data.LoadErr)
 		} else {
-			@uploadForm(flashMsg, flashErr)
-			if len(documents) == 0 {
-				@documentsEmpty()
-			} else {
-				@documentsList(documents)
-			}
+			@uploadForm(data.FlashMsg, data.FlashErr)
+			@documentsStats(data)
+			@documentsToolbar(data)
+			@documentsResults(data)
 		}
 	}
 }
 
-templ documentsHeader(count int, ok bool) {
+templ documentsHeader(total int, ok bool) {
 	@pageHeader("Knowledge", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
 		if ok {
-			@countBadgeLabel(countLabel(count, "document", "documents"), "lucide--file-text")
+			<span data-testid="documents-count">@countBadgeLabel(documentsCountLabel(total), "lucide--file-text")</span>
 		}
 	}
 }
 
+// documentsStats is the small stats strip: the project's document total and the
+// per-status breakdown the tabs filter on. The numbers come with the listing
+// response, so they are correct on first paint — there is no deferred fetch and
+// no placeholder flash.
+templ documentsStats(data documentPageData) {
+	<div class="mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]" data-testid="documents-stats">
+		@ui.StatsGroup([]ui.StatsGroupItem{
+			{Title: "documents", Value: groupDigits(int64(data.Counts.All))},
+			{Title: "processing", Value: groupDigits(int64(data.Counts.Processing)), Color: "text-info"},
+			{Title: "ready", Value: groupDigits(int64(data.Counts.Ready))},
+			{Title: "extracted", Value: groupDigits(int64(data.Counts.Extracted)), Color: "text-success"},
+			{Title: "failed", Value: groupDigits(int64(data.Counts.Failed)), Color: "text-error"},
+		})
+	</div>
+}
+
+// uploadForm is the document upload card. Its submit handler (below) opens the
+// file picker when no file is chosen, so an empty submit never reaches the API.
 templ uploadForm(flashMsg string, flashErr error) {
 	<div class="mb-6">
 		@flashToasts(flashMsg, flashErr)
@@ -84,6 +104,321 @@ templ uploadForm(flashMsg string, flashErr error) {
 	</div>
 }
 
+// documentsToolbar puts the search box, the status tabs, and the source/sort
+// controls in one card. Search and filters stay two forms: the search form
+// submits a query while the filter form applies each control on change, and a
+// single form cannot do both without dropping one of them.
+templ documentsToolbar(data documentPageData) {
+	<div class="mb-4">
+		@components.PanelCard("", nil, "p-3 sm:p-4") {
+			<div class="flex flex-col gap-3">
+				<form method="get" action="/documents" class="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="documents-search-form">
+					if data.Status != "" {
+						<input type="hidden" name="status" value={ data.Status }/>
+					}
+					if data.SourceType != "" {
+						<input type="hidden" name="sourceType" value={ data.SourceType }/>
+					}
+					if data.Sort != "" && data.Sort != documentSortCreated {
+						<input type="hidden" name="sort" value={ data.Sort }/>
+					}
+					if data.Order != "" && data.Order != documentOrderDesc {
+						<input type="hidden" name="order" value={ data.Order }/>
+					}
+					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
+						@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
+						<input type="search" name="q" value={ data.Query } placeholder="Search documents by name or source URL…" class="grow" autocomplete="off" aria-label="Search documents"/>
+					</label>
+					<div class="flex shrink-0 items-center gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--search",
+						}) {
+							Search
+						}
+						if data.filtered() {
+							@ui.Button(ui.ButtonProps{
+								Type:    ui.ButtonTypeLink,
+								Href:    "/documents",
+								Variant: ui.ButtonGhost,
+								Size:    ui.ButtonSM,
+								Icon:    "lucide--x",
+								Attrs:   templ.Attributes{"data-testid": "documents-clear-filters"},
+							}) {
+								Clear
+							}
+						}
+					</div>
+				</form>
+				<div class="border-base-content/10 border-t pt-3">
+					@documentsStatusTabs(data)
+				</div>
+				<form method="get" action="/documents" class="flex flex-wrap items-end gap-x-3 gap-y-2 border-base-content/10 border-t pt-3" data-testid="documents-filter-form">
+					if data.Query != "" {
+						<input type="hidden" name="q" value={ data.Query }/>
+					}
+					if data.Status != "" {
+						<input type="hidden" name="status" value={ data.Status }/>
+					}
+					@fm.FormControl("documents-filter-source", "Source", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-source" name="sourceType" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
+							for _, opt := range documentSourceSelectOptions(data) {
+								<option value={ opt.Value } selected?={ opt.Value == data.SourceType }>{ opt.Label }</option>
+							}
+						</select>
+					}
+					@fm.FormControl("documents-filter-sort", "Sort", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-sort" name="sort" class="select select-sm" aria-label="Sort by" onchange="this.form.submit()">
+							for _, opt := range documentSortSelectOptions() {
+								<option value={ opt.Value } selected?={ opt.Value == data.Sort }>{ opt.Label }</option>
+							}
+						</select>
+					}
+					@fm.FormControl("documents-filter-order", "Direction", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-order" name="order" class="select select-sm" aria-label="Sort direction" onchange="this.form.submit()">
+							for _, opt := range documentOrderSelectOptions() {
+								<option value={ opt.Value } selected?={ opt.Value == data.Order }>{ opt.Label }</option>
+							}
+						</select>
+					}
+				</form>
+			</div>
+		}
+	</div>
+}
+
+// documentsStatusTabs is the status filter: All plus the four buckets over the
+// derived processing status, each with its count. Every tab is a link carrying
+// the current search, source and sort state, so switching status keeps the view
+// the user has built instead of resetting it.
+templ documentsStatusTabs(data documentPageData) {
+	<div class="flex flex-wrap items-center gap-1" role="group" aria-label="Filter by status" data-testid="documents-status-tabs">
+		for _, opt := range documentStatusOptions(data) {
+			{{
+				active := data.Status == opt.Value
+				cls := "btn btn-sm gap-1.5"
+				if active {
+					cls += " btn-active"
+				}
+				href := data.requestURL(map[string]string{"status": opt.Value})
+			}}
+			<a href={ templ.URL(href) } class={ cls } aria-current={ templ.KV("page", active) } data-status={ opt.Value }>
+				<span>{ opt.Label }</span>
+				<span class="text-xs tabular-nums opacity-60">{ groupDigits(int64(opt.Count)) }</span>
+			</a>
+		}
+	</div>
+}
+
+// documentsResults renders one page of the listing: the table at md and up, the
+// card list below md (the table is hidden there, so both are rendered), and the
+// footer with the order note and the load-more control. An empty result renders
+// "nothing stored" or "nothing matched" depending on whether a filter is active.
+templ documentsResults(data documentPageData) {
+	if len(data.Rows) == 0 {
+		if data.filtered() {
+			@documentsNoMatches(data)
+		} else {
+			@documentsEmpty()
+		}
+	} else {
+		<div class="hidden md:block">
+			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
+				@table.TableWithProps(table.TableProps{Size: "sm", Attrs: templ.Attributes{"data-testid": "documents-table"}}) {
+					@documentsTableHead(data)
+					<tbody id="documents-list">
+						for _, r := range data.Rows {
+							@documentTableRow(r)
+						}
+					</tbody>
+				}
+			}
+		</div>
+		<div id="documents-mobile-list" class="md:hidden">
+			@cardList("", cardListProps{}) {
+				for _, r := range data.Rows {
+					@documentMobileCard(r)
+				}
+			}
+		</div>
+		@documentsFooter(data)
+	}
+}
+
+// documentsTableHead renders the column headers. Created and Updated are the
+// two sortable columns — the only two keys the list endpoint can order by while
+// keeping the keyset cursor correct.
+templ documentsTableHead(data documentPageData) {
+	@table.TableHead() {
+		@table.TableHeadRow() {
+			@table.TableHeadCell("Document")
+			@table.TableHeadCell("Status")
+			<th scope="col" class="text-right text-xs font-semibold text-base-content/60 uppercase">Versions</th>
+			@table.TableHeadCell("Source")
+			@documentsSortHead("Created", documentsSortHref(data, documentSortCreated), documentsSortDir(data, documentSortCreated))
+			@documentsSortHead("Updated", documentsSortHref(data, documentSortUpdated), documentsSortDir(data, documentSortUpdated))
+			<th class="w-10"></th>
+		}
+	}
+}
+
+// documentsSortHead renders one sortable column header with its state in
+// aria-sort. The glyph is always present (dimmed when inactive) so the header
+// advertises that the column sorts at all.
+templ documentsSortHead(label, href, dir string) {
+	{{
+		ariaSort := "none"
+		icon := "lucide--chevrons-up-down"
+		iconClass := "text-base-content/25"
+		switch dir {
+		case "asc":
+			ariaSort, icon, iconClass = "ascending", "lucide--chevron-up", ""
+		case "desc":
+			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
+		}
+	}}
+	<th scope="col" aria-sort={ ariaSort } class="text-right text-xs font-semibold text-base-content/60 uppercase">
+		<a href={ href } class="inline-flex items-center justify-end gap-1 hover:text-base-content">
+			@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
+			<span>{ label }</span>
+		</a>
+	</th>
+}
+
+// documentTableRow is one desktop row. The row is clickable through data-href
+// (app.js ignores clicks that land on form controls, so delete still works).
+templ documentTableRow(r documentRow) {
+	<tr class="hover cursor-pointer" data-href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } data-document-id={ r.ID }>
+		@table.TableCell("max-w-[26rem]", nil) {
+			<div class="flex min-w-0 items-center gap-3">
+				@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
+				<div class="min-w-0">
+					<a href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } class="hover:text-primary block truncate text-sm font-medium hover:underline">{ r.Name }</a>
+					<span class="text-muted-faint text-xs">{ strconv.Itoa(r.Chunks) } chunk{ plural(r.Chunks) }</span>
+				</div>
+			</div>
+		}
+		@table.TableCell("", nil) {
+			@documentStatusBadge(r.Status)
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-xs tabular-nums">{ documentVersionLabel(r.Versions) }</span>
+		}
+		@table.TableCell("max-w-[14rem]", nil) {
+			if r.Source != "" {
+				<span class="text-muted block truncate text-xs" title={ r.Source }>{ r.Source }</span>
+			} else {
+				@components.EmptyDash()
+			}
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-muted-faint text-xs tabular-nums" title={ r.CreatedAt }>{ relTime(r.CreatedAt) }</span>
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-muted-faint text-xs tabular-nums" title={ documentUpdatedLabel(r) }>{ relTime(documentUpdatedLabel(r)) }</span>
+		}
+		@table.TableActionCell() {
+			@documentDeleteForm(r.ID, r.Name)
+		}
+	</tr>
+}
+
+// documentMobileCard is the same document rendered for a phone: the name and
+// chunk count, status, then the metadata the table shows in its own columns.
+templ documentMobileCard(r documentRow) {
+	<div class="flex items-start gap-2 px-4 py-3 transition-colors hover:bg-base-200/40" data-document-id={ r.ID }>
+		<a class="flex min-w-0 grow items-start gap-3" href={ templ.URL("/documents/" + url.PathEscape(r.ID)) }>
+			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
+			<div class="min-w-0 grow">
+				<p class="truncate text-sm font-medium">{ r.Name }</p>
+				<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+					@ui.Badge(ui.BadgeProps{
+						Label:   strconv.Itoa(r.Chunks) + " chunk" + plural(r.Chunks),
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--braces",
+					})
+					@documentStatusBadge(r.Status)
+					if r.Versions > 0 {
+						@ui.Badge(ui.BadgeProps{Label: documentVersionLabel(r.Versions) + " v", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--layers"})
+					}
+				</div>
+				<div class="text-muted-faint mt-1 flex flex-wrap items-center gap-x-2 text-xs">
+					if r.Source != "" {
+						<span class="truncate">{ r.Source }</span>
+					}
+					<span title={ documentUpdatedLabel(r) }>updated { relTime(documentUpdatedLabel(r)) }</span>
+				</div>
+			</div>
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+		</a>
+		@documentDeleteForm(r.ID, r.Name)
+	</div>
+}
+
+// documentsFooter sits below the listing: the active-order note on the left and
+// the cursor-pagination trigger on the right. #documents-load-more is the OOB
+// swap target the /documents/partial response replaces when a page is appended.
+templ documentsFooter(data documentPageData) {
+	<div class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
+		<span class="text-muted-faint inline-flex items-center gap-1.5 text-xs">
+			@ui.IconSpan(documentSortDirectionIcon(data), "size-3.5 shrink-0")
+			{ documentsSortLabel(data) }
+		</span>
+		<div id="documents-load-more">
+			if data.HasMore {
+				@documentsLoadMoreButton(data)
+			}
+		</div>
+	</div>
+}
+
+// documentsLoadMoreButton is the cursor-pagination trigger. It targets the table
+// body; the partial also appends the same rows to the mobile card list out of
+// band, because the table is hidden on small screens.
+templ documentsLoadMoreButton(data documentPageData) {
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Size:       ui.ButtonSM,
+		Icon:       "lucide--chevron-down",
+		ExtraClass: "gap-2 px-5",
+		Attrs: templ.Attributes{
+			"hx-get":      documentsPartialURL(data),
+			"hx-target":   "#documents-list",
+			"hx-swap":     "beforeend",
+			"data-testid": "documents-load-more",
+		},
+	}) {
+		Load more
+	}
+}
+
+// documentsRowsPartial is the HTMX fragment returned by /documents/partial: the
+// next page's rows (appended to #documents-list), the same rows as mobile cards
+// (appended to #documents-mobile-list), and a replacement load-more slot that
+// disappears on the last page.
+templ documentsRowsPartial(data documentPageData) {
+	for _, r := range data.Rows {
+		@documentTableRow(r)
+	}
+	<div id="documents-mobile-list" class="md:hidden" hx-swap-oob="beforeend">
+		@cardList("", cardListProps{}) {
+			for _, r := range data.Rows {
+				@documentMobileCard(r)
+			}
+		}
+	</div>
+	<div id="documents-load-more" hx-swap-oob="true">
+		if data.HasMore {
+			@documentsLoadMoreButton(data)
+		}
+	</div>
+}
+
+// documentsEmpty is the "nothing stored yet" state: no filters, no documents.
 templ documentsEmpty() {
 	@ui.EmptyState(ui.EmptyStateProps{
 		Icon:        "lucide--file-text",
@@ -94,33 +429,38 @@ templ documentsEmpty() {
 	})
 }
 
-templ documentsList(documents []Document) {
-	@cardList("", cardListProps{}) {
-		for _, d := range documents {
-			@documentRow(d)
+// documentsNoMatches is the filtered empty state. It never claims there are no
+// documents: it reports what the active search/filters excluded and offers the
+// way back to the whole list. The upload form above stays usable.
+templ documentsNoMatches(data documentPageData) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No documents match",
+		Description: "Nothing stored matches the active search and filters. Clear them to see the full list.",
+		Bordered:    true,
+		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "documents-no-matches"},
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/documents",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear filters
 		}
 	}
 }
 
-templ documentRow(d Document) {
-	<div class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50">
-		<a class="flex min-w-0 grow items-center gap-3" href={ templ.URL("/documents/" + url.PathEscape(d.ID)) }>
-			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
-			<div class="min-w-0 grow">
-				<p class="truncate text-sm font-medium">{ documentName(d) }</p>
-				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { { relTime(d.CreatedAt) } }
-			</div>
-			@ui.Badge(ui.BadgeProps{
-				Label:   strconv.Itoa(d.Chunks) + " chunk" + plural(d.Chunks),
-				Variant: ui.BadgeGhost,
-				Size:    ui.BadgeSizeXS,
-				Icon:    "lucide--braces",
-			})
-			@documentStatusBadge(d.ExtractionStatus)
-			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
-		</a>
-		@documentDeleteForm(d.ID, documentName(d))
-	</div>
+// documentVersionLabel renders a document's version count, with a dash for a
+// missing value (an older API response, or a document the listing did not
+// populate).
+func documentVersionLabel(versions int) string {
+	if versions <= 0 {
+		return "—"
+	}
+	return strconv.Itoa(versions)
 }
 
 // documentDeleteForm is the per-row delete affordance on the documents list:
@@ -140,13 +480,17 @@ templ documentDeleteForm(id, name string) {
 	</form>
 }
 
+// documentStatusBadge renders a document's derived processing status as a
+// badge. Extraction status is folded into it (the API derives one from the
+// other), so a row never shows two competing status chips.
 templ documentStatusBadge(status string) {
 	if status == "" {
 		@components.EmptyDash()
 	} else {
-		@components.StatusBadge(status, documentStatusIntent(status), "", components.StatusBadgeOpts{
-			Size: ui.BadgeSizeXS,
-			Dot:  true,
+		@components.StatusBadge(documentProcessingLabel(status), documentProcessingIntent(status), "", components.StatusBadgeOpts{
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
+			Attrs: templ.Attributes{"data-status": status},
 		})
 	}
 }
@@ -905,7 +1249,7 @@ templ extractedObjects(documentID, jobID string, objects []GraphObject) {
 
 templ extractedObjectRow(o GraphObject, origin string) {
 	<a
-		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/50"
+		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/40"
 		href={ templ.URL("/objects/" + url.PathEscape(o.ID) + "?from=" + url.QueryEscape(origin)) }
 	>
 		@ui.Badge(ui.BadgeProps{

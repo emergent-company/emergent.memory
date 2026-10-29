@@ -77,15 +77,18 @@ const maxUploadSize = 10 * 1024 * 1024
 
 // listDocuments implements GET /api/documents.
 func (s *Server) listDocuments(c echo.Context) error {
-	docs, cursor, err := s.memory.ListDocuments(c.Request().Context(), c.QueryParam("cursor"))
+	page, err := s.memory.ListDocuments(c.Request().Context(), DocumentListParams{
+		Limit:  100,
+		Cursor: c.QueryParam("cursor"),
+	})
 	if err != nil {
 		return documentError(c, err)
 	}
-	items := make([]documentItem, 0, len(docs))
-	for _, d := range docs {
+	items := make([]documentItem, 0, len(page.Documents))
+	for _, d := range page.Documents {
 		items = append(items, documentFromParts(d))
 	}
-	return c.JSON(http.StatusOK, map[string]any{"documents": items, "nextCursor": cursor})
+	return c.JSON(http.StatusOK, map[string]any{"documents": items, "nextCursor": page.NextCursor})
 }
 
 // getDocument implements GET /api/documents/:id.

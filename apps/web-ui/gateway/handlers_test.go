@@ -140,27 +140,36 @@ type fakeMemory struct {
 	histErr          error // GetConversationHistory failure
 	documents        []Document
 	chunks           []Chunk
-	docErr           error               // ListDocuments/GetDocument/ListChunks failure
-	extractErr       error               // CreateExtractionJob failure
-	uploaded         []string            // filenames received via UploadDocument
-	uploadResult     *UploadResult       // non-nil overrides the UploadDocument result
-	extracted        []string            // document ids passed to CreateExtractionJob
-	deletedDocuments []string            // document ids passed to DeleteDocument, in order
-	deleteDocErr     error               // DeleteDocument failure
-	summary          *ExtractionSummary  // returned by GetExtractionSummary
-	docContent       *string             // returned by GetDocumentContent (nil → "")
-	objects          []GraphObject       // returned by ListExtractionObjects
-	lookupObjects    []GraphObject       // returned by LookupGraphObjectByKey
-	lookupErr        error               // LookupGraphObjectByKey failure
-	lastLookupType   string              // last typeFilter passed to LookupGraphObjectByKey
-	lastLookupKey    string              // last key passed to LookupGraphObjectByKey
-	relns            []GraphRelationship // returned by ListRelationships
-	branches         []Branch            // returned by ListBranches
-	extractionJobs   []ExtractionJob     // returned by ListExtractionJobs
-	extractionJob    *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
-	downloadDocBody  []byte              // raw bytes returned by DownloadDocument
-	downloadDocCT    string              // Content-Type returned by DownloadDocument
-	downloadDocErr   error               // DownloadDocument failure
+	docErr           error // ListDocuments/GetDocument/ListChunks failure
+	// documentsTotal/documentStatusCounts/documentsNextCursor are what the
+	// listing returns beyond the rows themselves. Zero values mean "one page,
+	// no more" — what a single-page project looks like.
+	documentsTotal         int
+	documentStatusCounts   DocumentStatusCounts
+	documentsNextCursor    string
+	lastDocumentListParams DocumentListParams // params of the last ListDocuments call
+	docSourceTypes         []DocumentSourceType
+	docSourceTypesErr      error
+	extractErr             error               // CreateExtractionJob failure
+	uploaded               []string            // filenames received via UploadDocument
+	uploadResult           *UploadResult       // non-nil overrides the UploadDocument result
+	extracted              []string            // document ids passed to CreateExtractionJob
+	deletedDocuments       []string            // document ids passed to DeleteDocument, in order
+	deleteDocErr           error               // DeleteDocument failure
+	summary                *ExtractionSummary  // returned by GetExtractionSummary
+	docContent             *string             // returned by GetDocumentContent (nil → "")
+	objects                []GraphObject       // returned by ListExtractionObjects
+	lookupObjects          []GraphObject       // returned by LookupGraphObjectByKey
+	lookupErr              error               // LookupGraphObjectByKey failure
+	lastLookupType         string              // last typeFilter passed to LookupGraphObjectByKey
+	lastLookupKey          string              // last key passed to LookupGraphObjectByKey
+	relns                  []GraphRelationship // returned by ListRelationships
+	branches               []Branch            // returned by ListBranches
+	extractionJobs         []ExtractionJob     // returned by ListExtractionJobs
+	extractionJob          *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
+	downloadDocBody        []byte              // raw bytes returned by DownloadDocument
+	downloadDocCT          string              // Content-Type returned by DownloadDocument
+	downloadDocErr         error               // DownloadDocument failure
 	// Document version history (GET /api/documents/:id/versions).
 	documentVersions    []DocumentVersion
 	documentVersionsErr error
@@ -1180,11 +1189,25 @@ func (f *fakeMemory) ListModels(ctx context.Context) ([]Model, error) {
 	return []Model{{Provider: "deepseek", ModelName: "deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash"}}, nil
 }
 
-func (f *fakeMemory) ListDocuments(ctx context.Context, cursor string) ([]Document, string, error) {
+func (f *fakeMemory) ListDocuments(ctx context.Context, params DocumentListParams) (*DocumentPage, error) {
 	if f.docErr != nil {
-		return nil, "", f.docErr
+		return nil, f.docErr
 	}
-	return f.documents, "", nil
+	f.lastDocumentListParams = params
+	return &DocumentPage{
+		Documents:    f.documents,
+		Total:        f.documentsTotal,
+		StatusCounts: f.documentStatusCounts,
+		NextCursor:   f.documentsNextCursor,
+	}, nil
+}
+
+func (f *fakeMemory) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
+	f.recordCatalog("ListDocumentSourceTypes")
+	if f.docSourceTypesErr != nil {
+		return nil, f.docSourceTypesErr
+	}
+	return f.docSourceTypes, nil
 }
 
 func (f *fakeMemory) GetDocument(ctx context.Context, id string) (*Document, error) {

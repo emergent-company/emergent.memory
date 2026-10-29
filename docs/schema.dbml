@@ -833,9 +833,9 @@ Table "kb"."chat_conversations" {
   Indexes {
     (canonical_id) [name: "IDX_chat_conversations_canonical_id", unique]
     (object_id) [name: "IDX_chat_conversations_object_id_unique", unique]
+    (parent_conversation_id) [name: "idx_chat_conversations_parent"]
     (project_id, updated_at) [name: "idx_chat_conversations_project_active_updated"]
     (session_id) [name: "idx_chat_conversations_session_id_unique", unique]
-    (parent_conversation_id) [name: "idx_chat_conversations_parent"]
   }
 }
 
@@ -1068,7 +1068,9 @@ Table "kb"."documents" {
     (`(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id_lookup"]
     (metadata) [name: "idx_documents_metadata"]
     (parent_document_id) [name: "idx_documents_parent_document_id"]
+    (project_id, created_at, id) [name: "idx_documents_project_created_id"]
     (project_id, source_id, source_status) [name: "idx_documents_project_source_status"]
+    (project_id, updated_at, id) [name: "idx_documents_project_updated_id"]
     (source_id, source_external_id) [name: "idx_documents_source_external_head", unique]
     (source_type) [name: "idx_documents_source_type"]
     (storage_key) [name: "idx_documents_storage_key"]
@@ -1731,6 +1733,7 @@ Table "kb"."object_extraction_jobs" {
   Indexes {
     (project_id) [name: "IDX_1c7f91f13d7e1a438519d37ec3"]
     (status) [name: "IDX_3844c9efd6d2e06105a117f90c"]
+    (document_id, created_at) [name: "idx_object_extraction_jobs_document_created"]
     (trace_id) [name: "idx_object_extraction_jobs_trace_id"]
   }
 }
@@ -2604,6 +2607,7 @@ Ref: "kb"."chat_conversations"."project_id" > "kb"."projects"."id"
 Ref: "kb"."chat_conversations"."session_id" > "kb"."sessions"."id"
 Ref: "kb"."chat_conversations"."agent_definition_id" > "kb"."agent_definitions"."id"
 Ref: "kb"."chat_conversations"."object_id" > "kb"."graph_objects"."id"
+Ref: "kb"."chat_conversations"."parent_conversation_id" > "kb"."chat_conversations"."id"
 Ref: "kb"."chat_messages"."conversation_id" > "kb"."chat_conversations"."id"
 Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
 Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
