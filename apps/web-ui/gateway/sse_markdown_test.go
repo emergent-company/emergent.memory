@@ -520,17 +520,63 @@ func TestRewriteChatStreamToolResultPreservesIDStatus(t *testing.T) {
 	}
 }
 
-// TestRewriteChatStreamToolResultNonJSONPassthrough asserts a tool result that
-// isn't a JSON object/array falls back to the verbatim raw event, followed by a
-// synthesized terminal `error` (no `done`).
-func TestRewriteChatStreamToolResultNonJSONPassthrough(t *testing.T) {
+// TestRewriteChatStreamToolResultNonJSONIsEnriched asserts a tool result that is
+// plain text is still categorised and still carries its original fields, followed
+// by a synthesized terminal `error` (no `done`). Text results are common (a
+// shell tool's output), so the chip would keep its wire name if only JSON results
+// were enriched.
+func TestRewriteChatStreamToolResultNonJSONIsEnriched(t *testing.T) {
 	in := `data: {"type":"mcp_tool","tool":"shell","result":"plain text"}` + "\n\n"
 	out := rewrite(t, in)
-	if !strings.HasPrefix(out, in) {
-		t.Errorf("non-JSON result should passthrough verbatim, out = %q", out)
+	for _, want := range []string{
+		`"type":"mcp_tool"`,
+		`"tool":"shell"`,
+		`"result":"plain text"`,
+		`"toolCategory":`,
+		`"family":"tool"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in output: %s", want, out)
+		}
 	}
 	if !strings.Contains(out, `"type":"error"`) {
 		t.Errorf("non-JSON result should gain a terminal error, out = %q", out)
+	}
+}
+
+// TestRewriteChatStreamToolFrameSubjectAndView pins the live frame's two shapes:
+// a running frame carries the call's arguments (so it gets a subject and no view),
+// and a terminal frame carries the result (so it gets a view and no subject).
+func TestRewriteChatStreamToolFrameSubjectAndView(t *testing.T) {
+	running := `data: {"type":"mcp_tool","id":"c1","tool":"search-hybrid","status":"running","result":{"query":"swiftui","limit":5}}` + "\n\n"
+	out := rewrite(t, running)
+	frame := decodeFirstFrame(t, out)
+	if got := frame["toolSubject"]; got != "swiftui" {
+		t.Errorf("running frame toolSubject = %v, want swiftui", got)
+	}
+	if _, ok := frame["toolView"]; ok {
+		t.Errorf("running frame must not carry a view: %v", frame["toolView"])
+	}
+	category, _ := frame["toolCategory"].(map[string]any)
+	if got := category["verb"]; got != "Searched memory" {
+		t.Errorf("toolCategory.verb = %v, want Searched memory", got)
+	}
+
+	settled := `data: {"type":"mcp_tool","id":"c1","tool":"search-hybrid","status":"completed","result":{"ok":true,"data":{"data":[{"object":{"id":"e1","name":"Alice"}}],"total":1}}}` + "\n\n"
+	out = rewrite(t, settled)
+	frame = decodeFirstFrame(t, out)
+	view, ok := frame["toolView"].(map[string]any)
+	if !ok {
+		t.Fatalf("terminal frame has no toolView: %v", frame)
+	}
+	if got := view["kind"]; got != "records" {
+		t.Errorf("toolView.kind = %v, want records", got)
+	}
+	if got := view["outcome"]; got != "1 record" {
+		t.Errorf("toolView.outcome = %v, want 1 record", got)
+	}
+	if _, ok := frame["toolSubject"]; ok {
+		t.Errorf("terminal frame must not re-derive a subject from its result: %v", frame["toolSubject"])
 	}
 }
 
@@ -819,5 +865,177 @@ func TestRenderHistoryHTMLLeavesSystemUntouched(t *testing.T) {
 	}
 	if _, has := c["html"]; has {
 		t.Errorf("system record must not gain markdown html: %v", c)
+	}
+}
+
+// decodeFirstFrame returns the first `data:` frame of a rewritten stream as a map.
+func decodeFirstFrame(t *testing.T, out string) map[string]any {
+	t.Helper()
+	for _, frame := range strings.Split(out, "\n\n") {
+		frame = strings.TrimSpace(frame)
+		if !strings.HasPrefix(frame, "data: ") {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(frame, "data: ")), &m); err != nil {
+			t.Fatalf("frame is not JSON: %v (%s)", err, frame)
+		}
+		return m
+	}
+	t.Fatalf("no data frame in %q", out)
+	return nil
+}
+
+// TestEnrichToolItemAddsTheStepFields pins the replay seam: a recorded tool_call
+// gains its category, subject and readable view, so a run read back describes a
+// call the way the live chip did.
+func TestEnrichToolItemAddsTheStepFields(t *testing.T) {
+	content := strings.TrimSuffix(strings.Repeat("A line of the retrieved document.\n", 12), "\n")
+	item := `{"kind":"tool_call",` +
+		`"tool_name":"document-get","tool_status":"completed",` +
+		`"tool_input":{"id":"d1","path":"notes.md"},` +
+		`"tool_output":{"id":"d1","filename":"notes.md","content":"` +
+		strings.ReplaceAll(content, "\n", `\n`) + `","ok":true}}`
+
+	out := enrichToolItem([]byte(item))
+	if out == nil {
+		t.Fatal("enrichToolItem returned nil")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+
+	category, _ := m["tool_category"].(map[string]any)
+	if got := category["family"]; got != "documents" {
+		t.Errorf("tool_category.family = %v, want documents", got)
+	}
+	if got := category["verb"]; got != "Worked with documents" {
+		t.Errorf("tool_category.verb = %v, want Worked with documents", got)
+	}
+	if got := category["icon"]; got != "lucide--file-text" {
+		t.Errorf("tool_category.icon = %v, want lucide--file-text", got)
+	}
+
+	if got := m["tool_subject"]; got != "d1" {
+		t.Errorf("tool_subject = %v, want d1", got)
+	}
+
+	view, ok := m["tool_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_view missing: %v", m)
+	}
+	if got := view["kind"]; got != "text" {
+		t.Errorf("tool_view.kind = %v, want text", got)
+	}
+	if got := view["outcome"]; got != "A line of the retrieved document." {
+		t.Errorf("tool_view.outcome = %v", got)
+	}
+	if got := view["moreLines"]; got != float64(4) {
+		t.Errorf("tool_view.moreLines = %v, want 4", got)
+	}
+
+	// The original fields survive.
+	if got := m["tool_name"]; got != "document-get" {
+		t.Errorf("tool_name = %v, want document-get", got)
+	}
+	if _, ok := m["tool_input_html"]; !ok {
+		t.Errorf("tool_input_html missing")
+	}
+}
+
+// TestEnrichToolItemWithoutReadableOutput: a payload with no readable shape still
+// gets its category, subject and view — the view's kind is empty and its bounded
+// raw text is what the step shows, so the client bounds and labels the payload the
+// same way it does a readable one.
+// TestEnrichToolItemLeavesAnUnsettledCallAlone: while a call is running, what it
+// carries is its arguments, not a result. A call paused for approval is worse:
+// afterToolCb persists it as "completed" with the executor's pause sentinel as its
+// output, so the payload — not the status — says it never ran. Reading either as
+// a result replayed a paused step as "Used memory · Note — 3 fields".
+func TestEnrichToolItemLeavesAnUnsettledCallAlone(t *testing.T) {
+	running := `{"kind":"tool_call","tool_name":"entity-create","tool_status":"running",` +
+		`"tool_input":{"title":"Note","type":"note"},"tool_output":{"title":"Note","type":"note"}}`
+	out := enrichToolItem([]byte(running))
+	if out == nil {
+		t.Fatal("enrichToolItem returned nil")
+	}
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["tool_view"]; ok {
+		t.Error("running: tool_view present, want none for an unsettled call")
+	}
+
+	// The shape a paused call is really persisted as.
+	paused := `{"kind":"tool_call","tool_name":"entity-create","tool_status":"completed",` +
+		`"tool_input":{"title":"Note","type":"note"},` +
+		`"tool_output":{"status":"awaiting_confirmation","question_id":"q1",` +
+		`"message":"Tool execution paused, awaiting user confirmation."}}`
+	out = enrichToolItem([]byte(paused))
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["tool_view"]; ok {
+		t.Errorf("paused: tool_view present, want none: %v", m["tool_view"])
+	}
+	// The subject still comes from the arguments, so the row can name the call.
+	if got, _ := m["tool_subject"].(string); got != "Note" {
+		t.Errorf("paused: tool_subject = %q, want Note (from the arguments)", got)
+	}
+
+	// No status at all means settled: history writes the output at completion.
+	settled := `{"kind":"tool_call","tool_name":"entity-create",` +
+		`"tool_input":{"title":"Note"},"tool_output":{"object":{"title":"Note"}}}`
+	out = enrichToolItem([]byte(settled))
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["tool_view"]; !ok {
+		t.Error("tool_view missing for an item with no status")
+	}
+}
+
+// TestRewriteChatStreamPausedFrameNamesNothing: a paused frame's `result` is the
+// executor's sentinel, so it is neither a result nor the call's arguments — the
+// chip keeps the subject the running frame gave it.
+func TestRewriteChatStreamPausedFrameNamesNothing(t *testing.T) {
+	paused := `data: {"type":"mcp_tool","id":"c1","tool":"entity-create","status":"awaiting_confirmation",` +
+		`"result":{"status":"awaiting_confirmation","question_id":"q1",` +
+		`"message":"Tool execution paused, awaiting user confirmation."}}` + "\n\n"
+	frame := decodeFirstFrame(t, rewrite(t, paused))
+	if got, ok := frame["toolSubject"]; ok {
+		t.Errorf("paused frame toolSubject = %v, want none (the sentinel names nothing)", got)
+	}
+	if _, ok := frame["toolView"]; ok {
+		t.Errorf("paused frame must not carry a view: %v", frame["toolView"])
+	}
+	category, _ := frame["toolCategory"].(map[string]any)
+	if got := category["verb"]; got != "Used memory" {
+		t.Errorf("toolCategory.verb = %v, want Used memory", got)
+	}
+}
+
+func TestEnrichToolItemWithoutReadableOutput(t *testing.T) {
+	item := `{"kind":"tool_call","tool_name":"entity-get","tool_status":"completed",` +
+		`"tool_input":{"id":"e1"},"tool_output":{"object":{"a":{"b":1}}}}`
+	out := enrichToolItem([]byte(item))
+	var m map[string]any
+	if err := json.Unmarshal(out, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["tool_category"]; !ok {
+		t.Error("tool_category missing")
+	}
+	view, ok := m["tool_view"].(map[string]any)
+	if !ok {
+		t.Fatalf("tool_view missing: %v", m)
+	}
+	if got := view["kind"]; got != "" {
+		t.Errorf("tool_view.kind = %v, want empty (no readable body)", got)
+	}
+	if got, _ := view["raw"].(string); !strings.Contains(got, `"a"`) {
+		t.Errorf("tool_view.raw = %q, want the bounded payload", got)
 	}
 }

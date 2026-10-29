@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "data": {
+    "projectId": "p1",
+    "entities": [
+      {
+        "id": "e1",
+        "key": "alice",
+        "name": "Alice",
+        "type": "person",
+        "version": 1,
+        "properties": {"description": "Engineer"}
+      }
+    ],
+    "pagination": {"total": 1, "limit": 10, "offset": 0, "has_more": false}
+  }
+}

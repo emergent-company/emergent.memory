@@ -325,12 +325,7 @@ func toolStatus(status string) string {
 // (empty / in-flight statuses are treated as unfinished: a paused question's
 // prompt lives in the agent-question row, not in a spinning chip).
 func toolFinished(status string) bool {
-	switch status {
-	case "", "running", "started", "in_progress", "pending", "queued":
-		return false
-	default:
-		return true
-	}
+	return toolTerminal(status)
 }
 
 // questionText returns the ask text of a tool-input map, or "".

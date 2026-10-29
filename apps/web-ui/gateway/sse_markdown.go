@@ -131,7 +131,7 @@ func rewriteChatStream(w io.Writer, r io.Reader) error {
 			if handled {
 				continue
 			}
-			if err := emitToolResultHTML(w, raw, data, ev.Result); err != nil {
+			if err := emitToolResultHTML(w, raw, data, ev.Tool, ev.Status, ev.Result); err != nil {
 				return err
 			}
 			continue
@@ -309,23 +309,42 @@ func fmtEvent(w io.Writer, payload []byte) (int, error) {
 	return w.Write(append(append([]byte("data: "), payload...), []byte("\n\n")...))
 }
 
-// emitToolResultHTML re-emits a non-ask_user mcp_tool SSE event, attaching a
-// highlighted `resultHtml` field when the result is valid JSON. All original
-// fields are preserved verbatim (json.RawMessage), so numbers and unknown
-// fields survive exactly. Falls back to the verbatim raw event when the result
-// isn't JSON or re-encoding fails.
-func emitToolResultHTML(w io.Writer, raw []byte, data string, result json.RawMessage) error {
-	hl, ok := highlightJSONValue(result)
-	if !ok {
-		_, err := w.Write(raw)
-		return err
-	}
+// emitToolResultHTML re-emits a non-ask_user mcp_tool SSE event, enriching it in
+// place: a highlighted `resultHtml` field when the result is valid JSON, the tool
+// category, and — depending on where the call is in its life — its subject or its
+// readable view. All original fields are preserved verbatim
+// (json.RawMessage), so numbers and unknown fields survive exactly. The verbatim
+// raw event is the fallback when the event cannot be decoded or re-encoded.
+//
+// A frame still running carries the call's arguments in `result`, not output, so
+// it gets a subject and no view; reading it as a result would describe the
+// question as the answer.
+func emitToolResultHTML(w io.Writer, raw []byte, data, tool, status string, result json.RawMessage) error {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &m); err != nil {
 		_, err := w.Write(raw)
 		return err
 	}
-	m["resultHtml"] = rawJSONString(hl)
+	if hl, ok := highlightJSONValue(result); ok {
+		m["resultHtml"] = rawJSONString(hl)
+	}
+	if category := toolCategoryJSON(tool); category != nil {
+		m["toolCategory"] = category
+	}
+	switch {
+	case toolAwaitingConfirmation(result):
+		// The call is paused for approval: `result` is the executor's sentinel, so it
+		// is neither a result nor the arguments. The chip keeps the subject the
+		// running frame gave it.
+	case toolTerminal(status):
+		if view := toolViewJSON(result); view != nil {
+			m["toolView"] = view
+		}
+	default:
+		if subject := toolSubjectJSON(result); subject != nil {
+			m["toolSubject"] = subject
+		}
+	}
 	payload, err := marshalNoEscape(m)
 	if err != nil {
 		_, err := w.Write(raw)
@@ -425,7 +444,7 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 						}
 					}
 				}
-			} else if re := addToolHighlight(item); re != nil {
+			} else if re := enrichToolItem(item); re != nil {
 				out[i] = re
 			}
 			continue
@@ -474,26 +493,49 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 	return out
 }
 
-// addToolHighlight decodes a tool_call timeline item and adds highlighted
-// tool_input_html / tool_output_html fields for JSON I/O, preserving every
-// other field verbatim (RawMessage). Returns the re-encoded item, or nil when
-// neither field is JSON.
-func addToolHighlight(data []byte) []byte {
+// enrichToolItem decodes a tool_call timeline item and adds the fields the
+// transcript renders from: highlighted tool_input_html / tool_output_html for
+// JSON I/O, tool_category, tool_subject, and tool_view. Every other field is
+// preserved verbatim (RawMessage). Returns the re-encoded item, or nil when the
+// item cannot be decoded or re-encoded.
+//
+// This is the replay seam: conversation history, run history/resume and share
+// pages all render through renderHistoryHTML, so a run read back carries the same
+// enrichment a live one did. (The recorded-session page reads memory's timeline
+// itself and builds the same presentation through the same toolresult package.) A
+// timeline item's output is its result once the call is settled, and an item with
+// no status is settled by construction (history writes the output when the call
+// finishes) — but a call still running is not, and a call paused for approval is
+// not either: the executor records it as "completed" with a pause sentinel as its
+// output, so the payload, not the status, is what says it never ran.
+func enrichToolItem(data []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil
 	}
-	changed := false
+	var tool, status string
+	if raw, ok := m["tool_name"]; ok {
+		_ = json.Unmarshal(raw, &tool)
+	}
+	if raw, ok := m["tool_status"]; ok {
+		_ = json.Unmarshal(raw, &status)
+	}
+	if category := toolCategoryJSON(tool); category != nil {
+		m["tool_category"] = category
+	}
 	if hl, ok := highlightJSONValue(m["tool_input"]); ok {
 		m["tool_input_html"] = rawJSONString(hl)
-		changed = true
 	}
 	if hl, ok := highlightJSONValue(m["tool_output"]); ok {
 		m["tool_output_html"] = rawJSONString(hl)
-		changed = true
 	}
-	if !changed {
-		return nil
+	if subject := toolSubjectJSON(m["tool_input"]); subject != nil {
+		m["tool_subject"] = subject
+	}
+	if toolSettled(status) && !toolAwaitingConfirmation(m["tool_output"]) {
+		if view := toolViewJSON(m["tool_output"]); view != nil {
+			m["tool_view"] = view
+		}
 	}
 	out, err := marshalNoEscape(m)
 	if err != nil {

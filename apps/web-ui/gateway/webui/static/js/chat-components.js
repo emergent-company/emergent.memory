@@ -47,6 +47,29 @@
       .replace(/^./, function (c) { return c.toUpperCase(); });
   }
 
+  // toolLabel is what a step calls itself: the category's verb, then the subject
+  // the call's arguments named, e.g. "Searched memory · swiftui". Both come from
+  // the server (tool_category / tool_subject) so the live chip and the recorded
+  // row cannot word the same call differently; without them it falls back to the
+  // de-slugged wire name, which is all an older server offers.
+  function toolLabel(category, name, running, subject) {
+    var label = "";
+    if (category && typeof category === "object") {
+      var verb = running ? category.runningVerb : category.verb;
+      if (typeof verb === "string") label = verb;
+    }
+    if (!label) label = humanizeToolName(name) || String(name || "tool");
+    var said = typeof subject === "string" ? subject.trim() : "";
+    return said ? label + " · " + said : label;
+  }
+
+  // toolIcon is the family's glyph. Colour is reserved for state, so the icon is
+  // what tells one kind of work from another.
+  function toolIcon(category) {
+    if (category && typeof category.icon === "string" && category.icon) return category.icon;
+    return "lucide--wrench";
+  }
+
   // formatDurationMs renders a tool call's execution duration compactly:
   // sub-second in "ms", then "1.2s", "5m", "2h 15m".
   function formatDurationMs(ms) {
@@ -123,18 +146,215 @@
 
   // Inline detail for an expanded tool badge — the same sections the legacy
   // side panel used to show (identity/duration, summary / error / input /
-  // output), now rendered directly under the row.
+  // output), now rendered directly under the row. When the server sent a view of
+  // the result, the readable body leads and the raw payload moves behind its own
+  // closed disclosure.
   function renderToolDetails(detailEl, payload) {
     var p = payload || {};
+    var view = p.view && typeof p.view === "object" ? p.view : null;
+    // A call waiting for approval has no result to show: the executor's pause
+    // sentinel is not one. Its arguments are still worth reading, so they lead.
+    if (p.status === "awaiting_confirmation") {
+      // No meta line either: "129 B response" is a lie about a call that never ran.
+      detailEl.innerHTML =
+        detailSection("Input", p.input, p.inputHtml) +
+        '<p class="text-sm text-muted">Waiting for confirmation — the tool has not run yet.</p>';
+      return;
+    }
     var body = toolMetaLine(p);
-    if (p.summary) body += summarySection(p.summary);
+    if (p.summary && !view) body += summarySection(p.summary);
     if (p.error) body += errorSection(p.error);
+    if (view) body += toolBodySection(view);
     body += detailSection("Input", p.input, p.inputHtml);
-    body += detailSection("Output", p.output, p.outputHtml);
+    if (view) {
+      // A result with no readable shape has no payload to put one tap away: its
+      // text is the whole answer, so it is shown directly.
+      body += hasReadableBody(view) ? rawPayloadSection(view, p.tool) : rawTextSection(view, p.tool);
+    } else {
+      body += detailSection("Output", p.output, p.outputHtml);
+    }
     if (!body) {
       body = '<p class="text-muted-faint text-sm">No details yet — the tool is still running.</p>';
     }
     detailEl.innerHTML = body;
+  }
+
+  // hasReadableBody reports whether a view holds something to read beyond its raw
+  // payload. The server sends a view for every settled result (it also carries the
+  // bounded raw text), so "kind" is what distinguishes a body from bare JSON.
+  function hasReadableBody(view) {
+    return !!view && typeof view.kind === "string" && view.kind !== "";
+  }
+
+  // toolBodySection renders the readable part of a result: a list of records, one
+  // record's fields, or a body of text. Nothing is rendered when the payload has no
+  // readable shape — the raw disclosure is the answer there.
+  function toolBodySection(view) {
+    var more = remainderLine(view);
+    switch (view && view.kind) {
+      case "records":
+        return recordsSection(view.items, more);
+      case "fields":
+        return fieldsSection(view.fields, more);
+      case "text":
+        return textBodySection(view.text, more);
+      default:
+        return "";
+    }
+  }
+
+  // remainderLine words what the caps hid, so a prefix never reads as the whole.
+  function remainderLine(view) {
+    var parts = [];
+    function add(n, one, many) {
+      if (typeof n !== "number" || n <= 0) return;
+      parts.push(n + " " + (n === 1 ? one : many));
+    }
+    add(view && view.moreRecords, "more record", "more records");
+    add(view && view.moreFields, "more field", "more fields");
+    add(view && view.moreLines, "more line", "more lines");
+    add(view && view.moreCharacters, "character cut", "characters cut");
+    return parts.join(" · ");
+  }
+
+  function remainderParagraph(text) {
+    if (!text) return "";
+    return '<p class="mt-2 font-mono text-[11px] text-muted-faint">' + escapeHTML(text) + "</p>";
+  }
+
+  function recordsSection(items, more) {
+    if (!Array.isArray(items) || !items.length) return "";
+    var rows = "";
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i] || {};
+      var title = String(item.title == null ? "" : item.title);
+      var href = httpURL(item.link);
+      var head = href
+        ? '<a class="link link-hover" href="' + escapeHTML(href) + '" target="_blank" rel="noopener noreferrer">' + escapeHTML(title) + "</a>"
+        : '<span class="text-base-content">' + escapeHTML(title) + "</span>";
+      var host = href ? '<span class="ml-1 font-mono text-[11px] text-muted-faint">' + escapeHTML(hostOf(href)) + "</span>" : "";
+      var detail = item.detail
+        ? '<p class="mt-0.5 text-xs text-muted leading-relaxed whitespace-pre-wrap break-words">' + escapeHTML(String(item.detail)) + "</p>"
+        : "";
+      rows += '<li class="py-1.5 border-b border-base-content/5 last:border-b-0">' + head + host + detail + "</li>";
+    }
+    return (
+      '<section class="mb-5">' +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">Result</p>' +
+      '<ul class="text-sm leading-relaxed">' + rows + "</ul>" +
+      remainderParagraph(more) +
+      "</section>"
+    );
+  }
+
+  function fieldsSection(fields, more) {
+    if (!Array.isArray(fields) || !fields.length) return "";
+    var rows = "";
+    for (var i = 0; i < fields.length; i++) {
+      var field = fields[i] || {};
+      rows +=
+        '<div class="grid grid-cols-[minmax(6rem,auto)_1fr] gap-2 py-1 border-b border-base-content/5 last:border-b-0">' +
+        '<dt class="font-mono text-[11px] text-muted-faint break-all">' + escapeHTML(String(field.label == null ? "" : field.label)) + "</dt>" +
+        '<dd class="text-sm text-base-content break-words whitespace-pre-wrap">' + escapeHTML(String(field.value == null ? "" : field.value)) + "</dd>" +
+        "</div>";
+    }
+    return (
+      '<section class="mb-5">' +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">Result</p>' +
+      '<dl class="text-sm leading-relaxed">' + rows + "</dl>" +
+      remainderParagraph(more) +
+      "</section>"
+    );
+  }
+
+  function textBodySection(text, more) {
+    if (typeof text !== "string" || !text) return "";
+    return (
+      '<section class="mb-5">' +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">Result</p>' +
+      '<pre class="memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
+      escapeHTML(text) +
+      "</pre>" +
+      remainderParagraph(more) +
+      "</section>"
+    );
+  }
+
+  // rawPayloadSection is the payload behind one closed disclosure: the step's wire
+  // name, the bounded raw JSON the server already prepared, and how much of it did
+  // not fit. A native <details> is the control — keyboard operable, and it reports
+  // its own state — and min-h-11 keeps its target at 44 CSS pixels.
+  function rawPayloadSection(view, tool) {
+    // The disclosure may render before (or without) the badge shell that normally
+    // injects these styles — an expanded step in a replayed transcript, the share
+    // page — so it asks for them itself. ensureBadgeStyle is idempotent.
+    ensureBadgeStyle();
+    var raw = view && typeof view.raw === "string" ? view.raw : "";
+    if (!raw) return "";
+    var name = typeof tool === "string" && tool ? tool : "";
+    return (
+      '<details class="memory-raw-disclosure mt-4 rounded-box border border-base-content/10 bg-base-200/30">' +
+      '<summary class="memory-raw-summary flex cursor-pointer items-center gap-2 px-3 text-xs font-semibold tracking-wider uppercase text-muted">' +
+      "<span>Raw payload</span>" +
+      '<span class="iconify lucide--chevron-down memory-raw-chevron ml-auto size-4 text-muted-faint" aria-hidden="true"></span>' +
+      "</summary>" +
+      (name ? '<p class="px-3 pb-1 font-mono text-[11px] text-muted-faint break-all">' + escapeHTML(name) + "</p>" : "") +
+      '<pre class="memory-scroll max-h-72 overflow-auto px-3 pb-2 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
+      escapeHTML(raw) +
+      "</pre>" +
+      remainderParagraph(rawRemainder(view)) +
+      "</details>"
+    );
+  }
+
+  // rawRemainder words what the raw cap hid, so both the disclosure and the
+  // directly-shown payload say it the same way.
+  function rawRemainder(view) {
+    var parts = [];
+    if (view && typeof view.rawMoreLines === "number" && view.rawMoreLines > 0) {
+      parts.push(view.rawMoreLines + " more " + (view.rawMoreLines === 1 ? "line" : "lines"));
+    }
+    if (view && typeof view.rawMoreCharacters === "number" && view.rawMoreCharacters > 0) {
+      parts.push(view.rawMoreCharacters + " characters cut");
+    }
+    return parts.join(" · ");
+  }
+
+  // rawTextSection shows a no-shape result's bounded text in the open, with the
+  // wire name kept beside it rather than behind a second tap.
+  function rawTextSection(view, tool) {
+    ensureBadgeStyle();
+    var raw = view && typeof view.raw === "string" ? view.raw : "";
+    if (!raw) return "";
+    var name = typeof tool === "string" && tool ? tool : "";
+    return (
+      '<section class="mb-5">' +
+      '<p class="mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted">Result</p>' +
+      (name ? '<p class="mb-1 font-mono text-[11px] text-muted-faint break-all">' + escapeHTML(name) + "</p>" : "") +
+      '<pre class="memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words">' +
+      escapeHTML(raw) +
+      "</pre>" +
+      remainderParagraph(rawRemainder(view)) +
+      "</section>"
+    );
+  }
+
+  // httpURL passes only an http(s) address through to markup; anything else is
+  // text, not a link.
+  function httpURL(value) {
+    if (typeof value !== "string") return "";
+    var href = value.trim();
+    return /^https?:\/\/[^\s]+$/i.test(href) ? href : "";
+  }
+
+  // hostOf is the address a reader recognises: the link's host, without scheme or
+  // path.
+  function hostOf(href) {
+    try {
+      return new URL(href).host;
+    } catch (e) {
+      return href;
+    }
   }
 
   function detailSection(label, value, html) {
@@ -320,7 +540,17 @@
       "50%{opacity:1;transform:translateY(-1px) scale(1.05)}}" +
       "@media (prefers-reduced-motion:reduce){" +
       ".memory-badge-live .memory-badge-label{animation:none}" +
-      ".memory-badge-live.memory-thinking .memory-badge-icon .iconify:not(.lucide--chevron-down){animation:none;opacity:.85}}";
+      ".memory-badge-live.memory-thinking .memory-badge-icon .iconify:not(.lucide--chevron-down){animation:none;opacity:.85}" +
+      // the raw disclosure opens and closes with no motion of its own; this keeps
+      // that true if a later restyle adds a transition to it
+      ".memory-raw-disclosure,.memory-raw-disclosure *{transition:none!important;animation:none!important}}" +
+      // the disclosure's control is 44 CSS pixels tall by its own rule, not by a
+      // spacing utility: the app's root font is 15px, which makes min-h-11 41.25px
+      ".memory-raw-summary{display:flex;align-items:center;min-height:44px}" +
+      // the open state turns the chevron over; no motion when the reader asked for
+      // less (the reduced-motion block above covers the transition)
+      ".memory-raw-chevron{transition:transform .15s ease}" +
+      ".memory-raw-disclosure[open] .memory-raw-chevron{transform:rotate(180deg)}";
     document.head.appendChild(st);
   }
 
@@ -1692,10 +1922,14 @@
             }
             break;
           }
-          // Tool activity from history: same chip language as live streaming.
+          // Tool activity from history: same chip language as live streaming, and
+          // the same vocabulary — the category, subject and view the gateway
+          // attached to the item (see enrichToolItem), so a run read back describes
+          // a call the way watching it did.
           var out = item.tool_output;
-          var cls = CS.classifyTool(item.tool_status, out);
-          ctx.toolChip(item.tool_name || "tool", cls.status, cls.error || cls.summary || "", {
+          var view = item.tool_view && typeof item.tool_view === "object" ? item.tool_view : null;
+          var cls = CS.classifyTool(item.tool_status, out, view);
+          ctx.toolChip(item.tool_name || "tool", cls.status, cls.line || cls.summary || "", {
             tool: item.tool_name || "tool",
             status: cls.status,
             summary: cls.summary,
@@ -1704,6 +1938,9 @@
             output: out,
             inputHtml: item.tool_input_html,
             outputHtml: item.tool_output_html,
+            view: view,
+            category: item.tool_category,
+            subject: item.tool_subject,
             id: item.id,
             durationMs: item.duration_ms,
             meta: meta,
@@ -1786,7 +2023,13 @@
   window.MemoryChatComponents = {
     escapeHTML: escapeHTML,
     humanizeToolName: humanizeToolName,
+    toolLabel: toolLabel,
+    toolIcon: toolIcon,
     renderToolDetails: renderToolDetails,
+    toolBodySection: toolBodySection,
+    rawPayloadSection: rawPayloadSection,
+    rawTextSection: rawTextSection,
+    remainderLine: remainderLine,
     detailSection: detailSection,
     errorSection: errorSection,
     summarySection: summarySection,

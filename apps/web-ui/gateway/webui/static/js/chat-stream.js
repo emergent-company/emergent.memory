@@ -225,17 +225,53 @@
   }
 
   // classifyTool turns a raw tool status + output into {status, error, summary}.
-  function classifyTool(rawStatus, output) {
+  //
+  // When the server sent a view of the result, the view wins: its error is the
+  // message the tool reported (read through the envelope), and its outcome is the
+  // one line the collapsed step shows. summarizeOutput stays as the fallback for a
+  // chip with no view (an older server, or a result the server could not read).
+  // collapsedLine bounds the one line a collapsed step has room for: a single
+  // line of at most 120 characters, ellipsis when cut. The opened step keeps the
+  // full message (view.error); a long provider error used to be handed to the
+  // collapsed row verbatim and pushed the row out of shape.
+  function collapsedLine(text) {
+    var s = typeof text === "string" ? text : "";
+    s = s.replace(/\s+/g, " ").trim();
+    if (s.length > 120) s = s.slice(0, 120) + "…";
+    return s;
+  }
+
+  // isAwaitingConfirmation reads the executor's pause sentinel: the policy check
+  // returned it instead of running the tool, and the run was paused. The persisted
+  // status says "completed" (the callback completed), so the payload is what says
+  // the call never ran.
+  function isAwaitingConfirmation(out) {
+    return !!out && out.status === "awaiting_confirmation";
+  }
+
+  function classifyTool(rawStatus, output, view) {
     var status = normalizeStatus(rawStatus);
     var out = (output && typeof output === "object" && !Array.isArray(output)) ? output : null;
-    var error = firstError(out);
+    // A paused call is still pending on every surface, including a replayed one.
+    if (isAwaitingConfirmation(out)) status = "awaiting_confirmation";
+    var viewed = view && typeof view === "object" ? view : null;
+    var error = (viewed && typeof viewed.error === "string" && viewed.error) || firstError(out);
     var failed = status === "error" || (status === "ok" && hasFailureSignal(out));
+    if (viewed && viewed.error) failed = true;
     if (failed) {
       status = "error";
       if (!error && out && typeof out.message === "string") error = out.message;
       if (!error) error = "tool failed";
     }
-    return { status: status, error: error, summary: summarizeOutput(output) };
+    if (status === "awaiting_confirmation") {
+      // There is no result to word, and the sentinel's own message is not one.
+      return { status: status, error: "", summary: "", line: "" };
+    }
+    var summary = (viewed && typeof viewed.outcome === "string" && viewed.outcome) || summarizeOutput(output);
+    // A view's outcome is already bounded by the gateway; the fallbacks (a raw
+    // error, a JSON-string result) are not.
+    var line = collapsedLine(error || summary);
+    return { status: status, error: error, summary: summary, line: line };
   }
 
   /* ---------- stateful engine (bound to a host page's ctx) ---------- */
@@ -384,6 +420,13 @@
 
     /* ---------- tool chips (shared badge shell from chat-components.js) ---------- */
 
+    // inFlight reports a call that has not finished: still running, or paused for
+    // approval. Both read in the continuous tense; only a settled call uses the
+    // past tense.
+    function inFlight(status) {
+      return status === "running" || status === "awaiting_confirmation";
+    }
+
     function toolChip(tool, status, detail, payload) {
       var p = payload || { tool: tool, status: status };
 
@@ -396,10 +439,15 @@
         '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
       ctx.messages.appendChild(wrap);
 
+      // The step names itself in the console's vocabulary (category verb + the
+      // subject the call's arguments gave), not by its wire name — that stays in
+      // the raw disclosure.
+      var category = p.category || null;
+      var icon = MemoryChatComponents.toolIcon(category);
       var chip = MemoryChatComponents.expandableBadge({
         className: "memory-tool-chip col-start-2 row-start-2 w-full",
-        icon: "lucide--wrench",
-        label: MemoryChatComponents.humanizeToolName(tool),
+        icon: icon,
+        label: MemoryChatComponents.toolLabel(category, tool, inFlight(status), p.subject),
         live: status === "running",
         dataStatus: status,
         container: wrap,
@@ -408,24 +456,30 @@
         },
       }, ctx.badgeCtx);
       if (!chip) return null;
-      chip.label.textContent = MemoryChatComponents.humanizeToolName(tool);
+      chip.label.textContent = MemoryChatComponents.toolLabel(category, tool, inFlight(status), p.subject);
       chip.root.setAttribute("data-tool", tool); // stable raw key for live updates
+      chip.root._toolIcon = icon;
       // Stable call id for live correlation (parallel/repeated same-name calls).
       // Additive — absent on chips whose payload carries no id and on servers
       // that predate the `mcp_tool.id` field.
       if (p.id != null && p.id !== "") chip.root.setAttribute("data-call-id", String(p.id));
-      // Hover affordance: swap the wrench for a dropdown chevron (like thinking).
-      var iconEl = chip.root.querySelector(".memory-badge-icon .iconify");
+      // Hover affordance: swap the category's glyph for a dropdown chevron (like
+      // thinking), and put the same glyph back on leave.
       if (chip.toggle) {
         chip.toggle.addEventListener("mouseenter", function () {
-          if (iconEl) iconEl.setAttribute("class", "iconify lucide--chevron-down size-4 text-muted-faint");
+          setToolIcon(chip.root, "lucide--chevron-down");
         });
         chip.toggle.addEventListener("mouseleave", function () {
-          if (iconEl) iconEl.setAttribute("class", "iconify lucide--wrench size-4 text-muted-faint");
+          setToolIcon(chip.root, chip.root._toolIcon);
         });
       }
-      // structured detail for the inline expand (kept on the element, as before)
+      // structured detail for the inline expand (kept on the element, as before).
+      // The renderer is kept too: a step opened while it was running has to show
+      // the result once the result arrives, instead of "still running" for ever.
       chip.root._payload = p;
+      chip.root._renderDetails = function () {
+        MemoryChatComponents.renderToolDetails(chip.detail, chip.root._payload || {});
+      };
       p.tool = tool;
       p.status = status;
       setToolStatus(chip.root, status, detail);
@@ -442,6 +496,39 @@
       // — appended in arrival order so they interleave with the bubbles.
       ctx.scrollToBottom();
       return chip.root;
+    }
+
+    // setToolIcon swaps the leading glyph on a chip. The glyph carries the family
+    // (colour is reserved for state), so it is the category's icon, not a wrench.
+    function setToolIcon(chip, glyph) {
+      if (!chip) return;
+      var iconEl = chip.querySelector(".memory-badge-icon .iconify");
+      if (iconEl) iconEl.setAttribute("class", "iconify " + (glyph || "lucide--wrench") + " size-4 text-muted-faint");
+    }
+
+    // applyToolFacts re-reads a chip's label and glyph from what the chip has
+    // learned: the verb's tense changes when the call settles, a later event can
+    // carry the category an earlier one did not, and the subject given while the
+    // call ran is what it keeps — a terminal frame carries the result, not the
+    // arguments.
+    function applyToolFacts(chip, tool) {
+      if (!chip) return;
+      var p = chip._payload || {};
+      var running = inFlight(p.status);
+      var labelEl = chip.querySelector(".memory-badge-label");
+      if (labelEl) {
+        labelEl.textContent = MemoryChatComponents.toolLabel(p.category, tool || p.tool, running, p.subject);
+      }
+      chip._toolIcon = MemoryChatComponents.toolIcon(p.category);
+      setToolIcon(chip, chip._toolIcon);
+    }
+
+    // refreshOpenDetail re-renders a step the reader has already opened, so what
+    // arrives later (the result, or a pause) is what they see.
+    function refreshOpenDetail(chip) {
+      if (chip && chip.classList.contains("memory-badge-open") && typeof chip._renderDetails === "function") {
+        chip._renderDetails();
+      }
     }
 
     function setToolStatus(chip, status, detail) {
@@ -526,8 +613,16 @@
         if (!target) {
           toolChip(tool, "running", "", {
             tool: tool, status: "running", input: evt.result, inputHtml: evt.resultHtml,
+            category: evt.toolCategory, subject: evt.toolSubject,
             id: callId || undefined,
           });
+        } else {
+          // A chip may already exist (reattached stream, or history rendered
+          // first): keep what this frame knows.
+          target._payload = target._payload || { tool: tool };
+          if (evt.toolCategory) target._payload.category = evt.toolCategory;
+          if (evt.toolSubject) target._payload.subject = evt.toolSubject;
+          applyToolFacts(target, tool);
         }
         return;
       }
@@ -541,32 +636,45 @@
           target.setAttribute("data-status", "awaiting_confirmation");
           target._payload = target._payload || { tool: tool };
           target._payload.status = "awaiting_confirmation";
+          if (evt.toolCategory) target._payload.category = evt.toolCategory;
+          if (evt.toolSubject) target._payload.subject = evt.toolSubject;
+          applyToolFacts(target, tool);
+          refreshOpenDetail(target);
         } else {
           toolChip(tool, "awaiting_confirmation", "Waiting for confirmation", {
-            tool: tool, status: "awaiting_confirmation", id: callId || undefined,
+            tool: tool, status: "awaiting_confirmation",
+            category: evt.toolCategory, subject: evt.toolSubject,
+            id: callId || undefined,
           });
         }
         ctx.scrollToBottom();
         return;
       }
 
-      var cls = classifyTool(evt.status, evt.result);
+      var cls = classifyTool(evt.status, evt.result, evt.toolView);
       if (evt.error) { cls.status = "error"; cls.error = evt.error; }
-      var detail = cls.error || cls.summary || "";
+      var detail = cls.line || cls.summary || "";
 
       if (target) {
-        setToolStatus(target, cls.status, detail);
-        target.setAttribute("data-status", cls.status);
         target._payload = target._payload || { tool: tool };
+        if (evt.toolCategory) target._payload.category = evt.toolCategory;
         target._payload.status = cls.status;
         target._payload.summary = cls.summary;
         target._payload.error = cls.error;
         target._payload.output = evt.result;
         target._payload.outputHtml = evt.resultHtml;
+        target._payload.view = evt.toolView;
+        applyToolFacts(target, tool);
+        setToolStatus(target, cls.status, detail);
+        target.setAttribute("data-status", cls.status);
+        // An open step is re-rendered: the reader opened it to see the result.
+        refreshOpenDetail(target);
       } else {
         toolChip(tool, cls.status, detail, {
           tool: tool, status: cls.status, summary: cls.summary, error: cls.error,
-          output: evt.result, outputHtml: evt.resultHtml, id: callId || undefined,
+          output: evt.result, outputHtml: evt.resultHtml, view: evt.toolView,
+          category: evt.toolCategory, subject: evt.toolSubject,
+          id: callId || undefined,
         });
       }
       ctx.scrollToBottom();
@@ -1109,6 +1217,8 @@
     summarizeText: summarizeText,
     tryParseJSON: tryParseJSON,
     classifyTool: classifyTool,
+    collapsedLine: collapsedLine,
+    isAwaitingConfirmation: isAwaitingConfirmation,
     agentIconifyClass: agentIconifyClass,
     createEngine: createEngine,
   };
