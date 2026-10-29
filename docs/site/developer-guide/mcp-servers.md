@@ -9,16 +9,25 @@ Memory integrates with the [Model Context Protocol](https://modelcontextprotocol
 
 ## Built-in Memory MCP server
 
-Memory exposes its own MCP server at two endpoints:
+Memory is a **remote** MCP server: there is no local stdio subcommand to run.
+The current spec transport is Streamable HTTP at `/api/mcp`; the project-scoped
+SSE endpoints remain available for clients that speak only SSE.
 
 | Transport | Endpoint | Authentication |
 |---|---|---|
-| SSE (project-scoped) | `GET /api/mcp/sse/:projectId` | `Authorization: Bearer <api_token>` |
-| Streamable HTTP (current spec) | `POST /api/mcp` | `Authorization: Bearer <api_token>` |
+| Streamable HTTP (spec 2025-11-25, recommended) | `/api/mcp` — `POST` for JSON-RPC, `GET` for the server-initiated stream, `DELETE` to end the session | `X-API-Key: <api_token>` + `X-Project-ID: <project_id>`, or `Authorization: Bearer <api_token>` |
+| SSE (legacy, project-scoped) | `GET /api/mcp/sse/<projectId>`, `POST /api/mcp/sse/<projectId>/message` | `X-API-Key`, `Authorization: Bearer`, or `?token=<api_token>` |
+| JSON-RPC over HTTP (legacy) | `POST /api/mcp/rpc` | same token, as `X-API-Key` or `Authorization: Bearer` |
+
+Send the project id as the `X-Project-ID` header on `/api/mcp`; the SSE routes
+carry it in the path instead.
+
+> **Tip:** `memory mcp-guide` prints these snippets for your server URL, with the
+> token redacted to `${MEMORY_PROJECT_TOKEN}` (pass `--show-secret` to inline the
+> real value). It uses your **first** project, so check the `X-Project-ID` value
+> before pasting if you belong to more than one.
 
 ### Connecting Claude Desktop
-
-> **Tip:** Run `memory mcp-guide` in any project directory to generate the correct config snippet automatically for Claude Desktop or Cursor.
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -26,23 +35,37 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/client-sse"],
-      "env": {
-        "MCP_SERVER_URL": "https://api.example.com/mcp/sse",
-        "MCP_API_TOKEN": "<your-api-token>"
+      "type": "http",
+      "url": "https://api.example.com/api/mcp",
+      "headers": {
+        "X-Project-ID": "<project-id>",
+        "X-API-Key": "<your-api-token>"
       }
     }
   }
 }
 ```
 
-Or using the streamable HTTP transport with a client that supports it:
+Clients that only implement the older SSE transport use the project-scoped
+endpoint instead — the project id is part of the URL there:
 
+```json
+{
+  "mcpServers": {
+    "memory": {
+      "type": "sse",
+      "url": "https://api.example.com/api/mcp/sse/<project-id>",
+      "headers": {
+        "X-API-Key": "<your-api-token>"
+      }
+    }
+  }
+}
 ```
-https://api.example.com/mcp
-Authorization: Bearer <api-token>
-```
+
+A client that can only speak `Authorization: Bearer` works too: the same token
+is accepted in that header. Clients that only support stdio need their own
+documented bridge to a remote server — Memory does not ship a stdio mode.
 
 ### Connecting OpenCode
 
@@ -53,17 +76,20 @@ Add to `opencode.json` in your project directory:
   "mcp": {
     "memory": {
       "type": "remote",
-      "url": "https://api.example.com/api/mcp/sse/<project-id>",
-      "headers": {"Authorization": "Bearer <your-api-token>"},
-      "oauth": false,
-      "enabled": true,
-      "timeout": 60000
+      "url": "https://api.example.com/api/mcp",
+      "headers": {
+        "X-Project-ID": "<project-id>",
+        "X-API-Key": "<your-api-token>"
+      },
+      "enabled": true
     }
   }
 }
 ```
 
-Replace `<project-id>` with your project UUID and `<your-api-token>` with a project-scoped API token. Run `opencode mcp list` to verify the connection.
+Replace `<project-id>` with your project UUID (`memory projects list`) and
+`<your-api-token>` with a project-scoped API token. Run `opencode mcp list` to
+verify the connection.
 
 ### Available MCP tools (built-in)
 
