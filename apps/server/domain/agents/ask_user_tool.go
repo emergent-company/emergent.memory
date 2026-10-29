@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -198,7 +199,7 @@ func BuildAskUserTool(deps AskUserToolDeps) (tool.Tool, error) {
 	return functiontool.New(
 		functiontool.Config{
 			Name:        ToolNameAskUser,
-			Description: "Ask the user a question and pause execution until they respond. Use this when you encounter ambiguity, need clarification, or require a decision from the user. You can provide structured options for the user to choose from, or leave options empty for a free-text response. Set interaction_type to 'buttons' (default, 2-5 options), 'select' (5+ options), 'multi_select' (multi-pick dropdown), or 'text' (free-text input with optional placeholder and max_length). When proposing a concrete change, also pass an optional 'proposal' argument — the envelope {\"kind\",\"summary\",\"body\"} with kind one of blueprint|skill|agent|mcp_server|provider|object (blueprint body {\"objectTypes\",\"relationshipTypes\"}) — so it renders a structured preview card instead of a raw code fence. After calling this tool, execution will pause and resume automatically when the user responds.",
+			Description: "Ask the user a question and pause execution until they respond. Use this when you encounter ambiguity, need clarification, or require a decision from the user. Pass options as an array of {label, value} objects (a bare string is accepted and used as both, and value defaults to label) or leave options empty for a free-text response. Set interaction_type to 'buttons' (default, 2-5 options), 'select' (5+ options), 'multi_select' (multi-pick dropdown), or 'text' (free-text input with optional placeholder and max_length). When proposing a concrete change, also pass an optional 'proposal' argument — the envelope {\"kind\",\"summary\",\"body\"} with kind one of blueprint|skill|agent|mcp_server|provider|object (blueprint body {\"objectTypes\",\"relationshipTypes\"}) — so it renders a structured preview card instead of a raw code fence. After calling this tool, execution will pause and resume automatically when the user responds.",
 		},
 		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
 			// Parse question (required); accept "message" as alias for "question"
@@ -454,13 +455,28 @@ func parseQuestionOptions(args map[string]any) []AgentQuestionOption {
 
 	options := make([]AgentQuestionOption, 0, len(optionsList))
 	for _, item := range optionsList {
+		// A bare string is the shape models reach for most often ("Accept",
+		// "Reject"). Treat it as an option whose label and value are the same
+		// text instead of dropping it, which used to leave an empty option list
+		// and fail the whole call (see the buttons validation below).
+		if s, isString := item.(string); isString {
+			if s = strings.TrimSpace(s); s != "" {
+				options = append(options, AgentQuestionOption{Label: s, Value: s})
+			}
+			continue
+		}
 		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		label, _ := m["label"].(string)
 		value, _ := m["value"].(string)
-		if label == "" || value == "" {
+		// Accept a label-only option: the value defaults to the label, so the
+		// rendered button and the submitted answer agree.
+		if value == "" {
+			value = label
+		}
+		if label == "" {
 			continue
 		}
 		opt := AgentQuestionOption{

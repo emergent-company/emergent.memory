@@ -30,6 +30,12 @@ func (f *fakeEmbeddingCtl) CurrentStatus() EmbeddingStatusSnapshot { return f.st
 func (f *fakeEmbeddingCtl) PauseAll()                              { f.paused = true }
 func (f *fakeEmbeddingCtl) ResumeAll()                             { f.paused = false }
 func (f *fakeEmbeddingCtl) ApplyConfig(EmbeddingConfigUpdate)      {}
+func (f *fakeEmbeddingCtl) ProjectQueueStats(context.Context, string) (EmbeddingProjectQueueStats, error) {
+	return EmbeddingProjectQueueStats{}, nil
+}
+func (f *fakeEmbeddingCtl) RetriggerFailed(context.Context, string) (EmbeddingRetriggerResult, error) {
+	return EmbeddingRetriggerResult{}, nil
+}
 
 // newGateHandler builds a Handler whose Service carries a real DB (for the
 // superadmin role lookup) and the fake embedding controller, and pre-populates

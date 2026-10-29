@@ -733,3 +733,59 @@ func TestWrapResultCompact(t *testing.T) {
 		}
 	})
 }
+
+// Text chunks (and synthetic relationship wrappers) carry only a version ID, so
+// slimEntity must fall back to it instead of printing the zero UUID.
+func TestSlimEntity_ZeroCanonicalFallsBackToVersionID(t *testing.T) {
+	chunkID := uuid.New()
+	o := &graph.GraphObjectResponse{
+		ID:          chunkID,
+		Type:        textChunkType,
+		CanonicalID: uuid.Nil,
+	}
+	got := slimEntity(o, ResponseOpts{FieldStrategy: "verbose"})
+	if got["id"] != chunkID.String() {
+		t.Fatalf("id = %v, want the version id %s", got["id"], chunkID)
+	}
+}
+
+// A chunk hit must keep its snippet and document_id under the default compact
+// field strategy, which strips `properties` from graph objects.
+func TestSlimSearchData_TextChunkKeepsPayload(t *testing.T) {
+	chunkID := uuid.New()
+	docID := uuid.New()
+	res := &graph.SearchResponse{
+		Data: []*graph.SearchResultItem{
+			{
+				Object: &graph.GraphObjectResponse{
+					ID:          chunkID,
+					CanonicalID: uuid.Nil,
+					Type:        textChunkType,
+					Properties: map[string]any{
+						"snippet":     "HUMA Energy is a company",
+						"document_id": docID.String(),
+					},
+				},
+				Score: 0.42,
+			},
+		},
+		Total: 1,
+	}
+
+	got := slimSearchResponse(res, ResponseOpts{FieldStrategy: "compact"})
+	data := got["data"].([]map[string]any)
+	obj := data[0]["object"].(map[string]any)
+
+	if obj["id"] != chunkID.String() {
+		t.Errorf("id = %v, want %s", obj["id"], chunkID)
+	}
+	if obj["type"] != textChunkType {
+		t.Errorf("type = %v, want %s", obj["type"], textChunkType)
+	}
+	if obj["snippet"] != "HUMA Energy is a company" {
+		t.Errorf("snippet = %v, want the chunk text", obj["snippet"])
+	}
+	if obj["document_id"] != docID.String() {
+		t.Errorf("document_id = %v, want %s", obj["document_id"], docID)
+	}
+}

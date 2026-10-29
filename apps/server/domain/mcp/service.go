@@ -348,6 +348,22 @@ func (s *Service) GetToolDefinitions() []ToolDefinition {
 			},
 		},
 		{
+			Name:          "project-update",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "projects:write",
+			Description:   "Set the project info document — the markdown describing this knowledge base's purpose, goals, audience, and context, which agents read via project-get and can inject as a knowledge-base context block. Replaces the current text. Propose the new text to the user before calling this.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"content": {
+						Type:        "string",
+						Description: "Full markdown content to store as the project info. Replaces the existing text (use an empty string to clear it).",
+					},
+				},
+				Required: []string{"content"},
+			},
+		},
+		{
 			Name:         "project-create",
 			OutputSchema: objectOutputSchema(),
 			Description:  "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
@@ -1745,6 +1761,7 @@ var toolRequiredScope = map[string]string{
 	// Project
 	"project-get":    "graph:read",
 	"project-create": "projects:write",
+	"project-update": "projects:write",
 	// Schema read
 	"schema-version":        "graph:read",
 	"entity-type-list":      "graph:read",
@@ -2305,6 +2322,8 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeGetProjectInfo(ctx, projectID)
 	case "project-create":
 		return s.executeCreateProject(ctx, args)
+	case "project-update":
+		return s.executeUpdateProjectInfo(ctx, projectID, args)
 	case "schema-version":
 		return s.executeSchemaVersion(ctx, projectID)
 	case "entity-type-list":
@@ -2535,6 +2554,10 @@ func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName s
 		return s.executeResumeEmbeddings(ctx)
 	case "embedding-config-update":
 		return s.executeUpdateEmbeddingConfig(ctx, args)
+	case "embedding-progress":
+		return s.executeGetEmbeddingProgress(ctx, projectID, args)
+	case "embedding-retrigger":
+		return s.executeRetriggerEmbeddings(ctx, projectID, args)
 
 	// Provider tools
 	case "provider-list-org":
@@ -2716,6 +2739,50 @@ func (s *Service) executeGetProjectInfo(ctx context.Context, projectID string) (
 	return &ToolResult{
 		Content: []ContentBlock{{Type: "text", Text: *info}},
 	}, nil
+}
+
+// maxProjectInfoBytes bounds the project info document. It is injected into
+// agent context on every run, so an unbounded blob would tax every subsequent
+// call in the project.
+const maxProjectInfoBytes = 100 * 1024
+
+// executeUpdateProjectInfo replaces kb.projects.project_info. There was no tool
+// for this: project-get existed but the operator could only read the project
+// info, never write or fix it, so "please make this project's purpose clearer"
+// had no path.
+func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	content, ok := args["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("project-update: missing required parameter: content")
+	}
+	if len(content) > maxProjectInfoBytes {
+		return nil, fmt.Errorf("project-update: content is %d bytes, over the %d-byte limit", len(content), maxProjectInfoBytes)
+	}
+
+	var stored *string
+	if content != "" {
+		stored = &content
+	}
+
+	res, err := s.db.NewUpdate().
+		TableExpr("kb.projects").
+		Set("project_info = ?", stored).
+		Set("updated_at = NOW()").
+		Where("id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("update project info: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return nil, fmt.Errorf("update project info: project %s not found", projectID)
+	}
+
+	return s.wrapResult(map[string]any{
+		"updated": true,
+		"bytes":   len(content),
+		"cleared": content == "",
+	})
 }
 
 // executeListEntityTypes returns all entity types with counts

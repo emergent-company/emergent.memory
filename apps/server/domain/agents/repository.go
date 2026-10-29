@@ -1819,6 +1819,8 @@ func newAgentRun(opts CreateRunOptions) *AgentRun {
 		Model:             opts.Model,
 		AgentDefinitionID: opts.AgentDefinitionID,
 		TrustedInternal:   opts.TrustedInternal,
+		SubjectObjectID:   opts.SubjectObjectID,
+		SubjectObjectType: opts.SubjectObjectType,
 		Tools:             []string{},
 	}
 }
@@ -2009,13 +2011,17 @@ func (r *Repository) CancelRunIfPaused(ctx context.Context, runID string) (bool,
 	return n > 0, nil
 }
 
-// MarkRunResumed transitions a paused run to running state when a new resume run has been created.
-// This prevents the old paused run from appearing stuck indefinitely.
+// MarkRunResumed finalizes the paused checkpoint run once a new resumed run has
+// been created. The checkpoint must reach a terminal state: this used to flip it
+// to `running` and clear completed_at, and nothing ever finalized it, so every
+// resumed run left its parent permanently stuck in "working" — visible as a
+// stalled run in the UI and counted as live work. Execution has moved to the new
+// run; the checkpoint records that it was resumed and is marked successful.
 func (r *Repository) MarkRunResumed(ctx context.Context, runID string) error {
 	_, err := r.db.NewUpdate().
 		Model((*AgentRun)(nil)).
-		Set("status = ?", RunStatusRunning).
-		Set("completed_at = NULL").
+		Set("status = ?", RunStatusSuccess).
+		Set("completed_at = NOW()").
 		Where("id = ?", runID).
 		Where("status = ?", RunStatusPaused).
 		Exec(ctx)
@@ -2622,6 +2628,38 @@ func (r *Repository) ListQuestionsByProject(ctx context.Context, projectID strin
 		questions[i] = &q
 	}
 	return questions, nil
+}
+
+// FindPendingQuestionByConversation returns the most recent pending question
+// whose run belongs to the given chat conversation, or nil. It lets the chat
+// send path recognise that an incoming message is the answer to a paused run
+// rather than a fresh turn.
+func (r *Repository) FindPendingQuestionByConversation(ctx context.Context, projectID, conversationID string) (*AgentQuestion, error) {
+	type questionRow struct {
+		AgentQuestion
+		ConversationID *string `bun:"conversation_id"`
+	}
+	query := `SELECT aq.id, aq.run_id, aq.agent_id, aq.project_id, aq.question, aq.proposal,
+	                 aq.options, aq.interaction_type, aq.placeholder, aq.max_length,
+	                 aq.response, aq.responded_by, aq.responded_at, aq.status,
+	                 aq.notification_id, aq.created_at, aq.updated_at,
+	                 cc.id AS conversation_id
+	          FROM kb.agent_questions aq
+	          JOIN kb.agent_runs ar ON ar.id = aq.run_id
+	          JOIN kb.chat_conversations cc ON cc.session_id = ar.session_id
+	          WHERE aq.project_id = ? AND cc.id = ? AND aq.status = ?
+	          ORDER BY aq.created_at DESC
+	          LIMIT 1`
+	var rows []questionRow
+	if err := r.db.NewRaw(query, projectID, conversationID, QuestionStatusPending).Scan(ctx, &rows); err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	q := rows[0].AgentQuestion
+	q.ConversationID = rows[0].ConversationID
+	return &q, nil
 }
 
 // UpdateQuestionNotificationID sets the notification_id on a question record.

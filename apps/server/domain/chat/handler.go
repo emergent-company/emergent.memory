@@ -957,6 +957,17 @@ func (h *Handler) StreamChat(c echo.Context) error {
 			slog.String("conversation_id", conv.ID.String()),
 			slog.String("agent_definition_id", conv.AgentDefinitionID.String()),
 		)
+
+		// If this conversation's run is parked on an ask_user question, this
+		// message is the answer: resume that run instead of starting a fresh one.
+		if q, qErr := h.agentRepo.FindPendingQuestionByConversation(ctx, user.ProjectID, conv.ID.String()); qErr == nil && q != nil {
+			if handled := h.resumeForAnswer(runCtx, sseWriter, conv, q, message, user); handled {
+				sseWriter.WriteData(sse.NewDoneEvent())
+				sseWriter.Close()
+				return nil
+			}
+		}
+
 		agentResult := h.streamAgentChat(runCtx, conv, message, user.ProjectID, user.OrgID, user.ID, sseWriter, "", "", "")
 		sseWriter.WriteData(sse.NewDoneEvent())
 		sseWriter.Close()
@@ -1461,21 +1472,18 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		}
 	}
 
-	// Persist assistant response to kb.chat_messages with agent_run_id reference
-	if responseText != "" {
-		var retrievalCtx json.RawMessage
-		if result != nil {
-			rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
-			retrievalCtx = rc
-		}
-
-		go func() {
-			_, _ = h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
-				Role:             RoleAssistant,
-				Content:          responseText,
-				RetrievalContext: retrievalCtx,
-			})
-		}()
+	// Persist assistant response to kb.chat_messages with agent_run_id reference.
+	//
+	// A paused run is special: the streamed text is the executor's synthetic
+	// "Execution paused…" sentinel, and the question the user is expected to
+	// answer lives in kb.agent_questions. Persisting only the sentinel left the
+	// conversation looking stalled with no visible prompt — the operator could
+	// not tell what it had been asked. Persist the question (and its options)
+	// instead, keeping any genuine pre-pause text in front of it.
+	if result != nil && result.Status == agents.RunStatusPaused {
+		h.persistPausedRunMessage(ctx, projectID, userID, conv, result, responseText)
+	} else if responseText != "" {
+		h.persistAssistantMessage(ctx, projectID, userID, conv, result, responseText)
 	}
 
 	// Derive and emit grounded citations after the run completes and before the
@@ -1542,6 +1550,270 @@ func agentRunMessageText(content map[string]any) string {
 	return text
 }
 
+// persistAssistantMessage stores an assistant turn in kb.chat_messages, tagged
+// with the run that produced it.
+func (h *Handler) persistAssistantMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, text string) {
+	if text == "" {
+		return
+	}
+	var retrievalCtx json.RawMessage
+	if result != nil && result.RunID != "" {
+		rc, _ := json.Marshal(map[string]string{"agent_run_id": result.RunID})
+		retrievalCtx = rc
+	}
+	go func() {
+		_, _ = h.svc.AddMessage(ctx, projectID, userID, conv.ID, AddMessageRequest{
+			Role:             RoleAssistant,
+			Content:          text,
+			RetrievalContext: retrievalCtx,
+		})
+	}()
+}
+
+// pauseSentinels are the synthetic texts the executor streams when it parks a
+// run. They carry no information for the user and must not become the only
+// assistant turn in the conversation.
+var pauseSentinels = []string{
+	"Execution paused. Waiting for user response to your question.",
+	"Execution paused. Waiting for user approval of tool call(s).",
+	"Step limit reached. Run has been paused.",
+}
+
+func stripPauseSentinels(text string) string {
+	for _, s := range pauseSentinels {
+		text = strings.ReplaceAll(text, s, "")
+	}
+	return strings.TrimSpace(text)
+}
+
+// persistPausedRunMessage writes the pending question into the conversation
+// history so reopening the chat shows what the agent asked, not a bare stall.
+func (h *Handler) persistPausedRunMessage(ctx context.Context, projectID, userID string, conv *Conversation, result *agents.ExecuteResult, streamedText string) {
+	body := stripPauseSentinels(streamedText)
+
+	questionID, _ := result.Summary["question_id"].(string)
+	if questionID != "" && h.agentRepo != nil {
+		if q, err := h.agentRepo.FindQuestionByID(ctx, questionID); err == nil && q != nil {
+			qtext := formatQuestionForChat(q)
+			if body != "" {
+				body += "\n\n" + qtext
+			} else {
+				body = qtext
+			}
+		}
+	}
+
+	if body == "" {
+		body = "Execution paused."
+	}
+	h.persistAssistantMessage(ctx, projectID, userID, conv, result, body)
+}
+
+// formatQuestionForChat renders a question and its options as markdown.
+func formatQuestionForChat(q *agents.AgentQuestion) string {
+	var b strings.Builder
+	b.WriteString(q.Question)
+	if len(q.Options) > 0 {
+		b.WriteString("\n\n")
+		for _, o := range q.Options {
+			b.WriteString("- **")
+			b.WriteString(o.Label)
+			b.WriteString("**")
+			if o.Description != "" {
+				b.WriteString(" — ")
+				b.WriteString(o.Description)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("\nReply with an option or your own answer.")
+	}
+	return b.String()
+}
+
+// resumeForAnswer answers a pending ask_user question with the user's chat
+// message and streams the resumed run into the caller's SSE stream.
+//
+// Before this, a message typed while a question was pending started a brand-new
+// run: the paused run and its question were left orphaned (the question stayed
+// pending forever) and the fresh agent had no idea what the user was replying
+// to. Returns false when the question cannot be answered as free text, in which
+// case the caller falls through to a normal turn.
+func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, conv *Conversation, q *agents.AgentQuestion, message string, user *auth.AuthUser) bool {
+	if h.agentExecutor == nil || h.agentRepo == nil {
+		return false
+	}
+
+	run, err := h.agentRepo.FindRunByID(ctx, q.RunID)
+	if err != nil || run == nil || run.Status != agents.RunStatusPaused {
+		return false
+	}
+
+	// Tool-confirmation pauses are answered by the approval card, which records
+	// the approve/reject decision. Free text there is not an answer.
+	if sc := agents.SuspendSignalFromMap(run.SuspendContext); sc != nil && sc.Reason == agents.SuspendReasonAwaitingToolConfirm {
+		return false
+	}
+
+	// Refuse BEFORE claiming the question. Claiming first and then discovering
+	// the run cannot continue (execution disabled, step budget exhausted) would
+	// consume the question permanently and leave the run paused with nothing to
+	// answer — the exact stall this fix exists to remove.
+	if err := h.agentExecutor.EnsureExecutionEnabled(); err != nil {
+		sseWriter.WriteData(sse.NewErrorEvent("Agent execution is disabled: " + err.Error()))
+		return true
+	}
+	if run.StepCount >= agents.MaxTotalStepsPerRun {
+		sseWriter.WriteData(sse.NewErrorEvent("This run reached its step limit and cannot be resumed. Send a new message to start a fresh run."))
+		return true
+	}
+
+	claimed, err := h.agentRepo.AnswerQuestion(ctx, q.ID, message, user.ID)
+	if err != nil {
+		sseWriter.WriteData(sse.NewErrorEvent("Failed to record answer"))
+		return true
+	}
+	if !claimed {
+		// Someone else answered or cancelled it first; treat as a normal turn.
+		return false
+	}
+
+	agent, err := h.agentRepo.FindByID(ctx, run.AgentID, nil)
+	if err != nil || agent == nil {
+		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
+		sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
+		return true
+	}
+	agentDef, _ := h.agentRepo.ResolveDefinitionForAgent(ctx, agent)
+
+	maxSteps := agents.MaxTotalStepsPerRun
+	resumedFrom := run.ID
+	preCreated, err := h.agentRepo.CreateRunWithOptions(ctx, agents.CreateRunOptions{
+		AgentID:          run.AgentID,
+		MaxSteps:         &maxSteps,
+		ResumedFrom:      &resumedFrom,
+		InitialStepCount: run.StepCount,
+		TriggerMetadata:  run.TriggerMetadata,
+		// The resumed run owns the work item; MarkRunResumed finalizes the
+		// paused checkpoint, so the subject must not be lost on the child.
+		SubjectObjectID:   run.SubjectObjectID,
+		SubjectObjectType: run.SubjectObjectType,
+	})
+	if err != nil {
+		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
+		sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
+		return true
+	}
+	if run.SuspendContext != nil {
+		sc := make(map[string]any, len(run.SuspendContext)+1)
+		for k, v := range run.SuspendContext {
+			sc[k] = v
+		}
+		sc["resume_run_id"] = preCreated.ID
+		_ = h.agentRepo.UpdateSuspendContext(ctx, run.ID, sc)
+	}
+
+	userMessage := fmt.Sprintf(
+		"Previously you asked: %q\nThe user responded: %q\nContinue from where you left off.",
+		q.Question, message,
+	)
+
+	var fullResponse strings.Builder
+	streamCallback := func(event agents.StreamEvent) {
+		switch event.Type {
+		case agents.StreamEventTextDelta:
+			fullResponse.WriteString(event.Text)
+			sseWriter.WriteData(sse.NewTokenEvent(event.Text))
+		case agents.StreamEventThinking:
+			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
+		case agents.StreamEventToolCallStart:
+			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, "started", event.ID, event.Input, ""))
+		case agents.StreamEventToolCallEnd:
+			status := event.Status
+			if status == "" {
+				status = "completed"
+				if event.Error != "" {
+					status = "error"
+				}
+			}
+			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
+		case agents.StreamEventError:
+			sseWriter.WriteData(sse.NewErrorEvent(event.Error))
+		case agents.StreamEventToolApproval:
+			sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
+		case agents.StreamEventA2UI:
+			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
+		}
+	}
+
+	// The resumed run outlives the SSE request for the same reason the initial
+	// run does (issue #1149): a browser reload must not fail it.
+	runCtx := agents.DetachedRunContext(ctx)
+	result, err := h.agentExecutor.Resume(runCtx, run, agents.ExecuteRequest{
+		Agent:           agent,
+		AgentDefinition: agentDef,
+		ProjectID:       user.ProjectID,
+		OrgID:           user.OrgID,
+		UserMessage:     userMessage,
+		UserID:          user.ID,
+		StreamCallback:  streamCallback,
+		PreCreatedRun:   preCreated,
+	})
+	if err != nil {
+		h.log.Error("failed to resume run after chat answer",
+			slog.String("run_id", run.ID),
+			slog.String("question_id", q.ID),
+			slog.String("error", err.Error()),
+		)
+		// Hand the question back and reach a terminal state on both runs: a
+		// consumed question with a still-paused parent has no recovery path
+		// (the stale reaper only touches `running`), and the pre-created run
+		// would otherwise leak as `running`.
+		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
+		_ = h.agentRepo.FailRunWithSteps(ctx, run.ID, fmt.Sprintf("resume failed: %s", err.Error()), run.StepCount)
+		_ = h.agentRepo.FailRunWithSteps(ctx, preCreated.ID, "resume failed before start", run.StepCount)
+		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
+		return true
+	}
+
+	if result != nil {
+		if result.Cleanup != nil {
+			go result.Cleanup()
+		}
+
+		// A reasoner that answers entirely in thinking mode delivers no text
+		// delta, so recover the answer from the run's persisted messages (same
+		// safety net as the first leg in streamAgentChat).
+		text := fullResponse.String()
+		if text == "" && result.Status == agents.RunStatusSuccess {
+			if runMsgs, msgErr := h.agentRepo.FindMessagesByRunID(ctx, result.RunID); msgErr == nil {
+				text = lastAgentReplyText(runMsgs)
+			}
+			if text == "" {
+				if t, ok := result.Summary["final_response"].(string); ok {
+					text = t
+				}
+			}
+			if text != "" {
+				_ = sseWriter.WriteData(sse.NewTokenEvent(text))
+			}
+		}
+
+		switch result.Status {
+		case agents.RunStatusPaused:
+			h.persistPausedRunMessage(ctx, user.ProjectID, user.ID, conv, result, text)
+		case agents.RunStatusError:
+			if errMsg, ok := result.Summary["error"].(string); ok && errMsg != "" {
+				sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
+			}
+		default:
+			if text != "" {
+				h.persistAssistantMessage(ctx, user.ProjectID, user.ID, conv, result, text)
+			}
+		}
+	}
+	return true
+}
+
 // QueryStreamRequest is the request body for the stateless query endpoint.
 type QueryStreamRequest struct {
 	Message        string `json:"message"`
@@ -1577,7 +1849,9 @@ func withQueryTypeScope(ctx context.Context, req QueryStreamRequest) context.Con
 // QueryStream handles POST /api/projects/:projectId/query.
 // It finds (or lazily creates) the project's graph-query-agent and streams the response
 // using the same agent chat path as /api/chat/stream. The agent is internal — it never
-// appears in the agent definitions list. No conversation is persisted.
+// appears in the agent definitions list. The conversation it runs in IS persisted (so
+// messages, runs and pending questions stay traceable) and, when the caller supplies a
+// parent, is linked to that parent conversation.
 func (h *Handler) QueryStream(c echo.Context) error {
 	user := auth.MustGetUser(c)
 

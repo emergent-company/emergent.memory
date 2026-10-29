@@ -38,6 +38,7 @@ tools:
   - "embedding-*"             # embedding status/pause/resume/config
   - "token-*"                 # token list/create/get/revoke
   - "document-*"              # document list/get/upload/delete
+  - "project-update"          # set the project info document (project-get reads it)
   # --- Graph: read-only inspection (no entity/relationship writes) ---
   - "project-get"
   - "project-briefing"

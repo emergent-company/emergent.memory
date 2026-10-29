@@ -48,7 +48,8 @@ func newEmbeddingControlEcho(t *testing.T, testDB *testutil.TestDB) *testutil.HT
 	objectWorker := extraction.NewGraphEmbeddingWorker(objectJobsSvc, embeds, dbc, cfg, log, nil, nil, nil, false)
 	relWorker := extraction.NewGraphRelationshipEmbeddingWorker(relJobsSvc, embeds, dbc, cfg, nil, log, nil, nil, false)
 	sweepWorker := extraction.NewEmbeddingSweepWorker(objectJobsSvc, embeds, dbc, extraction.DefaultEmbeddingSweepConfig(), log, nil, nil, false)
-	handler := extraction.NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker, nil, objectJobsSvc, relJobsSvc)
+	chunkJobsSvc := extraction.NewChunkEmbeddingJobsService(dbc, log, extraction.DefaultChunkEmbeddingConfig())
+	handler := extraction.NewEmbeddingControlHandler(objectWorker, relWorker, sweepWorker, nil, objectJobsSvc, relJobsSvc, chunkJobsSvc)
 
 	e := echo.New()
 	e.HideBanner = true

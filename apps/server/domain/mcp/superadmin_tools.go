@@ -518,6 +518,7 @@ var superadminMutationToolNames = map[string]bool{
 	"embedding-pause":         true,
 	"embedding-resume":        true,
 	"embedding-config-update": true,
+	"embedding-retrigger":     true,
 	// new operator mutations (confirm enforced in their handlers)
 	"user-delete":                 true,
 	"org-delete":                  true,
@@ -551,6 +552,8 @@ func (s *Service) superadminPreExistingMutationDryRun(toolName string, args map[
 		return s.superadminDryRun("resume all embedding workers", map[string]any{})
 	case "embedding-config-update":
 		return s.superadminDryRun("update embedding worker configuration", map[string]any{})
+	case "embedding-retrigger":
+		return s.superadminDryRun("requeue this project's failed embedding jobs", map[string]any{})
 	default:
 		return nil, fmt.Errorf("superadmin mutation dry-run not defined for %s", toolName)
 	}

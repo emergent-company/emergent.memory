@@ -26,17 +26,25 @@ func documentsToolDefinitions() []ToolDefinition {
 			Name:          "document-list",
 			OutputSchema:  objectOutputSchema(),
 			RequiredScope: "documents:read",
-			Description:   "List documents in the current project. Returns an array of document objects with id, filename, mimeType, conversionStatus, fileSizeBytes, and timestamps. Supports optional pagination.",
+			Description:   "List documents in the current project as metadata (id, filename, sourceType, mimeType, chunks, embeddedChunks, totalChars, fileSizeBytes, statuses, timestamps). Document bodies are NOT included by default — pass include_content=true only when you need the text, and prefer document-get or search-hybrid for a single document. Paginate with next_cursor/cursor.",
 			InputSchema: InputSchema{
 				Type: "object",
 				Properties: map[string]PropertySchema{
 					"limit": {
 						Type:        "integer",
-						Description: "Maximum number of documents to return (default 50)",
+						Description: "Maximum number of documents to return (default 50, max 500)",
 					},
 					"source_type": {
 						Type:        "string",
-						Description: "Filter by source type (e.g. 'upload', 'github', 'web')",
+						Description: "Filter by source type (e.g. 'upload', 'github', 'web', 'repo')",
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Opaque pagination cursor from a previous response's next_cursor. Omit for the first page.",
+					},
+					"include_content": {
+						Type:        "boolean",
+						Description: "When true, each document also carries its full content. Large corpora make this payload huge (megabytes) — leave it off unless you know the result set is small.",
 					},
 				},
 				Required: []string{},
@@ -118,16 +126,88 @@ func (s *Service) executeListDocuments(ctx context.Context, projectID string, ar
 	if st, ok := args["source_type"].(string); ok && st != "" {
 		params.SourceType = &st
 	}
+	// Without cursor support a 900-document project could only ever be paged by
+	// re-reading the same first page, and without the source_type filter it was
+	// impossible to see anything past the first page at all.
+	if cur, ok := args["cursor"].(string); ok && cur != "" {
+		parsed, err := documents.ParseCursor(cur)
+		if err != nil {
+			return nil, fmt.Errorf("list_documents: invalid cursor: %w", err)
+		}
+		params.Cursor = parsed
+	}
+
 	result, err := s.documentsSvc.List(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("list_documents: %w", err)
 	}
+
+	includeContent, _ := args["include_content"].(bool)
+	docs := make([]map[string]any, 0, len(result.Documents))
+	for i := range result.Documents {
+		docs = append(docs, documentSummary(&result.Documents[i], includeContent))
+	}
 	resp := map[string]any{
-		"documents":   result.Documents,
+		"documents":   docs,
 		"total":       result.Total,
 		"next_cursor": result.NextCursor,
 	}
 	return s.wrapResult(resp)
+}
+
+// documentSummary projects a document onto the fields an agent needs to decide
+// what to read next. Content is the one field that must stay opt-in: a full
+// listing of a large corpus inlined every document body (measured: 1 MB for 50
+// documents), which blew the caller's context and was then compressed away to a
+// preview the caller could not expand.
+func documentSummary(d *documents.Document, includeContent bool) map[string]any {
+	sum := map[string]any{
+		"id":             d.ID,
+		"chunks":         d.Chunks,
+		"embeddedChunks": d.EmbeddedChunks,
+		"totalChars":     d.TotalChars,
+	}
+	if d.Filename != nil && *d.Filename != "" {
+		sum["filename"] = *d.Filename
+	}
+	if d.SourceURL != nil && *d.SourceURL != "" {
+		sum["sourceUrl"] = *d.SourceURL
+	}
+	if d.MimeType != nil && *d.MimeType != "" {
+		sum["mimeType"] = *d.MimeType
+	}
+	if d.SourceType != nil && *d.SourceType != "" {
+		sum["sourceType"] = *d.SourceType
+	}
+	if d.SourceExternalID != nil && *d.SourceExternalID != "" {
+		sum["sourceExternalId"] = *d.SourceExternalID
+	}
+	if d.ConversionStatus != nil && *d.ConversionStatus != "" {
+		sum["conversionStatus"] = *d.ConversionStatus
+	}
+	if d.ConversionError != nil && *d.ConversionError != "" {
+		sum["conversionError"] = *d.ConversionError
+	}
+	if d.ProcessingStatus != nil && *d.ProcessingStatus != "" {
+		sum["processingStatus"] = *d.ProcessingStatus
+	}
+	if d.SourceStatus != "" {
+		sum["sourceStatus"] = d.SourceStatus
+	}
+	if d.FileSizeBytes != nil {
+		sum["fileSizeBytes"] = *d.FileSizeBytes
+	}
+	if d.ParentDocumentID != nil && *d.ParentDocumentID != "" {
+		sum["parentDocumentId"] = *d.ParentDocumentID
+	}
+	sum["canonicalId"] = d.CanonicalID
+	sum["version"] = d.Version
+	sum["createdAt"] = d.CreatedAt
+	sum["updatedAt"] = d.UpdatedAt
+	if includeContent && d.Content != nil {
+		sum["content"] = *d.Content
+	}
+	return sum
 }
 
 func (s *Service) executeGetDocument(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {

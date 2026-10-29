@@ -271,6 +271,13 @@ type CreateRunOptions struct {
 	// TrustedInternal is the fail-closed trust marker persisted on the run row.
 	// false (zero value) = external-facing/untrusted; trusted surfaces set true.
 	TrustedInternal bool
+	// SubjectObjectID/Type carry the work object a run was dispatched for. A
+	// resume must propagate them: HasLiveRunForSubject only sees queued/running/
+	// paused runs, so a resumed child without the subject would let the work
+	// reaper reclaim the item and dispatch a duplicate while the parent
+	// checkpoint is finalized.
+	SubjectObjectID   *string
+	SubjectObjectType *string
 }
 
 // CreateRunQueuedOptions holds optional parameters for CreateRunQueued.

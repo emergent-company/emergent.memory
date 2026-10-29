@@ -368,7 +368,7 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 			})
 
 		case search.ItemTypeText:
-			textType := "text_chunk"
+			textType := textChunkType
 
 			// Chunks carry no entity type, so the type allowlist (allowedTypes) and
 			// system blocklist (blockedTypes) do not gate them — they are keyed on
@@ -411,7 +411,7 @@ func (s *Service) mapUnifiedToSearchResponse(res *search.UnifiedSearchResponse, 
 		for _, item := range items {
 			// text_chunk items carry no labels; they are governed by
 			// include_chunks, not by the entity label filter, so let them pass.
-			if item.Object.Type == "text_chunk" {
+			if item.Object.Type == textChunkType {
 				filtered = append(filtered, item)
 				continue
 			}
@@ -457,7 +457,7 @@ func filterSearchItemsByScope(scope *TypeScope, items []*graph.SearchResultItem)
 		if item == nil || item.Object == nil {
 			continue
 		}
-		if item.Object.Type == "text_chunk" || scope.AllowsObject(item.Object.Type) {
+		if item.Object.Type == textChunkType || scope.AllowsObject(item.Object.Type) {
 			out = append(out, item)
 		}
 	}

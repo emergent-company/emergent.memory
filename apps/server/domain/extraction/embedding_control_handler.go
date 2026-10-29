@@ -21,6 +21,7 @@ type EmbeddingControlHandler struct {
 	staleTask     *scheduler.StaleJobCleanupTask
 	objectJobsSvc *GraphEmbeddingJobsService
 	relJobsSvc    *GraphRelationshipEmbeddingJobsService
+	chunkJobsSvc  *ChunkEmbeddingJobsService
 }
 
 // NewEmbeddingControlHandler creates a new control handler.
@@ -31,6 +32,7 @@ func NewEmbeddingControlHandler(
 	staleTask *scheduler.StaleJobCleanupTask,
 	objectJobsSvc *GraphEmbeddingJobsService,
 	relJobsSvc *GraphRelationshipEmbeddingJobsService,
+	chunkJobsSvc *ChunkEmbeddingJobsService,
 ) *EmbeddingControlHandler {
 	return &EmbeddingControlHandler{
 		objectWorker:  objectWorker,
@@ -39,6 +41,7 @@ func NewEmbeddingControlHandler(
 		staleTask:     staleTask,
 		objectJobsSvc: objectJobsSvc,
 		relJobsSvc:    relJobsSvc,
+		chunkJobsSvc:  chunkJobsSvc,
 	}
 }
 
@@ -585,6 +588,74 @@ func (h *EmbeddingControlHandler) ResumeAll() {
 	h.objectWorker.Resume()
 	h.relWorker.Resume()
 	h.sweepWorker.Resume()
+}
+
+// ProjectQueueStats returns per-queue job counts for one project.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) ProjectQueueStats(ctx context.Context, projectID string) (mcp.EmbeddingProjectQueueStats, error) {
+	var (
+		objStats   *GraphEmbeddingQueueStats
+		chunkStats *ChunkEmbeddingQueueStats
+		relStats   *GraphRelationshipEmbeddingQueueStats
+		objErr     error
+		chunkErr   error
+		relErr     error
+	)
+	var g errgroup.Group
+	g.Go(func() error { objStats, objErr = h.objectJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { chunkStats, chunkErr = h.chunkJobsSvc.StatsByProject(ctx, projectID); return nil })
+	g.Go(func() error { relStats, relErr = h.relJobsSvc.StatsByProject(ctx, projectID); return nil })
+	_ = g.Wait()
+
+	if objErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, objErr
+	}
+	if chunkErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, chunkErr
+	}
+	if relErr != nil {
+		return mcp.EmbeddingProjectQueueStats{}, relErr
+	}
+
+	return mcp.EmbeddingProjectQueueStats{
+		Chunks: mcp.EmbeddingQueueStats{
+			Pending:     chunkStats.Pending,
+			Processing:  chunkStats.Processing,
+			Completed:   chunkStats.Completed,
+			Failed:      chunkStats.Failed,
+			StaleFailed: chunkStats.StaleFailed,
+		},
+		Objects: mcp.EmbeddingQueueStats{
+			Pending:     objStats.Pending,
+			Processing:  objStats.Processing,
+			Completed:   objStats.Completed,
+			Failed:      objStats.Failed,
+			StaleFailed: objStats.StaleFailed,
+			DeadLetter:  objStats.DeadLetter,
+		},
+		Relationships: mcp.EmbeddingQueueStats{
+			Pending:     relStats.Pending,
+			Processing:  relStats.Processing,
+			Completed:   relStats.Completed,
+			Failed:      relStats.Failed,
+			StaleFailed: relStats.StaleFailed,
+			DeadLetter:  relStats.DeadLetter,
+		},
+	}, nil
+}
+
+// RetriggerFailed requeues this project's failed and dead_letter embedding jobs.
+// Implements mcp.EmbeddingControlHandler.
+func (h *EmbeddingControlHandler) RetriggerFailed(ctx context.Context, projectID string) (mcp.EmbeddingRetriggerResult, error) {
+	objN, err := h.objectJobsSvc.RetriggerByProject(ctx, projectID)
+	if err != nil {
+		return mcp.EmbeddingRetriggerResult{}, err
+	}
+	chunkN, err := h.chunkJobsSvc.RetriggerByProject(ctx, projectID)
+	if err != nil {
+		return mcp.EmbeddingRetriggerResult{}, err
+	}
+	return mcp.EmbeddingRetriggerResult{ObjectsReset: objN, ChunksReset: chunkN}, nil
 }
 
 // ApplyConfig applies an embedding configuration update.

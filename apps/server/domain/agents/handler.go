@@ -3264,6 +3264,11 @@ func (h *Handler) resumeQuestionRun(ctx context.Context, p RespondParams, run *A
 		ResumedFrom:      &resumedFrom,
 		InitialStepCount: run.StepCount,
 		TriggerMetadata:  run.TriggerMetadata,
+		// Keep the work-item link on the resumed run: the parent checkpoint is
+		// finalized by MarkRunResumed, and a subject with no live run is
+		// reclaimable by the work reaper.
+		SubjectObjectID:   run.SubjectObjectID,
+		SubjectObjectType: run.SubjectObjectType,
 	})
 	if err != nil {
 		return nil, apperror.NewInternal("failed to pre-create resume run", err)

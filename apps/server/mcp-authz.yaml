@@ -143,6 +143,11 @@
     },
     {
       "file": "apps/server/domain/mcp/service.go",
+      "func": "executeUpdateProjectInfo",
+      "why": "update kb.projects.project_info by the id already authorized for this call (project_id comes from the authenticated request context, never from tool arguments), scope-gated projects:write, bounded to 100 KB; no cross-project read or write"
+    },
+    {
+      "file": "apps/server/domain/mcp/service.go",
       "func": "getEntityBasicInfo",
       "why": "read kb.graph_objects, project-scoped; read-only"
     },

@@ -10,6 +10,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// textChunkType is the synthetic object type search results use for document
+// chunks. It is not a schema type: a chunk carries a snippet, not properties.
+const textChunkType = "text_chunk"
+
 // ResponseOpts controls how graph DTOs are slimmed for LLM-facing MCP tool results.
 type ResponseOpts struct {
 	Fields        []string // property projection; empty = all properties
@@ -189,8 +193,18 @@ func slimEntity(o *graph.GraphObjectResponse, opts ResponseOpts) map[string]any 
 	props := propertiesForStrategy(o.Properties, opts)
 	name, hasName := nameForStrategy(o.Properties, opts)
 
+	// Text-chunk and synthetic relationship items carry only a version ID — their
+	// CanonicalID is zero. Printing the canonical ID unconditionally emitted the
+	// zero UUID for every chunk hit, which made the result unresolvable: the
+	// caller had a snippet-free object with id 00000000-0000-0000-0000-000000000000.
+	// Fall back to the version ID so the identifier is always the real row.
+	displayID := o.CanonicalID
+	if displayID == uuid.Nil {
+		displayID = o.ID
+	}
+
 	out := map[string]any{
-		"id":   o.CanonicalID.String(),
+		"id":   displayID.String(),
 		"type": o.Type,
 	}
 	if o.Key != nil && *o.Key != "" {
@@ -352,8 +366,18 @@ func slimSearchData(items []*graph.SearchResultItem, opts ResponseOpts) []map[st
 		if it == nil {
 			continue
 		}
+		var object map[string]any
+		if it.Object != nil && it.Object.Type == textChunkType {
+			// A text chunk has no schema properties; snippet/document_id/source
+			// ARE the payload. The compact field strategy strips `properties`
+			// wholesale, which left chunk hits as an id plus a type — unusable
+			// for grounding an answer. Emit the payload inline instead.
+			object = slimTextChunk(it.Object)
+		} else {
+			object = slimEntity(it.Object, opts)
+		}
 		item := map[string]any{
-			"object": slimEntity(it.Object, opts),
+			"object": object,
 			"score":  it.Score,
 		}
 		if opts.Verbose {
@@ -368,6 +392,30 @@ func slimSearchData(items []*graph.SearchResultItem, opts ResponseOpts) []map[st
 			}
 		}
 		out = append(out, item)
+	}
+	return out
+}
+
+// slimTextChunk renders a document chunk hit as {id, type, snippet,
+// document_id, source}. The payload keys mirror what the search mapping puts in
+// Properties so a caller does not need to know which layer produced the item.
+func slimTextChunk(o *graph.GraphObjectResponse) map[string]any {
+	displayID := o.CanonicalID
+	if displayID == uuid.Nil {
+		displayID = o.ID
+	}
+	out := map[string]any{
+		"id":   displayID.String(),
+		"type": o.Type,
+	}
+	if s, ok := o.Properties["snippet"].(string); ok && s != "" {
+		out["snippet"] = truncateString(s)
+	}
+	if d, ok := o.Properties["document_id"].(string); ok && d != "" {
+		out["document_id"] = d
+	}
+	if src, ok := o.Properties["source"].(string); ok && src != "" {
+		out["source"] = src
 	}
 	return out
 }

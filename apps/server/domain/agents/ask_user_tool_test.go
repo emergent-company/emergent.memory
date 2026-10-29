@@ -161,10 +161,8 @@ func TestParseQuestionOptions_SkipsInvalidItems(t *testing.T) {
 	args := map[string]any{
 		"options": []any{
 			map[string]any{"label": "Good", "value": "good"},
-			"not a map",                              // skipped
-			map[string]any{"label": "", "value": ""}, // skipped: empty
-			map[string]any{"label": "Only label"},    // skipped: no value
-			map[string]any{"value": "only_value"},    // skipped: no label
+			map[string]any{"label": ""},           // skipped: no label to fall back to
+			map[string]any{"value": "only_value"}, // skipped: no label
 			map[string]any{"label": "Also Good", "value": "also_good"},
 		},
 	}
@@ -173,6 +171,32 @@ func TestParseQuestionOptions_SkipsInvalidItems(t *testing.T) {
 
 	assert.Equal(t, "Good", result[0].Label)
 	assert.Equal(t, "Also Good", result[1].Label)
+}
+
+// Models routinely send options as bare strings ("Accept", "Reject"); that used
+// to leave an empty option list and fail the whole ask_user call.
+func TestParseQuestionOptions_AcceptsStringOptions(t *testing.T) {
+	args := map[string]any{
+		"options": []any{"Accept", "  Reject  ", ""},
+	}
+	result := parseQuestionOptions(args)
+	require.Len(t, result, 2)
+
+	assert.Equal(t, "Accept", result[0].Label)
+	assert.Equal(t, "Accept", result[0].Value)
+	assert.Equal(t, "Reject", result[1].Label)
+	assert.Equal(t, "Reject", result[1].Value)
+}
+
+// A label-only option is valid: the submitted value defaults to the label.
+func TestParseQuestionOptions_LabelOnlyDefaultsValue(t *testing.T) {
+	args := map[string]any{
+		"options": []any{map[string]any{"label": "Accept but lead with the website framing"}},
+	}
+	result := parseQuestionOptions(args)
+	require.Len(t, result, 1)
+	assert.Equal(t, "Accept but lead with the website framing", result[0].Label)
+	assert.Equal(t, "Accept but lead with the website framing", result[0].Value)
 }
 
 func TestParseQuestionOptions_SingleOption(t *testing.T) {

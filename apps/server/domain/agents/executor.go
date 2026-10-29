@@ -1433,6 +1433,10 @@ func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req Exe
 			InitialStepCount: priorRun.StepCount,
 			TriggerMetadata:  priorRun.TriggerMetadata,
 			TrustedInternal:  priorRun.TrustedInternal,
+			// The resumed run owns the work item from here: MarkRunResumed
+			// finalizes the paused checkpoint.
+			SubjectObjectID:   priorRun.SubjectObjectID,
+			SubjectObjectType: priorRun.SubjectObjectType,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resumed run: %w", err)
