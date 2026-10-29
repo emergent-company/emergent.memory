@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage, goto } from '../../helpers/page';
+import { goto } from '../../helpers/page';
+import { uploadDocumentViaForm } from '../../helpers/documents';
 import { addProvider, setDefaultEmbeddingModel, setDefaultGenerativeModel } from '../../helpers/providers';
 
 // Extraction review → merge preview modal (gateway/documents.templ,
@@ -33,19 +34,6 @@ const EMBEDDING_MODEL =
   process.env.E2E_SCENARIO_LLM_EMBEDDING_MODEL || 'openai/gemini-embedding-001';
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** Upload one document through the /documents form and wait for the success redirect. */
-async function uploadDocument(page: Page, name: string, body: string): Promise<void> {
-  await goto(page, '/documents');
-  await expectAppPage(page, /Documents/);
-  await page.setInputFiles('input[type="file"][name="file"]', {
-    name,
-    mimeType: 'text/markdown',
-    buffer: Buffer.from(body),
-  });
-  await page.getByRole('button', { name: 'Upload' }).click();
-  await page.waitForURL(/\/documents\?uploaded=1/);
-}
 
 /** Open the freshly uploaded document's detail page and return its id. */
 async function openUploadedDocument(page: Page, name: string): Promise<string> {
@@ -145,7 +133,7 @@ test.describe('Extraction merge preview', () => {
     let id: string | undefined;
 
     try {
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
       id = await openUploadedDocument(page, name);
       await triggerExtraction(page, id);
 

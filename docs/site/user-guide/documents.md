@@ -128,12 +128,19 @@ does not have to combine the two raw statuses:
 
 **Knowledge → Documents** shows the same dataset with controls on top:
 
+- an **Upload** button in the page header that opens the upload form in a dialog,
 - a **stats strip** with the project's document total and the per-status counts,
 - **status tabs** (All, Processing, Ready, Extracted, Failed) that keep the active search, source and sort,
 - a **source filter** listing the source kinds the project actually has,
 - **search** over file names and source URLs,
 - **sorting** on the Created and Updated column headers (click again to flip),
 - a **Load more** button that appends the next page without losing the filters.
+
+The **Source** column names the origin: `Uploaded` for a file you uploaded, and
+the data source's own name (for example `Product Drive`) for a document imported
+by a connected integration. A document from a data source links to that
+data source's page, so you can jump straight from the row to the sync that
+brought it in.
 
 The header count is the number of documents matching every active filter — the
 project total when none is set — never just the length of the current page. The

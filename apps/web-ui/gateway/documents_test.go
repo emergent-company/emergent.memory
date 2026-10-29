@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"golang.org/x/net/html"
 )
 
 // --- MemoryClient document methods ---
@@ -551,7 +552,7 @@ func documentsTestPage() documentPageData {
 		},
 		Rows: []documentRow{
 			{ID: "d1", Name: "Spec.md", Chunks: 12, Status: "completed", Versions: 2, Source: "Uploaded", CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-27T10:00:00Z"},
-			{ID: "d2", Name: "notes.txt", Chunks: 3, Status: "ready_for_extraction", Versions: 1, Source: "Google Drive", CreatedAt: "2026-08-26T11:00:00Z", UpdatedAt: "2026-08-26T11:00:00Z"},
+			{ID: "d2", Name: "notes.txt", Chunks: 3, Status: "ready_for_extraction", Versions: 1, Source: "Product Drive", SourceID: "ds-2", SourceType: "drive", CreatedAt: "2026-08-26T11:00:00Z", UpdatedAt: "2026-08-26T11:00:00Z"},
 		},
 	}
 }
@@ -599,7 +600,13 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 		`id="documents-mobile-list"`,
 		// columns from the API that the old row hid
 		"Versions", "Source", "Updated",
+		// the filter lists the source type ...
 		"Google Drive",
+		// ... while a row from a connected source names it and links to it
+		"Product Drive",
+		`href="/data-sources/ds-2"`,
+		`data-testid="documents-source-link"`,
+		`title="From Product Drive"`,
 		`data-status="completed"`,
 		// status tabs carry counts and the filter state
 		`href="/documents?status=failed"`,
@@ -618,6 +625,24 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 			t.Errorf("documents browser missing %q", want)
 		}
 	}
+
+	// Only the sourced row links: one anchor in the table and one in the card
+	// list, and nothing for the uploaded row (there is no data source to open).
+	if got := strings.Count(html, `href="/data-sources/ds-2"`); got != 2 {
+		t.Errorf("source links to ds-2 = %d, want 2 (table row + card)", got)
+	}
+	if strings.Contains(html, `href="/data-sources/ds-1"`) {
+		t.Error("a row without a source id must not link to a data source")
+	}
+	if got := strings.Count(html, `data-testid="documents-source-link"`); got != 1 {
+		t.Errorf("table source links = %d, want 1", got)
+	}
+	if got := strings.Count(html, `data-testid="documents-source-link-card"`); got != 1 {
+		t.Errorf("card source links = %d, want 1", got)
+	}
+	// The card used to be one big <a>; the source link is its own anchor, so an
+	// anchor inside an anchor would silently split the card's DOM.
+	assertNoNestedAnchors(t, html)
 
 	// No further page: no load-more trigger.
 	data.HasMore = false
@@ -702,6 +727,57 @@ func TestRenderDocumentsFlashes(t *testing.T) {
 	data.FlashErr = errTest
 	if html := renderHTML(t, DocumentsPage(data)); !strings.Contains(html, "backend unreachable") {
 		t.Error("upload flash should render the real error, missing")
+	}
+}
+
+// TestRenderDocumentsUploadDialog pins the upload affordance: the page keeps a
+// single header button, and the form itself lives in a closed modal so the
+// listing is not pushed down by an always-open drop zone.
+func TestRenderDocumentsUploadDialog(t *testing.T) {
+	html := renderHTML(t, DocumentsPage(documentsTestPage()))
+
+	for _, want := range []string{
+		`data-testid="documents-upload-open"`,
+		`data-dialog-open="document-upload-modal"`,
+		`<dialog id="document-upload-modal" class="modal"`,
+		`data-testid="documents-upload-modal"`,
+		`aria-labelledby="document-upload-title"`,
+		`data-testid="documents-upload-input"`,
+		`data-testid="documents-upload-submit"`,
+		`data-dialog-close="document-upload-modal"`,
+		`data-document-upload`,
+		`enctype="multipart/form-data"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("upload dialog missing %q", want)
+		}
+	}
+
+	// One file input, and it is inside the dialog rather than loose on the page.
+	if got := strings.Count(html, `name="file"`); got != 1 {
+		t.Errorf("file inputs = %d, want 1", got)
+	}
+	dialogAt := strings.Index(html, `<dialog id="document-upload-modal"`)
+	inputAt := strings.Index(html, `data-testid="documents-upload-input"`)
+	closeAt := strings.Index(html, `</dialog>`)
+	if dialogAt < 0 || inputAt <= dialogAt || closeAt <= inputAt {
+		t.Errorf("file input must sit inside the upload dialog (dialog=%d input=%d close=%d)", dialogAt, inputAt, closeAt)
+	}
+
+	// An empty project points at the same dialog from its own call to action.
+	empty := renderHTML(t, DocumentsPage(documentPageData{Sort: documentSortCreated, Order: documentOrderDesc}))
+	ctaAt := strings.Index(empty, `data-testid="documents-empty-upload"`)
+	if ctaAt < 0 {
+		t.Fatal("empty state should offer an upload button")
+	}
+	// The attributes render before the test id, so take the whole opening tag.
+	tagStart := strings.LastIndex(empty[:ctaAt], "<button")
+	tagEnd := strings.Index(empty[ctaAt:], ">")
+	if tagStart < 0 || tagEnd < 0 {
+		t.Fatal("empty state upload button is not a <button> tag")
+	}
+	if cta := empty[tagStart : ctaAt+tagEnd]; !strings.Contains(cta, `data-dialog-open="document-upload-modal"`) {
+		t.Error("the empty state's upload button should open the dialog")
 	}
 }
 
@@ -2394,5 +2470,74 @@ func TestRenderExtractionObjectsCarryOrigin(t *testing.T) {
 	want := `href="/objects/o1?from=%2Fdocuments%2Fd1%2Fextractions%2Fjob1"`
 	if !strings.Contains(html, want) {
 		t.Fatalf("extracted object link missing origin trail %q:\n%s", want, html)
+	}
+}
+
+// anchorNesting reports the deepest <a> nesting in markup.
+//
+// It tokenizes instead of building a tree on purpose: html.Parse runs HTML5 tree
+// construction, which repairs nested anchors (the outer one is closed), so a
+// tree walk can never see the nesting it is meant to catch. The tokenizer sees
+// the tags as written.
+func anchorNesting(markup string) (int, error) {
+	z := html.NewTokenizer(strings.NewReader(markup))
+	depth, deepest := 0, 0
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			if err := z.Err(); err != io.EOF {
+				return deepest, err
+			}
+			return deepest, nil
+		}
+		if tt != html.StartTagToken && tt != html.EndTagToken {
+			continue
+		}
+		name, _ := z.TagName()
+		if string(name) != "a" {
+			continue
+		}
+		if tt == html.EndTagToken {
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		depth++
+		if depth > deepest {
+			deepest = depth
+		}
+	}
+}
+
+// assertNoNestedAnchors fails when an <a> opens inside another <a>. Browsers
+// repair that by closing the outer anchor, splitting whatever was inside it into
+// stray focusable fragments.
+func assertNoNestedAnchors(t *testing.T, markup string) {
+	t.Helper()
+	deepest, err := anchorNesting(markup)
+	if err != nil {
+		t.Fatalf("tokenize rendered page: %v", err)
+	}
+	if deepest > 1 {
+		t.Errorf("anchors nest %d deep; an <a> must never contain another <a>", deepest)
+	}
+}
+
+// TestAnchorNestingSeesNestedAnchors proves the guard can actually fail: the
+// fixture is the card markup from before the fix, where the source link sat
+// inside the card's anchor.
+func TestAnchorNestingSeesNestedAnchors(t *testing.T) {
+	preFix := `<div data-document-id="d1"><a class="card" href="/documents/d1"><p>spec.md</p>` +
+		`<a class="link" href="/data-sources/ds-1">Product Drive</a></a></div>`
+	deepest, err := anchorNesting(preFix)
+	if err != nil {
+		t.Fatalf("tokenize fixture: %v", err)
+	}
+	if deepest != 2 {
+		t.Errorf("nesting in the pre-fix markup = %d, want 2 (the guard would not have caught it)", deepest)
+	}
+	if deepest, err := anchorNesting(`<div><a href="/a">a</a><a href="/b">b</a></div>`); err != nil || deepest != 1 {
+		t.Errorf("sibling anchors = %d (err %v), want 1", deepest, err)
 	}
 }

@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectAppPage, goto } from '../../helpers/page';
+import { goto } from '../../helpers/page';
+import { uploadDocumentViaForm } from '../../helpers/documents';
 import { readBootstrap, createProject } from '../../helpers/bootstrap';
 import { addProvider, setDefaultEmbeddingModel, setDefaultGenerativeModel } from '../../helpers/providers';
 
@@ -41,19 +42,6 @@ const EMBEDDING_MODEL =
   process.env.E2E_SCENARIO_LLM_EMBEDDING_MODEL || 'openai/gemini-embedding-001';
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** Upload one document through the /documents form and wait for the success redirect. */
-async function uploadDocument(page: Page, name: string, body: string): Promise<void> {
-  await goto(page, '/documents');
-  await expectAppPage(page, /Documents/);
-  await page.setInputFiles('input[type="file"][name="file"]', {
-    name,
-    mimeType: 'text/markdown',
-    buffer: Buffer.from(body),
-  });
-  await page.getByRole('button', { name: 'Upload' }).click();
-  await page.waitForURL(/\/documents\?uploaded=1/);
-}
 
 /**
  * Find the list row for the freshly uploaded document, click into its detail
@@ -119,7 +107,7 @@ test.describe('Document upload + extraction', () => {
     let id: string | undefined;
 
     try {
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
       await expect(
         page.locator('#toast-container [role="alert"]').filter({ hasText: 'Document uploaded.' }),
       ).toBeVisible();
@@ -168,7 +156,7 @@ test.describe('Document upload + extraction', () => {
     let id: string | undefined;
 
     try {
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
       id = await openUploadedDocument(page, name);
       await triggerExtraction(page, id);
 
@@ -228,7 +216,7 @@ test.describe('Document upload + extraction', () => {
     let id: string | undefined;
 
     try {
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
       id = await openUploadedDocument(page, name);
       await triggerExtraction(page, id);
 
@@ -265,7 +253,7 @@ test.describe('Document upload + extraction', () => {
     try {
       projectId = await createProject(page, orgId, base);
 
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
       await openUploadedDocument(page, name);
 
       const extract = page.getByRole('button', { name: 'Extract data' });

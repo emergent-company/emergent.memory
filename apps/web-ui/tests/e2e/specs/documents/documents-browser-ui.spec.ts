@@ -8,6 +8,8 @@ import {
   DOCUMENTS_STATS,
   DOCUMENTS_STATUS_TABS,
   DOCUMENTS_TABLE,
+  DOCUMENTS_UPLOAD_MODAL,
+  DOCUMENTS_UPLOAD_OPEN,
   documentRowIDs,
   statValue,
   uniqueDocumentToken,
@@ -86,7 +88,14 @@ test.describe('Documents browser', () => {
     await page.locator('[data-testid="documents-clear-filters"]').click();
     await expect(page).toHaveURL(/\/documents$/);
     await expect(page.locator(DOCUMENTS_SEARCH_INPUT)).toHaveValue('');
+
+    // --- Upload is a header button that opens a dialog, not an inline form ---
+    await expect(page.locator(DOCUMENTS_UPLOAD_MODAL)).toBeHidden();
+    await page.locator(DOCUMENTS_UPLOAD_OPEN).click();
+    await expect(page.locator(DOCUMENTS_UPLOAD_MODAL)).toBeVisible();
     await expect(page.locator('input[name="file"]')).toBeVisible();
+    await page.locator('[data-dialog-close="document-upload-modal"]').click();
+    await expect(page.locator(DOCUMENTS_UPLOAD_MODAL)).toBeHidden();
 
     // --- Source filter: uploads only ---
     await page.locator('#documents-filter-source').selectOption('upload');
@@ -110,5 +119,16 @@ test.describe('Documents browser', () => {
     // The controls are reachable on the small viewport too.
     await expect(page.locator(DOCUMENTS_STATUS_TABS)).toBeVisible();
     await expect(page.locator(DOCUMENTS_SEARCH_INPUT)).toBeVisible();
+
+    // The whole card is the tap target (data-href), not only the name link, and
+    // tapping it opens the document. This is the card's real navigation path: it
+    // used to be one big <a>, which cannot contain the source link some rows
+    // carry, so the tap target moved to data-href.
+    const card = page.locator(`${DOCUMENTS_MOBILE_LIST} [data-document-id]`).first();
+    const id = await card.getAttribute('data-document-id');
+    expect(id).toBeTruthy();
+    await expect(card).toHaveAttribute('data-href', new RegExp(`/documents/${id}$`));
+    await card.getByText(/^updated /).click();
+    await page.waitForURL(new RegExp(`/documents/${id}$`));
   });
 });

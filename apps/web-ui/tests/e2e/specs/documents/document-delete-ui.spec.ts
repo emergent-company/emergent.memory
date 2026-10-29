@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { expectAppPage, goto } from '../../helpers/page';
+import { uploadDocumentViaForm } from '../../helpers/documents';
 
 // Document delete (gateway/documents.templ + gateway/ui.go):
 //
@@ -16,19 +17,6 @@ import { expectAppPage, goto } from '../../helpers/page';
 // project shares the bootstrap tenant.
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// uploadDocument submits the /documents form and waits for the success redirect.
-async function uploadDocument(page: Page, name: string, body: string): Promise<void> {
-  await goto(page, '/documents');
-  await expectAppPage(page, /Documents/);
-  await page.setInputFiles('input[type="file"][name="file"]', {
-    name,
-    mimeType: 'text/markdown',
-    buffer: Buffer.from(body),
-  });
-  await page.getByRole('button', { name: 'Upload' }).click();
-  await page.waitForURL(/\/documents\?uploaded=1/);
-}
 
 // openUploadedDocument clicks the list row for the freshly uploaded document
 // and returns the id parsed from its href.
@@ -63,7 +51,7 @@ test.describe('Document delete', () => {
 
     try {
       // 1. UPLOAD through the real form.
-      await uploadDocument(page, name, body);
+      await uploadDocumentViaForm(page, name, body);
 
       // 2. OPEN the new document's detail page (its title is the file name).
       id = await openUploadedDocument(page, name);

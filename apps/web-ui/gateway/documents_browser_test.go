@@ -20,6 +20,53 @@ func documentsTestServer(f *fakeMemory) *echo.Echo {
 	return e
 }
 
+// TestUIDocumentsSourceProvenance pins the per-row provenance wiring: a
+// document's data-source id resolves to that source's name and to a link to its
+// page, uploads stay plain text, an id the source list cannot resolve falls back
+// to the source-kind label but still links, and a row with no provenance renders
+// nothing at all.
+func TestUIDocumentsSourceProvenance(t *testing.T) {
+	f := &fakeMemory{
+		documents: []Document{
+			{ID: "d1", Filename: "spec.md", ProcessingStatus: "completed", SourceType: "drive", SourceID: "ds-1"},
+			{ID: "d2", Filename: "notes.txt", ProcessingStatus: "completed", SourceType: "upload"},
+			{ID: "d3", Filename: "orphan.md", ProcessingStatus: "completed", SourceType: "repo", SourceID: "ds-gone"},
+			{ID: "d4", Filename: "bare.md", ProcessingStatus: "completed"},
+		},
+		documentsTotal: 4,
+		dsIntegrations: []DSIntegration{{ID: "ds-1", Name: "Product Drive", SourceType: "drive"}},
+	}
+	e := documentsTestServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/documents", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// The connected source is named and linked, in the table and in the card.
+	if !strings.Contains(body, `title="From Product Drive"`) {
+		t.Error("row should name the data source it came from")
+	}
+	if got := strings.Count(body, `href="/data-sources/ds-1"`); got != 2 {
+		t.Errorf("links to the resolved source = %d, want 2 (table row + card)", got)
+	}
+	// An id the list cannot resolve keeps the kind label and still links.
+	if got := strings.Count(body, `href="/data-sources/ds-gone"`); got != 2 {
+		t.Errorf("links to the unresolved source = %d, want 2 (table row + card)", got)
+	}
+	if !strings.Contains(body, "Repository") {
+		t.Error("unresolved source should fall back to its kind label")
+	}
+	// Uploads and provenance-less rows link nowhere.
+	for _, unwanted := range []string{`href="/data-sources/"`, `href="/data-sources/ds-2"`, `href="/data-sources/ds-4"`} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("unexpected source link %q", unwanted)
+		}
+	}
+}
+
 // TestUIDocumentsListParams pins the query-parameter contract between the page
 // and the API: the filters, search, sort and cursor the user selected reach the
 // listing request, and unrecognised values normalize to the defaults instead of

@@ -134,6 +134,7 @@ type documentRow struct {
 	Status     string // derived processing status value ("" when unknown)
 	Versions   int
 	Source     string // resolved provenance label ("Uploaded", a data source's name, or a source type)
+	SourceID   string // data-source integration id; set only when the row can link to it
 	UpdatedAt  string
 	CreatedAt  string
 	SourceType string
@@ -390,6 +391,7 @@ func (s *Server) loadDocumentsPage(ctx context.Context, data *documentPageData, 
 			Status:     doc.ProcessingStatus,
 			Versions:   doc.Version,
 			Source:     source,
+			SourceID:   doc.SourceID,
 			UpdatedAt:  doc.UpdatedAt,
 			CreatedAt:  doc.CreatedAt,
 			SourceType: doc.SourceType,

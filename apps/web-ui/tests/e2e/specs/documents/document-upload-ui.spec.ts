@@ -1,19 +1,15 @@
 import { test, expect } from '@playwright/test';
 import { expectAppPage, goto } from '../../helpers/page';
+import { uploadDocumentViaForm } from '../../helpers/documents';
 
 test.describe('Document upload', () => {
 
 test('uploads a document via the form', async ({ page }) => {
   const name = `e2e-doc-${Date.now()}`;
-  await goto(page, '/documents');
-  await page.setInputFiles('input[name="file"]', {
-    name: `${name}.md`,
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('# E2E\n\nHello from the e2e suite.'),
-  });
-  await page.getByRole('button', { name: 'Upload' }).click();
-  // uiUploadDocument redirects back to the list on success.
-  await page.waitForURL(/\/documents\?uploaded=1/);
+  // The form lives in the header's upload dialog; the helper opens it, chooses
+  // the file and submits, then waits for uiUploadDocument's success redirect.
+  await uploadDocumentViaForm(page, `${name}.md`, '# E2E\n\nHello from the e2e suite.');
+  await expect(page.locator('#toast-container [role="alert"]').filter({ hasText: 'Document uploaded.' })).toBeVisible();
 });
 
 test('opens a document detail', async ({ page }) => {

@@ -1,4 +1,5 @@
 import { Page, expect } from '@playwright/test';
+import { expectAppPage, goto } from './page';
 
 /**
  * Helpers for the documents browser (`/documents`): seeding documents through
@@ -19,6 +20,10 @@ export const DOCUMENTS_STATS = '[data-testid="documents-stats"]';
 export const DOCUMENTS_STATUS_TABS = '[data-testid="documents-status-tabs"]';
 export const DOCUMENTS_LOAD_MORE = '[data-testid="documents-load-more"]';
 export const DOCUMENTS_SEARCH_INPUT = 'input[name="q"]';
+/** The header button that opens the upload dialog. */
+export const DOCUMENTS_UPLOAD_OPEN = '[data-testid="documents-upload-open"]';
+/** The upload dialog (closed until the header button is used). */
+export const DOCUMENTS_UPLOAD_MODAL = '[data-testid="documents-upload-modal"]';
 
 /** A filename fragment unique to one test run. */
 export function uniqueDocumentToken(prefix = 'e2e-doc-browser'): string {
@@ -48,6 +53,31 @@ export async function uploadTestDocument(
   const id = (await resp.json()).id as string;
   expect(id, `upload ${filename} returned no id`).toBeTruthy();
   return id;
+}
+
+/**
+ * Upload a document through the page's own upload form: open the header's
+ * upload dialog, choose the file, submit, and wait for the PRG redirect. Specs
+ * that seed a later step (detail, delete, extraction) upload the way a user does
+ * so a regression in the form breaks them instead of hiding behind the API.
+ */
+export async function uploadDocumentViaForm(
+  page: Page,
+  name: string,
+  body = `# ${name}\n\nSeeded by the documents e2e suite.`,
+): Promise<void> {
+  await goto(page, '/documents');
+  await expectAppPage(page, /Documents/);
+  await page.locator(DOCUMENTS_UPLOAD_OPEN).click();
+  const modal = page.locator(DOCUMENTS_UPLOAD_MODAL);
+  await expect(modal).toBeVisible();
+  await modal.locator('input[type="file"][name="file"]').setInputFiles({
+    name,
+    mimeType: 'text/markdown',
+    buffer: Buffer.from(body),
+  });
+  await modal.getByRole('button', { name: 'Upload' }).click();
+  await page.waitForURL(/\/documents\?uploaded=1/);
 }
 
 /** The value of one stat in the stats strip, e.g. "documents" or "failed". */
