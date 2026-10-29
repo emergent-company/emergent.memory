@@ -714,9 +714,12 @@ func TestObjectPreviewWiring(t *testing.T) {
 }
 
 // TestObjectPreviewInterceptionScope pins the client scoping contract: the
-// drawer opens only for references inside a chat message list (or a sources
-// citation link) — never for the .memory-md knowledge answer on the object page
-// — and both htmx error events are handled.
+// drawer opens only for references inside a chat message list (the inline
+// assistant markdown and the in-bubble Sources footer both live there) — never
+// for the .memory-md knowledge answer on the object page — and both htmx error
+// events are handled. It also pins that no testid-keyed escape hatch exists:
+// `citation-link` was one until #2251, but the sources block stopped emitting it
+// in #1228, leaving a branch that could never run.
 func TestObjectPreviewInterceptionScope(t *testing.T) {
 	src, err := os.ReadFile("webui/static/js/object-preview.js")
 	if err != nil {
@@ -725,7 +728,6 @@ func TestObjectPreviewInterceptionScope(t *testing.T) {
 	js := string(src)
 	for _, want := range []string{
 		`#chat-messages, #sidepanel-messages`,
-		`data-testid") === "citation-link"`,
 		`htmx:response:error`,
 		`htmx:error`,
 	} {
@@ -735,5 +737,8 @@ func TestObjectPreviewInterceptionScope(t *testing.T) {
 	}
 	if strings.Contains(js, `closest(".memory-md")`) {
 		t.Error("object-preview.js must not scope interception to .memory-md (matches non-chat surfaces too)")
+	}
+	if strings.Contains(js, `getAttribute("data-testid")`) {
+		t.Error("object-preview.js must not key interception on a data-testid: the sources block stopped emitting citation-link in #1228, so such a branch is unreachable (#2251)")
 	}
 }

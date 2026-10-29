@@ -7,10 +7,10 @@
    navigate. The summary body is fetched with HTMX from GET /objects/:id/preview.
 
    Scoping: interception is limited to chat content — an assistant markdown
-   block inside a chat message list (#chat-messages or #sidepanel-messages) or a
-   sources-block citation link ([data-testid="citation-link"]). Object references
-   rendered elsewhere (.memory-md on the object-detail knowledge answer, skill
-   previews, share pages, or the object list/detail pages) navigate normally.
+   block, including the in-bubble Sources footer, inside a chat message list
+   (#chat-messages or #sidepanel-messages). Object references rendered elsewhere
+   (.memory-md on the object-detail knowledge answer, skill previews, share
+   pages, or the object list/detail pages) navigate normally.
 
    Drawer width + modal mode reuse the assistant side panel's pattern
    (#1389): MemoryChatHost.createResizeGrip drives the persisted width, and
@@ -182,16 +182,16 @@
   }
 
   // isChatObjectRef is the whole scoping rule: an anchor to /objects/… that
-  // lives in a chat message list — the inline assistant markdown rendered into
-  // #chat-messages / #sidepanel-messages — or is a sources-block citation link.
-  // Other .memory-md surfaces (the object-detail knowledge answer, skill
-  // previews) and the object list/detail pages are deliberately excluded.
+  // lives in a chat message list — the inline assistant markdown, or the
+  // in-bubble Sources footer, both rendered into #chat-messages /
+  // #sidepanel-messages. Other .memory-md surfaces (the object-detail knowledge
+  // answer, skill previews) and the object list/detail pages are deliberately
+  // excluded.
   function isChatObjectRef(a) {
     var href = a.getAttribute("href") || "";
     if (href.indexOf("/objects/") < 0) return false;
     if (a.target && a.target !== "" && a.target !== "_self") return false;
     if (a.hasAttribute("download")) return false;
-    if (a.getAttribute("data-testid") === "citation-link") return true;
     return !!a.closest("#chat-messages, #sidepanel-messages");
   }
 

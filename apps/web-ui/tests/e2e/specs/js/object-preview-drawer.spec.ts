@@ -23,10 +23,9 @@ import path from 'node:path';
 // Every surface below is markup the app actually renders: the sources footer
 // chain is chat-components.js sourcesFooter()/sourceRow() (details[data-testid=
 // chat-sources] > summary > .collapse-content > li[data-testid=chat-source] > a),
-// mounted inside the assistant bubble. object-preview.js also has a branch keying
-// on data-testid="citation-link", which no template or renderer has emitted since
-// #1228; it is dead (issue #2251) and deliberately not exercised here — a spec
-// against it would pass against a surface that does not exist.
+// mounted inside the assistant bubble — which is why the chat-list scoping
+// reaches it. (object-preview.js used to also key on a citation-link testid; no
+// renderer had emitted it since #1228, so it was removed in #2251.)
 //
 // Loads the shipped object-preview.js verbatim into a bare page with the same
 // shell markup objectPreviewDrawer() emits, a stubbed MemoryChatHost (resize
