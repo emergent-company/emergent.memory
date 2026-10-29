@@ -232,11 +232,12 @@ func suggestResyncPack(groups []stalePackGroup, packs []activePackOption) active
 
 // staleTypePackIndex maps a stale object's Type to its owning compiled pack.
 // Memory's /validate results do not name the pack, but /compiled-types carries
-// schemaName per type.
+// schemaName per type. Shadowed (losing) duplicates are skipped: an overridden
+// declaration must not claim the objects of the type that won.
 func (s *Server) staleTypePackIndex(ctx context.Context) map[string]string {
 	idx := map[string]string{}
 	if compiled, err := s.memory.GetCompiledTypes(ctx); err == nil && compiled != nil {
-		for _, t := range compiled.ObjectTypes {
+		for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
 			if t.Name != "" && t.SchemaName != "" {
 				idx[t.Name] = t.SchemaName
 			}

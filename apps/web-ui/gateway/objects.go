@@ -321,7 +321,10 @@ func (s *Server) loadObjectFilterOptions(ctx context.Context, data *objectsPageD
 	data.Branches = branches
 	if compiled != nil {
 		data.TypeUIByType = objectTypeUIMap(compiled.ObjectTypes)
-		for _, t := range compiled.ObjectTypes {
+		// Visible declarations only: a shadowed duplicate would otherwise list
+		// the same type name twice in the filter (and a name that only survives
+		// as a shadowed loser is not selectable at all).
+		for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
 			data.Types = append(data.Types, t.Name)
 		}
 	}
@@ -1084,11 +1087,13 @@ func objectPropertyType(defs []objectPropertyDef, name string) string {
 // type (skipping underscore-prefixed internal properties), sorted by name.
 // Each property's declared type, widget hint, and enum are read from its raw
 // JSON schema ({"type":"...","widget":"...","enum":[...]}); empty Type means
-// string/unrecognised. Returns nil when the type is unknown or has no
-// parseable properties.
+// string/unrecognised. Shadowed (losing) duplicates are skipped, so the
+// properties always belong to the declaration the rest of the page shows (the
+// status field and the preview panel title already resolve that way). Returns
+// nil when the type is unknown or has no parseable properties.
 func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []objectPropertyDef {
 	var props json.RawMessage
-	for _, t := range objectTypes {
+	for _, t := range visibleCompiledTypes(objectTypes) {
 		if t.Name == typeName {
 			props = t.Properties
 			break

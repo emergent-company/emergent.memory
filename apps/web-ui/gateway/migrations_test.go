@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -480,5 +481,28 @@ func TestUIMigrateResyncPackGating(t *testing.T) {
 	}
 	if f.migrationFrom != "s3" || f.migrationTo != "s3" {
 		t.Errorf("execute target = (%q, %q), want s3==s3", f.migrationFrom, f.migrationTo)
+	}
+}
+
+func TestStaleTypePackIndexSkipsShadowed(t *testing.T) {
+	// /compiled-types carries schemaName per type; an overridden (shadowed)
+	// declaration must not claim the objects of the type that won, whichever
+	// order the list carries them in.
+	winner := CompiledType{Name: "person", SchemaName: "people-pack"}
+	loser := CompiledType{Name: "person", Shadowed: true, SchemaName: "old-pack"}
+
+	for _, tc := range []struct {
+		name  string
+		types []CompiledType
+	}{
+		{name: "shadowed after winner", types: []CompiledType{winner, loser}},
+		{name: "shadowed before winner", types: []CompiledType{loser, winner}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{compiled: &CompiledSchemaTypes{ObjectTypes: tc.types}}}
+			if got := s.staleTypePackIndex(context.Background())["person"]; got != "people-pack" {
+				t.Errorf("index[person] = %q, want people-pack", got)
+			}
+		})
 	}
 }

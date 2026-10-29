@@ -2531,6 +2531,54 @@ func TestCompiledTypePropertyDefs(t *testing.T) {
 	}
 }
 
+func TestCompiledTypePropertyDefsSkipsShadowed(t *testing.T) {
+	// The status field, the preview panel title and the forms all resolve the
+	// winning declaration; the property rows must come from that same one, in
+	// whichever order the compiled list carries winner and loser.
+	winner := CompiledType{Name: "person", Properties: json.RawMessage(`{"fresh":{"type":"string"}}`)}
+	loser := CompiledType{Name: "person", Shadowed: true, Properties: json.RawMessage(`{"stale":{"type":"string"}}`)}
+
+	for _, tc := range []struct {
+		name  string
+		types []CompiledType
+	}{
+		{name: "shadowed after winner", types: []CompiledType{winner, loser}},
+		{name: "shadowed before winner", types: []CompiledType{loser, winner}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := compiledTypePropertyDefs(tc.types, "person")
+			if len(got) != 1 || got[0].Name != "fresh" {
+				t.Fatalf("defs = %+v, want only the winning declaration's fresh property", got)
+			}
+		})
+	}
+
+	// A name that survives only as a shadowed loser has no properties to render.
+	only := []CompiledType{{Name: "gone", Shadowed: true, Properties: json.RawMessage(`{"stale":{"type":"string"}}`)}}
+	if got := compiledTypePropertyDefs(only, "gone"); got != nil {
+		t.Errorf("all-shadowed input = %+v, want nil", got)
+	}
+}
+
+func TestLoadObjectFilterOptionsSkipsShadowed(t *testing.T) {
+	// A shadowed duplicate would list the same type name twice in the filter
+	// dropdown, and a name that survives only as a loser is not selectable.
+	compiled := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+		{Name: "person"},
+		{Name: "note"},
+		{Name: "person", Shadowed: true},
+		{Name: "gone", Shadowed: true},
+	}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{compiled: compiled}}
+
+	var data objectsPageData
+	s.loadObjectFilterOptions(context.Background(), &data)
+
+	if want := []string{"person", "note"}; !reflect.DeepEqual(data.Types, want) {
+		t.Errorf("types = %v, want %v (winner once, shadowed-only name absent)", data.Types, want)
+	}
+}
+
 func TestObjectPropertyDefLabel(t *testing.T) {
 	labelled := objectPropertyDef{Name: "owner_notes", Title: "Owner notes"}
 	if got := labelled.Label(); got != "Owner notes" {

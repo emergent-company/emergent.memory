@@ -112,6 +112,34 @@ func TestObjectTypeUIMap(t *testing.T) {
 	}
 }
 
+func TestObjectTypeUIMapSkipsShadowed(t *testing.T) {
+	// A shadowed (losing) duplicate must never lend its accent to the winner,
+	// whichever order the compiled list happens to carry them in — the map is
+	// indexed by name, so a raw last-wins loop would.
+	winner := CompiledType{Name: "person", UI: json.RawMessage(`{"icon":"lucide--user","color":"#111111"}`)}
+	loser := CompiledType{Name: "person", Shadowed: true, UI: json.RawMessage(`{"icon":"lucide--ghost","color":"#999999"}`)}
+	want := typeUI{Icon: "lucide--user", Color: "#111111"}
+
+	for _, tc := range []struct {
+		name  string
+		types []CompiledType
+	}{
+		{name: "shadowed after winner", types: []CompiledType{winner, loser}},
+		{name: "shadowed before winner", types: []CompiledType{loser, winner}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := objectTypeUIMap(tc.types)["person"]; got != want {
+				t.Errorf("map[person] = %+v, want %+v", got, want)
+			}
+		})
+	}
+
+	// A name that survives only as a shadowed loser declares nothing effective.
+	if got := objectTypeUIMap([]CompiledType{{Name: "gone", Shadowed: true, UI: json.RawMessage(`{"icon":"lucide--ghost"}`)}}); got != nil {
+		t.Errorf("all-shadowed input = %v, want nil", got)
+	}
+}
+
 func TestTypeUIOf(t *testing.T) {
 	if got := typeUIOf(nil, "note"); got != (typeUI{}) {
 		t.Errorf("nil map = %+v, want zero typeUI", got)
