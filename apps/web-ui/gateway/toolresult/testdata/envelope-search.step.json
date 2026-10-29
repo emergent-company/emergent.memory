@@ -1,0 +1,29 @@
+{
+  "category": {
+    "family": "search",
+    "verb": "Searched memory",
+    "runningVerb": "Searching memory",
+    "icon": "lucide--search"
+  },
+  "input": {
+    "query": "swiftui",
+    "limit": 5
+  },
+  "subject": "swiftui",
+  "tool": "search-hybrid",
+  "view": {
+    "kind": "records",
+    "items": [
+      {
+        "title": "Alice",
+        "detail": "Engineer"
+      },
+      {
+        "title": "retrieval",
+        "detail": "How answers are found"
+      }
+    ],
+    "outcome": "2 records",
+    "raw": "{\n  \"data\": {\n    \"data\": [\n      {\n        \"object\": {\n          \"id\": \"e1\",\n          \"key\": \"alice\",\n          \"name\": \"Alice\",\n          \"properties\": {\n            \"description\": \"Engineer\"\n          },\n          \"type\": \"person\"\n        },\n        \"score\": 0.91\n      },\n      {\n        \"object\": {\n          \"id\": \"e2\",\n          \"key\": \"retrieval\",\n          \"properties\": {\n            \"description\": \"How answers are found\"\n          },\n          \"type\": \"topic\"\n        },\n        \"score\": 0.72\n      }\n    ],\n    \"has_more\": false,\n    \"total\": 2\n  },\n  \"ok\": true\n}"
+  }
+}

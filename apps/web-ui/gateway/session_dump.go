@@ -56,6 +56,11 @@ type TimelineItem struct {
 	// Citations are the answer's grounded references, carried through on
 	// assistant message items so the dump preserves them.
 	Citations json.RawMessage `json:"citations,omitempty"`
+
+	// ToolStep is the presentation of a tool_call item, derived at render time
+	// through the toolresult package (see enrichTimelineSteps). It is never part
+	// of the dump: `json:"-"` keeps the wire shape unchanged.
+	ToolStep *toolStep `json:"-"`
 }
 
 // parseTimeline unmarshals raw timeline items into typed items, skipping any
@@ -76,11 +81,22 @@ func parseTimeline(items []json.RawMessage) []TimelineItem {
 
 // toolError inspects a tool result and returns a human-readable error string,
 // or "" when the tool completed without an error.
+// toolError is the failure message for a tool call, or "" when it did not fail.
+// The message in the result wins over the status word: a persisted failure is
+// recorded as status "failed", and "failed" tells a reader nothing a red dot
+// does not already say.
 func toolError(status, output string) string {
-	if status != "" && status != "completed" {
-		return status
-	}
+	failed := status != "" && status != "completed"
 	if output == "" {
+		if failed {
+			return status
+		}
+		return ""
+	}
+	// A tool paused for approval has not failed: the executor's sentinel carries
+	// a "message" field announcing the pause, and reading it as a failure would
+	// report an error for a call that has simply not run yet.
+	if toolAwaitingConfirmation(json.RawMessage(output)) {
 		return ""
 	}
 	var obj struct {
@@ -94,6 +110,9 @@ func toolError(status, output string) string {
 		} `json:"results"`
 	}
 	if err := json.Unmarshal([]byte(output), &obj); err != nil {
+		if failed {
+			return status
+		}
 		return ""
 	}
 	detected := (obj.Failed != nil && *obj.Failed > 0) || (obj.Success != nil && !*obj.Success)
@@ -115,6 +134,9 @@ func toolError(status, output string) string {
 		msgs = append(msgs, obj.Message)
 	}
 	if !detected {
+		if failed {
+			return status
+		}
 		return ""
 	}
 	if len(msgs) == 0 {

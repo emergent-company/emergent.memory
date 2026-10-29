@@ -339,16 +339,36 @@ func sessionItemFooter(it TimelineItem) string {
 	return footer
 }
 
-// sessionToolItem renders one tool call: name, status, execution duration and
-// call id, collapsible syntax-highlighted input/output JSON, and a distinct
-// error line when the call failed. Input/output <details> are collapsed by
-// default so long payloads never form a text wall.
+// sessionToolItem renders one tool call the way the chat reads it: the category
+// verb and icon with the subject its arguments gave, the execution duration, the
+// collapsed outcome line, and the readable body of the result. The wire name and
+// both raw blocks sit behind one disclosure, so the card leads with what the call
+// did rather than with its payload. A call paused for approval says so instead of
+// showing a result it does not have.
+//
+// The presentation is built at render time by enrichTimelineSteps through the
+// same toolresult package the live chip uses (design D4); this template only lays
+// it out.
 templ sessionToolItem(it TimelineItem) {
-	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3">
+	{{ step := it.ToolStep }}
+	{{ failure := toolError(it.ToolStatus, string(it.ToolOutput)) }}
+	if step != nil {
+		{{ failure = step.Failure }}
+	}
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid="session-tool-step" data-tool={ it.ToolName }>
 		<div class="flex flex-wrap items-center gap-2">
-			<span class="iconify lucide--wrench size-3.5 text-muted-faint" aria-hidden="true"></span>
-			<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
-			@toolStatusBadge(it.ToolStatus)
+			if step != nil {
+				<span class={ "iconify " + step.Category.Icon + " size-3.5 text-muted-faint" } aria-hidden="true"></span>
+				<span class="text-xs font-medium" data-testid="session-tool-label">{ step.Label() }</span>
+			} else {
+				<span class="iconify lucide--wrench size-3.5 text-muted-faint" aria-hidden="true"></span>
+				<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
+			}
+			if step != nil && step.Paused {
+				@components.StatusBadge("awaiting approval", ui.BadgeWarning, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@toolStatusBadge(it.ToolStatus)
+			}
 			if it.DurationMs != nil {
 				@ui.Badge(ui.BadgeProps{Label: toolDurationLabel(*it.DurationMs), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
 			}
@@ -356,39 +376,167 @@ templ sessionToolItem(it TimelineItem) {
 				<span class="font-mono text-[10px] text-muted-faint" title={ it.ID }>#{ shortID(it.ID) }</span>
 			}
 		</div>
-		if len(it.ToolInput) > 0 {
-			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
-			<details class="mt-2">
-				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
-				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
-					if inOK {
-						@templ.Raw(inHL)
-					} else {
-						<span>{ string(it.ToolInput) }</span>
-					}
-				</div>
-			</details>
-		}
-		if len(it.ToolOutput) > 0 {
-			{{ outHL, outOK := highlightJSONValue(it.ToolOutput) }}
-			<details class="mt-2">
-				<summary class="flex cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Output <span class="iconify lucide--chevron-right size-3" aria-hidden="true"></span></summary>
-				<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
-					if outOK {
-						@templ.Raw(outHL)
-					} else {
-						<span>{ string(it.ToolOutput) }</span>
-					}
-				</div>
-			</details>
-		}
-		if err := toolError(it.ToolStatus, string(it.ToolOutput)); err != "" {
-			<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium">
+		// The failure is the answer, so it comes first — before the outcome line it
+		// would repeat and before the body that explains it.
+		if failure != "" {
+			<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium" data-testid="session-tool-failure">
 				<span class="iconify lucide--circle-alert size-3.5" aria-hidden="true"></span>
-				{ err }
+				{ failure }
 			</p>
 		}
+		if step != nil {
+			if outcome := step.Outcome(); step.ShowOutcome() {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					{ outcome }
+				}
+			}
+			if step.Paused {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Icon: "lucide--clock", IconClass: "size-3.5 shrink-0 text-warning"}) {
+					Waiting for confirmation — the tool has not run yet.
+				}
+			} else if step.Records() {
+				@sessionToolRecords(step)
+			} else if step.Fields() {
+				@sessionToolFields(step)
+			} else if step.ShowText() {
+				@sessionToolText(step)
+			} else if step.ShowRawText() {
+				@sessionToolRawText(step, it.ToolName)
+			}
+		}
+		if step == nil {
+			// No presentation (an item built outside the render path): keep the
+			// pre-picture card rather than hiding the payload.
+			@sessionToolRawDisclosure(it, step)
+		} else if step.ShowRawDisclosure() {
+			@sessionToolRawDisclosure(it, step)
+		} else {
+			// A paused call has no result to disclose, and a payload already in the
+			// open does not need a second tap: the arguments are what a reader is
+			// still missing, so they keep a disclosure of their own.
+			@sessionToolInput(it)
+		}
 	</div>
+}
+
+// sessionToolRecords renders a list result as title plus, when it has one, a
+// detail and the host of its link.
+templ sessionToolRecords(step *toolStep) {
+	<ul class="mt-2 flex flex-col gap-1.5">
+		for _, item := range step.View.Items {
+			<li class="flex flex-wrap items-baseline gap-x-2 text-xs">
+				<span class="font-medium">{ item.Title }</span>
+				if item.Detail != "" {
+					<span class="text-muted">{ item.Detail }</span>
+				}
+				if host := linkHost(item.Link); host != "" {
+					<a class="text-primary/80 hover:underline" href={ templ.SafeURL(item.Link) } target="_blank" rel="noopener noreferrer">{ host }</a>
+				}
+			</li>
+		}
+	</ul>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolFields renders a record of scalars as label/value pairs.
+templ sessionToolFields(step *toolStep) {
+	<dl class="mt-2 grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 gap-y-1 text-xs">
+		for _, field := range step.View.Fields {
+			<dt class="text-muted-faint font-mono">{ field.Label }</dt>
+			<dd class="min-w-0 break-words">{ field.Value }</dd>
+		}
+	</dl>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolText renders a body of text, already bounded by the parser.
+templ sessionToolText(step *toolStep) {
+	<p class="mt-2 text-xs leading-relaxed whitespace-pre-wrap break-words">{ step.View.Text }</p>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolRawText shows a result with no readable shape: its bounded text is
+// the whole answer, so it is in the open, with the wire name kept beside it.
+templ sessionToolRawText(step *toolStep, tool string) {
+	<p class="mt-2 font-mono text-[10px] text-muted-faint break-all">{ tool }</p>
+	<pre class="mt-1 max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">{ step.View.Raw }</pre>
+	if more := step.RawRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolInput renders the arguments of a call that has not run yet.
+templ sessionToolInput(it TimelineItem) {
+	if len(it.ToolInput) > 0 {
+		{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
+		<details class="group mt-2">
+			<summary class="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3 transition-transform motion-reduce:transition-none group-open:rotate-90" aria-hidden="true"></span></summary>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if inOK {
+					@templ.Raw(inHL)
+				} else {
+					<span>{ string(it.ToolInput) }</span>
+				}
+			</div>
+		</details>
+	}
+}
+
+// sessionToolRawDisclosure puts the wire name and both raw blocks behind one
+// closed disclosure: the card leads with what the call did, and the payload is one
+// tap away. The summary is a full 44 CSS pixel control (design D8).
+templ sessionToolRawDisclosure(it TimelineItem, step *toolStep) {
+	<details class="group mt-3">
+		<summary class="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Show raw JSON <span class="iconify lucide--chevron-right size-3 transition-transform motion-reduce:transition-none group-open:rotate-90" aria-hidden="true"></span></summary>
+		<p class="mt-1 font-mono text-[10px] text-muted-faint break-all">{ it.ToolName }</p>
+		if len(it.ToolInput) > 0 {
+			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Input</p>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if inOK {
+					@templ.Raw(inHL)
+				} else {
+					<span>{ string(it.ToolInput) }</span>
+				}
+			</div>
+		}
+		if step != nil && step.View != nil && step.View.Raw != "" {
+			// The parser's bounded raw text is what the chip discloses: a 300 KB
+			// payload does not become a text wall because it is on a server-rendered
+			// page.
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Output</p>
+			<pre class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">{ step.View.Raw }</pre>
+			if more := step.RawRemainder(); more != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+					{ more }
+				}
+			}
+		} else if len(it.ToolOutput) > 0 {
+			{{ outHL, outOK := highlightJSONValue(it.ToolOutput) }}
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Output</p>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if outOK {
+					@templ.Raw(outHL)
+				} else {
+					<span>{ string(it.ToolOutput) }</span>
+				}
+			</div>
+		}
+	</details>
 }
 
 // runStatusBadge colors a run status.

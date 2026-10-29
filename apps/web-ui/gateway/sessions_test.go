@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/emergent-company/emergent.memory/apps/web-ui/toolresult"
 	"github.com/labstack/echo/v4"
 )
 
@@ -312,5 +314,269 @@ func TestSessionDetailBackendFailure(t *testing.T) {
 		if strings.Contains(body, leak) {
 			t.Errorf("error state leaked %q", leak)
 		}
+	}
+}
+
+// --- recorded session: the tool step (phase 2) --------------------------------
+//
+// The recorded-session page and the chat chip must describe the same call the
+// same way. Both tests below read the shared step contract
+// `toolresult/testdata/envelope-search.step.json`, which the parser test pins, so
+// changing a wording rule forces one deliberate update instead of two renderers
+// drifting apart (spec task 3.3).
+
+type sessionStepContract struct {
+	Tool     string                   `json:"tool"`
+	Input    json.RawMessage          `json:"input"`
+	Category toolresult.Category      `json:"category"`
+	Subject  string                   `json:"subject"`
+	View     *toolresult.Presentation `json:"view"`
+}
+
+func loadSessionStepContract(t *testing.T) sessionStepContract {
+	t.Helper()
+	raw, err := os.ReadFile("toolresult/testdata/envelope-search.step.json")
+	if err != nil {
+		t.Fatalf("read step contract: %v", err)
+	}
+	var c sessionStepContract
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("decode step contract: %v", err)
+	}
+	if c.Tool == "" || c.View == nil || c.Subject == "" {
+		t.Fatalf("incomplete step contract: %+v", c)
+	}
+	return c
+}
+
+// envelopeSearchItem is the recorded tool_call item for the shared contract: the
+// real payload fixture as the output, the contract's arguments as its input.
+func envelopeSearchItem(t *testing.T) TimelineItem {
+	t.Helper()
+	c := loadSessionStepContract(t)
+	payload, err := os.ReadFile("toolresult/testdata/envelope-search.json")
+	if err != nil {
+		t.Fatalf("read payload fixture: %v", err)
+	}
+	return TimelineItem{
+		Kind:       "tool_call",
+		RunID:      "r1",
+		ID:         "call-1",
+		ToolName:   c.Tool,
+		ToolInput:  c.Input,
+		ToolOutput: json.RawMessage(payload),
+		ToolStatus: "completed",
+	}
+}
+
+// TestEnrichTimelineStepsPresentation is task 3.1: the recorded page assembles
+// each tool item's presentation through the same toolresult package the chip
+// uses.
+func TestEnrichTimelineStepsPresentation(t *testing.T) {
+	contract := loadSessionStepContract(t)
+	items := []TimelineItem{
+		envelopeSearchItem(t),
+		{Kind: "message", Role: "user", Content: &MessageContent{Text: "find me notes"}},
+	}
+	enrichTimelineSteps(items)
+
+	step := items[0].ToolStep
+	if step == nil {
+		t.Fatal("tool_call item has no presentation")
+	}
+	if want := contract.Category.Verb + " · " + contract.Subject; step.Label() != want {
+		t.Errorf("Label() = %q, want %q", step.Label(), want)
+	}
+	if step.Outcome() != contract.View.Outcome {
+		t.Errorf("Outcome() = %q, want %q", step.Outcome(), contract.View.Outcome)
+	}
+	if !step.Records() {
+		t.Error("Records() = false, want the list body")
+	}
+	// Non-tool items carry no presentation.
+	if items[1].ToolStep != nil {
+		t.Error("message item has a tool presentation")
+	}
+}
+
+// TestRenderSessionToolStep is tasks 3.2 and 3.3: the template renders the
+// presentation, and the strings it must show come from the same contract file the
+// DOM spec reads.
+func TestRenderSessionToolStep(t *testing.T) {
+	contract := loadSessionStepContract(t)
+	items := []TimelineItem{envelopeSearchItem(t)}
+	enrichTimelineSteps(items)
+	html := renderHTML(t, sessionToolItem(items[0]))
+
+	for _, want := range []string{
+		contract.Category.Verb, contract.Subject, contract.View.Outcome,
+		contract.View.Items[0].Title, contract.View.Items[0].Detail,
+		contract.View.Items[1].Title,
+		// the wire name and both raw blocks live behind one disclosure
+		"Show raw JSON", contract.Tool, ">Input<", ">Output<",
+		// 44 CSS pixels of tappable height for the disclosure control
+		"min-h-[44px]",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("tool step missing %q", want)
+		}
+	}
+	// The payload is behind a closed disclosure, not in the body.
+	if strings.Contains(html, "<details open") {
+		t.Error("raw disclosure renders open; it must stay closed until asked for")
+	}
+	// Everything the reader sees before the disclosure is the readable body: the
+	// payload itself must not leak into it.
+	body, _, found := strings.Cut(html, "Show raw JSON")
+	if !found {
+		t.Fatal("raw disclosure missing")
+	}
+	if strings.Contains(body, `"score"`) || strings.Contains(body, "has_more") || strings.Contains(body, "0.91") {
+		t.Errorf("collapsed body carries the raw payload: %s", body)
+	}
+}
+
+// TestRenderSessionToolStepPaused: a call paused for approval never ran, so its
+// card says so and shows its arguments, not the executor's sentinel as a result.
+func TestRenderSessionToolStepPaused(t *testing.T) {
+	items := []TimelineItem{{
+		Kind:       "tool_call",
+		ToolName:   "entity-create",
+		ToolInput:  json.RawMessage(`{"title":"Note","type":"note"}`),
+		ToolOutput: json.RawMessage(`{"status":"awaiting_confirmation","question_id":"q1","message":"Tool execution paused, awaiting user confirmation."}`),
+		ToolStatus: "completed",
+	}}
+	enrichTimelineSteps(items)
+	html := renderHTML(t, sessionToolItem(items[0]))
+
+	for _, want := range []string{"Using memory · Note", "Waiting for confirmation", "has not run yet", "title", ">Input", "badge-warning"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("paused step missing %q", want)
+		}
+	}
+	// It says it is waiting once, and it does not wear the persisted "completed"
+	// badge for a call that never ran.
+	if got := strings.Count(html, "Waiting for confirmation"); got != 1 {
+		t.Errorf("paused step says it is waiting %d times, want once", got)
+	}
+	for _, unwanted := range []string{"badge-success", ">completed<", "fields", "Show raw JSON", "Tool execution paused"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("paused step shows %q; it has no result to show", unwanted)
+		}
+	}
+}
+
+// TestRenderSessionToolStepNoShape: a payload with no readable shape shows its
+// bounded text in the open — there is nothing else to read.
+func TestRenderSessionToolStepNoShape(t *testing.T) {
+	items := []TimelineItem{{
+		Kind:       "tool_call",
+		ToolName:   "entity-get",
+		ToolInput:  json.RawMessage(`{"id":"e1"}`),
+		ToolOutput: json.RawMessage(`not JSON at all — the handler returned plain text`),
+		ToolStatus: "completed",
+	}}
+	enrichTimelineSteps(items)
+	html := renderHTML(t, sessionToolItem(items[0]))
+
+	if !strings.Contains(html, "entity-get") {
+		t.Error("no-shape step must keep the wire name beside the text")
+	}
+	if !strings.Contains(html, "<pre") {
+		t.Error("no-shape step must show the payload text itself")
+	}
+	if strings.Contains(html, "Show raw JSON") {
+		t.Error("no-shape step shows a second disclosure over the text it already shows")
+	}
+	// The result is in the open, but the call's arguments are still one tap away —
+	// the card never hides what the tool was asked to do.
+	if !strings.Contains(html, ">Input") {
+		t.Error("no-shape step hides the call's arguments")
+	}
+}
+
+// TestRenderSessionToolStepFailedStatus: a persisted failure is recorded with
+// status "failed"; the reader needs the message, not the status word.
+func TestRenderSessionToolStepFailedStatus(t *testing.T) {
+	items := []TimelineItem{{
+		Kind:       "tool_call",
+		ToolName:   "document-get",
+		ToolInput:  json.RawMessage(`{"id":"d1"}`),
+		ToolOutput: json.RawMessage(`{"ok":false,"error":"connection refused"}`),
+		ToolStatus: "failed",
+	}}
+	enrichTimelineSteps(items)
+	html := renderHTML(t, sessionToolItem(items[0]))
+
+	body, _, found := strings.Cut(html, "Show raw JSON")
+	if !found {
+		t.Fatal("raw disclosure missing")
+	}
+	if !strings.Contains(body, "connection refused") {
+		t.Errorf("failed step does not say why it failed:\n%s", body)
+	}
+	// The error line carries the message, not the status word (the badge already
+	// says "failed").
+	i := strings.Index(html, `data-testid="session-tool-failure"`)
+	if i < 0 {
+		t.Fatal("failed step has no failure line")
+	}
+	line := html[i:]
+	if end := strings.Index(line, "</p>"); end >= 0 {
+		line = line[:end]
+	}
+	if !strings.Contains(line, "connection refused") || strings.Contains(line, ">failed<") {
+		t.Errorf("failure line = %q, want the result's message", line)
+	}
+	if !strings.Contains(html, "badge-error") {
+		t.Error("failed step must keep the failing status badge")
+	}
+}
+
+// TestRenderSessionToolStepFailed: a failed result reads as its message once. The
+// outcome, the body and an error line are the same sentence; printing all three
+// buries the answer the card exists to give.
+func TestRenderSessionToolStepFailed(t *testing.T) {
+	payload, err := os.ReadFile("toolresult/testdata/failed-envelope.json")
+	if err != nil {
+		t.Fatalf("read payload fixture: %v", err)
+	}
+	items := []TimelineItem{{
+		Kind:       "tool_call",
+		ToolName:   "entity-get",
+		ToolInput:  json.RawMessage(`{"id":"e9"}`),
+		ToolOutput: json.RawMessage(payload),
+		ToolStatus: "completed", // a failure is recorded as a completed call
+	}}
+	enrichTimelineSteps(items)
+	html := renderHTML(t, sessionToolItem(items[0]))
+
+	body, _, found := strings.Cut(html, "Show raw JSON")
+	if !found {
+		t.Fatal("raw disclosure missing")
+	}
+	if got := strings.Count(body, "entity not found: e9"); got != 1 {
+		t.Errorf("failure message shown %d times before the disclosure, want once:\n%s", got, body)
+	}
+	if !strings.Contains(html, "text-error") {
+		t.Error("failed step must keep the error line")
+	}
+}
+
+// TestToolStepRemainderWording pins the cap lines to the chat chip's wording:
+// the page and the chip state a hidden remainder the same way.
+func TestToolStepRemainderWording(t *testing.T) {
+	step := &toolStep{View: &toolresult.Presentation{
+		Kind:              toolresult.KindRecords,
+		MoreRecords:       2,
+		MoreLines:         1,
+		RawMoreLines:      3,
+		RawMoreCharacters: 120,
+	}}
+	if got, want := step.BodyRemainder(), "2 more records · 1 more line"; got != want {
+		t.Errorf("BodyRemainder() = %q, want %q", got, want)
+	}
+	if got, want := step.RawRemainder(), "3 more lines · 120 characters cut"; got != want {
+		t.Errorf("RawRemainder() = %q, want %q", got, want)
 	}
 }

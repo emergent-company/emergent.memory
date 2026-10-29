@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"net/url"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/emergent-company/emergent.memory/apps/web-ui/toolresult"
 	"github.com/labstack/echo/v4"
 )
 
@@ -80,6 +83,7 @@ func (s *Server) uiSession(c echo.Context) error {
 		history.Items = messageTimelineItems(detail.Messages)
 	}
 	items := parseTimeline(history.Items)
+	enrichTimelineSteps(items)
 	groups := groupByRun(items)
 	s.enrichRunTraces(ctx, groups)
 	return s.page(c, pageTitle(sessionTitle(detail)), SessionPage(agents, detail, groups, nil))
@@ -118,4 +122,190 @@ func sessionTitle(detail *ConversationDetail) string {
 func isSessionNotFound(err error) bool {
 	msg := err.Error()
 	return isMemoryNotFound(err) || strings.Contains(msg, "invalid conversation id")
+}
+
+// --- tool-step presentation ---------------------------------------------------
+
+// toolStep is one tool call's presentation on the recorded-session page: the same
+// category, subject and view the live chat chip gets on the wire, assembled here
+// because this page renders without JavaScript (design D4). Deriving it at render
+// time means nothing is persisted and the page cannot show a stale reading.
+type toolStep struct {
+	Category toolresult.Category
+	Subject  string
+	// Paused marks a call that was paused for approval: the policy check returned
+	// the executor's sentinel instead of running the tool, so the payload is not a
+	// result and there is no view to show.
+	Paused bool
+	View   *toolresult.Presentation
+	// Failure is the call's failure line, or "" when it succeeded. It is the
+	// answer when a call failed, so it is shown once, with error styling, and the
+	// outcome and body drop the sentence it repeats.
+	Failure string
+}
+
+// Label is what the step says it did: the category verb, then the subject its
+// arguments gave it. A paused call has not finished, so it reads in the
+// continuous tense — the same rule the live chip applies.
+func (s *toolStep) Label() string {
+	verb := s.Category.Verb
+	if s.Paused {
+		verb = s.Category.RunningVerb
+	}
+	if s.Subject == "" {
+		return verb
+	}
+	return verb + " · " + s.Subject
+}
+
+// Outcome is the collapsed one-line result the chat chip shows, worded once in
+// the toolresult package. A paused call has no result: it says it is waiting.
+func (s *toolStep) Outcome() string {
+	switch {
+	case s.Paused:
+		return "Waiting for confirmation"
+	case s.View == nil:
+		return ""
+	default:
+		return s.View.Outcome
+	}
+}
+
+// ShowOutcome reports whether the outcome line adds anything the card does not
+// already say. A failure is the answer, so its error line carries it; a body of
+// text that is the outcome worded once is not repeated either.
+func (s *toolStep) ShowOutcome() bool {
+	// A paused call says it is waiting once, in the note that also explains what
+	// that means; a failed call is carried by its error line.
+	if s.Paused || s.Failure != "" || s.Outcome() == "" {
+		return false
+	}
+	if s.Text() && sameLine(s.View.Text, s.Outcome()) {
+		return false
+	}
+	return true
+}
+
+// ShowText reports whether the text body adds anything over the failure line.
+func (s *toolStep) ShowText() bool {
+	if !s.Text() {
+		return false
+	}
+	return s.Failure == "" || !sameLine(s.View.Text, s.Failure)
+}
+
+// sameLine reports whether two strings are the same sentence to a reader.
+func sameLine(a, b string) bool {
+	return strings.TrimSpace(a) == strings.TrimSpace(b)
+}
+
+// enrichTimelineSteps attaches each tool_call item's presentation. The parse is
+// bounded by the package's caps, so a long run costs a bounded pass per item.
+func enrichTimelineSteps(items []TimelineItem) {
+	for i := range items {
+		if items[i].Kind != "tool_call" {
+			continue
+		}
+		step := &toolStep{
+			Category: toolresult.Classify(items[i].ToolName),
+			Subject:  toolresult.Subject(items[i].ToolInput),
+		}
+		step.Failure = toolError(items[i].ToolStatus, string(items[i].ToolOutput))
+		if toolAwaitingConfirmation(items[i].ToolOutput) {
+			step.Paused = true
+		} else if view := toolresult.Parse(string(items[i].ToolOutput)); view != nil {
+			step.View = view
+		}
+		items[i].ToolStep = step
+	}
+}
+
+// Records, Fields and Text say which readable body the result has. They are
+// predicates rather than templ comparisons so the template needs no import.
+func (s *toolStep) Records() bool {
+	return s.View != nil && s.View.Kind == toolresult.KindRecords
+}
+
+func (s *toolStep) Fields() bool {
+	return s.View != nil && s.View.Kind == toolresult.KindFields
+}
+
+func (s *toolStep) Text() bool {
+	return s.View != nil && s.View.Kind == toolresult.KindText
+}
+
+// ShowRawText reports a payload with no readable shape: its bounded text is the
+// whole answer, so it is shown in the open rather than behind a second tap — the
+// same rule the chat chip applies.
+func (s *toolStep) ShowRawText() bool {
+	return s.View != nil && !s.Records() && !s.Fields() && !s.Text() && s.View.Raw != ""
+}
+
+// ShowRawDisclosure reports whether the wire name and the raw blocks go behind
+// the disclosure. A paused call has no result to disclose, and a payload shown in
+// the open is already in front of the reader.
+func (s *toolStep) ShowRawDisclosure() bool {
+	return !s.Paused && !s.ShowRawText()
+}
+
+// BodyRemainder states what the body caps hid, so a shortened body cannot pass
+// for the whole result.
+func (s *toolStep) BodyRemainder() string {
+	if s.View == nil {
+		return ""
+	}
+	var parts []string
+	if s.View.MoreRecords > 0 {
+		parts = append(parts, moreCounted(s.View.MoreRecords, "record"))
+	}
+	if s.View.MoreFields > 0 {
+		parts = append(parts, moreCounted(s.View.MoreFields, "field"))
+	}
+	if s.View.MoreLines > 0 {
+		parts = append(parts, moreCounted(s.View.MoreLines, "line"))
+	}
+	if s.View.MoreCharacters > 0 {
+		parts = append(parts, strconv.Itoa(s.View.MoreCharacters)+" characters cut")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ")
+}
+
+// RawRemainder states what the raw cap hid.
+func (s *toolStep) RawRemainder() string {
+	if s.View == nil {
+		return ""
+	}
+	var parts []string
+	if s.View.RawMoreLines > 0 {
+		parts = append(parts, moreCounted(s.View.RawMoreLines, "line"))
+	}
+	if s.View.RawMoreCharacters > 0 {
+		parts = append(parts, strconv.Itoa(s.View.RawMoreCharacters)+" characters cut")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " · ")
+}
+
+// moreCounted words a hidden remainder the way the chat chip does ("1 more
+// record", "2 more records"), so the two surfaces phrase a cap the same way.
+func moreCounted(n int, noun string) string {
+	if n == 1 {
+		return "1 more " + noun
+	}
+	return strconv.Itoa(n) + " more " + noun + "s"
+}
+
+// linkHost is the domain a record's link points at, for the quiet suffix the chat
+// chip shows instead of a full URL.
+func linkHost(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.TrimPrefix(u.Host, "www.")
 }
