@@ -886,6 +886,10 @@ func (f *fakeMemory) ListConversations(ctx context.Context, includeArchived bool
 	return &ConversationList{Conversations: out, Total: len(out)}, nil
 }
 
+func (f *fakeMemory) ListConversationsWithAncestors(ctx context.Context, includeArchived bool) (*ConversationList, error) {
+	return f.ListConversations(ctx, includeArchived)
+}
+
 func (f *fakeMemory) ArchiveConversation(ctx context.Context, id string) error {
 	if f.archiveConvErr != nil {
 		return f.archiveConvErr

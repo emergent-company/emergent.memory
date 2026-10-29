@@ -581,7 +581,7 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 	for _, a := range agents {
 		appearances[a.ID] = agentAppearance{Name: a.Name, Icon: agentIcon(a.UIConfig), Color: agentColor(a.UIConfig)}
 	}
-	convs, cerr := s.memory.ListConversations(ctx, includeArchived)
+	convs, cerr := s.memory.ListConversationsWithAncestors(ctx, includeArchived)
 	if cerr != nil {
 		convs = &ConversationList{}
 	}
@@ -598,15 +598,50 @@ func (s *Server) chatRailData(ctx context.Context, includeArchived bool) (agents
 		captureError(qErr)
 		questions = nil
 	}
+	// Nested sub-chats are internal loopback sessions. Their transcript is not
+	// shown until the group is opened, so fetching one history per child would
+	// multiply the rail's request count for badges nobody sees (17 sub-chats in
+	// one observed chat). Pending approvals and questions are already in the
+	// project-wide snapshots, so badge those without loading a transcript; an
+	// orphan promoted to a root is not nested and keeps the full state fetch.
+	visible := make(map[string]bool, len(convs.Conversations))
+	for _, c := range convs.Conversations {
+		visible[c.ID] = true
+	}
+	isSubchat := make(map[string]bool, len(convs.Conversations))
+	for _, c := range convs.Conversations {
+		if c.ParentConversationID != "" && visible[c.ParentConversationID] {
+			isSubchat[c.ID] = true
+		}
+	}
 	for i := range convs.Conversations {
-		st, serr := s.conversationState(ctx, convs.Conversations[i].ID, approvals, questions)
-		if serr != nil {
-			convs.Conversations[i].Bucket = runBucketDone
+		c := &convs.Conversations[i]
+		if isSubchat[c.ID] {
+			for _, a := range approvals {
+				if a.ConversationID == c.ID && a.Decision == "pending" {
+					c.PendingApprovals++
+				}
+			}
+			for _, q := range questions {
+				if q.ConversationID == c.ID && (q.Response == nil || *q.Response == "") {
+					c.PendingQuestions++
+				}
+			}
+			if c.PendingApprovals > 0 || c.PendingQuestions > 0 {
+				c.Bucket = runBucketNeedsInput
+			} else {
+				c.Bucket = runBucketDone
+			}
 			continue
 		}
-		convs.Conversations[i].Bucket = st.bucket
-		convs.Conversations[i].PendingApprovals = len(st.pendingApprovals)
-		convs.Conversations[i].PendingQuestions = len(st.pendingQuestions)
+		st, serr := s.conversationState(ctx, c.ID, approvals, questions)
+		if serr != nil {
+			c.Bucket = runBucketDone
+			continue
+		}
+		c.Bucket = st.bucket
+		c.PendingApprovals = len(st.pendingApprovals)
+		c.PendingQuestions = len(st.pendingQuestions)
 	}
 	schedRuns = s.chatScheduledRuns(ctx, appearances)
 	shared = s.chatSharedSessions(ctx)

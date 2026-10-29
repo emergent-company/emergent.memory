@@ -1334,6 +1334,22 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   border-radius: var(--radius-box);
   transition: background-color 0.15s ease, color 0.15s ease;
 }
+/* A spawned sub-chat nests under its parent row. The left guide line plus the
+   shared row hover make the grouping readable while the list stays a single
+   scroll container (no nested list box). */
+#chat-rail .session-subchat {
+  border-left: 1px solid var(--color-base-300);
+  border-radius: 0 var(--radius-box) var(--radius-box) 0;
+}
+#chat-rail .session-subchat .font-medium {
+  font-weight: 450;
+}
+#chat-rail [data-action="toggle-subchats"] .subchat-chevron {
+  transition: transform 0.15s ease;
+}
+#chat-rail [data-action="toggle-subchats"][aria-expanded="false"] .subchat-chevron {
+  transform: rotate(-90deg);
+}
 #chat-rail .list-row:hover {
   background: oklch(1 0 0 / 0.04);
 }

@@ -57,6 +57,7 @@
   var selectedSessions = {};         // session id -> true, the checked set while selecting
   var bulkBusy = false;              // a bulk archive is in flight (footer button disabled)
   var archivePendingIds = {};        // session id -> true, optimistic archive in flight (#1419 review)
+  var expandedSubchats = {};         // group root id -> true, sub-chat rows expanded
   var aborter = null;
   var eventSource = null;   // SSE live-update channel for the active conversation/run
   var eventSourceId = "";   // scope key the current eventSource is subscribed to ("conv:<id>" / "run:<id>")
@@ -309,6 +310,10 @@
     originFilterSelect = document.getElementById("chat-origin-filter");
     includeArchivedEl = document.getElementById("chat-include-archived");
 
+    // Seed the sub-chat group model before any filter pass; the server-rendered
+    // rail already has the initial collapsed/expanded classes.
+    initSubchats();
+
     // Dedicated read-only run-transcript page: no composer, no session rail,
     // no agent picker. Render the run's history through the exact shared
     // timeline path and stop — all composer/rail/input wiring below is for the
@@ -463,6 +468,8 @@
         setSessionSelected(t.getAttribute("data-id"), !!t.checked);
       } else if (t.getAttribute("data-action") === "select-all-sessions") {
         selectAllSessions(!!t.checked);
+      } else if (t.getAttribute("data-action") === "toggle-subchats") {
+        toggleSubchats(t.getAttribute("data-subchat-group"));
       } else if (t.getAttribute("data-action") === "bulk-archive-sessions") {
         bulkArchiveSelected();
       } else if (t.getAttribute("data-action") === "archive-session") {
@@ -707,16 +714,22 @@
     return false;
   }
 
-  // Show/hide session rows according to the active agent + origin filters and
-  // toggle the empty states. Rows carry data-agent and data-origin attributes
-  // (server + client render), so filtering is a pure DOM pass that works after
-  // both the initial server render and refreshSessionRail() rebuilds.
+  // Show/hide session rows according to the active agent + origin filters, the
+  // sub-chat group state, and the optimistic archive marker; toggle the empty
+  // states. Rows carry data-agent/data-origin and sub-chat rows carry
+  // data-parent-id, so visibility is a pure DOM pass that works after both the
+  // initial server render and refreshSessionRail() rebuilds.
   function applyAgentFilter() {
     var railList = document.getElementById("chat-rail-list");
     if (!railList) return;
 
     var rows = railList.querySelectorAll("[data-origin]");
-    var visible = 0;
+    var showRows = new Array(rows.length);
+    var groupHasMatch = {};
+
+    // First pass: the filter + optimistic archive conditions, independent of
+    // collapse state, so a collapsed group can still surface when one of its
+    // children matches.
     for (var i = 0; i < rows.length; i++) {
       var agent = rows[i].getAttribute("data-agent") || "";
       var origin = rows[i].getAttribute("data-origin") || "";
@@ -727,8 +740,38 @@
       // Only while "Include archived" is off: with it on an archived row is
       // expected to stay listed, pending or not.
       if (!filterIncludeArchived && rows[i].getAttribute("data-archive-pending") === "true") show = false;
-      rows[i].classList.toggle("hidden", !show);
-      if (show) visible++;
+      showRows[i] = show;
+      var parentID = rows[i].getAttribute("data-parent-id");
+      if (show && parentID) groupHasMatch[parentID] = true;
+    }
+
+    var visible = 0;
+    for (var j = 0; j < rows.length; j++) {
+      var showRow = showRows[j];
+      var groupID = rows[j].getAttribute("data-parent-id");
+      if (groupID) {
+        // A sub-chat is visible only while its group is open.
+        showRow = showRow && !!expandedSubchats[groupID];
+      } else if (rows[j].hasAttribute("data-subchat-count")) {
+        // Keep a collapsed parent header reachable when one of its children is
+        // the only match, otherwise the filter would hide the toggle that opens
+        // the matching sub-chat.
+        var ownGroup = rows[j].getAttribute("data-subchat-group");
+        showRow = showRow || !!groupHasMatch[ownGroup];
+      }
+      rows[j].classList.toggle("hidden", !showRow);
+      if (showRow) visible++;
+    }
+
+    // Reflect the group model on each toggle's chevron and accessible name.
+    var toggles = railList.querySelectorAll("[data-action='toggle-subchats']");
+    for (var k = 0; k < toggles.length; k++) {
+      var toggleGroup = toggles[k].getAttribute("data-subchat-group");
+      var isOpen = !!expandedSubchats[toggleGroup];
+      toggles[k].setAttribute("aria-expanded", isOpen ? "true" : "false");
+      var countEl = toggles[k].querySelector(".tabular-nums");
+      var count = countEl ? parseInt(countEl.textContent, 10) || 0 : 0;
+      toggles[k].setAttribute("aria-label", (isOpen ? "Hide " : "Show ") + count + (count === 1 ? " sub-chat" : " sub-chats"));
     }
 
     var emptyAll = document.getElementById("chat-rail-empty");
@@ -743,6 +786,32 @@
       if (emptyAll) emptyAll.classList.add("hidden");
       if (emptyFiltered) emptyFiltered.classList.add("hidden");
     }
+  }
+
+  // initSubchats seeds the open/closed model from the server-rendered rail.
+  // The server opens only the active branch; a user's toggles persist across
+  // rail refreshes because an existing entry is not overwritten. An active
+  // sub-chat (deep link or resume) forces its group open.
+  function initSubchats() {
+    var railList = document.getElementById("chat-rail-list");
+    if (!railList) return;
+    // The group state lives on the parent row (data-subchats-expanded); the
+    // toggle button only identifies the group. Read the row, not the button.
+    var groups = railList.querySelectorAll("[data-subchat-count]");
+    for (var i = 0; i < groups.length; i++) {
+      var id = groups[i].getAttribute("data-id");
+      if (id && !(id in expandedSubchats)) {
+        expandedSubchats[id] = groups[i].getAttribute("data-subchats-expanded") === "true";
+      }
+    }
+    var active = railList.querySelector("[data-active='true'][data-parent-id]");
+    if (active) expandedSubchats[active.getAttribute("data-parent-id")] = true;
+  }
+
+  function toggleSubchats(groupID) {
+    if (!groupID) return;
+    expandedSubchats[groupID] = !expandedSubchats[groupID];
+    applyAgentFilter();
   }
 
   // Re-fetch the server-rendered rail list (past conversations + scheduled-run
@@ -760,6 +829,7 @@
       if (!res.ok) throw new Error("HTTP " + res.status);
       railList.innerHTML = await res.text();
       reapplyArchivePending();
+      initSubchats();
       applyAgentFilter();
       applyRailBadges();
       pruneSelection();
@@ -1055,6 +1125,9 @@
     deleteSessionId = id;
     var name = document.getElementById("chat-delete-confirm-name");
     if (name) name.textContent = title || "this session";
+    // Delete cascades to every accessible descendant, including archived and
+    // off-page rows the rail cannot count. The static description names that
+    // blast radius; a page-derived number would understate it.
     d.showModal();
   }
 

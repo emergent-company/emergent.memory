@@ -827,12 +827,15 @@ Table "kb"."chat_conversations" {
   "session_id" uuid
   "is_archived" boolean [not null, default: false]
   "archived_at" timestamptz
+  "parent_conversation_id" uuid
+  "spawn_source" text
 
   Indexes {
     (canonical_id) [name: "IDX_chat_conversations_canonical_id", unique]
     (object_id) [name: "IDX_chat_conversations_object_id_unique", unique]
     (project_id, updated_at) [name: "idx_chat_conversations_project_active_updated"]
     (session_id) [name: "idx_chat_conversations_session_id_unique", unique]
+    (parent_conversation_id) [name: "idx_chat_conversations_parent"]
   }
 }
 

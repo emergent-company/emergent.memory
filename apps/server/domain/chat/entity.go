@@ -33,6 +33,18 @@ type Conversation struct {
 	// Created on first agent-backed stream; reused on subsequent turns.
 	SessionID *uuid.UUID `bun:"session_id,type:uuid" json:"sessionId,omitempty"`
 
+	// ParentConversationID links a sub-chat to the conversation whose agent run
+	// spawned it. It is empty for a user-started chat and for runs with no chat
+	// parent (scheduled, board, direct API callers). The link is persisted when
+	// the sub-chat is created so the rail can group it without re-deriving the
+	// parent from run rows on every read.
+	ParentConversationID *uuid.UUID `bun:"parent_conversation_id,type:uuid" json:"parentConversationId,omitempty"`
+
+	// SpawnSource names the mechanism that opened the sub-chat (for example
+	// "search-knowledge"). Informational: it lets the rail label a nested row
+	// without needing the internal agent definition.
+	SpawnSource *string `bun:"spawn_source" json:"spawnSource,omitempty"`
+
 	// Archive state — non-destructive hide. IsArchived is the list filter
 	// predicate; ArchivedAt is set on archive and cleared on unarchive.
 	IsArchived bool       `bun:"is_archived,notnull,default:false" json:"isArchived"`
@@ -78,6 +90,12 @@ type ListConversationsParams struct {
 	Limit           int
 	Offset          int
 	IncludeArchived bool
+	// IncludeAncestors makes the list self-contained for grouping: when a page
+	// contains a sub-chat whose parent falls outside the page (or outside the
+	// limit), the visible ancestor chain is fetched too. The ancestors obey the
+	// same project/owner/archive filters and are merged back by updated_at, so
+	// the page is never longer than necessary but is always groupable.
+	IncludeAncestors bool
 }
 
 // ListConversationsResult contains the result of listing conversations
@@ -91,6 +109,12 @@ type CreateConversationRequest struct {
 	Title       string  `json:"title" validate:"required,max=512"`
 	Message     string  `json:"message" validate:"required,max=100000"`
 	CanonicalID *string `json:"canonicalId,omitempty" validate:"omitempty,uuid"`
+
+	// ParentConversationID and SpawnSource are set only by internal loopback
+	// callers (QueryStream). json:"-" keeps them off the public create body: a
+	// client must not be able to graft its conversation onto another one.
+	ParentConversationID *string `json:"-" validate:"omitempty,uuid"`
+	SpawnSource          *string `json:"-" validate:"omitempty,max=64"`
 }
 
 // UpdateConversationRequest is the request body for updating a conversation

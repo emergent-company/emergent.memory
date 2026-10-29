@@ -40,6 +40,10 @@ type MemoryBackend interface {
 	CancelAgentRun(ctx context.Context, agentID, runID string) (bool, error)
 	ListSessionTodos(ctx context.Context, sessionID string) ([]SessionTodo, error)
 	ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error)
+	// ListConversationsWithAncestors is the rail's variant: the page also
+	// carries the visible ancestors of its sub-chats so a child that outran its
+	// parent is still groupable.
+	ListConversationsWithAncestors(ctx context.Context, includeArchived bool) (*ConversationList, error)
 	ArchiveConversation(ctx context.Context, id string) error
 	UnarchiveConversation(ctx context.Context, id string) error
 	DeleteConversation(ctx context.Context, id string) error

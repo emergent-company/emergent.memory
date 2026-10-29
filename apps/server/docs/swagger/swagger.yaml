@@ -2355,12 +2355,26 @@ definitions:
         type: string
       ownerUserId:
         type: string
+      parentConversationId:
+        description: |-
+          ParentConversationID links a sub-chat to the conversation whose agent run
+          spawned it. It is empty for a user-started chat and for runs with no chat
+          parent (scheduled, board, direct API callers). The link is persisted when
+          the sub-chat is created so the rail can group it without re-deriving the
+          parent from run rows on every read.
+        type: string
       projectId:
         type: string
       sessionId:
         description: |-
           SessionID links this conversation to its backing kb.sessions row.
           Created on first agent-backed stream; reused on subsequent turns.
+        type: string
+      spawnSource:
+        description: |-
+          SpawnSource names the mechanism that opened the sub-chat (for example
+          "search-knowledge"). Informational: it lets the rail label a nested row
+          without needing the internal agent definition.
         type: string
       title:
         type: string
@@ -2405,12 +2419,26 @@ definitions:
         type: string
       ownerUserId:
         type: string
+      parentConversationId:
+        description: |-
+          ParentConversationID links a sub-chat to the conversation whose agent run
+          spawned it. It is empty for a user-started chat and for runs with no chat
+          parent (scheduled, board, direct API callers). The link is persisted when
+          the sub-chat is created so the rail can group it without re-deriving the
+          parent from run rows on every read.
+        type: string
       projectId:
         type: string
       sessionId:
         description: |-
           SessionID links this conversation to its backing kb.sessions row.
           Created on first agent-backed stream; reused on subsequent turns.
+        type: string
+      spawnSource:
+        description: |-
+          SpawnSource names the mechanism that opened the sub-chat (for example
+          "search-knowledge"). Informational: it lets the rail label a nested row
+          without needing the internal agent definition.
         type: string
       title:
         type: string
@@ -12587,6 +12615,10 @@ paths:
       - description: Include archived conversations (default false)
         in: query
         name: includeArchived
+        type: boolean
+      - description: Include visible ancestors of listed sub-chats (default false)
+        in: query
+        name: includeAncestors
         type: boolean
       produces:
       - application/json

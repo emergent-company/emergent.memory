@@ -88,6 +88,7 @@ func NewHandler(svc *Service, llmClient *vertex.Client, searchSvc *search.Servic
 // @Param        limit query int false "Max results (1-100, default 50)" minimum(1) maximum(100)
 // @Param        offset query int false "Offset for pagination" minimum(0)
 // @Param        includeArchived query bool false "Include archived conversations (default false)"
+// @Param        includeAncestors query bool false "Include visible ancestors of listed sub-chats (default false)"
 // @Success      200 {object} ListConversationsResult "List of conversations"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
 // @Failure      401 {object} apperror.Error "Unauthorized"
@@ -129,11 +130,23 @@ func (h *Handler) ListConversations(c echo.Context) error {
 		includeArchived = parsed
 	}
 
+	// includeAncestors is opt-in: the web rail needs a groupable page (a child
+	// can be newer than its parent and push the parent off the limit), while
+	// other API callers keep the exact pagination contract.
+	includeAncestors := false
+	if iaStr := c.QueryParam("includeAncestors"); iaStr != "" {
+		parsed, err := strconv.ParseBool(iaStr)
+		if err != nil {
+			return apperror.NewBadRequest("includeAncestors must be a boolean")
+		}
+		includeAncestors = parsed
+	}
+
 	// Pass the caller's user id for the owner-or-shared filter. An ownerless
 	// device credential carries no user id (""), so the repository scopes it to
 	// project-shared conversations instead of comparing "" against a uuid
 	// column (SQLSTATE 22P02).
-	result, err := h.svc.ListConversations(c.Request().Context(), user.ProjectID, &user.ID, limit, offset, includeArchived)
+	result, err := h.svc.ListConversations(c.Request().Context(), user.ProjectID, &user.ID, limit, offset, includeArchived, includeAncestors)
 	if err != nil {
 		return err
 	}
@@ -1537,6 +1550,7 @@ type QueryStreamRequest struct {
 	Namespace      string `json:"namespace,omitempty"`       // optional: scopes all MCP tool calls to this namespace
 	ParentRunID    string `json:"parent_run_id,omitempty"`   // optional: calling agent's run ID for parent→child linkage
 	RootRunID      string `json:"root_run_id,omitempty"`     // optional: top-level orchestration run ID
+	SpawnSource    string `json:"spawn_source,omitempty"`    // optional: mechanism that opened the conversation (e.g. "search-knowledge")
 	ResponseFormat string `json:"response_format,omitempty"` // optional: hint prepended to message to control answer shape/verbosity
 
 	// Per-call graph type scope. The internal graph-query-agent carries no
@@ -1672,11 +1686,40 @@ func (h *Handler) QueryStream(c echo.Context) error {
 		if len(title) > 50 {
 			title = title[:50] + "..."
 		}
+
+		// Persist the spawning conversation when the caller supplied a parent
+		// run (the search-knowledge loopback forwards its own run id). The run's
+		// session resolves to the conversation; only link one the caller can see
+		// in this project, so a caller-supplied run id cannot graft a chat onto
+		// a foreign conversation.
+		var parentConversationID string
+		if parentRunID != "" && h.agentRepo != nil {
+			if id := h.agentRepo.ConversationIDForRun(ctx, parentRunID); id != "" {
+				if parentUUID, parseErr := uuid.Parse(id); parseErr == nil &&
+					h.svc.CanAccessConversation(ctx, projectID, user.ID, parentUUID) {
+					parentConversationID = id
+				}
+			}
+		}
+
+		createReq := CreateConversationRequest{Title: title, Message: message}
+		if parentConversationID != "" {
+			createReq.ParentConversationID = &parentConversationID
+		}
+		if req.SpawnSource != "" {
+			// Public callers reach this endpoint too; cap the label so a
+			// caller-supplied source cannot store an unbounded string in the rail.
+			// Truncate by rune, not byte, so a multi-byte label never becomes
+			// invalid UTF-8 and fails the insert.
+			source := req.SpawnSource
+			if runes := []rune(source); len(runes) > 64 {
+				source = string(runes[:64])
+			}
+			createReq.SpawnSource = &source
+		}
+
 		var createErr error
-		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, CreateConversationRequest{
-			Title:   title,
-			Message: message,
-		})
+		conv, createErr = h.svc.CreateConversation(ctx, projectID, user.ID, createReq)
 		if createErr != nil {
 			span.RecordError(createErr)
 			span.SetStatus(codes.Error, createErr.Error())

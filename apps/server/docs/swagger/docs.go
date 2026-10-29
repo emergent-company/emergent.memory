@@ -3156,6 +3156,12 @@ const docTemplate = `{
                         "description": "Include archived conversations (default false)",
                         "name": "includeArchived",
                         "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Include visible ancestors of listed sub-chats (default false)",
+                        "name": "includeAncestors",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -29142,11 +29148,19 @@ const docTemplate = `{
                 "ownerUserId": {
                     "type": "string"
                 },
+                "parentConversationId": {
+                    "description": "ParentConversationID links a sub-chat to the conversation whose agent run\nspawned it. It is empty for a user-started chat and for runs with no chat\nparent (scheduled, board, direct API callers). The link is persisted when\nthe sub-chat is created so the rail can group it without re-deriving the\nparent from run rows on every read.",
+                    "type": "string"
+                },
                 "projectId": {
                     "type": "string"
                 },
                 "sessionId": {
                     "description": "SessionID links this conversation to its backing kb.sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
+                    "type": "string"
+                },
+                "spawnSource": {
+                    "description": "SpawnSource names the mechanism that opened the sub-chat (for example\n\"search-knowledge\"). Informational: it lets the rail label a nested row\nwithout needing the internal agent definition.",
                     "type": "string"
                 },
                 "title": {
@@ -29207,11 +29221,19 @@ const docTemplate = `{
                 "ownerUserId": {
                     "type": "string"
                 },
+                "parentConversationId": {
+                    "description": "ParentConversationID links a sub-chat to the conversation whose agent run\nspawned it. It is empty for a user-started chat and for runs with no chat\nparent (scheduled, board, direct API callers). The link is persisted when\nthe sub-chat is created so the rail can group it without re-deriving the\nparent from run rows on every read.",
+                    "type": "string"
+                },
                 "projectId": {
                     "type": "string"
                 },
                 "sessionId": {
                     "description": "SessionID links this conversation to its backing kb.sessions row.\nCreated on first agent-backed stream; reused on subsequent turns.",
+                    "type": "string"
+                },
+                "spawnSource": {
+                    "description": "SpawnSource names the mechanism that opened the sub-chat (for example\n\"search-knowledge\"). Informational: it lets the rail label a nested row\nwithout needing the internal agent definition.",
                     "type": "string"
                 },
                 "title": {

@@ -497,7 +497,7 @@ templ chatDeleteConfirmDialog() {
 // session name span is filled by chat.js (textContent — never innerHTML).
 templ chatDeleteConfirmDescription() {
 	@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
-		This permanently deletes <span id="chat-delete-confirm-name" class="font-medium text-base-content">this session</span> and its messages. It cannot be undone.
+		This permanently deletes <span id="chat-delete-confirm-name" class="font-medium text-base-content">this session</span>, its messages, and any sub-chats spawned from it. It cannot be undone.
 	}
 }
 
@@ -510,8 +510,15 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 	if hasRows {
 		@ui.List(ui.ListProps{}) {
 			if convs != nil {
-				for _, c := range convs.Conversations {
-					@sessionRailItem(c, appearances[c.AgentDefinitionID], c.ID == convID)
+				for _, grp := range groupConversations(convs.Conversations, convID) {
+					if len(grp.Descendants) > 0 {
+						@sessionRailGroupParent(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID, len(grp.Descendants), grp.Expanded)
+					} else {
+						@sessionRailItem(grp.Root, appearances[grp.Root.AgentDefinitionID], grp.Root.ID == convID)
+					}
+					for _, d := range grp.Descendants {
+						@sessionRailSubchat(d.Conversation, appearances[d.AgentDefinitionID], d.ID == convID, grp.Root.ID, d.Depth, !grp.Expanded)
+					}
 				}
 			}
 			for _, r := range schedRuns {
@@ -536,6 +543,26 @@ templ chatRailList(convs *ConversationList, appearances map[string]agentAppearan
 // An archived row (shown only when the rail's "Include archived" filter is on)
 // carries data-archived plus an "Archived" marker and is visually muted.
 templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{})
+}
+
+// sessionRailGroupParent renders the root of a conversation group. count is the
+// number of spawned sub-chats beneath it and expanded is the server-rendered
+// initial state (the active branch is open, everything else starts collapsed).
+templ sessionRailGroupParent(c Conversation, ap agentAppearance, active bool, count int, expanded bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatCount: count, SubchatsExpanded: expanded})
+}
+
+// sessionRailSubchat renders one nested chat below its group root. rootID is
+// the row the toggle controls; depth drives indentation. collapsed mirrors the
+// server-rendered group state so the first paint matches chat.js's model.
+templ sessionRailSubchat(c Conversation, ap agentAppearance, active bool, rootID string, depth int, collapsed bool) {
+	@sessionRailRow(c, ap, active, sessionRailRowOptions{SubchatRootID: rootID, SubchatDepth: depth, Collapsed: collapsed})
+}
+
+// sessionRailRow is the shared row markup for a top-level chat, a group parent
+// and a nested sub-chat.
+templ sessionRailRow(c Conversation, ap agentAppearance, active bool, opts sessionRailRowOptions) {
 	{{
 		attrs := templ.Attributes{
 			"data-action":            "resume-session",
@@ -553,8 +580,43 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 		if c.IsArchived {
 			attrs["data-archived"] = "true"
 		}
+		class := "list-row"
+		style := ""
+		if c.IsArchived {
+			class += " opacity-60"
+		}
+		if opts.SubchatRootID != "" {
+			attrs["data-parent-id"] = opts.SubchatRootID
+			attrs["data-subchat"] = "true"
+			attrs["data-depth"] = strconv.Itoa(opts.SubchatDepth)
+			class += " session-subchat"
+			pad := 8 + 14*opts.SubchatDepth
+			if pad > 40 {
+				pad = 40
+			}
+			style = "padding-left: " + strconv.Itoa(pad) + "px"
+		}
+		if opts.SubchatCount > 0 {
+			attrs["data-subchat-count"] = strconv.Itoa(opts.SubchatCount)
+			// The filter pass reads the group id from the row (not the toggle
+			// button) so a child-only match can keep its collapsed root visible.
+			attrs["data-subchat-group"] = c.ID
+			if opts.SubchatsExpanded {
+				attrs["data-subchats-expanded"] = "true"
+			}
+		}
+		if opts.Collapsed {
+			class += " hidden"
+		}
+		subtitleName := ap.Name
+		if opts.SubchatRootID != "" {
+			subtitleName = "Sub-chat"
+			if c.SpawnSource != "" {
+				subtitleName = c.SpawnSource
+			}
+		}
 	}}
-	<li class={ "list-row", templ.KV("opacity-60", c.IsArchived) } { attrs... }>
+	<li class={ class } style={ style } { attrs... }>
 		<!-- Selection checkbox (#1385). Always rendered so the markup is
 		     server-owned and stable across rail refreshes; hidden until
 		     chat.js enables selection mode. It carries its own data-action so
@@ -586,9 +648,26 @@ templ sessionRailItem(c Conversation, ap agentAppearance, active bool) {
 				}
 			</div>
 			<div class="font-medium text-sm">{ c.Title }</div>
-			<div class="text-xs text-muted">{ railSubtitle(ap.Name, c.UpdatedAt) }</div>
+			<div class="text-xs text-muted">{ railSubtitle(subtitleName, c.UpdatedAt) }</div>
 		</div>
 		<div class="flex items-center gap-1">
+			if opts.SubchatCount > 0 {
+				@ui.Button(ui.ButtonProps{
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonXS,
+					ExtraClass: "gap-1",
+					AriaLabel:  subchatToggleLabel(opts.SubchatCount, opts.SubchatsExpanded),
+					Attrs: templ.Attributes{
+						"data-action":        "toggle-subchats",
+						"data-subchat-group": c.ID,
+						"data-testid":        "session-subchats-toggle",
+						"aria-expanded":      boolString(opts.SubchatsExpanded),
+					},
+				}) {
+					<span class="text-xs tabular-nums">{ strconv.Itoa(opts.SubchatCount) }</span>
+					@ui.IconSpan("lucide--chevron-down", "size-3 subchat-chevron")
+				}
+			}
 			@ui.IconSpan("lucide--chevron-right", "size-4 text-muted-subtle")
 			<!-- Row action menu. Uses the shared go-daisy popover (native
 			     popover top-layer, position:fixed) rather than a CSS dropdown:
@@ -800,11 +879,15 @@ func railEmptyClass(hasConvs bool) string {
 templ chatRailEmpty(hasRows bool) {
 	<div id="chat-rail-empty" class={ railEmptyClass(hasRows) }>
 		@ui.IconSpan("lucide--messages-square", "size-6 text-muted-subtle")
-		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { No sessions yet. Chat once or create a schedule and runs land here. }
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			No sessions yet. Chat once or create a schedule and runs land here. 
+		}
 	</div>
 	<div id="chat-rail-empty-filtered" class="hidden px-3 py-6 text-center">
 		@ui.IconSpan("lucide--filter", "size-6 text-muted-subtle")
-		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) { No sessions match the current filter. }
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			No sessions match the current filter. 
+		}
 	</div>
 }
 

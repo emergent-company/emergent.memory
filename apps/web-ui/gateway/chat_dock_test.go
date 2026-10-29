@@ -608,12 +608,19 @@ func TestChatRailDataCarriesBucket(t *testing.T) {
 		convs: []Conversation{
 			{ID: "c1", Title: "failed", AgentDefinitionID: "a1"},
 			{ID: "c2", Title: "needs input", AgentDefinitionID: "a1"},
+			{ID: "c3", Title: "sub-chat", AgentDefinitionID: "a1", ParentConversationID: "c1"},
 		},
 		histories: map[string]*ConversationHistory{
 			"c1": {ConversationID: "c1", Items: []json.RawMessage{runItem("run_end", "r1", "failed")}},
 			"c2": {ConversationID: "c2", Items: []json.RawMessage{runItem("run_end", "r2", "working")}},
 		},
-		approvals: []ToolApprovalItem{{ConversationID: "c2", Decision: "pending", QuestionID: "a1"}},
+		approvals: []ToolApprovalItem{
+			{ConversationID: "c2", Decision: "pending", QuestionID: "a1"},
+			{ConversationID: "c3", Decision: "pending", QuestionID: "a3"},
+		},
+		questions: []AgentQuestionItem{
+			{ID: "q3", ConversationID: "c3", Question: "continue?"},
+		},
 	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	_, _, convs, _, _, _, err := s.chatRailData(t.Context(), false)
@@ -629,6 +636,11 @@ func TestChatRailDataCarriesBucket(t *testing.T) {
 	}
 	if got := byID["c2"]; got.Bucket != runBucketNeedsInput || got.PendingApprovals != 1 || got.PendingQuestions != 0 {
 		t.Errorf("c2 row = bucket %q approvals %d questions %d, want needs_input/1/0", got.Bucket, got.PendingApprovals, got.PendingQuestions)
+	}
+	// c3 is nested, so it must not fetch history; its pending approval and
+	// question still badge from the project-wide snapshots.
+	if got := byID["c3"]; got.Bucket != runBucketNeedsInput || got.PendingApprovals != 1 || got.PendingQuestions != 1 {
+		t.Errorf("c3 row = bucket %q approvals %d questions %d, want needs_input/1/1", got.Bucket, got.PendingApprovals, got.PendingQuestions)
 	}
 }
 

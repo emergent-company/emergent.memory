@@ -305,6 +305,7 @@ func TestChatDeleteConfirmDialogRender(t *testing.T) {
 	for _, want := range []string{
 		`id="chat-delete-confirm-modal"`,
 		`id="chat-delete-confirm-name"`,
+		`and any sub-chats spawned from it`,
 		`data-testid="chat-delete-confirm-go"`,
 		`data-action="close-delete-session"`,
 		`method="dialog"`, // backdrop/Escape dismiss, no request

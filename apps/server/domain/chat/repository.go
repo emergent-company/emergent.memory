@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -92,10 +93,83 @@ func (r *Repository) ListConversations(ctx context.Context, params ListConversat
 		return nil, fmt.Errorf("list conversations: %w", err)
 	}
 
+	// A sub-chat can be newer than the parent that spawned it, so the parent may
+	// fall outside the page (or the limit). The rail groups by parent id, and a
+	// page that references a parent it does not contain cannot be grouped. Pull
+	// in the visible ancestor chain; the query is opt-in so other list callers
+	// keep the exact page contract.
+	if params.IncludeAncestors && len(conversations) > 0 {
+		ancestors, err := r.listMissingAncestors(ctx, params, conversations)
+		if err != nil {
+			return nil, err
+		}
+		if len(ancestors) > 0 {
+			conversations = append(conversations, ancestors...)
+			sort.SliceStable(conversations, func(i, j int) bool {
+				return conversations[i].UpdatedAt.After(conversations[j].UpdatedAt)
+			})
+		}
+	}
+
 	return &ListConversationsResult{
 		Conversations: conversations,
 		Total:         total,
 	}, nil
+}
+
+// listMissingAncestors walks parent links from the current page and returns the
+// ancestors that are not already present. Each level re-applies the same
+// project/owner/archive predicates, so an inaccessible or archived parent is
+// never revealed; the depth cap and seen set make a corrupt cycle terminate.
+func (r *Repository) listMissingAncestors(ctx context.Context, params ListConversationsParams, page []Conversation) ([]Conversation, error) {
+	seen := make(map[uuid.UUID]bool, len(page))
+	frontier := make(map[uuid.UUID]bool)
+	for _, c := range page {
+		seen[c.ID] = true
+		if c.ParentConversationID != nil && !seen[*c.ParentConversationID] {
+			frontier[*c.ParentConversationID] = true
+		}
+	}
+
+	var out []Conversation
+	for depth := 0; depth < 16 && len(frontier) > 0; depth++ {
+		ids := make([]uuid.UUID, 0, len(frontier))
+		for id := range frontier {
+			ids = append(ids, id)
+		}
+
+		query := r.db.NewSelect().
+			Model((*Conversation)(nil)).
+			Where("id IN (?)", bun.In(ids)).
+			Where("project_id = ?", params.ProjectID)
+		if params.OwnerUserID != nil {
+			condition, args := ownerOrSharedScope("", *params.OwnerUserID)
+			query = query.Where(condition, args...)
+		}
+		if !params.IncludeArchived {
+			query = query.Where("is_archived = false")
+		}
+
+		var parents []Conversation
+		if err := query.Scan(ctx, &parents); err != nil {
+			return nil, fmt.Errorf("list conversation ancestors: %w", err)
+		}
+
+		next := make(map[uuid.UUID]bool)
+		for _, p := range parents {
+			if seen[p.ID] {
+				continue
+			}
+			seen[p.ID] = true
+			out = append(out, p)
+			if p.ParentConversationID != nil && !seen[*p.ParentConversationID] {
+				next[*p.ParentConversationID] = true
+			}
+		}
+		frontier = next
+	}
+
+	return out, nil
 }
 
 // GetByID retrieves a conversation by ID, scoped to the caller: the caller
@@ -257,6 +331,75 @@ func (r *Repository) SetArchived(ctx context.Context, projectID, ownerUserID str
 	if err != nil {
 		r.log.Error("failed to set conversation archived", logger.Error(err))
 		return false, apperror.NewDatabase("set conversation archived", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
+// subchatTreeCTE is the recursive, access-scoped descendant set rooted at one
+// conversation. The root must match the caller's owner-or-shared predicate; each
+// descendant must too, so a shared parent can never expose (or mutate) another
+// user's private sub-chat. project_id is repeated in both terms because the
+// table is RLS-scoped and the predicate is part of every conversation accessor.
+func subchatTreeCTE(condition string) string {
+	return `
+WITH RECURSIVE tree AS (
+    SELECT id, 0 AS depth
+    FROM kb.chat_conversations
+    WHERE id = ? AND project_id = ? AND ` + condition + `
+    UNION ALL
+    SELECT c.id, t.depth + 1
+    FROM kb.chat_conversations c
+    JOIN tree t ON c.parent_conversation_id = t.id
+    WHERE c.project_id = ? AND ` + condition + ` AND t.depth < 64
+)`
+}
+
+// subchatTreeArgs returns the argument list for subchatTreeCTE: the root id and
+// project, then the access args twice (anchor + recursive term).
+func subchatTreeArgs(conversationID uuid.UUID, projectID string, accessArgs []any) []any {
+	args := []any{conversationID, projectID}
+	args = append(args, accessArgs...)
+	args = append(args, projectID)
+	args = append(args, accessArgs...)
+	return args
+}
+
+// DeleteCascade deletes a conversation and every descendant sub-chat visible to
+// the caller. Messages cascade via the messages FK. It returns whether the root
+// matched so the service can map a no-match to not-found.
+func (r *Repository) DeleteCascade(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) (bool, error) {
+	condition, accessArgs := ownerOrSharedScope("", ownerUserID)
+	query := subchatTreeCTE(condition) + `
+DELETE FROM kb.chat_conversations WHERE id IN (SELECT id FROM tree)`
+	result, err := r.db.NewRaw(query, subchatTreeArgs(conversationID, projectID, accessArgs)...).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to delete conversation subtree", logger.Error(err))
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return rowsAffected > 0, nil
+}
+
+// SetArchivedCascade sets or clears the archive state on a conversation and
+// every descendant sub-chat visible to the caller. Archiving a parent hides the
+// whole group (a visible child under a hidden parent cannot be grouped), and
+// unarchiving restores it symmetrically. A no-op state change still reports a
+// match, so the service can keep archive/unarchive idempotent.
+func (r *Repository) SetArchivedCascade(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID, archived bool) (bool, error) {
+	condition, accessArgs := ownerOrSharedScope("", ownerUserID)
+	setClause := "is_archived = false, archived_at = NULL"
+	if archived {
+		setClause = "is_archived = true, archived_at = NOW()"
+	}
+	query := subchatTreeCTE(condition) + `
+UPDATE kb.chat_conversations SET ` + setClause + ` WHERE id IN (SELECT id FROM tree)`
+	result, err := r.db.NewRaw(query, subchatTreeArgs(conversationID, projectID, accessArgs)...).Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to set conversation subtree archived", logger.Error(err))
+		return false, apperror.NewDatabase("set conversation subtree archived", err)
 	}
 
 	rowsAffected, _ := result.RowsAffected()

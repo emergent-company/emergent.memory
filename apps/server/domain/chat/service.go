@@ -45,13 +45,14 @@ func NewService(repo *Repository, log *slog.Logger) *Service {
 // ListConversations returns a paginated list of conversations for a project.
 // Archived conversations are excluded by default; pass includeArchived to
 // include them.
-func (s *Service) ListConversations(ctx context.Context, projectID string, ownerUserID *string, limit, offset int, includeArchived bool) (*ListConversationsResult, error) {
+func (s *Service) ListConversations(ctx context.Context, projectID string, ownerUserID *string, limit, offset int, includeArchived, includeAncestors bool) (*ListConversationsResult, error) {
 	return s.repo.ListConversations(ctx, ListConversationsParams{
-		ProjectID:       projectID,
-		OwnerUserID:     ownerUserID,
-		Limit:           limit,
-		Offset:          offset,
-		IncludeArchived: includeArchived,
+		ProjectID:        projectID,
+		OwnerUserID:      ownerUserID,
+		Limit:            limit,
+		Offset:           offset,
+		IncludeArchived:  includeArchived,
+		IncludeAncestors: includeAncestors,
 	})
 }
 
@@ -65,6 +66,14 @@ func (s *Service) GetConversation(ctx context.Context, projectID, ownerUserID st
 		return nil, apperror.ErrNotFound.WithMessage("Conversation not found")
 	}
 	return conv, nil
+}
+
+// CanAccessConversation reports whether the caller can see a conversation in
+// the project. The spawn-parent resolution uses it so a caller-supplied run id
+// cannot graft a sub-chat onto a conversation it cannot see.
+func (s *Service) CanAccessConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) bool {
+	conv, err := s.GetConversation(ctx, projectID, ownerUserID, conversationID)
+	return err == nil && conv != nil
 }
 
 // GetConversationWithMessages retrieves a conversation with all its messages
@@ -119,15 +128,26 @@ func (s *Service) CreateConversation(ctx context.Context, projectID, ownerUserID
 	// member from the object's refinement chat.
 	owner, isPrivate := ownerForCreate(ownerUserID, canonicalID == nil)
 
+	var parentConversationID *uuid.UUID
+	if req.ParentConversationID != nil && *req.ParentConversationID != "" {
+		parsed, err := uuid.Parse(*req.ParentConversationID)
+		if err != nil {
+			return nil, apperror.New(400, "invalid-parent-conversation-id", "Invalid parent conversation ID format")
+		}
+		parentConversationID = &parsed
+	}
+
 	now := time.Now()
 	conv := &Conversation{
-		Title:       req.Title,
-		OwnerUserID: owner,
-		IsPrivate:   isPrivate,
-		ProjectID:   projectUUIDPtr,
-		CanonicalID: canonicalID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		Title:                req.Title,
+		OwnerUserID:          owner,
+		IsPrivate:            isPrivate,
+		ProjectID:            projectUUIDPtr,
+		CanonicalID:          canonicalID,
+		ParentConversationID: parentConversationID,
+		SpawnSource:          req.SpawnSource,
+		CreatedAt:            now,
+		UpdatedAt:            now,
 	}
 
 	// Create the initial user message
@@ -173,9 +193,12 @@ func (s *Service) UpdateConversation(ctx context.Context, projectID, ownerUserID
 	return conv, nil
 }
 
-// DeleteConversation deletes a conversation and all its messages
+// DeleteConversation deletes a conversation together with its spawned
+// sub-chats (and, via the messages FK, their messages). Deleting a parent is
+// one action in the rail, so a surviving child would otherwise become an
+// unexplained orphan.
 func (s *Service) DeleteConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
-	deleted, err := s.repo.Delete(ctx, projectID, ownerUserID, conversationID)
+	deleted, err := s.repo.DeleteCascade(ctx, projectID, ownerUserID, conversationID)
 	if err != nil {
 		return err
 	}
@@ -185,10 +208,12 @@ func (s *Service) DeleteConversation(ctx context.Context, projectID, ownerUserID
 	return nil
 }
 
-// ArchiveConversation marks a conversation as archived. Idempotent: archiving an
-// already-archived conversation still succeeds.
+// ArchiveConversation marks a conversation and its spawned sub-chats as
+// archived. Idempotent: archiving an already-archived conversation still
+// succeeds. A hidden parent with visible children would leave the rail unable
+// to group them, so the state change follows the subtree.
 func (s *Service) ArchiveConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
-	matched, err := s.repo.SetArchived(ctx, projectID, ownerUserID, conversationID, true)
+	matched, err := s.repo.SetArchivedCascade(ctx, projectID, ownerUserID, conversationID, true)
 	if err != nil {
 		return err
 	}
@@ -198,10 +223,11 @@ func (s *Service) ArchiveConversation(ctx context.Context, projectID, ownerUserI
 	return nil
 }
 
-// UnarchiveConversation clears a conversation's archive state. Idempotent:
-// unarchiving a conversation that is not archived still succeeds.
+// UnarchiveConversation clears the archive state on a conversation and its
+// spawned sub-chats. Idempotent: unarchiving a conversation that is not
+// archived still succeeds.
 func (s *Service) UnarchiveConversation(ctx context.Context, projectID, ownerUserID string, conversationID uuid.UUID) error {
-	matched, err := s.repo.SetArchived(ctx, projectID, ownerUserID, conversationID, false)
+	matched, err := s.repo.SetArchivedCascade(ctx, projectID, ownerUserID, conversationID, false)
 	if err != nil {
 		return err
 	}

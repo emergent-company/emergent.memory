@@ -82,7 +82,7 @@ func (s *Service) executeQueryKnowledge(ctx context.Context, projectID string, a
 	}
 
 	// Build the request body
-	body := map[string]any{"message": question}
+	body := map[string]any{"message": question, "spawn_source": "search-knowledge"}
 	if branch, ok := args["branch"].(string); ok && branch != "" {
 		body["branch"] = branch
 	}

@@ -26,6 +26,12 @@ type Conversation struct {
 	IsArchived bool   `json:"isArchived"`
 	ArchivedAt string `json:"archivedAt,omitempty"`
 
+	// ParentConversationID is the conversation whose agent run spawned this
+	// sub-chat (empty for a user-started chat). SpawnSource names the mechanism
+	// (e.g. "search-knowledge"). The rail groups rows by the parent id.
+	ParentConversationID string `json:"parentConversationId,omitempty"`
+	SpawnSource          string `json:"spawnSource,omitempty"`
+
 	// Run-control state the gateway derives for the session rail badge (not
 	// present on memory's list response — populated by chatRailData). json:"-"
 	// keeps them out of the /api/conversations response.
@@ -45,9 +51,29 @@ type ConversationList struct {
 // so archive hides a session, while statistics opt in so archiving never
 // rewrites historical counts (design D6).
 func (m *MemoryClient) ListConversations(ctx context.Context, includeArchived bool) (*ConversationList, error) {
-	path := "/api/chat/conversations"
+	q := url.Values{}
 	if includeArchived {
-		path += "?includeArchived=true"
+		q.Set("includeArchived", "true")
+	}
+	return m.listConversations(ctx, q)
+}
+
+// ListConversationsWithAncestors is the session rail's list: it also asks
+// memory for the visible ancestors of any sub-chat on the page, because a
+// spawned child can be newer than its parent and push the parent off the limit.
+func (m *MemoryClient) ListConversationsWithAncestors(ctx context.Context, includeArchived bool) (*ConversationList, error) {
+	q := url.Values{}
+	if includeArchived {
+		q.Set("includeArchived", "true")
+	}
+	q.Set("includeAncestors", "true")
+	return m.listConversations(ctx, q)
+}
+
+func (m *MemoryClient) listConversations(ctx context.Context, q url.Values) (*ConversationList, error) {
+	path := "/api/chat/conversations"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
 	}
 	var out ConversationList
 	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
@@ -69,9 +95,9 @@ func (m *MemoryClient) UnarchiveConversation(ctx context.Context, id string) err
 	return m.do(ctx, http.MethodPost, "/api/chat/"+url.PathEscape(id)+"/unarchive", nil, nil)
 }
 
-// DeleteConversation permanently deletes one conversation (its messages cascade
-// on memory's side). Irreversible; a foreign or unknown id surfaces as
-// not-found.
+// DeleteConversation permanently deletes one conversation (its messages and
+// accessible sub-chats cascade on memory's side). Irreversible; a foreign or
+// unknown id surfaces as not-found.
 func (m *MemoryClient) DeleteConversation(ctx context.Context, id string) error {
 	return m.do(ctx, http.MethodDelete, "/api/chat/"+url.PathEscape(id), nil, nil)
 }
