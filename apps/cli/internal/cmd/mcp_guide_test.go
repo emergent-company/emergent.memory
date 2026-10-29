@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/apps/cli/internal/testutil"
@@ -108,4 +109,28 @@ func TestMCPGuideProjectTokenDoesNotWarn(t *testing.T) {
 	assert.Contains(t, stdout, "emt_projsecret", "--show-secret must print the project token")
 	assert.NotContains(t, stdout, "dummy-key-123", "account key must not leak when a project token is active")
 	assert.NotContains(t, stderr, "account-scoped", "project token is not account-scoped")
+}
+
+// TestMCPGuideSnippetsUseClientConfigKeys pins the root key of every snippet to
+// the one the target client reads. The SSE block shipped under a bare `servers`
+// key, which Claude Desktop ignores silently: the client starts with no Memory
+// server and nothing in the output hints at why (#2268).
+func TestMCPGuideSnippetsUseClientConfigKeys(t *testing.T) {
+	server := newMCPGuideTestServer(t)
+	setupMCPGuideEnv(t, server.URL, "dummy-key-123")
+
+	stdout, _ := runMCPGuideCmd(t)
+
+	// Claude Desktop / Claude Code / Cursor read `mcpServers` — both the
+	// Streamable HTTP snippet and the legacy SSE snippet target those clients.
+	assert.Equal(t, 2, strings.Count(stdout, `"mcpServers":`),
+		"the HTTP and SSE snippets must both use the mcpServers root key")
+	// OpenCode's own config uses `mcp`.
+	assert.Contains(t, stdout, `"mcp":`, "the OpenCode snippet must use the mcp root key")
+	// A bare `servers` root key is not read by any client we emit a snippet for.
+	assert.NotContains(t, stdout, `"servers":`, "no snippet may use a bare servers root key")
+
+	// The SSE snippet still has to address a real endpoint for the project.
+	assert.Contains(t, stdout, server.URL+"/api/mcp/sse/proj-123",
+		"SSE endpoint missing the project-scoped path")
 }

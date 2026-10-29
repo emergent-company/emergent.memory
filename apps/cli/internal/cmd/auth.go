@@ -1345,7 +1345,7 @@ func printMCPConfig(cfg *config.Config, project *projectResponse, activeKey stri
 	fmt.Println()
 
 	sseConfig := map[string]interface{}{
-		"servers": map[string]interface{}{
+		"mcpServers": map[string]interface{}{
 			"memory": map[string]interface{}{
 				"type": "sse",
 				"url":  sseURL,
