@@ -11,7 +11,6 @@ use (
 	./blueprints/code-memory-blueprint/tools/context-action-map
 	./blueprints/code-memory-blueprint/tools/context-rewire
 	./blueprints/code-memory-blueprint/tools/coverage-audit
-	./blueprints/code-memory-blueprint/tools/entity-seed
 	./blueprints/code-memory-blueprint/tools/func-tree
 	./blueprints/code-memory-blueprint/tools/graph-complexity
 	./blueprints/code-memory-blueprint/tools/graph-fix
