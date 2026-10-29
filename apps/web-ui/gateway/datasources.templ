@@ -98,7 +98,8 @@ templ dataSourceRow(src DSIntegration, providerNames map[string]string) {
 			</a>
 		</td>
 		<td>{ dsProviderLabel(providerNames, src.ProviderType) }</td>
-		<td>@dsStatusBadge(src.Status)</td>
+		<td>@dsStatusBadge(src.Status)
+</td>
 		<td>{ dsSyncModeLabel(src.SyncMode) }</td>
 		<td class="whitespace-nowrap">{ dsLastSyncLabel(src) }</td>
 		<td class="text-right">
@@ -179,9 +180,9 @@ templ dsSourceStatusBadge(status string) {
 // loadErr surfaces a provider-list or schema fetch failure; oauthClientErr
 // surfaces an inline, actionable "no OAuth client configured" error (instead of
 // a transient toast) with a link to the org's OAuth client settings.
-templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error, oauthClientErr *dsOAuthClientError) {
+templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker, loadErr error, flashErr error, oauthClientErr *dsOAuthClientError) {
 	if selected != nil && (selected.DSProviderSupportsCredentials() || selected.DSProviderSupportsConfigOnly()) {
-		@dsCredentialsConnectPage(*selected, configFields, credentialFields, loadErr, flashErr)
+		@dsCredentialsConnectPage(*selected, configFields, credentialFields, picker, loadErr, flashErr)
 	} else {
 		@layout.Container(layout.ContainerLG, nil) {
 			if oauthClientErr != nil {
@@ -225,63 +226,97 @@ templ DataSourceNewPage(providers []DSProvider, selected *DSProvider, configFiel
 	}
 }
 
-// dsProviderChoice is one selectable provider card in the chooser. It renders
-// exactly the connect actions the provider advertises (OAuth and/or credentials),
-// so a new catalog provider needs no code change here.
+// dsProviderChoice is one selectable provider card in the chooser. It spells out
+// the connect methods the provider advertises (OAuth and/or a saved credential),
+// so "sign in with the provider" and "use a personal access token" are two
+// clearly separated, labelled paths rather than two unlabelled buttons.
 templ dsProviderChoice(p DSProvider) {
 	@components.PanelCard("", nil) {
-		<div class="flex flex-col gap-3" data-testid="ds-provider-choice">
+		<div class="flex flex-col gap-4" data-testid="ds-provider-choice">
 			<div class="flex items-start gap-3">
 				@ui.IconTile("lucide--cloud", ui.IconTileProps{Tone: "info"})
 				<div class="min-w-0 grow">
 					<h2 class="text-base font-semibold">{ p.Name }</h2>
 					if p.Description != "" {
-						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { { p.Description } }
+						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+							{ p.Description }
+						}
 					}
 				</div>
 			</div>
-			<div class="flex flex-wrap items-center gap-2">
-				if p.DSProviderSupportsOAuth() {
-					// hx-boost is off: the handler redirects to the provider
-					// (cross-origin), which a boosted fetch cannot follow.
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
-						Variant: ui.ButtonPrimary,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--plug-zap",
-						Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
-					}) {
-						Connect with { p.Name }
-					}
-				}
-				if p.DSProviderSupportsCredentials() {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=credentials",
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--key-round",
-						Attrs:   templ.Attributes{"data-testid": "ds-credentials-connect"},
-					}) {
-						Enter credentials
-					}
-				}
-				if p.DSProviderSupportsConfigOnly() {
-					@ui.Button(ui.ButtonProps{
-						Type:    ui.ButtonTypeLink,
-						Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=config",
-						Variant: ui.ButtonOutline,
-						Size:    ui.ButtonSM,
-						Icon:    "lucide--settings",
-						Attrs:   templ.Attributes{"data-testid": "ds-config-connect"},
-					}) {
-						Configure source
-					}
-				}
-			</div>
+			@dsProviderMethods(p)
 		</div>
 	}
+}
+
+// dsProviderMethods is the "Connection method" block: one labelled row per
+// advertised method with a one-line explanation and its action.
+templ dsProviderMethods(p DSProvider) {
+	<div class="flex flex-col gap-2" data-testid="ds-connection-methods">
+		<h3 class="text-xs font-semibold uppercase tracking-wide text-muted">Connection method</h3>
+		if p.DSProviderSupportsOAuth() {
+			<div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/10 px-3 py-2.5" data-testid="ds-method-oauth">
+				<div class="min-w-0">
+					<p class="text-sm font-medium">OAuth connection</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						Sign in to { p.Name } in your browser. No token to paste, and the grant can be renewed without a new credential. 
+					}
+				</div>
+				// hx-boost is off: the handler redirects to the provider
+				// (cross-origin), which a boosted fetch cannot follow.
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources/oauth/start?providerType=" + url.QueryEscape(p.Type),
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plug-zap",
+					Attrs:   templ.Attributes{"data-testid": "ds-oauth-connect", "hx-boost": "false"},
+				}) {
+					Connect with { p.Name }
+				}
+			</div>
+		}
+		if p.DSProviderSupportsCredentials() {
+			<div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/10 px-3 py-2.5" data-testid="ds-method-credentials">
+				<div class="min-w-0">
+					<p class="text-sm font-medium">Personal access token</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						Use a saved credential from this project. You can pick one or add a new one on the next step. 
+					}
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=credentials",
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--key-round",
+					Attrs:   templ.Attributes{"data-testid": "ds-credentials-connect"},
+				}) {
+					Use a personal access token
+				}
+			</div>
+		}
+		if p.DSProviderSupportsConfigOnly() {
+			<div class="flex flex-wrap items-center justify-between gap-3 rounded-box border border-base-content/10 px-3 py-2.5" data-testid="ds-method-config">
+				<div class="min-w-0">
+					<p class="text-sm font-medium">Connection settings</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+						No account or token needed. Configure what to crawl or sync. 
+					}
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/data-sources/new?providerType=" + url.QueryEscape(p.Type) + "&method=config",
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--settings",
+					Attrs:   templ.Attributes{"data-testid": "ds-config-connect"},
+				}) {
+					Configure source
+				}
+			</div>
+		}
+	</div>
 }
 
 // dsOAuthClientMissingAlert is the inline, actionable error shown when an OAuth
@@ -323,7 +358,9 @@ templ dsOAuthConnectPanel(p DSProvider) {
 			@ui.IconTile("lucide--plug-zap", ui.IconTileProps{Tone: "info"})
 			<div>
 				<h2 class="text-base font-semibold">Authorize with { p.Name }</h2>
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Your browser will be sent to { p.Name } to authorize access for this project. No credentials are pasted here — the connection is stored once { p.Name } redirects you back. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+					Your browser will be sent to { p.Name } to authorize access for this project. No credentials are pasted here — the connection is stored once { p.Name } redirects you back. 
+				}
 			</div>
 		</div>
 		<div class="mt-4 flex flex-wrap items-center gap-2">
@@ -351,12 +388,18 @@ templ dsOAuthConnectPanel(p DSProvider) {
 	}
 }
 
-// dsCredentialsConnectPage renders the write-only credentials form for a
-// provider that advertises the credentials method (a GitHub personal access
-// token, for example; Drive connects via OAuth and declares no credential
-// fields). Config and credential inputs come from the provider schema; the
-// hidden providerType carries the chosen provider through the POST.
-templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []dsConfigField, loadErr error, flashErr error) {
+// dsCredentialsConnectPage renders the credentials connect form for a provider
+// that advertises the credentials method (a GitHub personal access token, for
+// example; Drive connects via OAuth and declares no credential fields). Config
+// inputs come from the provider schema; the credential itself is chosen from the
+// project's saved credentials (or created inline), so no secret is typed into
+// this form. The hidden providerType carries the chosen provider through POST.
+templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker, loadErr error, flashErr error) {
+	{{ connectDisabled := picker.Supported && picker.SelectedID == "" }}
+	{{ submitAttrs := templ.Attributes{"id": "ds-connect-submit", "data-testid": "ds-connect-submit"} }}
+	if connectDisabled {
+		{{ submitAttrs["disabled"] = "disabled" }}
+	}
 	<div class={ pageFormChromeClass }>
 		@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", "Connect a data source")), "", "Connect a data source", "Sync documents from "+p.Name+" into this project.", detailHeaderOpts{Margin: "mb-6"})
 		@flashToasts("", flashErr)
@@ -371,7 +414,9 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 				<input type="hidden" name="providerType" value={ p.Type }/>
 				@components.PanelCard("", nil) {
 					<h2 class="text-base font-semibold">Source</h2>
-					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Name this connection and choose how it syncs. }
+					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+						Name this connection and choose how it syncs. 
+					}
 					<div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div class="flex flex-col gap-1">
 							<label class="text-sm font-medium" for="name">Name <span class="text-error" aria-hidden="true">*</span></label>
@@ -382,15 +427,21 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 				}
 				@components.PanelCard("", nil) {
 					<h2 class="text-base font-semibold">Sync scope</h2>
-					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { The repository or folder to sync, plus optional filters. }
+					@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+						The repository or folder to sync, plus optional filters. 
+					}
 					<div class="mt-3">
 						@dsConfigFieldInputs(configFields)
 					</div>
 				}
-				if len(credentialFields) > 0 {
+				if picker.Supported {
+					@dsCredentialPickerPanel(p, picker)
+				} else if len(credentialFields) > 0 {
 					@components.PanelCard("", nil) {
 						<h2 class="text-base font-semibold">Credentials</h2>
-						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { Credentials are stored encrypted and are never shown again. }
+						@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+							Credentials are stored encrypted and are never shown again. 
+						}
 						<div class="mt-3">
 							@dsCredentialFieldInputs(credentialFields)
 						</div>
@@ -404,6 +455,7 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 					Variant: ui.ButtonPrimary,
 					Size:    ui.ButtonSM,
 					Icon:    "lucide--plus",
+					Attrs:   submitAttrs,
 				}) {
 					Connect
 				}
@@ -432,6 +484,80 @@ templ dsCredentialsConnectPage(p DSProvider, configFields, credentialFields []ds
 				}
 			}
 		</form>
+		if picker.ShowModal {
+			@savedCredentialModal(picker, nil)
+		}
+	}
+}
+
+// dsCredentialPickerPanel is the saved-credential picker on the connect form:
+// one select of this project's credentials for the provider, a shortcut to add
+// one, and an inline empty state when none exist yet.
+templ dsCredentialPickerPanel(p DSProvider, picker dsSavedCredentialPicker) {
+	@components.PanelCard("", nil) {
+		<h2 class="text-base font-semibold">Credential</h2>
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+			Pick a saved { p.Name } credential, or add a new one. Secrets are stored encrypted and never shown again. 
+		}
+		if picker.LoadErr != nil {
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "Saved credentials could not be loaded. Create one below, or reload the page.",
+				})
+			</div>
+		}
+		if len(picker.Items) == 0 {
+			<div class="mt-3 flex flex-wrap items-center gap-3" data-testid="ds-credential-empty">
+				@ui.EmptyNote(ui.EmptyNoteProps{}) {
+					No saved credentials for { p.Name } yet. 
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-credential-create",
+						"onclick":     "dsSavedCredentialOpenNew()",
+					},
+				}) {
+					New credential
+				}
+			</div>
+		} else {
+			<div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+				<div class="flex grow flex-col gap-1">
+					<label class="text-sm font-medium" for="credential_id">Saved credential</label>
+					<select
+						id="credential_id"
+						name="credential_id"
+						class="select w-full"
+						data-testid="ds-field-credential"
+						onchange="var b=document.getElementById('ds-connect-submit');if(b){b.disabled=this.value==='';}"
+					>
+						<option value="">Select a credential</option>
+						for _, c := range picker.Items {
+							<option value={ c.ID } selected?={ c.ID == picker.SelectedID }>{ dsSavedCredentialLabel(c) }</option>
+						}
+					</select>
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--plus",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-credential-create",
+						"onclick":     "dsSavedCredentialOpenNew()",
+					},
+				}) {
+					New credential
+				}
+			</div>
+		}
 	}
 }
 
@@ -465,7 +591,9 @@ templ dsSyncModeSelect(current string, interval *int) {
 // dsConfigFieldInputs renders the provider's non-credential config fields.
 templ dsConfigFieldInputs(fields []dsConfigField) {
 	if len(fields) == 0 {
-		@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-config-empty"}}) { This provider declares no configuration fields. }
+		@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-config-empty"}}) {
+			This provider declares no configuration fields. 
+		}
 	} else {
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 			for _, f := range fields {
@@ -488,7 +616,9 @@ templ dsConfigFieldInput(f dsConfigField) {
 				<span class="text-sm font-medium">{ f.Label }</span>
 			</label>
 			if f.Description != "" {
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					{ f.Description }
+				}
 			}
 		</div>
 	} else if f.dsIsPicker() && f.Type == "array" && f.SourceID != "" {
@@ -568,13 +698,16 @@ templ dsConfigFieldInput(f dsConfigField) {
 		</div>
 	} else {
 		<div class={ "flex flex-col gap-1", templ.KV("sm:col-span-2", f.Type == "array") }>
-			<label class="text-sm font-medium" for={ f.Key }>{ f.Label }
+			<label class="text-sm font-medium" for={ f.Key }>
+				{ f.Label }
 				if f.Required {
 					<span class="text-error" aria-hidden="true">*</span>
 				}
 			</label>
 			if f.Description != "" {
-				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+					{ f.Description }
+				}
 			}
 			if f.Type == "array" {
 				<textarea id={ f.Key } name={ f.Key } rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid={ "ds-field-" + f.Key } placeholder={ dsArrayFieldPlaceholder(f.Key) }>{ f.Value }</textarea>
@@ -635,14 +768,18 @@ templ DSResourceSuggestionsPartial(items []DSResource, truncated bool, err error
 // inputs. Values are never prefilled: the server never returns them.
 templ dsCredentialFieldInputs(fields []dsConfigField) {
 	if len(fields) == 0 {
-		@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-credentials-empty"}}) { This provider declares no credential fields. }
+		@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-credentials-empty"}}) {
+			This provider declares no credential fields. 
+		}
 	} else {
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 			for _, f := range fields {
 				<div class="flex flex-col gap-1">
 					<label class="text-sm font-medium" for={ f.Key }>{ f.Label }</label>
 					if f.Description != "" {
-						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { f.Description } }
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+							{ f.Description }
+						}
 					}
 					<input id={ f.Key } name={ f.Key } type="password" autocomplete="new-password" class="input input-bordered w-full" data-testid={ "ds-field-" + f.Key }/>
 				</div>
@@ -683,7 +820,7 @@ templ DSTestResultPartial(resp *DSTestConnectionResponse, err error) {
 // test, settings, and sync-job history. A nil src renders the load-error state.
 // resourcePrompt, when non-nil, is the banner prompting the user to finish
 // connecting by choosing a sync target (folder/repo).
-templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, jobs []DSSyncJob, loadErr error, resourcePrompt *dsResourcePrompt, credentialSummary *dsCredentialSummary, flashMsg string, flashErr error) {
+templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker, jobs []DSSyncJob, loadErr error, resourcePrompt *dsResourcePrompt, credentialSummary *dsCredentialSummary, flashMsg string, flashErr error) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if src == nil {
 			@pageError("Data source unavailable", loadErr)
@@ -702,9 +839,12 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 			if credentialSummary != nil {
 				@dsCredentialCard(*credentialSummary)
 			}
-			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields)
+			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields, picker)
 			<script src={ templ.SafeURL(webui.AssetPath("/js/datasource-config-picker.js")) }></script>
 			@dsSyncHistory(src.ID, jobs)
+			if picker.ShowModal {
+				@savedCredentialModal(picker, nil)
+			}
 			if src.ProviderType == dsProviderTypeGoogleDrive && (credentialSummary == nil || !credentialSummary.PickerBlocked) {
 				@dsFolderPickerModal(src)
 			}
@@ -792,7 +932,9 @@ templ dsSyncScopeCard(src *DSIntegration, summary *dsCredentialSummary) {
 					@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "info"})
 					<div>
 						<h2 class="text-base font-semibold">Sync scope</h2>
-						@ui.EmptyNote() { These folders are ingested into this project. Subfolders are included when recursive sync is on. }
+						@ui.EmptyNote() {
+							These folders are ingested into this project. Subfolders are included when recursive sync is on. 
+						}
 					</div>
 				</div>
 				if summary == nil || !summary.PickerBlocked {
@@ -859,7 +1001,9 @@ templ dsCredentialCard(summary dsCredentialSummary) {
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
 				<div>
 					<h2 class="text-base font-semibold">Credentials</h2>
-					@ui.EmptyNote() { The OAuth app and the account this source uses to read the provider. Secrets are never shown. }
+					@ui.EmptyNote() {
+						The OAuth app and the account this source uses to read the provider. Secrets are never shown. 
+					}
 				</div>
 			</div>
 			<dl class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -966,15 +1110,17 @@ templ dsFolderPickerModal(src *DSIntegration) {
 		ID:       "ds-folder-picker",
 		BoxClass: "max-w-2xl",
 		Attrs: templ.Attributes{
-			"data-testid":               "ds-folder-picker",
-			"data-picker-session-url":   "/data-sources/" + url.PathEscape(src.ID) + "/picker-session",
-			"data-save-url":             "/data-sources/" + url.PathEscape(src.ID) + "/sync-targets",
-			"aria-labelledby":           "ds-folder-picker-title",
+			"data-testid":             "ds-folder-picker",
+			"data-picker-session-url": "/data-sources/" + url.PathEscape(src.ID) + "/picker-session",
+			"data-save-url":           "/data-sources/" + url.PathEscape(src.ID) + "/sync-targets",
+			"aria-labelledby":         "ds-folder-picker-title",
 		},
 	}) {
 		<div class="flex items-start justify-between gap-3">
 			<div>
-				@ui.DialogTitle(ui.DialogTitleProps{ID: "ds-folder-picker-title"}) { Choose folders }
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "ds-folder-picker-title"}) {
+					Choose folders 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
 					Select one or more folders in Google Drive. Use the picker's folder list to open subfolders; shared drives appear in the sidebar. Nothing syncs until you save.
 				}
@@ -1096,7 +1242,9 @@ templ dsConnectionCard(src *DSIntegration) {
 				@ui.IconTile("lucide--plug-zap", ui.IconTileProps{Tone: "info"})
 				<div>
 					<h2 class="text-base font-semibold">Connection</h2>
-					@ui.EmptyNote() { Test the stored credentials and scope against the provider. }
+					@ui.EmptyNote() {
+						Test the stored credentials and scope against the provider. 
+					}
 				</div>
 			</div>
 			@ui.Button(ui.ButtonProps{
@@ -1118,7 +1266,7 @@ templ dsConnectionCard(src *DSIntegration) {
 	}
 }
 
-templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFields []dsConfigField) {
+templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFields []dsConfigField, picker dsSavedCredentialPicker) {
 	@components.PanelCard("", nil) {
 		<h2 class="text-base font-semibold">Settings</h2>
 		<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/update") } data-testid="ds-edit-form" class="mt-3 flex flex-col gap-4">
@@ -1141,10 +1289,56 @@ templ dsEditCard(src *DSIntegration, syncNote string, configFields, credentialFi
 					@dsConfigFieldInputs(configFields)
 				</div>
 			</div>
-			if len(credentialFields) > 0 {
+			if picker.Supported {
 				<div>
 					<h3 class="text-sm font-semibold">Credentials</h3>
-					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Stored credentials are never returned. Leave the credential fields blank to keep the current credentials; fill them all to replace them. }
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						Stored credentials are never returned. Pick the saved credential this source should use; editing a credential changes every source that uses it. 
+					}
+					if picker.LoadErr != nil {
+						<p class="mt-1 text-sm text-warning" data-testid="ds-credential-load-error">Saved credentials could not be loaded. Reload the page before switching credentials.</p>
+					}
+					<div class="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+						<div class="flex grow flex-col gap-1">
+							<label class="text-sm font-medium" for="credential_id">Saved credential</label>
+							if len(picker.Items) == 0 {
+								@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "ds-credential-empty"}}) {
+									No saved credentials for this provider yet. Add one to replace the stored credentials. 
+								}
+							} else {
+								<select id="credential_id" name="credential_id" class="select w-full" data-testid="ds-field-credential">
+									<option value="">Keep current credentials</option>
+									for _, c := range picker.Items {
+										<option value={ c.ID } selected?={ c.ID == picker.SelectedID }>{ dsSavedCredentialLabel(c) }</option>
+									}
+								</select>
+							}
+						</div>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeButton,
+							Variant: ui.ButtonOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--plus",
+							Attrs: templ.Attributes{
+								"data-testid": "ds-credential-create",
+								"onclick":     "dsSavedCredentialOpenNew()",
+							},
+						}) {
+							New credential
+						}
+					</div>
+					if len(picker.Items) > 0 && src.CredentialID == "" && len(credentialFields) > 0 {
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1", Attrs: templ.Attributes{"data-testid": "ds-credential-legacy-note"}}) {
+							This source was connected with a credential stored outside the saved-credentials list.
+						}
+					}
+				</div>
+			} else if len(credentialFields) > 0 {
+				<div>
+					<h3 class="text-sm font-semibold">Credentials</h3>
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+						Stored credentials are never returned. Leave the credential fields blank to keep the current credentials; fill them all to replace them. 
+					}
 					<div class="mt-3">
 						@dsCredentialFieldInputs(credentialFields)
 					</div>
@@ -1167,13 +1361,17 @@ templ dsSyncHistory(sourceID string, jobs []DSSyncJob) {
 					@ui.IconTile("lucide--history", ui.IconTileProps{Tone: "neutral"})
 					<div>
 						<h2 class="text-base font-semibold">Sync history</h2>
-						@ui.EmptyNote() { Recent sync jobs for this source, newest first. }
+						@ui.EmptyNote() {
+							Recent sync jobs for this source, newest first. 
+						}
 					</div>
 				</div>
 				@countBadgeLabel(strconv.Itoa(len(jobs))+" job"+plural(len(jobs)), "lucide--list")
 			</div>
 			if len(jobs) == 0 {
-				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-sync-empty"}}) { No syncs yet. Trigger a sync to ingest the configured scope. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-sync-empty"}}) {
+					No syncs yet. Trigger a sync to ingest the configured scope. 
+				}
 			} else {
 				<div class="mt-3 flex flex-col gap-3">
 					for _, job := range jobs {
@@ -1216,7 +1414,9 @@ templ dsSyncJobRow(sourceID string, job DSSyncJob) {
 		</div>
 		@dsJobProgress(job)
 		if job.StatusMessage != nil && *job.StatusMessage != "" {
-			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "ds-sync-message"}}) { { *job.StatusMessage } }
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "ds-sync-message"}}) {
+				{ *job.StatusMessage }
+			}
 		}
 		if job.ErrorMessage != nil && *job.ErrorMessage != "" {
 			<div class="mt-3">
@@ -1265,11 +1465,15 @@ templ dsVersionHistory(versions []DocumentVersion) {
 			@ui.IconTile("lucide--layers", ui.IconTileProps{Tone: "neutral"})
 			<div>
 				<h2 class="text-base font-semibold">Version history</h2>
-				@ui.EmptyNote() { Every retained version, newest first. The highest version is the current one. }
+				@ui.EmptyNote() {
+					Every retained version, newest first. The highest version is the current one. 
+				}
 			</div>
 		</div>
 		if len(versions) == 0 {
-			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-versions-empty"}}) { This document has no recorded versions. }
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3", Attrs: templ.Attributes{"data-testid": "ds-versions-empty"}}) {
+				This document has no recorded versions. 
+			}
 		} else {
 			<div class="mt-3 flex flex-col gap-2" data-testid="document-versions">
 				for _, v := range versions {

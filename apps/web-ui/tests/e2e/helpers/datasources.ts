@@ -57,21 +57,37 @@ export interface GitHubSource {
   name: string;
 }
 
+/** The saved GitHub credential the mock seeds for the picker specs. */
+export const SEEDED_GITHUB_CREDENTIAL_ID = 'cred-gh-1';
+
 /**
- * Connect a GitHub source through the schema-driven credentials form: token,
- * repository (typed or picked), name. The mock accepts any token but validates
- * that a repository and token are present, matching the server.
+ * Select a saved credential on the connect form (or the source settings card).
+ * The credential is chosen by value so the label copy can change freely.
+ */
+export async function selectSavedCredential(
+  page: Page,
+  credentialId: string = SEEDED_GITHUB_CREDENTIAL_ID,
+): Promise<void> {
+  const picker = page.getByTestId('ds-field-credential');
+  await expect(picker).toBeVisible();
+  await picker.selectOption(credentialId);
+}
+
+/**
+ * Connect a GitHub source through the schema-driven credentials form: a saved
+ * personal-access-token credential, repository (typed or picked), name. The mock
+ * validates that a repository and a credential are present, matching the server.
  */
 export async function createGitHubSource(
   page: Page,
-  opts: { name: string; repo: string; token?: string },
+  opts: { name: string; repo: string; credentialId?: string },
 ): Promise<GitHubSource> {
   await page.goto('/data-sources/new?providerType=github&method=credentials');
   await expect(page.getByTestId('ds-connect-form')).toBeVisible();
   await page.getByTestId('ds-field-name').fill(opts.name);
-  await page.getByTestId('ds-field-access_token').fill(opts.token ?? 'ghp_e2e_token');
+  await selectSavedCredential(page, opts.credentialId);
   await page.getByTestId('ds-field-repo').fill(opts.repo);
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByTestId('ds-connect-submit').click();
   await page.waitForURL(/\/data-sources\/ds-\d+/);
   const id = page.url().match(/\/data-sources\/(ds-\d+)/)?.[1] ?? '';
   expect(id, 'connect should redirect to the new source detail page').not.toBe('');

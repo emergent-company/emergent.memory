@@ -15,6 +15,9 @@ test.describe('Drive data source', () => {
     await expect(page.getByTestId('ds-oauth-connect')).toBeVisible();
     await expect(page.getByTestId('ds-connect-form')).toHaveCount(0);
     await expect(page.locator('input[type="password"]')).toHaveCount(0);
+    // OAuth-only: no saved-credential picker and no "New credential" shortcut.
+    await expect(page.getByTestId('ds-field-credential')).toHaveCount(0);
+    await expect(page.getByTestId('ds-credential-create')).toHaveCount(0);
   });
 
   test('mirrors the provider: the Drive create API needs a folder and a credential', async ({ page }) => {
@@ -66,8 +69,10 @@ test.describe('Drive data source', () => {
       await expect(page.getByTestId('ds-field-folders')).toHaveCount(0);
       await expect(page.getByTestId('ds-field-mime_types')).toBeVisible();
       await expect(page.getByTestId('ds-field-recursive')).toBeVisible();
-      // Drive has no credential fields, so there is no write-only secret input.
+      // Drive has no credential fields, so there is no write-only secret input
+      // and no saved-credential picker on the settings card.
       await expect(page.getByTestId('ds-field-refresh_token')).toHaveCount(0);
+      await expect(page.getByTestId('ds-field-credential')).toHaveCount(0);
     } finally {
       await deleteDriveSource(page, src.id);
     }

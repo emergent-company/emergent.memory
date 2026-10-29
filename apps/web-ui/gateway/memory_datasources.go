@@ -94,6 +94,10 @@ type DSIntegration struct {
 	// Config carries the non-secret config values (credential keys stripped) so
 	// the edit UI can round-trip a source's persisted settings.
 	Config map[string]any `json:"config,omitempty"`
+	// CredentialID names the saved credential backing this source, when it was
+	// connected with one. The saved credential's secret fields are never
+	// returned — only this metadata id.
+	CredentialID string `json:"credentialId,omitempty"`
 	// OAuthStrategy is the effective scope strategy the server resolved for this
 	// source (project → org → provider default). Present on the single-source
 	// read only; empty means the provider default applies.
@@ -195,6 +199,9 @@ type DSCreateIntegrationRequest struct {
 	Config              map[string]any `json:"config"`
 	SyncMode            *string        `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
+	// CredentialID references a project-scoped saved credential instead of
+	// carrying secret material in Config.
+	CredentialID string `json:"credentialId,omitempty"`
 }
 
 // DSUpdateIntegrationRequest is the partial update body. Omitted fields are left
@@ -205,12 +212,43 @@ type DSUpdateIntegrationRequest struct {
 	Config              map[string]any `json:"config,omitempty"`
 	SyncMode            *string        `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
+	// CredentialID switches the source to another saved credential.
+	CredentialID string `json:"credentialId,omitempty"`
 }
 
 // DSTestConfigRequest tests an unsaved provider config.
 type DSTestConfigRequest struct {
 	ProviderType string         `json:"providerType"`
 	Config       map[string]any `json:"config"`
+	// CredentialID is the saved credential to test with, when the form selected
+	// one instead of supplying inline credential fields.
+	CredentialID string `json:"credentialId,omitempty"`
+}
+
+// DSSavedCredential is a project-scoped saved data-source credential. Only
+// metadata travels: the server never returns the credential's secret fields.
+type DSSavedCredential struct {
+	ID           string `json:"id"`
+	ProviderType string `json:"providerType"`
+	Name         string `json:"name"`
+	UsedByCount  int    `json:"usedByCount"`
+	CreatedAt    string `json:"createdAt"`
+	UpdatedAt    string `json:"updatedAt"`
+}
+
+// DSSavedCredentialRequest is the create body for a saved credential.
+// Credentials holds the provider's write-only fields (e.g. access_token).
+type DSSavedCredentialRequest struct {
+	ProviderType string         `json:"providerType"`
+	Name         string         `json:"name"`
+	Credentials  map[string]any `json:"credentials"`
+}
+
+// DSSavedCredentialUpdateRequest is the update body. An empty Credentials map
+// leaves the stored secret material unchanged.
+type DSSavedCredentialUpdateRequest struct {
+	Name        string         `json:"name"`
+	Credentials map[string]any `json:"credentials,omitempty"`
 }
 
 // DSOAuthAuthorizeResponse is the provider authorization URL returned by the
@@ -282,6 +320,55 @@ func (m *MemoryClient) ListDSCredentials(ctx context.Context) ([]DSOAuthCredenti
 	return out.Items, nil
 }
 
+// ListSavedDSCredentials lists the project's saved credentials, optionally
+// narrowed to one provider (GET
+// /api/data-source-integrations/credentials/saved). The response is metadata
+// only: names, usage counts, timestamps.
+func (m *MemoryClient) ListSavedDSCredentials(ctx context.Context, providerType string) ([]DSSavedCredential, error) {
+	path := "/api/data-source-integrations/credentials/saved"
+	if providerType != "" {
+		path += "?providerType=" + url.QueryEscape(providerType)
+	}
+	var out struct {
+		Items []DSSavedCredential `json:"items"`
+	}
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// CreateSavedDSCredential stores a new project-scoped credential (POST
+// /api/data-source-integrations/credentials/saved). The secret fields are
+// write-only.
+func (m *MemoryClient) CreateSavedDSCredential(ctx context.Context, req *DSSavedCredentialRequest) (*DSSavedCredential, error) {
+	var out DSSavedCredential
+	if err := m.doH(ctx, http.MethodPost, "/api/data-source-integrations/credentials/saved", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateSavedDSCredential renames a saved credential and optionally replaces its
+// secret fields (PATCH /api/data-source-integrations/credentials/saved/:id). An
+// omitted Credentials map keeps the stored secret.
+func (m *MemoryClient) UpdateSavedDSCredential(ctx context.Context, id string, req *DSSavedCredentialUpdateRequest) (*DSSavedCredential, error) {
+	var out DSSavedCredential
+	path := "/api/data-source-integrations/credentials/saved/" + url.PathEscape(id)
+	if err := m.doH(ctx, http.MethodPatch, path, req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteSavedDSCredential removes a saved credential (DELETE
+// /api/data-source-integrations/credentials/saved/:id). The server answers 409
+// when a source still uses it.
+func (m *MemoryClient) DeleteSavedDSCredential(ctx context.Context, id string) error {
+	path := "/api/data-source-integrations/credentials/saved/" + url.PathEscape(id)
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), nil)
+}
+
 // DSResource is a selectable sync target for a source (a Drive folder or a
 // GitHub repository) returned by the provider's resource listing.
 type DSResource struct {
@@ -291,12 +378,16 @@ type DSResource struct {
 }
 
 // ListDSProviderResources lists a provider's selectable sync targets from an
-// unsaved config (POST /api/data-source-integrations/resources). The credential
-// travels inside config and is never persisted. truncated mirrors the backend's
-// X-Resources-Truncated header, the same convention as ListDSResources.
-func (m *MemoryClient) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+// unsaved config (POST /api/data-source-integrations/resources). credentialID
+// names the saved credential to list with, when the form selected one; an
+// inline credential inside config is never persisted. truncated mirrors the
+// backend's X-Resources-Truncated header, the same convention as ListDSResources.
+func (m *MemoryClient) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error) {
 	var out []DSResource
 	body := map[string]any{"providerType": providerType, "config": config}
+	if credentialID != "" {
+		body["credentialId"] = credentialID
+	}
 	hdr, err := m.doHResp(ctx, http.MethodPost, "/api/data-source-integrations/resources", body, m.documentHeaders(ctx), &out)
 	if err != nil {
 		return nil, false, err
@@ -306,9 +397,12 @@ func (m *MemoryClient) ListDSProviderResources(ctx context.Context, providerType
 
 // ListDSProviderRefs lists the refs (branches and tags) of the resource named in
 // an unsaved config (POST /api/data-source-integrations/refs).
-func (m *MemoryClient) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+func (m *MemoryClient) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error) {
 	var out []DSResource
 	body := map[string]any{"providerType": providerType, "config": config}
+	if credentialID != "" {
+		body["credentialId"] = credentialID
+	}
 	hdr, err := m.doHResp(ctx, http.MethodPost, "/api/data-source-integrations/refs", body, m.documentHeaders(ctx), &out)
 	if err != nil {
 		return nil, false, err

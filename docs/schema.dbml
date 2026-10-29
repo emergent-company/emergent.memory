@@ -2400,6 +2400,21 @@ Table "kb"."skills" {
 }
 // kb.skills: Reusable Markdown workflow instructions (skills) for agents. Global when project_id IS NULL; project-scoped otherwise.
 
+Table "kb"."source_credentials" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "provider" text [not null]
+  "name" text [not null]
+  "encrypted_credentials" bytea [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, provider, name) [unique]
+    (project_id, provider) [name: "idx_source_credentials_project_provider"]
+  }
+}
+
 Table "kb"."source_sync_jobs" {
   "id" uuid [pk, default: `uuid_generate_v4()`]
   "status" text [not null, default: 'pending']
@@ -2449,6 +2464,11 @@ Table "kb"."sources" {
   "last_synced_at" timestamptz
   "created_at" timestamptz [not null, default: `now()`]
   "updated_at" timestamptz [not null, default: `now()`]
+  "credential_id" uuid
+
+  Indexes {
+    (credential_id) [name: "idx_sources_credential_id"]
+  }
 }
 
 Table "kb"."system_process_logs" {
@@ -2694,5 +2714,6 @@ Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
 Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
 Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
 Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
+Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
 Ref: "kb"."tags"."project_id" > "kb"."projects"."id"
 Ref: "kb"."tasks"."project_id" > "kb"."projects"."id"

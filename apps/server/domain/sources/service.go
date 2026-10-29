@@ -222,8 +222,9 @@ func (s *Service) ListSourceTypes(ctx context.Context, projectID uuid.UUID) ([]S
 // ---- Connection testing ----
 
 // TestConfig tests an unsaved provider config, building a connector from the
-// credentials carried in the request config. It never persists anything.
-func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*TestConnectionResponse, error) {
+// credentials carried in the request config or from a referenced saved
+// credential. It never persists anything.
+func (s *Service) TestConfig(ctx context.Context, projectID uuid.UUID, req *TestConfigRequest) (*TestConnectionResponse, error) {
 	p, ok := s.providers.Get(req.ProviderType)
 	if !ok {
 		return nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
@@ -231,7 +232,7 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 	if err := p.ValidateConfig(req.Config); err != nil {
 		return nil, err
 	}
-	creds, err := p.ExtractCredentials(req.Config)
+	creds, err := s.credentialsForRequest(ctx, projectID, p, req.Config, req.SavedCredentialID)
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +242,8 @@ func (s *Service) TestConfig(ctx context.Context, req *TestConfigRequest) (*Test
 // ListProviderResources lists a provider's selectable sync targets (repositories,
 // folders) from an unsaved config. It never persists the config or credentials,
 // and it does not require the full sync config: only credentials are needed.
-func (s *Service) ListProviderResources(ctx context.Context, req *ProviderListRequest) ([]Resource, bool, error) {
-	p, creds, err := s.unsavedProviderCredentials(req)
+func (s *Service) ListProviderResources(ctx context.Context, projectID uuid.UUID, req *ProviderListRequest) ([]Resource, bool, error) {
+	p, creds, err := s.unsavedProviderCredentials(ctx, projectID, req)
 	if err != nil {
 		return nil, false, err
 	}
@@ -261,8 +262,8 @@ func (s *Service) ListProviderResources(ctx context.Context, req *ProviderListRe
 // ListProviderRefs lists the refs of the resource named in an unsaved config (a
 // GitHub repository's branches and tags). Providers without ref support return a
 // validation error. truncated reports that the provider returned only a page.
-func (s *Service) ListProviderRefs(ctx context.Context, req *ProviderListRequest) ([]Resource, bool, error) {
-	p, creds, err := s.unsavedProviderCredentials(req)
+func (s *Service) ListProviderRefs(ctx context.Context, projectID uuid.UUID, req *ProviderListRequest) ([]Resource, bool, error) {
+	p, creds, err := s.unsavedProviderCredentials(ctx, projectID, req)
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,14 +293,15 @@ func providerListError(prefix string, err error) error {
 	return apperror.NewValidation(prefix + ": " + err.Error())
 }
 
-// unsavedProviderCredentials resolves a provider and extracts its credentials
-// from an unsaved config, without validating the rest of the config.
-func (s *Service) unsavedProviderCredentials(req *ProviderListRequest) (SourceProvider, Credentials, error) {
+// unsavedProviderCredentials resolves a provider and its credentials from an
+// unsaved config, without validating the rest of the config. Credentials come
+// from a referenced saved credential when one is supplied.
+func (s *Service) unsavedProviderCredentials(ctx context.Context, projectID uuid.UUID, req *ProviderListRequest) (SourceProvider, Credentials, error) {
 	p, ok := s.providers.Get(req.ProviderType)
 	if !ok {
 		return nil, nil, apperror.NewValidation("unsupported providerType: " + req.ProviderType)
 	}
-	creds, err := p.ExtractCredentials(req.Config)
+	creds, err := s.credentialsForRequest(ctx, projectID, p, req.Config, req.SavedCredentialID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -317,7 +319,7 @@ func (s *Service) TestConnection(ctx context.Context, projectID, id uuid.UUID) (
 	if !ok {
 		return &TestConnectionResponse{Success: false, Message: "unknown provider: " + src.Provider}, nil
 	}
-	creds, err := s.decryptCredentials(src.EncryptedCredentials)
+	creds, err := s.credentialsForSource(ctx, src)
 	if err != nil {
 		return &TestConnectionResponse{Success: false, Message: err.Error()}, nil
 	}
@@ -372,7 +374,7 @@ func (s *Service) ListResources(ctx context.Context, projectID, id uuid.UUID, qu
 	if !ok {
 		return nil, false, apperror.NewValidation("unsupported providerType: " + src.Provider)
 	}
-	creds, err := s.decryptCredentials(src.EncryptedCredentials)
+	creds, err := s.credentialsForSource(ctx, src)
 	if err != nil {
 		return nil, false, err
 	}
@@ -423,13 +425,30 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 			return nil, err
 		}
 	}
-	creds, err := p.ExtractCredentials(cfg)
-	if err != nil {
-		return nil, err
-	}
-	blob, err := s.encryptCredentials(creds)
-	if err != nil {
-		return nil, err
+	var credentialID *uuid.UUID
+	var blob []byte
+	if req.SavedCredentialID != nil && strings.TrimSpace(*req.SavedCredentialID) != "" {
+		id, err := parseCredentialID(*req.SavedCredentialID)
+		if err != nil {
+			return nil, err
+		}
+		cred, err := s.repo.GetCredentialByID(ctx, id, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if cred.Provider != req.ProviderType {
+			return nil, apperror.NewValidation(fmt.Sprintf("saved credential provider %q does not match source provider %q", cred.Provider, req.ProviderType))
+		}
+		credentialID = &id
+	} else {
+		creds, err := p.ExtractCredentials(cfg)
+		if err != nil {
+			return nil, err
+		}
+		blob, err = s.encryptCredentials(creds)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve the sync mode before the interval: the policy decides whether this
@@ -452,6 +471,7 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		DisplayName:          req.Name,
 		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
+		CredentialID:         credentialID,
 		SyncPolicy:           mode,
 		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
@@ -517,7 +537,7 @@ func (s *Service) resolveLegacyTargetNames(ctx context.Context, projectID uuid.U
 	if err != nil {
 		return
 	}
-	creds, err := s.decryptCredentials(withCreds.EncryptedCredentials)
+	creds, err := s.credentialsForSource(ctx, withCreds)
 	if err != nil {
 		return
 	}
@@ -587,6 +607,30 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			existing.Status = SourceStatusDisabled
 		}
 	}
+	savedRefActive := false
+	if req.SavedCredentialID != nil {
+		raw := strings.TrimSpace(*req.SavedCredentialID)
+		if raw == "" {
+			// Clear the reference; the source returns to its inline blob.
+			existing.CredentialID = nil
+		} else {
+			id, err := parseCredentialID(raw)
+			if err != nil {
+				return nil, err
+			}
+			cred, err := s.repo.GetCredentialByID(ctx, id, projectID)
+			if err != nil {
+				return nil, err
+			}
+			if cred.Provider != existing.Provider {
+				return nil, apperror.NewValidation(fmt.Sprintf("saved credential provider %q does not match source provider %q", cred.Provider, existing.Provider))
+			}
+			existing.CredentialID = &id
+			// A referenced source keeps no inline copy of the secret.
+			existing.EncryptedCredentials = nil
+			savedRefActive = true
+		}
+	}
 	if req.Config != nil {
 		p, ok := s.providers.Get(existing.Provider)
 		if !ok {
@@ -622,7 +666,7 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 				return nil, verr
 			}
 		}
-		if hasCredentialKeys(cfg, p.CredentialKeys()) {
+		if !savedRefActive && hasCredentialKeys(cfg, p.CredentialKeys()) {
 			creds, err := p.ExtractCredentials(cfg)
 			if err != nil {
 				return nil, err
@@ -634,6 +678,13 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 			existing.EncryptedCredentials = blob
 		}
 		existing.Config = stripCredentialKeys(cfg, p.CredentialKeys())
+	}
+
+	// Clearing a saved-credential reference leaves the source with no usable
+	// credential unless the same request supplied replacement inline fields.
+	// Reject that end state instead of persisting a source that cannot sync.
+	if existing.CredentialID == nil && len(existing.EncryptedCredentials) == 0 {
+		return nil, apperror.NewValidation("clearing a saved credential requires supplying replacement credential fields")
 	}
 
 	updated, err := s.repo.Update(ctx, existing)
@@ -836,6 +887,11 @@ func (s *Service) toIntegration(src *Source) *Integration {
 	if p, ok := s.providers.Get(src.Provider); ok {
 		sourceType = p.Catalog().SourceType
 	}
+	var credentialID *string
+	if src.CredentialID != nil {
+		id := src.CredentialID.String()
+		credentialID = &id
+	}
 	return &Integration{
 		ID:                  src.ID.String(),
 		ProjectID:           src.ProjectID.String(),
@@ -849,6 +905,7 @@ func (s *Service) toIntegration(src *Source) *Integration {
 		Status:              src.Status,
 		ErrorMessage:        src.LastError,
 		ErrorCount:          src.ErrorCount,
+		CredentialID:        credentialID,
 		CreatedAt:           src.CreatedAt,
 		UpdatedAt:           src.UpdatedAt,
 	}

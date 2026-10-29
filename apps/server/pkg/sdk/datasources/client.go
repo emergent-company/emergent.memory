@@ -128,6 +128,32 @@ type OAuthCredentialDescription struct {
 	ResolvedScope string                `json:"resolvedScope"`
 }
 
+// SavedCredential is a project-scoped reusable credential. It never carries the
+// secret; credentials are write-only on create/update.
+type SavedCredential struct {
+	ID           string    `json:"id"`
+	ProviderType string    `json:"providerType"`
+	Name         string    `json:"name"`
+	UsedByCount  int       `json:"usedByCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// CreateSavedCredentialRequest is the request body for saving a reusable
+// credential for a credentials-based provider.
+type CreateSavedCredentialRequest struct {
+	ProviderType string                 `json:"providerType"`
+	Name         string                 `json:"name"`
+	Credentials  map[string]interface{} `json:"credentials"`
+}
+
+// UpdateSavedCredentialRequest is the request body for a partial update. An
+// empty Credentials map keeps the stored secret.
+type UpdateSavedCredentialRequest struct {
+	Name        *string                `json:"name,omitempty"`
+	Credentials map[string]interface{} `json:"credentials,omitempty"`
+}
+
 // SetOAuthClientRequest is the write shape for an org OAuth client config.
 // The client secret is write-only; on update an empty ClientSecret preserves the stored one.
 type SetOAuthClientRequest struct {
@@ -161,8 +187,11 @@ type Integration struct {
 	Status               string     `json:"status"`
 	ErrorMessage         *string    `json:"errorMessage,omitempty"`
 	ErrorCount           int        `json:"errorCount"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	// CredentialID names the project-scoped saved credential backing this
+	// source, when it uses one. It is a reference, not secret material.
+	CredentialID *string   `json:"credentialId,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // SyncJob represents a data source sync job.
@@ -230,6 +259,9 @@ type CreateIntegrationRequest struct {
 	Config              map[string]interface{} `json:"config"`
 	SyncMode            *string                `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int                   `json:"syncIntervalMinutes,omitempty"`
+	// CredentialID references a project-scoped saved credential instead of
+	// carrying inline credential keys in Config.
+	CredentialID *string `json:"credentialId,omitempty"`
 }
 
 // UpdateIntegrationRequest is the request body for updating an integration.
@@ -240,12 +272,16 @@ type UpdateIntegrationRequest struct {
 	SyncMode            *string                `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int                   `json:"syncIntervalMinutes,omitempty"`
 	Enabled             *bool                  `json:"enabled,omitempty"`
+	// CredentialID references a saved credential; an empty string clears the
+	// reference and returns the source to its inline credential blob.
+	CredentialID *string `json:"credentialId,omitempty"`
 }
 
 // TestConfigRequest is the request body for testing a provider config.
 type TestConfigRequest struct {
 	ProviderType string                 `json:"providerType"`
 	Config       map[string]interface{} `json:"config"`
+	CredentialID *string                `json:"credentialId,omitempty"`
 }
 
 // TriggerSyncRequest is the request body for triggering a sync.
@@ -350,6 +386,139 @@ func (c *Client) ListCredentials(ctx context.Context) ([]OAuthCredentialDescript
 	}
 
 	return result.Items, nil
+}
+
+// ListSavedCredentials returns the project's reusable credentials, optionally
+// filtered to one provider type.
+// GET /api/data-source-integrations/credentials/saved
+func (c *Client) ListSavedCredentials(ctx context.Context, providerType string) ([]SavedCredential, error) {
+	u, err := url.Parse(c.base + "/api/data-source-integrations/credentials/saved")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+	if providerType != "" {
+		q := u.Query()
+		q.Set("providerType", providerType)
+		u.RawQuery = q.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result struct {
+		Items []SavedCredential `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Items, nil
+}
+
+// CreateSavedCredential stores a reusable credential.
+// POST /api/data-source-integrations/credentials/saved
+func (c *Client) CreateSavedCredential(ctx context.Context, createReq *CreateSavedCredentialRequest) (*SavedCredential, error) {
+	body, err := json.Marshal(createReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.base+"/api/data-source-integrations/credentials/saved", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result SavedCredential
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateSavedCredential renames a saved credential and/or replaces its secret.
+// PATCH /api/data-source-integrations/credentials/saved/:id
+func (c *Client) UpdateSavedCredential(ctx context.Context, credentialID string, updateReq *UpdateSavedCredentialRequest) (*SavedCredential, error) {
+	body, err := json.Marshal(updateReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PATCH", c.base+"/api/data-source-integrations/credentials/saved/"+url.PathEscape(credentialID), bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result SavedCredential
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteSavedCredential deletes an unreferenced saved credential.
+// DELETE /api/data-source-integrations/credentials/saved/:id
+func (c *Client) DeleteSavedCredential(ctx context.Context, credentialID string) error {
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.base+"/api/data-source-integrations/credentials/saved/"+url.PathEscape(credentialID), nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	if err := c.setHeaders(req); err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
 }
 
 // GetProviderSchema returns the configuration schema for a provider type.

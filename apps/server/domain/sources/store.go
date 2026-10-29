@@ -109,12 +109,16 @@ func (r *Repository) Update(ctx context.Context, src *Source) (*Source, error) {
 		Set("sync_policy = ?", src.SyncPolicy).
 		Set("sync_interval_minutes = ?", src.SyncIntervalMinutes).
 		Set("status = ?", src.Status).
+		Set("credential_id = ?", src.CredentialID).
 		Set("updated_at = now()").
 		Where("id = ?", src.ID).
 		Where("project_id = ?", src.ProjectID)
 
 	if len(src.EncryptedCredentials) > 0 {
 		q = q.Set("encrypted_credentials = ?", src.EncryptedCredentials)
+	} else if src.CredentialID != nil {
+		// A referenced source carries no inline credential copy.
+		q = q.Set("encrypted_credentials = NULL")
 	}
 
 	res, err := q.Exec(ctx)

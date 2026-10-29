@@ -106,16 +106,58 @@ type Source struct {
 	DisplayName          string         `bun:"display_name" json:"displayName,omitempty"`
 	Config               map[string]any `bun:"config,type:jsonb,notnull" json:"config"`
 	EncryptedCredentials []byte         `bun:"encrypted_credentials,type:bytea" json:"-"`
-	SyncPolicy           string         `bun:"sync_policy,notnull" json:"syncPolicy"`
-	SyncIntervalMinutes  *int           `bun:"sync_interval_minutes" json:"syncIntervalMinutes,omitempty"`
-	Cursor               map[string]any `bun:"cursor,type:jsonb,notnull" json:"cursor"`
-	Status               string         `bun:"status,notnull" json:"status"`
-	ErrorCount           int            `bun:"error_count,notnull" json:"errorCount"`
-	LastError            *string        `bun:"last_error" json:"lastError,omitempty"`
-	LastErrorAt          *time.Time     `bun:"last_error_at" json:"lastErrorAt,omitempty"`
-	LastSyncedAt         *time.Time     `bun:"last_synced_at" json:"lastSyncedAt,omitempty"`
-	CreatedAt            time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
-	UpdatedAt            time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+	// CredentialID references a project-scoped saved credential. When set, the
+	// source uses that credential instead of its legacy inline blob.
+	CredentialID        *uuid.UUID     `bun:"credential_id,type:uuid" json:"credentialId,omitempty"`
+	SyncPolicy          string         `bun:"sync_policy,notnull" json:"syncPolicy"`
+	SyncIntervalMinutes *int           `bun:"sync_interval_minutes" json:"syncIntervalMinutes,omitempty"`
+	Cursor              map[string]any `bun:"cursor,type:jsonb,notnull" json:"cursor"`
+	Status              string         `bun:"status,notnull" json:"status"`
+	ErrorCount          int            `bun:"error_count,notnull" json:"errorCount"`
+	LastError           *string        `bun:"last_error" json:"lastError,omitempty"`
+	LastErrorAt         *time.Time     `bun:"last_error_at" json:"lastErrorAt,omitempty"`
+	LastSyncedAt        *time.Time     `bun:"last_synced_at" json:"lastSyncedAt,omitempty"`
+	CreatedAt           time.Time      `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt           time.Time      `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// SourceCredential is the kb.source_credentials row model. A saved credential
+// is a reusable, project-scoped credential payload for one provider. The
+// encrypted blob is deliberately `json:"-"` so it can never be serialised.
+type SourceCredential struct {
+	bun.BaseModel `bun:"table:kb.source_credentials,alias:sc"`
+
+	ID                   uuid.UUID `bun:"id,pk,type:uuid" json:"id"`
+	ProjectID            uuid.UUID `bun:"project_id,type:uuid,notnull" json:"projectId"`
+	Provider             string    `bun:"provider,notnull" json:"provider"`
+	Name                 string    `bun:"name,notnull" json:"name"`
+	EncryptedCredentials []byte    `bun:"encrypted_credentials,type:bytea,notnull" json:"-"`
+	CreatedAt            time.Time `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt            time.Time `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// SavedCredential is the public, secret-free view of a saved credential.
+type SavedCredential struct {
+	ID           string    `json:"id"`
+	ProviderType string    `json:"providerType"`
+	Name         string    `json:"name"`
+	UsedByCount  int       `json:"usedByCount"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+}
+
+// CreateSavedCredentialRequest is the write shape for a reusable credential.
+type CreateSavedCredentialRequest struct {
+	ProviderType string         `json:"providerType"`
+	Name         string         `json:"name"`
+	Credentials  map[string]any `json:"credentials"`
+}
+
+// UpdateSavedCredentialRequest is the partial-update shape for a reusable
+// credential. An empty Credentials map keeps the stored secret.
+type UpdateSavedCredentialRequest struct {
+	Name        *string        `json:"name,omitempty"`
+	Credentials map[string]any `json:"credentials,omitempty"`
 }
 
 // Provider mirrors pkg/sdk/datasources.Provider — the provider-catalog entry.
@@ -187,8 +229,12 @@ type Integration struct {
 	Status               string     `json:"status"`
 	ErrorMessage         *string    `json:"errorMessage,omitempty"`
 	ErrorCount           int        `json:"errorCount"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	// CredentialID names the project-scoped saved credential backing this
+	// source, when it uses one. Omitted for legacy sources whose credentials
+	// were stored inline. It is a reference, not secret material.
+	CredentialID *string   `json:"credentialId,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
 }
 
 // SourceType mirrors pkg/sdk/datasources.SourceType — document counts grouped
@@ -215,6 +261,9 @@ type CreateIntegrationRequest struct {
 	Config              map[string]any `json:"config"`
 	SyncMode            *string        `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
+	// SavedCredentialID references a project-scoped saved credential. When set,
+	// the source references it instead of storing an inline credential copy.
+	SavedCredentialID *string `json:"credentialId,omitempty"`
 	// AllowIncompleteConfig lets a caller (the OAuth callback) create a source
 	// whose config is missing its sync target (folder_id/repo). The target is
 	// selected after consent and applied via a later update, so config
@@ -230,19 +279,24 @@ type UpdateIntegrationRequest struct {
 	SyncMode            *string        `json:"syncMode,omitempty"`
 	SyncIntervalMinutes *int           `json:"syncIntervalMinutes,omitempty"`
 	Enabled             *bool          `json:"enabled,omitempty"`
+	// SavedCredentialID references a project-scoped saved credential. An empty
+	// string clears the reference and returns the source to its inline blob.
+	SavedCredentialID *string `json:"credentialId,omitempty"`
 }
 
 // TestConfigRequest mirrors pkg/sdk/datasources.TestConfigRequest.
 type TestConfigRequest struct {
-	ProviderType string         `json:"providerType"`
-	Config       map[string]any `json:"config"`
+	ProviderType      string         `json:"providerType"`
+	Config            map[string]any `json:"config"`
+	SavedCredentialID *string        `json:"credentialId,omitempty"`
 }
 
 // ProviderListRequest mirrors TestConfigRequest for a credential-scoped listing
 // (repositories, refs) of an unsaved provider config. Nothing is persisted.
 type ProviderListRequest struct {
-	ProviderType string         `json:"providerType"`
-	Config       map[string]any `json:"config"`
+	ProviderType      string         `json:"providerType"`
+	Config            map[string]any `json:"config"`
+	SavedCredentialID *string        `json:"credentialId,omitempty"`
 }
 
 // SyncJob is the kb.source_sync_jobs row model. It carries the full

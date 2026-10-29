@@ -28,6 +28,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	readGroup.GET("/providers", h.ListProviders)
 	readGroup.GET("/providers/:providerType/schema", h.GetProviderSchema)
 	readGroup.GET("/credentials", h.ListCredentials)
+	readGroup.GET("/credentials/saved", h.ListSavedCredentials)
 	readGroup.GET("/source-types", h.ListSourceTypes)
 	readGroup.GET("", h.List)
 	readGroup.GET("/:id", h.Get)
@@ -44,6 +45,8 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup.POST("/test-config", h.TestConfig)
 	writeGroup.POST("/resources", h.ListProviderResources)
 	writeGroup.POST("/refs", h.ListProviderRefs)
+	writeGroup.POST("/credentials/saved", h.CreateSavedCredential)
+	writeGroup.PATCH("/credentials/saved/:id", h.UpdateSavedCredential)
 	writeGroup.POST("/:id/test-connection", h.TestConnection)
 	// The picker session mints a Google access token from the source's refresh
 	// token, so it is grouped with the write scope even though it is a GET: a
@@ -58,6 +61,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// Delete operation.
 	deleteGroup := g.Group("")
 	deleteGroup.Use(authMiddleware.RequireAPITokenScopes("documents:delete"))
+	deleteGroup.DELETE("/credentials/saved/:id", h.DeleteSavedCredential)
 	deleteGroup.DELETE("/:id", h.Delete)
 
 	// OAuth callback: intentionally unauthenticated (the browser arrives

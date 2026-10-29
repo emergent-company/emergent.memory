@@ -45,7 +45,7 @@ func (s *Service) PickerSession(ctx context.Context, projectID, id uuid.UUID) (*
 	if developerKey == "" || appID == "" {
 		return nil, apperror.NewValidation("the Google Picker is not configured: set the Picker developer key and Picker app ID under Settings → Credentials")
 	}
-	creds, err := s.decryptCredentials(src.EncryptedCredentials)
+	creds, err := s.credentialsForSource(ctx, src)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +98,7 @@ func (s *Service) SaveSyncTargets(ctx context.Context, projectID, id uuid.UUID, 
 	if len(unique) == 0 {
 		return nil, apperror.NewValidation("select at least one folder")
 	}
-	creds, err := s.decryptCredentials(src.EncryptedCredentials)
+	creds, err := s.credentialsForSource(ctx, src)
 	if err != nil {
 		return nil, err
 	}

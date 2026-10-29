@@ -446,6 +446,22 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
     - method: GET
+      path: /api/data-source-integrations/credentials/saved
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:read)
+    - method: POST
+      path: /api/data-source-integrations/credentials/saved
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: DELETE
+      path: /api/data-source-integrations/credentials/saved/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:delete)
+    - method: PATCH
+      path: /api/data-source-integrations/credentials/saved/:id
+      level: project-member
+      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:write)
+    - method: GET
       path: /api/data-source-integrations/oauth/:providerType/callback
       level: public
       note: ""

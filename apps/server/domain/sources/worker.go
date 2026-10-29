@@ -206,7 +206,7 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		return w.failJob(ctx, job, fmt.Errorf("unknown provider %q", src.Provider))
 	}
 
-	creds, err := w.svc.decryptCredentials(src.EncryptedCredentials)
+	creds, err := w.svc.credentialsForSource(ctx, src)
 	if err != nil {
 		return w.failJob(ctx, job, fmt.Errorf("decrypt credentials: %w", err))
 	}

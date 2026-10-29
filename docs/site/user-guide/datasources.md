@@ -19,6 +19,24 @@ Data sources let you connect external systems to Memory and automatically import
 
 ---
 
+## Saved credentials
+
+The **Credentials** page also lists the project's **saved credentials** above the OAuth apps table. A
+saved credential is a token — today, a GitHub personal access token — stored once, encrypted, and
+reused by any number of data sources in the project. The list shows the name, the provider, how many
+sources use it, and when it was last changed; the token itself is never displayed again.
+
+- **Add credential** opens a dialog: choose the provider, name the credential, and paste the token.
+  Only the fields that provider requires are asked for.
+- **Edit** reopens the same dialog with the name filled in. Renaming is safe, and leaving the token
+  field empty keeps the stored token. Editing a credential changes it for every source that uses it,
+  so a rotated token only needs to be updated once.
+- **Delete** is refused while a source still uses the credential; switch those sources to another
+  credential first.
+
+On a credentials connect form you can either select one of these saved credentials or create a new
+one without leaving the page — the new credential is selected for you when you return.
+
 ## Credentials (OAuth apps)
 
 OAuth-based providers (Google Drive, GitHub) need an OAuth 2.0 **app** — a client that Memory uses
@@ -252,9 +270,18 @@ plain connect and creates a **new** source.
 
 ### Connect GitHub with a personal access token
 
-Select **GitHub** on **Data Sources → New data source**, choose **Connect with credentials**, and
-paste a token. The token is used to load the suggestions below and is then stored encrypted and
-write-only — it is never shown again.
+GitHub can be connected either with OAuth or with a personal access token. The token path uses a
+saved credential:
+
+1. Open **Project Settings → Credentials** and choose **Add credential**: pick **GitHub**, give the
+   credential a name, and paste the token. (You can also do this inline from the connect form.)
+2. On **Data Sources → New data source**, pick **GitHub** and choose **Use a personal access token**.
+3. Select the saved credential. The list shows how many sources already use each one, so reusing an
+   existing token is an informed choice.
+4. Fill in the repository scope below and press **Connect**.
+
+The token is stored encrypted and write-only — it is never shown again. One saved credential can
+back several GitHub sources; editing it updates all of them.
 
 | Field | How to fill it |
 |---|---|

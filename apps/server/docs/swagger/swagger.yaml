@@ -9108,6 +9108,11 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      credentialId:
+        description: |-
+          SavedCredentialID references a project-scoped saved credential. When set,
+          the source references it instead of storing an inline credential copy.
+        type: string
       description:
         type: string
       name:
@@ -9121,6 +9126,16 @@ definitions:
       syncMode:
         type: string
     type: object
+  domain_sources.CreateSavedCredentialRequest:
+    properties:
+      credentials:
+        additionalProperties: {}
+        type: object
+      name:
+        type: string
+      providerType:
+        type: string
+    type: object
   domain_sources.Integration:
     properties:
       config:
@@ -9132,6 +9147,12 @@ definitions:
           here (design D2).
         type: object
       createdAt:
+        type: string
+      credentialId:
+        description: |-
+          CredentialID names the project-scoped saved credential backing this
+          source, when it uses one. Omitted for legacy sources whose credentials
+          were stored inline. It is a reference, not secret material.
         type: string
       description:
         type: string
@@ -9300,6 +9321,8 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      credentialId:
+        type: string
       providerType:
         type: string
     type: object
@@ -9330,6 +9353,21 @@ definitions:
         items:
           type: string
         type: array
+    type: object
+  domain_sources.SavedCredential:
+    properties:
+      createdAt:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      providerType:
+        type: string
+      updatedAt:
+        type: string
+      usedByCount:
+        type: integer
     type: object
   domain_sources.SetOAuthClientRequest:
     properties:
@@ -9401,6 +9439,8 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      credentialId:
+        type: string
       providerType:
         type: string
     type: object
@@ -9425,6 +9465,11 @@ definitions:
       config:
         additionalProperties: {}
         type: object
+      credentialId:
+        description: |-
+          SavedCredentialID references a project-scoped saved credential. An empty
+          string clears the reference and returns the source to its inline blob.
+        type: string
       description:
         type: string
       enabled:
@@ -9434,6 +9479,14 @@ definitions:
       syncIntervalMinutes:
         type: integer
       syncMode:
+        type: string
+    type: object
+  domain_sources.UpdateSavedCredentialRequest:
+    properties:
+      credentials:
+        additionalProperties: {}
+        type: object
+      name:
         type: string
     type: object
   domain_sources.startOAuthBody:
@@ -25916,6 +25969,169 @@ paths:
       security:
       - bearerAuth: []
       summary: List data-source credentials
+      tags:
+      - data-source-integrations
+  /data-source-integrations/credentials/saved:
+    get:
+      description: Returns the project's reusable credentials (optionally filtered
+        by providerType). Secrets are never returned.
+      parameters:
+      - description: Filter by provider type
+        in: query
+        name: providerType
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Saved credentials
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/domain_sources.SavedCredential'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Unsupported provider type
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List saved data-source credentials
+      tags:
+      - data-source-integrations
+    post:
+      consumes:
+      - application/json
+      description: Stores a reusable, encrypted credential for a credentials-based
+        provider
+      parameters:
+      - description: Credential to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.CreateSavedCredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created credential
+          schema:
+            $ref: '#/definitions/domain_sources.SavedCredential'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Create a saved data-source credential
+      tags:
+      - data-source-integrations
+  /data-source-integrations/credentials/saved/{id}:
+    delete:
+      description: Deletes an unreferenced saved credential; returns 409 while a data
+        source uses it
+      parameters:
+      - description: Credential ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Credential not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "409":
+          description: Credential still referenced
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Delete a saved data-source credential
+      tags:
+      - data-source-integrations
+    patch:
+      consumes:
+      - application/json
+      description: Renames a saved credential and/or replaces its encrypted secret
+      parameters:
+      - description: Credential ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Fields to update
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_sources.UpdateSavedCredentialRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Updated credential
+          schema:
+            $ref: '#/definitions/domain_sources.SavedCredential'
+        "400":
+          description: Bad request
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "404":
+          description: Credential not found
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "422":
+          description: Validation failed
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Update a saved data-source credential
       tags:
       - data-source-integrations
   /data-source-integrations/oauth/{providerType}/callback:

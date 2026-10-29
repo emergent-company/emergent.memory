@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/emergent-company/emergent.memory/internal/config"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
 )
@@ -69,7 +71,7 @@ func TestService_ListProviderResources_UsesUnsavedCredentials(t *testing.T) {
 	p.resources = []Resource{{ID: "acme/docs", Name: "acme/docs", Type: "repo"}}
 	svc := newListingService(p)
 
-	resources, _, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{
+	resources, _, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{
 		ProviderType: "github",
 		Config:       map[string]any{"access_token": "at"},
 	})
@@ -89,7 +91,7 @@ func TestService_ListProviderResources_UsesUnsavedCredentials(t *testing.T) {
 
 func TestService_ListProviderResources_EmptyIsNotNil(t *testing.T) {
 	svc := newListingService(githubLister())
-	resources, _, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	resources, _, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err != nil {
 		t.Fatalf("ListProviderResources() error = %v", err)
 	}
@@ -100,7 +102,7 @@ func TestService_ListProviderResources_EmptyIsNotNil(t *testing.T) {
 
 func TestService_ListProviderResources_RejectsUnknownProvider(t *testing.T) {
 	svc := newListingService(githubLister())
-	if _, _, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{ProviderType: "imap"}); err == nil {
+	if _, _, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "imap"}); err == nil {
 		t.Fatal("ListProviderResources(imap) = nil error, want validation error")
 	}
 }
@@ -109,7 +111,7 @@ func TestService_ListProviderResources_SurfacesCredentialError(t *testing.T) {
 	p := githubLister()
 	p.extractErr = errors.New("config.access_token is required")
 	svc := newListingService(p)
-	_, _, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	_, _, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err == nil || !strings.Contains(err.Error(), "access_token") {
 		t.Fatalf("ListProviderResources() error = %v, want the credential error", err)
 	}
@@ -122,7 +124,7 @@ func TestService_ListProviderResources_WrapsProviderError(t *testing.T) {
 	p := githubLister()
 	p.listErr = errors.New("rate limited")
 	svc := newListingService(p)
-	_, _, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	_, _, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err == nil || !strings.Contains(err.Error(), "list resources failed") {
 		t.Fatalf("ListProviderResources() error = %v, want a wrapped error", err)
 	}
@@ -134,7 +136,7 @@ func TestService_ListProviderRefs_Passthrough(t *testing.T) {
 	p.truncated = true
 	svc := newListingService(p)
 
-	refs, truncated, err := svc.ListProviderRefs(context.Background(), &ProviderListRequest{
+	refs, truncated, err := svc.ListProviderRefs(context.Background(), uuid.Nil, &ProviderListRequest{
 		ProviderType: "github",
 		Config:       map[string]any{"access_token": "at", "repo": "acme/docs"},
 	})
@@ -154,7 +156,7 @@ func TestService_ListProviderRefs_Passthrough(t *testing.T) {
 
 func TestService_ListProviderRefs_RejectsProviderWithoutRefSupport(t *testing.T) {
 	svc := newListingService(&stubProvider{catalog: Provider{Type: "google_drive"}})
-	_, _, err := svc.ListProviderRefs(context.Background(), &ProviderListRequest{ProviderType: "google_drive"})
+	_, _, err := svc.ListProviderRefs(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "google_drive"})
 	if err == nil || !strings.Contains(err.Error(), "does not support ref listing") {
 		t.Fatalf("ListProviderRefs(drive) error = %v, want unsupported-provider error", err)
 	}
@@ -164,7 +166,7 @@ func TestService_ListProviderRefs_WrapsProviderError(t *testing.T) {
 	p := githubLister()
 	p.refsErr = errors.New("boom")
 	svc := newListingService(p)
-	_, _, err := svc.ListProviderRefs(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	_, _, err := svc.ListProviderRefs(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err == nil || !strings.Contains(err.Error(), "list refs failed") {
 		t.Fatalf("ListProviderRefs() error = %v, want a wrapped error", err)
 	}
@@ -175,7 +177,7 @@ func TestService_ListProviderRefs_PreservesProviderValidationMessage(t *testing.
 	p.refsErr = apperror.NewValidation("config.repo is required to list branches")
 	svc := newListingService(p)
 
-	_, _, err := svc.ListProviderRefs(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	_, _, err := svc.ListProviderRefs(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err == nil {
 		t.Fatal("ListProviderRefs() = nil error, want the provider's validation error")
 	}
@@ -193,7 +195,7 @@ func TestService_ListProviderResources_ReportsTruncation(t *testing.T) {
 	p.truncated = true
 	svc := newListingService(p)
 
-	_, truncated, err := svc.ListProviderResources(context.Background(), &ProviderListRequest{ProviderType: "github"})
+	_, truncated, err := svc.ListProviderResources(context.Background(), uuid.Nil, &ProviderListRequest{ProviderType: "github"})
 	if err != nil {
 		t.Fatalf("ListProviderResources() error = %v", err)
 	}

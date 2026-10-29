@@ -485,6 +485,41 @@ let dsJobsBySource = {}; // sourceId -> [job], newest first.
 let dsCounter = 1;
 let dsJobCounter = 1;
 
+// Project-scoped saved credentials (metadata only; the credential material is
+// server-side and never returned). Seeded with one GitHub token so the connect
+// form and the credentials page have something to pick and edit.
+let dsSavedCredentials = [
+  {
+    id: "cred-gh-1",
+    providerType: "github",
+    name: "E2E GitHub token",
+    credentials: { access_token: "ghp_e2e_token" },
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  },
+];
+let dsSavedCredCounter = 1;
+
+// dsSavedCredentialView projects a stored credential into the read DTO: metadata
+// plus the live usage count derived from the sources, so delete can mirror the
+// server's 409-when-in-use rule.
+const dsSavedCredentialView = (c) => ({
+  id: c.id,
+  providerType: c.providerType,
+  name: c.name,
+  usedByCount: dsSources.filter((s) => s.row.credentialId === c.id).length,
+  createdAt: c.createdAt,
+  updatedAt: c.updatedAt,
+});
+const dsSavedCredentialByID = (id) => dsSavedCredentials.find((c) => c.id === id);
+
+// dsCredentialProviderType resolves the provider for a credentialId, used by the
+// create/test/list endpoints that accept one.
+const dsCredentialProviderType = (id) => {
+  const c = dsSavedCredentialByID(id);
+  return c ? c.providerType : "";
+};
+
 // dsIntegration projects a stored source: the row plus its non-secret config
 // (credential keys stripped). Credentials never leave here.
 //
@@ -1147,8 +1182,14 @@ const server = http.createServer((req, res) => {
     return readBody(req, (payload) => {
       const config = payload.config || {};
       if (payload.providerType === "github") {
-        if (!String(config.access_token || "")) {
+        // A saved credential replaces the inline token; the server resolves it
+        // project-side and tests with its stored secret.
+        const credential = String(payload.credentialId || "");
+        if (!String(config.access_token || "") && !credential) {
           return json(res, { success: false, message: "GitHub token is required." });
+        }
+        if (credential && dsCredentialProviderType(credential) !== "github") {
+          return json(res, { success: false, message: "Saved credential not found for GitHub." });
         }
         return json(res, { success: true, message: "Connected to GitHub." });
       }
@@ -1183,6 +1224,14 @@ const server = http.createServer((req, res) => {
   // in the body and is never stored; only identifiers come back.
   if (path === "/api/data-source-integrations/resources" && req.method === "POST") {
     return readBody(req, (payload) => {
+      if (payload.credentialId && dsCredentialProviderType(payload.credentialId) !== payload.providerType) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "credentialId does not belong to this provider" } });
+      }
+      if (payload.providerType === "github" && !payload.credentialId && !String((payload.config || {}).access_token || "")) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "a GitHub credential is required" } });
+      }
       return json(res, dsProviderResources(payload.providerType));
     });
   }
@@ -1202,6 +1251,10 @@ const server = http.createServer((req, res) => {
   // Credential-scoped ref listing for the connect form's ref picker.
   if (path === "/api/data-source-integrations/refs" && req.method === "POST") {
     return readBody(req, (payload) => {
+      if (payload.providerType === "github" && !payload.credentialId && !String((payload.config || {}).access_token || "")) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "a GitHub credential is required" } });
+      }
       const repo = String((payload.config || {}).repo || "");
       if (repo !== "acme/private-docs") {
         res.statusCode = 422;
@@ -1217,6 +1270,80 @@ const server = http.createServer((req, res) => {
     });
   }
 
+  // --- saved, project-scoped credentials ------------------------------------
+  //
+  // Metadata only: the credential material stays server-side, so an update with
+  // an empty credential map keeps the stored secret (the gateway omits it).
+  const dsSavedCredMatch = path.match(/^\/api\/data-source-integrations\/credentials\/saved(?:\/([^/]+))?$/);
+  if (dsSavedCredMatch && !dsSavedCredMatch[1] && req.method === "GET") {
+    const providerType = url.searchParams.get("providerType") || "";
+    const items = dsSavedCredentials
+      .filter((c) => !providerType || c.providerType === providerType)
+      .map(dsSavedCredentialView);
+    return json(res, { items });
+  }
+  if (dsSavedCredMatch && !dsSavedCredMatch[1] && req.method === "POST") {
+    return readBody(req, (payload) => {
+      if (!String(payload.name || "").trim()) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "name is required" } });
+      }
+      if (!String(payload.providerType || "")) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "providerType is required" } });
+      }
+      const creds = payload.credentials && typeof payload.credentials === "object" ? payload.credentials : {};
+      if (!Object.keys(creds).length) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "credentials are required" } });
+      }
+      const now = nowISO();
+      const stored = {
+        id: `cred-${dsSavedCredCounter++}`,
+        providerType: String(payload.providerType),
+        name: String(payload.name).trim(),
+        credentials: creds,
+        createdAt: now,
+        updatedAt: now,
+      };
+      dsSavedCredentials.push(stored);
+      res.statusCode = 201;
+      return json(res, dsSavedCredentialView(stored));
+    });
+  }
+  if (dsSavedCredMatch && dsSavedCredMatch[1] && req.method === "PATCH") {
+    return readBody(req, (payload) => {
+      const stored = dsSavedCredentialByID(dsSavedCredMatch[1]);
+      if (!stored) {
+        res.statusCode = 404;
+        return json(res, { error: { code: "not_found", message: "credential not found" } });
+      }
+      if (String(payload.name || "").trim()) stored.name = String(payload.name).trim();
+      if (payload.credentials && typeof payload.credentials === "object" && Object.keys(payload.credentials).length) {
+        stored.credentials = { ...stored.credentials, ...payload.credentials };
+      }
+      stored.updatedAt = nowISO();
+      return json(res, dsSavedCredentialView(stored));
+    });
+  }
+  if (dsSavedCredMatch && dsSavedCredMatch[1] && req.method === "DELETE") {
+    const stored = dsSavedCredentialByID(dsSavedCredMatch[1]);
+    if (!stored) {
+      res.statusCode = 404;
+      return json(res, { error: { code: "not_found", message: "credential not found" } });
+    }
+    const usedBy = dsSavedCredentialView(stored).usedByCount;
+    if (usedBy > 0) {
+      res.statusCode = 409;
+      return json(res, {
+        error: { code: "conflict", message: `credential is used by ${usedBy} data source${usedBy === 1 ? "" : "s"}` },
+      });
+    }
+    dsSavedCredentials = dsSavedCredentials.filter((c) => c.id !== stored.id);
+    res.statusCode = 204;
+    return res.end();
+  }
+
   if (path === "/api/data-source-integrations" && req.method === "GET") {
     return json(res, dsSources.map(dsIntegration));
   }
@@ -1226,12 +1353,17 @@ const server = http.createServer((req, res) => {
       const config = payload.config || {};
       // Mirror the server's provider validation: the gateway no longer applies
       // Drive-only rules, so an incomplete config must still fail here.
+      const credentialID = String(payload.credentialId || "");
+      if (credentialID && dsCredentialProviderType(credentialID) !== payload.providerType) {
+        res.statusCode = 422;
+        return json(res, { error: { code: "validation_error", message: "credentialId does not belong to this provider" } });
+      }
       if (payload.providerType === "github") {
         if (!String(config.repo || "")) {
           res.statusCode = 422;
           return json(res, { error: { code: "validation_error", message: "config.repo is required" } });
         }
-        if (!String(config.access_token || "")) {
+        if (!credentialID && !String(config.access_token || "")) {
           res.statusCode = 422;
           return json(res, { error: { code: "validation_error", message: "config.access_token is required" } });
         }
@@ -1320,6 +1452,7 @@ const server = http.createServer((req, res) => {
       // grant from it, or the e2e would assert a value the real server never
       // produces. The credentials card therefore reports its neutral
       // "not recorded at connect" state for a source created this way.
+      if (payload.credentialId) row.credentialId = String(payload.credentialId);
       const src = { row, config: payload.config || {} };
       dsSources.push(src);
       res.statusCode = 201;

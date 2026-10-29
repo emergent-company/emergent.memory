@@ -22965,6 +22965,256 @@ const docTemplate = `{
                 }
             }
         },
+        "/data-source-integrations/credentials/saved": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns the project's reusable credentials (optionally filtered by providerType). Secrets are never returned.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "List saved data-source credentials",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by provider type",
+                        "name": "providerType",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Saved credentials",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/domain_sources.SavedCredential"
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Unsupported provider type",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Stores a reusable, encrypted credential for a credentials-based provider",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Create a saved data-source credential",
+                "parameters": [
+                    {
+                        "description": "Credential to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.CreateSavedCredentialRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created credential",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SavedCredential"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/data-source-integrations/credentials/saved/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Deletes an unreferenced saved credential; returns 409 while a data source uses it",
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Delete a saved data-source credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Credential ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Deleted"
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Credential not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Credential still referenced",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Renames a saved credential and/or replaces its encrypted secret",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "data-source-integrations"
+                ],
+                "summary": "Update a saved data-source credential",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Credential ID (UUID)",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.UpdateSavedCredentialRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated credential",
+                        "schema": {
+                            "$ref": "#/definitions/domain_sources.SavedCredential"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Credential not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "422": {
+                        "description": "Validation failed",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/data-source-integrations/oauth/{providerType}/callback": {
             "get": {
                 "description": "Consumes the pending state, exchanges the code, creates the source, and redirects to the UI",
@@ -38887,6 +39137,10 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "credentialId": {
+                    "description": "SavedCredentialID references a project-scoped saved credential. When set,\nthe source references it instead of storing an inline credential copy.",
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -38907,6 +39161,21 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_sources.CreateSavedCredentialRequest": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
+                    "type": "string"
+                },
+                "providerType": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_sources.Integration": {
             "type": "object",
             "properties": {
@@ -38916,6 +39185,10 @@ const docTemplate = `{
                     "additionalProperties": {}
                 },
                 "createdAt": {
+                    "type": "string"
+                },
+                "credentialId": {
+                    "description": "CredentialID names the project-scoped saved credential backing this\nsource, when it uses one. Omitted for legacy sources whose credentials\nwere stored inline. It is a reference, not secret material.",
                     "type": "string"
                 },
                 "description": {
@@ -39132,6 +39405,9 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "credentialId": {
+                    "type": "string"
+                },
                 "providerType": {
                     "type": "string"
                 }
@@ -39177,6 +39453,29 @@ const docTemplate = `{
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "domain_sources.SavedCredential": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "providerType": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "usedByCount": {
+                    "type": "integer"
                 }
             }
         },
@@ -39286,6 +39585,9 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "credentialId": {
+                    "type": "string"
+                },
                 "providerType": {
                     "type": "string"
                 }
@@ -39323,6 +39625,10 @@ const docTemplate = `{
                     "type": "object",
                     "additionalProperties": {}
                 },
+                "credentialId": {
+                    "description": "SavedCredentialID references a project-scoped saved credential. An empty\nstring clears the reference and returns the source to its inline blob.",
+                    "type": "string"
+                },
                 "description": {
                     "type": "string"
                 },
@@ -39336,6 +39642,18 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "syncMode": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_sources.UpdateSavedCredentialRequest": {
+            "type": "object",
+            "properties": {
+                "credentials": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "name": {
                     "type": "string"
                 }
             }

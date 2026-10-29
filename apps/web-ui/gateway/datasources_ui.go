@@ -600,18 +600,24 @@ func (s *Server) uiDataSourceNew(c echo.Context) error {
 
 	var configFields, credentialFields []dsConfigField
 	var schemaErr error
+	picker := dsSavedCredentialPicker{}
 	if selected != nil {
 		schema, serr := s.memory.GetDSProviderSchema(ctx, selected.Type)
 		if serr != nil {
 			schemaErr = userFacingError(serr)
 		}
 		configFields, credentialFields = dsConfigFields(schema, nil)
+		// ?credentialId (server-provided link) and ?savedCredential (the
+		// post-create redirect from the shared modal) both preselect a
+		// credential on the connect form.
+		selectedCred := cmp.Or(strings.TrimSpace(c.QueryParam("credentialId")), strings.TrimSpace(c.QueryParam("savedCredential")))
+		picker = s.dsSavedCredentialPickerFor(ctx, providers, selected.Type, selectedCred, dsConnectFormPath(selected.Type))
 	}
 	if err == nil {
 		err = schemaErr
 	}
 	flashErr := flashError(c)
-	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, selected, configFields, credentialFields, err, flashErr, nil))
+	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, selected, configFields, credentialFields, picker, err, flashErr, nil))
 }
 
 // dsSelectProvider picks the selected provider from the catalog by type, applying
@@ -758,7 +764,7 @@ func (s *Server) renderDSOAuthClientMissing(c echo.Context, providerType string)
 			oauthErr.SettingsURL = "/orgs/" + url.PathEscape(sc.OrgID) + "/settings/oauth-clients#" + url.PathEscape(providerType)
 		}
 	}
-	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, err, nil, oauthErr))
+	return s.page(c, pageTitle("New Data Source"), DataSourceNewPage(providers, nil, nil, nil, dsSavedCredentialPicker{}, err, nil, oauthErr))
 }
 
 // dsOAuthErrorMessage renders a callback outcome as an actionable message.
@@ -1468,6 +1474,150 @@ func (s *Server) uiOrgOAuthClientDelete(c echo.Context) error {
 	return nil
 }
 
+// --- saved credentials (project settings) ---
+//
+// Saved credentials are project-scoped, reusable, write-only secrets (a GitHub
+// personal access token, for example). A data source references one by id
+// instead of carrying secret material in its config; the credentials API returns
+// metadata only, never the secret fields.
+
+// dsSavedCredentialPickerFor builds the picker state for one provider: its saved
+// credentials, the credential the form should preselect, and the initial
+// required fields for the add/edit modal. A failed credentials read leaves the
+// picker empty with LoadErr set, so the form still renders and offers "New
+// credential" instead of failing the page.
+func (s *Server) dsSavedCredentialPickerFor(ctx context.Context, providers []DSProvider, providerType, selectedID, returnURL string) dsSavedCredentialPicker {
+	picker := dsSavedCredentialPicker{
+		Providers:       dsCredentialProviders(providers),
+		ReturnURL:       returnURL,
+		SelectedID:      selectedID,
+		DefaultProvider: providerType,
+	}
+	picker.Supported = dsProviderSupportsCredentials(providers, providerType)
+	if !picker.Supported {
+		return picker
+	}
+	picker.FixedProvider = providerType
+	picker.ShowModal = true
+	items, err := s.memory.ListSavedDSCredentials(ctx, providerType)
+	if err != nil {
+		captureError(err)
+		picker.LoadErr = dsFormError(err)
+	} else {
+		picker.Items = items
+	}
+	if _, credentialFields, ferr := s.dsProviderFields(ctx, providerType); ferr != nil {
+		captureError(ferr)
+	} else {
+		picker.Fields = dsRequiredCredentialFields(credentialFields)
+	}
+	return picker
+}
+
+// uiSavedCredentialFields renders the modal's credential inputs for a provider
+// (HTMX swap target). Only required fields are returned for a create; ?optional=1
+// adds the rest for an edit, where leaving a field empty keeps its stored value.
+func (s *Server) uiSavedCredentialFields(c echo.Context) error {
+	ctx := c.Request().Context()
+	providerType := strings.TrimSpace(c.QueryParam("providerType"))
+	optional := c.QueryParam("optional") == "1"
+	if providerType == "" {
+		renderPartial(c.Response().Writer, c.Request(), dsSavedCredentialFields("", nil, !optional, errors.New("providerType is required")))
+		return nil
+	}
+	_, credentialFields, err := s.dsProviderFields(ctx, providerType)
+	if err != nil {
+		renderPartial(c.Response().Writer, c.Request(), dsSavedCredentialFields(providerType, nil, !optional, err))
+		return nil
+	}
+	fields := credentialFields
+	if !optional {
+		fields = dsRequiredCredentialFields(fields)
+	}
+	renderPartial(c.Response().Writer, c.Request(), dsSavedCredentialFields(providerType, fields, !optional, nil))
+	return nil
+}
+
+// uiSavedCredentialCreate stores a new saved credential (PRG) and returns to the
+// page that opened the modal with ?savedCredential=<id>, so the connect form (or
+// the settings card) can preselect it.
+func (s *Server) uiSavedCredentialCreate(c echo.Context) error {
+	ctx := c.Request().Context()
+	returnTo := dsSafeReturnPath(c.FormValue("return_to"))
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	if providerType == "" {
+		return redirectWithError(c, returnTo, errors.New("providerType is required"))
+	}
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return redirectWithError(c, returnTo, errors.New("name is required"))
+	}
+	_, credentialFields, err := s.dsProviderFields(ctx, providerType)
+	if err != nil {
+		return redirectWithError(c, returnTo, err)
+	}
+	creds := dsConfigFromFields(c, credentialFields)
+	if len(creds) == 0 {
+		return redirectWithError(c, returnTo, errors.New("enter the provider's credential fields"))
+	}
+	item, err := s.memory.CreateSavedDSCredential(ctx, &DSSavedCredentialRequest{
+		ProviderType: providerType,
+		Name:         name,
+		Credentials:  creds,
+	})
+	if err != nil {
+		return redirectWithError(c, returnTo, dsFormError(err))
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), dsAppendQuery(returnTo, "savedCredential", item.ID))
+	return nil
+}
+
+// uiSavedCredentialUpdate renames a saved credential and replaces the secret
+// fields that were filled in (PRG). Empty secret inputs keep their stored value,
+// so a rename never forces the token to be retyped.
+func (s *Server) uiSavedCredentialUpdate(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := c.Param("id")
+	returnTo := dsSafeReturnPath(c.FormValue("return_to"))
+	if id == "" {
+		return redirectWithError(c, returnTo, errors.New("credential id is required"))
+	}
+	name := strings.TrimSpace(c.FormValue("name"))
+	if name == "" {
+		return redirectWithError(c, returnTo, errors.New("name is required"))
+	}
+	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	if providerType == "" {
+		return redirectWithError(c, returnTo, errors.New("providerType is required"))
+	}
+	_, credentialFields, err := s.dsProviderFields(ctx, providerType)
+	if err != nil {
+		return redirectWithError(c, returnTo, err)
+	}
+	req := &DSSavedCredentialUpdateRequest{Name: name}
+	if creds := dsConfigFromFields(c, credentialFields); len(creds) > 0 {
+		req.Credentials = creds
+	}
+	if _, err := s.memory.UpdateSavedDSCredential(ctx, id, req); err != nil {
+		return redirectWithError(c, returnTo, dsFormError(err))
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), dsAppendQuery(returnTo, "savedCredentialUpdated", "1"))
+	return nil
+}
+
+// uiSavedCredentialDelete removes a saved credential (PRG). The server answers
+// 409 while a source still uses it, and that message is surfaced on the page so
+// the user knows to switch the source first.
+func (s *Server) uiSavedCredentialDelete(c echo.Context) error {
+	ctx := c.Request().Context()
+	returnTo := dsSafeReturnPath(c.FormValue("return_to"))
+	if err := s.memory.DeleteSavedDSCredential(ctx, c.Param("id")); err != nil {
+		return redirectWithError(c, returnTo, dsFormError(err))
+	}
+	render.RedirectAfterMutation(c.Response().Writer, c.Request(), dsAppendQuery(returnTo, "savedCredentialDeleted", "1"))
+	return nil
+}
+
 // --- project credentials (project settings) ---
 //
 // Credentials are OAuth apps, resolved project → organization → deployment.
@@ -1500,16 +1650,146 @@ type dsCredentialRow struct {
 	ManagedNote  string
 }
 
-// dsCredentialsPageData is the project credentials table page payload.
+// dsCredentialsPageData is the project credentials page payload.
 type dsCredentialsPageData struct {
-	Nav            settingsNavCommon
-	ProjectName    string
-	OrgName        string
-	Rows           []dsCredentialRow
-	DeploymentNote string
-	LoadErr        error
-	FlashMsg       string
-	FlashErr       error
+	Nav              settingsNavCommon
+	ProjectName      string
+	OrgName          string
+	Rows             []dsCredentialRow
+	SavedCredentials []dsSavedCredentialRow
+	// SavedCredentialsErr keeps a failed saved-credential read from taking the
+	// whole page down: the OAuth apps table still renders, with the failure
+	// called out above it.
+	SavedCredentialsErr   error
+	SavedCredentialPicker dsSavedCredentialPicker
+	DeploymentNote        string
+	LoadErr               error
+	FlashMsg              string
+	FlashErr              error
+}
+
+// dsSavedCredentialRow is one saved credential plus its provider's display name.
+type dsSavedCredentialRow struct {
+	DSSavedCredential
+	ProviderName string
+}
+
+// dsSavedCredentialPicker is the shared saved-credential state for the connect
+// form, the source settings card, and the reusable add/edit modal. Supported
+// means the provider accepts a saved credential (so the raw credential inputs
+// are replaced); Items is the list for the picker; Fields is the initial set of
+// required credential inputs rendered inside the modal.
+type dsSavedCredentialPicker struct {
+	Supported       bool
+	ShowModal       bool
+	Items           []DSSavedCredential
+	SelectedID      string
+	ReturnURL       string
+	FixedProvider   string
+	DefaultProvider string
+	Providers       []DSProvider
+	Fields          []dsConfigField
+	LoadErr         error
+}
+
+// dsCredentialProviders filters the catalog to the providers that accept a saved
+// credential — the only ones the modal offers.
+func dsCredentialProviders(providers []DSProvider) []DSProvider {
+	out := make([]DSProvider, 0, len(providers))
+	for _, p := range providers {
+		if p.DSProviderSupportsCredentials() {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// dsProviderSupportsCredentials reports whether the catalog lists the provider
+// with the credentials connect method.
+func dsProviderSupportsCredentials(providers []DSProvider, providerType string) bool {
+	for _, p := range providers {
+		if p.Type == providerType {
+			return p.DSProviderSupportsCredentials()
+		}
+	}
+	return false
+}
+
+// dsRequiredCredentialFields keeps the schema's required credential fields: the
+// saved-credential modal asks only for what the provider needs to connect.
+func dsRequiredCredentialFields(fields []dsConfigField) []dsConfigField {
+	out := make([]dsConfigField, 0, len(fields))
+	for _, f := range fields {
+		if f.Required {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// dsSavedCredentialLabel is a saved credential's option label: its name plus how
+// many sources already use it, so reusing one is an informed choice.
+func dsSavedCredentialLabel(c DSSavedCredential) string {
+	name := strings.TrimSpace(c.Name)
+	if name == "" {
+		name = "Credential " + dsShortID(c.ID)
+	}
+	return name + " — " + dsUsedByLabel(c.UsedByCount)
+}
+
+// dsUsedByLabel renders a saved credential's usage count as plain copy.
+func dsUsedByLabel(n int) string {
+	switch n {
+	case 0:
+		return "Not used"
+	case 1:
+		return "1 source"
+	default:
+		return strconv.Itoa(n) + " sources"
+	}
+}
+
+// dsPickerProviderName resolves a provider's display name from the catalog.
+func dsPickerProviderName(providers []DSProvider, providerType string) string {
+	if providerType == "" {
+		return ""
+	}
+	return dsProviderLabel(dsProviderNameMap(providers), providerType)
+}
+
+// savedCredentialFormAction is the modal form's POST target: create for a nil
+// edit, the update endpoint for an existing credential.
+func savedCredentialFormAction(edit *DSSavedCredential) string {
+	if edit != nil {
+		return "/settings/credentials/saved/" + url.PathEscape(edit.ID) + "/update"
+	}
+	return "/settings/credentials/saved"
+}
+
+// dsSafeReturnPath confines a modal's return path to this origin: a same-origin
+// path beginning with a single slash. Anything absolute, scheme-relative, or
+// scheme-qualified falls back to the credentials page, so the form can never be
+// used as an open redirect.
+func dsSafeReturnPath(raw string) string {
+	const fallback = "/settings/credentials"
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return fallback
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "" || u.Host != "" {
+		return fallback
+	}
+	return raw
+}
+
+// dsAppendQuery adds key=value to path, preserving an existing query string.
+func dsAppendQuery(path, key, value string) string {
+	sep := "?"
+	if strings.Contains(path, "?") {
+		sep = "&"
+	}
+	return path + sep + key + "=" + url.QueryEscape(value)
 }
 
 // dsCredentialDetailData is the per-provider project editor payload.
@@ -1675,19 +1955,52 @@ func (s *Server) uiProjectCredentials(c echo.Context) error {
 		}
 	}
 	rows, deploymentNote := dsCredentialRows(providers, creds, s.strictProjectAdminForCaller(c, project.ID), s.orgAdminForCaller(c, project.OrgID), project.OrgID)
+	credProviders := dsCredentialProviders(providers)
+	savedPicker := dsSavedCredentialPicker{
+		Providers: credProviders,
+		ShowModal: len(credProviders) > 0,
+		ReturnURL: "/settings/credentials",
+	}
+	saved, serr := s.memory.ListSavedDSCredentials(ctx, "")
+	savedErr := error(nil)
+	if serr != nil {
+		captureError(serr)
+		savedErr = userFacingError(serr)
+	}
+	savedRows := make([]dsSavedCredentialRow, 0, len(saved))
+	for _, item := range saved {
+		savedRows = append(savedRows, dsSavedCredentialRow{
+			DSSavedCredential: item,
+			ProviderName:      dsPickerProviderName(providers, item.ProviderType),
+		})
+	}
+	if len(credProviders) > 0 {
+		savedPicker.DefaultProvider = credProviders[0].Type
+		if _, credentialFields, ferr := s.dsProviderFields(ctx, savedPicker.DefaultProvider); ferr != nil {
+			captureError(ferr)
+		} else {
+			savedPicker.Fields = dsRequiredCredentialFields(credentialFields)
+		}
+	}
 	flashMsg := flashFromQuery(c, []flashParam{
+		{key: "savedCredential", msg: "Credential saved."},
+		{key: "savedCredentialUpdated", msg: "Credential updated."},
+		{key: "savedCredentialDeleted", msg: "Credential deleted."},
 		{key: "saved", msg: "OAuth app saved."},
 		{key: "deleted", msg: "Project OAuth app removed."},
 	})
 	return s.page(c, pageTitle("Credentials"), CredentialsPage(dsCredentialsPageData{
-		Nav:            nav,
-		ProjectName:    project.Name,
-		OrgName:        orgName,
-		Rows:           rows,
-		DeploymentNote: deploymentNote,
-		LoadErr:        loadErr,
-		FlashMsg:       flashMsg,
-		FlashErr:       flashError(c),
+		Nav:                   nav,
+		ProjectName:           project.Name,
+		OrgName:               orgName,
+		Rows:                  rows,
+		SavedCredentials:      savedRows,
+		SavedCredentialsErr:   savedErr,
+		SavedCredentialPicker: savedPicker,
+		DeploymentNote:        deploymentNote,
+		LoadErr:               loadErr,
+		FlashMsg:              flashMsg,
+		FlashErr:              flashError(c),
 	}))
 }
 
@@ -1948,7 +2261,11 @@ func (s *Server) uiDataSourceTestConfig(c echo.Context) error {
 		renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(nil, err))
 		return nil
 	}
-	resp, terr := s.memory.TestDSConfig(ctx, &DSTestConfigRequest{ProviderType: providerType, Config: cfg})
+	resp, terr := s.memory.TestDSConfig(ctx, &DSTestConfigRequest{
+		ProviderType: providerType,
+		Config:       cfg,
+		CredentialID: strings.TrimSpace(c.FormValue("credential_id")),
+	})
 	renderPartial(c.Response().Writer, c.Request(), DSTestResultPartial(resp, dsFormError(terr)))
 	return nil
 }
@@ -1986,6 +2303,7 @@ func (s *Server) uiDataSourceCreate(c echo.Context) error {
 		Config:              cfg,
 		SyncMode:            &mode,
 		SyncIntervalMinutes: dsIntervalForMode(c, mode),
+		CredentialID:        strings.TrimSpace(c.FormValue("credential_id")),
 	}
 	item, err := s.memory.CreateDSIntegration(ctx, req)
 	if err != nil {
@@ -1999,16 +2317,16 @@ func (s *Server) uiDataSourceCreate(c echo.Context) error {
 // connect form and renders them as suggestions for the repo field. The token is
 // used for this call only; the memory endpoint never persists it.
 func (s *Server) uiDataSourceRepos(c echo.Context) error {
-	return s.uiDataSourceOptions(c, "repo", func(ctx context.Context, providerType string, cfg map[string]any) ([]DSResource, bool, error) {
-		return s.memory.ListDSProviderResources(ctx, providerType, cfg)
+	return s.uiDataSourceOptions(c, "repo", func(ctx context.Context, providerType string, cfg map[string]any, credentialID string) ([]DSResource, bool, error) {
+		return s.memory.ListDSProviderResources(ctx, providerType, cfg, credentialID)
 	})
 }
 
 // uiDataSourceRefs lists the branches and tags of the repository currently in
 // the connect form, as suggestions for the ref field.
 func (s *Server) uiDataSourceRefs(c echo.Context) error {
-	return s.uiDataSourceOptions(c, "ref", func(ctx context.Context, providerType string, cfg map[string]any) ([]DSResource, bool, error) {
-		return s.memory.ListDSProviderRefs(ctx, providerType, cfg)
+	return s.uiDataSourceOptions(c, "ref", func(ctx context.Context, providerType string, cfg map[string]any, credentialID string) ([]DSResource, bool, error) {
+		return s.memory.ListDSProviderRefs(ctx, providerType, cfg, credentialID)
 	})
 }
 
@@ -2032,10 +2350,11 @@ func (s *Server) uiDataSourceFieldOptions(c echo.Context) error {
 // endpoint's fallback for a request without one. Listing failures are inline
 // and never block submission: the input keeps its typed value and stays
 // editable.
-func (s *Server) uiDataSourceOptions(c echo.Context, defaultFieldKey string, list func(context.Context, string, map[string]any) ([]DSResource, bool, error)) error {
+func (s *Server) uiDataSourceOptions(c echo.Context, defaultFieldKey string, list func(context.Context, string, map[string]any, string) ([]DSResource, bool, error)) error {
 	ctx := c.Request().Context()
 	fieldKey := dsPickerFieldKey(c.FormValue("fieldKey"), defaultFieldKey)
 	providerType := strings.TrimSpace(c.FormValue("providerType"))
+	credentialID := strings.TrimSpace(c.FormValue("credential_id"))
 	var (
 		items     []DSResource
 		truncated bool
@@ -2047,7 +2366,7 @@ func (s *Server) uiDataSourceOptions(c echo.Context, defaultFieldKey string, lis
 		var cfg map[string]any
 		cfg, err = s.dsFormConfig(ctx, c, providerType)
 		if err == nil {
-			items, truncated, err = list(ctx, providerType, cfg)
+			items, truncated, err = list(ctx, providerType, cfg, credentialID)
 			if err != nil {
 				err = dsFormError(err)
 			}
@@ -2098,7 +2417,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	id := c.Param("id")
 	src, err := s.memory.GetDSIntegration(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, nil, userFacingError(err), nil, nil, "", nil))
+		return s.page(c, pageTitle("Data Source"), DataSourceDetailPage(nil, "", nil, nil, dsSavedCredentialPicker{}, nil, userFacingError(err), nil, nil, "", nil))
 	}
 	providerName := dsProviderLabel(dsProviderNameMap(nil), src.ProviderType)
 	var providers []DSProvider
@@ -2126,6 +2445,11 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	resourcePrompt := dsResourcePromptFor(src)
 	credentialSummary := s.dsCredentialSummary(ctx, src, dsProviderEntry(providers, src.ProviderType))
 	credentialSummary.CanReconnect = dsProviderCanOAuth(providers, src.ProviderType)
+	// The settings card offers the saved-credential picker (and the shared
+	// add-credential modal) for providers connected with a credential. The
+	// post-create redirect (?savedCredential) preselects the new one.
+	selectedCred := cmp.Or(strings.TrimSpace(c.QueryParam("savedCredential")), src.CredentialID)
+	picker := s.dsSavedCredentialPickerFor(ctx, providers, src.ProviderType, selectedCred, "/data-sources/"+url.PathEscape(src.ID))
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "created", msg: "Data source connected."},
 		{key: "reconnected", msg: "Connection renewed."},
@@ -2135,7 +2459,7 @@ func (s *Server) uiDataSourceDetail(c echo.Context) error {
 	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(dsSourceName(*src)),
-		DataSourceDetailPage(src, providerName, configFields, credentialFields, jobs, nil, resourcePrompt, credentialSummary, flashMsg, flashErr))
+		DataSourceDetailPage(src, providerName, configFields, credentialFields, picker, jobs, nil, resourcePrompt, credentialSummary, flashMsg, flashErr))
 }
 
 // uiDataSourceUpdate handles the settings form (PRG). The config is rebuilt from
@@ -2176,6 +2500,7 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	if len(cfg) > 0 {
 		req.Config = cfg
 	}
+	req.CredentialID = strings.TrimSpace(c.FormValue("credential_id"))
 	if _, err := s.memory.UpdateDSIntegration(ctx, id, req); err != nil {
 		return redirectWithError(c, detailPath, dsFormError(err))
 	}

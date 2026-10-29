@@ -134,7 +134,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 	// The OAuth action opts out of hx-boost: /data-sources/oauth/start redirects
 	// to the provider's cross-origin authorization server, which a boosted
 	// fetch (mode: same-origin) cannot follow.
-	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, nil, nil, nil))
+	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*oauth, *credsOnly}, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
 		`data-testid="ds-provider-chooser"`,
@@ -157,7 +157,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 
 	// An OAuth provider renders the confirmation panel (no credentials form).
 	oauthOnly := &DSProvider{Type: "google_drive", Name: "Google Drive", AuthMethods: []string{"oauth"}}
-	confirm := renderHTML(t, DataSourceNewPage([]DSProvider{*oauthOnly}, oauthOnly, nil, nil, nil, nil, nil))
+	confirm := renderHTML(t, DataSourceNewPage([]DSProvider{*oauthOnly}, oauthOnly, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
 	for _, want := range []string{
 		"Authorize with Google Drive",
 		`data-testid="ds-oauth-connect"`,
@@ -174,7 +174,7 @@ func TestRenderDataSourceNewPage(t *testing.T) {
 
 	// A credentials provider renders the write-only form from the schema.
 	config, credFields := dsConfigFields(testDSSchema(), nil)
-	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, nil, nil, nil))
+	form := renderHTML(t, DataSourceNewPage([]DSProvider{*credsOnly}, credsOnly, config, credFields, dsSavedCredentialPicker{}, nil, nil, nil))
 	for _, want := range []string{
 		"Connect a data source",
 		`data-testid="ds-connect-form"`,
@@ -532,7 +532,7 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	job := DSSyncJob{ID: "j1", IntegrationID: "s1", Status: "processing", TotalItems: 10, ProcessedItems: 4, SuccessfulItems: 3, FailedItems: 1, CurrentPhase: &phase, TriggerType: "manual", CreatedAt: "2026-09-01T10:00:00Z"}
 	config, creds := dsConfigFields(testDSSchema(), nil)
 
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, []DSSyncJob{job}, nil, nil, nil, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, dsSavedCredentialPicker{}, []DSSyncJob{job}, nil, nil, nil, "", nil))
 	for _, want := range []string{
 		"Team Drive", "Google Drive",
 		`hx-post="/data-sources/s1/test-connection"`,
@@ -553,13 +553,13 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	}
 
 	// No jobs renders the explanatory note, not a broken section.
-	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, nil, "", nil))
+	noJobs := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, nil, "", nil))
 	if !strings.Contains(noJobs, "No syncs yet") {
 		t.Error("empty sync history missing")
 	}
 
 	// A nil source renders the load-error state.
-	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, nil, errTest, nil, nil, "", nil))
+	errPage := renderHTML(t, DataSourceDetailPage(nil, "", nil, nil, dsSavedCredentialPicker{}, nil, errTest, nil, nil, "", nil))
 	if !strings.Contains(errPage, "Data source unavailable") {
 		t.Error("load-error state missing")
 	}
@@ -572,7 +572,7 @@ func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
 	config, creds := dsConfigFields(testDSSchema(), nil)
 
 	incomplete := &DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive"}
-	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(incomplete), nil, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(incomplete, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, dsResourcePromptFor(incomplete), nil, "", nil))
 	if !strings.Contains(html, `data-testid="ds-resource-needed"`) {
 		t.Error("resource-needed banner missing")
 	}
@@ -600,7 +600,7 @@ func TestRenderDataSourceDetailPageResourceBanner(t *testing.T) {
 	}
 
 	complete := &DSIntegration{ID: "s2", Name: "Team Drive", ProviderType: "google_drive", Config: map[string]any{"folder_id": "f1"}}
-	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, nil, nil, dsResourcePromptFor(complete), nil, "", nil))
+	html = renderHTML(t, DataSourceDetailPage(complete, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, dsResourcePromptFor(complete), nil, "", nil))
 	if strings.Contains(html, `data-testid="ds-resource-needed"`) {
 		t.Error("resource-needed banner must not render for a complete source")
 	}
@@ -706,6 +706,10 @@ func newDSUIServer(f *fakeMemory) *echo.Echo {
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType", s.uiOrgOAuthClientUpsert)
 	e.POST("/orgs/:id/settings/oauth-clients/:providerType/delete", s.uiOrgOAuthClientDelete)
 	e.GET("/settings/credentials", s.uiProjectCredentials)
+	e.GET("/settings/credentials/saved/fields", s.uiSavedCredentialFields)
+	e.POST("/settings/credentials/saved", s.uiSavedCredentialCreate)
+	e.POST("/settings/credentials/saved/:id/update", s.uiSavedCredentialUpdate)
+	e.POST("/settings/credentials/saved/:id/delete", s.uiSavedCredentialDelete)
 	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
 	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
 	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)
@@ -851,7 +855,7 @@ func githubSchema() *DSProviderSchema {
 func TestRenderGitHubConnectFormPickers(t *testing.T) {
 	p := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"credentials"}}
 	configFields, credentialFields := dsConfigFields(githubSchema(), nil)
-	form := renderHTML(t, DataSourceNewPage([]DSProvider{*p}, p, configFields, credentialFields, nil, nil, nil))
+	form := renderHTML(t, DataSourceNewPage([]DSProvider{*p}, p, configFields, credentialFields, dsSavedCredentialPicker{}, nil, nil, nil))
 
 	for _, want := range []string{
 		`name="providerType" value="github"`,
@@ -915,7 +919,7 @@ func TestDSConfigFieldsWebOrderCrawlScope(t *testing.T) {
 // renders a "Configure source" action and no credentials/OAuth action.
 func TestRenderDataSourceNewPageConfigOnlyChooser(t *testing.T) {
 	web := &DSProvider{Type: "web", Name: "Web", SourceType: "web", AuthMethods: []string{"config"}}
-	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*web}, nil, nil, nil, nil, nil, nil))
+	chooser := renderHTML(t, DataSourceNewPage([]DSProvider{*web}, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
 	for _, want := range []string{
 		"Web",
 		`data-testid="ds-provider-choice"`,
@@ -940,7 +944,7 @@ func TestRenderDataSourceNewPageConfigOnlyChooser(t *testing.T) {
 // and gains no config-only action.
 func TestRenderDataSourceNewPageDualCapabilityUnchanged(t *testing.T) {
 	github := &DSProvider{Type: "github", Name: "GitHub", AuthMethods: []string{"oauth", "credentials"}}
-	html := renderHTML(t, DataSourceNewPage([]DSProvider{*github}, nil, nil, nil, nil, nil, nil))
+	html := renderHTML(t, DataSourceNewPage([]DSProvider{*github}, nil, nil, nil, dsSavedCredentialPicker{}, nil, nil, nil))
 	for _, want := range []string{
 		`data-testid="ds-oauth-connect"`,
 		`data-testid="ds-credentials-connect"`,
@@ -1866,7 +1870,7 @@ func TestRenderDataSourceDetailPageFolderTargets(t *testing.T) {
 		SettingsHref:    "/settings/credentials/google_drive",
 		GrantedStrategy: "drive.readonly",
 	}
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, nil, nil, nil, summary, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, summary, "", nil))
 	for _, want := range []string{
 		`data-testid="ds-sync-scope"`,
 		`data-testid="ds-folder-targets"`,
@@ -1914,7 +1918,7 @@ func TestRenderDataSourceDetailPageDriveFileBlocked(t *testing.T) {
 		Configured:    true,
 		SettingsHref:  "/settings/credentials/google_drive",
 	}
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, dsResourcePromptFor(&src), summary, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, dsResourcePromptFor(&src), summary, "", nil))
 	if !strings.Contains(html, `data-testid="ds-picker-blocked"`) {
 		t.Error("drive.file notice missing")
 	}
@@ -2050,7 +2054,7 @@ func TestDSCredentialSummaryDistinguishesLookupFailure(t *testing.T) {
 	}
 	// The card follows the same distinction: a lookup failure must not tell the
 	// user to create a second OAuth client.
-	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, nil, nil, nil, failedSummary, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, failedSummary, "", nil))
 	if !strings.Contains(html, "ds-credential-lookup-failed") {
 		t.Error("lookup failure must render its own note")
 	}
@@ -2067,7 +2071,7 @@ func TestDSCredentialSummaryDistinguishesLookupFailure(t *testing.T) {
 	if emptySummary.ScopeLabel != "Not configured" {
 		t.Errorf("ScopeLabel with no client = %q, want %q", emptySummary.ScopeLabel, "Not configured")
 	}
-	html = renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, nil, nil, nil, emptySummary, "", nil))
+	html = renderHTML(t, DataSourceDetailPage(src, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, emptySummary, "", nil))
 	if !strings.Contains(html, "ds-credential-missing") {
 		t.Error("an unconfigured provider must advertise setting an app up")
 	}
@@ -2965,7 +2969,7 @@ func TestRenderDataSourceDetailPageReconnectAction(t *testing.T) {
 
 	reconnectable := base
 	reconnectable.CanReconnect = true
-	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, nil, &reconnectable, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, &reconnectable, "", nil))
 	if !strings.Contains(html, `data-testid="ds-credential-reconnect"`) {
 		t.Error("OAuth source missing the reconnect action")
 	}
@@ -2973,7 +2977,7 @@ func TestRenderDataSourceDetailPageReconnectAction(t *testing.T) {
 		t.Errorf("reconnect action does not target the source:\n%s", html)
 	}
 
-	html = renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, nil, nil, nil, &base, "", nil))
+	html = renderHTML(t, DataSourceDetailPage(&src, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, &base, "", nil))
 	if strings.Contains(html, `data-testid="ds-credential-reconnect"`) {
 		t.Error("a provider without the OAuth method must not offer a reconnect")
 	}
@@ -3183,7 +3187,7 @@ func TestDSCredentialSummarySelfRegistering(t *testing.T) {
 		t.Errorf("granted = %q/%q, want the recorded scopes on a success tone", summary.GrantedLabel, summary.GrantedTone)
 	}
 
-	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, summary, "", nil))
 	for _, want := range []string{
 		"Registered at connect",
 		"Public client registered automatically",
@@ -3287,7 +3291,7 @@ func TestDSCredentialSummarySelfRegisteringWithoutScopes(t *testing.T) {
 	if summary.GrantedTone != "neutral" {
 		t.Errorf("GrantedTone = %q, want neutral", summary.GrantedTone)
 	}
-	if strings.Contains(renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil)), "ds-credential-missing") {
+	if strings.Contains(renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, summary, "", nil)), "ds-credential-missing") {
 		t.Error("a source without grant metadata must not advertise setting an app up")
 	}
 }
@@ -3446,7 +3450,7 @@ func TestDSSyncOptionsNote(t *testing.T) {
 func TestDSDetailPageRendersTheProviderSpecificSyncNote(t *testing.T) {
 	drive := DSIntegration{ID: "s1", Name: "Team Drive", ProviderType: "google_drive", Status: "active"}
 	config, creds := dsConfigFields(testDSSchema(), nil)
-	driveHTML := renderHTML(t, DataSourceDetailPage(&drive, "Google Drive", config, creds, nil, nil, nil, nil, "", nil))
+	driveHTML := renderHTML(t, DataSourceDetailPage(&drive, "Google Drive", config, creds, dsSavedCredentialPicker{}, nil, nil, nil, nil, "", nil))
 	if !strings.Contains(driveHTML, "every selected folder") {
 		t.Error("Drive detail page lost the folder note")
 	}
@@ -3462,7 +3466,7 @@ func TestDSDetailPageRendersTheProviderSpecificSyncNote(t *testing.T) {
 		t.Fatalf("note = %q, want empty (no folders, no credential fields)", note)
 	}
 	summary := &dsCredentialSummary{ProviderName: "trale", SourceID: "t1", AccountLabel: "Trale account", SelfRegistering: true, Configured: true, CanReconnect: true, GrantedTone: "neutral", GrantedLabel: "Not recorded at connect"}
-	bareHTML := renderHTML(t, DataSourceDetailPage(&bare, "Trale", bareFields, bareCreds, nil, nil, nil, summary, "", nil))
+	bareHTML := renderHTML(t, DataSourceDetailPage(&bare, "Trale", bareFields, bareCreds, dsSavedCredentialPicker{}, nil, nil, nil, summary, "", nil))
 	for _, unwanted := range []string{"every selected folder", "write-only"} {
 		if strings.Contains(bareHTML, unwanted) {
 			t.Errorf("detail page of a folder-less provider contains Drive copy %q", unwanted)
@@ -3481,7 +3485,7 @@ func TestDSDetailPageOmitsTheMissingAppWarningWhenTheCatalogIsUnknown(t *testing
 	if !summary.ProviderUnknown {
 		t.Error("ProviderUnknown = false for a nil catalog entry")
 	}
-	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, nil, nil, nil, summary, "", nil))
+	html := renderHTML(t, DataSourceDetailPage(src, "Trale", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, summary, "", nil))
 	if strings.Contains(html, "ds-credential-missing") {
 		t.Error("unknown provider still renders the \"set one up\" warning")
 	}

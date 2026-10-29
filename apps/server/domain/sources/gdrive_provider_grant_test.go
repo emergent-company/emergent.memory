@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"golang.org/x/oauth2"
 
 	"github.com/emergent-company/emergent.memory/internal/gdrive"
@@ -306,7 +308,7 @@ func TestService_TestConfigRewordsUnsavedGrant(t *testing.T) {
 	s := &Service{providers: NewRegistry(
 		driveProviderWithTransport(&fakeDriveTransport{testConnErr: revokedGrantErr()}),
 	)}
-	resp, err := s.TestConfig(context.Background(), &TestConfigRequest{
+	resp, err := s.TestConfig(context.Background(), uuid.Nil, &TestConfigRequest{
 		ProviderType: "google_drive",
 		Config:       map[string]any{"folder_id": "f1", "refresh_token": "rt"},
 	})

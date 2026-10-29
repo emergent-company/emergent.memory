@@ -77,6 +77,124 @@ func (h *Handler) ListCredentials(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
+// ListSavedCredentials handles GET /api/data-source-integrations/credentials/saved.
+// @Summary      List saved data-source credentials
+// @Description  Returns the project's reusable credentials (optionally filtered by providerType). Secrets are never returned.
+// @Tags         data-source-integrations
+// @Produce      json
+// @Param        providerType query string false "Filter by provider type"
+// @Success      200 {object} map[string][]SavedCredential "Saved credentials"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      422 {object} apperror.Error "Unsupported provider type"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/credentials/saved [get]
+// @Security     bearerAuth
+func (h *Handler) ListSavedCredentials(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	items, err := h.svc.ListSavedCredentials(c.Request().Context(), projectID, c.QueryParam("providerType"))
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+// CreateSavedCredential handles POST /api/data-source-integrations/credentials/saved.
+// @Summary      Create a saved data-source credential
+// @Description  Stores a reusable, encrypted credential for a credentials-based provider
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateSavedCredentialRequest true "Credential to create"
+// @Success      201 {object} SavedCredential "Created credential"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      422 {object} apperror.Error "Validation failed"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/credentials/saved [post]
+// @Security     bearerAuth
+func (h *Handler) CreateSavedCredential(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	var req CreateSavedCredentialRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	created, err := h.svc.CreateSavedCredential(c.Request().Context(), projectID, req.ProviderType, req.Name, req.Credentials)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, created)
+}
+
+// UpdateSavedCredential handles PATCH /api/data-source-integrations/credentials/saved/:id.
+// @Summary      Update a saved data-source credential
+// @Description  Renames a saved credential and/or replaces its encrypted secret
+// @Tags         data-source-integrations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Credential ID (UUID)"
+// @Param        request body UpdateSavedCredentialRequest true "Fields to update"
+// @Success      200 {object} SavedCredential "Updated credential"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Credential not found"
+// @Failure      422 {object} apperror.Error "Validation failed"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/credentials/saved/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateSavedCredential(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	var req UpdateSavedCredentialRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest
+	}
+	updated, err := h.svc.UpdateSavedCredential(c.Request().Context(), projectID, id, req.Name, req.Credentials)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, updated)
+}
+
+// DeleteSavedCredential handles DELETE /api/data-source-integrations/credentials/saved/:id.
+// @Summary      Delete a saved data-source credential
+// @Description  Deletes an unreferenced saved credential; returns 409 while a data source uses it
+// @Tags         data-source-integrations
+// @Param        id path string true "Credential ID (UUID)"
+// @Success      204 "Deleted"
+// @Failure      400 {object} apperror.Error "Bad request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Credential not found"
+// @Failure      409 {object} apperror.Error "Credential still referenced"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /data-source-integrations/credentials/saved/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteSavedCredential(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
+	id, err := h.pathID(c)
+	if err != nil {
+		return err
+	}
+	if err := h.svc.DeleteSavedCredential(c.Request().Context(), projectID, id); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
 // ListSourceTypes handles GET /api/data-source-integrations/source-types.
 // @Summary      List source types
 // @Description  Returns document counts grouped by source type for the project
@@ -113,11 +231,15 @@ func (h *Handler) ListSourceTypes(c echo.Context) error {
 // @Router       /data-source-integrations/test-config [post]
 // @Security     bearerAuth
 func (h *Handler) TestConfig(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
 	var req TestConfigRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest
 	}
-	resp, err := h.svc.TestConfig(c.Request().Context(), &req)
+	resp, err := h.svc.TestConfig(c.Request().Context(), projectID, &req)
 	if err != nil {
 		return err
 	}
@@ -275,11 +397,15 @@ func (h *Handler) SaveSyncTargets(c echo.Context) error {
 // @Router       /data-source-integrations/resources [post]
 // @Security     bearerAuth
 func (h *Handler) ListProviderResources(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
 	var req ProviderListRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest
 	}
-	resources, truncated, err := h.svc.ListProviderResources(c.Request().Context(), &req)
+	resources, truncated, err := h.svc.ListProviderResources(c.Request().Context(), projectID, &req)
 	if err != nil {
 		return err
 	}
@@ -304,11 +430,15 @@ func (h *Handler) ListProviderResources(c echo.Context) error {
 // @Router       /data-source-integrations/refs [post]
 // @Security     bearerAuth
 func (h *Handler) ListProviderRefs(c echo.Context) error {
+	projectID, err := h.projectID(c)
+	if err != nil {
+		return err
+	}
 	var req ProviderListRequest
 	if err := c.Bind(&req); err != nil {
 		return apperror.ErrBadRequest
 	}
-	refs, truncated, err := h.svc.ListProviderRefs(c.Request().Context(), &req)
+	refs, truncated, err := h.svc.ListProviderRefs(c.Request().Context(), projectID, &req)
 	if err != nil {
 		return err
 	}

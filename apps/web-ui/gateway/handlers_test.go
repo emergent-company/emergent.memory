@@ -215,64 +215,73 @@ type fakeMemory struct {
 	dsDeletedOAuthOrg            string                    // last org id passed to DeleteDSOAuthClient
 	dsDeletedOAuthProv           string                    // last provider passed to DeleteDSOAuthClient
 	// Project-scoped OAuth-client config (see datasources_ui.go).
-	dsProjectOAuthClients      []DSOAuthClientConfig      // returned by ListProjectDSOAuthClients
-	dsProjectOAuthClientErr    error                      // any project OAuth-client method failure
-	dsUpsertedProjectOAuthID   string                     // last project id passed to UpsertProjectDSOAuthClient
-	dsUpsertedProjectOAuthProv string                     // last provider passed to UpsertProjectDSOAuthClient
-	dsUpsertedProjectOAuthReq  *DSSetOAuthClientRequest   // last request passed to UpsertProjectDSOAuthClient
-	dsDeletedProjectOAuthID    string                     // last project id passed to DeleteProjectDSOAuthClient
-	dsDeletedProjectOAuthProv  string                     // last provider passed to DeleteProjectDSOAuthClient
-	dsResources                []DSResource               // returned by ListDSResources
-	dsResourcesTruncated       bool                       // truncated flag returned by ListDSResources
-	dsResourcesErr             error                      // ListDSResources failure
-	dsResourcesQuery           string                     // last query passed to ListDSResources
-	dsResourcesCallCount       int                        // number of ListDSResources calls
-	dsProviderResources        []DSResource               // returned by ListDSProviderResources
-	dsProviderResourcesTrunc   bool                       // truncated flag for ListDSProviderResources
-	dsProviderResourcesErr     error                      // ListDSProviderResources failure
-	dsProviderRefs             []DSResource               // returned by ListDSProviderRefs
-	dsProviderRefsTrunc        bool                       // truncated flag for ListDSProviderRefs
-	dsProviderRefsErr          error                      // ListDSProviderRefs failure
-	dsListedProviderType       string                     // last provider type passed to the listing methods
-	dsListedConfig             map[string]any             // last config passed to the listing methods
-	dsSavedResourceID          string                     // last id passed to SaveDSResource
-	dsSavedResourceCfg         map[string]any             // last cfg passed to SaveDSResource
-	mergeReadiness             *MergeReadiness            // returned by GetMergeReadiness
-	mergeResult                *BranchMergeResult         // returned by MergeBranch
-	mergeErr                   error                      // GetMergeReadiness/MergeBranch failure
-	lastMergeBranchID          string                     // last sourceBranchID passed to MergeBranch
-	lastMergePolicy            string                     // last policy passed to MergeBranch
-	previewMergeResult         *BranchMergeResult         // returned by PreviewMergeBranch
-	previewMergeErr            error                      // PreviewMergeBranch failure
-	lastPreviewMergeBranchID   string                     // last branchID passed to PreviewMergeBranch
-	lastPreviewMergePolicy     string                     // last policy passed to PreviewMergeBranch
-	resolvedResourceType       string                     // last resourceType passed to ResolveNotificationsForResource
-	resolvedResourceID         string                     // last resourceID passed to ResolveNotificationsForResource
-	resolveResourceErr         error                      // ResolveNotificationsForResource failure
-	similar                    []SimilarObject            // returned by GetSimilarObjects
-	similarErr                 error                      // GetSimilarObjects failure
-	objectHistory              []GraphObject              // returned by GetObjectHistory
-	objectHistoryErr           error                      // GetObjectHistory failure
-	updateResult               *GraphObject               // returned by UpdateObject
-	updateObjectErr            error                      // UpdateObject failure
-	lastUpdateID               string                     // last id passed to UpdateObject
-	lastUpdateReq              *UpdateObjectRequest       // last request passed to UpdateObject
-	createObjectResult         *GraphObject               // returned by CreateObject
-	createObjectErr            error                      // CreateObject failure
-	lastCreateObjectReq        *CreateObjectRequest       // last request passed to CreateObject
-	bulkDeleteErr              error                      // DeleteGraphObject failure
-	deletedObjectIDs           []string                   // ids passed to DeleteGraphObject, in order
-	deletedObjectBranches      []string                   // branch args passed to DeleteGraphObject, in order
-	bulkStatusErr              error                      // BulkUpdateStatus failure
-	bulkStatusResult           *BulkUpdateStatusResponse  // returned by BulkUpdateStatus (nil → Success: len(ids))
-	bulkStatusIDs              []string                   // ids passed to BulkUpdateStatus, in order
-	bulkStatusValue            string                     // status passed to BulkUpdateStatus
-	createRelErr               error                      // CreateRelationship failure
-	lastCreateRelReq           *CreateRelationshipRequest // last request passed to CreateRelationship
-	ftsResults                 []GraphObject              // returned by SearchObjectsFTS
-	ftsErr                     error                      // SearchObjectsFTS failure
-	ftsQuery                   string                     // last query passed to SearchObjectsFTS
-	ftsTypeFilter              string                     // last type filter passed to SearchObjectsFTS
+	dsProjectOAuthClients      []DSOAuthClientConfig    // returned by ListProjectDSOAuthClients
+	dsProjectOAuthClientErr    error                    // any project OAuth-client method failure
+	dsUpsertedProjectOAuthID   string                   // last project id passed to UpsertProjectDSOAuthClient
+	dsUpsertedProjectOAuthProv string                   // last provider passed to UpsertProjectDSOAuthClient
+	dsUpsertedProjectOAuthReq  *DSSetOAuthClientRequest // last request passed to UpsertProjectDSOAuthClient
+	dsDeletedProjectOAuthID    string                   // last project id passed to DeleteProjectDSOAuthClient
+	dsDeletedProjectOAuthProv  string                   // last provider passed to DeleteProjectDSOAuthClient
+	dsResources                []DSResource             // returned by ListDSResources
+	dsResourcesTruncated       bool                     // truncated flag returned by ListDSResources
+	dsResourcesErr             error                    // ListDSResources failure
+	dsResourcesQuery           string                   // last query passed to ListDSResources
+	dsResourcesCallCount       int                      // number of ListDSResources calls
+	dsProviderResources        []DSResource             // returned by ListDSProviderResources
+	dsProviderResourcesTrunc   bool                     // truncated flag for ListDSProviderResources
+	dsProviderResourcesErr     error                    // ListDSProviderResources failure
+	dsProviderRefs             []DSResource             // returned by ListDSProviderRefs
+	dsProviderRefsTrunc        bool                     // truncated flag for ListDSProviderRefs
+	dsProviderRefsErr          error                    // ListDSProviderRefs failure
+	dsListedProviderType       string                   // last provider type passed to the listing methods
+	dsListedCredentialID       string                   // last credential id passed to the listing methods
+	dsListedConfig             map[string]any           // last config passed to the listing methods
+	dsSavedResourceID          string                   // last id passed to SaveDSResource
+	dsSavedResourceCfg         map[string]any           // last cfg passed to SaveDSResource
+	// Saved, project-scoped credentials (see datasources_ui.go).
+	dsSavedCredentials       []DSSavedCredential             // returned by ListSavedDSCredentials
+	dsSavedCredentialErr     error                           // any saved-credential method failure
+	dsCreatedSavedReq        *DSSavedCredentialRequest       // last create request forwarded
+	dsUpdatedSavedID         string                          // last id passed to UpdateSavedDSCredential
+	dsUpdatedSavedReq        *DSSavedCredentialUpdateRequest // last update request forwarded
+	dsDeletedSavedID         string                          // last id passed to DeleteSavedDSCredential
+	dsListedSavedProvider    string                          // last providerType passed to ListSavedDSCredentials
+	mergeReadiness           *MergeReadiness                 // returned by GetMergeReadiness
+	mergeResult              *BranchMergeResult              // returned by MergeBranch
+	mergeErr                 error                           // GetMergeReadiness/MergeBranch failure
+	lastMergeBranchID        string                          // last sourceBranchID passed to MergeBranch
+	lastMergePolicy          string                          // last policy passed to MergeBranch
+	previewMergeResult       *BranchMergeResult              // returned by PreviewMergeBranch
+	previewMergeErr          error                           // PreviewMergeBranch failure
+	lastPreviewMergeBranchID string                          // last branchID passed to PreviewMergeBranch
+	lastPreviewMergePolicy   string                          // last policy passed to PreviewMergeBranch
+	resolvedResourceType     string                          // last resourceType passed to ResolveNotificationsForResource
+	resolvedResourceID       string                          // last resourceID passed to ResolveNotificationsForResource
+	resolveResourceErr       error                           // ResolveNotificationsForResource failure
+	similar                  []SimilarObject                 // returned by GetSimilarObjects
+	similarErr               error                           // GetSimilarObjects failure
+	objectHistory            []GraphObject                   // returned by GetObjectHistory
+	objectHistoryErr         error                           // GetObjectHistory failure
+	updateResult             *GraphObject                    // returned by UpdateObject
+	updateObjectErr          error                           // UpdateObject failure
+	lastUpdateID             string                          // last id passed to UpdateObject
+	lastUpdateReq            *UpdateObjectRequest            // last request passed to UpdateObject
+	createObjectResult       *GraphObject                    // returned by CreateObject
+	createObjectErr          error                           // CreateObject failure
+	lastCreateObjectReq      *CreateObjectRequest            // last request passed to CreateObject
+	bulkDeleteErr            error                           // DeleteGraphObject failure
+	deletedObjectIDs         []string                        // ids passed to DeleteGraphObject, in order
+	deletedObjectBranches    []string                        // branch args passed to DeleteGraphObject, in order
+	bulkStatusErr            error                           // BulkUpdateStatus failure
+	bulkStatusResult         *BulkUpdateStatusResponse       // returned by BulkUpdateStatus (nil → Success: len(ids))
+	bulkStatusIDs            []string                        // ids passed to BulkUpdateStatus, in order
+	bulkStatusValue          string                          // status passed to BulkUpdateStatus
+	createRelErr             error                           // CreateRelationship failure
+	lastCreateRelReq         *CreateRelationshipRequest      // last request passed to CreateRelationship
+	ftsResults               []GraphObject                   // returned by SearchObjectsFTS
+	ftsErr                   error                           // SearchObjectsFTS failure
+	ftsQuery                 string                          // last query passed to SearchObjectsFTS
+	ftsTypeFilter            string                          // last type filter passed to SearchObjectsFTS
 
 	// Work items (object-driven work / Kanban board).
 	workItems         []WorkItem      // returned by ListWorkItems
@@ -4276,6 +4285,73 @@ func (f *fakeMemory) ListDSCredentials(ctx context.Context) ([]DSOAuthCredential
 	return f.dsCredentials, nil
 }
 
+// --- saved, project-scoped credentials ---
+
+func (f *fakeMemory) ListSavedDSCredentials(ctx context.Context, providerType string) ([]DSSavedCredential, error) {
+	f.dsListedSavedProvider = providerType
+	if f.dsSavedCredentialErr != nil {
+		return nil, f.dsSavedCredentialErr
+	}
+	if providerType == "" {
+		return f.dsSavedCredentials, nil
+	}
+	out := make([]DSSavedCredential, 0, len(f.dsSavedCredentials))
+	for _, c := range f.dsSavedCredentials {
+		if c.ProviderType == providerType {
+			out = append(out, c)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeMemory) CreateSavedDSCredential(ctx context.Context, req *DSSavedCredentialRequest) (*DSSavedCredential, error) {
+	if f.dsSavedCredentialErr != nil {
+		return nil, f.dsSavedCredentialErr
+	}
+	f.dsCreatedSavedReq = req
+	item := DSSavedCredential{
+		ID:           "cred-new",
+		ProviderType: req.ProviderType,
+		Name:         req.Name,
+		CreatedAt:    "2026-09-01T00:00:00Z",
+		UpdatedAt:    "2026-09-01T00:00:00Z",
+	}
+	f.dsSavedCredentials = append(f.dsSavedCredentials, item)
+	return &item, nil
+}
+
+func (f *fakeMemory) UpdateSavedDSCredential(ctx context.Context, id string, req *DSSavedCredentialUpdateRequest) (*DSSavedCredential, error) {
+	if f.dsSavedCredentialErr != nil {
+		return nil, f.dsSavedCredentialErr
+	}
+	f.dsUpdatedSavedID = id
+	f.dsUpdatedSavedReq = req
+	for i := range f.dsSavedCredentials {
+		if f.dsSavedCredentials[i].ID != id {
+			continue
+		}
+		f.dsSavedCredentials[i].Name = req.Name
+		f.dsSavedCredentials[i].UpdatedAt = "2026-09-02T00:00:00Z"
+		return &f.dsSavedCredentials[i], nil
+	}
+	return nil, &memoryHTTPError{Status: http.StatusNotFound, Message: "credential not found"}
+}
+
+func (f *fakeMemory) DeleteSavedDSCredential(ctx context.Context, id string) error {
+	if f.dsSavedCredentialErr != nil {
+		return f.dsSavedCredentialErr
+	}
+	f.dsDeletedSavedID = id
+	kept := f.dsSavedCredentials[:0]
+	for _, c := range f.dsSavedCredentials {
+		if c.ID != id {
+			kept = append(kept, c)
+		}
+	}
+	f.dsSavedCredentials = kept
+	return nil
+}
+
 func (f *fakeMemory) GetDSProviderSchema(ctx context.Context, providerType string) (*DSProviderSchema, error) {
 	if f.dsErr != nil {
 		return nil, f.dsErr
@@ -4589,18 +4665,20 @@ func (f *fakeMemory) ListDSResources(ctx context.Context, id, query string) ([]D
 	return f.dsResources, f.dsResourcesTruncated, nil
 }
 
-func (f *fakeMemory) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+func (f *fakeMemory) ListDSProviderResources(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error) {
 	f.dsListedProviderType = providerType
 	f.dsListedConfig = config
+	f.dsListedCredentialID = credentialID
 	if f.dsProviderResourcesErr != nil {
 		return nil, false, f.dsProviderResourcesErr
 	}
 	return f.dsProviderResources, f.dsProviderResourcesTrunc, nil
 }
 
-func (f *fakeMemory) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error) {
+func (f *fakeMemory) ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error) {
 	f.dsListedProviderType = providerType
 	f.dsListedConfig = config
+	f.dsListedCredentialID = credentialID
 	if f.dsProviderRefsErr != nil {
 		return nil, false, f.dsProviderRefsErr
 	}

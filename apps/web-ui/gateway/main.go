@@ -500,6 +500,13 @@ func main() {
 	// the handler 404s for anyone else). Context-addressed like the rest of the
 	// project settings hub.
 	e.GET("/settings/credentials", s.uiProjectCredentials)
+	// Saved, reusable data-source credentials: the shared add/edit modal's
+	// fields partial, plus the create/update/delete writes. Registered before
+	// the :providerType routes so the static "saved" segment always wins.
+	e.GET("/settings/credentials/saved/fields", s.uiSavedCredentialFields)
+	e.POST("/settings/credentials/saved", s.uiSavedCredentialCreate)
+	e.POST("/settings/credentials/saved/:id/update", s.uiSavedCredentialUpdate)
+	e.POST("/settings/credentials/saved/:id/delete", s.uiSavedCredentialDelete)
 	e.GET("/settings/credentials/:providerType", s.uiProjectCredential)
 	e.POST("/settings/credentials/:providerType", s.uiProjectOAuthClientUpsert)
 	e.POST("/settings/credentials/:providerType/delete", s.uiProjectOAuthClientDelete)

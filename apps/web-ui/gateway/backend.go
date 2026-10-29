@@ -126,6 +126,12 @@ type MemoryBackend interface {
 	// ListDSCredentials returns the member-readable OAuth credential
 	// descriptions (configured flags, non-secret client ids, resolved scope).
 	ListDSCredentials(ctx context.Context) ([]DSOAuthCredentialDescription, error)
+	// Saved, project-scoped data-source credentials (metadata only; secrets are
+	// write-only). Used by the credentials page and the connect-form picker.
+	ListSavedDSCredentials(ctx context.Context, providerType string) ([]DSSavedCredential, error)
+	CreateSavedDSCredential(ctx context.Context, req *DSSavedCredentialRequest) (*DSSavedCredential, error)
+	UpdateSavedDSCredential(ctx context.Context, id string, req *DSSavedCredentialUpdateRequest) (*DSSavedCredential, error)
+	DeleteSavedDSCredential(ctx context.Context, id string) error
 	ListDSSourceTypes(ctx context.Context) ([]DSSourceType, error)
 	TestDSConfig(ctx context.Context, req *DSTestConfigRequest) (*DSTestConnectionResponse, error)
 	TestDSConnection(ctx context.Context, id string) (*DSTestConnectionResponse, error)
@@ -152,8 +158,8 @@ type MemoryBackend interface {
 	DeleteProjectDSOAuthClient(ctx context.Context, projectID, providerType string) error
 	ListDSResources(ctx context.Context, id, query string) ([]DSResource, bool, error)
 	// Credential-scoped listing for unsaved configs (connect-form pickers).
-	ListDSProviderResources(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error)
-	ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any) ([]DSResource, bool, error)
+	ListDSProviderResources(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error)
+	ListDSProviderRefs(ctx context.Context, providerType string, config map[string]any, credentialID string) ([]DSResource, bool, error)
 	SaveDSResource(ctx context.Context, id string, cfg map[string]any) (*DSIntegration, error)
 	GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error)
 	GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error)

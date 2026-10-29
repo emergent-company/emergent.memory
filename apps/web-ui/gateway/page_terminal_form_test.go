@@ -48,7 +48,7 @@ func TestPageTerminalFormShape(t *testing.T) {
 		},
 		{
 			"dsCredentialsConnectPage",
-			renderHTML(t, dsCredentialsConnectPage(DSProvider{Type: "drive", Name: "Google Drive"}, nil, nil, nil, nil)),
+			renderHTML(t, dsCredentialsConnectPage(DSProvider{Type: "drive", Name: "Google Drive"}, nil, nil, dsSavedCredentialPicker{}, nil, nil)),
 		},
 	}
 
