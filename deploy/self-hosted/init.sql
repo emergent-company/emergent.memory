@@ -1,12 +1,13 @@
 -- PostgreSQL Initialization Script for Spec Server
 -- ===================================================
 -- Purpose: Create PostgreSQL extensions and roles
--- Schema creation is handled by application migrations (apps/server-go/migrations/)
--- 
--- This keeps Docker init minimal and ensures schema consistency with migrations.
--- Run migrations after container starts: npm run db:migrate
+-- Schema creation is handled by application migrations (apps/server/migrations/)
 --
--- NOTE: Zitadel is managed externally via emergent-infra/zitadel
+-- This keeps Docker init minimal and ensures schema consistency with migrations.
+-- The server image runs them on start; from a checkout use `task migrate:up`.
+--
+-- NOTE: Zitadel is not part of this stack — self-hosted installs authenticate
+-- with a standalone API key, and an OIDC deployment is yours to run separately.
 
 -- Enable required PostgreSQL extensions
 CREATE EXTENSION IF NOT EXISTS vector;

@@ -7,10 +7,10 @@ Knowledge graph platform for ingesting, storing, and querying structured knowled
 
 ## Technologies
 
-- **Backend:** Go (1.25+)
+- **Backend:** Go (1.26+)
 - **Database:** PostgreSQL 18 with pgvector
-- **Authentication:** Zitadel (OIDC)
-- **CLI:** Go (memory-cli)
+- **Authentication:** Zitadel (OIDC), or a standalone API key
+- **CLI:** Go (`memory`)
 - **Automation:** Taskfile
 
 ## Repository Layout
@@ -74,7 +74,9 @@ The system supports integration with:
 
 Published documentation is available at **https://emergent-company.github.io/emergent.memory/**.
 
-Development, deployment and environment documentation is maintained in a separate repository.
+Build, test and local-development instructions are in
+[CONTRIBUTING.md](CONTRIBUTING.md), and installing Memory on a server is covered
+in [`deploy/self-hosted/`](deploy/self-hosted/README.md).
 
 The published documentation lives in [`docs/site`](docs/site) and is built with
 `mkdocs.yml`. The database schema is generated from the migrations into

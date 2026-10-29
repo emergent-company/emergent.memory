@@ -30,9 +30,8 @@ name: Meta CI
 # skipped), satisfying the required context; a maintainer must re-run from a
 # trusted ref to actually validate a fork.
 #
-# The review-bot meta checks (script syntax + review-gate tests) moved to
-# the infra repo. There is no review bot: the
-# `emergent-code-reviewer` App survives only as the private-checkout credential.
+# There is no review bot: a maintainer posts the review verdict before a merge,
+# and the required `ci` + `merge-guard` checks read that verdict.
 on:
   push:
     branches: [main]

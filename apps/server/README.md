@@ -27,18 +27,26 @@ This document provides comprehensive guidance for developing, deploying, and deb
 ### Quick Start
 
 ```bash
-# 1. Start dependencies (Postgres 17 + pgvector + whisper) — from the infra
-#    repo checkout, which owns the compose file and the DSN docs:
-#      docker compose -f docker-compose.dev.yml up -d
+# 1. Start dependencies (PostgreSQL 18 + pgvector, object store) from the
+#    repository root. `storage-init` boots from the server image, so build it
+#    once; see CONTRIBUTING.md for the full local setup (auth included):
+#      docker compose -f deploy/self-hosted/docker-compose.local.yml build server
+#      docker compose -f deploy/self-hosted/docker-compose.local.yml up -d db seaweedfs storage-init
 
-# 2. Build the server
+# 2. Build the server and migrate the database once. Run the task from the
+#    repository root: only the root Taskfile loads .env, and `migrate:up` takes
+#    POSTGRES_HOST from it (`apps/server/Taskfile.yml` has no dotenv of its own).
+/usr/local/go/bin/go build -C apps/server ./...
+POSTGRES_PASSWORD=your-password task migrate:up
+
+# 3. Run the server. STANDALONE_MODE means API-key auth, so /health does not
+#    depend on a Zitadel instance a fresh checkout does not have.
 cd apps/server
-/usr/local/go/bin/go build ./...
+POSTGRES_PASSWORD=your-password STANDALONE_MODE=true STANDALONE_API_KEY=dev-key \
+  /usr/local/go/bin/go run ./cmd/server
 
-# 3. Run the server
-POSTGRES_PASSWORD=your-password /usr/local/go/bin/go run ./cmd/server
-
-# 4. Verify it's running
+# 4. Verify it's running (503 means a critical component — database, storage or
+#    auth — is not healthy yet; `storage-init` is one-shot and may need a moment)
 curl http://localhost:3002/health
 ```
 

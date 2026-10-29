@@ -22,38 +22,61 @@ apps/server/
 
 ## Migration Commands
 
-### Using the CLI Tool
+### Using the tasks (recommended)
+
+Run these from the repository root — the root Taskfile is the one that loads
+`.env`, and it passes the target (`DB_HOST`, `DB_PORT`, `POSTGRES_DATABASE`) on
+to the binary:
+
+```bash
+task migrate:up        # apply everything pending
+task migrate:status    # what is applied, what is pending
+task migrate:down      # roll back the last migration
+```
+
+### Using the CLI Tool directly
+
+The binary reads **no** `.env` files, and a mutating command (`up`, `up-to`,
+`down`, `mark-applied`) refuses to run against a loopback host unless the host
+was set explicitly — a missing `POSTGRES_HOST` must not silently migrate your
+local database. So pass the whole target:
 
 ```bash
 cd apps/server
+export POSTGRES_HOST=localhost POSTGRES_PORT=5432 \
+       POSTGRES_USER=emergent POSTGRES_DB=emergent \
+       POSTGRES_PASSWORD=your-password
 
 # Check migration status
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c status
+go run ./cmd/migrate -c status
 
 # Run all pending migrations
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c up
+go run ./cmd/migrate -c up
 
 # Run migrations up to a specific version
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c up-to -v 2
+go run ./cmd/migrate -c up-to -v 2
 
 # Rollback the last migration
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c down
+go run ./cmd/migrate -c down
 
 # Get current database version
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c version
+go run ./cmd/migrate -c version
 
 # Create a new migration
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c create add_new_table
+go run ./cmd/migrate -c create add_new_table
 
 # Mark a migration as applied (for existing databases)
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c mark-applied -v 1
+go run ./cmd/migrate -c mark-applied -v 1
 
 # Apply pending migrations, allowing out-of-order (missing) migrations
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c up -allow-missing
+go run ./cmd/migrate -c up -allow-missing
 
 # Verify post-conditions (detect indexes left invalid by killed concurrent DDL)
-POSTGRES_PASSWORD=your-password go run ./cmd/migrate -c verify
+go run ./cmd/migrate -c verify
 ```
+
+`DATABASE_URL` overrides the whole target when set. The full environment
+contract is printed by `go run ./cmd/migrate -h`.
 
 ### Environment Variables
 

@@ -89,8 +89,8 @@
 #       every other tag is *probed* and kept only when it resolves to the same
 #       digest. version_style is required when version_embedded is true.
 #
-# Map contract (schema_version 1) — consumers (the infra repo's deploy jobs)
-# MUST read this, not infer from tags:
+# Map contract (schema_version 1) — deploy automation MUST read this rather
+# than infer from tags:
 #
 #   {
 #     "schema_version": 1,
