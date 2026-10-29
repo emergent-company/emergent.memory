@@ -99,9 +99,10 @@ func TestCLIInstalled_TokensList(t *testing.T) {
 //
 // Known issues:
 //   - `tokens get` without --project may error with "project is required"
-//     (CLI bug on mcj-emergent).  The test skips when this happens.
-//   - project-scoped `tokens create` returns [500] database_error on
-//     mcj-emergent.
+//     (CLI bug on the compose-hosted e2e server).  The test skips when that
+//     happens.
+//   - project-scoped `tokens create` returns [500] database_error on the
+//     compose-hosted e2e server.
 func TestCLIInstalled_TokenGetAndRevoke(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)

@@ -169,8 +169,8 @@ func TestTaskCLI_BlueprintWorkflow(t *testing.T) {
 	// ── Step 8: task-cli types ───────────────────────────────────────────────
 	// Soft check only: assert exit 0 but do NOT assert specific type names.
 	// The type registry API may not be available on all server versions
-	// (e.g. mcj-emergent returns an empty list), so we only verify the command
-	// itself succeeds.
+	// (e.g. the compose-hosted server returns an empty list), so we only verify
+	// the command itself succeeds.
 	rl.Section("task-cli types")
 	typesOut, err := runTaskCLI(t, taskCLIBin, srv, token, projectID, "types")
 	rl.CLI("task-cli types", typesOut)

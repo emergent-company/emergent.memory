@@ -17,8 +17,8 @@ import (
 // TestCLIInstalled_SkillCreateGetUpdateDelete exercises the full skill lifecycle:
 // create → get → update → delete.
 //
-// Known issue: `skills create` returns [500] on mcj-emergent for project-scoped
-// skills.  The test skips when this happens.
+// Known issue: `skills create` returns [500] on the compose-hosted e2e server
+// for project-scoped skills.  The test skips when this happens.
 func TestCLIInstalled_SkillCreateGetUpdateDelete(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)
@@ -127,8 +127,8 @@ func TestCLIInstalled_SkillCreateGetUpdateDelete(t *testing.T) {
 // TestCLIInstalled_SkillListProject verifies that `memory skills list --project`
 // returns project-scoped skills.
 //
-// Known issue: `skills create` returns [500] on mcj-emergent for project-scoped
-// skills.  The test skips when this happens.
+// Known issue: `skills create` returns [500] on the compose-hosted e2e server
+// for project-scoped skills.  The test skips when this happens.
 func TestCLIInstalled_SkillListProject(t *testing.T) {
 	rl := newRunLog(t)
 	t.Cleanup(rl.Close)

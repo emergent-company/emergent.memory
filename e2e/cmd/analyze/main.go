@@ -17,7 +17,7 @@
 //
 //	GOOGLE_AI_API_KEY   Required. Gemini API key.
 //	ANALYZER_MODEL      Optional. Model name (default: gemini-2.0-flash).
-//	MEMORY_TEST_ENV     Optional. Named .env overlay (e.g. "mcj-emergent").
+//	MEMORY_TEST_ENV     Optional. Named .env overlay (e.g. "compose").
 package main
 
 import (

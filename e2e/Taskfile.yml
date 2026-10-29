@@ -339,26 +339,35 @@ tasks:
       - rm -rf "{{.LOG_DIR}}" "{{.TASKFILE_DIR}}/tests/integration/logs" "{{.TASKFILE_DIR}}/tests/api/logs" "{{.TASKFILE_DIR}}/tests/cli/logs"
       - echo "logs cleaned"
 
-  # ─── mcj-emergent Docker server ────────────────────────────
+  # ─── Compose-hosted e2e server ─────────────────────────────
 
   server:start:
-    desc: Start Docker server stack (db + server for mcj-emergent)
+    desc: Start the compose e2e stack (db + server)
     cmds:
       - |
         echo "  checking Docker server stack..."
         if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"State":"running"'; then
-          echo "  mcj-emergent server already running"
+          echo "  compose e2e server already running"
         else
           echo "  starting Docker server stack..."
           docker compose up -d test-emergent-server 2>&1 | tail -5
           echo "  waiting for server health..."
+          # The server publishes an ephemeral loopback port, so wait on the
+          # container's own healthcheck rather than guessing a host URL.
+          ok=false
           for i in $(seq 1 30); do
-            if curl -sf http://mcj-emergent:3002/ > /dev/null 2>&1; then
-              echo "  server healthy after ~${i}s"
+            if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"Health":"healthy"'; then
+              ok=true
+              echo "  server healthy after ~$(( i * 2 ))s"
               break
             fi
             sleep 2
           done
+          if [ "$ok" != true ]; then
+            echo "  server did not report healthy within 60s; last 30 log lines:" >&2
+            docker compose logs --tail 30 test-emergent-server >&2 || true
+            exit 1
+          fi
         fi
     dir: "{{.TASKFILE_DIR}}"
 
@@ -401,20 +410,20 @@ tasks:
           {{.RUNLOG_BIN}} test "" {{.CLI_ARGS}} -- -timeout 1200s -v
     dir: "{{.TASKFILE_DIR}}"
 
-  # ─── Tests — mcj-emergent Docker server ────────────────────
+  # ─── Tests — compose-hosted server ─────────────────────────
 
-  test:mcj:
-    desc: "Run all tests against mcj-emergent Docker server"
+  test:compose:
+    desc: "Run all tests against the compose-hosted server"
     deps: [server:start, runlog:start]
     cmds:
-      - '{{.RUNLOG_BIN}} test mcj-emergent {{.CLI_ARGS}}'
+      - '{{.RUNLOG_BIN}} test compose {{.CLI_ARGS}}'
     dir: "{{.TASKFILE_DIR}}"
 
-  test:mcj:single:
-    desc: "Run a single test against mcj-emergent (usage: task -d e2e test:mcj:single -- TestName)"
+  test:compose:single:
+    desc: "Run a single test against the compose-hosted server (usage: task -d e2e test:compose:single -- TestName)"
     deps: [server:start, runlog:start]
     cmds:
-      - '{{.RUNLOG_BIN}} test mcj-emergent {{.CLI_ARGS}}'
+      - '{{.RUNLOG_BIN}} test compose {{.CLI_ARGS}}'
     dir: "{{.TASKFILE_DIR}}"
 
   # ─── Docker CI runner ──────────────────────────────────────
@@ -434,7 +443,7 @@ tasks:
   # ─── Back-compat aliases ───────────────────────────────────
   # Renamed to the runlog:* family. Kept so existing notes and muscle
   # memory keep working — note that `daemon:start` no longer pulls in the
-  # Docker server; use test:mcj / server:start for that.
+  # Docker server; use test:compose / server:start for that.
 
   daemon:start:
     desc: "Alias for runlog:start"
@@ -481,9 +490,10 @@ tasks:
     cmds:
       - task: runlog:status
       - |
-        echo "=== mcj-emergent Docker server ==="
+        echo "=== compose e2e server ==="
         if docker compose ps test-emergent-server --format json 2>/dev/null | grep -q '"State":"running"'; then
-          echo "  server: RUNNING (http://mcj-emergent:3002)"
+          port=$(docker compose port test-emergent-server 3002 2>/dev/null | sed 's/.*://')
+          echo "  server: RUNNING (http://127.0.0.1:${port})"
         else
           echo "  server: NOT RUNNING"
         fi

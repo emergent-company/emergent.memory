@@ -65,9 +65,21 @@ runlog test
 
 # Tests with environment profile overlay
 runlog test localhost                     # loads .env.localhost
-runlog test mcj-emergent TestCLI_Auth     # loads .env.mcj-emergent, runs one test
+runlog test compose TestCLIInstalled_Version  # loads .env.compose, one test
 runlog test production -- -v              # pass extra flags to go test
 ```
+
+`compose` targets the stack that `task -d e2e server:start` brings up. Its server
+publishes an **ephemeral** loopback port, so `.env.compose` has to carry the one
+for the current run:
+
+```bash
+cd e2e
+port="$(docker compose port test-emergent-server 3002 | sed 's/.*://')"
+echo "MEMORY_TEST_SERVER=http://127.0.0.1:${port}" > .env.compose
+```
+
+`task -d e2e test:compose` starts that stack and then runs this profile.
 
 The `runlog test` command:
 - Loads `.env` from the repo directory

@@ -9,7 +9,7 @@ Current suites:
 | Suite | Location | Run |
 |---|---|---|
 | API e2e (plain `go test`, no Docker) | `e2e/tests/api/` | `task test:e2e` |
-| CLI e2e (runlog + Docker server) | `e2e/tests/cli/` | `task -d e2e test:mcj` |
+| CLI e2e (runlog + compose server) | `e2e/tests/cli/` | `task -d e2e test:compose` |
 | Web UI e2e (Playwright) | `apps/web-ui/tests/e2e/` | `cd apps/web-ui && task e2e:test` |
 
 `e2e/docker-compose.yml` provisions its own ephemeral Postgres, server and
