@@ -39,8 +39,8 @@ const (
 
 	// ObjectStoreImage is the pinned SeaweedFS S3-compatible object store.
 	//
-	// MinIO archived its community edition and privatised its images (issue
-	// #23); SeaweedFS (chrislusf/seaweedfs, Apache-2.0) is the maintained,
+	// MinIO archived its community edition and privatised its images;
+	// SeaweedFS (chrislusf/seaweedfs, Apache-2.0) is the maintained,
 	// freely pullable replacement. The single-node command
 	// (`server -dir=/data -s3`) runs master + volume + filer + S3 in one
 	// process; the S3 API listens on 8333.

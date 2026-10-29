@@ -227,7 +227,7 @@ func TestDockerComposeDbShmSize(t *testing.T) {
 }
 
 // TestObjectStoreImageIsPinnedByDigest guards the replacement of the archived
-// MinIO images (issue #23) with a maintained, freely pullable backend. The
+// MinIO images with a maintained, freely pullable backend. The
 // object-store image must be pinned by digest and the bucket bootstrap must run
 // from the server image, not a MinIO client image.
 func TestObjectStoreImageIsPinnedByDigest(t *testing.T) {

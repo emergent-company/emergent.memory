@@ -21,7 +21,7 @@ entropy     = 2.5
 # Pre-`memt_` tokens are 68 chars: `emt_` + 64 alphanumeric chars (the
 # historical tokens were lowercase hex; the rule accepts the full base62
 # shape). The rule above does not match them, which is why the token leaked in
-# `commands.sh` survived the secret scan (infra tracking issue #37). Match the
+# `commands.sh` survived the secret scan. Match the
 # full legacy shape so test fixtures such as `emt_test_*` and other short `emt_`
 # literals do not produce false positives.
 #

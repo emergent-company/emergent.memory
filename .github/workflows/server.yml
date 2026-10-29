@@ -324,10 +324,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # BuildKit solver parallelism bound (infra #363): must match
-          # ci_host_buildkit_max_parallelism in the infra ansible role that
-          # configures the CI hosts. Set inline because the self-hosted pool
-          # spans hosts that role does not configure.
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6

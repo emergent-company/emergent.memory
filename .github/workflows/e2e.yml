@@ -94,15 +94,15 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # BuildKit solver parallelism bound (infra #363): must match
-          # ci_host_buildkit_max_parallelism in the infra ansible role that
-          # configures the CI hosts. Set inline because the self-hosted pool
-          # spans hosts that role does not configure.
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
 
-      # infra #335: pin the docker-container builder this action creates for the
+      # Pin the docker-container builder this action creates for the
       # bare `docker build` / `docker compose ... --build` steps inside
       # e2e/run_tests.sh. On the Linux runner the daemon-default builder (docker
       # driver) hands build containers systemd-resolved's stub resolver
@@ -141,7 +141,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Distinct infrastructure step: an image-pull failure must read as
-      # infrastructure, not as a failing test (issue #23). The server image is
+      # infrastructure, not as a failing test. The server image is
       # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
@@ -208,10 +208,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # BuildKit solver parallelism bound (infra #363): must match
-          # ci_host_buildkit_max_parallelism in the infra ansible role that
-          # configures the CI hosts. Set inline because the self-hosted pool
-          # spans hosts that role does not configure.
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
@@ -247,7 +247,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Distinct infrastructure step: an image-pull failure must read as
-      # infrastructure, not as a failing test (issue #23). The server image is
+      # infrastructure, not as a failing test. The server image is
       # built locally ($MEMORY_SERVER_IMAGE) and the test client/registry services
       # are built, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
@@ -354,10 +354,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
-          # BuildKit solver parallelism bound (infra #363): must match
-          # ci_host_buildkit_max_parallelism in the infra ansible role that
-          # configures the CI hosts. Set inline because the self-hosted pool
-          # spans hosts that role does not configure.
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
           buildkitd-config-inline: |
             [worker.oci]
               max-parallelism = 6
@@ -390,7 +390,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Distinct infrastructure step: an image-pull failure must read as
-      # infrastructure, not as a failing test (issue #23). The server image is
+      # infrastructure, not as a failing test. The server image is
       # built locally ($MEMORY_SERVER_IMAGE) and the mailgun stub is built from
       # source, so pull only the registry-backed services.
       - name: "Preflight: pull stack images"
@@ -465,7 +465,7 @@ jobs:
   # Stacks from *other* runs are swept too, but only once they are older than any
   # job here could live (job timeout 30m; the gate is 6h). That is what makes a
   # cancelled run that is never re-run reclaimable by the next run, not only by
-  # the host-side reaper (b4ng-link/infrastructure playbook 116).
+  # the host-side reaper that sweeps leftover stacks on the CI hosts.
   #
   # It reaps only the Docker daemon it lands on. The self-hosted `memory` pool
   # spans two hosts — the Linux runners and the macOS runners — each with its

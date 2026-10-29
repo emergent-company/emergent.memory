@@ -15,7 +15,7 @@ name: Connector CI
 # `mac-build` is the only job that actually compiles the Swift app. Before it
 # existed, every job on `apps/connector.mac` was format/lint only, so a type
 # error, an API newer than the deployment target, or a broken actor-isolation
-# change merged green (infra issue #343). It uses the macOS runner label already
+# change merged green. It uses the macOS runner label already
 # serving mac-release.yml and ios-test.yml, so it needs no new runner. It builds
 # for testing (`build-for-testing`) so the unit/UI test sources are compiled too;
 # running the suites stays manual (`task connector-mac:test`).
@@ -140,7 +140,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: apps/connector.mac/Scripts/lint-swift.sh
 
-  # Compile check for the Swift app (infra issue #343). Keep the
+  # Compile check for the Swift app. Keep the
   # xcodegen/xcodebuild invocation in step with
   # apps/connector.mac/Scripts/mac-build.sh — same project, scheme, ad-hoc
   # signing and derived-data path. That script drives ssh builds and cannot run

@@ -50,10 +50,10 @@ echo "> runs DB will be written to: $RUNS_DB_DIR/runs.db"
 
 # ─── Build the test image ─────────────────────────────────────────────────────
 # The build context is the REPO ROOT: the Dockerfile compiles the memory CLI
-# from apps/cli (see e2e/Dockerfile). The repo is private, so the test no longer
-# downloads the CLI/install script from GitHub.
+# from apps/cli (see e2e/Dockerfile), so the test exercises the code under review
+# rather than downloading a published CLI or an install script.
 #
-# Buildx builder pinning (infra #335): the `memory` self-hosted runner pool spans
+# Buildx builder pinning: the `memory` self-hosted runner pool spans
 # two hosts. On the Linux runner the daemon-default buildx builder (docker driver)
 # hands build containers systemd-resolved's stub resolver 127.0.0.53, which is
 # unreachable from the build network namespace, so every network `RUN` dies

@@ -26,9 +26,9 @@ defaults:
 jobs:
   lint:
     name: Lint
-    # Self-hosted (#184): the SDK tests are pure-Python (httpx/pydantic have
+    # Self-hosted: the SDK tests are pure-Python (httpx/pydantic have
     # wheels; no C toolchain needed), so this does not depend on the missing
-    # compiler tracked in #233. The fork guard keeps PR-authored code off the
+    # host compiler. The fork guard keeps PR-authored code off the
     # persistent runner for forks, matching every other self-hosted job here.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
@@ -39,7 +39,7 @@ jobs:
       # actions/setup-python cannot resolve a version on this pool (Arch — the
       # Linux runner reports "not found for this operating system"), so uv
       # installs a managed interpreter and the job installs into an isolated
-      # venv — no host Python toolchain required (#184, #233).
+      # venv — no host Python toolchain required.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -72,7 +72,7 @@ jobs:
       # actions/setup-python cannot resolve a version on this pool (Arch — the
       # Linux runner reports "not found for this operating system"), so uv
       # installs a managed interpreter and the job installs into an isolated
-      # venv — no host Python toolchain required (#184, #233).
+      # venv — no host Python toolchain required.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:

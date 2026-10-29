@@ -17,7 +17,7 @@ on:
       - 'docs/**'
       - 'mkdocs.yml'
       # Self-change so a runner/build migration is exercised by its own PR and
-      # by the merge, instead of silently waiting for the next docs edit (#184).
+      # by the merge, instead of silently waiting for the next docs edit.
       - '.github/workflows/docs.yml'
     tags:
       - 'v*'
@@ -30,7 +30,7 @@ on:
 jobs:
   build:
     name: Build docs
-    # Self-hosted (#184): mkdocs + mike are pure-Python and a docs build is
+    # Self-hosted: mkdocs + mike are pure-Python and a docs build is
     # PR-triggered on every docs/** change — one of the largest recurring
     # hosted-minute consumers. Fork guard as everywhere else.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -46,7 +46,7 @@ jobs:
       # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
-      # runner in the pool (#184, #233).
+      # runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -67,7 +67,7 @@ jobs:
 
   deploy-latest:
     name: Deploy latest (main)
-    # Self-hosted (#184): push-to-main only (never a fork PR), so no guard is
+    # Self-hosted: push-to-main only (never a fork PR), so no guard is
     # needed. The gh-pages-deploy concurrency group still serialises it against
     # the appcast publishers.
     runs-on: [self-hosted, linux, x64, memory]
@@ -84,7 +84,7 @@ jobs:
       # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
-      # runner in the pool (#184, #233).
+      # runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -154,7 +154,7 @@ jobs:
       # the Arch runners, and their distro Python has no ensurepip,
       # so `python3 -m venv` fails there ("ensurepip is not available"). uv
       # provisions its own interpreter, so docs build identically on every
-      # runner in the pool (#184, #233).
+      # runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
