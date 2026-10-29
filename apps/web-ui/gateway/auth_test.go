@@ -566,12 +566,21 @@ func TestPublicBaseURLTrimmed(t *testing.T) {
 // drop Secure (the "missing oauth state" bug) while TLS proxies keep it.
 func TestCookieSecure(t *testing.T) {
 	e := echo.New()
-	newCtx := func(headers map[string]string) echo.Context {
+	// Echo 4.16 only honours X-Forwarded-Proto from a trusted peer (loopback,
+	// link-local, private networks, unix sockets) — a public client cannot flip
+	// the scheme. proxyCtx models the terminating proxy talking to us from the
+	// private network, which is how traefik/caddy reach the gateway in every
+	// deployment; publicCtx models a request straight off the internet.
+	newCtxFrom := func(remoteAddr string, headers map[string]string) echo.Context {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = remoteAddr
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
 		return e.NewContext(req, httptest.NewRecorder())
+	}
+	newCtx := func(headers map[string]string) echo.Context {
+		return newCtxFrom("172.17.0.1:41234", headers)
 	}
 	server := func(authMode, baseURL string) *Server {
 		return &Server{cfg: Config{AuthMode: authMode, PublicBaseURL: baseURL}, memory: &fakeMemory{}}
@@ -605,6 +614,14 @@ func TestCookieSecure(t *testing.T) {
 	c = newCtx(map[string]string{"X-Forwarded-Proto": "https"})
 	if !server("session", "").cookieSecure(c) {
 		t.Error("cookieSecure = false for empty PUBLIC_BASE_URL over HTTPS proxy, want true")
+	}
+
+	// Empty base URL + https claimed by a peer that is not the proxy → false.
+	// Echo 4.16 ignores forwarding headers from untrusted addresses, so an
+	// internet client cannot make the cookie Secure (or, with http, drop it).
+	c = newCtxFrom("203.0.113.9:5555", map[string]string{"X-Forwarded-Proto": "https"})
+	if server("session", "").cookieSecure(c) {
+		t.Error("cookieSecure = true for X-Forwarded-Proto from an untrusted peer, want false")
 	}
 }
 
