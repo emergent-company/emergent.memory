@@ -356,14 +356,19 @@ func (r *Repository) RecordSourceError(ctx context.Context, projectID, sourceID 
 	return nil
 }
 
-// ListDueSources returns sources whose sync_interval_minutes is set and whose
-// last_synced_at is older than the interval (or never synced), i.e. the sources
-// the scheduler should admit next.
+// ListDueSources returns sources the scheduler should admit next: those whose
+// policy is scheduled, whose sync_interval_minutes is set, and whose
+// last_synced_at is older than the interval (or that never synced).
+//
+// The policy is checked first on purpose. A source switched back to manual keeps
+// its stored interval in older rows, so interval presence alone is not a
+// scheduling signal — only sync_policy makes a source eligible.
 func (r *Repository) ListDueSources(ctx context.Context, now time.Time) ([]*Source, error) {
 	var srcs []*Source
 	err := r.db.NewSelect().
 		Model(&srcs).
 		Where("status = ?", SourceStatusActive).
+		Where("sync_policy = ?", SyncPolicyScheduled).
 		Where("sync_interval_minutes IS NOT NULL").
 		Where("sync_interval_minutes > 0").
 		Where("last_synced_at IS NULL OR last_synced_at < now() - make_interval(mins => sync_interval_minutes)").

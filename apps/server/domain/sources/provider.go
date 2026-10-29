@@ -163,8 +163,7 @@ type ResourceRefLister interface {
 // SyncIntervalBoundsProvider is implemented by providers that impose a default
 // and minimum sync cadence (the web crawler defaults to 60 minutes and rejects
 // intervals below 15). The Service applies the bounds when a source sets a sync
-// interval and falls back to today's behaviour — any value, no default — for
-// providers that do not implement it.
+// interval, and uses the declared default when a scheduled source omits one.
 type SyncIntervalBoundsProvider interface {
 	// SyncIntervalBounds returns the minimum accepted interval and the default
 	// applied when a source omits the interval, both in minutes.

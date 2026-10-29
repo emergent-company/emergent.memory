@@ -458,6 +458,7 @@ templ dsSyncModeSelect(current string, interval *int) {
 				value={ strconv.Itoa(*interval) }
 			}
 		/>
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Used only in Scheduled mode. A manual source syncs when you trigger it. }
 	</div>
 }
 

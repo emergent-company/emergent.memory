@@ -74,6 +74,18 @@ func (s *SourceSyncSuite) projectUUID() uuid.UUID {
 
 func (s *SourceSyncSuite) createSource(svc *sources.Service, interval *int) string {
 	s.T().Helper()
+	return s.createSourceWith(svc, sources.SyncPolicyManual, interval)
+}
+
+// createScheduledSource creates a source in scheduled mode: the scheduler only
+// admits sources whose policy is scheduled, so a due-source test needs one.
+func (s *SourceSyncSuite) createScheduledSource(svc *sources.Service, interval *int) string {
+	s.T().Helper()
+	return s.createSourceWith(svc, sources.SyncPolicyScheduled, interval)
+}
+
+func (s *SourceSyncSuite) createSourceWith(svc *sources.Service, mode string, interval *int) string {
+	s.T().Helper()
 	created, err := svc.Create(s.Ctx, s.projectUUID(), &sources.CreateIntegrationRequest{
 		Name:         "Drive",
 		ProviderType: sources.ProviderTypeGoogleDrive,
@@ -83,6 +95,7 @@ func (s *SourceSyncSuite) createSource(svc *sources.Service, interval *int) stri
 			"client_secret": "cs",
 			"refresh_token": "rt",
 		},
+		SyncMode:            &mode,
 		SyncIntervalMinutes: interval,
 	})
 	s.Require().NoError(err)
@@ -523,12 +536,49 @@ func (s *SourceSyncSuite) TestAdmitDueSources() {
 	svc := s.newService()
 	repo := sources.NewRepository(s.DB(), s.log)
 
-	// A: due (interval set, last synced long ago).
-	dueID := s.createSource(svc, ptrInt(5))
-	// B: not due (interval set, just synced).
-	notDueID := s.createSource(svc, ptrInt(60))
-	// C: no interval (never scheduled).
-	noIntervalID := s.createSource(svc, nil)
+	// A: due (scheduled, interval set, last synced long ago).
+	dueID := s.createScheduledSource(svc, ptrInt(5))
+	// B: not due (scheduled, interval set, just synced).
+	notDueID := s.createScheduledSource(svc, ptrInt(60))
+	// C: scheduled but no interval. The service always supplies one now, so this
+	// legacy shape is inserted directly; it must stay inert rather than be
+	// admitted (and re-admitted) forever.
+	legacyScheduled := &sources.Source{
+		ID:                   uuid.New(),
+		ProjectID:            s.projectUUID(),
+		Provider:             sources.ProviderTypeGoogleDrive,
+		DisplayName:          "Legacy scheduled without interval",
+		Config:               map[string]any{"folder_id": "folder-3"},
+		EncryptedCredentials: []byte("ciphertext"),
+		SyncPolicy:           sources.SyncPolicyScheduled,
+		SyncIntervalMinutes:  nil,
+		Cursor:               map[string]any{},
+		Status:               sources.SourceStatusActive,
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+	}
+	_, err := repo.Create(s.Ctx, legacyScheduled)
+	s.Require().NoError(err)
+	// D: manual policy that still carries an interval. This is the shape that
+	// made a "manual" source sync hourly: the sweep used to key off the interval
+	// alone. Inserted straight through the repository because the service now
+	// refuses to persist this combination.
+	legacyManual := &sources.Source{
+		ID:                   uuid.New(),
+		ProjectID:            s.projectUUID(),
+		Provider:             sources.ProviderTypeGoogleDrive,
+		DisplayName:          "Legacy manual with interval",
+		Config:               map[string]any{"folder_id": "folder-2"},
+		EncryptedCredentials: []byte("ciphertext"),
+		SyncPolicy:           sources.SyncPolicyManual,
+		SyncIntervalMinutes:  ptrInt(5),
+		Cursor:               map[string]any{},
+		Status:               sources.SourceStatusActive,
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+	}
+	_, err = repo.Create(s.Ctx, legacyManual)
+	s.Require().NoError(err)
 
 	now := time.Now().UTC()
 	s.Require().NoError(repo.AdvanceSourceCursor(s.Ctx, s.projectUUID(), uuid.MustParse(notDueID), map[string]any{"t": "x"}, now))
@@ -536,10 +586,12 @@ func (s *SourceSyncSuite) TestAdmitDueSources() {
 
 	s.Require().NoError(svc.AdmitDueSources(s.Ctx))
 
-	// A admitted (scheduled), B and C not.
+	// Only A is admitted: B is not due, C and D are legacy shapes the policy gate
+	// must keep inert.
 	s.requireActiveJobCount(sourceIDUUID(dueID), 1)
 	s.requireActiveJobCount(sourceIDUUID(notDueID), 0)
-	s.requireActiveJobCount(sourceIDUUID(noIntervalID), 0)
+	s.requireActiveJobCount(legacyScheduled.ID, 0)
+	s.requireActiveJobCount(legacyManual.ID, 0)
 
 	jobs, err := svc.ListSyncJobs(s.Ctx, s.projectUUID(), uuid.MustParse(dueID), nil)
 	s.Require().NoError(err)
@@ -549,6 +601,97 @@ func (s *SourceSyncSuite) TestAdmitDueSources() {
 	// Second sweep: active job suppresses a duplicate.
 	s.Require().NoError(svc.AdmitDueSources(s.Ctx))
 	s.requireActiveJobCount(sourceIDUUID(dueID), 1)
+}
+
+// TestSyncPolicyOwnsInterval covers the two halves of "manual means manual": a
+// source created manual is stored without an interval, and switching modes moves
+// the interval with the policy.
+func (s *SourceSyncSuite) TestSyncPolicyOwnsInterval() {
+	svc := s.newService()
+
+	manual := sources.SyncPolicyManual
+	// Created manual while posting an interval, as the connect form does.
+	id := s.createSourceWith(svc, manual, ptrInt(30))
+	src, err := svc.Get(s.Ctx, s.projectUUID(), uuid.MustParse(id))
+	s.Require().NoError(err)
+	s.Require().Equal(sources.SyncPolicyManual, src.SyncMode)
+	s.Require().Nil(src.SyncIntervalMinutes, "manual source must not store an interval")
+
+	// Switching to scheduled without an interval supplies the provider default.
+	scheduled := sources.SyncPolicyScheduled
+	src, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		SyncMode: &scheduled,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(sources.SyncPolicyScheduled, src.SyncMode)
+	s.Require().NotNil(src.SyncIntervalMinutes)
+	s.Require().Positive(*src.SyncIntervalMinutes)
+	interval := *src.SyncIntervalMinutes
+
+	// An unrelated edit keeps the stored interval instead of resetting it.
+	renamed := "Renamed"
+	src, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		Name: &renamed,
+	})
+	s.Require().NoError(err)
+	s.Require().NotNil(src.SyncIntervalMinutes)
+	s.Require().Equal(interval, *src.SyncIntervalMinutes)
+
+	// Switching back to manual clears it, so the sweep cannot admit it again.
+	src, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		SyncMode: &manual,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(sources.SyncPolicyManual, src.SyncMode)
+	s.Require().Nil(src.SyncIntervalMinutes)
+}
+
+// TestSyncModeWireValues covers the documented wire contract: `recurring` — the
+// value the public user guide told API callers to send for interval-driven syncs
+// — still means scheduled, and an unrecognised value is rejected instead of
+// being stored as a policy the sweep would never admit.
+func (s *SourceSyncSuite) TestSyncModeWireValues() {
+	svc := s.newService()
+
+	recurring := "recurring"
+	id := s.createSourceWith(svc, recurring, ptrInt(30))
+	src, err := svc.Get(s.Ctx, s.projectUUID(), uuid.MustParse(id))
+	s.Require().NoError(err)
+	s.Require().Equal(sources.SyncPolicyScheduled, src.SyncMode, "recurring must normalise to scheduled")
+	s.Require().NotNil(src.SyncIntervalMinutes)
+	s.Require().Equal(30, *src.SyncIntervalMinutes)
+
+	// The same alias on update converges the stored policy too.
+	scheduled := sources.SyncPolicyScheduled
+	src, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		SyncMode: &scheduled,
+	})
+	s.Require().NoError(err)
+	src, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		SyncMode: &recurring,
+	})
+	s.Require().NoError(err)
+	s.Require().Equal(sources.SyncPolicyScheduled, src.SyncMode)
+
+	// An unrecognised mode is a validation error, not a silent no-sync source.
+	bogus := "hourly"
+	_, err = svc.Create(s.Ctx, s.projectUUID(), &sources.CreateIntegrationRequest{
+		Name:         "Bogus mode",
+		ProviderType: sources.ProviderTypeGoogleDrive,
+		Config: map[string]any{
+			"folder_id":     "folder-1",
+			"client_id":     "cid",
+			"client_secret": "cs",
+			"refresh_token": "rt",
+		},
+		SyncMode: &bogus,
+	})
+	s.Require().Error(err)
+
+	_, err = svc.Update(s.Ctx, s.projectUUID(), uuid.MustParse(id), &sources.UpdateIntegrationRequest{
+		SyncMode: &bogus,
+	})
+	s.Require().Error(err)
 }
 
 func (s *SourceSyncSuite) requireActiveJobCount(sourceID uuid.UUID, want int) {

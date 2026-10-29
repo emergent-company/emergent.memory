@@ -374,6 +374,19 @@ func dsIntervalFromForm(c echo.Context) (*int, bool) {
 	return &n, true
 }
 
+// dsIntervalForMode returns the submitted interval only for a scheduled source.
+// A manual source owns no interval, so forwarding one would be dropped by the
+// server and read as a silent no-op in the form.
+func dsIntervalForMode(c echo.Context, mode string) *int {
+	if mode != "scheduled" {
+		return nil
+	}
+	if interval, ok := dsIntervalFromForm(c); ok {
+		return interval
+	}
+	return nil
+}
+
 // dsProviderNameMap indexes provider display names by provider type.
 func dsProviderNameMap(providers []DSProvider) map[string]string {
 	names := make(map[string]string, len(providers))
@@ -1821,13 +1834,11 @@ func (s *Server) uiDataSourceCreate(c echo.Context) error {
 	}
 	mode := cmp.Or(c.FormValue("sync_mode"), "manual")
 	req := &DSCreateIntegrationRequest{
-		Name:         name,
-		ProviderType: providerType,
-		Config:       cfg,
-		SyncMode:     &mode,
-	}
-	if interval, ok := dsIntervalFromForm(c); ok {
-		req.SyncIntervalMinutes = interval
+		Name:                name,
+		ProviderType:        providerType,
+		Config:              cfg,
+		SyncMode:            &mode,
+		SyncIntervalMinutes: dsIntervalForMode(c, mode),
 	}
 	item, err := s.memory.CreateDSIntegration(ctx, req)
 	if err != nil {
@@ -1978,9 +1989,11 @@ func (s *Server) uiDataSourceUpdate(c echo.Context) error {
 	}
 	if mode := c.FormValue("sync_mode"); mode != "" {
 		req.SyncMode = &mode
-	}
-	if interval, ok := dsIntervalFromForm(c); ok {
-		req.SyncIntervalMinutes = interval
+		req.SyncIntervalMinutes = dsIntervalForMode(c, mode)
+	} else {
+		// Older forms did not carry sync_mode; the stored policy decides whether a
+		// submitted interval means anything.
+		req.SyncIntervalMinutes = dsIntervalForMode(c, src.SyncMode)
 	}
 	providerType := strings.TrimSpace(c.FormValue("providerType"))
 	if providerType == "" {

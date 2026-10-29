@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -431,10 +432,14 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		return nil, err
 	}
 
-	// Apply a provider's sync-cadence bounds (default + minimum) when it
-	// declares them. Providers without the interface keep today's behaviour:
-	// whatever the request carried, or nil.
-	interval, err := applySyncIntervalBounds(p, req.SyncIntervalMinutes)
+	// Resolve the sync mode before the interval: the policy decides whether this
+	// source carries an interval at all, so a manual source created through a
+	// form that also posts an interval is stored without one.
+	mode, err := defaultSyncMode(p, req.SyncMode)
+	if err != nil {
+		return nil, err
+	}
+	interval, err := applyScheduledInterval(p, mode, req.SyncIntervalMinutes)
 	if err != nil {
 		return nil, err
 	}
@@ -447,15 +452,12 @@ func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateIn
 		DisplayName:          req.Name,
 		Config:               stripCredentialKeys(cfg, p.CredentialKeys()),
 		EncryptedCredentials: blob,
-		SyncPolicy:           "manual",
+		SyncPolicy:           mode,
 		SyncIntervalMinutes:  interval,
 		Cursor:               map[string]any{},
 		Status:               "active",
 		CreatedAt:            now,
 		UpdatedAt:            now,
-	}
-	if req.SyncMode != nil && *req.SyncMode != "" {
-		src.SyncPolicy = *req.SyncMode
 	}
 
 	created, err := s.repo.Create(ctx, src)
@@ -547,17 +549,35 @@ func (s *Service) Update(ctx context.Context, projectID, id uuid.UUID, req *Upda
 		existing.DisplayName = *req.Name
 	}
 	if req.SyncMode != nil && *req.SyncMode != "" {
-		existing.SyncPolicy = *req.SyncMode
+		mode, err := NormalizeSyncMode(*req.SyncMode)
+		if err != nil {
+			return nil, err
+		}
+		existing.SyncPolicy = mode
 	}
-	if req.SyncIntervalMinutes != nil {
+	// The policy owns the interval. A source switched back to manual keeps no
+	// interval — leaving one behind is what let a "manual" source keep syncing on
+	// the scheduler sweep — and a scheduled source never ends up without one. A
+	// scheduled source whose interval is already set keeps it through an edit that
+	// does not mention the interval.
+	switch {
+	case existing.SyncPolicy != SyncPolicyScheduled:
+		existing.SyncIntervalMinutes = nil
+	case req.SyncIntervalMinutes != nil, existing.SyncIntervalMinutes == nil:
+		// The provider lookup only supplies bounds; a source whose provider is no
+		// longer registered still gets a cadence, because the sweep needs one.
+		interval := req.SyncIntervalMinutes
 		if p, ok := s.providers.Get(existing.Provider); ok {
-			resolved, err := applySyncIntervalBounds(p, req.SyncIntervalMinutes)
+			resolved, err := applyScheduledInterval(p, existing.SyncPolicy, interval)
 			if err != nil {
 				return nil, err
 			}
 			existing.SyncIntervalMinutes = resolved
+		} else if interval == nil {
+			def := defaultSyncIntervalMinutes
+			existing.SyncIntervalMinutes = &def
 		} else {
-			existing.SyncIntervalMinutes = req.SyncIntervalMinutes
+			existing.SyncIntervalMinutes = interval
 		}
 	}
 	if req.Enabled != nil {
@@ -713,6 +733,12 @@ func stripCredentialKeys(cfg map[string]any, keys []string) map[string]any {
 	return out
 }
 
+// defaultSyncIntervalMinutes is the interval a provider without sync-cadence
+// bounds gets when a source is switched to scheduled mode without an explicit
+// interval. Without it, "scheduled" with a blank interval field would be a
+// silent no-op — the mirror image of a manual source that still syncs.
+const defaultSyncIntervalMinutes = 60
+
 // applySyncIntervalBounds applies a provider's sync-cadence bounds (when it
 // declares them via SyncIntervalBoundsProvider) to a requested interval. A nil
 // interval becomes the provider default; a below-minimum interval is rejected.
@@ -731,6 +757,60 @@ func applySyncIntervalBounds(p SourceProvider, interval *int) (*int, error) {
 		return nil, apperror.NewValidation(fmt.Sprintf("syncIntervalMinutes must be at least %d minutes for %s", minMin, p.Catalog().Type))
 	}
 	return interval, nil
+}
+
+// NormalizeSyncMode maps a requested sync mode onto the canonical policy. The
+// public API documented `recurring` for interval-driven syncs before the policy
+// gated the scheduler, so it stays accepted as an alias for `scheduled`.
+// Anything else is rejected rather than stored: an unrecognised policy is inert
+// (only `scheduled` is admitted by the sweep), which would be a silent no-op.
+func NormalizeSyncMode(mode string) (string, error) {
+	switch strings.TrimSpace(mode) {
+	case "":
+		return "", nil
+	case SyncPolicyManual:
+		return SyncPolicyManual, nil
+	case SyncPolicyScheduled, "recurring":
+		return SyncPolicyScheduled, nil
+	default:
+		return "", apperror.NewValidation("syncMode must be manual or scheduled")
+	}
+}
+
+// defaultSyncMode resolves the policy for a new source. An explicit mode always
+// wins — the connect form's Manual selection must not be overridden by a provider
+// default. Without an explicit mode, a provider that declares sync-cadence
+// bounds is one that expects to be polled (Gmail, the web crawler), so its
+// sources start scheduled; every other provider starts manual and syncs only
+// when triggered.
+func defaultSyncMode(p SourceProvider, requested *string) (string, error) {
+	if requested != nil && *requested != "" {
+		return NormalizeSyncMode(*requested)
+	}
+	if _, ok := p.(SyncIntervalBoundsProvider); ok {
+		return SyncPolicyScheduled, nil
+	}
+	return SyncPolicyManual, nil
+}
+
+// applyScheduledInterval resolves the interval to persist for a source in the
+// given sync mode. Mode is authoritative in both directions: a manual source
+// carries no interval, so nothing can schedule it behind the operator's back; a
+// scheduled source always carries one, falling back to the provider default
+// (or defaultSyncIntervalMinutes when the provider declares no bounds).
+func applyScheduledInterval(p SourceProvider, mode string, interval *int) (*int, error) {
+	if mode != SyncPolicyScheduled {
+		return nil, nil
+	}
+	resolved, err := applySyncIntervalBounds(p, interval)
+	if err != nil {
+		return nil, err
+	}
+	if resolved == nil {
+		def := defaultSyncIntervalMinutes
+		resolved = &def
+	}
+	return resolved, nil
 }
 
 // publicConfig returns the source's config with credential keys removed, ready

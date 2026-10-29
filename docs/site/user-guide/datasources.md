@@ -353,7 +353,7 @@ document. It connects with **config only** — no credentials are collected or s
       "name": "Team inbox",
       "providerType": "gmail",
       "sourceType": "email",
-      "syncMode": "recurring",
+      "syncMode": "scheduled",
       "syncIntervalMinutes": 60,
       "config": { "query": "in:inbox -label:spam" }
     }
@@ -388,8 +388,8 @@ POST /api/data-source-integrations/{id}/test-connection
 | `name` | Display name for this integration |
 | `providerType` | The provider: `google_drive`, `gmail`, `github`, `trale`, `web` |
 | `sourceType` | Category of content: `drive`, `email`, `repo`, `meeting`, `web` |
-| `syncMode` | `manual` (trigger explicitly) or `recurring` (automatic on interval) |
-| `syncIntervalMinutes` | Minutes between automatic syncs (for `recurring` mode) |
+| `syncMode` | `manual` (sync only when you trigger it) or `scheduled` (automatic on the interval). `recurring` is accepted as an alias for `scheduled`. A `manual` source never syncs on its own, and switching a source to `manual` clears its stored interval. |
+| `syncIntervalMinutes` | Minutes between automatic syncs. Required in spirit for `scheduled`: omitting it applies the provider's default (60 minutes for the web crawler and Gmail). Ignored for `manual`. |
 | `status` | `active` · `error` · `disabled` |
 
 For `google_drive`, `config.folders` is the sync scope:

@@ -39,6 +39,15 @@ const (
 	SourceStatusDisabled = "disabled"
 )
 
+// Sync policy values (kb.sources.sync_policy). The policy — not the presence of
+// an interval — is what makes a source eligible for the scheduler sweep:
+// `manual` sources are only ever synced by an explicit trigger, `scheduled`
+// sources are admitted when their interval has elapsed.
+const (
+	SyncPolicyManual    = "manual"
+	SyncPolicyScheduled = "scheduled"
+)
+
 // Provider type identifiers.
 const (
 	// ProviderTypeGoogleDrive syncs documents from a Google Drive folder.
