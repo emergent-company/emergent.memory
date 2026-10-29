@@ -78,6 +78,60 @@ func editUIBlock(icon, color string) map[string]any {
 	return ui
 }
 
+// editorManagedPropertyKeys are the per-property JSON-Schema keys the schema
+// editor owns. Every other key on an existing property definition — enum,
+// default, items, format, min/max constraints, x-embedding-target, … — is
+// preserved across an editor save, because the editor renders only the managed
+// ones and would otherwise drop them when it replaces the property set.
+var editorManagedPropertyKeys = map[string]bool{
+	"type":        true,
+	"title":       true,
+	"widget":      true,
+	"description": true,
+	"required":    true,
+}
+
+// mergePropertyEdits overlays the editor's property definitions onto the type's
+// existing raw property map, carrying each kept property's editor-unmanaged keys
+// over. The editor's property set is a full replacement: a property absent from
+// edits is dropped, and an empty (non-nil) edits map therefore removes every
+// property. A nil edits map means "no properties submitted" and returns nil so
+// applyObjectTypeEdit leaves the type's properties untouched. An empty raw map
+// (a brand-new type) returns edits unchanged.
+func mergePropertyEdits(raw json.RawMessage, edits map[string]any) map[string]any {
+	if edits == nil {
+		return nil
+	}
+	if len(raw) == 0 || len(edits) == 0 {
+		return edits
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		return edits
+	}
+	out := make(map[string]any, len(edits))
+	for name, def := range edits {
+		next, ok := def.(map[string]any)
+		if !ok {
+			out[name] = def
+			continue
+		}
+		merged := make(map[string]any, len(next)+4)
+		if prev, ok := existing[name].(map[string]any); ok {
+			for k, v := range prev {
+				if !editorManagedPropertyKeys[k] {
+					merged[k] = v
+				}
+			}
+		}
+		for k, v := range next {
+			merged[k] = v
+		}
+		out[name] = merged
+	}
+	return out
+}
+
 // applyObjectTypeEdit upserts edit into types (name-keyed), preserving every
 // unrelated type and any extra keys on the edited type. A missing type is
 // appended. The input slice is not mutated.

@@ -387,13 +387,31 @@ type ObjectTypeDetail struct {
 	AllowedStatuses []string
 }
 
-// PropertyDetail is one property of an object type.
+// PropertyDetail is one property of an object type. Title is the property's
+// optional human-friendly display label (JSON-Schema "title"); Name is the
+// machine key. Display code shows Title when set and falls back to Name.
 type PropertyDetail struct {
 	Name        string
+	Title       string
 	Type        string
 	Widget      string
 	Description string
 	Required    bool
+}
+
+// PropertyLabel is the property's display name: its Title when declared, else
+// the machine key. The key stays visible in the UI as secondary text.
+func (p PropertyDetail) PropertyLabel() string {
+	if p.Title != "" {
+		return p.Title
+	}
+	return p.Name
+}
+
+// ShowsKey reports whether the machine key should be rendered as secondary text
+// — only when a distinct label makes it worth showing.
+func (p PropertyDetail) ShowsKey() bool {
+	return p.Title != "" && !strings.EqualFold(p.Title, p.Name)
 }
 
 // RelationshipTypeDetail is one relationship type definition.
@@ -436,6 +454,7 @@ type FieldDiff struct {
 type PropertyDiff struct {
 	Name        string
 	Change      DiffChange
+	Title       FieldDiff
 	Type        FieldDiff
 	Widget      FieldDiff
 	Description FieldDiff
@@ -584,6 +603,7 @@ func propertiesFromMap(v any) []PropertyDetail {
 		p, _ := pv.(map[string]any)
 		out = append(out, PropertyDetail{
 			Name:        name,
+			Title:       strAny(p["title"]),
 			Type:        strAny(p["type"]),
 			Widget:      strAny(p["widget"]),
 			Description: strAny(p["description"]),
@@ -756,6 +776,7 @@ func unionNames[T any](base, target []T, name func(T) string) []string {
 // propertyFieldsChanged reports whether any diffed property field differs.
 func propertyFieldsChanged(p PropertyDiff) bool {
 	return p.Type.Change != DiffChangeNone ||
+		p.Title.Change != DiffChangeNone ||
 		p.Widget.Change != DiffChangeNone ||
 		p.Description.Change != DiffChangeNone ||
 		p.Required.Change != DiffChangeNone
@@ -784,6 +805,7 @@ func diffProperties(base, target []PropertyDetail) []PropertyDiff {
 		p := PropertyDiff{
 			Name:        name,
 			Change:      entityChange(inBase, inTarget),
+			Title:       presenceField(b.Title, t.Title, inBase, inTarget),
 			Type:        presenceField(b.Type, t.Type, inBase, inTarget),
 			Widget:      FieldDiff{Change: entityChange(inBase, inTarget)},
 			Description: presenceField(b.Description, t.Description, inBase, inTarget),

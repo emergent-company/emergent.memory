@@ -89,7 +89,8 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
         },
         "email": {
           "type": "string",
-          "format": "email"
+          "title": "Email",
+          "description": "Contact address"
         }
       },
       "required": ["name"]
@@ -117,9 +118,19 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
           "description": "Abstract or summary"
         },
         "publication_date": {
-          "type": "string",
-          "format": "date",
+          "type": "date",
+          "title": "Publication date",
           "description": "Date published (YYYY-MM-DD)"
+        },
+        "link": {
+          "type": "url",
+          "title": "Link",
+          "description": "Canonical https URL for the paper"
+        },
+        "content_hash": {
+          "type": "sha256",
+          "title": "Content hash",
+          "description": "Hex SHA-256 of the source content"
         },
         "authors": {
           "type": "array",
@@ -157,15 +168,36 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | Feature        | Type        | Example                                        |
 | -------------- | ----------- | ---------------------------------------------- |
 | **String**     | `string`    | `"type": "string"`                             |
+| **Label**      | `title`     | `"title": "Publication date"` (human-friendly field name) |
+| **URL**        | `url`       | `"type": "url"` (http/https, validated)         |
+| **MD5**        | `md5`       | `"type": "md5"` (32 hex characters)            |
+| **SHA-1**      | `sha1`      | `"type": "sha1"` (40 hex characters)           |
+| **SHA-256**    | `sha256`    | `"type": "sha256"` (64 hex characters)         |
+| **SHA-512**    | `sha512`    | `"type": "sha512"` (128 hex characters)        |
 | **Number**     | `number`    | `"type": "number"`                             |
 | **Integer**    | `integer`   | `"type": "integer", "minimum": 0`              |
 | **Boolean**    | `boolean`   | `"type": "boolean", "default": false`          |
+| **Date**       | `date`      | `"type": "date"` (ISO 8601 stored as RFC 3339) |
 | **Array**      | `array`     | `"type": "array", "items": {"type": "string"}` |
 | **Object**     | `object`    | `"type": "object", "properties": {...}`        |
 | **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]`   |
-| **Format**     | `format`    | `"format": "email"` / `"date"` / `"uri"`       |
+| **Format**     | `format`    | `"format": "email"` — documentation only (not enforced) |
 | **Validation** | constraints | `minLength`, `maxLength`, `minimum`, `maximum` |
 | **Required**   | `required`  | `"required": ["field1", "field2"]`             |
+
+Only the types above are interpreted: `type` drives coercion and validation for
+`date`, `url`, the four hex-digest types, `number`, `boolean`, `array` and
+`object`. The remaining JSON-Schema keywords (`format`, `pattern`, `minLength`,
+`minItems`, `minimum`, …) are carried through for documentation and tooling but
+are **not** enforced when an object is written — use `date`, `url` or a
+hex-digest type when you need validation.
+
+`url` and the four hex-digest types are validated on write: a URL must be an
+absolute `http`/`https` URL with a host, and a hash must be exactly its digest
+length of hexadecimal characters (upper-case input is stored lower-case). A
+`title` is display-only — it becomes the property's label in the UI (schemas and
+object forms), with the machine key shown beneath it; extraction still uses the
+keyed property name.
 
 ---
 
@@ -359,7 +391,7 @@ Here's a complete schema for a research project domain:
       "type": "object",
       "properties": {
         "name": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
+        "email": { "type": "string", "title": "Email" },
         "affiliation": { "type": "string" },
         "h_index": { "type": "integer", "minimum": 0 }
       },

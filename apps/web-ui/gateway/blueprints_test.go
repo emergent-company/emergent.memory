@@ -1025,10 +1025,15 @@ func TestRenderBlueprintDetailVersionsAndDiff(t *testing.T) {
 func TestPropertyTypeIntent(t *testing.T) {
 	cases := map[string]ui.BadgeIntent{
 		"string":  ui.BadgeInfo,
+		"url":     propertyTypeBadgeIdentifier,
 		"number":  ui.BadgeSuccess,
 		"integer": ui.BadgeSuccess,
 		"boolean": propertyTypeBadgeBoolean,
 		"date":    ui.BadgeWarning,
+		"md5":     propertyTypeBadgeIdentifier,
+		"sha1":    propertyTypeBadgeIdentifier,
+		"sha256":  propertyTypeBadgeIdentifier,
+		"sha512":  propertyTypeBadgeIdentifier,
 		"array":   propertyTypeBadgeArray,
 		"object":  propertyTypeBadgeObject,
 		"":        ui.BadgeNeutral,
@@ -1041,16 +1046,90 @@ func TestPropertyTypeIntent(t *testing.T) {
 	}
 }
 
+// TestPropertyNameRendersLabelAndKey pins the label-first, key-second display:
+// a schema `title` becomes the property's visible name, with the machine key
+// beneath it as secondary mono text; a property without a title renders exactly
+// as before (the key alone).
+func TestPropertyNameRendersLabelAndKey(t *testing.T) {
+	labelled := renderHTML(t, propertyName(PropertyDetail{Name: "owner_notes", Title: "Owner notes"}))
+	if got := strings.Count(labelled, "Owner notes"); got != 1 {
+		t.Errorf("label occurrences = %d, want 1 in:\n%s", got, labelled)
+	}
+	if got := strings.Count(labelled, "owner_notes"); got != 1 {
+		t.Errorf("key occurrences = %d, want 1 in:\n%s", got, labelled)
+	}
+	if strings.Index(labelled, "Owner notes") > strings.Index(labelled, "owner_notes") {
+		t.Errorf("label must render above the key in:\n%s", labelled)
+	}
+	if !strings.Contains(labelled, "font-mono") {
+		t.Errorf("key must render in mono in:\n%s", labelled)
+	}
+
+	// No title: the key alone, in the pre-existing style.
+	unlabelled := renderHTML(t, propertyName(PropertyDetail{Name: "owner_notes"}))
+	if !strings.Contains(unlabelled, "owner_notes") || strings.Contains(unlabelled, "font-medium") {
+		t.Errorf("unlabelled property must render just the key in:\n%s", unlabelled)
+	}
+
+	// A label identical to the key renders once, not twice — including when the
+	// difference is only case (ShowsKey compares with EqualFold).
+	same := renderHTML(t, propertyName(PropertyDetail{Name: "title", Title: "title"}))
+	if got := strings.Count(same, "title"); got != 1 {
+		t.Errorf("identical label/key occurrences = %d, want 1 in:\n%s", got, same)
+	}
+	caseOnly := propertyName(PropertyDetail{Name: "owner_notes", Title: "Owner_Notes"})
+	if strings.Contains(renderHTML(t, caseOnly), "owner_notes") {
+		t.Errorf("a case-only label difference must not show the key twice: %s", renderHTML(t, caseOnly))
+	}
+}
+
+// TestObjectTypePropertiesHeader checks the property table now names its first
+// column Property (label + key), and that both render for a labelled property.
+func TestObjectTypePropertiesHeader(t *testing.T) {
+	html := renderHTML(t, objectTypeProperties([]PropertyDetail{
+		{Name: "owner_notes", Title: "Owner notes", Type: "string"},
+	}, true))
+	for _, want := range []string{"<th>Property</th>", "Owner notes", "owner_notes"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("properties table missing %q in:\n%s", want, html)
+		}
+	}
+}
+
 // TestPropertyTypeToneHuesSeparated guards the scannability of the type colour
-// scheme.
+// scheme. Every type the registry interprets must resolve to a tone whose oklch
+// hue has been measured here, and the distinct hues must stay at least 40°
+// apart. Tones that deliberately cover a family are listed once, so a new type
+// cannot be added with an unmeasured colour (or an alias of another type's
+// semantic tone) without failing this test.
 func TestPropertyTypeToneHuesSeparated(t *testing.T) {
-	hues := []float64{
-		240, // string  — --color-info
-		152, // number/integer — --color-success
-		40,  // boolean — local: error 75% + warning
-		82,  // date    — --color-warning
-		196, // array   — local: info + success
-		313, // object  — local: error + info
+	// Measured oklch hues, matching webui/css/app.css "Schema property-type
+	// badges" (the comment there carries the contrast measurements too).
+	toneHues := map[ui.BadgeIntent]float64{
+		ui.BadgeInfo:                240,    // string
+		ui.BadgeSuccess:             152,    // number / integer
+		propertyTypeBadgeBoolean:    40,     // local: error 75% + warning
+		ui.BadgeWarning:             82,     // date
+		propertyTypeBadgeArray:      196,    // local: info + success
+		propertyTypeBadgeObject:     313,    // local: error + info
+		propertyTypeBadgeIdentifier: 356.96, // local: error 76% + base-content (url + digests)
+	}
+
+	// The accepted registry vocabulary (see propertyTypeIntent), so every mapped
+	// type — not just the editor's options — is covered.
+	accepted := []string{
+		"string", "url", "number", "integer", "boolean", "date",
+		"md5", "sha1", "sha256", "sha512", "array", "object",
+	}
+	for _, typ := range accepted {
+		if _, ok := toneHues[propertyTypeIntent(typ)]; !ok {
+			t.Errorf("type %q resolves to a tone with no measured hue (%q)", typ, propertyTypeIntent(typ))
+		}
+	}
+
+	hues := make([]float64, 0, len(toneHues))
+	for _, h := range toneHues {
+		hues = append(hues, h)
 	}
 	slices.Sort(hues)
 	const minSeparation = 40.0
@@ -1064,5 +1143,19 @@ func TestPropertyTypeToneHuesSeparated(t *testing.T) {
 	}
 	if minSep < minSeparation {
 		t.Fatalf("minimum type-tone hue separation %.1f° is below the %.0f° floor (hues %v)", minSep, minSeparation, hues)
+	}
+}
+
+// TestPropertyDiffRowShowsLabelChange pins the label as a reported field in a
+// blueprint version diff, so relabelling a property is visible between versions.
+func TestPropertyDiffRowShowsLabelChange(t *testing.T) {
+	html := renderHTML(t, propertyDiffRow(PropertyDiff{
+		Name:  "homepage",
+		Title: FieldDiff{After: "Homepage", Change: DiffChangeAdded},
+	}))
+	for _, want := range []string{"homepage", "Label", "Homepage"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("property diff row missing %q in:\n%s", want, html)
+		}
 	}
 }

@@ -819,6 +819,7 @@ templ propertyDiffRow(p PropertyDiff) {
 			@requiredBadge(p.Required)
 			@diffFlag("widget", p.Widget)
 		</div>
+		@diffField("Label", p.Title)
 		if p.Description.Change != DiffChangeNone {
 			<div class="mt-1 text-xs">@diffValue(p.Description)</div>
 		} else if p.Description.After != "" {
@@ -1062,33 +1063,44 @@ templ objectTypeNameLink(display string, href string) {
 	}
 }
 
-// The three property types below have no distinct semantic tone in the app's
-// single (dark) theme without aliasing another type, so they get page-local
-// badge tones. The class names are rendered by ui.Badge and their --badge-color
-// is set from theme tokens in webui/css/app.css ("Schema property-type badges")
-// — the palette never hardcodes a colour. See TestPropertyTypeToneHuesSeparated
+// The four tones below have no distinct semantic tone in the app's single
+// (dark) theme without aliasing another type, so they get page-local badge
+// tones. The class names are rendered by ui.Badge and their --badge-color is
+// set from theme tokens in webui/css/app.css ("Schema property-type badges") —
+// the palette never hardcodes a colour. See TestPropertyTypeToneHuesSeparated
 // for the measured hue separation this guards.
+//
+// `identifier` covers url and the four hex-digest types together: the six
+// semantic tones plus boolean/array/object already leave a single free hue at
+// the guard's 40-degree floor, and url/digest are both "structured string value"
+// types, so they share the one slot rather than re-tinting a semantic tone and
+// colliding with it. The badge label always carries the type name.
 const (
-	propertyTypeBadgeBoolean ui.BadgeIntent = "memory-prop-type-badge--boolean"
-	propertyTypeBadgeArray   ui.BadgeIntent = "memory-prop-type-badge--array"
-	propertyTypeBadgeObject  ui.BadgeIntent = "memory-prop-type-badge--object"
+	propertyTypeBadgeBoolean    ui.BadgeIntent = "memory-prop-type-badge--boolean"
+	propertyTypeBadgeArray      ui.BadgeIntent = "memory-prop-type-badge--array"
+	propertyTypeBadgeObject     ui.BadgeIntent = "memory-prop-type-badge--object"
+	propertyTypeBadgeIdentifier ui.BadgeIntent = "memory-prop-type-badge--identifier"
 )
 
 // propertyTypeIntent maps a schema property type to a badge tone so the type
 // column is scannable at a glance. The vocabulary is the set the schema
 // registry accepts and interprets, NOT the schema editor's select options
-// (propertyTypeOptions): string, number, integer, boolean, date, array, object.
-// See docs/public/guides/schema-creation.md and
-// the coercion switches in apps/server/domain/graph/validation.go. `integer` is
-// a distinct registry type (builtin_seeder.go, blueprint YAMLs) and
-// deliberately shares number's tone. `null`, `ref`/`object_ref`, `json`, `uuid`
-// and `datetime` are not accepted types, so they are not mapped. Anything else
-// (empty, or a type a future registry adds) falls back to the neutral tone
-// deliberately, so it still renders a readable badge.
+// (propertyTypeOptions): string, url, number, integer, boolean, date, md5,
+// sha1, sha256, sha512, array, object. See
+// docs/public/guides/schema-creation.md and the coercion switches in
+// apps/server/domain/graph/validation.go. `integer` is a distinct registry type
+// (builtin_seeder.go, blueprint YAMLs) and deliberately shares number's tone;
+// url and the four hex-digest types share the `identifier` tone (see above).
+// `null`, `ref`/`object_ref`, `json`, `uuid` and `datetime`
+// are not accepted types, so they are not mapped. Anything else (empty, or a
+// type a future registry adds) falls back to the neutral tone deliberately, so
+// it still renders a readable badge.
 func propertyTypeIntent(t string) ui.BadgeIntent {
 	switch t {
 	case "string":
 		return ui.BadgeInfo
+	case "url", "md5", "sha1", "sha256", "sha512":
+		return propertyTypeBadgeIdentifier
 	case "number", "integer":
 		return ui.BadgeSuccess
 	case "boolean":
@@ -1111,6 +1123,24 @@ templ propertyTypeBadge(t string) {
 	@ui.Badge(ui.BadgeProps{Label: t, Variant: propertyTypeIntent(t), Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
 }
 
+// propertyName renders one property's display name: the human label when the
+// schema declares a JSON-Schema `title`, with the machine key beneath it in mono
+// secondary text. A property with no label renders exactly as before — the key
+// in mono. Shared by the table and the mobile layout so the fallback is
+// identical in both.
+templ propertyName(p PropertyDetail) {
+	if p.ShowsKey() {
+		<div class="flex flex-col leading-tight">
+			<span class="text-xs font-medium text-base-content">{ p.PropertyLabel() }</span>
+			<span class="font-mono text-[11px] break-all text-muted-subtle">{ p.Name }</span>
+		</div>
+	} else {
+		// No distinct key to show: render the label (the key itself when the
+		// property declares no title), keeping today's mono style.
+		<span class="font-mono text-xs break-all text-muted-bright">{ p.PropertyLabel() }</span>
+	}
+}
+
 // objectTypeProperties lists an object type's property definitions: stacked
 // rows on mobile, a four-column table from md up. showLabel renders the inner
 // "Properties" title — true when the box has no outer section heading (blueprint
@@ -1125,7 +1155,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 		<div class="flex flex-col gap-1.5 md:hidden">
 			for _, p := range properties {
 				<div class="flex flex-wrap items-center gap-2">
-					<span class="font-mono text-xs text-muted-bright">{ p.Name }</span>
+					@propertyName(p)
 					if p.Type != "" {
 						@propertyTypeBadge(p.Type)
 					}
@@ -1142,7 +1172,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 			<table class="table table-sm">
 				<thead>
 					<tr>
-						<th>Name</th>
+						<th>Property</th>
 						<th>Type</th>
 						<th>Required</th>
 						<th>Description</th>
@@ -1151,7 +1181,7 @@ templ objectTypeProperties(properties []PropertyDetail, showLabel bool) {
 				<tbody>
 					for _, p := range properties {
 						<tr>
-							<td class="font-mono text-xs text-muted-bright">{ p.Name }</td>
+							<td>@propertyName(p)</td>
 							<td>
 								if p.Type != "" {
 									@propertyTypeBadge(p.Type)

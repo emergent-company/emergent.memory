@@ -1263,11 +1263,12 @@ div:has(> #_layout-topbar) {
 
 /* Schema property-type badges (blueprint/schema browsers).
  * The type column colour-codes each registry property type so it is scannable
- * at a glance. Three types have no distinct semantic tone in the dark theme —
- * boolean/array/object would otherwise alias warning, info|secondary and
- * primary|warning — so they get page-local tones here. Every value is derived
- * from theme tokens with color-mix; no raw colours. The label always carries
- * the type text, so colour is never the only signal.
+ * at a glance. Four tones have no distinct semantic tone in the dark theme —
+ * boolean/array/object would alias warning, info|secondary and primary|warning,
+ * and url/md5/sha1/sha256/sha512 would alias primary|info|secondary — so they
+ * get page-local tones here. Every value is derived from theme tokens with
+ * color-mix; no raw colours. The label always carries the type text, so colour
+ * is never the only signal.
  *
  * Measured hues (oklch) and soft-badge text contrast in this theme; the minimum
  * pair separation is 42deg (boolean 40 -> date 82):
@@ -1278,7 +1279,12 @@ div:has(> #_layout-topbar) {
  *   date    --color-warning                           82deg  oklch(0.810 0.1550  82)  8.4:1
  *   array   info + success                           196deg  oklch(0.700 0.1325 196)  6.4:1
  *   object  error + info                             313deg  oklch(0.660 0.1575 313)  4.8:1
+ *   identifier error 76% + base-content              357deg  oklch(0.702 0.1540 357)  5.6:1
  *   unknown --color-neutral-content (soft-neutral)    grey   oklch(0.900 0.0100 265) 11.2:1
+ *
+ * `identifier` is the only free hue left at the 40deg floor, so url and the four
+ * hex-digest types share it (they are all "structured string value" types) —
+ * tinting them off a semantic tone would collide with that tone's own type.
  *
  * Unlayered so the custom property beats daisyUI's layered badge rules, matching
  * the soft-neutral override above. */
@@ -1290,6 +1296,11 @@ div:has(> #_layout-topbar) {
 }
 .memory-prop-type-badge--object {
   --badge-color: color-mix(in oklch, var(--color-error), var(--color-info));
+}
+.memory-prop-type-badge--identifier {
+  /* Lifted with base-content so the rose clears AA on the soft chip (the
+     unlightened error+info mix measured 4.4:1, under the 4.5 floor). */
+  --badge-color: color-mix(in oklch, var(--color-error) 76%, var(--color-base-content));
 }
 
 /* Badge dots: go-daisy renders Dot as <span class="status status-<intent>

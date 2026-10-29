@@ -978,10 +978,75 @@ func objectTypeDisplayName(t CompiledType) string {
 // carries these losslessly from the pack through the compiled-types view.
 type objectPropertyDef struct {
 	Name        string
+	Title       string
 	Type        string
 	Widget      string
 	Enum        []string
 	Description string
+}
+
+// Label is the property's display name: the schema's declared title (JSON-Schema
+// `title`), falling back to the machine key when none is set.
+func (d objectPropertyDef) Label() string {
+	if d.Title != "" {
+		return d.Title
+	}
+	return d.Name
+}
+
+// KeyHint is the machine key rendered as secondary hint text under the field, or
+// "" when the label already is the key (nothing extra to show).
+func (d objectPropertyDef) KeyHint() string {
+	if d.Title != "" && !strings.EqualFold(d.Title, d.Name) {
+		return d.Name
+	}
+	return ""
+}
+
+// propertyHashLengths maps each hex-digest property type to its digest length in
+// characters, mirroring the server's accepted vocabulary
+// (apps/server/domain/graph/validation.go). Unknown types return 0.
+var propertyHashLengths = map[string]int{
+	"md5":    32,
+	"sha1":   40,
+	"sha256": 64,
+	"sha512": 128,
+}
+
+// isHashPropertyType reports whether t names a hex-digest property type.
+func isHashPropertyType(t string) bool {
+	_, ok := propertyHashLengths[t]
+	return ok
+}
+
+// hashInputPattern is the HTML input pattern for a hash property type: exactly
+// its digest length of hex characters. Empty for a non-hash type.
+func hashInputPattern(t string) string {
+	n := propertyHashLengths[t]
+	if n == 0 {
+		return ""
+	}
+	return "[0-9a-fA-F]{" + strconv.Itoa(n) + "}"
+}
+
+// hashInputMaxLength is the maxlength attribute value for a hash property type,
+// i.e. its digest length. Empty for a non-hash type.
+func hashInputMaxLength(t string) string {
+	n := propertyHashLengths[t]
+	if n == 0 {
+		return ""
+	}
+	return strconv.Itoa(n)
+}
+
+// hashInputHint is the placeholder for a hash property type, e.g. "SHA256 · 64
+// hex characters". Empty for a non-hash type.
+func hashInputHint(t string) string {
+	n := propertyHashLengths[t]
+	if n == 0 {
+		return ""
+	}
+	return strings.ToUpper(t) + " · " + strconv.Itoa(n) + " hex characters"
 }
 
 // indexedFormValues collects base[0], base[1], … from the submitted form
@@ -1044,12 +1109,14 @@ func compiledTypePropertyDefs(objectTypes []CompiledType, typeName string) []obj
 		def := objectPropertyDef{Name: k}
 		var meta struct {
 			Type        string   `json:"type"`
+			Title       string   `json:"title"`
 			Widget      string   `json:"widget"`
 			Enum        []string `json:"enum"`
 			Description string   `json:"description"`
 		}
 		if json.Unmarshal(raw, &meta) == nil {
 			def.Type = meta.Type
+			def.Title = meta.Title
 			def.Widget = meta.Widget
 			def.Enum = meta.Enum
 			def.Description = meta.Description

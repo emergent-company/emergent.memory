@@ -1,7 +1,9 @@
 package graph
 
 import (
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +62,61 @@ func coerceToBoolean(value any) (bool, error) {
 	default:
 		return false, fmt.Errorf("cannot convert %T to boolean", value)
 	}
+}
+
+// coerceToURL validates a URL-typed property: an absolute http(s) URL with a
+// host. Surrounding whitespace is trimmed; the trimmed value is stored.
+func coerceToURL(value any) (string, error) {
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected url string, got %T", value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" {
+		return "", fmt.Errorf("empty string cannot be converted to url")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("invalid url %q: expected an http or https scheme", trimmed)
+	}
+	if u.Hostname() == "" {
+		return "", fmt.Errorf("invalid url %q: missing host", trimmed)
+	}
+	return trimmed, nil
+}
+
+// hashTypeLengths maps each hex-digest property type to its digest length in
+// characters. These are the types the schema registry accepts and validates.
+var hashTypeLengths = map[string]int{
+	"md5":    32,
+	"sha1":   40,
+	"sha256": 64,
+	"sha512": 128,
+}
+
+// coerceToHash validates a hex digest of the exact length its type declares.
+// Surrounding whitespace is trimmed and the value is stored lower-case (hashes
+// are case-insensitive); a wrong length or a non-hex character is rejected.
+func coerceToHash(value any, kind string) (string, error) {
+	n, ok := hashTypeLengths[kind]
+	if !ok {
+		return "", fmt.Errorf("unknown hash type %q", kind)
+	}
+	s, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("expected %s hex string, got %T", kind, value)
+	}
+	trimmed := strings.TrimSpace(s)
+	if len(trimmed) != n {
+		return "", fmt.Errorf("%s must be %d hex characters, got %d", kind, n, len(trimmed))
+	}
+	if _, err := hex.DecodeString(trimmed); err != nil {
+		return "", fmt.Errorf("%s must be hexadecimal", kind)
+	}
+	return strings.ToLower(trimmed), nil
 }
 
 func coerceToDate(value any) (string, error) {
@@ -176,6 +233,10 @@ func (v *PropertyValidator) coerceValue(value any, targetType string) (any, erro
 		return coerceToBoolean(value)
 	case "date":
 		return coerceToDate(value)
+	case "url":
+		return coerceToURL(value)
+	case "md5", "sha1", "sha256", "sha512":
+		return coerceToHash(value, targetType)
 	case "array":
 		if _, ok := value.([]any); !ok {
 			return nil, fmt.Errorf("expected array, got %T", value)
@@ -245,6 +306,22 @@ func validateProperties(
 
 		case "date":
 			coerced, err := coerceToDate(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "url":
+			coerced, err := coerceToURL(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "md5", "sha1", "sha256", "sha512":
+			coerced, err := coerceToHash(value, propDef.Type)
 			if err != nil {
 				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
 			} else {
@@ -411,6 +488,22 @@ func validatePatchDelta(
 
 		case "date":
 			coerced, err := coerceToDate(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "url":
+			coerced, err := coerceToURL(value)
+			if err != nil {
+				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
+			} else {
+				validated[key] = coerced
+			}
+
+		case "md5", "sha1", "sha256", "sha512":
+			coerced, err := coerceToHash(value, propDef.Type)
 			if err != nil {
 				validationErrors = append(validationErrors, fmt.Sprintf("%s: %v", key, err))
 			} else {

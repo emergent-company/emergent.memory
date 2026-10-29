@@ -482,7 +482,7 @@ templ ObjectCreatePage(objectTypes []CompiledType, propDefs []objectPropertyDef,
 								@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: form.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 							}
 							for _, p := range propDefs {
-								@fm.FormControl(p.Name, p.Name, fm.LabelAbove, "", "", nil) {
+								@fm.FormControl(p.Name, p.Label(), fm.LabelAbove, p.KeyHint(), "", nil) {
 									@propertyInput(p, form.Props[p.Name])
 								}
 							}
@@ -534,12 +534,13 @@ templ objectStatusField(id string, current string, ctrl *objectStatusControl) {
 // propertyInput renders a type-appropriate input for one schema property.
 // boolean → hidden false + toggle switch (so unchecked submits explicit false);
 // date → date picker; number/integer → numeric input; array/object → chip
-// TagList (one chip per value); string with a declared enum → native select of
-// the allowed values; string with widget: "input" → single-line input; any
-// other string/unknown → an auto-growing textarea (string properties may hold
-// arbitrarily long text; widget: "textarea" states that intent explicitly).
-// vals carries the property's raw submitted values (indexed for multi-value
-// props).
+// TagList (one chip per value); url → url input; md5/sha1/sha256/sha512 → a
+// single-line hex input constrained to the digest length; string with a declared
+// enum → native select of the allowed values; string with widget: "input" →
+// single-line input; any other string/unknown → an auto-growing textarea (string
+// properties may hold arbitrarily long text; widget: "textarea" states that
+// intent explicitly). vals carries the property's raw submitted values (indexed
+// for multi-value props).
 templ propertyInput(def objectPropertyDef, vals []string) {
 	{{
 		v := ""
@@ -561,6 +562,10 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 		<input name={ "prop_" + def.Name } type="number" step="any" value={ v } class="input w-full"/>
 	} else if def.Type == "integer" {
 		<input name={ "prop_" + def.Name } type="number" step="1" value={ v } class="input w-full"/>
+	} else if def.Type == "url" {
+		<input name={ "prop_" + def.Name } type="url" value={ v } placeholder="https://…" spellcheck="false" autocapitalize="off" class="input w-full"/>
+	} else if isHashPropertyType(def.Type) {
+		<input name={ "prop_" + def.Name } type="text" value={ v } placeholder={ hashInputHint(def.Type) } pattern={ hashInputPattern(def.Type) } maxlength={ hashInputMaxLength(def.Type) } spellcheck="false" autocapitalize="off" autocomplete="off" class="input w-full font-mono"/>
 	} else if def.Type == "array" || def.Type == "object" {
 		@fm.TagList(fm.TagListProps{ID: "prop-" + def.Name, Name: "prop_" + def.Name, Values: vals, Placeholder: "Add an item..."})
 	} else if len(def.Enum) > 0 {
@@ -788,7 +793,7 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 			}
 			for _, p := range graphObjectProperties(*obj) {
 				if def, ok := objectPropertyDefByName(propDefs, p.Key); ok {
-					@fm.FormControl(p.Key, p.Key, fm.LabelAbove, "", "", nil) {
+					@fm.FormControl(p.Key, def.Label(), fm.LabelAbove, def.KeyHint(), "", nil) {
 						@propertyInput(def, propValues(obj.Properties[p.Key]))
 					}
 				} else {

@@ -2462,16 +2462,16 @@ func TestObjectStatusField(t *testing.T) {
 
 func TestCompiledTypePropertyDefs(t *testing.T) {
 	objectTypes := []CompiledType{
-		{Name: "person", Properties: json.RawMessage(`{"zeta":{"type":"string"},"first_name":{"type":"string","description":"First name"},"age":{"type":"number"},"_internal":{"type":"string"}}`)},
+		{Name: "person", Properties: json.RawMessage(`{"zeta":{"type":"string"},"first_name":{"type":"string","title":"First name","description":"First name"},"age":{"type":"number"},"_internal":{"type":"string"}}`)},
 		{Name: "note", Properties: json.RawMessage(`{"content":{"type":"string","widget":"textarea"},"category":{"type":"string","enum":["preference","fact","correction"]},"source":{"type":"string","widget":"input"}}`)},
 		{Name: "plain", Properties: json.RawMessage(`{}`)},
 	}
 
-	// parses type per property; sorted; underscore-prefixed skipped
+	// parses type and display title per property; sorted; underscore-prefixed skipped
 	got := compiledTypePropertyDefs(objectTypes, "person")
 	want := []objectPropertyDef{
 		{Name: "age", Type: "number"},
-		{Name: "first_name", Type: "string", Description: "First name"},
+		{Name: "first_name", Title: "First name", Type: "string", Description: "First name"},
 		{Name: "zeta", Type: "string"},
 	}
 	if len(got) != len(want) {
@@ -2531,6 +2531,39 @@ func TestCompiledTypePropertyDefs(t *testing.T) {
 	}
 }
 
+func TestObjectPropertyDefLabel(t *testing.T) {
+	labelled := objectPropertyDef{Name: "owner_notes", Title: "Owner notes"}
+	if got := labelled.Label(); got != "Owner notes" {
+		t.Errorf("label = %q, want the title", got)
+	}
+	if got := labelled.KeyHint(); got != "owner_notes" {
+		t.Errorf("key hint = %q, want the machine key", got)
+	}
+
+	unlabelled := objectPropertyDef{Name: "owner_notes"}
+	if got := unlabelled.Label(); got != "owner_notes" {
+		t.Errorf("unlabelled label = %q, want the key", got)
+	}
+	if got := unlabelled.KeyHint(); got != "" {
+		t.Errorf("unlabelled key hint = %q, want empty", got)
+	}
+
+	same := objectPropertyDef{Name: "title", Title: "title"}
+	if got := same.KeyHint(); got != "" {
+		t.Errorf("identical label/key hint = %q, want empty", got)
+	}
+
+	// The comparison ignores case: a label that differs only in case is not a
+	// second, machine-readable name for the same property.
+	mixed := objectPropertyDef{Name: "owner_notes", Title: "Owner_Notes"}
+	if got := mixed.Label(); got != "Owner_Notes" {
+		t.Errorf("case-only label = %q, want the title", got)
+	}
+	if got := mixed.KeyHint(); got != "" {
+		t.Errorf("case-only difference hint = %q, want empty", got)
+	}
+}
+
 func TestPropertyInput(t *testing.T) {
 	cases := []struct {
 		def  objectPropertyDef
@@ -2548,6 +2581,11 @@ func TestPropertyInput(t *testing.T) {
 		{objectPropertyDef{Name: "source", Type: "string", Widget: "input"}, `<input name="prop_source" type="text"`},
 		{objectPropertyDef{Name: "category", Type: "string", Enum: []string{"preference", "fact"}}, `<select name="prop_category"`},
 		{objectPropertyDef{Name: "notes", Type: "string", Widget: "bogus"}, `<textarea name="prop_notes" rows="1" data-autogrow`},
+		{objectPropertyDef{Name: "homepage", Type: "url"}, `name="prop_homepage" type="url"`},
+		{objectPropertyDef{Name: "checksum", Type: "sha256"}, `name="prop_checksum" type="text"`},
+		{objectPropertyDef{Name: "digest", Type: "md5"}, `pattern="[0-9a-fA-F]{32}"`},
+		{objectPropertyDef{Name: "digest", Type: "md5"}, `maxlength="32"`},
+		{objectPropertyDef{Name: "digest", Type: "sha512"}, `maxlength="128"`},
 	}
 	for _, c := range cases {
 		html := renderHTML(t, propertyInput(c.def, nil))
@@ -2645,6 +2683,8 @@ func TestPropertyInput(t *testing.T) {
 		{Name: "source", Type: "string", Widget: "input"},
 		{Name: "category", Type: "string", Enum: []string{"preference", "fact"}},
 		{Name: "active", Type: "boolean"},
+		{Name: "homepage", Type: "url"},
+		{Name: "checksum", Type: "sha256"},
 	}
 	for _, def := range notMultiLine {
 		html := renderHTML(t, propertyInput(def, []string{"x"}))
@@ -3255,5 +3295,41 @@ func TestObjectDetailFromHandler(t *testing.T) {
 	region = breadcrumbRegion(rec.Body.String())
 	if !strings.Contains(region, `href="/objects"`) || !strings.Contains(region, ">sam-lee<") {
 		t.Errorf("invalid origin must fall back to Objects > <object>: %s", region)
+	}
+}
+
+// TestObjectFormPropertyLabels pins the label-first mapping on both object form
+// surfaces: the create form and the detail properties card name the property by
+// its display label and keep the machine key as the hint. An unlabelled property
+// keeps the key as its label and shows no hint.
+func TestObjectFormPropertyLabels(t *testing.T) {
+	defs := []objectPropertyDef{
+		{Name: "owner_notes", Title: "Owner notes", Type: "string"},
+		{Name: "plain", Type: "string"},
+	}
+	const labelledLegend = `<legend class="fieldset-legend">Owner notes</legend>`
+	const keyHint = `<span class="label-text-alt text-base-content/60">owner_notes</span>`
+
+	form := renderHTML(t, ObjectCreatePage([]CompiledType{{Name: "Person"}}, defs, objectCreateForm{Type: "Person"}, nil, nil, nil))
+	if !strings.Contains(form, labelledLegend) {
+		t.Errorf("create form must label the property by its title:\n%s", form)
+	}
+	if !strings.Contains(form, keyHint) {
+		t.Errorf("create form must keep the machine key visible as the hint:\n%s", form)
+	}
+	if !strings.Contains(form, `<legend class="fieldset-legend">plain</legend>`) {
+		t.Errorf("unlabelled property must keep its key as the label:\n%s", form)
+	}
+	if strings.Contains(form, `<span class="label-text-alt text-base-content/60">plain</span>`) {
+		t.Errorf("unlabelled property must not repeat its key as a hint:\n%s", form)
+	}
+
+	obj := &GraphObject{ID: "o1", Type: "Person", Key: "p1", Properties: map[string]any{"owner_notes": "hello"}}
+	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, defs, nil, nil, nil))
+	if !strings.Contains(detail, labelledLegend) {
+		t.Errorf("detail properties card must label the property by its title:\n%s", detail)
+	}
+	if !strings.Contains(detail, keyHint) {
+		t.Errorf("detail properties card must keep the machine key as the hint:\n%s", detail)
 	}
 }

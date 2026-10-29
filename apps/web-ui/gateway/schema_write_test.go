@@ -7,7 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/labstack/echo/v4"
 )
 
 // --- pack mutation client methods (task 1.2) ---
@@ -450,5 +454,98 @@ func TestApplyObjectTypeEditDropsEmptiedUI(t *testing.T) {
 	out := applyObjectTypeEdit(types, ObjectTypeEdit{Name: "person"})
 	if _, ok := out[0]["ui"]; ok {
 		t.Fatalf("ui should be dropped when emptied: %v", out[0])
+	}
+}
+
+// mergePropertyEdits keeps the per-property JSON-Schema keys the schema editor
+// does not render (enum, default, x-embedding-target, …) and applies the
+// editor's own fields on top; the editor's property set is a full replacement,
+// so a property dropped from the form disappears.
+func TestMergePropertyEdits(t *testing.T) {
+	raw := json.RawMessage(`{
+		"topic":{"type":"string","enum":["a","b"],"default":"a","x-embedding-target":true,"title":"Old name"},
+		"gone":{"type":"string","enum":["x"]},
+		"plain":{"type":"string"}
+	}`)
+	edits := map[string]any{
+		"topic": map[string]any{"type": "string", "title": "New name", "description": "why"},
+		"plain": map[string]any{"type": "number"},
+		"added": map[string]any{"type": "url"},
+	}
+
+	out := mergePropertyEdits(raw, edits)
+
+	topic, _ := out["topic"].(map[string]any)
+	if topic["title"] != "New name" || topic["description"] != "why" {
+		t.Errorf("editor fields not applied: %v", topic)
+	}
+	if def, _ := topic["default"].(string); def != "a" {
+		t.Errorf("unmanaged default not preserved: %v", topic)
+	}
+	if target, _ := topic["x-embedding-target"].(bool); !target {
+		t.Errorf("x-embedding-target not preserved: %v", topic)
+	}
+	if enum, _ := topic["enum"].([]any); len(enum) != 2 {
+		t.Errorf("enum not preserved: %v", topic)
+	}
+
+	if _, ok := out["gone"]; ok {
+		t.Error("a property removed from the form must be dropped")
+	}
+	if plain, _ := out["plain"].(map[string]any); plain["type"] != "number" {
+		t.Errorf("changed type = %v, want number", plain["type"])
+	}
+	if added, _ := out["added"].(map[string]any); added["type"] != "url" {
+		t.Errorf("added property = %v", added["type"])
+	}
+
+	// A brand-new type has no existing definitions to carry over.
+	if got := mergePropertyEdits(nil, edits); len(got) != len(edits) {
+		t.Errorf("empty raw = %v, want edits unchanged", got)
+	}
+
+	// A nil edits map means "no properties submitted", so the type's properties
+	// must be left alone (applyObjectTypeEdit only replaces a non-nil map); an
+	// empty non-nil map is the "remove every property" case.
+	if got := mergePropertyEdits(raw, nil); got != nil {
+		t.Errorf("nil edits = %v, want nil", got)
+	}
+	if got := mergePropertyEdits(raw, map[string]any{}); got == nil || len(got) != 0 {
+		t.Errorf("empty edits = %v, want an empty non-nil map", got)
+	}
+}
+
+// formContext builds an echo context from a parsed form body.
+func formContext(t *testing.T, target string, form url.Values) echo.Context {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationForm)
+	if err := req.ParseForm(); err != nil {
+		t.Fatalf("parse form: %v", err)
+	}
+	return echo.New().NewContext(req, httptest.NewRecorder())
+}
+
+// The editor's label field persists as the property's JSON-Schema `title`, and
+// an empty label persists no title at all.
+func TestObjectTypeEditFormCarriesPropertyTitle(t *testing.T) {
+	form := url.Values{
+		"description":          {"a person"},
+		"property_name":        {"owner_notes", "age"},
+		"property_label":       {"Owner notes", "  "},
+		"property_type":        {"string", "number"},
+		"property_widget":      {"", ""},
+		"property_description": {"", ""},
+		"property_required":    {"", ""},
+	}
+	edit := objectTypeEditFromForm("person", formContext(t, "/schema/object-types/person", form))
+
+	owner, _ := edit.Properties["owner_notes"].(map[string]any)
+	if owner["title"] != "Owner notes" {
+		t.Errorf("owner_notes title = %v, want Owner notes", owner["title"])
+	}
+	age, _ := edit.Properties["age"].(map[string]any)
+	if _, ok := age["title"]; ok {
+		t.Errorf("blank label must not persist a title: %v", age)
 	}
 }

@@ -299,10 +299,10 @@ func schemaOriginLabel(name, version string) string {
 }
 
 // propertyTypeOptions is the editor's fixed set of property type values. It
-// mirrors the types the memory schema registry accepts and drives both the
-// existing rows and the add-row template so they never drift.
+// mirrors the types the memory schema registry accepts and interprets and drives
+// both the existing rows and the add-row template so they never drift.
 func propertyTypeOptions() []string {
-	return []string{"string", "number", "boolean", "date", "array", "object"}
+	return []string{"string", "url", "number", "boolean", "date", "md5", "sha1", "sha256", "sha512", "array", "object"}
 }
 
 // propertyWidgetOption is one choice in the editor's per-property widget select.
@@ -468,6 +468,10 @@ func (s *Server) uiSchemaObjectTypeUpdate(c echo.Context) error {
 		}
 		return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("object type %q not found", name)})
 	}
+	// The editor renders a subset of each property's JSON-Schema keys, so merge
+	// its edit onto the effective type's existing definitions — otherwise enum,
+	// default, x-embedding-target, … would be dropped by the save.
+	edit.Properties = mergePropertyEdits(found.Properties, edit.Properties)
 	prov := provenanceFor(s.buildProvenanceIndex(ctx), *found)
 	if prov != nil {
 		// Blueprint-derived type: copy into the project-owned override pack
@@ -565,6 +569,7 @@ func objectTypeDetailFromForm(name string, c echo.Context) *ObjectTypeDetail {
 func objectTypePropertiesFromForm(c echo.Context) []PropertyDetail {
 	form := c.Request().Form
 	names := form["property_name"]
+	labels := form["property_label"]
 	types := form["property_type"]
 	widgets := form["property_widget"]
 	descriptions := form["property_description"]
@@ -577,6 +582,7 @@ func objectTypePropertiesFromForm(c echo.Context) []PropertyDetail {
 		}
 		out = append(out, PropertyDetail{
 			Name:        pn,
+			Title:       strings.TrimSpace(formValueAt(labels, i)),
 			Type:        formValueAt(types, i),
 			Widget:      formValueAt(widgets, i),
 			Description: formValueAt(descriptions, i),
@@ -623,6 +629,7 @@ func objectTypeEditFromForm(name string, c echo.Context) ObjectTypeEdit {
 	form := c.Request().Form
 	props := map[string]any{}
 	names := form["property_name"]
+	labels := form["property_label"]
 	types := form["property_type"]
 	widgets := form["property_widget"]
 	descriptions := form["property_description"]
@@ -633,6 +640,9 @@ func objectTypeEditFromForm(name string, c echo.Context) ObjectTypeEdit {
 			continue
 		}
 		p := map[string]any{"type": formValueAt(types, i)}
+		if l := strings.TrimSpace(formValueAt(labels, i)); l != "" {
+			p["title"] = l
+		}
 		if w := formValueAt(widgets, i); w != "" {
 			p["widget"] = w
 		}

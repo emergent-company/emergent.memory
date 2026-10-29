@@ -213,7 +213,7 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 		}
 		value := objectPreviewValue(o.Properties[d.Name])
 		out = append(out, objectPreviewField{
-			Label:       objectPreviewFieldLabel(d.Name),
+			Label:       objectPreviewDeclaredLabel(d),
 			Name:        d.Name,
 			Description: d.Description,
 			Value:       value,
@@ -232,6 +232,18 @@ func objectPreviewTypeFields(o GraphObject, schema objectPreviewSchema) []object
 		})
 	}
 	return out
+}
+
+// objectPreviewDeclaredLabel is the row label for a property the schema declares:
+// the authored display label (JSON-Schema `title`) when the property has one,
+// otherwise this drawer's humanised key. Titles take precedence so an authored
+// label is authoritative wherever the property is named; the humanised fallback
+// is the read-only preview's own convention for properties that declare none.
+func objectPreviewDeclaredLabel(d objectPropertyDef) string {
+	if d.Title != "" {
+		return d.Title
+	}
+	return objectPreviewFieldLabel(d.Name)
 }
 
 // objectPreviewFieldLabel renders a schema property name as a readable field

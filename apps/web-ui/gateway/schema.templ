@@ -457,7 +457,7 @@ templ schemaEditorForm(view *SchemaEditView) {
 				}
 			</div>
 			<div class="mb-2 hidden gap-2 text-[11px] font-medium tracking-wide text-muted-faint uppercase sm:grid sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
-				<span>Name</span>
+				<span>Label / key</span>
 				<span>Type</span>
 				<span>Widget</span>
 				<span>Required</span>
@@ -497,13 +497,17 @@ templ schemaEditorForm(view *SchemaEditView) {
 	</form>
 }
 
-// schemaPropertyRow is one editable property: name, type, required, and
-// description. The parallel field names (property_*) are read positionally by
-// the save handler; the required select always submits a value so the arrays
-// stay aligned (a bare checkbox would not).
+// schemaPropertyRow is one editable property: display label and machine key,
+// type, widget, required, and description. The parallel field names (property_*)
+// are read positionally by the save handler; the required select always submits
+// a value so the arrays stay aligned (a bare checkbox would not). The label is
+// optional — it persists as the property's JSON-Schema `title`.
 templ schemaPropertyRow(p PropertyDetail) {
 	<div class="property-row grid items-center gap-2 rounded-box border border-base-content/10 bg-base-200/25 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_8rem_8rem_minmax(0,1.4fr)_auto]">
-		<input type="text" name="property_name" value={ p.Name } placeholder="property_name" class="input input-sm w-full font-mono" aria-label="Property name"/>
+		<div class="flex min-w-0 flex-col gap-1">
+			<input type="text" name="property_label" value={ p.Title } placeholder="Display label" class="input input-sm w-full" aria-label="Property label"/>
+			<input type="text" name="property_name" value={ p.Name } placeholder="property_name" class="input input-sm w-full font-mono" aria-label="Property name"/>
+		</div>
 		<select name="property_type" class="select select-sm w-full" aria-label="Property type">
 			for _, opt := range propertyTypeOptions() {
 				<option

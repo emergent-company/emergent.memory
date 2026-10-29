@@ -89,6 +89,7 @@ func TestRenderSchemaEditorRowsAndTemplate(t *testing.T) {
 		`data-add-property="property-row-template"`,
 		`data-remove-property="1"`,
 		`name="property_name"`,
+		`name="property_label"`,
 		`name="property_type"`,
 		`name="property_required"`,
 		`name="property_description"`,
@@ -96,6 +97,7 @@ func TestRenderSchemaEditorRowsAndTemplate(t *testing.T) {
 		`action="/schema/object-types/person"`,
 		`name="_ui"`,
 		"first_name", "age", "number", "Optional", "Required", "Add property", "Save changes",
+		"Label / key", `value="url"`, `value="sha256"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("editor missing %q", want)

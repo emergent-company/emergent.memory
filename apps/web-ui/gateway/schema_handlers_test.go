@@ -476,3 +476,54 @@ func TestRequireSchemaWriteAllowsWithCapability(t *testing.T) {
 		t.Errorf("updated pack = %q, want pack-1", f.updatedSchemaPackID)
 	}
 }
+
+// TestUISchemaObjectTypeUpdateMergesUnmanagedPropertyKeys pins the handler wiring
+// of the merge: the editor renders a subset of each property's JSON-Schema keys,
+// so the save must carry the unmanaged ones over from the effective type rather
+// than replacing the map, and must persist the submitted label as `title`.
+func TestUISchemaObjectTypeUpdateMergesUnmanagedPropertyKeys(t *testing.T) {
+	f := &fakeMemory{
+		compiled: &CompiledSchemaTypes{ObjectTypes: []CompiledType{{
+			Name:       "person",
+			SchemaID:   "pack-1",
+			Properties: json.RawMessage(`{"homepage":{"type":"string","enum":["a","b"],"default":"a","x-embedding-target":true}}`),
+		}}},
+		schemas: []SchemaInfo{{ID: "pack-1", ProjectID: "proj"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate)
+
+	form := url.Values{}
+	form.Set("description", "a person")
+	form.Set("property_name", "homepage")
+	form.Set("property_label", "Homepage")
+	form.Set("property_type", "url")
+	form.Set("property_description", "canonical link")
+	rec := schemaFormPost(e, "/schema/object-types/person", form)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if f.updatedSchemaPackEdit == nil {
+		t.Fatal("no edit submitted")
+	}
+	homepage, ok := f.updatedSchemaPackEdit.Properties["homepage"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %v", f.updatedSchemaPackEdit.Properties)
+	}
+	if homepage["title"] != "Homepage" {
+		t.Errorf("title = %v, want the submitted label", homepage["title"])
+	}
+	if homepage["type"] != "url" || homepage["description"] != "canonical link" {
+		t.Errorf("editor fields not applied: %v", homepage)
+	}
+	if enum, _ := homepage["enum"].([]any); len(enum) != 2 {
+		t.Errorf("enum not preserved: %v", homepage)
+	}
+	if homepage["default"] != "a" {
+		t.Errorf("default not preserved: %v", homepage)
+	}
+	if homepage["x-embedding-target"] != true {
+		t.Errorf("x-embedding-target not preserved: %v", homepage)
+	}
+}

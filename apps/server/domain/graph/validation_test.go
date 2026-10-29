@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
@@ -108,6 +109,102 @@ func TestCoerceToDate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCoerceToURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"https url", "https://example.com/docs?x=1", "https://example.com/docs?x=1", false},
+		{"http url", "http://example.com", "http://example.com", false},
+		{"trimmed", "  https://example.com/a  ", "https://example.com/a", false},
+		{"missing scheme", "example.com/docs", "", true},
+		{"non-http scheme", "ftp://example.com/file", "", true},
+		{"missing host", "https:///path", "", true},
+		{"empty string", "", "", true},
+		{"non-string", 42, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToURL(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestCoerceToHash(t *testing.T) {
+	sha256Value := "3b1f2e4c5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e"
+	tests := []struct {
+		name      string
+		kind      string
+		input     any
+		expected  string
+		expectErr bool
+	}{
+		{"md5 lower", "md5", "d41d8cd98f00b204e9800998ecf8427e", "d41d8cd98f00b204e9800998ecf8427e", false},
+		{"sha1 upper normalised", "sha1", "DA39A3EE5E6B4B0D3255BFEF95601890AFD80709", "da39a3ee5e6b4b0d3255bfef95601890afd80709", false},
+		{"sha256", "sha256", sha256Value, sha256Value, false},
+		{"trimmed", "md5", "  d41d8cd98f00b204e9800998ecf8427e  ", "d41d8cd98f00b204e9800998ecf8427e", false},
+		{"wrong length", "md5", "d41d8cd98f00b204e9800998ecf8427", "", true},
+		{"non-hex", "md5", "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", "", true},
+		{"sha512 wrong length", "sha512", sha256Value, "", true},
+		{"unknown kind", "crc32", "d41d8cd9", "", true},
+		{"non-string", "md5", 123, "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := coerceToHash(tt.input, tt.kind)
+			if tt.expectErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestValidatePropertiesURLAndHash(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Name: "Link",
+		Properties: map[string]agents.PropertyDef{
+			"homepage": {Type: "url"},
+			"checksum": {Type: "sha256"},
+		},
+	}
+	sum := "3b1f2e4c5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e"
+
+	t.Run("valid values are coerced", func(t *testing.T) {
+		out, err := validateProperties(map[string]any{
+			"homepage": " https://example.com ",
+			"checksum": strings.ToUpper(sum),
+		}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "https://example.com", out["homepage"])
+		assert.Equal(t, sum, out["checksum"])
+	})
+
+	t.Run("invalid url is rejected", func(t *testing.T) {
+		_, err := validateProperties(map[string]any{"homepage": "not a url"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "homepage")
+	})
+
+	t.Run("invalid hash is rejected", func(t *testing.T) {
+		_, err := validateProperties(map[string]any{"checksum": "short"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "checksum")
+	})
 }
 
 func TestValidateProperties(t *testing.T) {
@@ -468,4 +565,98 @@ func TestApplySchemaDefaults(t *testing.T) {
 		assert.Equal(t, "x", props["name"])
 		assert.NotContains(t, props, "confidence")
 	})
+}
+
+// validatePatchProperties and validateRelationshipPatchProperties share the
+// delta coercion switch with validateProperties; these pin the url/hash arms so
+// the three copies cannot drift.
+func TestValidatePatchPropertiesURLAndHash(t *testing.T) {
+	schema := agents.ObjectSchema{
+		Name: "Link",
+		Properties: map[string]agents.PropertyDef{
+			"homepage": {Type: "url"},
+			"checksum": {Type: "sha256"},
+			"note":     {Type: "string"},
+		},
+	}
+	sum := "3b1f2e4c5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e"
+
+	t.Run("valid delta coerced and normalised", func(t *testing.T) {
+		out, err := validatePatchProperties(map[string]any{
+			"homepage": "  https://example.com/docs  ",
+			"checksum": strings.ToUpper(sum),
+		}, schema)
+		assert.NoError(t, err)
+		assert.Equal(t, "https://example.com/docs", out["homepage"])
+		assert.Equal(t, sum, out["checksum"])
+	})
+
+	t.Run("invalid url in the delta is rejected", func(t *testing.T) {
+		_, err := validatePatchProperties(map[string]any{"homepage": "not a url"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "homepage")
+	})
+
+	t.Run("invalid digest in the delta is rejected", func(t *testing.T) {
+		_, err := validatePatchProperties(map[string]any{"checksum": "abc"}, schema)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "checksum")
+	})
+
+	t.Run("null clears without coercion", func(t *testing.T) {
+		out, err := validatePatchProperties(map[string]any{"homepage": nil}, schema)
+		assert.NoError(t, err)
+		value, ok := out["homepage"]
+		if !ok || value != nil {
+			t.Errorf("null = %v (present %v), want nil", value, ok)
+		}
+	})
+
+	t.Run("unrelated delta is not blocked by a stale value", func(t *testing.T) {
+		// A value stored before the type existed may be malformed; a patch that
+		// does not touch it must not re-validate it.
+		out, err := validateRelationshipPatchProperties(
+			map[string]any{"note": "hello"},
+			map[string]any{"homepage": "not-a-url", "checksum": "short"},
+			schema,
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, "hello", out["note"])
+		if _, ok := out["homepage"]; ok {
+			t.Errorf("untouched key must not be echoed back: %v", out)
+		}
+	})
+}
+
+// PropertyValidator has its own coercion switch (domain/graph/service.go's
+// wrapper path); it must validate the new types too.
+func TestPropertyValidatorURLAndHash(t *testing.T) {
+	sum := "3b1f2e4c5d6a7b8c9d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e"
+	schema := &agents.ObjectSchema{
+		Name: "Link",
+		Properties: map[string]agents.PropertyDef{
+			"homepage": {Type: "url"},
+			"checksum": {Type: "sha256"},
+		},
+	}
+	v := NewPropertyValidator()
+
+	ok := v.ValidateProperties(map[string]any{
+		"homepage": " https://example.com ",
+		"checksum": strings.ToUpper(sum),
+	}, schema)
+	assert.True(t, ok.Valid, "errors: %v", ok.Errors)
+	assert.Equal(t, "https://example.com", ok.Coerced["homepage"])
+	assert.Equal(t, sum, ok.Coerced["checksum"])
+
+	bad := v.ValidateProperties(map[string]any{
+		"homepage": "not a url",
+		"checksum": "abc",
+	}, schema)
+	assert.False(t, bad.Valid)
+	fields := make([]string, 0, len(bad.Errors))
+	for _, e := range bad.Errors {
+		fields = append(fields, e.Field)
+	}
+	assert.ElementsMatch(t, []string{"homepage", "checksum"}, fields)
 }
