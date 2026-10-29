@@ -980,23 +980,31 @@ func (i *Installer) printCompletionMessage(apiKey string, servicesStarted bool, 
 	fmt.Printf("%sConfiguration (copy this JSON):%s\n", colorBold, colorReset)
 	fmt.Println()
 
-	binPath := filepath.Join(i.config.InstallDir, "bin", "memory")
+	// Memory is a remote MCP server (Streamable HTTP). There is no local stdio
+	// subcommand, so the `command`/`args` form this used to print produced a
+	// config that failed with `unknown command "mcp"` (#2204). Same shape as
+	// `deploy/self-hosted/install-online.sh` and `memory mcp-guide`.
 	fmt.Printf(`{
   "mcpServers": {
     "memory": {
-      "command": "%s",
-      "args": ["mcp"],
-      "env": {
-        "MEMORY_SERVER_URL": "http://localhost:%d",
-        "MEMORY_ACCOUNT_API_KEY": "%s"
+      "type": "http",
+      "url": "http://localhost:%d/api/mcp",
+      "headers": {
+        "X-Project-ID": "<PROJECT_ID>",
+        "X-API-Key": "%s"
       }
     }
   }
 }
-`, strings.ReplaceAll(binPath, "\\", "\\\\"), i.config.ServerPort, apiKey)
+`, i.config.ServerPort, apiKey)
 
 	fmt.Println()
+	fmt.Printf("%s<PROJECT_ID>%s is the project to expose over MCP; list yours with:\n", colorYellow, colorReset)
+	fmt.Println("  memory projects list")
+	fmt.Println()
 	fmt.Printf("%sNote:%s Restart your AI agent (Claude Desktop/VS Code) after adding this config.\n", colorYellow, colorReset)
+	fmt.Println()
+	fmt.Printf("%sReprint this config at any time:%s memory mcp-guide\n", colorBold, colorReset)
 	fmt.Println()
 	fmt.Printf("%s📚 Documentation:%s https://github.com/emergent-company/emergent.memory\n", colorCyan, colorReset)
 	fmt.Println()
