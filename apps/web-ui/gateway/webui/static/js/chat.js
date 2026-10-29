@@ -68,8 +68,6 @@
   var conversationId = "";  // threaded back into /api/chat turns
   var activeRunId = "";     // scheduled-run transcript open in the pane ("" = conversation/fresh chat)
   var transcriptRefreshPending = false; // one history re-render at a time
-  var thinkingMap = {};     // live thinking segments: id -> {details, body, setLive, done}
-  var thinkingOrder = [];   // thinking segment ids in insertion order
   var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
   var transcriptReady = false; // persisted history rendered at least once for this scope
 
@@ -292,6 +290,7 @@
   var isPauseNotice = MemoryChatStream.isPauseNotice;
   var isResumePrompt = MemoryChatStream.isResumePrompt;
   var isThinkingMessage = MemoryChatStream.isThinkingMessage;
+  var stripContextPreamble = MemoryChatStream.stripContextPreamble;
   var notify = MemoryChatStream.notify;
 
   function init() {
@@ -1367,7 +1366,6 @@
     if (liveTurn) return;
     MemoryChatComponents.renderTimeline(items, timelineCtx(pendingApprovals), {
       showRunMarkers: chatDebugEnabled(),
-      showThinking: true,
       showMeta: currentScopeIsRun(),
       silent: false,
     });
@@ -1476,13 +1474,6 @@
     afterTranscriptRender();
   }
 
-  // memory ACP wraps each user turn with "## Prior conversation context";
-  // surface only the current message, not the re-listed prior turns.
-  function stripContextPreamble(text) {
-    var m = text.match(/## Current user message\s*\n([\s\S]*)$/);
-    return m ? m[1].trim() : text;
-  }
-
   /* ---------- bubbles ---------- */
 
   // Inline tool-detail sections (summary / error / input / output) and
@@ -1569,76 +1560,27 @@
 
   /* ---------- expandable badges (thinking + tool calls) ---------- */
 
-  // The badge builder, its CSS injection, and the thinking-block renderer all
-  // live in chat-components.js (shared with sidepanel.js). Call sites below
-  // reference them via window.MemoryChatComponents with this page's badgeCtx.
-
-  // Live `thinking` SSE events (and the _debugThinking test hook) land here.
-  // A new id starts a fresh badge in stream position; `text` is appended as a
-  // plain-text delta; `done:true` stops the shimmer and leaves the badge
-  // collapsible.
-  function handleThinkingEvent(evt) {
-    var id = evt && evt.id;
-    if (!id) return;
-    var text = evt.text == null ? "" : String(evt.text);
-    var done = !!evt.done;
-    var role = evt.role || "operator";
-
-    var rec = thinkingMap[id];
-    if (!rec) {
-      rec = MemoryChatComponents.createThinkingBlock(role, { live: true }, badgeCtx);
-      if (!rec) return;
-      thinkingMap[id] = rec;
-      thinkingOrder.push(id);
-      // Keep the badge in arrival order (below the in-progress assistant
-      // bubble), like tool chips — chronological, not hoisted above the reply.
-      // createThinkingBlock already appended it to the end of the stream.
-    }
-
-    if (text) {
-      rec.body.appendChild(document.createTextNode(text));
-      scrollToBottom();
-    }
-
-    if (done && !rec.done) {
-      rec.done = true;
-      if (rec.setLive) rec.setLive(false);
-    }
-  }
-
+  // The badge builder, its CSS injection, the thinking-block renderer and the
+  // live thinking tracker all live in chat-components.js (shared with
+  // sidepanel.js and share-agent.js). One instance per page; call sites below
+  // keep their local names.
+  var thinking = MemoryChatComponents.createThinkingHost({
+    badgeCtx: badgeCtx,
+    scrollToBottom: scrollToBottom,
+  });
+  // Live `thinking` SSE events (and the _debugThinking test hook) land here: a
+  // new id starts a fresh badge in stream position, `text` appends as a plain
+  // delta, `done:true` stops the shimmer.
+  var handleThinkingEvent = thinking.handle;
   // History path: an operator message carrying a non-empty function_calls
   // array is the planning monologue, not the final answer — render it as a
   // collapsed thinking badge using raw text (never markdown-rendered).
   // (isThinkingMessage itself lives in chat-stream.js.)
-
-  function renderThinkingBlock(text, html, role) {
-    var rec = MemoryChatComponents.createThinkingBlock(role, { live: false }, badgeCtx);
-    if (!rec) return null;
-    if (html) {
-      // Server rendered the markdown already (content.html) — drop the mono
-      // raw-text classes and render it like assistant markdown, but dimmed.
-      rec.body.className = "memory-thinking-body memory-md break-words opacity-70";
-      rec.body.innerHTML = html;
-    } else if (text) {
-      rec.body.textContent = text;
-    }
-    return rec;
-  }
-
-  function clearThinking() {
-    thinkingMap = {};
-    thinkingOrder = [];
-  }
-
+  var renderThinkingBlock = thinking.render;
+  var clearThinking = thinking.clear;
   // The stream ended before a segment sent done:true — stop its shimmer so
   // the badge doesn't look stuck, then stop tracking the segments.
-  function finalizeThinking() {
-    for (var i = 0; i < thinkingOrder.length; i++) {
-      var rec = thinkingMap[thinkingOrder[i]];
-      if (rec && rec.setLive) rec.setLive(false);
-    }
-    clearThinking();
-  }
+  var finalizeThinking = thinking.finalize;
 
   // onStreamFinish: a completed (or aborted) turn is always re-pulled from
   // history so the transcript ends up showing the persisted run — even when

@@ -85,8 +85,6 @@
     liveTurn: false,
   };
 
-  var thinkingMap = {};   // live thinking segments: id -> {body, setLive, done}
-  var thinkingOrder = []; // thinking segment ids in insertion order
   var railOpener = null;  // element to restore focus to when the drawer closes
 
   /* ---------- small helpers ---------- */
@@ -469,65 +467,23 @@
     return state.agentUI || { icon: "", color: "" };
   }
 
-  /* ---------- thinking blocks (copied from chat.js) ---------- */
+  /* ---------- thinking blocks (shared with chat.js + sidepanel.js) ---------- */
 
+  // The live thinking tracker and the history renderer both live in
+  // chat-components.js, so the three pages that render thinking cannot drift.
+  var thinking = MemoryChatComponents.createThinkingHost({
+    badgeCtx: badgeCtx,
+    scrollToBottom: scrollToBottom,
+  });
   // Live `thinking` SSE events land here: a new id starts a fresh badge in
   // stream position; `text` appends as plain-text deltas; `done` stops the
   // shimmer. renderThinkingBlock renders the history path (non-live).
-  function handleThinkingEvent(evt) {
-    var id = evt && evt.id;
-    if (!id) return;
-    var text = evt.text == null ? "" : String(evt.text);
-    var done = !!evt.done;
-    var role = evt.role || "operator";
-
-    var rec = thinkingMap[id];
-    if (!rec) {
-      rec = MemoryChatComponents.createThinkingBlock(role, { live: true }, badgeCtx);
-      if (!rec) return;
-      thinkingMap[id] = rec;
-      thinkingOrder.push(id);
-    }
-
-    if (text) {
-      rec.body.appendChild(document.createTextNode(text));
-      scrollToBottom();
-    }
-
-    if (done && !rec.done) {
-      rec.done = true;
-      if (rec.setLive) rec.setLive(false);
-    }
-  }
-
-  function renderThinkingBlock(text, html, role) {
-    var rec = MemoryChatComponents.createThinkingBlock(role, { live: false }, badgeCtx);
-    if (!rec) return null;
-    if (html) {
-      // Server rendered the markdown already (content.html) — drop the mono
-      // raw-text classes and render it like assistant markdown, but dimmed.
-      rec.body.className = "memory-thinking-body memory-md break-words opacity-70";
-      rec.body.innerHTML = html;
-    } else if (text) {
-      rec.body.textContent = text;
-    }
-    return rec;
-  }
-
-  function clearThinking() {
-    thinkingMap = {};
-    thinkingOrder = [];
-  }
-
+  var handleThinkingEvent = thinking.handle;
+  var renderThinkingBlock = thinking.render;
+  var clearThinking = thinking.clear;
   // The stream ended before a segment sent done:true — stop its shimmer so
   // the badge doesn't look stuck, then stop tracking the segments.
-  function finalizeThinking() {
-    for (var i = 0; i < thinkingOrder.length; i++) {
-      var rec = thinkingMap[thinkingOrder[i]];
-      if (rec && rec.setLive) rec.setLive(false);
-    }
-    clearThinking();
-  }
+  var finalizeThinking = thinking.finalize;
 
   /* ---------- SSE dispatcher ---------- */
 
@@ -707,7 +663,6 @@
       },
     }, {
       showRunMarkers: false,
-      showThinking: true,
       showMeta: false,
       silent: true,
     });

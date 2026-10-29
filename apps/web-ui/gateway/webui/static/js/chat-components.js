@@ -1,13 +1,16 @@
-/* Memory web UI — shared chat components (tool-call badges, thinking blocks).
-   Loaded by BOTH the /chat page (chat.js) and the global side panel
-   (sidepanel.js) so tool-call rendering is pixel-identical everywhere and
-   there is exactly one implementation to keep in sync.
+/* Memory web UI — shared chat components (timeline renderer, tool-call badges,
+   thinking blocks, A2UI cards). Loaded by the /chat page (chat.js), the global
+   side panel (sidepanel.js) and the public share page (share-agent.js) so the
+   transcript is pixel-identical everywhere and there is exactly one
+   implementation to keep in sync.
 
    Pure string builders (humanizeToolName, detail/error/summary sections,
    renderToolDetails) are self-contained. The DOM builders (expandableBadge,
    createThinkingBlock) take a ctx object { messages, hideEmpty,
    scrollToBottom } supplied by the host page's IIFE — each page owns its own
-   message stream container, so nothing is shared mutable state. */
+   message stream container, so nothing is shared mutable state.
+   createThinkingHost(createThinkingBlock + the live thinking segment map) is
+   instantiated once per page for the same reason. */
 (function () {
   "use strict";
 
@@ -378,6 +381,83 @@
       body: badge.detail.querySelector(".memory-thinking-body"),
       setLive: badge.setLive,
     };
+  }
+
+  // Shared thinking host — the live `thinking` SSE path and the transcript path
+  // in one object, so the pages that render thinking (/chat, the global
+  // assistant drawer, public share pages) share one implementation instead of a
+  // copy each.
+  //   opts.badgeCtx          passed to createThinkingBlock (may be a getter)
+  //   opts.scrollToBottom()  called after a live delta lands
+  // Returns:
+  //   handle(evt)            live frame: a new id starts a badge in stream
+  //                          position, `text` appends, `done` stops the shimmer
+  //   render(text, html,role) history: one static, collapsed badge
+  //   clear()                forget the live segments (a turn started)
+  //   finalize()             stop the shimmer on segments the stream left open,
+  //                          then clear
+  function createThinkingHost(opts) {
+    opts = opts || {};
+    var map = {};     // live segment id -> {body, setLive, done}
+    var order = [];   // segment ids in insertion order
+    var scroll = opts.scrollToBottom || function () {};
+
+    function handle(evt) {
+      var id = evt && evt.id;
+      if (!id) return;
+      var text = evt.text == null ? "" : String(evt.text);
+      var role = evt.role || "operator";
+
+      var rec = map[id];
+      if (!rec) {
+        rec = createThinkingBlock(role, { live: true }, opts.badgeCtx);
+        if (!rec) return;
+        map[id] = rec;
+        order.push(id);
+        // createThinkingBlock already appended it to the end of the stream, so
+        // the badge keeps arrival order (below the in-progress bubble) like a
+        // tool chip — chronological, not hoisted above the reply.
+      }
+
+      if (text) {
+        rec.body.appendChild(document.createTextNode(text));
+        scroll();
+      }
+
+      if (evt.done && !rec.done) {
+        rec.done = true;
+        if (rec.setLive) rec.setLive(false);
+      }
+    }
+
+    function render(text, html, role) {
+      var rec = createThinkingBlock(role, { live: false }, opts.badgeCtx);
+      if (!rec) return null;
+      if (html) {
+        // Server rendered the markdown already (content.html) — drop the mono
+        // raw-text classes and render it like assistant markdown, but dimmed.
+        rec.body.className = "memory-thinking-body memory-md break-words opacity-70";
+        rec.body.innerHTML = html;
+      } else if (text) {
+        rec.body.textContent = text;
+      }
+      return rec;
+    }
+
+    function clear() {
+      map = {};
+      order = [];
+    }
+
+    function finalize() {
+      for (var i = 0; i < order.length; i++) {
+        var rec = map[order[i]];
+        if (rec && rec.setLive) rec.setLive(false);
+      }
+      clear();
+    }
+
+    return { handle: handle, render: render, clear: clear, finalize: finalize };
   }
 
   // Shared renderer for a conversation's composed agent instruction — the
@@ -1457,8 +1537,6 @@
   //                   regardless (header, working placeholder, cancelable run
   //                   id, turn footers) — only the visible rows are gated. The
   //                   /chat page enables this via its debug switch (chat.js).
-  //   showThinking    chat renders the planning/thinking monologue and the final
-  //                   answer's persisted reasoning; the side panel renders neither.
   //   showMeta        chat annotates bubbles/chips with "step N · rel time" on a
   //                   dedicated run transcript (currentScopeIsRun()); the side
   //                   panel never does. (The issue names runTranscript AND
@@ -1466,6 +1544,11 @@
   //                   the run-scope meta annotation — so it is a single flag.)
   //   silent          the side panel suppresses the per-bubble scrollToBottom and
   //                   scrolls once at the end; chat scrolls on every bubble.
+  //
+  // Thinking is NOT a flag: every surface renders it. An operator run writes
+  // its answer text on the same record as the next tool call, so a surface that
+  // skipped thinking items lost the assistant's prose, not just the reasoning —
+  // which is exactly what the assistant drawer did.
   //
   // ctx — page-local hooks and state (kept on the host page):
   //   container                              required — the message list element
@@ -1477,9 +1560,11 @@
   //   addAssistantMessage(html, name, silent, meta) -> Element|null
   //   toolChip(tool, status, detail, payload)
   //   renderHistoryQuestion(input, questionId, answer)
-  //   renderThinkingBlock(text, html, kind)
+  //   renderThinkingBlock(text, html, kind)  optional — a host that omits it
+  //                                          skips thinking items instead of
+  //                                          failing
   //   isThinkingItem(item, content)          surface-specific thinking guard
-  //   stripContextPreamble(text)             optional (chat only)
+  //   stripContextPreamble(text)             optional
   //   pendingApprovals[], renderApproval({questionId,tool,input})   optional
   //   attachTurnFooters(records), onNewestRun(runId,status,ended), afterRender(status,ended)  optional
   function renderTimeline(items, ctx, flags) {
@@ -1488,7 +1573,6 @@
     var CS = window.MemoryChatStream || {};
     var container = ctx.container;
     var showRunMarkers = !!flags.showRunMarkers;
-    var showThinking = !!flags.showThinking;
     var showMeta = !!flags.showMeta;
     var silent = !!flags.silent;
 
@@ -1643,21 +1727,23 @@
             // Tool result — already shown by the preceding tool_call chip.
             break;
           } else if (ctx.isThinkingItem ? ctx.isThinkingItem(item, content) : CS.isThinkingMessage(content)) {
-            // Planning/thinking monologue (carries function_calls): chat renders
-            // a collapsible thinking block; the side panel skips it entirely so
-            // its history stays consistent with a live stream that never renders
-            // thinking.
-            if (showThinking) ctx.renderThinkingBlock(text, html, "reasoning");
+            // Planning/thinking monologue (carries function_calls): a collapsed
+            // Thinking block on every surface, exactly like the live stream. A
+            // tool-calling step with no text has nothing to show, so it is
+            // skipped rather than rendered as an empty badge.
+            if ((text || html) && ctx.renderThinkingBlock) {
+              ctx.renderThinkingBlock(text, html, "reasoning");
+            }
           } else if (CS.isPauseNotice(text)) {
             // Synthetic "Execution paused…" message the executor injects when a
             // run pauses on ask_user — the question card already conveys this.
             break;
-          } else if (text || html || (showThinking && content.reasoning)) {
+          } else if (text || html || content.reasoning) {
             // assistant / diane: skip function-call-only and empty messages.
             // The server splits the chain-of-thought into content.reasoning
             // (rendered as a Thinking block above) and renders the reply
             // markdown into content.html.
-            if (showThinking && content.reasoning) {
+            if (content.reasoning && ctx.renderThinkingBlock) {
               ctx.renderThinkingBlock(content.reasoning, null, "reasoning");
             }
             var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), name, silent, meta);
@@ -1708,6 +1794,7 @@
     expandableBadge: expandableBadge,
     ensureBadgeStyle: ensureBadgeStyle,
     createThinkingBlock: createThinkingBlock,
+    createThinkingHost: createThinkingHost,
     agentPromptCard: agentPromptCard,
     formatDurationMs: formatDurationMs,
     makeCopyButton: makeCopyButton,

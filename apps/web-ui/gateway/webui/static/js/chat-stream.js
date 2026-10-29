@@ -71,6 +71,15 @@
     );
   }
 
+  // stripContextPreamble removes the internal continuity preamble the server
+  // prepends to a resumed run's user message ("## Prior conversation context …
+  // ## Current user message") so the bubble shows only what the user typed.
+  // Shared: the /chat page and the assistant drawer render the same history.
+  function stripContextPreamble(text) {
+    var m = String(text || "").match(/## Current user message\s*\n([\s\S]*)$/);
+    return m ? m[1].trim() : text;
+  }
+
   // Tool-result normalization, shared by live SSE and history rendering.
   // The memory service (and any other MCP server) reports results in
   // heterogeneous shapes, so we classify generically at the boundary:
@@ -1092,6 +1101,7 @@
     isPauseNotice: isPauseNotice,
     isResumePrompt: isResumePrompt,
     isThinkingMessage: isThinkingMessage,
+    stripContextPreamble: stripContextPreamble,
     normalizeStatus: normalizeStatus,
     hasFailureSignal: hasFailureSignal,
     firstError: firstError,

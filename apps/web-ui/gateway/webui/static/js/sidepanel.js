@@ -97,12 +97,26 @@
     scrollToBottom: scrollToBottom,
   };
 
+  // Thinking — live `thinking` frames and the history path — is tracked by the
+  // shared host in chat-components.js, the same instance chat.js and the public
+  // share pages wire. An operator run carries its answer text on the same
+  // record as the next tool call, so a surface that skipped thinking items
+  // showed the question cards and tool chips with none of the assistant's
+  // prose.
+  var thinking = MemoryChatComponents.createThinkingHost({
+    badgeCtx: badgeCtx,
+    scrollToBottom: scrollToBottom,
+  });
+  var handleThinkingEvent = thinking.handle;
+  var renderThinkingBlock = thinking.render;
+  var clearThinking = thinking.clear;
+  var finalizeThinking = thinking.finalize;
+
   // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
   // page-local (persist + session picker refresh); frames from an aborted
   // stream are dropped via isAborted (newSession()/loadSession() abort the
   // in-flight controller, but frames already buffered in the reader would
-  // otherwise land after the state reset and clobber the fresh session). The
-  // panel never renders thinking, so no onThinking is wired.
+  // otherwise land after the state reset and clobber the fresh session).
   var handleEvent = MemoryChatHost.makeHandleEvent({
     getStreaming: function () { return streaming; },
     setBubbleHTML: function (v) { bubbleHTML = v; },
@@ -123,6 +137,7 @@
     },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
+    onThinking: handleThinkingEvent,
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },
     onMeta: function (evt) {
       if (evt.conversationId) {
@@ -156,9 +171,9 @@
     setStreaming: setStreaming,
     scrollToBottom: scrollToBottom,
     hideEmpty: hideEmpty,
-    onStreamStart: function () {},
-    onStreamFinish: recordHistory,
-    onStreamFail: function () {},
+    onStreamStart: function () { clearThinking(); },
+    onStreamFinish: function () { finalizeThinking(); recordHistory(); },
+    onStreamFail: function () { finalizeThinking(); },
     answerQuestion: answerQuestion,
     postDecision: postDecision,
     badgeCtx: badgeCtx,
@@ -191,6 +206,7 @@
   var isPauseNotice = MemoryChatStream.isPauseNotice;
   var isResumePrompt = MemoryChatStream.isResumePrompt;
   var isThinkingMessage = MemoryChatStream.isThinkingMessage;
+  var stripContextPreamble = MemoryChatStream.stripContextPreamble;
   var notify = MemoryChatStream.notify;
 
   // Called by the shared stream engine on stream finish: persist the finished
@@ -487,8 +503,15 @@
   // transcript, renders it into the log, and sets conversationId so subsequent
   // messages continue that session. Only the conversationId is persisted — the
   // transcript already lives on the backend.
-  async function loadSession(id) {
+  //
+  // opts.keepLocalOnEmpty — a restore() reconcile must not blank a transcript
+  //   the server has not stored yet (an empty timeline and no local copy would
+  //   otherwise leave the panel looking like a new session).
+  // opts.quiet — suppress the error toast; used by restore(), where a restored
+  //   local transcript is already on screen when the fetch fails.
+  async function loadSession(id, opts) {
     if (!id) return;
+    opts = opts || {};
     if (aborter) aborter.abort();
     streaming = false;
     bubble = null; bubbleHTML = ""; bubbleText = "";
@@ -502,9 +525,14 @@
       var data = await r.json();
       items = data.items || [];
     } catch (err) {
-      notify("error", "Could not load session: " + err.message);
+      if (!opts.quiet) notify("error", "Could not load session: " + err.message);
       return;
     }
+
+    // The fetch can outlive the moment it was issued: a turn may have started
+    // in the meantime, and replacing the log would destroy its bubble.
+    if (streaming) return;
+    if (opts.keepLocalOnEmpty && items.length === 0 && history.length) return;
 
     conversationId = id;
     history = [];
@@ -535,8 +563,10 @@
   // renderHistoryItems renders a conversation's server timeline into the log —
   // the same item vocabulary chat.js's history render uses, now through the one
   // shared MemoryChatComponents.renderTimeline. The panel deviates only in its
-  // flags: no run lifecycle boundaries, no thinking, no run-scope meta, and
-  // silent bubbles (it scrolls once at the end) — see the renderTimeline contract.
+  // flags: no run lifecycle boundaries, no run-scope meta, and silent bubbles
+  // (it scrolls once at the end) — see the renderTimeline contract. Thinking
+  // (operator planning, which also carries the answer text) renders exactly as
+  // it does on /chat.
   function renderHistoryItems(items) {
     MemoryChatComponents.renderTimeline(items, {
       container: messages,
@@ -548,21 +578,24 @@
         if (messages) messages.innerHTML = "";
       },
       isThinkingItem: function (item, content) {
-        // The panel's live stream never renders thinking, so its history stays
-        // consistent and skips operator planning monologues too.
+        // An operator message carrying tool calls is the planning/answer text,
+        // not a final answer bubble — same rule as the live stream.
         return item.role === "operator" && isThinkingMessage(content);
       },
+      // A resumed run's user record repeats the prior turns under "## Prior
+      // conversation context"; the bubble shows only what the user typed.
+      stripContextPreamble: stripContextPreamble,
       addUserMessage: addUserMessage,
       addAssistantMessage: addAssistantMessage,
       toolChip: toolChip,
       renderHistoryQuestion: renderHistoryQuestion,
+      renderThinkingBlock: renderThinkingBlock,
       afterRender: function () {
         if (!items.length && empty) empty.classList.remove("hidden");
         scrollToBottom(true);
       },
     }, {
       showRunMarkers: false,
-      showThinking: false,
       showMeta: false,
       silent: true,
     });
@@ -679,12 +712,15 @@
     }
     if (history.length) scrollToBottom(true);
 
-    // A session loaded from the picker persists only its conversationId (the
-    // transcript lives on the backend). After a reload there is no local
-    // history to render — re-fetch the server transcript so the session
-    // reappears. In-progress conversations (local history present) are left
-    // untouched: the local copy is newer than what the backend has flushed.
-    if (conversationId && history.length === 0) loadSession(conversationId);
+    // A resumed session's transcript lives on the backend, which is
+    // authoritative: the local copy is a cache (the last 80 turns, and blind to
+    // anything another surface appended), so trusting it alone rendered a
+    // truncated session after a reload. Re-fetch whenever this panel is not
+    // mid-turn; a failed fetch, or an empty timeline for a session the server
+    // has not stored yet, leaves the restored copy in place.
+    if (conversationId && !streaming) {
+      loadSession(conversationId, { keepLocalOnEmpty: true, quiet: true });
+    }
   }
 
   /* ---------- bubbles ---------- */

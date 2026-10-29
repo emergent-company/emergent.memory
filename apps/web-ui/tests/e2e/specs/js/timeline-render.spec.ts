@@ -13,8 +13,11 @@ import path from 'node:path';
 //   2. the chat surface's debug-on variant renders run lifecycle markers,
 //      thinking blocks, the run-scope "step N · …" meta annotations, tool chips
 //      and bubbles (the default chat transcript hides the marker rows — #1381);
-//   3. the side panel renders the SAME items WITHOUT markers/thinking/meta
-//      (its documented deviations), while still rendering chips and bubbles.
+//   3. the side panel renders the SAME items WITHOUT markers/meta (its
+//      documented deviations), while still rendering thinking, chips and
+//      bubbles — thinking is not a deviation: an operator run puts its answer
+//      text on the same record as the next tool call, so hiding thinking hid
+//      the assistant's prose.
 //
 // It is non-vacuous: if sidepanel.js is wired with chat's flags (or vice versa)
 // the surface assertions below fail, and if renderTimeline ignores a flag the
@@ -57,10 +60,12 @@ const T2 = '2026-09-30T10:00:30.000Z';
 type HistoryItem = Record<string, unknown>;
 
 // One rich, run-scoped timeline. The two surfaces render this SAME array; the
-// only difference must be the flags-driven deviations (markers/thinking/meta).
+// only difference must be the flags-driven deviations (markers/meta).
 //  - run_start / run_end      → chat: typed markers; sidepanel: skipped
 //  - user message             → both: a "You" bubble
-//  - operator thinking        → chat: a Thinking block; sidepanel: skipped
+//  - operator thinking        → both: a Thinking block (the answer text of an
+//                               operator run rides on this record)
+//  - empty operator thinking  → both: skipped (a bare tool call has no prose)
 //  - tool_call                → both: a tool chip
 //  - agent message (html)     → both: an assistant bubble
 const ITEMS: HistoryItem[] = [
@@ -70,6 +75,15 @@ const ITEMS: HistoryItem[] = [
     kind: 'message',
     role: 'operator',
     content: { text: 'planning out loud', function_calls: [{ name: 'entity-query' }] },
+    step_number: 2,
+    created_at: T1,
+  },
+  // A tool-calling step with no text: nothing to show, so neither surface may
+  // paint an empty Thinking badge for it.
+  {
+    kind: 'message',
+    role: 'operator',
+    content: { text: '', function_calls: [{ name: 'entity-query' }] },
     step_number: 2,
     created_at: T1,
   },
@@ -98,10 +112,10 @@ const FAILED_ITEMS: HistoryItem[] = [
 ];
 
 // Debug-on chat flags: markers ON (the /chat page enables this transiently via
-// ?debug / window.MemoryChatDebug), thinking + meta ON. Side panel flags leave
-// all three OFF.
-const DEBUG_FLAGS = { showRunMarkers: true, showThinking: true, showMeta: true, silent: false };
-const SIDEPANEL_FLAGS = { showRunMarkers: false, showThinking: false, showMeta: false, silent: true };
+// ?debug / window.MemoryChatDebug), meta ON. Side panel flags leave both OFF.
+// Thinking is rendered on both surfaces and is not a flag.
+const DEBUG_FLAGS = { showRunMarkers: true, showMeta: true, silent: false };
+const SIDEPANEL_FLAGS = { showRunMarkers: false, showMeta: false, silent: true };
 
 interface StubWindow {
   __eventsources: unknown[];
@@ -196,7 +210,7 @@ async function renderWithFlags(
 }
 
 test.describe('shared timeline renderer — flag matrix (chat-components.js)', () => {
-  test('exposes renderTimeline and gates markers/thinking/meta on the flags', async ({ page }) => {
+  test('exposes renderTimeline and gates markers/meta on the flags', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
     await page.setContent(BARE_SKELETON);
@@ -218,11 +232,13 @@ test.describe('shared timeline renderer — flag matrix (chat-components.js)', (
     expect(chat.assistants).toEqual(['<p>all done</p>']);
     expect(chat.tools).toEqual(['entity-query']);
 
-    // Side panel flags: no markers, no thinking, no meta — but the same bubbles
+    // Side panel flags: no markers, no meta — but the same thinking, bubbles
     // and chips. If a flag were ignored/mis-wired, one of these counts would
     // match chat's instead of 0.
     expect(side.markers).toBe(0);
-    expect(side.thinking).toBe(0);
+    // Thinking is flagless: one badge for the populated planning record, none
+    // for the empty tool-calling step.
+    expect(side.thinking).toBe(1);
     expect(side.metas).toBe(0);
     expect(side.users).toEqual(['do the thing']);
     expect(side.assistants).toEqual(['<p>all done</p>']);
@@ -338,7 +354,7 @@ test.describe('shared timeline renderer — /chat surface (chat.js)', () => {
     // Run lifecycle boundary rows are a debug affordance, hidden by default
     // (#1381). The items still drive the rest of the transcript.
     await expect(messages.locator('.memory-run-marker')).toHaveCount(0);
-    // Thinking block (chat-only deviation: showThinking).
+    // Thinking block (rendered on every surface; the empty step is skipped).
     await expect(messages.locator('.memory-thinking')).toHaveCount(1);
     await expect(messages.locator('.memory-thinking-body')).toContainText('planning out loud');
     // Run-scope meta annotation (chat-only deviation: showMeta).
@@ -465,7 +481,7 @@ const SIDEPANEL_SKELETON = `<!doctype html>
 </html>`;
 
 test.describe('shared timeline renderer — side panel surface (sidepanel.js)', () => {
-  test('renders the same items WITHOUT markers/thinking/meta, with chips and bubbles', async ({ page }) => {
+  test('renders the same items WITHOUT markers/meta, with thinking, chips and bubbles', async ({ page }) => {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
@@ -522,10 +538,15 @@ test.describe('shared timeline renderer — side panel surface (sidepanel.js)', 
     await expect(messages.locator('.memory-md')).toContainText('all done');
     await expect(messages.locator('[data-tool="entity-query"]')).toHaveCount(1);
 
-    // The side-panel deviations: no run lifecycle markers, no thinking, no meta.
+    // The side-panel deviations: no run lifecycle markers, no meta.
     await expect(messages.locator('.memory-run-marker')).toHaveCount(0);
-    await expect(messages.locator('.memory-thinking')).toHaveCount(0);
     await expect(messages.locator('.chat-footer')).toHaveCount(0);
+
+    // Thinking is NOT a deviation any more: the drawer renders the operator's
+    // planning/answer text exactly as /chat does, and skips the empty step
+    // instead of painting a blank badge (#2237).
+    await expect(messages.locator('.memory-thinking')).toHaveCount(1);
+    await expect(messages.locator('.memory-thinking-body')).toContainText('planning out loud');
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
