@@ -10312,7 +10312,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.88.2
+  version: 0.88.3
 paths:
   /.well-known/oauth-protected-resource:
     get:
