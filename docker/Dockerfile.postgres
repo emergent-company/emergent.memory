@@ -1,7 +1,8 @@
 # Custom PostgreSQL with pgvector and initialization scripts
 # Embeds init scripts directly in image for portability
 #
-# NOTE: Zitadel is managed externally via emergent-infra/zitadel
+# NOTE: Zitadel is not part of this stack. Authentication is standalone API-key
+# or an OIDC issuer you host yourself; nothing here creates Zitadel objects.
 FROM pgvector/pgvector:pg17
 
 # Copy initialization scripts

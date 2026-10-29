@@ -1,5 +1,9 @@
 # Docker Services Prefix Configuration
 
+> **Historical.** The Compose stack this document configures has been removed;
+> the shipped stack is [`deploy/self-hosted/docker-compose.yml`](../deploy/self-hosted/docker-compose.yml).
+> `docker/.env` is no longer read — see `apps/cli/internal/installer/docker.go` (#2004).
+
 This document explains how to run multiple instances of the emergent-memory Docker services without naming conflicts.
 
 ## Overview
