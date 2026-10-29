@@ -962,7 +962,7 @@ func (h *Handler) StreamChat(c echo.Context) error {
 		// message is the answer: resume that run instead of starting a fresh one.
 		if q, qErr := h.agentRepo.FindPendingQuestionByConversation(ctx, user.ProjectID, conv.ID.String()); qErr == nil && q != nil {
 			if handled := h.resumeForAnswer(runCtx, sseWriter, conv, q, message, user); handled {
-				sseWriter.WriteData(sse.NewDoneEvent())
+				_ = sseWriter.WriteData(sse.NewDoneEvent())
 				sseWriter.Close()
 				return nil
 			}
@@ -1256,7 +1256,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 		switch event.Type {
 		case agents.StreamEventTextDelta:
 			fullResponse.WriteString(event.Text)
-			sseWriter.WriteData(sse.NewTokenEvent(event.Text))
+			_ = sseWriter.WriteData(sse.NewTokenEvent(event.Text))
 		case agents.StreamEventThinking:
 			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
 		case agents.StreamEventToolCallStart:
@@ -1271,9 +1271,9 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			}
 			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
 		case agents.StreamEventError:
-			sseWriter.WriteData(sse.NewErrorEvent(event.Error))
+			_ = sseWriter.WriteData(sse.NewErrorEvent(event.Error))
 		case agents.StreamEventToolApproval:
-			sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
+			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
 			surfaces = append(surfaces, event.A2UI...)
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
@@ -1420,7 +1420,7 @@ func (h *Handler) streamAgentChat(ctx context.Context, conv *Conversation, messa
 			slog.String("agent_definition_id", agentDefID),
 			slog.String("error", err.Error()),
 		)
-		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
+		_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
 		return nil
 	}
 
@@ -1659,17 +1659,17 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 	// consume the question permanently and leave the run paused with nothing to
 	// answer — the exact stall this fix exists to remove.
 	if err := h.agentExecutor.EnsureExecutionEnabled(); err != nil {
-		sseWriter.WriteData(sse.NewErrorEvent("Agent execution is disabled: " + err.Error()))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("Agent execution is disabled: " + err.Error()))
 		return true
 	}
 	if run.StepCount >= agents.MaxTotalStepsPerRun {
-		sseWriter.WriteData(sse.NewErrorEvent("This run reached its step limit and cannot be resumed. Send a new message to start a fresh run."))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("This run reached its step limit and cannot be resumed. Send a new message to start a fresh run."))
 		return true
 	}
 
 	claimed, err := h.agentRepo.AnswerQuestion(ctx, q.ID, message, user.ID)
 	if err != nil {
-		sseWriter.WriteData(sse.NewErrorEvent("Failed to record answer"))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to record answer"))
 		return true
 	}
 	if !claimed {
@@ -1680,7 +1680,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 	agent, err := h.agentRepo.FindByID(ctx, run.AgentID, nil)
 	if err != nil || agent == nil {
 		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
-		sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
 		return true
 	}
 	agentDef, _ := h.agentRepo.ResolveDefinitionForAgent(ctx, agent)
@@ -1700,7 +1700,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 	})
 	if err != nil {
 		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
-		sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
+		_ = sseWriter.WriteData(sse.NewErrorEvent("Failed to resume the paused run"))
 		return true
 	}
 	if run.SuspendContext != nil {
@@ -1722,7 +1722,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		switch event.Type {
 		case agents.StreamEventTextDelta:
 			fullResponse.WriteString(event.Text)
-			sseWriter.WriteData(sse.NewTokenEvent(event.Text))
+			_ = sseWriter.WriteData(sse.NewTokenEvent(event.Text))
 		case agents.StreamEventThinking:
 			_ = sseWriter.WriteData(sse.NewThinkingEvent(event.ID, event.Role, event.Text, event.Done))
 		case agents.StreamEventToolCallStart:
@@ -1737,9 +1737,9 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 			}
 			_ = sseWriter.WriteData(sse.NewMCPToolEventWithID(event.Tool, status, event.ID, event.Output, event.Error))
 		case agents.StreamEventError:
-			sseWriter.WriteData(sse.NewErrorEvent(event.Error))
+			_ = sseWriter.WriteData(sse.NewErrorEvent(event.Error))
 		case agents.StreamEventToolApproval:
-			sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
+			_ = sseWriter.WriteData(sse.NewApprovalEvent(event.Tool, event.Input, event.QuestionID))
 		case agents.StreamEventA2UI:
 			_ = sseWriter.WriteData(sse.NewUIEvent(event.SurfaceID, event.A2UI))
 		}
@@ -1771,7 +1771,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 		_ = h.agentRepo.ReopenQuestion(ctx, q.ID)
 		_ = h.agentRepo.FailRunWithSteps(ctx, run.ID, fmt.Sprintf("resume failed: %s", err.Error()), run.StepCount)
 		_ = h.agentRepo.FailRunWithSteps(ctx, preCreated.ID, "resume failed before start", run.StepCount)
-		sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
+		_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(err)))
 		return true
 	}
 
@@ -1803,7 +1803,7 @@ func (h *Handler) resumeForAnswer(ctx context.Context, sseWriter *sse.Writer, co
 			h.persistPausedRunMessage(ctx, user.ProjectID, user.ID, conv, result, text)
 		case agents.RunStatusError:
 			if errMsg, ok := result.Summary["error"].(string); ok && errMsg != "" {
-				sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
+				_ = sseWriter.WriteData(sse.NewErrorEvent(friendlyProviderError(fmt.Errorf("%s", errMsg))))
 			}
 		default:
 			if text != "" {
