@@ -21,6 +21,14 @@ concurrency:
 
 env:
   GO_VERSION: '1.26'
+  # Every Go step in this workflow resolves through apps/server/go.mod alone,
+  # never the repo-root go.work. Both images that ship this binary
+  # (apps/server/Dockerfile and deploy/self-hosted/Dockerfile.server) copy only
+  # apps/server + pkg/sdk, so they build in module mode; workspace MVS instead
+  # picks the highest version any *other* module requires, which is how the
+  # gateway shipped a grpc pin this CI never exercised (#2300, #2309). A
+  # go.mod-only problem here would be invisible until image-build time (#2314).
+  GOWORK: "off"
 
 # Least privilege: PR-controlled source runs on the self-hosted runner only
 # behind the fork guard; keep the checkout token read-only as defense-in-depth.
@@ -269,6 +277,7 @@ jobs:
           go run ./cmd/migrate -c up -allow-localhost
 
       - name: Check schema documentation is current
+        working-directory: apps/server
         env:
           DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
         run: |
@@ -276,7 +285,10 @@ jobs:
           # migrated database. A migration that changes the schema must
           # regenerate it in the same PR; otherwise the document silently rots
           # the way it did after the Nx tooling was removed.
-          go run ./apps/server/cmd/schema-dbml -check
+          #
+          # Run from apps/server (module mode, like the rest of the job) and
+          # point -out at the repo-root document the tool defaults to.
+          go run ./cmd/schema-dbml -check -out ../../docs/schema.dbml
 
       - name: Run DB-backed tests
         working-directory: apps/server
