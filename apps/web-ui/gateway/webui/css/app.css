@@ -335,6 +335,14 @@ main#main-content {
       max-height: 100dvh;
     }
   }
+  /* dvh does not shrink for the software keyboard either; app.js publishes the
+     layout-space visible height as --app-vh and flags <html>. Scoped to the
+     drawer mode: on desktop the sidebar is a layout column, not a
+     viewport-pinned surface. */
+  html.keyboard-open #_layout-sidebar {
+    height: var(--app-vh, 100vh);
+    max-height: var(--app-vh, 100vh);
+  }
 }
 /* The nav menu is the drawer's scroll container; pad its scroll end so the
    last item clears the home indicator (iPad/landscape) instead of hiding
@@ -1716,11 +1724,19 @@ html[data-standalone] body {
   }
 }
 
-/* iOS software keyboard: dvh does NOT shrink for the keyboard. app.js sets
-   --app-vh from visualViewport.height and toggles .keyboard-open on <html>, so
-   shrinking the shell lifts bottom-anchored composers above the keyboard. */
+/* iOS software keyboard: dvh does NOT shrink for the keyboard. app.js publishes
+   --app-vh as `visualViewport.height * visualViewport.scale` — the height in
+   *layout* pixels — and toggles .keyboard-open on <html>, so shrinking these
+   surfaces lifts bottom-anchored composers and action rows above the keyboard.
+   The multiplication is load-bearing: visualViewport reports CSS pixels at the
+   current zoom, so an unscaled read turns a pinch zoom into a keyboard.
+   Every viewport-pinned surface needs its own `html.keyboard-open` override —
+   some sit in their own media query, as the nav drawer and the chat rail do —
+   and a matching row in SURFACES in specs/js/mobile-viewport.spec.ts, which
+   fails when a rule in this stylesheet has no row. */
 html.keyboard-open .app-shell { height: var(--app-vh, 100vh); }
-html.keyboard-open #sidepanel-panel:not(.sidepanel-in-modal) { height: var(--app-vh, 100vh); }
+html.keyboard-open #sidepanel-panel:not(.sidepanel-in-modal),
+html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height: var(--app-vh, 100vh); }
 
 /* Modal boxes: never taller than the dynamic viewport; the extra bottom padding
    keeps the action row clear of the home indicator. */
@@ -1779,6 +1795,11 @@ html.keyboard-open #sidepanel-panel:not(.sidepanel-in-modal) { height: var(--app
   }
   @supports (height: 100dvh) {
     #chat-rail:not(.hidden) { height: 100dvh; }
+  }
+  /* The rail is viewport-pinned too, and it holds the chat filter input: without
+     this, typing there opens the keyboard over a full-height sheet. */
+  html.keyboard-open #chat-rail:not(.hidden) {
+    height: var(--app-vh, 100vh);
   }
   #chat-rail:not(.hidden) #chat-rail-list { min-height: 0; }
 }
