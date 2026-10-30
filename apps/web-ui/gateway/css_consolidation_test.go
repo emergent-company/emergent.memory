@@ -190,6 +190,27 @@ func TestChatBubbleShrinksToContent(t *testing.T) {
 	}
 }
 
+// TestMobileTouchTargetsAndHoverFallbacks guards the P3 touch fixes: the app
+// root is 15px, so daisyUI btn-xs (24px) and btn-sm (32px) are below the 44px
+// touch target, and the chat turn time is revealed only on hover/focus. The
+// compiled sheet must raise the mobile hit area and keep the timestamp visible
+// where hover does not exist.
+func TestMobileTouchTargetsAndHoverFallbacks(t *testing.T) {
+	css := compiledCSS(t)
+	if !strings.Contains(css, ".btn-xs,.btn-sm{min-height:44px}") {
+		t.Error("compiled css missing the mobile min-height:44px rule for .btn-xs/.btn-sm")
+	}
+	if !strings.Contains(css, ".btn-xs.btn-square,.btn-xs.btn-circle,.btn-sm.btn-square,.btn-sm.btn-circle{min-width:44px}") {
+		t.Error("compiled css missing the mobile 44px min-width rule for square/circle icon buttons")
+	}
+	if !strings.Contains(css, "@media (hover:none){.memory-turn-footer .memory-turn-time{") {
+		t.Error("compiled css missing the (hover:none) fallback that keeps the chat turn time visible")
+	}
+	if !strings.Contains(css, "max-width:12rem") {
+		t.Error("chat turn time fallback missing its 12rem reveal width")
+	}
+}
+
 // TestStackedMobileTables guards the mobile card fallback for dense list
 // tables: the table must collapse into one card per row below md and read its
 // column labels from the per-table --h1..--h8 variables.

@@ -680,6 +680,13 @@ main#main-content {
   max-width: 12rem;
   opacity: 1;
 }
+/* Touch has no hover: keep the end time visible instead of hiding it forever. */
+@media (hover: none) {
+  .memory-turn-footer .memory-turn-time {
+    max-width: 12rem;
+    opacity: 0.85;
+  }
+}
 
 /* copy affordances — hidden until hover/focus so layout and reading flow do
    not change; revealed on touch via the hover:none fallback below. */
@@ -1771,6 +1778,16 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
   }
   #_layout-sidebar .menu-item { min-height: 44px; }
   #sidepanel-panel .btn-square { min-width: 44px; min-height: 44px; }
+
+  /* Remaining per-row icon actions: btn-xs is 24px and btn-sm 32px at the 15px
+     root. Raise the hit area on touch viewports while leaving the glyph size
+     and desktop density unchanged. */
+  .btn-xs,
+  .btn-sm { min-height: 44px; }
+  .btn-xs.btn-square,
+  .btn-xs.btn-circle,
+  .btn-sm.btn-square,
+  .btn-sm.btn-circle { min-width: 44px; }
 
   /* iOS focus zoom: controls below 16px trigger it once user-scalable is
      allowed. Keep form text at 16px on phones (desktop scale unchanged). */

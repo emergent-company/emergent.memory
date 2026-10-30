@@ -324,7 +324,7 @@ func TestRenderMembersInviteDeliveryLog(t *testing.T) {
 	for _, want := range []string{
 		// the popover is a hover trigger whose content is wired to a focusable
 		// button; the log is rendered server-side into that content.
-		`data-gd-popover-type="hover"`,
+		`data-gd-popover-type="click"`,
 		`aria-expanded="false"`,
 		`aria-controls="invite-delivery-log-inv-1"`,
 		`id="invite-delivery-log-inv-1"`,

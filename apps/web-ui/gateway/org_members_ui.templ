@@ -351,7 +351,7 @@ templ memberInviteRow(inv SentInviteDto, base string, canRevoke bool) {
 		@table.TableCell("", nil) {
 			@ui.Popover(ui.PopoverRootProps{}) {
 				@ui.PopoverTrigger(ui.PopoverTriggerProps{
-					TriggerType: ui.PopoverTriggerHover,
+					TriggerType: ui.PopoverTriggerClick,
 					Class:       "flex w-full cursor-help items-center gap-3 rounded-field text-left outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
 					Attrs: templ.Attributes{
 						"aria-label":    "Invitation email log for " + inv.Email,
