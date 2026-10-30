@@ -155,15 +155,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (project format 77 requires Xcode 16+)
+      - name: Select Xcode
+        id: xcode
+        env:
+          # Deliberate, reported selection: ACCEPTED_XCODE_PATH pins a known-good
+          # bundle so an App Store auto-update cannot swap the toolchain under a
+          # build (infra#621). The script already failed the step if nothing is
+          # installed, so there is no empty-value guard to keep here.
+          ACCEPTED_XCODE_PATH: ${{ vars.ACCEPTED_XCODE_PATH }}
         run: |
-          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE" ]; then
-            echo "::error::No Xcode found in /Applications"
-            ls -d /Applications/Xcode*.app 2>/dev/null || true
-            exit 1
-          fi
-          echo "Selecting $XCODE"
+          XCODE=$(.github/scripts/select-xcode.sh)
           sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
           xcodebuild -version
           MAJOR=$(xcodebuild -version | awk 'NR==1 {split($2,v,"."); print v[1]}')

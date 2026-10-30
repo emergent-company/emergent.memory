@@ -26,6 +26,11 @@ on:
         type: string
         required: false
         default: ''
+      xcode_path:
+        description: 'Xcode bundle to build with (e.g. /Applications/Xcode_27.1.app). Defaults to the ACCEPTED_XCODE_PATH repository variable, then the newest installed release.'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -65,14 +70,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (iOS 26 SDK required)
+      - name: Select Xcode
+        id: xcode
+        env:
+          # A tag push cannot take inputs, so the durable pin is the repository
+          # variable; `xcode_path` is the one-off override for a re-run. Chosen
+          # deliberately and reported, because App Store Connect accepts an SDK
+          # only once Apple opens submissions for it — a newer Xcode installed
+          # mid-release is the usual cause of an upload rejected with 90534
+          # (infra#621).
+          ACCEPTED_XCODE_PATH: ${{ inputs.xcode_path || vars.ACCEPTED_XCODE_PATH }}
         run: |
-          XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XCODE" ]; then
-            echo "::error::No Xcode found in /Applications"
-            exit 1
-          fi
-          echo "Selecting $XCODE"
+          XCODE=$(.github/scripts/select-xcode.sh)
           sudo -n xcode-select -s "$XCODE" 2>/dev/null || true
           xcodebuild -version
 
@@ -178,17 +187,43 @@ jobs:
           retention-days: 7
 
       - name: Upload to TestFlight
+        # The toolchain goes through env, never into the run body: step outputs
+        # are dynamic values, and check-injection.py rightly rejects expanding
+        # them inline.
+        env:
+          XCODE_PATH: ${{ steps.xcode.outputs.xcode }}
+          XCODE_VERSION: ${{ steps.xcode.outputs.version }}
+          IOS_SDK: ${{ steps.xcode.outputs.sdk }}
         run: |
           mkdir -p ~/private_keys
           echo "${{ secrets.APP_STORE_CONNECT_API_KEY }}" > ~/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_KEY_ID }}.p8
           IPA=$(find apps/ios/build/Export -name "*.ipa" -type f | head -1)
           [ -z "$IPA" ] && { echo "::error::No IPA found"; exit 1; }
+          # App Store Connect refuses an SDK it has not opened for submissions
+          # with `IrisAPI -19241 / code 90534`, which says nothing about which
+          # toolchain was used. Say it, and name the fix: the same build passes
+          # once the last accepted Xcode is pinned (infra#621).
+          set +e
           xcrun altool --upload-app \
             -f "$IPA" \
             -t ios \
             --apiKey "${{ secrets.APP_STORE_CONNECT_KEY_ID }}" \
             --apiIssuer "${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}" \
-            --output-format xml
+            --output-format xml 2>&1 | tee /tmp/altool-upload.log
+          status=${PIPESTATUS[0]}
+          set -e
+          # Match the rejection by its text, not only by the exit status: a
+          # zero-exit altool that still reported 90534 would otherwise be
+          # treated as a successful upload and write the marker tag the next
+          # release's skip check relies on.
+          if grep -qE '90534|Unsupported SDK or Xcode version' /tmp/altool-upload.log; then
+            echo "::error::App Store Connect rejected this build as an unsupported SDK or Xcode (90534). It was built with ${XCODE_PATH} (Xcode ${XCODE_VERSION}, iOS SDK ${IOS_SDK}). Apple accepts an SDK only from an Xcode release it supports, so a newer Xcode installed after the last good release is the usual cause. Pin the last accepted bundle with the ACCEPTED_XCODE_PATH repository variable or the xcode_path dispatch input, then re-run."
+            exit 1
+          fi
+          if [ "$status" -ne 0 ]; then
+            echo "::error::TestFlight upload failed (altool exit $status); see the altool output above."
+            exit "$status"
+          fi
 
       - name: Record upload marker
         # Only meaningful for tag releases; marks this commit as uploaded so the
