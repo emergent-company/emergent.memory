@@ -6,7 +6,7 @@
 # plists, xcrun) is exercised wherever the script actually runs: the macOS
 # runners.
 #
-# The selection bug these pin (infra#621): "/Applications/Xcode.app wins
+# The selection bug these pin: "/Applications/Xcode.app wins
 # unconditionally" and "sort -V compares paths, not bundles". Both meant the
 # newest *installed* Xcode was not the one chosen, so an auto-update could not
 # be routed around with a known-good copy.

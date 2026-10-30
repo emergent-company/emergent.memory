@@ -2,7 +2,7 @@
 # Choose which installed Xcode the macOS jobs build with, and make the choice
 # visible in the run.
 #
-# Why this exists (infra#621): every macOS workflow used to inline
+# Why this exists: every macOS workflow used to inline
 #
 #   XCODE=$(ls -d /Applications/Xcode.app 2>/dev/null \
 #     || ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
@@ -164,7 +164,7 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo "| iOS SDK | ${sdk:-unknown} |"
     echo "| installed | $(echo "$installed" | tr '\n' ' ') |"
     echo
-    echo "Upload rejected with 90534? App Store Connect only accepts SDKs from an Xcode release it supports; pin the last accepted bundle with \`ACCEPTED_XCODE_PATH\` (infra#621)."
+    echo "Upload rejected with 90534? App Store Connect only accepts SDKs from an Xcode release it supports; pin the last accepted bundle with \`ACCEPTED_XCODE_PATH\`."
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 

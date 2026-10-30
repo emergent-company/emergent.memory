@@ -54,8 +54,8 @@ jobs:
         env:
           # Deliberate, reported selection: ACCEPTED_XCODE_PATH pins a known-good
           # bundle so an App Store auto-update cannot swap the toolchain under a
-          # build (infra#621). The script already failed the step if nothing is
-          # installed, so there is no empty-value guard to keep here.
+          # build. The script already failed the step if nothing is installed, so
+          # there is no empty-value guard to keep here.
           ACCEPTED_XCODE_PATH: ${{ vars.ACCEPTED_XCODE_PATH }}
         run: |
           XCODE=$(.github/scripts/select-xcode.sh)

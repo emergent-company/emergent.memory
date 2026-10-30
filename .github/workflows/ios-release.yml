@@ -77,8 +77,7 @@ jobs:
           # variable; `xcode_path` is the one-off override for a re-run. Chosen
           # deliberately and reported, because App Store Connect accepts an SDK
           # only once Apple opens submissions for it — a newer Xcode installed
-          # mid-release is the usual cause of an upload rejected with 90534
-          # (infra#621).
+          # mid-release is the usual cause of an upload rejected with 90534.
           ACCEPTED_XCODE_PATH: ${{ inputs.xcode_path || vars.ACCEPTED_XCODE_PATH }}
         run: |
           XCODE=$(.github/scripts/select-xcode.sh)
@@ -202,7 +201,7 @@ jobs:
           # App Store Connect refuses an SDK it has not opened for submissions
           # with `IrisAPI -19241 / code 90534`, which says nothing about which
           # toolchain was used. Say it, and name the fix: the same build passes
-          # once the last accepted Xcode is pinned (infra#621).
+          # once the last accepted Xcode is pinned.
           set +e
           xcrun altool --upload-app \
             -f "$IPA" \

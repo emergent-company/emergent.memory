@@ -179,7 +179,7 @@ jobs:
       - name: iOS release skip-check tests
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: .github/scripts/ios-release-should-build.test.sh
-      # Xcode selection (infra#621): "/Applications/Xcode.app wins" and
+      # Xcode selection: "/Applications/Xcode.app wins" and
       # "sort -V compares paths, not bundles" both meant the newest *installed*
       # Xcode was not the one used, so the auto-update App Store Connect later
       # rejected could not be routed around. Also pins the deliberate-pin path
