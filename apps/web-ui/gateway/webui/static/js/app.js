@@ -964,11 +964,25 @@
     window.location.assign(MemoryScope.path("/objects/" + encodeURIComponent(id)));
   }
 
+  /* Mobile card "Move": opens the item drawer, which carries the status
+     control and the other work-item actions. HTML5 drag never fires on touch. */
+  document.addEventListener("click", function (ev) {
+    var move = ev.target.closest ? ev.target.closest("[data-board-open-drawer]") : null;
+    if (!move) return;
+    ev.preventDefault();
+    var moveID = move.getAttribute("data-board-open-drawer");
+    if (!moveID || !window.htmx) return;
+    htmx.ajax("GET", MemoryScope.path("/board/items/" + encodeURIComponent(moveID)), {
+      target: "#board-drawer",
+      swap: "innerHTML"
+    });
+  });
+
   document.addEventListener("click", function (ev) {
     if (ev.defaultPrevented) return;
     if (ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
     var card = ev.target.closest ? ev.target.closest("[data-board-open-preview]") : null;
-    if (!card) return;
+    if (!card || (ev.target.closest && ev.target.closest("[data-board-open-drawer]"))) return;
     ev.preventDefault();
     openBoardCardPreview(card);
   });

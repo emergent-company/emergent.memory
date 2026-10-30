@@ -203,6 +203,19 @@ templ boardCard(it WorkItem) {
 			if it.RunCount > 0 {
 				@components.StatusBadge(it.LatestRunStatus, boardRunIntent(it.LatestRunStatus), "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
 			}
+			<!-- Touch has no HTML5 drag: this opens the item drawer (status
+			     control + actions) so a card can still be moved between lanes. -->
+			<button
+				type="button"
+				draggable="false"
+				class="ml-auto inline-flex min-h-[44px] items-center gap-1 rounded-field border border-base-content/10 px-2 text-xs text-muted transition-colors hover:text-base-content md:hidden"
+				data-board-open-drawer={ it.CanonicalID }
+				aria-label={ "Open actions for " + it.Key }
+				data-testid={ "board-move-" + it.CanonicalID }
+			>
+				@ui.IconSpan("lucide--arrow-right-left", "size-3.5")
+				Move
+			</button>
 		</div>
 	</div>
 }

@@ -74,6 +74,19 @@ const CUSTOM_BOARD_HTML = `<!doctype html><html><body>
        data-canonical-id="w4">literal blocked card</div>
 </body></html>`;
 
+// Minimal fixture for the touch-only "Move" affordance: a card carrying the
+// nested button that opens the item drawer (status control) instead of HTML5
+// drag, which touch devices never fire.
+const MOVE_CARD_HTML = `<!doctype html><html><body>
+  <div id="board"><section data-board-column="ready"></section></div>
+  <div id="board-drawer"></div>
+  <div id="card-ready" draggable="true" data-board-card data-board-status="ready"
+       data-board-open-preview aria-haspopup="dialog" role="button" tabindex="0"
+       data-canonical-id="w2">ready card
+    <button type="button" id="move-w2" data-board-open-drawer="w2" draggable="false">Move</button>
+  </div>
+</body></html>`;
+
 interface AjaxCall {
   method: string;
   url: string;
@@ -214,6 +227,33 @@ test.describe('Board drag + preview wiring (app.js)', () => {
       () => (window as unknown as { __previewRef: unknown }).__previewRef,
     );
     expect(ref).toEqual({ id: 'w2', editHref: '/objects/w2', actions: 'board' });
+
+    expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('the mobile Move button opens the item drawer, not the preview', async ({ page }) => {
+    const errors = await bootstrap(page, MOVE_CARD_HTML);
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __previewOpened: boolean };
+      w.__previewOpened = false;
+      (window as unknown as { MemoryObjectPreview: unknown }).MemoryObjectPreview = {
+        open: () => {
+          w.__previewOpened = true;
+        },
+      };
+    });
+
+    await page.locator('#move-w2').click();
+
+    const fired = await calls(page);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].method).toBe('GET');
+    expect(fired[0].url).toBe('/board/items/w2');
+    expect(fired[0].opts).toEqual({ target: '#board-drawer', swap: 'innerHTML' });
+    expect(
+      await page.evaluate(() => (window as unknown as { __previewOpened: boolean }).__previewOpened),
+    ).toBe(false);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
