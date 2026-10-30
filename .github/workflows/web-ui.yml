@@ -168,10 +168,11 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Debian and has apt-get, so
-        # `--with-deps` installs the Chromium runtime libs; the browser cache is
-        # already warm there. The guard is defensive — every runner in the pool
-        # has apt-get today, so the else branch is unreachable.
+        # The `memory` pool spans two hosts and only one is apt-based: there
+        # `--with-deps` installs the Chromium runtime libs, while on the other
+        # host Playwright does not recognise the distribution — it falls back to
+        # the ubuntu24.04 build and installs no dependencies. The guard is what
+        # keeps both halves working.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium
@@ -248,10 +249,11 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Debian and has apt-get, so
-        # `--with-deps` installs the Chromium runtime libs; the browser cache is
-        # already warm there. The guard is defensive — every runner in the pool
-        # has apt-get today, so the else branch is unreachable.
+        # The `memory` pool spans two hosts and only one is apt-based: there
+        # `--with-deps` installs the Chromium runtime libs, while on the other
+        # host Playwright does not recognise the distribution — it falls back to
+        # the ubuntu24.04 build and installs no dependencies. The guard is what
+        # keeps both halves working.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium
@@ -316,10 +318,11 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Debian and has apt-get, so
-        # `--with-deps` installs the Chromium runtime libs; the browser cache is
-        # already warm there. The guard is defensive — every runner in the pool
-        # has apt-get today, so the else branch is unreachable.
+        # The `memory` pool spans two hosts and only one is apt-based: there
+        # `--with-deps` installs the Chromium runtime libs, while on the other
+        # host Playwright does not recognise the distribution — it falls back to
+        # the ubuntu24.04 build and installs no dependencies. The guard is what
+        # keeps both halves working.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium

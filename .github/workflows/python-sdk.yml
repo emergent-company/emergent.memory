@@ -36,8 +36,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # actions/setup-python cannot resolve a version on this pool (Debian 13 —
-      # the Linux runner reports "not found for this operating system"), so uv
+      # actions/setup-python cannot resolve a version on this pool — on the
+      # Debian host it reports "not found for this operating system" — so uv
       # installs a managed interpreter and the job installs into an isolated
       # venv — no host Python toolchain required.
       - name: Set up Python 3.12 (uv)
@@ -69,8 +69,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # actions/setup-python cannot resolve a version on this pool (Debian 13 —
-      # the Linux runner reports "not found for this operating system"), so uv
+      # actions/setup-python cannot resolve a version on this pool — on the
+      # Debian host it reports "not found for this operating system" — so uv
       # installs a managed interpreter and the job installs into an isolated
       # venv — no host Python toolchain required.
       - name: Set up Python 3.12 (uv)
