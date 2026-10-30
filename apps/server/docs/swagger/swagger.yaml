@@ -10480,7 +10480,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.88.3
+  version: 0.88.4
 paths:
   /.well-known/oauth-protected-resource:
     get:
