@@ -125,6 +125,23 @@ func documentProcessingIntent(status string) ui.BadgeIntent {
 	}
 }
 
+// documentHeaderStatus picks the derived processing status for the document
+// header, falling back to the raw extraction status for an older API. A
+// dead-lettered extraction folds into extraction_failed so the header never
+// renders the internal "dead_letter" token.
+func documentHeaderStatus(doc *Document) string {
+	if doc == nil {
+		return ""
+	}
+	if doc.ProcessingStatus != "" {
+		return doc.ProcessingStatus
+	}
+	if doc.ExtractionStatus == "dead_letter" {
+		return "extraction_failed"
+	}
+	return doc.ExtractionStatus
+}
+
 // documentRow is one rendered document. The table and the mobile card share it
 // so both surfaces cannot drift apart.
 type documentRow struct {
@@ -165,6 +182,13 @@ type documentPageData struct {
 	HasMore    bool
 
 	Sources []documentSourceOption
+
+	// Problems is the project's terminal-failure report. Nil means none, a
+	// failed fetch, or a non-Documents page state; the panel renders nothing.
+	Problems *ProcessingProblemsReport
+	// CanManage gates admin-only actions in the panel, such as the project-wide
+	// embedding retrigger.
+	CanManage bool
 
 	LoadErr  error
 	FlashMsg string
@@ -478,14 +502,28 @@ func (s *Server) uiDocuments(c echo.Context) error {
 			{key: "uploaded", msg: "Document uploaded."},
 			{key: "duplicate", msg: "Document already exists (identical content)."},
 			{key: "deleted", msg: "Document deleted."},
+			{key: "extractions_retried", msg: "Retry started for failed extractions."},
+			{key: "extractions_none", msg: "No failed extractions to retry."},
+			{key: "conversions_retried", msg: "Failed conversions queued for retry."},
+			{key: "conversions_none", msg: "No failed conversions to retry."},
+			{key: "embeddings_retried", msg: "Failed embeddings queued for retry."},
+			{key: "embeddings_none", msg: "No failed embeddings to retry."},
 		}),
 		FlashErr: flashError(c),
 	}
 	ctx := c.Request().Context()
+	data.CanManage = s.projectAdminForCaller(c, s.currentProjectID(ctx))
 	if err := s.loadDocumentsPage(ctx, &data, data.Cursor); err != nil {
 		data.LoadErr = userFacingError(err)
 	} else {
 		s.loadDocumentSourceOptions(ctx, &data)
+	}
+	// Load the report before page() so the sidebar badge reuses the same cached
+	// value. A panel fetch failure must not fail the document listing.
+	if report, perr := s.cachedProcessingProblems(ctx); perr != nil {
+		captureError(perr)
+	} else {
+		data.Problems = report
 	}
 	return s.page(c, pageTitle("Documents"), DocumentsPage(data))
 }

@@ -378,6 +378,9 @@ func (s *Server) uiDocumentExtractions(c echo.Context) error {
 	}
 	sortExtractionJobsNewestFirst(jobs)
 	flashMsg, warnMsg, hint := mergeFlashFromQuery(c)
+	if flashMsg == "" && c.QueryParam("retried") != "" {
+		flashMsg = "Retry started. A new extraction run was queued; the failed attempt stays in history."
+	}
 	return s.page(c, pageTitle(documentName(*doc), "Extraction history"), DocumentExtractionsPage(doc, jobs, nil, flashMsg, warnMsg, flashError(c), hint))
 }
 

@@ -295,10 +295,14 @@ func (s *Service) enqueueMCPInviteEmail(ctx context.Context, toEmail, senderName
 	}
 	subject := fmt.Sprintf("%s has shared Memory project access with you", senderName)
 
+	sourceType := "project"
 	_, err := s.emailSvc.Enqueue(ctx, email.EnqueueOptions{
+		ProjectID:    &projectID,
 		TemplateName: "mcp-invite",
 		ToEmail:      toEmail,
 		Subject:      subject,
+		SourceType:   &sourceType,
+		SourceID:     &projectID,
 		TemplateData: map[string]interface{}{
 			"senderName":  senderName,
 			"projectId":   projectID,

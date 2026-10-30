@@ -76,7 +76,13 @@ type fakeMemory struct {
 	// unloadable-definition path (the fallback below otherwise synthesises a
 	// definition for every listed agent).
 	defErrs map[string]error
-	convs   []Conversation
+	// processing problems (needs-attention panel)
+	problems              *ProcessingProblemsReport
+	problemsErr           error
+	retriedJobIDs         []string
+	bulkRetried           int
+	embeddingsRetriggered int
+	convs                 []Conversation
 	// session lifecycle (chat-conversation-lifecycle).
 	convIncludeArchived bool     // last includeArchived flag received by ListConversations
 	archivedConvs       []string // conversation ids passed to ArchiveConversation, in order

@@ -706,21 +706,22 @@ func (s *GraphEmbeddingJobsService) CoverageByProject(ctx context.Context, proje
 // the partial unique index uidx_graph_embedding_jobs_active. The embedding sweep
 // may already have queued an object while a stale failed row for it remained, so
 // a blind failed->pending UPDATE aborts on that index and rolls the whole
-// statement back. Skip objects that already have an active job, and reset only
-// the most recently updated retryable row per object.
+// statement back. Skip objects that already have an active job, and reset the
+// object only when its most recent row is a terminal failure.
 func (s *GraphEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
 	result, err := s.db.NewRaw(`UPDATE kb.graph_embedding_jobs
 		SET status = 'pending',
+			attempt_count = 0,
 			scheduled_at = now(),
 			last_error = NULL,
 			updated_at = now()
-		WHERE id IN (
+		WHERE status IN ('failed', 'dead_letter')
+		  AND id IN (
 			SELECT DISTINCT ON (x.object_id) x.id
 			FROM kb.graph_embedding_jobs x
-			WHERE x.status IN ('failed', 'dead_letter')
-			  AND x.object_id IN (
-				SELECT id FROM kb.graph_objects WHERE project_id = ?
-			  )
+			WHERE x.object_id IN (
+			  SELECT id FROM kb.graph_objects WHERE project_id = ? AND deleted_at IS NULL
+				)
 			  AND NOT EXISTS (
 				SELECT 1 FROM kb.graph_embedding_jobs a
 				WHERE a.object_id = x.object_id

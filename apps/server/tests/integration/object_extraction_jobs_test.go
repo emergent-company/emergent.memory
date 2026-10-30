@@ -518,11 +518,16 @@ func (s *ObjectExtractionJobsTestSuite) TestFindByProject_WithStatusFilter() {
 		ProjectID: s.projectID,
 	})
 
-	// Create and complete another job
+	// Create and complete another job. A job only reaches 'completed' from
+	// 'processing', which is what a worker's claim does, so claim it first.
 	job2, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
 		ProjectID: s.projectID,
 	})
-	_ = s.jobsService.MarkCompleted(s.ctx, job2.ID, extraction.ObjectExtractionResults{})
+	_, err := s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET status = 'processing', started_at = now() WHERE id = ?",
+		job2.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(s.jobsService.MarkCompleted(s.ctx, job2.ID, extraction.ObjectExtractionResults{}))
 
 	// Find pending jobs only
 	pendingStatus := extraction.JobStatusPending
@@ -655,27 +660,98 @@ func (s *ObjectExtractionJobsTestSuite) TestBulkCancelByProject_CancelsAllPendin
 // Test: BulkRetryFailed
 // =============================================================================
 
-func (s *ObjectExtractionJobsTestSuite) TestBulkRetryFailed_ResetsFailedJobs() {
-	// Create and fail jobs
-	job1, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
-		ProjectID: s.projectID,
-	})
-	job2, _ := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
-		ProjectID: s.projectID,
-	})
+func (s *ObjectExtractionJobsTestSuite) TestBulkRetryFailed_CreatesLinkedRuns() {
+	// Two units, two terminal failures. A retry must start a new run for each
+	// unit and leave the failed attempt and its error untouched.
+	doc1 := s.documentID
+	doc2 := uuid.New().String()
+	_, err := s.testDB.DB.NewRaw(`
+		INSERT INTO kb.documents (id, project_id, source_type, filename, content, created_at, updated_at)
+		VALUES (?, ?, 'upload', 'second-document.txt', 'Second document', now(), now())
+	`, doc2, s.projectID).Exec(s.ctx)
+	s.Require().NoError(err)
 
-	_, _ = s.testDB.DB.NewRaw(
-		"UPDATE kb.object_extraction_jobs SET status = 'failed', error_message = 'test error' WHERE id IN (?, ?)",
+	job1, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:  s.projectID,
+		DocumentID: &doc1,
+	})
+	s.Require().NoError(err)
+	job2, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:  s.projectID,
+		DocumentID: &doc2,
+	})
+	s.Require().NoError(err)
+
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET status = 'dead_letter', error_message = 'test error', retry_count = 3 WHERE id IN (?, ?)",
 		job1.ID, job2.ID).Exec(s.ctx)
+	s.Require().NoError(err)
 
 	count, err := s.jobsService.BulkRetryFailed(s.ctx, s.projectID)
 	s.NoError(err)
 	s.Equal(2, count)
 
-	// Verify jobs are back to pending
-	updatedJob1, _ := s.jobsService.FindByID(s.ctx, job1.ID)
-	s.Equal(extraction.JobStatusPending, updatedJob1.Status)
-	s.Nil(updatedJob1.ErrorMessage)
+	for _, old := range []*extraction.ObjectExtractionJob{job1, job2} {
+		preserved, err := s.jobsService.FindByID(s.ctx, old.ID)
+		s.NoError(err)
+		s.Equal(extraction.JobStatusDeadLetter, preserved.Status, "failed attempt must stay in history")
+		s.NotNil(preserved.ErrorMessage)
+
+		next, err := s.jobsService.FindByID(s.ctx, s.linkedJobID(old.ID))
+		s.Require().NoError(err)
+		s.Require().NotNil(next)
+		s.Require().NotNil(next.ReprocessingOf)
+		s.Equal(extraction.JobStatusPending, next.Status)
+		s.Equal(old.ID, *next.ReprocessingOf)
+		s.Equal(0, next.RetryCount)
+		s.Equal(3, next.MaxRetries, "retry gets a full budget")
+	}
+}
+
+// TestBulkRetryFailed_SkipsUnitsWithNewerSuccess pins the latest-attempt rule:
+// a unit whose newest job completed must not be retried because an older
+// attempt failed.
+func (s *ObjectExtractionJobsTestSuite) TestBulkRetryFailed_SkipsUnitsWithNewerSuccess() {
+	doc := s.documentID
+	failed, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:  s.projectID,
+		DocumentID: &doc,
+	})
+	s.Require().NoError(err)
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET status = 'failed', error_message = 'old error', created_at = now() - interval '1 hour' WHERE id = ?",
+		failed.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	newer, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID:  s.projectID,
+		DocumentID: &doc,
+	})
+	s.Require().NoError(err)
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET status = 'completed', completed_at = now() WHERE id = ?",
+		newer.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	count, err := s.jobsService.BulkRetryFailed(s.ctx, s.projectID)
+	s.NoError(err)
+	s.Equal(0, count)
+
+	var retried int
+	err = s.testDB.DB.NewRaw(
+		"SELECT COUNT(*) FROM kb.object_extraction_jobs WHERE reprocessing_of = ?", failed.ID).Scan(s.ctx, &retried)
+	s.NoError(err)
+	s.Equal(0, retried)
+}
+
+// linkedJobID returns the id of the run BulkRetryFailed made for oldID.
+func (s *ObjectExtractionJobsTestSuite) linkedJobID(oldID string) string {
+	var id string
+	err := s.testDB.DB.NewRaw(
+		"SELECT id FROM kb.object_extraction_jobs WHERE reprocessing_of = ?", oldID).Scan(s.ctx, &id)
+	s.Require().NoError(err)
+	s.Require().NotEmpty(id)
+	return id
 }
 
 // =============================================================================
@@ -717,4 +793,121 @@ func (s *ObjectExtractionJobsTestSuite) TestDeleteCompleted_DeletesFinishedJobs(
 	stats, _ := s.jobsService.Stats(s.ctx, &s.projectID)
 	s.Equal(int64(1), stats.Total)
 	s.Equal(int64(1), stats.Pending)
+}
+
+// =============================================================================
+// Test: RetryJob staleness guard
+// =============================================================================
+
+// TestRetryJob_RejectsLiveProcessingJob pins the guard that keeps a retry from
+// resetting a run whose worker is still alive. A 'processing' job younger than
+// the stale threshold must be refused with ErrJobStillRunning and left
+// processing: resetting it would process the same unit twice and let the older
+// run overwrite the newer attempt's terminal state.
+func (s *ObjectExtractionJobsTestSuite) TestRetryJob_RejectsLiveProcessingJob() {
+	job, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+	s.Require().NoError(err)
+
+	// Dequeue claims the job: status processing, started_at = now.
+	_, err = s.jobsService.Dequeue(s.ctx)
+	s.Require().NoError(err)
+
+	running, err := s.jobsService.FindByID(s.ctx, job.ID)
+	s.Require().NoError(err)
+	s.Require().Equal(extraction.JobStatusProcessing, running.Status)
+	s.Require().NotNil(running.StartedAt)
+
+	_, err = s.jobsService.RetryJob(s.ctx, job.ID, s.projectID)
+	s.Require().Error(err)
+	s.ErrorIs(err, extraction.ErrJobStillRunning, "a live run must be refused, got %v", err)
+
+	still, err := s.jobsService.FindByID(s.ctx, job.ID)
+	s.Require().NoError(err)
+	s.Equal(extraction.JobStatusProcessing, still.Status, "a rejected retry must not touch the live job")
+	s.Require().NotNil(still.StartedAt)
+	s.Equal(*running.StartedAt, *still.StartedAt, "the live run keeps its own start time")
+}
+
+// TestRetryJob_RequeuesStaleProcessingJob is the other half of the same guard:
+// once the run is older than the threshold, the retry path still requeues it in
+// place, which is how a genuinely stuck unit recovers.
+func (s *ObjectExtractionJobsTestSuite) TestRetryJob_RequeuesStaleProcessingJob() {
+	job, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+	s.Require().NoError(err)
+	_, err = s.jobsService.Dequeue(s.ctx)
+	s.Require().NoError(err)
+
+	// Past the suite's 10-minute threshold.
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET started_at = now() - interval '2 hours', retry_count = 2 WHERE id = ?",
+		job.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	retried, err := s.jobsService.RetryJob(s.ctx, job.ID, s.projectID)
+	s.Require().NoError(err)
+	s.Require().NotNil(retried)
+	s.Equal(job.ID, retried.ID, "a stuck job is requeued in place, not replaced")
+	s.Equal(extraction.JobStatusPending, retried.Status)
+	s.Equal(0, retried.RetryCount, "the requeue hands back a fresh retry budget")
+	s.Nil(retried.StartedAt)
+}
+
+// TestRetryJob_UsesWiredStaleThreshold proves the guard reads the threshold the
+// stale-job sweep uses (via StaleMinutesResolver) instead of a second, local
+// definition: the same 5-minute-old job is refused under a 30-minute threshold
+// and requeued under a 2-minute one.
+func (s *ObjectExtractionJobsTestSuite) TestRetryJob_UsesWiredStaleThreshold() {
+	makeService := func(minutes int) *extraction.ObjectExtractionJobsService {
+		return extraction.NewObjectExtractionJobsService(s.testDB.DB, s.log, extraction.DefaultObjectExtractionConfig()).
+			WithStaleMinutesResolver(func() int { return minutes })
+	}
+
+	job, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+	s.Require().NoError(err)
+	_, err = s.jobsService.Dequeue(s.ctx)
+	s.Require().NoError(err)
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET started_at = now() - interval '5 minutes' WHERE id = ?",
+		job.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	_, err = makeService(30).RetryJob(s.ctx, job.ID, s.projectID)
+	s.Require().Error(err)
+	s.ErrorIs(err, extraction.ErrJobStillRunning, "5 minutes old is not stuck under a 30-minute threshold")
+
+	retried, err := makeService(2).RetryJob(s.ctx, job.ID, s.projectID)
+	s.Require().NoError(err)
+	s.Equal(extraction.JobStatusPending, retried.Status, "past the threshold the job is requeued")
+}
+
+// TestMarkCompleted_DoesNotOverwriteRequeuedJob covers the second half of the
+// double-processing hazard: the worker of the old attempt must not write its
+// terminal state onto a job that has since been requeued or cancelled.
+func (s *ObjectExtractionJobsTestSuite) TestMarkCompleted_DoesNotOverwriteRequeuedJob() {
+	job, err := s.jobsService.CreateJob(s.ctx, extraction.CreateObjectExtractionJobOptions{
+		ProjectID: s.projectID,
+	})
+	s.Require().NoError(err)
+	_, err = s.jobsService.Dequeue(s.ctx)
+	s.Require().NoError(err)
+
+	// Simulate requeueing the stuck row while the old worker is still running.
+	_, err = s.testDB.DB.NewRaw(
+		"UPDATE kb.object_extraction_jobs SET status = 'pending', started_at = NULL WHERE id = ?",
+		job.ID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	err = s.jobsService.MarkCompleted(s.ctx, job.ID, extraction.ObjectExtractionResults{ObjectsCreated: 99})
+	s.Require().NoError(err, "an ignored write is not an error for the caller")
+
+	after, err := s.jobsService.FindByID(s.ctx, job.ID)
+	s.Require().NoError(err)
+	s.Equal(extraction.JobStatusPending, after.Status, "the requeued row keeps its state")
+	s.Equal(0, after.ObjectsCreated, "the stale run's results must not be written")
 }

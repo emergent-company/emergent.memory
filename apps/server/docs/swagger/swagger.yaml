@@ -6347,6 +6347,174 @@ definitions:
       enabled:
         type: boolean
     type: object
+  domain_processingproblems.Action:
+    properties:
+      href:
+        description: Href is the page the action applies to (or should navigate to).
+        type: string
+      kind:
+        $ref: '#/definitions/domain_processingproblems.ActionKind'
+      label:
+        description: Label is the button text, e.g. "Retry extraction".
+        type: string
+      requiresRole:
+        description: |-
+          RequiresRole is the minimum project role ("project_user" or
+          "project_admin"). Empty means any member.
+        type: string
+    type: object
+  domain_processingproblems.ActionKind:
+    enum:
+    - retry_extraction
+    - retry_embeddings
+    - open
+    type: string
+    x-enum-varnames:
+    - ActionRetryExtraction
+    - ActionRetryEmbeddings
+    - ActionOpen
+  domain_processingproblems.Area:
+    enum:
+    - documents
+    - graph
+    - sources
+    - email
+    - agents
+    - schema
+    type: string
+    x-enum-varnames:
+    - AreaDocuments
+    - AreaGraph
+    - AreaSources
+    - AreaEmail
+    - AreaAgents
+    - AreaSchema
+  domain_processingproblems.AreaSummary:
+    properties:
+      area:
+        $ref: '#/definitions/domain_processingproblems.Area'
+      byClass:
+        items:
+          $ref: '#/definitions/domain_processingproblems.ClassCount'
+        type: array
+      count:
+        description: |-
+          Count is the exact number of problems in this area, not the number of
+          rows carried in Problems: a queue returns at most problemRowLimit rows.
+        type: integer
+      label:
+        type: string
+      problems:
+        items:
+          $ref: '#/definitions/domain_processingproblems.Problem'
+        type: array
+      summary:
+        description: |-
+          Summary is the one-line cause breakdown, e.g.
+          "Invalid model output 4 · Internal error 3". It is computed over the
+          returned rows, so it explains the visible sample when Truncated is true.
+        type: string
+      truncated:
+        description: |-
+          Truncated reports that Count is larger than len(Problems), so a client
+          must render the number as a lower bound ("200 of 264") instead of
+          presenting the page size as the backlog.
+        type: boolean
+    type: object
+  domain_processingproblems.ClassCount:
+    properties:
+      class:
+        $ref: '#/definitions/domain_processingproblems.FailureClass'
+      count:
+        type: integer
+    type: object
+  domain_processingproblems.Failure:
+    properties:
+      class:
+        $ref: '#/definitions/domain_processingproblems.FailureClass'
+      remediation:
+        type: string
+      retryable:
+        description: |-
+          Retryable means retrying the unit is worth offering. A deterministic
+          failure (missing model, unreadable document) stays false until the user
+          fixes the cause; the UI still shows the remediation.
+        type: boolean
+      summary:
+        type: string
+    type: object
+  domain_processingproblems.FailureClass:
+    enum:
+    - configuration
+    - provider
+    - invalid_output
+    - input
+    - permission
+    - conflict
+    - limit
+    - internal
+    - unknown
+    type: string
+    x-enum-varnames:
+    - ClassConfiguration
+    - ClassProvider
+    - ClassInvalidOutput
+    - ClassInput
+    - ClassPermission
+    - ClassConflict
+    - ClassLimit
+    - ClassInternal
+    - ClassUnknown
+  domain_processingproblems.Problem:
+    properties:
+      action:
+        $ref: '#/definitions/domain_processingproblems.Action'
+      area:
+        $ref: '#/definitions/domain_processingproblems.Area'
+      attempts:
+        type: integer
+      documentId:
+        type: string
+      drilldownHref:
+        type: string
+      errorMessage:
+        type: string
+      failure:
+        $ref: '#/definitions/domain_processingproblems.Failure'
+      jobId:
+        type: string
+      label:
+        type: string
+      maxAttempts:
+        type: integer
+      occurredAt:
+        type: string
+      queue:
+        type: string
+      sourceId:
+        type: string
+      status:
+        type: string
+      unitId:
+        type: string
+    type: object
+  domain_processingproblems.Report:
+    properties:
+      areas:
+        items:
+          $ref: '#/definitions/domain_processingproblems.AreaSummary'
+        type: array
+      generatedAt:
+        description: GeneratedAt lets the UI show staleness for a cached response.
+        type: string
+      projectId:
+        type: string
+      total:
+        description: |-
+          Total is the exact number of problems across every area. It is a sum of
+          per-area counts, so it is not capped by the per-queue row limit.
+        type: integer
+    type: object
   domain_projects.CreateProjectRequest:
     properties:
       name:
@@ -19893,6 +20061,36 @@ paths:
       summary: List includable MCP tools
       tags:
       - mcp
+  /api/projects/{projectId}/processing-problems:
+    get:
+      description: Terminal failures across every project-scoped job queue, grouped
+        by area with a classified cause and a next action.
+      parameters:
+      - description: Project ID
+        in: path
+        name: projectId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/domain_processingproblems.Report'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: List processing problems
+      tags:
+      - processing
   /api/projects/{projectId}/skills:
     get:
       description: List all skills available to agents in the project (global + org

@@ -59,6 +59,33 @@ func TestObjectExtractionJobToDTONilCreatedObjectIDs(t *testing.T) {
 	}
 }
 
+// TestObjectExtractionJobToDTODeadLettered ensures a dead-lettered job keeps
+// the client-facing failed status (compatibility) while carrying the
+// dead_lettered flag the panel and history use for "Failed permanently".
+func TestObjectExtractionJobToDTODeadLettered(t *testing.T) {
+	j := &ObjectExtractionJob{ID: "job1", ProjectID: "p1", Status: JobStatusDeadLetter}
+
+	dto := j.ToDTO()
+	if dto.Status != StatusFailed {
+		t.Fatalf("Status = %q, want %q", dto.Status, StatusFailed)
+	}
+	if !dto.DeadLettered {
+		t.Fatal("DeadLettered = false, want true")
+	}
+
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatalf("marshal DTO: %v", err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("unmarshal DTO: %v", err)
+	}
+	if payload["dead_lettered"] != true {
+		t.Fatalf("dead_lettered = %v, want true", payload["dead_lettered"])
+	}
+}
+
 // TestObjectExtractionJobToDTORetryCount ensures the entity's RetryCount flows
 // through ToDTO and serialises as retry_count (without omitempty, so the gateway
 // sees 0 rather than a missing key).

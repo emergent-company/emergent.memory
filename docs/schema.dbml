@@ -1098,11 +1098,13 @@ Table "kb"."email_jobs" {
   "delivery_status_at" timestamptz
   "delivery_status_synced_at" timestamptz
   "started_at" timestamptz
+  "project_id" uuid
 
   Indexes {
     (mailgun_message_id) [name: "idx_email_jobs_mailgun_id"]
     (`btrim(mailgun_message_id::text, '<>'::text)`) [name: "idx_email_jobs_mailgun_message_id_btrim"]
     (processed_at) [name: "idx_email_jobs_needs_status_sync"]
+    (project_id, status) [name: "idx_email_jobs_project_status"]
     (source_type, source_id) [name: "idx_email_jobs_source"]
     (status, next_retry_at) [name: "idx_email_jobs_status_next_retry"]
   }

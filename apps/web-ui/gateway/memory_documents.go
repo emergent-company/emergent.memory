@@ -326,11 +326,14 @@ func (m *MemoryClient) UploadDocument(ctx context.Context, filename string, r io
 // timestamp fields are RFC3339 strings (empty when the server omitted a
 // nullable time).
 type ExtractionJob struct {
-	ID               string   `json:"id"`
-	ProjectID        string   `json:"project_id"`
-	SourceType       string   `json:"source_type"`
-	SourceID         string   `json:"source_id"`
-	Status           string   `json:"status"`
+	ID         string `json:"id"`
+	ProjectID  string `json:"project_id"`
+	SourceType string `json:"source_type"`
+	SourceID   string `json:"source_id"`
+	Status     string `json:"status"`
+	// DeadLettered is true when the job exhausted its retry budget. Status is
+	// "failed" for both intermediate failures and dead letters.
+	DeadLettered     bool     `json:"dead_lettered"`
 	TotalItems       int      `json:"total_items"`
 	ProcessedItems   int      `json:"processed_items"`
 	SuccessfulItems  int      `json:"successful_items"`

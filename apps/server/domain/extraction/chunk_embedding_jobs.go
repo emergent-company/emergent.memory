@@ -495,26 +495,28 @@ func (s *ChunkEmbeddingJobsService) StatsByProject(ctx context.Context, projectI
 	return stats, nil
 }
 
-// RetriggerByProject resets failed jobs for a project's chunks to pending.
-// Returns the number of jobs reset.
+// RetriggerByProject resets failed and dead-lettered jobs for a project's
+// chunks to pending, with a fresh attempt budget. Returns the number of jobs
+// reset.
 //
 // At most one active (pending/processing) job may exist per chunk — enforced by
 // the partial unique index uidx_chunk_embedding_jobs_active. A blind
 // failed->pending UPDATE aborts on that index if a stale failed row coexists
 // with an already-queued active row. Skip chunks that already have an active
-// job, and reset only the most recently updated retryable row per chunk.
+// job, and reset the chunk only when its most recent row is a terminal failure.
 func (s *ChunkEmbeddingJobsService) RetriggerByProject(ctx context.Context, projectID string) (int, error) {
 	result, err := s.db.NewRaw(`UPDATE kb.chunk_embedding_jobs
 		SET status = 'pending',
+			attempt_count = 0,
 			scheduled_at = now(),
 			last_error = NULL,
 			updated_at = now()
-		WHERE id IN (
+		WHERE status IN ('failed', 'dead_letter')
+		  AND id IN (
 			SELECT DISTINCT ON (x.chunk_id) x.id
 			FROM kb.chunk_embedding_jobs x
-			WHERE x.status = 'failed'
-			  AND x.chunk_id IN (
-				SELECT c.id FROM kb.chunks c
+			WHERE x.chunk_id IN (
+			  SELECT c.id FROM kb.chunks c
 				JOIN kb.documents d ON d.id = c.document_id
 				WHERE d.project_id = ?
 			  )

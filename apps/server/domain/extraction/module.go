@@ -288,7 +288,7 @@ func provideCachedEmbeddingService(embeds *embeddings.Service, db bun.IDB, appCf
 // job-creation chokepoint (issue #1555). Trace preview (spans + estimated cost)
 // is wired only when tracing is enabled and a provider repo is available;
 // otherwise the handler degrades to no enrichment.
-func provideAdminHandler(jobsService *ObjectExtractionJobsService, cfg *config.Config, providerRepo *provider.Repository) *AdminHandler {
+func provideAdminHandler(jobsService *ObjectExtractionJobsService, parsingJobs *DocumentParsingJobsService, cfg *config.Config, providerRepo *provider.Repository) *AdminHandler {
 	tempoURL := ""
 	if cfg.Otel.Enabled() {
 		tempoURL = cfg.Otel.InternalTempoQueryURL()
@@ -300,7 +300,7 @@ func provideAdminHandler(jobsService *ObjectExtractionJobsService, cfg *config.C
 	if providerRepo != nil {
 		pricing = &extractionPricingAdapter{repo: providerRepo}
 	}
-	return NewAdminHandler(jobsService, tempoURL, pricing)
+	return NewAdminHandler(jobsService, parsingJobs, tempoURL, pricing)
 }
 
 // extractionPricingAdapter wraps *provider.Repository to satisfy the modelPricing
@@ -425,9 +425,13 @@ func provideDocumentParsingJobsService(db bun.IDB, log *slog.Logger, cfg *Extrac
 // The modelconfig service supplies the generative-model gate at the job-creation
 // chokepoint: CreateJob rejects (ErrNoGenerativeModel) when the project has no
 // resolvable generative model, covering admin API, MCP queue-reextraction and
-// document auto-extract paths (issue #1555).
-func provideObjectExtractionJobsService(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig, modelCfg *modelconfig.Service) *ObjectExtractionJobsService {
-	return NewObjectExtractionJobsService(db, log, cfg.ObjectExtraction).WithGenerativeModelResolver(modelCfg)
+// document auto-extract paths (issue #1555). The scheduler's stale-job task
+// supplies the "stuck" threshold the retry guard shares with the sweep, so a
+// live run is never requeued out from under its worker.
+func provideObjectExtractionJobsService(db bun.IDB, log *slog.Logger, cfg *ExtractionConfig, modelCfg *modelconfig.Service, staleTask *scheduler.StaleJobCleanupTask) *ObjectExtractionJobsService {
+	return NewObjectExtractionJobsService(db, log, cfg.ObjectExtraction).
+		WithGenerativeModelResolver(modelCfg).
+		WithStaleMinutesResolver(staleTask.GetStaleMinutes)
 }
 
 // provideMemorySchemaProvider creates template pack schema provider with fx

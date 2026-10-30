@@ -27,6 +27,7 @@ templ DocumentsPage(data documentPageData) {
 			@pageError("Failed to load documents", data.LoadErr)
 		} else {
 			@flashToasts(data.FlashMsg, data.FlashErr)
+			@documentsProblemsPanel(data.Problems, data.CanManage)
 			@documentsStats(data)
 			@documentsToolbar(data)
 			@documentsResults(data)
@@ -693,7 +694,7 @@ templ documentDetailHeader(doc *Document, section string) {
 	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
 		<div class="flex flex-wrap items-center gap-2">
 			@countBadgeLabel(strconv.Itoa(doc.Chunks)+" chunk"+plural(doc.Chunks), "lucide--braces")
-			@documentStatusBadge(doc.ExtractionStatus)
+			@documentStatusBadge(documentHeaderStatus(doc))
 			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
 				@ui.Button(ui.ButtonProps{
 					Type:      ui.ButtonTypeSubmit,
@@ -853,7 +854,7 @@ templ extractionRunStatus(d extractionJobDetail, oob bool) {
 		attrs["hx-swap-oob"] = "true"
 	} }}
 	<div { attrs... }>
-		@documentStatusBadge(job.Status)
+		@extractionJobStatusBadge(job.Status, job.DeadLettered)
 		if extractionJobActive(job.Status) {
 			@ui.Badge(ui.BadgeProps{Label: "Live", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--radio", Animate: true, Attrs: templ.Attributes{"data-testid": "extraction-live"}})
 		}
@@ -1015,7 +1016,7 @@ templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHi
 				<p class="text-sm font-medium">{ relTime(job.CreatedAt) }</p>
 				<p class="text-muted-faint font-mono text-xs">{ shortID(job.ID) }</p>
 			</div>
-			@documentStatusBadge(job.Status)
+			@extractionJobStatusBadge(job.Status, job.DeadLettered)
 			@ui.Badge(ui.BadgeProps{
 				Label:   strconv.Itoa(job.ObjectCount()) + " object" + plural(job.ObjectCount()),
 				Variant: ui.BadgeInfo,
@@ -1031,6 +1032,19 @@ templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHi
 				})
 			}
 			<a class="link link-primary text-xs" href={ templ.URL(traceHref) } data-testid="extraction-view-trace">View trace →</a>
+			if job.Status == "failed" {
+				<form method="post" action={ templ.URL("/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) + "/retry") }>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonSecondary,
+						Style:   ui.ButtonStyleOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--rotate-ccw",
+					}) {
+						Retry
+					}
+				</form>
+			}
 		</div>
 		if job.ErrorMessage != nil && *job.ErrorMessage != "" {
 			<div class="px-4 pb-3">

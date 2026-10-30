@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/emergent-company/emergent.memory/domain/documents"
@@ -43,6 +44,12 @@ func (a *extractionRetrierAdapter) FindRetryableByDocument(ctx context.Context, 
 func (a *extractionRetrierAdapter) RetryByJobID(ctx context.Context, jobID, projectID string) (*documents.RetryableJob, error) {
 	job, err := a.svc.RetryJob(ctx, jobID, projectID)
 	if err != nil {
+		// A run younger than the stale-job threshold is live: refuse the retry
+		// with the domain's detailed message so the documents handler answers
+		// 409 Conflict instead of requeueing work that is still in flight.
+		if errors.Is(err, extraction.ErrJobStillRunning) {
+			return nil, documents.NewRetryConflict(err.Error())
+		}
 		return nil, err
 	}
 	return &documents.RetryableJob{

@@ -14305,6 +14305,52 @@
                 }
             }
         },
+        "/api/projects/{projectId}/processing-problems": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Terminal failures across every project-scoped job queue, grouped by area with a classified cause and a next action.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "processing"
+                ],
+                "summary": "List processing problems",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Project ID",
+                        "name": "projectId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/domain_processingproblems.Report"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/api/projects/{projectId}/skills": {
             "get": {
                 "security": [
@@ -35664,6 +35710,219 @@
                 },
                 "enabled": {
                     "type": "boolean"
+                }
+            }
+        },
+        "domain_processingproblems.Action": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "description": "Href is the page the action applies to (or should navigate to).",
+                    "type": "string"
+                },
+                "kind": {
+                    "$ref": "#/definitions/domain_processingproblems.ActionKind"
+                },
+                "label": {
+                    "description": "Label is the button text, e.g. \"Retry extraction\".",
+                    "type": "string"
+                },
+                "requiresRole": {
+                    "description": "RequiresRole is the minimum project role (\"project_user\" or\n\"project_admin\"). Empty means any member.",
+                    "type": "string"
+                }
+            }
+        },
+        "domain_processingproblems.ActionKind": {
+            "type": "string",
+            "enum": [
+                "retry_extraction",
+                "retry_embeddings",
+                "open"
+            ],
+            "x-enum-varnames": [
+                "ActionRetryExtraction",
+                "ActionRetryEmbeddings",
+                "ActionOpen"
+            ]
+        },
+        "domain_processingproblems.Area": {
+            "type": "string",
+            "enum": [
+                "documents",
+                "graph",
+                "sources",
+                "email",
+                "agents",
+                "schema"
+            ],
+            "x-enum-varnames": [
+                "AreaDocuments",
+                "AreaGraph",
+                "AreaSources",
+                "AreaEmail",
+                "AreaAgents",
+                "AreaSchema"
+            ]
+        },
+        "domain_processingproblems.AreaSummary": {
+            "type": "object",
+            "properties": {
+                "area": {
+                    "$ref": "#/definitions/domain_processingproblems.Area"
+                },
+                "byClass": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_processingproblems.ClassCount"
+                    }
+                },
+                "count": {
+                    "description": "Count is the exact number of problems in this area, not the number of\nrows carried in Problems: a queue returns at most problemRowLimit rows.",
+                    "type": "integer"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_processingproblems.Problem"
+                    }
+                },
+                "summary": {
+                    "description": "Summary is the one-line cause breakdown, e.g.\n\"Invalid model output 4 · Internal error 3\". It is computed over the\nreturned rows, so it explains the visible sample when Truncated is true.",
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated reports that Count is larger than len(Problems), so a client\nmust render the number as a lower bound (\"200 of 264\") instead of\npresenting the page size as the backlog.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "domain_processingproblems.ClassCount": {
+            "type": "object",
+            "properties": {
+                "class": {
+                    "$ref": "#/definitions/domain_processingproblems.FailureClass"
+                },
+                "count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "domain_processingproblems.Failure": {
+            "type": "object",
+            "properties": {
+                "class": {
+                    "$ref": "#/definitions/domain_processingproblems.FailureClass"
+                },
+                "remediation": {
+                    "type": "string"
+                },
+                "retryable": {
+                    "description": "Retryable means retrying the unit is worth offering. A deterministic\nfailure (missing model, unreadable document) stays false until the user\nfixes the cause; the UI still shows the remediation.",
+                    "type": "boolean"
+                },
+                "summary": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_processingproblems.FailureClass": {
+            "type": "string",
+            "enum": [
+                "configuration",
+                "provider",
+                "invalid_output",
+                "input",
+                "permission",
+                "conflict",
+                "limit",
+                "internal",
+                "unknown"
+            ],
+            "x-enum-varnames": [
+                "ClassConfiguration",
+                "ClassProvider",
+                "ClassInvalidOutput",
+                "ClassInput",
+                "ClassPermission",
+                "ClassConflict",
+                "ClassLimit",
+                "ClassInternal",
+                "ClassUnknown"
+            ]
+        },
+        "domain_processingproblems.Problem": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "$ref": "#/definitions/domain_processingproblems.Action"
+                },
+                "area": {
+                    "$ref": "#/definitions/domain_processingproblems.Area"
+                },
+                "attempts": {
+                    "type": "integer"
+                },
+                "documentId": {
+                    "type": "string"
+                },
+                "drilldownHref": {
+                    "type": "string"
+                },
+                "errorMessage": {
+                    "type": "string"
+                },
+                "failure": {
+                    "$ref": "#/definitions/domain_processingproblems.Failure"
+                },
+                "jobId": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "maxAttempts": {
+                    "type": "integer"
+                },
+                "occurredAt": {
+                    "type": "string"
+                },
+                "queue": {
+                    "type": "string"
+                },
+                "sourceId": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "unitId": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_processingproblems.Report": {
+            "type": "object",
+            "properties": {
+                "areas": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_processingproblems.AreaSummary"
+                    }
+                },
+                "generatedAt": {
+                    "description": "GeneratedAt lets the UI show staleness for a cached response.",
+                    "type": "string"
+                },
+                "projectId": {
+                    "type": "string"
+                },
+                "total": {
+                    "description": "Total is the exact number of problems across every area. It is a sum of\nper-area counts, so it is not capped by the per-queue row limit.",
+                    "type": "integer"
                 }
             }
         },

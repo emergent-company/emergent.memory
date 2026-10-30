@@ -117,6 +117,13 @@ type MemoryBackend interface {
 	GetDocumentContent(ctx context.Context, documentID string) (string, error)
 	ListExtractionJobs(ctx context.Context, documentID string) ([]ExtractionJob, error)
 	GetExtractionJob(ctx context.Context, jobID string) (*ExtractionJob, error)
+	// Processing problems: one project-level read model behind the
+	// needs-attention panel and the Documents badge.
+	GetProcessingProblems(ctx context.Context) (*ProcessingProblemsReport, error)
+	RetryExtractionJob(ctx context.Context, jobID string) error
+	RetryAllExtractionJobs(ctx context.Context) (int, error)
+	RetryAllParsingJobs(ctx context.Context) (int, error)
+	RetriggerEmbeddings(ctx context.Context) (int, error)
 	DownloadDocument(ctx context.Context, id string) (io.ReadCloser, string, error)
 	ListDocumentVersions(ctx context.Context, documentID string) ([]DocumentVersion, error)
 	// Data-source integrations (see memory_datasources.go). Credentials are

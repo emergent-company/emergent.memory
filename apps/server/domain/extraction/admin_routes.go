@@ -33,6 +33,14 @@ func RegisterAdminRoutes(e *echo.Echo, h *AdminHandler, authMiddleware *auth.Mid
 	projectScoped.DELETE("/projects/:projectId/bulk-delete", h.BulkDeleteJobs)
 	projectScoped.POST("/projects/:projectId/bulk-retry", h.BulkRetryJobs)
 
+	// Parsing jobs live in a sibling admin group, not under extraction-jobs:
+	// they are a different queue with a different retry contract, but share
+	// the same authentication and project-member gate.
+	parsing := e.Group("/api/admin/parsing-jobs")
+	parsing.Use(authMiddleware.RequireAuth())
+	parsing.Use(authMiddleware.RequireProjectTokenScope(), authMiddleware.RequireProjectMember())
+	parsing.POST("/projects/:projectId/bulk-retry", h.BulkRetryParsingJobs)
+
 	// Job/body-scoped: the project is resolved in the handler, which enforces
 	// membership via auth.RequireProjectMembership.
 	jobScoped := admin.Group("")

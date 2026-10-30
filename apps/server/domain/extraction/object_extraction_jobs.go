@@ -76,12 +76,27 @@ const noGenerativeModelMessage = "No generative model is configured for this pro
 // auto-extract path logs and skips without failing the upload.
 var ErrNoGenerativeModel = errors.New("no generative model is configured for this project")
 
+// ErrJobStillRunning is returned by RetryJob when the addressed job is
+// 'processing' but younger than the stale-job threshold, so the worker that
+// claimed it is probably still alive. Requeuing a live run would process the
+// same unit twice and let the older run overwrite the newer attempt's terminal
+// state. Callers map it to 409 Conflict. Genuinely stuck jobs are converted to
+// 'failed' by the stale-job sweep and retried through the linked-run path.
+var ErrJobStillRunning = errors.New("extraction job is still running")
+
+// StaleMinutesResolver reports the threshold, in minutes, after which a
+// processing job counts as stuck. It is wired to the scheduler's
+// StaleJobCleanupTask so the retry path and the stale-job sweep share one
+// definition of "stuck" (and a runtime threshold override applies to both).
+type StaleMinutesResolver func() int
+
 // ObjectExtractionJobsService manages object extraction jobs
 type ObjectExtractionJobsService struct {
 	db            bun.IDB
 	log           *slog.Logger
 	config        *ObjectExtractionConfig
 	modelResolver GenerativeModelResolver
+	staleMinutes  StaleMinutesResolver
 }
 
 // NewObjectExtractionJobsService creates a new object extraction jobs service.
@@ -104,6 +119,29 @@ func NewObjectExtractionJobsService(db bun.IDB, log *slog.Logger, config *Object
 func (s *ObjectExtractionJobsService) WithGenerativeModelResolver(resolver GenerativeModelResolver) *ObjectExtractionJobsService {
 	s.modelResolver = resolver
 	return s
+}
+
+// WithStaleMinutesResolver attaches the threshold that defines a stuck
+// 'processing' job. Production wires the scheduler's StaleJobCleanupTask here so
+// the retry guard and the sweep cannot drift apart. Passing nil falls back to
+// the extraction config's own threshold, which is the value RecoverStaleJobs
+// already uses.
+func (s *ObjectExtractionJobsService) WithStaleMinutesResolver(resolver StaleMinutesResolver) *ObjectExtractionJobsService {
+	s.staleMinutes = resolver
+	return s
+}
+
+// staleThresholdMinutes returns the stale-job threshold in minutes.
+func (s *ObjectExtractionJobsService) staleThresholdMinutes() int {
+	if s.staleMinutes != nil {
+		if minutes := s.staleMinutes(); minutes > 0 {
+			return minutes
+		}
+	}
+	if s.config != nil && s.config.StaleThresholdMinutes > 0 {
+		return s.config.StaleThresholdMinutes
+	}
+	return 30
 }
 
 // ensureGenerativeModel is the job-creation chokepoint gate. It fails open when
@@ -293,7 +331,11 @@ func (s *ObjectExtractionJobsService) DequeueBatch(ctx context.Context, batchSiz
 	return jobs, nil
 }
 
-// MarkCompleted marks a job as completed with results
+// MarkCompleted marks a job as completed with results.
+//
+// The write only applies while the job is 'processing'. A job that was
+// requeued, cancelled or swept while this run was in flight keeps its current
+// state: writing completion onto it would overwrite the newer owner's state.
 func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID string, results ObjectExtractionResults) error {
 	now := time.Now().UTC()
 
@@ -306,7 +348,7 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 		createdObjectIDs = []string{}
 	}
 
-	_, err := s.db.NewUpdate().
+	res, err := s.db.NewUpdate().
 		Model((*ObjectExtractionJob)(nil)).
 		Set("status = ?", JobStatusCompleted).
 		Set("completed_at = ?", now).
@@ -323,12 +365,22 @@ func (s *ObjectExtractionJobsService) MarkCompleted(ctx context.Context, jobID s
 		Set("created_object_ids = ?", pq.Array(createdObjectIDs)).
 		Set("debug_info = ?", results.DebugInfo).
 		Where("id = ?", jobID).
+		Where("status = ?", JobStatusProcessing).
 		Exec(ctx)
 	if err != nil {
 		s.log.Error("failed to mark job completed",
 			slog.String("id", jobID),
 			logger.Error(err))
 		return fmt.Errorf("mark completed: %w", err)
+	}
+
+	if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+		// The job left 'processing' while this run was in flight (requeued,
+		// cancelled or swept). Its terminal state belongs to whoever owns it
+		// now; writing completion here would overwrite that state.
+		s.log.Warn("ignored completion for a job that is no longer processing",
+			slog.String("id", jobID))
+		return nil
 	}
 
 	s.log.Info("object extraction job completed",
@@ -356,7 +408,9 @@ type ObjectExtractionResults struct {
 }
 
 // MarkFailed marks a job as failed with an error message
-// If retries are available, schedules a retry; otherwise marks as permanently failed
+// If retries are available, schedules a retry; otherwise marks as permanently failed.
+// Like MarkCompleted, it only writes while the job is 'processing', so a stale
+// worker cannot clobber a job that was requeued or cancelled behind it.
 func (s *ObjectExtractionJobsService) MarkFailed(ctx context.Context, jobID string, errorMessage string, errorDetails JSON) error {
 	now := time.Now().UTC()
 
@@ -375,7 +429,7 @@ func (s *ObjectExtractionJobsService) MarkFailed(ctx context.Context, jobID stri
 
 	if newRetryCount >= job.MaxRetries {
 		// Move to dead letter queue
-		_, err = s.db.NewUpdate().
+		res, err := s.db.NewUpdate().
 			Model((*ObjectExtractionJob)(nil)).
 			Set("status = ?", JobStatusDeadLetter).
 			Set("completed_at = ?", now).
@@ -384,9 +438,15 @@ func (s *ObjectExtractionJobsService) MarkFailed(ctx context.Context, jobID stri
 			Set("error_details = ?", errorDetails).
 			Set("retry_count = ?", newRetryCount).
 			Where("id = ?", jobID).
+			Where("status = ?", JobStatusProcessing).
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("mark as dead letter: %w", err)
+		}
+		if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+			s.log.Warn("ignored failure for a job that is no longer processing",
+				slog.String("id", jobID))
+			return nil
 		}
 
 		s.log.Warn("object extraction job moved to dead letter queue",
@@ -395,7 +455,7 @@ func (s *ObjectExtractionJobsService) MarkFailed(ctx context.Context, jobID stri
 			slog.Int("retryCount", newRetryCount))
 	} else {
 		// Schedule retry - reset to pending
-		_, err = s.db.NewUpdate().
+		res, err := s.db.NewUpdate().
 			Model((*ObjectExtractionJob)(nil)).
 			Set("status = ?", JobStatusPending).
 			Set("updated_at = ?", now).
@@ -404,9 +464,15 @@ func (s *ObjectExtractionJobsService) MarkFailed(ctx context.Context, jobID stri
 			Set("retry_count = ?", newRetryCount).
 			Set("started_at = NULL").
 			Where("id = ?", jobID).
+			Where("status = ?", JobStatusProcessing).
 			Exec(ctx)
 		if err != nil {
 			return fmt.Errorf("schedule retry: %w", err)
+		}
+		if affected, err := res.RowsAffected(); err == nil && affected == 0 {
+			s.log.Warn("ignored failure for a job that is no longer processing",
+				slog.String("id", jobID))
+			return nil
 		}
 
 		s.log.Info("object extraction job scheduled for retry",
@@ -545,13 +611,16 @@ func (s *ObjectExtractionJobsService) FindByDocument(ctx context.Context, docume
 
 // ObjectExtractionStats contains statistics about object extraction jobs
 type ObjectExtractionStats struct {
-	Pending     int64 `json:"pending"`
-	Processing  int64 `json:"processing"`
-	Completed   int64 `json:"completed"`
-	Failed      int64 `json:"failed"`
-	StaleFailed int64 `json:"staleFailed"`
-	Cancelled   int64 `json:"cancelled"`
-	Total       int64 `json:"total"`
+	Pending    int64 `json:"pending"`
+	Processing int64 `json:"processing"`
+	Completed  int64 `json:"completed"`
+	// Failed includes dead-lettered jobs; DeadLettered is the subset that
+	// exhausted its retry budget.
+	Failed       int64 `json:"failed"`
+	DeadLettered int64 `json:"deadLettered"`
+	StaleFailed  int64 `json:"staleFailed"`
+	Cancelled    int64 `json:"cancelled"`
+	Total        int64 `json:"total"`
 }
 
 // Stats returns statistics about object extraction jobs
@@ -589,10 +658,19 @@ func (s *ObjectExtractionJobsService) Stats(ctx context.Context, projectID *stri
 			stats.Completed = r.Count
 		case JobStatusFailed:
 			stats.Failed = r.Count
+		case JobStatusDeadLetter:
+			// A dead letter is a failure that exhausted its retry budget. Keep
+			// the subset separately so the UI can say "failed permanently".
+			// It is folded into Failed after the loop: GROUP BY returns rows in
+			// arbitrary order, so adding it here would be overwritten if the
+			// failed group happened to come second.
+			stats.DeadLettered = r.Count
 		case JobStatusCancelled:
 			stats.Cancelled = r.Count
 		}
 	}
+
+	stats.Failed += stats.DeadLettered
 
 	// Count rows terminal-failed by the stale-job sweep separately so genuine
 	// failures and historical cleanup are not conflated.
@@ -638,31 +716,63 @@ func (s *ObjectExtractionJobsService) BulkCancelByProject(ctx context.Context, p
 	return int(rowsAffected), nil
 }
 
-// BulkRetryFailed resets all failed jobs for a project back to pending
+// BulkRetryFailed starts a new run for the latest failed or dead-lettered job
+// of every document/chunk in the project. A unit whose latest job completed or
+// was cancelled is not retried, and units that already have an active job are
+// skipped so a quick double click does not stack duplicate runs. Jobs without a
+// document or chunk are retried individually, not by this project-wide action.
 func (s *ObjectExtractionJobsService) BulkRetryFailed(ctx context.Context, projectID string) (int, error) {
-	now := time.Now().UTC()
-
-	res, err := s.db.NewUpdate().
-		Model((*ObjectExtractionJob)(nil)).
-		Set("status = ?", JobStatusPending).
-		Set("error_message = NULL").
-		Set("error_details = NULL").
-		Set("started_at = NULL").
-		Set("completed_at = NULL").
-		Set("updated_at = ?", now).
+	// One candidate per unit: only when the unit's most recent job is a
+	// terminal failure.
+	candidates := make([]*ObjectExtractionJob, 0)
+	err := s.db.NewSelect().
+		Model(&candidates).
 		Where("project_id = ?", projectID).
-		Where("status = ?", JobStatusFailed).
-		Exec(ctx)
+		Where("status IN (?)", bun.In([]JobStatus{JobStatusFailed, JobStatusDeadLetter})).
+		Where(`id IN (
+			SELECT DISTINCT ON (COALESCE(document_id::text, chunk_id::text, id::text)) id
+			FROM kb.object_extraction_jobs
+			WHERE project_id = ? AND (document_id IS NOT NULL OR chunk_id IS NOT NULL)
+			ORDER BY COALESCE(document_id::text, chunk_id::text, id::text), created_at DESC
+		)`, projectID).
+		Scan(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("bulk retry: %w", err)
+		return 0, fmt.Errorf("find retryable jobs: %w", err)
 	}
 
-	rowsAffected, _ := res.RowsAffected()
-	s.log.Info("bulk retried failed object extraction jobs",
-		slog.String("projectId", projectID),
-		slog.Int64("count", rowsAffected))
+	created := 0
+	var firstErr error
+	for _, job := range candidates {
+		_, wasCreated, err := s.ReprocessJob(ctx, job.ID, projectID)
+		if err != nil {
+			// One unreprocessable job (e.g. the project has no model) must not
+			// abort the rest of the batch; the caller reports the count that
+			// did start.
+			if firstErr == nil {
+				firstErr = err
+			}
+			s.log.Warn("failed to reprocess extraction job",
+				slog.String("jobId", job.ID),
+				slog.String("projectId", projectID),
+				logger.Error(err))
+			continue
+		}
+		if wasCreated {
+			created++
+		}
+	}
 
-	return int(rowsAffected), nil
+	s.log.Info("bulk reprocessed failed object extraction jobs",
+		slog.String("projectId", projectID),
+		slog.Int("count", created))
+
+	// Every candidate was rejected: report the reason instead of letting the
+	// UI claim a retry started. A partial success still returns the count and
+	// leaves the failures visible in the panel.
+	if created == 0 && firstErr != nil {
+		return 0, fmt.Errorf("retry failed extractions: %w", firstErr)
+	}
+	return created, nil
 }
 
 // DeleteCompleted deletes all completed/failed/cancelled jobs for a project
@@ -784,11 +894,15 @@ func (s *ObjectExtractionJobsService) DeleteJob(ctx context.Context, jobID strin
 	return nil
 }
 
-// RetryJob resets a failed or stuck job back to pending for retry
+// RetryJob retries a failed extraction job.
+//
+// A failed or dead-lettered job is terminal history: retrying it starts a new,
+// linked run (reprocessing_of) with a fresh retry budget, so the failed attempt
+// keeps its error message and trace. A stuck 'processing' job is requeued in
+// place because there is no failed attempt worth preserving — but only once it
+// is old enough to be stuck, which is the same threshold the stale-job sweep
+// uses to terminal-fail it.
 func (s *ObjectExtractionJobsService) RetryJob(ctx context.Context, jobID string, projectID string) (*ObjectExtractionJob, error) {
-	now := time.Now().UTC()
-
-	// Get current job
 	job, err := s.FindByID(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("find job: %w", err)
@@ -796,38 +910,154 @@ func (s *ObjectExtractionJobsService) RetryJob(ctx context.Context, jobID string
 	if job == nil {
 		return nil, fmt.Errorf("job not found")
 	}
-
-	// Verify project
 	if job.ProjectID != projectID {
 		return nil, fmt.Errorf("job not found in project")
 	}
 
-	// Can only retry failed, dead_letter, or processing (stuck) jobs
-	if job.Status != JobStatusFailed && job.Status != JobStatusDeadLetter && job.Status != JobStatusProcessing {
+	switch job.Status {
+	case JobStatusProcessing:
+		return s.requeueJob(ctx, job)
+	case JobStatusFailed, JobStatusDeadLetter:
+		next, _, err := s.ReprocessJob(ctx, jobID, projectID)
+		return next, err
+	default:
 		return nil, fmt.Errorf("cannot retry job with status %s (only failed/dead_letter/processing jobs can be retried)", job.Status)
 	}
+}
 
-	// Reset job to pending
-	_, err = s.db.NewUpdate().
+// requeueJob resets a stuck processing job to pending with a fresh retry
+// budget. It is only used for jobs that never reached a terminal state.
+//
+// A 'processing' job younger than the stale-job threshold is rejected with
+// ErrJobStillRunning: its worker is probably still alive, and resetting it would
+// run the unit twice. The staleness predicate is the sweep's
+// (started_at IS NOT NULL AND started_at < now - threshold) so the two paths
+// agree on what "stuck" means; the job is also guarded by that predicate in the
+// UPDATE, so a run reclaimed between the read and the write cannot be requeued.
+func (s *ObjectExtractionJobsService) requeueJob(ctx context.Context, job *ObjectExtractionJob) (*ObjectExtractionJob, error) {
+	now := time.Now().UTC()
+	staleMinutes := s.staleThresholdMinutes()
+	cutoff := now.Add(-time.Duration(staleMinutes) * time.Minute)
+
+	if job.StartedAt == nil {
+		return nil, fmt.Errorf("%w: it has no start time recorded, and a run is only requeued after the %d-minute stale threshold", ErrJobStillRunning, staleMinutes)
+	}
+	if !job.StartedAt.Before(cutoff) {
+		return nil, fmt.Errorf("%w: it started %s ago and is only requeued after the %d-minute stale threshold",
+			ErrJobStillRunning, now.Sub(*job.StartedAt).Truncate(time.Minute), staleMinutes)
+	}
+
+	res, err := s.db.NewUpdate().
 		Model((*ObjectExtractionJob)(nil)).
 		Set("status = ?", JobStatusPending).
+		Set("retry_count = 0").
 		Set("error_message = NULL").
 		Set("error_details = NULL").
 		Set("started_at = NULL").
 		Set("completed_at = NULL").
 		Set("updated_at = ?", now).
-		Where("id = ?", jobID).
+		Where("id = ?", job.ID).
+		Where("status = ?", JobStatusProcessing).
+		Where("started_at IS NOT NULL AND started_at < ?", cutoff).
 		Exec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("retry job: %w", err)
 	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("retry job rows: %w", err)
+	}
+	if affected == 0 {
+		// The worker finished the job between the read and this update. Do not
+		// revive a completed/failed row: that would start a duplicate run and
+		// erase its terminal state.
+		return nil, fmt.Errorf("job is no longer processing; refresh to see its current state")
+	}
 
-	s.log.Info("retried object extraction job",
-		slog.String("id", jobID),
-		slog.String("previousStatus", string(job.Status)))
+	s.log.Info("requeued stuck object extraction job",
+		slog.String("id", job.ID),
+		slog.String("previousStatus", string(job.Status)),
+		slog.Int("staleMinutes", staleMinutes))
 
-	// Fetch updated job
-	return s.FindByID(ctx, jobID)
+	return s.FindByID(ctx, job.ID)
+}
+
+// ReprocessJob creates a new extraction job for a failed or dead-lettered one.
+// The new job carries a full retry budget and points at the original through
+// reprocessing_of, so the failure remains in the document's extraction history
+// instead of being overwritten by the retry.
+//
+// The bool reports whether a new job was created. It is false when an active
+// job already exists for the same unit; that job is returned so repeated
+// retries are idempotent.
+func (s *ObjectExtractionJobsService) ReprocessJob(ctx context.Context, jobID, projectID string) (*ObjectExtractionJob, bool, error) {
+	old, err := s.FindByID(ctx, jobID)
+	if err != nil {
+		return nil, false, fmt.Errorf("find job: %w", err)
+	}
+	if old == nil || old.ProjectID != projectID {
+		return nil, false, fmt.Errorf("job not found in project")
+	}
+	if old.Status != JobStatusFailed && old.Status != JobStatusDeadLetter {
+		return nil, false, fmt.Errorf("cannot reprocess job with status %s (only failed/dead_letter jobs can be reprocessed)", old.Status)
+	}
+
+	if active, err := s.findActiveSibling(ctx, old); err != nil {
+		return nil, false, err
+	} else if active != nil {
+		return active, false, nil
+	}
+
+	next, err := s.CreateJob(ctx, CreateObjectExtractionJobOptions{
+		ProjectID:        old.ProjectID,
+		DocumentID:       old.DocumentID,
+		ChunkID:          old.ChunkID,
+		JobType:          JobTypeReextraction,
+		EnabledTypes:     old.EnabledTypes,
+		ExtractionConfig: old.ExtractionConfig,
+		SourceType:       old.SourceType,
+		SourceID:         old.SourceID,
+		SourceMetadata:   old.SourceMetadata,
+		CreatedBy:        old.CreatedBy,
+		ReprocessingOf:   &old.ID,
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	s.log.Info("reprocessed object extraction job",
+		slog.String("previousJobId", old.ID),
+		slog.String("newJobId", next.ID),
+		slog.String("projectId", projectID))
+
+	return next, true, nil
+}
+
+// findActiveSibling returns a pending or processing job for the same document
+// or chunk, which is the guard against stacking duplicate runs on one unit.
+func (s *ObjectExtractionJobsService) findActiveSibling(ctx context.Context, job *ObjectExtractionJob) (*ObjectExtractionJob, error) {
+	if job.DocumentID == nil && job.ChunkID == nil {
+		return nil, nil
+	}
+
+	active := new(ObjectExtractionJob)
+	q := s.db.NewSelect().
+		Model(active).
+		Where("project_id = ?", job.ProjectID).
+		Where("status IN (?)", bun.In([]JobStatus{JobStatusPending, JobStatusProcessing}))
+	if job.DocumentID != nil {
+		q = q.Where("document_id = ?", *job.DocumentID)
+	}
+	if job.ChunkID != nil {
+		q = q.Where("chunk_id = ?", *job.ChunkID)
+	}
+	if err := q.Order("created_at DESC").Limit(1).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("find active extraction job: %w", err)
+	}
+	return active, nil
 }
 
 // GetStatistics returns detailed statistics for a project
@@ -898,6 +1128,7 @@ func (s *ObjectExtractionJobsService) GetStatistics(ctx context.Context, project
 	stats.JobsByStatus["processing"] = basicStats.Processing
 	stats.JobsByStatus["completed"] = basicStats.Completed
 	stats.JobsByStatus["failed"] = basicStats.Failed
+	stats.JobsByStatus["dead_letter"] = basicStats.DeadLettered
 	stats.JobsByStatus["staleFailed"] = basicStats.StaleFailed
 	stats.JobsByStatus["cancelled"] = basicStats.Cancelled
 

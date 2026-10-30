@@ -1570,7 +1570,10 @@ func (r *Repository) UpdateContentAndStatus(ctx context.Context, documentID, con
 
 // processingStatusSQL returns a SQL CASE expression that derives the unified processing status
 // from conversion_status, document_parsing_jobs, and object_extraction_jobs.
-// Precedence: converting > conversion_failed > extracting > extraction_failed > completed > ready_for_extraction
+// Precedence: converting > conversion_failed > extracting > extraction_failed > completed > ready_for_extraction.
+// A dead_letter extraction job is terminal failure: object extraction never
+// writes the intermediate 'failed' state, so omitting dead_letter here would
+// report a permanently failed document as ready.
 func processingStatusSQL() string {
 	return processingStatusExpr() + " AS processing_status"
 }
@@ -1584,7 +1587,7 @@ func processingStatusExpr() string {
 	return `CASE
 		WHEN EXISTS (
 			SELECT 1 FROM kb.document_parsing_jobs dpj
-			WHERE dpj.document_id = d.id AND dpj.status IN ('pending', 'processing')
+			WHERE dpj.document_id = d.id AND dpj.status IN ('pending', 'processing', 'retry_pending')
 		) THEN 'converting'
 		WHEN d.conversion_status = 'failed' THEN 'conversion_failed'
 		WHEN EXISTS (
@@ -1594,7 +1597,7 @@ func processingStatusExpr() string {
 		WHEN (
 			SELECT oej2.status FROM kb.object_extraction_jobs oej2
 			WHERE oej2.document_id = d.id ORDER BY oej2.created_at DESC LIMIT 1
-		) = 'failed' THEN 'extraction_failed'
+		) IN ('failed', 'dead_letter') THEN 'extraction_failed'
 		WHEN (
 			SELECT oej3.status FROM kb.object_extraction_jobs oej3
 			WHERE oej3.document_id = d.id ORDER BY oej3.created_at DESC LIMIT 1

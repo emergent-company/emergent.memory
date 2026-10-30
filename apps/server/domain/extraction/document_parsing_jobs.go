@@ -484,6 +484,44 @@ type JobStatusUpdates struct {
 	Metadata      map[string]interface{}
 }
 
+// RetryFailedByProject requeues the latest terminal parsing failure for each
+// document (or unlinked source) in a project and returns how many jobs were
+// reset. A unit with an active attempt is skipped so a retry cannot race the
+// worker, and retry_count is zeroed so the job gets a fresh budget. This is the
+// member-facing path for a document whose conversion dead-lettered.
+func (s *DocumentParsingJobsService) RetryFailedByProject(ctx context.Context, projectID string) (int, error) {
+	res, err := s.db.NewRaw(`
+		UPDATE kb.document_parsing_jobs
+		SET status = 'pending',
+		    retry_count = 0,
+		    next_retry_at = NULL,
+		    error_message = NULL,
+		    started_at = NULL,
+		    completed_at = NULL,
+		    updated_at = now()
+		WHERE status IN ('failed', 'dead_letter')
+		  AND id IN (
+		    SELECT DISTINCT ON (COALESCE(x.document_id::text, x.id::text)) x.id
+		    FROM kb.document_parsing_jobs x
+		    WHERE x.project_id = ?
+		      AND NOT EXISTS (
+		          SELECT 1 FROM kb.document_parsing_jobs a
+		          WHERE a.project_id = x.project_id
+		            AND COALESCE(a.document_id::text, a.id::text) = COALESCE(x.document_id::text, x.id::text)
+		            AND a.status IN ('pending', 'processing', 'retry_pending')
+		      )
+		    ORDER BY COALESCE(x.document_id::text, x.id::text), x.created_at DESC
+		)`, projectID).Exec(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("retry failed parsing jobs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("retry failed parsing jobs rows: %w", err)
+	}
+	return int(n), nil
+}
+
 // Stats returns queue statistics
 func (s *DocumentParsingJobsService) Stats(ctx context.Context) (*DocumentParsingQueueStats, error) {
 	stats := &DocumentParsingQueueStats{}
@@ -493,7 +531,7 @@ func (s *DocumentParsingJobsService) Stats(ctx context.Context) (*DocumentParsin
 		COUNT(*) FILTER (WHERE status = 'processing') as processing,
 		COUNT(*) FILTER (WHERE status = 'retry_pending') as retry_pending,
 		COUNT(*) FILTER (WHERE status = 'completed') as completed,
-		COUNT(*) FILTER (WHERE status = 'failed' AND COALESCE(error_message, '') <> '`+jobs.StaleJobMessage+`') as failed,
+		COUNT(*) FILTER (WHERE status IN ('failed', 'dead_letter') AND COALESCE(error_message, '') <> '`+jobs.StaleJobMessage+`') as failed,
 		COUNT(*) FILTER (WHERE status = 'failed' AND error_message = '`+jobs.StaleJobMessage+`') as stale_failed
 	FROM kb.document_parsing_jobs`).Scan(ctx,
 		&stats.Pending, &stats.Processing, &stats.RetryPending, &stats.Completed, &stats.Failed, &stats.StaleFailed)

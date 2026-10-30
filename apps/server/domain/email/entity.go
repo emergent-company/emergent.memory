@@ -38,7 +38,11 @@ const (
 type EmailJob struct {
 	bun.BaseModel `bun:"table:kb.email_jobs,alias:ej"`
 
-	ID               string     `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	ID string `bun:"id,pk,type:uuid,default:gen_random_uuid()"`
+	// ProjectID is the project this mail belongs to. It is nil for
+	// account-scoped mail (none is produced today) and for rows written before
+	// the column existed.
+	ProjectID        *string    `bun:"project_id,type:uuid"`
 	TemplateName     string     `bun:"template_name,notnull"`
 	ToEmail          string     `bun:"to_email,notnull"`
 	ToName           *string    `bun:"to_name"`

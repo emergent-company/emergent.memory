@@ -34,6 +34,9 @@ func NewJobsService(db bun.IDB, log *slog.Logger, cfg *Config) *JobsService {
 
 // EnqueueOptions contains options for enqueuing an email job
 type EnqueueOptions struct {
+	// ProjectID attributes the mail to a project so its delivery failures can
+	// be surfaced to that project's members.
+	ProjectID    *string
 	TemplateName string
 	ToEmail      string
 	ToName       *string
@@ -79,10 +82,11 @@ func (s *JobsService) EnqueueTx(ctx context.Context, db bun.IDB, opts EnqueueOpt
 	// Use raw SQL for now() to ensure clock consistency
 	// Bun's NewRaw uses ? placeholders
 	err = db.NewRaw(`INSERT INTO kb.email_jobs (
-		template_name, to_email, to_name, subject, template_data,
+		project_id, template_name, to_email, to_name, subject, template_data,
 		status, attempts, max_attempts, source_type, source_id, next_retry_at
-	) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, now())
+	) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, now())
 	RETURNING *`,
+		opts.ProjectID,
 		opts.TemplateName,
 		opts.ToEmail,
 		opts.ToName,

@@ -42,6 +42,12 @@ type Server struct {
 	// save/remove. Guarded by missingProvidersMu.
 	missingProvidersMu    sync.Mutex
 	missingProvidersCache map[string]providerMissingEntry
+	// Processing-problems cache backing the Documents sidebar badge: the
+	// project's report lives ~30s so a page render does not run the eleven-queue
+	// aggregate every time. A retry handler deletes the entry. Guarded by
+	// problemsMu.
+	problemsMu    sync.Mutex
+	problemsCache map[string]processingProblemsEntry
 	// Label-autocomplete cache: each project's distinct object labels live
 	// ~labelSuggestionsTTL so object page renders skip the object-list query.
 	// Nil map = cold cache. Guarded by labelCacheMu. labelSuggestionsGroup

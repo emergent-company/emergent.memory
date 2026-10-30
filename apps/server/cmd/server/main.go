@@ -58,6 +58,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
+	"github.com/emergent-company/emergent.memory/domain/processingproblems"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/domain/sandbox"
@@ -200,6 +201,9 @@ func coreFxOptions() fx.Option {
 
 		// Email module (email job queue and worker)
 		email.Module,
+
+		// Processing problems (project-scoped read model over every job queue)
+		processingproblems.Module,
 
 		// Scheduler module (cron-based scheduled tasks)
 		scheduler.Module,

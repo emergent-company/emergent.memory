@@ -73,11 +73,23 @@ func pageTestID(title string) string {
 // project's owning org — see #997); it is threaded in by page() from the
 // caller's access tree.
 func sidebarGroups(base string, isOrgAdmin bool) []layout.SidebarGroup {
+	return sidebarGroupsWithWarn(base, isOrgAdmin, 0)
+}
+
+// sidebarGroupsWithWarn is sidebarGroups plus the Documents attention badge.
+// The badge counts document-related terminal failures only (extraction,
+// conversion, chunk embeddings); other areas surface in the Documents panel
+// and can earn their own badge later.
+func sidebarGroupsWithWarn(base string, isOrgAdmin bool, documentsWarn int) []layout.SidebarGroup {
+	documentsItem := layout.SidebarItem{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"}
+	if documentsWarn > 0 {
+		documentsItem.Warn = sidebarWarnBadge(documentsWarn)
+	}
 	memoryBrowser := []layout.SidebarItem{
 		{Label: "Objects", Href: base + "/objects", Icon: "lucide--box"},
 		{Label: "Embeddings", Href: base + "/embeddings", Icon: "lucide--scan-line"},
 		{Label: "Schema", Href: base + "/schema", Icon: "lucide--git-branch"},
-		{Label: "Documents", Href: base + "/documents", Icon: "lucide--file-text"},
+		documentsItem,
 		{Label: "Data Sources", Href: base + "/data-sources", Icon: "lucide--cloud"},
 	}
 	if isOrgAdmin {
@@ -346,7 +358,16 @@ func (s *Server) page(c echo.Context, title string, content templ.Component) err
 		if current != nil {
 			backupsOrgID = current.OrgID
 		}
-		groups = layout.ActiveSidebarGroups(sidebarGroups(linkBase, isOrgAdmin(tree, backupsOrgID)), activePath)
+		// Documents badge: document-related terminal failures. Best-effort and
+		// cached for 30s, so a page render does not run the aggregate every
+		// time; a failure just hides the badge.
+		documentsWarn := 0
+		if report, err := s.cachedProcessingProblems(c.Request().Context()); err != nil {
+			captureError(err)
+		} else {
+			documentsWarn = processingDocumentsCount(report)
+		}
+		groups = layout.ActiveSidebarGroups(sidebarGroupsWithWarn(linkBase, isOrgAdmin(tree, backupsOrgID), documentsWarn), activePath)
 		// Warn in the settings nav when the active project has zero configured
 		// LLM providers. Fail-safe helper: false on lookup errors.
 		providersMissing = s.projectHasNoProviders(c.Request().Context())

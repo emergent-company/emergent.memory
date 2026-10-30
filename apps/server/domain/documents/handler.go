@@ -2,6 +2,7 @@ package documents
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -32,6 +33,22 @@ type ExtractionRetrier interface {
 // Defined here to avoid import cycles with the chunking package.
 type ChunkingService interface {
 	RecreateChunks(ctx context.Context, projectID, documentID string) error
+}
+
+// RetryConflictError reports that a retry was refused because the addressed run
+// is still in flight. The extraction domain owns the sentinel
+// (extraction.ErrJobStillRunning) and its threshold-aware message; this type
+// carries that message across the narrow ExtractionRetrier seam without
+// documents importing extraction, which would be an import cycle.
+type RetryConflictError struct {
+	Message string
+}
+
+func (e *RetryConflictError) Error() string { return e.Message }
+
+// NewRetryConflict builds the error the documents handler renders as 409.
+func NewRetryConflict(message string) error {
+	return &RetryConflictError{Message: message}
 }
 
 // Handler handles document HTTP requests
@@ -711,6 +728,12 @@ func (h *Handler) RetryExtraction(c echo.Context) error {
 
 	job, err := h.extraction.RetryByJobID(c.Request().Context(), retryableJob.ID, user.ProjectID)
 	if err != nil {
+		// A run that is still in flight is a conflict rather than a bad request:
+		// retrying it would process the document twice.
+		var conflict *RetryConflictError
+		if errors.As(err, &conflict) {
+			return apperror.NewConflict(conflict.Message)
+		}
 		return apperror.ErrBadRequest.WithMessage(err.Error())
 	}
 

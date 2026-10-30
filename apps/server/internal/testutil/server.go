@@ -622,7 +622,7 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	// full-server tests keep creating jobs without seeding project model config;
 	// the chokepoint gate itself is covered by domain/extraction DB tests.
 	extractionJobsSvc := extraction.NewObjectExtractionJobsService(db, log, extraction.DefaultObjectExtractionConfig())
-	extractionAdminHandler := extraction.NewAdminHandler(extractionJobsSvc, "", nil)
+	extractionAdminHandler := extraction.NewAdminHandler(extractionJobsSvc, nil, "", nil)
 	extraction.RegisterAdminRoutes(e, extractionAdminHandler, authMiddleware)
 
 	// Register monitoring routes

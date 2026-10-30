@@ -503,6 +503,7 @@ func (s *Service) enqueueInviteEmail(ctx context.Context, db bun.IDB, invite *In
 	}
 	toName := invite.Email
 	_, emailErr := s.emailSvc.EnqueueTx(ctx, db, email.EnqueueOptions{
+		ProjectID:    invite.ProjectID,
 		TemplateName: "project-invitation",
 		ToEmail:      invite.Email,
 		ToName:       &toName,

@@ -39,6 +39,11 @@ type ExtractionJobDTO struct {
 	SourceMetadata   map[string]interface{} `json:"source_metadata"`
 	ExtractionConfig map[string]interface{} `json:"extraction_config"`
 	Status           ExtractionJobStatusDTO `json:"status"`
+	// DeadLettered distinguishes a job that exhausted its retry budget from an
+	// intermediate failure. Status remains the client-facing "failed" value for
+	// compatibility; the panel and history use this flag for the permanent
+	// label.
+	DeadLettered     bool                   `json:"dead_lettered"`
 	TotalItems       int                    `json:"total_items"`
 	ProcessedItems   int                    `json:"processed_items"`
 	SuccessfulItems  int                    `json:"successful_items"`
@@ -112,6 +117,10 @@ type ExtractionJobListDTO struct {
 type ExtractionJobStatisticsDTO struct {
 	TotalJobs    int                            `json:"total_jobs"`
 	JobsByStatus map[ExtractionJobStatusDTO]int `json:"jobs_by_status"`
+	// DeadLettered is the subset of JobsByStatus["failed"] that exhausted its
+	// retry budget. It is reported separately so a consumer can distinguish
+	// "failed permanently" from an intermediate failure.
+	DeadLettered int `json:"dead_lettered"`
 	// StaleFailed is the count of rows terminal-failed by the stale-job sweep
 	// (jobs.StaleJobMessage). It is kept out of JobsByStatus["failed"] so that
 	// historical cleanup is not presented as a current failure, and reported
@@ -332,6 +341,7 @@ func (j *ObjectExtractionJob) ToDTO() *ExtractionJobDTO {
 		SourceMetadata:   sourceMetadata,
 		ExtractionConfig: extractionConfig,
 		Status:           mapJobStatusToDTO(j.Status),
+		DeadLettered:     j.Status == JobStatusDeadLetter,
 		TotalItems:       j.TotalItems,
 		ProcessedItems:   j.ProcessedItems,
 		SuccessfulItems:  j.SuccessfulItems,

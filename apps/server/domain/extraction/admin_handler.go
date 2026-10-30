@@ -20,6 +20,7 @@ import (
 // AdminHandler handles HTTP requests for extraction jobs admin API
 type AdminHandler struct {
 	jobsService  *ObjectExtractionJobsService
+	parsingJobs  *DocumentParsingJobsService
 	tempoBaseURL string       // internal Tempo query URL; empty when tracing disabled
 	pricing      modelPricing // optional; nil when provider repo not available
 }
@@ -33,8 +34,8 @@ type modelPricing interface {
 
 // NewAdminHandler creates a new extraction jobs admin handler. tempoBaseURL and
 // pricing are optional (empty/nil → trace enrichment is a no-op).
-func NewAdminHandler(jobsService *ObjectExtractionJobsService, tempoBaseURL string, pricing modelPricing) *AdminHandler {
-	return &AdminHandler{jobsService: jobsService, tempoBaseURL: tempoBaseURL, pricing: pricing}
+func NewAdminHandler(jobsService *ObjectExtractionJobsService, parsingJobs *DocumentParsingJobsService, tempoBaseURL string, pricing modelPricing) *AdminHandler {
+	return &AdminHandler{jobsService: jobsService, parsingJobs: parsingJobs, tempoBaseURL: tempoBaseURL, pricing: pricing}
 }
 
 // CreateJob handles POST /api/admin/extraction-jobs
@@ -497,6 +498,13 @@ func (h *AdminHandler) RetryJob(c echo.Context) error {
 
 	job, err := h.jobsService.RetryJob(c.Request().Context(), jobID, projectID)
 	if err != nil {
+		// A live run is a conflict, not a bad request: the caller asked to retry
+		// work that is still in flight, and the 409 tells it to wait for the
+		// current attempt (or the stale-job sweep) instead of silently
+		// double-processing the unit.
+		if errors.Is(err, ErrJobStillRunning) {
+			return apperror.NewConflict(err.Error())
+		}
 		return apperror.NewBadRequest(err.Error())
 	}
 
@@ -534,7 +542,10 @@ func (h *AdminHandler) GetStatistics(c echo.Context) error {
 		case "completed":
 			jobsByStatus[StatusCompleted] = int(count)
 		case "failed":
-			jobsByStatus[StatusFailed] = int(count)
+			jobsByStatus[StatusFailed] += int(count)
+		case "dead_letter":
+			// Already included in "failed" by the service; surfaced separately
+			// through DeadLettered. Do not add it twice.
 		case "cancelled":
 			jobsByStatus[StatusCancelled] = int(count)
 		}
@@ -545,6 +556,7 @@ func (h *AdminHandler) GetStatistics(c echo.Context) error {
 		JobsByStatus: jobsByStatus,
 		// Stale-sweep reaps are kept out of JobsByStatus["failed"] and surfaced
 		// separately so historical cleanup is not read as a current failure.
+		DeadLettered:  int(stats.JobsByStatus["dead_letter"]),
 		StaleFailed:   int(stats.JobsByStatus["staleFailed"]),
 		SuccessRate:   stats.SuccessRate,
 		JobsThisWeek:  int(stats.JobsThisWeek),
@@ -633,6 +645,35 @@ func (h *AdminHandler) BulkRetryJobs(c echo.Context) error {
 	return c.JSON(http.StatusOK, SuccessResponse(BulkRetryResponseDTO{
 		Retried: count,
 		Message: fmt.Sprintf("Retrying %d job%s", count, pluralize(count)),
+	}))
+}
+
+// BulkRetryParsingJobs handles POST /api/admin/parsing-jobs/projects/:projectId/bulk-retry
+// It requeues the latest terminal conversion failure for each document in the
+// project. Unlike schema migrations, parsing is deterministic enough that a
+// fresh retry budget is safe; the failed attempt remains in the job history.
+func (h *AdminHandler) BulkRetryParsingJobs(c echo.Context) error {
+	if h.parsingJobs == nil {
+		return apperror.NewInternal("parsing retry is not configured", nil)
+	}
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+	if user.ProjectID != "" && projectID != user.ProjectID {
+		return apperror.NewBadRequest("projectId mismatch with X-Project-ID header")
+	}
+
+	count, err := h.parsingJobs.RetryFailedByProject(c.Request().Context(), projectID)
+	if err != nil {
+		return apperror.NewInternal("failed to bulk retry parsing jobs", err)
+	}
+
+	return c.JSON(http.StatusOK, SuccessResponse(BulkRetryResponseDTO{
+		Retried: count,
+		Message: fmt.Sprintf("Retrying %d conversion%s", count, pluralize(count)),
 	}))
 }
 

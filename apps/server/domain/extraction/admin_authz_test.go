@@ -45,7 +45,7 @@ func newAdminEchoWithResolver(t *testing.T, testDB *testutil.TestDB, resolver ex
 
 	jobsSvc := extraction.NewObjectExtractionJobsService(dbc, log, extraction.DefaultObjectExtractionConfig()).
 		WithGenerativeModelResolver(resolver)
-	handler := extraction.NewAdminHandler(jobsSvc, "", nil)
+	handler := extraction.NewAdminHandler(jobsSvc, nil, "", nil)
 
 	e := echo.New()
 	e.HideBanner = true
