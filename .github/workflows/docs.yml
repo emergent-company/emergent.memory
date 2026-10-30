@@ -43,10 +43,10 @@ jobs:
           fetch-depth: 0  # mike needs full history
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch runners, and their distro Python has no ensurepip,
-      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
-      # provisions its own interpreter, so docs build identically on every
-      # runner in the pool.
+      # the self-hosted Linux runners (Debian 13, whose distro Python has no
+      # ensurepip — it ships only in python3-venv), so `python3 -m venv` fails
+      # there ("ensurepip is not available"). uv provisions its own interpreter,
+      # so docs build identically on every runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -81,10 +81,10 @@ jobs:
           fetch-depth: 0
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch runners, and their distro Python has no ensurepip,
-      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
-      # provisions its own interpreter, so docs build identically on every
-      # runner in the pool.
+      # the self-hosted Linux runners (Debian 13, whose distro Python has no
+      # ensurepip — it ships only in python3-venv), so `python3 -m venv` fails
+      # there ("ensurepip is not available"). uv provisions its own interpreter,
+      # so docs build identically on every runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -151,10 +151,10 @@ jobs:
           fetch-depth: 0
 
       # The pool is heterogeneous: actions/setup-python resolves no version on
-      # the Arch runners, and their distro Python has no ensurepip,
-      # so `python3 -m venv` fails there ("ensurepip is not available"). uv
-      # provisions its own interpreter, so docs build identically on every
-      # runner in the pool.
+      # the self-hosted Linux runners (Debian 13, whose distro Python has no
+      # ensurepip — it ships only in python3-venv), so `python3 -m venv` fails
+      # there ("ensurepip is not available"). uv provisions its own interpreter,
+      # so docs build identically on every runner in the pool.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:

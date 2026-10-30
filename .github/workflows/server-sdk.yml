@@ -69,10 +69,10 @@ jobs:
 
   test:
     name: Test
-    # Hosted runner: `-race` needs cgo, and the heterogeneous self-hosted
-    # `memory` pool is not guaranteed to have a C compiler (the Linux runner has no
-    # gcc and is Arch, so no apt fallback). Hosted ubuntu ships gcc, and running
-    # this unprivileged test job there is safe for fork PRs.
+    # Hosted runner: `-race` needs cgo and the self-hosted `memory` pool is not
+    # guaranteed to have a C compiler (the Linux runner has no gcc). Hosted
+    # ubuntu ships gcc, and running this unprivileged test job there is safe for
+    # fork PRs.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: "!startsWith(github.ref, 'refs/tags/')"

@@ -168,10 +168,10 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux: it has no
-        # apt-get, but the Chromium runtime libs and browser cache are already
-        # installed on the host, so `--with-deps` (which shells out to apt)
-        # must be skipped there. Keep the dependency install on Debian runners.
+        # The `memory` self-hosted runner is Debian and has apt-get, so
+        # `--with-deps` installs the Chromium runtime libs; the browser cache is
+        # already warm there. The guard is defensive — every runner in the pool
+        # has apt-get today, so the else branch is unreachable.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium
@@ -248,10 +248,10 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux: it has no
-        # apt-get, but the Chromium runtime libs and browser cache are already
-        # installed on the host, so `--with-deps` (which shells out to apt)
-        # must be skipped there. Keep the dependency install on Debian runners.
+        # The `memory` self-hosted runner is Debian and has apt-get, so
+        # `--with-deps` installs the Chromium runtime libs; the browser cache is
+        # already warm there. The guard is defensive — every runner in the pool
+        # has apt-get today, so the else branch is unreachable.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium
@@ -316,10 +316,10 @@ jobs:
           key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
       - name: Install Playwright Chromium
-        # The `memory` self-hosted runner is Arch Linux: it has no
-        # apt-get, but the Chromium runtime libs and browser cache are already
-        # installed on the host, so `--with-deps` (which shells out to apt)
-        # must be skipped there. Keep the dependency install on Debian runners.
+        # The `memory` self-hosted runner is Debian and has apt-get, so
+        # `--with-deps` installs the Chromium runtime libs; the browser cache is
+        # already warm there. The guard is defensive — every runner in the pool
+        # has apt-get today, so the else branch is unreachable.
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             npx playwright install --with-deps chromium
