@@ -584,6 +584,12 @@ func main() {
 	e.POST("/orgs", s.uiCreateOrg)
 	e.GET("/orgs/:id", s.uiOrg)
 	e.GET("/orgs/:id/members", s.uiOrgMembers)
+	e.GET("/orgs/:id/members/add", s.uiOrgMemberAddPage)
+	e.POST("/orgs/:id/members", s.uiOrgAddMember)
+	e.POST("/orgs/:id/members/:userId/role", s.uiOrgChangeMemberRole)
+	e.POST("/orgs/:id/members/:userId/remove", s.uiOrgRemoveMember)
+	e.POST("/orgs/:id/invites/:inviteId/resend", s.uiOrgResendInvite)
+	e.POST("/orgs/:id/invites/:inviteId/revoke", s.uiOrgRevokeInvite)
 	// Org-level invitation: carries the org id + org_admin role and no
 	// projectId, unlike the project-scoped /members/new flow.
 	e.GET("/orgs/:id/invite", s.uiOrgInvitePage)

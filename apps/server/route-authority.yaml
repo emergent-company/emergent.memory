@@ -1090,7 +1090,23 @@ routes:
       level: auth
       note: RequireAuth
     - method: GET
+      path: /api/orgs/:id/invites
+      level: auth
+      note: RequireAuth
+    - method: GET
       path: /api/orgs/:id/members
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/orgs/:id/members
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/orgs/:id/members/:userId
+      level: auth
+      note: RequireAuth
+    - method: PATCH
+      path: /api/orgs/:id/members/:userId
       level: auth
       note: RequireAuth
     - method: GET

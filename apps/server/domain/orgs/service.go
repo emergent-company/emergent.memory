@@ -30,6 +30,12 @@ type orgRepository interface {
 	UpdateName(ctx context.Context, id, name string) (*Org, error)
 	Delete(ctx context.Context, id string) (bool, error)
 	ListMembers(ctx context.Context, orgID string) ([]OrgMemberDTO, error)
+	FindVerifiedUserByEmail(ctx context.Context, email string) (*orgMemberUser, error)
+	AddMember(ctx context.Context, orgID, userID, role string) (*OrgMemberDTO, error)
+	UpdateMemberRole(ctx context.Context, orgID, userID, role string) (bool, error)
+	CountAdmins(ctx context.Context, orgID string) (int, error)
+	SoleProjectAdminProjects(ctx context.Context, orgID, userID string) ([]string, error)
+	RemoveMemberWithCascade(ctx context.Context, orgID, userID string) ([]string, bool, error)
 	CountUserMemberships(ctx context.Context, userID string) (int, error)
 	IsUserMember(ctx context.Context, orgID, userID string) (bool, error)
 	GetMembershipRole(ctx context.Context, orgID, userID string) (string, error)
@@ -46,11 +52,18 @@ type orgRepository interface {
 // Compile-time check that the concrete repository satisfies the service port.
 var _ orgRepository = (*Repository)(nil)
 
+// TokenRevoker revokes a user's project-scoped API tokens. Satisfied by
+// apitoken.Repository via fx injection; optional so the domain works without it.
+type TokenRevoker interface {
+	RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error
+}
+
 // Service handles business logic for organizations
 type Service struct {
 	repo                orgRepository
 	log                 *slog.Logger
 	toolPoolInvalidator ToolPoolInvalidator
+	tokenRevoker        TokenRevoker // optional; nil-safe
 }
 
 // ServiceParams bundles dependencies for NewService.
@@ -60,8 +73,9 @@ type ServiceParams struct {
 	Repo *Repository
 	Log  *slog.Logger
 
-	// Optional cross-domain dependency (nil-safe when the agents feature is off).
+	// Optional cross-domain dependencies (nil-safe when not wired).
 	ToolPoolInvalidator ToolPoolInvalidator `optional:"true"`
+	TokenRevoker        TokenRevoker        `optional:"true"`
 }
 
 // NewService creates a new organization service
@@ -70,6 +84,7 @@ func NewService(p ServiceParams) *Service {
 		repo:                p.Repo,
 		log:                 p.Log.With(logger.Scope("orgs.svc")),
 		toolPoolInvalidator: p.ToolPoolInvalidator,
+		tokenRevoker:        p.TokenRevoker,
 	}
 }
 
@@ -213,4 +228,160 @@ func (s *Service) ListMembers(ctx context.Context, orgID, userID string) ([]OrgM
 		members[i].ActivityTier = activity.TierFor(members[i].LastActiveAt, false, now)
 	}
 	return members, nil
+}
+
+// validOrgRole reports whether role is a supported organization membership role.
+func validOrgRole(role string) bool {
+	return role == OrgRoleAdmin || role == OrgRoleMember
+}
+
+// AddMember directly adds an already-registered user to an organization by
+// exact verified email. Organization administration only. The lookup is exact
+// (no partial registry browsing); an unregistered email is a 404 that points the
+// caller at the invitation flow, and an existing member is a 409.
+func (s *Service) AddMember(ctx context.Context, orgID, callerID, email, role string) (*OrgMemberDTO, error) {
+	if err := s.requireOrgAdmin(ctx, orgID, callerID); err != nil {
+		return nil, err
+	}
+	role = strings.TrimSpace(role)
+	if !validOrgRole(role) {
+		return nil, apperror.NewBadRequest("invalid role")
+	}
+	email = strings.TrimSpace(email)
+	if email == "" || !strings.Contains(email, "@") {
+		return nil, apperror.NewBadRequest("a valid email address is required")
+	}
+
+	found, err := s.repo.FindVerifiedUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if found == nil {
+		return nil, apperror.New(404, "not-found", "No registered user with that email — send an invitation instead.")
+	}
+
+	member, err := s.repo.AddMember(ctx, orgID, found.ID, role)
+	if err != nil {
+		return nil, err
+	}
+
+	s.log.Info("organization member added",
+		slog.String("orgID", orgID),
+		slog.String("userID", found.ID),
+		slog.String("role", role),
+		slog.String("addedBy", callerID))
+	return member, nil
+}
+
+// UpdateMemberRole changes an organization member's role in place. The last
+// org_admin cannot be demoted, so an organization always retains an
+// administrator.
+func (s *Service) UpdateMemberRole(ctx context.Context, orgID, callerID, userID, role string) error {
+	if err := s.requireOrgAdmin(ctx, orgID, callerID); err != nil {
+		return err
+	}
+	role = strings.TrimSpace(role)
+	if !validOrgRole(role) {
+		return apperror.NewBadRequest("invalid role")
+	}
+
+	current, err := s.repo.GetMembershipRole(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if current == "" {
+		return apperror.New(404, "not-found", "Member not found")
+	}
+	if current == role {
+		return nil
+	}
+	if current == OrgRoleAdmin && role != OrgRoleAdmin {
+		admins, err := s.repo.CountAdmins(ctx, orgID)
+		if err != nil {
+			return err
+		}
+		if admins <= 1 {
+			return apperror.New(403, "last-admin", "Cannot change the last organization admin. Assign another org admin first.")
+		}
+	}
+
+	updated, err := s.repo.UpdateMemberRole(ctx, orgID, userID, role)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return apperror.New(404, "not-found", "Member not found")
+	}
+
+	s.log.Info("organization member role changed",
+		slog.String("orgID", orgID),
+		slog.String("userID", userID),
+		slog.String("oldRole", current),
+		slog.String("role", role),
+		slog.String("changedBy", callerID))
+	return nil
+}
+
+// RemoveMember removes a member from an organization. Removing an org_admin is
+// blocked when they are the last one. Removal cascades to the member's project
+// memberships in this organization and revokes their project-scoped tokens, but
+// is refused when the member is the only project_admin of a project in the org
+// (that project would otherwise be left without an administrator).
+func (s *Service) RemoveMember(ctx context.Context, orgID, callerID, userID string) error {
+	if err := s.requireOrgAdmin(ctx, orgID, callerID); err != nil {
+		return err
+	}
+
+	current, err := s.repo.GetMembershipRole(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if current == "" {
+		return apperror.New(404, "not-found", "Member not found")
+	}
+	if current == OrgRoleAdmin {
+		admins, err := s.repo.CountAdmins(ctx, orgID)
+		if err != nil {
+			return err
+		}
+		if admins <= 1 {
+			return apperror.New(403, "last-admin", "Cannot remove the last organization admin. Assign another org admin first.")
+		}
+	}
+
+	soleAdminOf, err := s.repo.SoleProjectAdminProjects(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if len(soleAdminOf) > 0 {
+		return apperror.New(409, "project-without-admin",
+			"Cannot remove this member: they are the only project admin of "+strings.Join(soleAdminOf, ", ")+". Assign another project admin first.")
+	}
+
+	projectIDs, removed, err := s.repo.RemoveMemberWithCascade(ctx, orgID, userID)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return apperror.New(404, "not-found", "Member not found")
+	}
+
+	if s.tokenRevoker != nil {
+		for _, projectID := range projectIDs {
+			if err := s.tokenRevoker.RevokeByProjectAndUser(ctx, projectID, userID); err != nil {
+				s.log.Warn("failed to revoke member project tokens",
+					slog.String("orgID", orgID),
+					slog.String("projectID", projectID),
+					slog.String("userID", userID),
+					slog.String("error", err.Error()))
+			}
+		}
+	}
+
+	s.log.Info("organization member removed",
+		slog.String("orgID", orgID),
+		slog.String("userID", userID),
+		slog.Int("projectMembershipsRemoved", len(projectIDs)),
+		slog.String("removedBy", callerID))
+	return nil
 }

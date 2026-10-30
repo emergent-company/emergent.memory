@@ -212,6 +212,13 @@ func coreFxOptions() fx.Option {
 			return tokenRepo
 		}),
 
+		// Cross-domain wiring: expose apitoken.Repository as orgs.TokenRevoker
+		// (org-member removal cascades to project memberships and revokes their
+		// project-scoped tokens).
+		fx.Provide(func(tokenRepo *apitoken.Repository) orgs.TokenRevoker {
+			return tokenRepo
+		}),
+
 		// Cross-domain wiring: expose branches.Store as projects.BranchReader
 		fx.Provide(func(branchStore *branches.Store) projects.BranchReader {
 			return branchStore

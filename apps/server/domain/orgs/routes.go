@@ -28,6 +28,9 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	g.DELETE("/:id", h.Delete)
 
 	g.GET("/:id/members", h.ListMembers)
+	g.POST("/:id/members", h.AddMember)
+	g.PATCH("/:id/members/:userId", h.UpdateMemberRole)
+	g.DELETE("/:id/members/:userId", h.RemoveMember)
 
 	// Org tool settings — admin routes
 	admin := e.Group("/api/admin/orgs")

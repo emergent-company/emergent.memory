@@ -74,6 +74,43 @@ func (h *Handler) ListByProject(c echo.Context) error {
 	return c.JSON(http.StatusOK, invites)
 }
 
+// ListOrgInvites returns the invitations sent for an organization itself
+// (org-scoped invitations only). The list carries invitee PII, so the caller
+// must be an org_admin of the addressed organization.
+// @Summary      List organization invitations
+// @Description  Returns org-scoped invitations (pending, accepted, declined, revoked) for an organization; org_admin only
+// @Tags         invites
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {array} SentInvite "List of invitations for the organization"
+// @Failure      400 {object} apperror.Error "Missing organization id"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Router       /api/orgs/{id}/invites [get]
+// @Security     bearerAuth
+func (h *Handler) ListOrgInvites(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	orgID := c.Param("id")
+	if orgID == "" {
+		return apperror.NewBadRequest("organization id is required")
+	}
+
+	allowed, err := h.mayAdministerOrg(c.Request().Context(), orgID, user.ID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return apperror.ErrForbidden
+	}
+
+	invites, err := h.svc.ListByOrg(c.Request().Context(), orgID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, invites)
+}
+
 // Create creates a new invitation
 // @Summary      Create project invitation
 // @Description  Sends an invitation email to a user to join a project with specified role (requires project admin access)
@@ -126,8 +163,8 @@ func (h *Handler) Create(c echo.Context) error {
 		// accepting it would write the out-of-vocabulary value "org_admin" into
 		// kb.project_memberships.role (issue #979). Reject it at create time so
 		// the junk role is never persisted.
-		if req.Role == "org_admin" {
-			return apperror.NewBadRequest("org_admin role is not valid for a project-scoped invite")
+		if req.Role == "org_admin" || req.Role == "org_member" {
+			return apperror.NewBadRequest(req.Role + " role is not valid for a project-scoped invite")
 		}
 	} else {
 		// Org-scoped: the caller must be a member of the target org (issue #960).

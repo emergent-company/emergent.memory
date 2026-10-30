@@ -172,6 +172,36 @@ func (s *Service) ListPendingForUser(ctx context.Context, userID string) ([]Pend
 // invite's full email delivery log (every send/resend with its delivery events)
 // loaded in two further batched queries for the whole project.
 func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentInvite, error) {
+	return s.listInvites(ctx,
+		`WHERE i.project_id = ?`,
+		[]any{projectID},
+		inviteScope{column: "i.project_id", value: projectID},
+	)
+}
+
+// ListByOrg returns the invitations sent for an organization itself (that is,
+// org-scoped invitations with no project), with the same delivery-status and
+// delivery-log enrichment as ListByProject. Project-scoped invitations in the
+// organization are deliberately excluded: the organization members surface owns
+// the org-level invite list, while project invites live on their project.
+func (s *Service) ListByOrg(ctx context.Context, orgID string) ([]SentInvite, error) {
+	return s.listInvites(ctx,
+		`WHERE i.organization_id = ? AND i.project_id IS NULL`,
+		[]any{orgID},
+		inviteScope{column: "i.organization_id", value: orgID, extra: "AND i.project_id IS NULL"},
+	)
+}
+
+// inviteScope identifies which invitations a delivery-log batch resolves.
+type inviteScope struct {
+	column string // fixed SQL column: i.project_id or i.organization_id
+	value  string
+	extra  string // fixed extra predicate (org scope excludes project invites)
+}
+
+// listInvites runs the shared invite list query for a prebuilt WHERE clause and
+// attaches each invite's delivery log.
+func (s *Service) listInvites(ctx context.Context, where string, args []any, scope inviteScope) ([]SentInvite, error) {
 	var invites []SentInvite
 	err := s.db.NewRaw(`
 		SELECT i.id, i.email, i.role, i.status, i.created_at, i.expires_at,
@@ -184,9 +214,9 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentIn
 			ORDER BY created_at DESC
 			LIMIT 1
 		) ej ON true
-		WHERE i.project_id = ?
+		`+where+`
 		ORDER BY i.created_at DESC
-	`, projectID).Scan(ctx, &invites)
+	`, args...).Scan(ctx, &invites)
 	if err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
@@ -194,7 +224,7 @@ func (s *Service) ListByProject(ctx context.Context, projectID string) ([]SentIn
 		return []SentInvite{}, nil
 	}
 
-	logs, err := s.inviteDeliveryLogs(ctx, projectID)
+	logs, err := s.inviteDeliveryLogs(ctx, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -234,16 +264,16 @@ type inviteDeliveryEventRow struct {
 // project in two batched queries (no per-invitation round trip): the
 // invite-scoped email jobs, then the Mailgun delivery events recorded against
 // them. The result maps invitation id → sends, newest first.
-func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map[string][]InviteDeliveryEvent, error) {
+func (s *Service) inviteDeliveryLogs(ctx context.Context, scope inviteScope) (map[string][]InviteDeliveryEvent, error) {
 	var jobs []inviteDeliveryJobRow
 	if err := s.db.NewRaw(`
 		SELECT j.source_id, j.id, j.created_at, j.processed_at, j.status,
 		       j.delivery_status, j.delivery_status_at, j.last_error
 		FROM kb.email_jobs j
 		JOIN kb.invites i ON i.id = j.source_id
-		WHERE j.source_type = 'invite' AND i.project_id = ?
+		WHERE j.source_type = 'invite' AND `+scope.column+` = ? `+scope.extra+`
 		ORDER BY j.created_at DESC, j.id DESC
-	`, projectID).Scan(ctx, &jobs); err != nil {
+	`, scope.value).Scan(ctx, &jobs); err != nil {
 		return nil, apperror.ErrDatabase.WithInternal(err)
 	}
 
@@ -273,9 +303,9 @@ func (s *Service) inviteDeliveryLogs(ctx context.Context, projectID string) (map
 			FROM kb.email_logs l
 			JOIN kb.email_jobs j ON j.id = l.email_job_id
 			JOIN kb.invites i ON i.id = j.source_id
-			WHERE j.source_type = 'invite' AND i.project_id = ?
+			WHERE j.source_type = 'invite' AND `+scope.column+` = ? `+scope.extra+`
 			ORDER BY l.created_at ASC, l.id ASC
-		`, projectID).Scan(ctx, &events); err != nil {
+		`, scope.value).Scan(ctx, &events); err != nil {
 			return nil, apperror.ErrDatabase.WithInternal(err)
 		}
 		for _, e := range events {
@@ -305,6 +335,7 @@ func (s *Service) Create(ctx context.Context, req *CreateInviteRequest) (*Invite
 	// Validate role
 	validRoles := map[string]bool{
 		"org_admin":      true,
+		"org_member":     true,
 		"project_admin":  true,
 		"project_user":   true,
 		"project_viewer": true,
@@ -505,6 +536,8 @@ func roleLabelFor(role string) string {
 		return "Viewer (read-only)"
 	case "org_admin":
 		return "Organization Admin"
+	case "org_member":
+		return "Organization Member"
 	default:
 		return role
 	}
@@ -575,8 +608,8 @@ func (s *Service) Accept(ctx context.Context, userID, token string) error {
 	// out-of-vocabulary value "org_admin" into kb.project_memberships.role AND
 	// grant org-level admin in kb.organization_memberships. Refuse it fail
 	// closed here so no membership rows are written.
-	if invite.ProjectID != nil && invite.Role == "org_admin" {
-		return apperror.NewForbidden("org_admin is not valid for a project-scoped invite")
+	if invite.ProjectID != nil && (invite.Role == "org_admin" || invite.Role == "org_member") {
+		return apperror.NewForbidden(invite.Role + " is not valid for a project-scoped invite")
 	}
 
 	// Defence in depth (issue #967): an org_admin membership grant must originate
@@ -703,7 +736,7 @@ func orgMembershipRole(inviteRole string) (role string, ok bool) {
 	switch inviteRole {
 	case "org_admin":
 		return "org_admin", true
-	case "project_admin", "project_user", "project_viewer":
+	case "org_member", "project_admin", "project_user", "project_viewer":
 		return "member", true
 	default:
 		return "", false

@@ -18,7 +18,10 @@ type fakeOrgRepo struct {
 	org    *Org   // returned by UpdateName/GetByID when err is nil
 	err    error  // UpdateName/GetByID failure
 	member bool   // result returned by IsUserMember
-	role   string // result returned by GetMembershipRole
+	role   string // result returned by IsOrgAdmin / GetMembershipRole
+
+	membershipRoleOverride    string
+	hasMembershipRoleOverride bool
 
 	updatedID   string // last id passed to UpdateName
 	updatedName string // last name passed to UpdateName
@@ -27,6 +30,33 @@ type fakeOrgRepo struct {
 	deletedID    string
 	deleteCalls  int
 	deleteResult bool
+
+	// org-member management surfaces
+	foundUser      *orgMemberUser
+	findUserErr    error
+	findUserEmail  string
+	addedMember    *OrgMemberDTO
+	addMemberErr   error
+	addMemberCalls int
+	addedOrgID     string
+	addedUserID    string
+	addedRole      string
+
+	updateRoleResult bool
+	updateRoleErr    error
+	updateRoleCalls  int
+	updatedRole      string
+
+	adminCount    int
+	adminCountErr error
+
+	soleProjects []string
+	soleErr      error
+
+	removedProjectIDs []string
+	removed           bool
+	removeErr         error
+	removeCalls       int
 }
 
 func (f *fakeOrgRepo) List(context.Context, string) ([]OrgDTO, error) { return nil, nil }
@@ -67,6 +97,9 @@ func (f *fakeOrgRepo) IsUserMember(context.Context, string, string) (bool, error
 }
 
 func (f *fakeOrgRepo) GetMembershipRole(context.Context, string, string) (string, error) {
+	if f.hasMembershipRoleOverride {
+		return f.membershipRoleOverride, nil
+	}
 	return f.role, nil
 }
 
@@ -84,6 +117,49 @@ func (f *fakeOrgRepo) UpsertOrgToolSetting(context.Context, *OrgToolSetting) (*O
 
 func (f *fakeOrgRepo) DeleteOrgToolSetting(context.Context, string, string) (bool, error) {
 	return false, nil
+}
+
+func (f *fakeOrgRepo) FindVerifiedUserByEmail(_ context.Context, email string) (*orgMemberUser, error) {
+	f.findUserEmail = email
+	return f.foundUser, f.findUserErr
+}
+
+func (f *fakeOrgRepo) AddMember(_ context.Context, orgID, userID, role string) (*OrgMemberDTO, error) {
+	f.addMemberCalls++
+	f.addedOrgID = orgID
+	f.addedUserID = userID
+	f.addedRole = role
+	return f.addedMember, f.addMemberErr
+}
+
+func (f *fakeOrgRepo) UpdateMemberRole(_ context.Context, _, _, role string) (bool, error) {
+	f.updateRoleCalls++
+	f.updatedRole = role
+	return f.updateRoleResult, f.updateRoleErr
+}
+
+func (f *fakeOrgRepo) CountAdmins(context.Context, string) (int, error) {
+	return f.adminCount, f.adminCountErr
+}
+
+func (f *fakeOrgRepo) SoleProjectAdminProjects(context.Context, string, string) ([]string, error) {
+	return f.soleProjects, f.soleErr
+}
+
+func (f *fakeOrgRepo) RemoveMemberWithCascade(context.Context, string, string) ([]string, bool, error) {
+	f.removeCalls++
+	return f.removedProjectIDs, f.removed, f.removeErr
+}
+
+// fakeTokenRevoker records the projects whose tokens were revoked.
+type fakeTokenRevoker struct {
+	revoked []string
+	err     error
+}
+
+func (f *fakeTokenRevoker) RevokeByProjectAndUser(_ context.Context, projectID, _ string) error {
+	f.revoked = append(f.revoked, projectID)
+	return f.err
 }
 
 func testOrgService(repo orgRepository) *Service {

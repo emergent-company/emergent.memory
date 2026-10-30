@@ -198,6 +198,43 @@ func (m *MemoryClient) ListOrgMembers(ctx context.Context, orgID string) ([]OrgM
 	return out, nil
 }
 
+// AddOrgMember directly adds a registered user to an org by exact verified
+// email (POST /api/orgs/{id}/members; body {"email","role"}).
+func (m *MemoryClient) AddOrgMember(ctx context.Context, orgID, email, role string) (*OrgMemberDto, error) {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/members"
+	body := map[string]string{"email": email, "role": role}
+	var out OrgMemberDto
+	if err := m.do(ctx, http.MethodPost, path, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// UpdateOrgMemberRole changes an org member's role in place
+// (PATCH /api/orgs/{id}/members/{userId}; body {"role"}).
+func (m *MemoryClient) UpdateOrgMemberRole(ctx context.Context, orgID, userID, role string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/members/" + url.PathEscape(userID)
+	return m.do(ctx, http.MethodPatch, path, map[string]string{"role": role}, nil)
+}
+
+// RemoveOrgMember removes an org member, cascading to their project
+// memberships in the org (DELETE /api/orgs/{id}/members/{userId}).
+func (m *MemoryClient) RemoveOrgMember(ctx context.Context, orgID, userID string) error {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/members/" + url.PathEscape(userID)
+	return m.do(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// ListOrgInvites lists the org-scoped invitations sent for an organization
+// (GET /api/orgs/{id}/invites). Project-scoped invites are not included.
+func (m *MemoryClient) ListOrgInvites(ctx context.Context, orgID string) ([]SentInviteDto, error) {
+	path := "/api/orgs/" + url.PathEscape(orgID) + "/invites"
+	var out []SentInviteDto
+	if err := m.do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrgToolSettingDto is one per-org tool toggle/config (admin routes under
 // /api/admin/orgs/{orgId}/tool-settings).
 type OrgToolSettingDto struct {

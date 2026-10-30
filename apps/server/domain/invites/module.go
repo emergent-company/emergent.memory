@@ -41,6 +41,12 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	// POST /api/invites/:id/resend - resend a pending invitation
 	g.POST("/:id/resend", h.Resend)
 
+	// Org-scoped invite listing. Lives under /api/orgs so the organization
+	// members surface can show pending org invitations; the handler gates on
+	// org_admin (invitee PII).
+	orgs := e.Group("/api/orgs", authMiddleware.RequireAuth())
+	orgs.GET("/:id/invites", h.ListOrgInvites)
+
 	// Project-specific invite routes. The project is the :projectId path param,
 	// so the shared pair applies in canonical order (issue #926).
 	projects := e.Group("/api/projects", authMiddleware.RequireAuth())

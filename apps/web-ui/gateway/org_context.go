@@ -39,16 +39,27 @@ type orgPageData struct {
 }
 
 // orgMembersPageData is the payload for OrgMembersPage: the active org's
-// members (OrgMemberDto from GET /api/orgs/{id}/members) plus PRG flash
-// feedback (the ?invited= success flash from the org-invite flow). The page is
-// org_admin-gated (it exposes whole-org PII), but the Members sidebar entry's
-// visibility is driven by page()'s org-nav builder (orgSidebarGroups), not by
-// this payload — the members page data carries no role state.
+// members (GET /api/orgs/{id}/members) and org-scoped pending invitations
+// (GET /api/orgs/{id}/invites), plus PRG flash feedback. The page is
+// org_admin-gated (it exposes whole-org PII); IsOrgAdmin gates the write
+// controls. PendingErr degrades the invite section without hiding members.
 type orgMembersPageData struct {
+	Org        *Org
+	Members    []OrgMemberDto
+	Pending    []SentInviteDto
+	PendingErr error
+	LoadErr    error
+	FlashMsg   string
+	FlashErr   error
+	IsOrgAdmin bool
+}
+
+// orgMemberAddPageData is the payload for OrgMemberAddPage
+// (GET /orgs/:id/members/add): the direct-add form for an already-registered
+// user, plus PRG error feedback.
+type orgMemberAddPageData struct {
 	Org      *Org
-	Members  []OrgMemberDto
 	LoadErr  error
-	FlashMsg string
 	FlashErr error
 }
 
@@ -330,29 +341,63 @@ func transferMovedMessage(projects []ProjectRef, tree []OrgWithProjectsDto, proj
 // uiOrgMembers renders the active org's members (GET /orgs/:id/members).
 // ?invited=1 surfaces the org-invite success flash.
 func (s *Server) uiOrgMembers(c echo.Context) error {
+	ctx := c.Request().Context()
 	data := orgMembersPageData{FlashErr: flashError(c)}
-	if c.QueryParam("invited") != "" {
+	switch {
+	case c.QueryParam("invited") != "":
 		data.FlashMsg = "Invitation sent."
+	case c.QueryParam("added") != "":
+		data.FlashMsg = "Member added."
+	case c.QueryParam("role-changed") != "":
+		data.FlashMsg = "Role changed."
+	case c.QueryParam("removed") != "":
+		data.FlashMsg = "Member removed."
+	case c.QueryParam("revoked") != "":
+		data.FlashMsg = "Invite revoked."
+	case c.QueryParam("resent") != "":
+		data.FlashMsg = resendFlash(c.QueryParam("resent"))
 	}
 	org, err := s.resolveOrg(c)
 	if err != nil {
 		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 	}
-	members, err := s.memory.ListOrgMembers(c.Request().Context(), org.ID)
+	data.Org = org
+	data.IsOrgAdmin = s.orgAdminForCaller(c, org.ID)
+
+	members, err := s.memory.ListOrgMembers(ctx, org.ID)
 	if err != nil {
-		data.Org = org
 		data.LoadErr = userFacingError(err)
 		return s.page(c, pageTitle("Members"), OrgMembersPage(data))
 	}
-	data.Org = org
 	data.Members = members
 	// Live presence is best-effort: a failed fetch still renders the persisted
 	// activity tiers.
-	if presence, perr := s.memory.GetOrgPresence(c.Request().Context(), org.ID); perr == nil {
+	if presence, perr := s.memory.GetOrgPresence(ctx, org.ID); perr == nil {
 		markOnlineOrg(data.Members, presenceSet(presence))
 	}
+
+	invites, ierr := s.memory.ListOrgInvites(ctx, org.ID)
+	if ierr != nil {
+		data.PendingErr = userFacingError(ierr)
+	} else {
+		for _, inv := range invites {
+			if inv.Status == "pending" {
+				data.Pending = append(data.Pending, inv)
+			}
+		}
+	}
 	return s.page(c, pageTitle("Members"), OrgMembersPage(data))
+}
+
+// uiOrgMemberAddPage renders the direct-add form (GET /orgs/:id/members/add):
+// add an already-registered user by exact email and choose their org role.
+func (s *Server) uiOrgMemberAddPage(c echo.Context) error {
+	org, err := s.resolveOrg(c)
+	if err != nil {
+		return s.page(c, pageTitle("Add a member"), OrgMemberAddPage(orgMemberAddPageData{LoadErr: userFacingError(err), FlashErr: flashError(c)}))
+	}
+	return s.page(c, pageTitle("Add a member"), OrgMemberAddPage(orgMemberAddPageData{Org: org, FlashErr: flashError(c)}))
 }
 
 // uiOrgInvitePage renders the standalone invite-to-organization page
@@ -386,7 +431,7 @@ func (s *Server) uiOrgInviteCreate(c echo.Context) error {
 		return redirectWithError(c, back, fmt.Errorf("email is required"))
 	}
 	role := strings.TrimSpace(c.FormValue("role"))
-	if role != "org_admin" {
+	if role != "org_admin" && role != "org_member" {
 		return redirectWithError(c, back, fmt.Errorf("invalid role"))
 	}
 	if _, err := s.memory.CreateInvite(c.Request().Context(), CreateInviteDto{

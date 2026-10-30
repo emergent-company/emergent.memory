@@ -25,6 +25,12 @@ func orgContextUIServer(s *Server) *echo.Echo {
 	e.GET("/settings", s.uiProjectSettings)
 	e.GET("/settings/budget", s.uiProjectBudgetSettings)
 	e.GET("/orgs/:id/members", s.uiOrgMembers)
+	e.GET("/orgs/:id/members/add", s.uiOrgMemberAddPage)
+	e.POST("/orgs/:id/members", s.uiOrgAddMember)
+	e.POST("/orgs/:id/members/:userId/role", s.uiOrgChangeMemberRole)
+	e.POST("/orgs/:id/members/:userId/remove", s.uiOrgRemoveMember)
+	e.POST("/orgs/:id/invites/:inviteId/resend", s.uiOrgResendInvite)
+	e.POST("/orgs/:id/invites/:inviteId/revoke", s.uiOrgRevokeInvite)
 	e.GET("/orgs/:id/invite", s.uiOrgInvitePage)
 	e.POST("/orgs/:id/invite", s.uiOrgInviteCreate)
 	e.GET("/orgs/:id/settings", s.uiOrgSettings)
@@ -1330,5 +1336,90 @@ func TestOrgPageRenderSingleAccessTreeFetch(t *testing.T) {
 				t.Errorf("GET %s performed %d GetOrgsAndProjects calls, want 1", tc.path, f.orgsAndProjectsCalls)
 			}
 		})
+	}
+}
+
+// TestUIOrgMemberManagement covers the organization member-management surface:
+// the members page renders invite/add actions and pending org invitations, and
+// the add/role/remove/resend/revoke forms redirect back to the members page.
+func TestUIOrgMemberManagement(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		orgMembers: []OrgMemberDto{
+			{ID: "u1", Email: "ada@x.io", Role: "org_admin", JoinedAt: time.Now().Format(time.RFC3339)},
+			{ID: "u2", Email: "bob@x.io", Role: "member", JoinedAt: time.Now().Format(time.RFC3339)},
+		},
+		orgInvites: []SentInviteDto{
+			{ID: "inv1", Email: "pend@x.io", Role: "org_member", Status: "pending", CreatedAt: time.Now().Format(time.RFC3339)},
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	rec := orgGet(t, e, "/orgs/o1/members")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/members = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Invite member", "Add member", "pend@x.io", "Not responded", `name="role"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org members page missing %q", want)
+		}
+	}
+
+	// Direct add.
+	rec = orgPost(t, e, "/orgs/o1/members", "email=new@x.io&role=member")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?added=1" {
+		t.Fatalf("POST add = %d %q, want 303 /orgs/o1/members?added=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.addedOrgMemberEmail != "new@x.io" || f.addedOrgMemberRole != "member" {
+		t.Errorf("AddOrgMember forwarded %q/%q", f.addedOrgMemberEmail, f.addedOrgMemberRole)
+	}
+
+	// Invalid direct-add role is rejected before memory.
+	rec = orgPost(t, e, "/orgs/o1/members", "email=new@x.io&role=owner")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "invalid+role") {
+		t.Errorf("invalid add role = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Inline role change.
+	rec = orgPost(t, e, "/orgs/o1/members/u2/role", "role=org_admin")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?role-changed=1" {
+		t.Fatalf("POST role = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.updatedOrgMemberID != "u2" || f.updatedOrgMemberRole != "org_admin" {
+		t.Errorf("UpdateOrgMemberRole forwarded %q/%q", f.updatedOrgMemberID, f.updatedOrgMemberRole)
+	}
+
+	// Remove.
+	rec = orgPost(t, e, "/orgs/o1/members/u2/remove", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?removed=1" {
+		t.Fatalf("POST remove = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.removedOrgMemberID != "u2" {
+		t.Errorf("RemoveOrgMember forwarded %q", f.removedOrgMemberID)
+	}
+
+	// Resend + revoke pending org invite.
+	rec = orgPost(t, e, "/orgs/o1/invites/inv1/resend", "")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "resent=sent") {
+		t.Errorf("POST resend = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.resentInvite != "inv1" {
+		t.Errorf("ResendInvite forwarded %q", f.resentInvite)
+	}
+	rec = orgPost(t, e, "/orgs/o1/invites/inv1/revoke", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?revoked=1" {
+		t.Errorf("POST revoke = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.canceledInvite != "inv1" {
+		t.Errorf("CancelInvite forwarded %q", f.canceledInvite)
+	}
+
+	// Direct-add page renders.
+	rec = orgGet(t, e, "/orgs/o1/members/add")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "org-member-add-email") {
+		t.Errorf("GET add page = %d, missing form", rec.Code)
 	}
 }

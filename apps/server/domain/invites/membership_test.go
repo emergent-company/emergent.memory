@@ -272,6 +272,25 @@ func (s *InvitesMembershipSuite) TestCreateProjectScopedOrgAdminRejected() {
 		"no invite row may be created for a project-scoped org_admin invite")
 }
 
+// TestCreateProjectScopedOrgMemberRejected proves a project-scoped invitation
+// with role org_member is refused with 400: org_member is an organization-level
+// grant, and accepting it would write no project role while granting org
+// membership outside project scope.
+func (s *InvitesMembershipSuite) TestCreateProjectScopedOrgMemberRejected() {
+	resp := s.Client.POST("/api/invites",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithJSONBody(map[string]any{
+			"orgId":     s.OrgID,
+			"projectId": s.ProjectID,
+			"email":     "invitee@example.com",
+			"role":      "org_member",
+		}))
+	s.Require().Equal(http.StatusBadRequest, resp.StatusCode,
+		"project-scoped org_member invite must be 400, got %d: %s", resp.StatusCode, resp.String())
+	s.Require().Equal(0, s.inviteCountForOrg(s.OrgID),
+		"no invite row may be created for a project-scoped org_member invite")
+}
+
 // ─── Revoke (DELETE /api/invites/:id) ────────────────────────────────────────
 
 // TestRevokeNonMemberForbidden proves a non-member (bare user) cannot revoke an

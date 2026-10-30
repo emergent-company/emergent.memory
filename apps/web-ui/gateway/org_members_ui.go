@@ -733,7 +733,7 @@ func roleIntent(role string) ui.BadgeIntent {
 	switch role {
 	case "org_admin", "project_admin":
 		return ui.BadgePrimary
-	case "project_user":
+	case "project_user", "org_member", "member":
 		return ui.BadgeNeutral
 	default:
 		return ui.BadgeGhost
@@ -745,7 +745,7 @@ func roleLabel(role string) string {
 	switch role {
 	case "org_admin":
 		return "org admin"
-	case "org_member":
+	case "org_member", "member":
 		return "org member"
 	case "project_admin":
 		return "project admin"
@@ -994,4 +994,141 @@ func pendingInviteMeta(inv PendingInviteDto) string {
 		b.WriteString(relTime(inv.ExpiresAt))
 	}
 	return b.String()
+}
+
+// --- Organization-level member management handlers -------------------------
+
+// validOrgMemberRole reports whether role is a supported organization
+// membership role (the server's org role vocabulary).
+func validOrgMemberRole(role string) bool {
+	return role == "org_admin" || role == "member"
+}
+
+// orgMembersBack builds the members-page redirect target for an org id.
+func orgMembersBack(orgID string) string {
+	return "/orgs/" + url.PathEscape(orgID) + "/members"
+}
+
+// uiOrgAddMember handles the direct-add form (POST /orgs/:id/members; fields
+// email, role). Only already-registered users can be added this way — an
+// unregistered email surfaces the server's "send an invitation instead" error
+// back on the add page.
+func (s *Server) uiOrgAddMember(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.Param("id"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := "/orgs/" + url.PathEscape(orgID) + "/members/add"
+	if !s.orgAdminForCaller(c, orgID) {
+		return redirectWithError(c, orgMembersBack(orgID), fmt.Errorf("you do not have permission to add members"))
+	}
+	email := strings.TrimSpace(c.FormValue("email"))
+	if email == "" {
+		return redirectWithError(c, back, fmt.Errorf("email is required"))
+	}
+	role := strings.TrimSpace(c.FormValue("role"))
+	if !validOrgMemberRole(role) {
+		return redirectWithError(c, back, fmt.Errorf("invalid role"))
+	}
+	if _, err := s.memory.AddOrgMember(ctx, orgID, email, role); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, orgMembersBack(orgID)+"?added=1")
+}
+
+// uiOrgChangeMemberRole handles an inline role change on the org members table
+// (POST /orgs/:id/members/:userId/role; field role).
+func (s *Server) uiOrgChangeMemberRole(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.Param("id"))
+	userID := strings.TrimSpace(c.Param("userId"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := orgMembersBack(orgID)
+	if userID == "" {
+		return redirectWithError(c, back, fmt.Errorf("member id is required"))
+	}
+	if !s.orgAdminForCaller(c, orgID) {
+		return redirectWithError(c, back, fmt.Errorf("you do not have permission to change member roles"))
+	}
+	role := strings.TrimSpace(c.FormValue("role"))
+	if !validOrgMemberRole(role) {
+		return redirectWithError(c, back, fmt.Errorf("invalid role"))
+	}
+	if err := s.memory.UpdateOrgMemberRole(ctx, orgID, userID, role); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?role-changed=1")
+}
+
+// uiOrgRemoveMember handles a member-remove form (POST
+// /orgs/:id/members/:userId/remove). Memory enforces the last-org-admin and
+// sole-project-admin guards server-side; failures surface as a ?err= flash.
+func (s *Server) uiOrgRemoveMember(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.Param("id"))
+	userID := strings.TrimSpace(c.Param("userId"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := orgMembersBack(orgID)
+	if userID == "" {
+		return redirectWithError(c, back, fmt.Errorf("member id is required"))
+	}
+	if !s.orgAdminForCaller(c, orgID) {
+		return redirectWithError(c, back, fmt.Errorf("you do not have permission to remove members"))
+	}
+	if err := s.memory.RemoveOrgMember(ctx, orgID, userID); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?removed=1")
+}
+
+// uiOrgResendInvite handles one org invite resend form (POST
+// /orgs/:id/invites/:inviteId/resend). The org comes from the path and the
+// caller must administer it; the server's outcome is carried through the PRG
+// redirect so the members page shows truthful feedback.
+func (s *Server) uiOrgResendInvite(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.Param("id"))
+	inviteID := strings.TrimSpace(c.Param("inviteId"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := orgMembersBack(orgID)
+	if inviteID == "" {
+		return redirectWithError(c, back, fmt.Errorf("invite id is required"))
+	}
+	if !s.orgAdminForCaller(c, orgID) {
+		return redirectWithError(c, back, fmt.Errorf("you do not have permission to resend this invitation"))
+	}
+	outcome, err := s.memory.ResendInvite(ctx, inviteID)
+	if err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?resent="+url.QueryEscape(string(outcome)))
+}
+
+// uiOrgRevokeInvite handles one org invite revoke form (POST
+// /orgs/:id/invites/:inviteId/revoke).
+func (s *Server) uiOrgRevokeInvite(c echo.Context) error {
+	ctx := c.Request().Context()
+	orgID := strings.TrimSpace(c.Param("id"))
+	inviteID := strings.TrimSpace(c.Param("inviteId"))
+	if orgID == "" {
+		return redirectWithError(c, "/orgs", errOrgIDRequired)
+	}
+	back := orgMembersBack(orgID)
+	if inviteID == "" {
+		return redirectWithError(c, back, fmt.Errorf("invite id is required"))
+	}
+	if !s.orgAdminForCaller(c, orgID) {
+		return redirectWithError(c, back, fmt.Errorf("you do not have permission to revoke this invitation"))
+	}
+	if err := s.memory.CancelInvite(ctx, inviteID); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?revoked=1")
 }

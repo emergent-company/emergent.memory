@@ -505,26 +505,36 @@ type fakeMemory struct {
 	modelConfig            *ProjectModelConfig // returned by GetProjectModelConfig
 	lastModelConfig        *ProjectModelConfig // last UpsertProjectModelConfig
 
-	orgs                 []Org                     // returned by ListOrgs
-	listOrgsErr          error                     // failure for ListOrgs
-	createdOrgs          []Org                     // every CreateOrg request, in order
-	createOrgID          int                       // id counter for created orgs
-	createOrgErr         error                     // failure for CreateOrg
-	getOrgErr            error                     // failure for GetOrg
-	updateOrgErr         error                     // failure for UpdateOrg
-	renamedOrgID         string                    // last org id passed to UpdateOrg
-	renamedOrgName       string                    // last name passed to UpdateOrg
-	deletedOrgID         string                    // last org id passed to DeleteOrg
-	deleteOrgErr         error                     // failure for DeleteOrg
-	deletedProjectIDs    []string                  // project ids passed to DeleteProject, in order
-	deleteProjectErr     error                     // failure for DeleteProject
-	restoredProjectIDs   []string                  // project ids passed to RestoreProject, in order
-	restoreProjectErr    error                     // failure for RestoreProject
-	transferCount        int                       // number of TransferProject calls
-	transferredID        string                    // last project id passed to TransferProject
-	transferredToOrg     string                    // last destination org id passed to TransferProject
-	transferProjectErr   error                     // failure for TransferProject
-	orgMembers           []OrgMemberDto            // returned by ListOrgMembers
+	orgs                 []Org          // returned by ListOrgs
+	listOrgsErr          error          // failure for ListOrgs
+	createdOrgs          []Org          // every CreateOrg request, in order
+	createOrgID          int            // id counter for created orgs
+	createOrgErr         error          // failure for CreateOrg
+	getOrgErr            error          // failure for GetOrg
+	updateOrgErr         error          // failure for UpdateOrg
+	renamedOrgID         string         // last org id passed to UpdateOrg
+	renamedOrgName       string         // last name passed to UpdateOrg
+	deletedOrgID         string         // last org id passed to DeleteOrg
+	deleteOrgErr         error          // failure for DeleteOrg
+	deletedProjectIDs    []string       // project ids passed to DeleteProject, in order
+	deleteProjectErr     error          // failure for DeleteProject
+	restoredProjectIDs   []string       // project ids passed to RestoreProject, in order
+	restoreProjectErr    error          // failure for RestoreProject
+	transferCount        int            // number of TransferProject calls
+	transferredID        string         // last project id passed to TransferProject
+	transferredToOrg     string         // last destination org id passed to TransferProject
+	transferProjectErr   error          // failure for TransferProject
+	orgMembers           []OrgMemberDto // returned by ListOrgMembers
+	addedOrgMemberEmail  string
+	addedOrgMemberRole   string
+	addOrgMemberErr      error
+	updatedOrgMemberID   string
+	updatedOrgMemberRole string
+	updateOrgMemberErr   error
+	removedOrgMemberID   string
+	removeOrgMemberErr   error
+	orgInvites           []SentInviteDto // returned by ListOrgInvites
+	orgInvitesErr        error
 	orgToolSettings      []OrgToolSettingDto       // returned by ListOrgToolSettings
 	toolSettingErr       error                     // failure for any org tool-setting method
 	toolSettingOrg       string                    // last org id passed to Upsert/DeleteOrgToolSetting
@@ -3656,6 +3666,36 @@ func (f *fakeMemory) DeleteOrg(ctx context.Context, orgID string) error {
 
 func (f *fakeMemory) ListOrgMembers(ctx context.Context, orgID string) ([]OrgMemberDto, error) {
 	return f.orgMembers, nil
+}
+
+func (f *fakeMemory) AddOrgMember(ctx context.Context, orgID, email, role string) (*OrgMemberDto, error) {
+	if f.addOrgMemberErr != nil {
+		return nil, f.addOrgMemberErr
+	}
+	f.addedOrgMemberEmail = email
+	f.addedOrgMemberRole = role
+	return &OrgMemberDto{ID: "u-added", Email: email, Role: role}, nil
+}
+
+func (f *fakeMemory) UpdateOrgMemberRole(ctx context.Context, orgID, userID, role string) error {
+	if f.updateOrgMemberErr != nil {
+		return f.updateOrgMemberErr
+	}
+	f.updatedOrgMemberID = userID
+	f.updatedOrgMemberRole = role
+	return nil
+}
+
+func (f *fakeMemory) RemoveOrgMember(ctx context.Context, orgID, userID string) error {
+	if f.removeOrgMemberErr != nil {
+		return f.removeOrgMemberErr
+	}
+	f.removedOrgMemberID = userID
+	return nil
+}
+
+func (f *fakeMemory) ListOrgInvites(ctx context.Context, orgID string) ([]SentInviteDto, error) {
+	return f.orgInvites, f.orgInvitesErr
 }
 
 func (f *fakeMemory) GetOrgPresence(ctx context.Context, orgID string) (*PresenceDto, error) {

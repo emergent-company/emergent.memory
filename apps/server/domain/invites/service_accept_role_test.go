@@ -28,6 +28,7 @@ func TestAcceptInviteGrantsInvitedOrgRole(t *testing.T) {
 		wantRole   string
 	}{
 		{"org_admin invite grants org_admin membership", "org_admin", "org_admin"},
+		{"org_member invite grants member membership", "org_member", "member"},
 		{"project_user invite grants member membership", "project_user", "member"},
 	}
 

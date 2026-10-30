@@ -180,3 +180,99 @@ func (h *Handler) ListMembers(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, members)
 }
+
+// AddMember directly adds an already-registered user to an organization
+// @Summary      Add organization member
+// @Description  Adds a registered user (exact verified email) to the organization with the given role
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        request body AddOrgMemberRequest true "Member add request"
+// @Success      201 {object} OrgMemberDTO "Member added"
+// @Failure      400 {object} apperror.Error "Invalid request or role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "No registered user with that email"
+// @Failure      409 {object} apperror.Error "User is already a member"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members [post]
+// @Security     bearerAuth
+func (h *Handler) AddMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	var req AddOrgMemberRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	member, err := h.svc.AddMember(c.Request().Context(), id, user.ID, req.Email, req.Role)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, member)
+}
+
+// UpdateMemberRole changes an organization member's role
+// @Summary      Update organization member role
+// @Description  Changes a member's organization role in place
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        userId path string true "User ID (UUID)"
+// @Param        request body UpdateOrgMemberRoleRequest true "Role update request"
+// @Success      200 {object} map[string]string "Role updated"
+// @Failure      400 {object} apperror.Error "Invalid role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden or last admin"
+// @Failure      404 {object} apperror.Error "Member not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members/{userId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateMemberRole(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+	userID := c.Param("userId")
+
+	var req UpdateOrgMemberRoleRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	if err := h.svc.UpdateMemberRole(c.Request().Context(), id, user.ID, userID, req.Role); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// RemoveMember removes an organization member (and their project memberships in
+// the organization).
+// @Summary      Remove organization member
+// @Description  Removes a member from the organization, cascading to their project memberships in it
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        userId path string true "User ID (UUID)"
+// @Success      200 {object} map[string]string "Member removed"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden or last admin"
+// @Failure      404 {object} apperror.Error "Member not found"
+// @Failure      409 {object} apperror.Error "Member is the sole project admin"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members/{userId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RemoveMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+	userID := c.Param("userId")
+
+	if err := h.svc.RemoveMember(c.Request().Context(), id, user.ID, userID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "removed"})
+}

@@ -106,6 +106,7 @@ func seedAuthzFixture(t *testing.T, db *bun.DB) authzFixture {
 
 	for _, u := range users {
 		mustExec(t, db, ctx, `INSERT INTO core.user_profiles (id, zitadel_user_id, created_at, updated_at) VALUES (?, ?, NOW(), NOW())`, u.id, u.token)
+		mustExec(t, db, ctx, `INSERT INTO core.user_emails (user_id, email, verified, created_at) VALUES (?, ?, true, NOW())`, u.id, u.token+"@example.com")
 	}
 
 	// orgA memberships: org_admin + plain member.

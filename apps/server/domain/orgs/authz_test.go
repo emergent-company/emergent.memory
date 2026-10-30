@@ -1,6 +1,7 @@
 package orgs_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -138,4 +139,94 @@ func TestOrgDecisionIgnoresSpoofedOrgHeader(t *testing.T) {
 			t.Fatalf("DELETE orgDel as plain member with X-Org-ID=orgDel = %d, want 403: %s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// TestOrgMemberWriteAuthorityMatrix pins the org-admin bar for the organization
+// member add/role/remove routes. Wrong-authority callers are refused before any
+// write; an org_admin of the addressed org succeeds.
+func TestOrgMemberWriteAuthorityMatrix(t *testing.T) {
+	testDB, e := newAuthzServer(t)
+	f := seedAuthzFixture(t, testDB.DB)
+	_ = f
+
+	orgID := f.orgDel
+	base := "/api/orgs/" + orgID + "/members"
+
+	// Direct add.
+	addBody := `{"email":"` + f.bareToken + `@example.com","role":"member"}`
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"add/unauth", "", http.StatusUnauthorized},
+		{"add/bare", f.bareToken, http.StatusForbidden},
+		{"add/member-A", f.memberAToken, http.StatusForbidden},
+		{"add/member-B", f.orgAdminBToken, http.StatusForbidden},
+		{"add/org_admin-A", f.orgAdminAToken, http.StatusCreated},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSON(e, http.MethodPost, base, tc.token, addBody)
+			if rec.Code != tc.want {
+				t.Errorf("POST %s (token=%q) = %d, want %d: %s", base, tc.token, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+
+	// Role change: promote the plain member to org_admin.
+	// The member's id is not exposed by the fixture; resolve it from the DB.
+	var memberID string
+	if err := testDB.DB.NewRaw(
+		`SELECT user_id FROM kb.organization_memberships WHERE organization_id = ? AND role = 'member' LIMIT 1`,
+		orgID,
+	).Scan(context.Background(), &memberID); err != nil {
+		t.Fatalf("resolve member id: %v", err)
+	}
+	rolePath := base + "/" + memberID
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"role/unauth", "", http.StatusUnauthorized},
+		{"role/bare", f.bareToken, http.StatusForbidden},
+		{"role/member-A", f.memberAToken, http.StatusForbidden},
+		{"role/member-B", f.orgAdminBToken, http.StatusForbidden},
+		{"role/org_admin-A", f.orgAdminAToken, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSON(e, http.MethodPatch, rolePath, tc.token, `{"role":"org_admin"}`)
+			if rec.Code != tc.want {
+				t.Errorf("PATCH %s (token=%q) = %d, want %d: %s", rolePath, tc.token, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+
+	// Demote the member back to plain member so the removal matrix exercises a
+	// non-admin caller and a non-admin target.
+	demote := doJSON(e, http.MethodPatch, rolePath, f.orgAdminAToken, `{"role":"member"}`)
+	if demote.Code != http.StatusOK {
+		t.Fatalf("demote member before removal = %d: %s", demote.Code, demote.Body.String())
+	}
+
+	// Remove the member (orgDel still has orgAdminA as admin).
+	removePath := base + "/" + memberID
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{"remove/unauth", "", http.StatusUnauthorized},
+		{"remove/bare", f.bareToken, http.StatusForbidden},
+		{"remove/member-A", f.memberAToken, http.StatusForbidden},
+		{"remove/member-B", f.orgAdminBToken, http.StatusForbidden},
+		{"remove/org_admin-A", f.orgAdminAToken, http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(e, http.MethodDelete, removePath, tc.token)
+			if rec.Code != tc.want {
+				t.Errorf("DELETE %s (token=%q) = %d, want %d: %s", removePath, tc.token, rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
 }

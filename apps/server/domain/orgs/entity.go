@@ -56,6 +56,29 @@ type OrgMemberDTO struct {
 	ActivityTier string `json:"activityTier,omitempty"`
 }
 
+// Canonical organization membership roles.
+const (
+	// OrgRoleAdmin grants organization administration (rename/delete, members,
+	// invites, org settings).
+	OrgRoleAdmin = "org_admin"
+	// OrgRoleMember is a plain organization membership with no org-tier write
+	// authority.
+	OrgRoleMember = "member"
+)
+
+// AddOrgMemberRequest is the request body for directly adding an already
+// registered user to an organization by exact verified email.
+type AddOrgMemberRequest struct {
+	Email string `json:"email" validate:"required"`
+	Role  string `json:"role" validate:"required"`
+}
+
+// UpdateOrgMemberRoleRequest is the request body for changing an organization
+// member's role.
+type UpdateOrgMemberRoleRequest struct {
+	Role string `json:"role" validate:"required"`
+}
+
 // CreateOrgRequest is the request body for creating an organization
 type CreateOrgRequest struct {
 	Name string `json:"name" validate:"required,min=1,max=120"`

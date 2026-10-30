@@ -649,17 +649,50 @@ templ projectsPendingRefreshNote(orgID string, n int) {
 	</div>
 }
 
-// OrgMembersPage renders the active org's members (GET /orgs/:id/members).
+// OrgMembersPage renders the active org's members (GET /orgs/:id/members) and
+// its pending org-scoped invitations, with invite/add actions and inline
+// role/remove controls for org admins.
 templ OrgMembersPage(data orgMembersPageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@pageError("Members unavailable", data.LoadErr)
 		} else {
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members"), "", "Members", "People in "+data.Org.Name+".", detailHeaderOpts{Margin: "mb-6"}) {
-				@countBadge(len(data.Members), "member", "lucide--users")
+				<div class="flex flex-wrap items-center gap-2">
+					@countBadge(len(data.Members), "member", "lucide--users")
+					if data.IsOrgAdmin {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/orgs/" + url.PathEscape(data.Org.ID) + "/members/add",
+							Variant: ui.ButtonGhost,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--user-check",
+						}) {
+							Add member
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    "/orgs/" + url.PathEscape(data.Org.ID) + "/invite",
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--mail-plus",
+						}) {
+							Invite member
+						}
+					}
+				</div>
 			}
 			@flashToasts(data.FlashMsg, data.FlashErr)
-			if len(data.Members) == 0 {
+			if data.PendingErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Couldn't load pending invitations: " + data.PendingErr.Error(),
+				})
+			}
+			if len(data.Members) == 0 && len(data.Pending) == 0 {
 				@ui.EmptyState(ui.EmptyStateProps{
 					Icon:        "lucide--users",
 					Title:       "No members yet",
@@ -668,6 +701,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 					Class:       "py-12",
 				})
 			} else {
+				{{ soleAdmin := orgHasSoleAdmin(data.Members) }}
 				@components.TableCard(nil) {
 					@table.TableWithProps(table.TableProps{Bordered: false}) {
 						@table.TableHead() {
@@ -676,11 +710,17 @@ templ OrgMembersPage(data orgMembersPageData) {
 								@table.TableHeadCell("Role")
 								@table.TableHeadCell("Activity")
 								@table.TableHeadCell("Since")
+								if data.IsOrgAdmin {
+									@table.TableHeadCell("")
+								}
 							}
 						}
 						@table.TableBody() {
 							for _, m := range data.Members {
-								@orgMemberRow(m)
+								@orgMemberRow(data.Org.ID, m, data.IsOrgAdmin && !(soleAdmin && m.Role == "org_admin"))
+							}
+							for _, inv := range data.Pending {
+								@orgPendingInviteRow(data.Org.ID, inv, data.IsOrgAdmin)
 							}
 						}
 					}
@@ -690,9 +730,21 @@ templ OrgMembersPage(data orgMembersPageData) {
 	}
 }
 
-// orgMemberRow is one org member row: avatar/initials + identity, role badge,
-// joined date.
-templ orgMemberRow(m OrgMemberDto) {
+// orgHasSoleAdmin reports whether the org has exactly one org_admin, whose
+// role/remove controls must be disabled so the org always retains an admin.
+func orgHasSoleAdmin(members []OrgMemberDto) bool {
+	admins := 0
+	for _, m := range members {
+		if m.Role == "org_admin" {
+			admins++
+		}
+	}
+	return admins == 1
+}
+
+// orgMemberRow is one org member row: identity, inline role form (admin only),
+// activity, joined date, and a remove action.
+templ orgMemberRow(orgID string, m OrgMemberDto, editable bool) {
 	@table.TableRow(m.ID, true, nil) {
 		@table.TableCell("", nil) {
 			<div class="flex items-center gap-3">
@@ -714,7 +766,25 @@ templ orgMemberRow(m OrgMemberDto) {
 			</div>
 		}
 		@table.TableCell("", nil) {
-			@roleBadge(m.Role)
+			if editable {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/members/" + url.PathEscape(m.ID) + "/role") } class="flex items-center gap-1.5">
+					<select name="role" class="select select-xs" aria-label={ "Role for " + orgMemberDisplayName(m) }>
+						<option value="org_admin" selected?={ m.Role == "org_admin" }>Org admin</option>
+						<option value="member" selected?={ m.Role == "member" }>Member</option>
+					</select>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeSubmit,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--check",
+						AriaLabel: "Save role for " + orgMemberDisplayName(m),
+						Attrs:     templ.Attributes{"title": "Save role"},
+					})
+				</form>
+			} else {
+				@roleBadge(m.Role)
+			}
 		}
 		@table.TableCell("", nil) {
 			@memberActivityIndicator(m.LastActiveAt, m.ActivityTier)
@@ -722,22 +792,98 @@ templ orgMemberRow(m OrgMemberDto) {
 		@table.TableCell("", nil) {
 			<span class="text-muted text-xs whitespace-nowrap">{ relTime(m.JoinedAt) }</span>
 		}
+		if editable {
+			@table.TableCell("text-right", nil) {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/members/" + url.PathEscape(m.ID) + "/remove") } onsubmit="return confirm('Remove this member from the organization? Their project access in this organization is removed too.');">
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeSubmit,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeSquare,
+						Icon:       "lucide--user-minus",
+						ExtraClass: "text-error hover:text-error",
+						AriaLabel:  "Remove " + orgMemberDisplayName(m),
+						Attrs:      templ.Attributes{"title": "Remove from organization"},
+					})
+				</form>
+			}
+		}
+	}
+}
+
+// orgPendingInviteRow is one still-pending organization invitation: invited
+// email, role, delivery state, sent time, and resend/revoke actions.
+templ orgPendingInviteRow(orgID string, inv SentInviteDto, canManage bool) {
+	@table.TableRow(inv.ID, true, nil) {
+		@table.TableCell("", nil) {
+			<div class="flex items-center gap-3">
+				<span class="border-base-content/10 flex size-8 shrink-0 items-center justify-center rounded-full border">
+					@ui.IconSpan("lucide--mail", "size-4 text-muted-faint")
+				</span>
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ inv.Email }</p>
+					<div class="mt-1 flex flex-wrap items-center gap-1.5">
+						@ui.Badge(ui.BadgeProps{Label: "Not responded", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Dot: true})
+						{{ label, intent := inviteDeliveryBadge(inv.DeliveryStatus) }}
+						@components.StatusBadge(label, intent, "", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Dot: true})
+					</div>
+				</div>
+			</div>
+		}
+		@table.TableCell("", nil) {
+			@roleBadge(inv.Role)
+		}
+		@table.TableCell("", nil) {
+			<span class="text-muted text-xs">—</span>
+		}
+		@table.TableCell("", nil) {
+			<span class="text-muted text-xs whitespace-nowrap">{ relTime(inv.CreatedAt) }</span>
+		}
+		if canManage {
+			@table.TableCell("text-right", nil) {
+				<div class="flex justify-end gap-0.5">
+					<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/invites/" + url.PathEscape(inv.ID) + "/resend") } hx-boost="false" onsubmit="return confirm('Resend this invitation?');">
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Shape:     ui.ButtonShapeSquare,
+							Icon:      "lucide--send",
+							AriaLabel: "Resend invitation to " + inv.Email,
+							Attrs:     templ.Attributes{"title": "Resend invitation"},
+						})
+					</form>
+					<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(orgID) + "/invites/" + url.PathEscape(inv.ID) + "/revoke") }>
+						@ui.Button(ui.ButtonProps{
+							Type:       ui.ButtonTypeSubmit,
+							Variant:    ui.ButtonGhost,
+							Size:       ui.ButtonSM,
+							Shape:      ui.ButtonShapeSquare,
+							Icon:       "lucide--trash-2",
+							ExtraClass: "text-error hover:text-error",
+							AriaLabel:  "Revoke invite for " + inv.Email,
+							Attrs:      templ.Attributes{"title": "Revoke invite"},
+						})
+					</form>
+				</div>
+			}
+		}
 	}
 }
 
 // OrgInvitePage renders the standalone invite-to-organization page
 // (GET /orgs/:id/invite): an email field (with live user-search autofill) and
-// the fixed org_admin role, posting to POST /orgs/:id/invite. The invitation
-// is organization-scoped — no projectId is carried. ?err= surfaces PRG
-// feedback from the invite-create flow; a failed org fetch renders the
-// whole-page error state. The form opts out of hx-boost so the browser runs a
-// native POST/PRG.
+// an organization role (Org admin / Member), posting to POST /orgs/:id/invite.
+// The invitation is organization-scoped — no projectId is carried. ?err=
+// surfaces PRG feedback from the invite-create flow; a failed org fetch renders
+// the whole-page error state. The form opts out of hx-boost so the browser runs
+// a native POST/PRG.
 templ OrgInvitePage(data orgInvitePageData) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if data.LoadErr != nil {
 			@pageError("Organization unavailable", data.LoadErr)
 		} else {
-			{{ subtitle := "An email invitation carrying the org admin role — they join " + data.Org.Name + " once they accept." }}
+			{{ subtitle := "Send an email invitation to join " + data.Org.Name + ". Choose whether they administer the organization or join as a member." }}
 			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members", "/orgs/"+url.PathEscape(data.Org.ID)+"/members", "Invite a member"), "", "Invite a member", subtitle) {}
 			@flashToasts("", data.FlashErr)
 			@components.PanelCard("", nil) {
@@ -760,9 +906,10 @@ templ OrgInvitePage(data orgInvitePageData) {
 						/>
 						<datalist id="org-invite-email-options"></datalist>
 					}
-					@form.FormControl("org-invite-role", "Role", form.LabelAbove, "Organization admins manage the organization, its projects, and its people.", "", nil) {
+					@form.FormControl("org-invite-role", "Role", form.LabelAbove, "Organization admins manage the organization, its projects, and its people. Members get access to the organization without admin rights.", "", nil) {
 						<select id="org-invite-role" name="role" class="select w-full">
-							<option value="org_admin" selected>Org admin</option>
+							<option value="org_member" selected>Member</option>
+							<option value="org_admin">Org admin</option>
 						</select>
 					}
 					@form.FormActions("", "") {
@@ -773,6 +920,57 @@ templ OrgInvitePage(data orgInvitePageData) {
 							Icon:    "lucide--mail-plus",
 						}) {
 							Send invitation
+						}
+					}
+				</form>
+			}
+		}
+	}
+}
+
+// OrgMemberAddPage renders the direct-add form (GET /orgs/:id/members/add):
+// add an already-registered user by exact email and choose their org role.
+// ?err= surfaces PRG feedback; a failed org fetch renders the error state.
+templ OrgMemberAddPage(data orgMemberAddPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Organization unavailable", data.LoadErr)
+		} else {
+			@detailHeader(orgCrumbs(data.Org.ID, data.Org.Name, "Members", "/orgs/"+url.PathEscape(data.Org.ID)+"/members", "Add a member"), "", "Add a member", "Add someone who already has an account to "+data.Org.Name+". For anyone else, send an invitation instead.") {}
+			@flashToasts("", data.FlashErr)
+			@components.PanelCard("", nil) {
+				<form method="post" action={ templ.URL("/orgs/" + url.PathEscape(data.Org.ID) + "/members") } hx-boost="false" class="flex flex-col gap-4">
+					@form.FormControl("org-member-add-email", "Email", form.LabelAbove, "The exact email on their account. Start typing to match a registered user.", "", nil) {
+						<input
+							id="org-member-add-email"
+							name="email"
+							type="email"
+							required
+							list="org-member-add-email-options"
+							autocomplete="off"
+							placeholder="name@example.com"
+							class="input w-full"
+							hx-get="/partial/invite-user-search"
+							hx-trigger="input changed delay:300ms"
+							hx-target="#org-member-add-email-options"
+							hx-swap="innerHTML"
+						/>
+						<datalist id="org-member-add-email-options"></datalist>
+					}
+					@form.FormControl("org-member-add-role", "Role", form.LabelAbove, "Organization admins manage the organization, its projects, and its people. Members get access without admin rights.", "", nil) {
+						<select id="org-member-add-role" name="role" class="select w-full">
+							<option value="member" selected>Member</option>
+							<option value="org_admin">Org admin</option>
+						</select>
+					}
+					@form.FormActions("", "") {
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--user-check",
+						}) {
+							Add member
 						}
 					}
 				</form>
