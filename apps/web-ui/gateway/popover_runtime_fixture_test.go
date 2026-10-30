@@ -27,7 +27,15 @@ func TestPopoverFixtureMatchesPinnedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cannot resolve %s module dir: %v", module, err)
 	}
-	want, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), filepath.FromSlash(rel)))
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		// `-mod=vendor` — the mode the image builds in, and the mode CI runs
+		// once `task css` has vendored go-daisy — reports no module directory
+		// (the module cache is not consulted). The vendored copy is then the
+		// file the build actually ships.
+		dir = filepath.Join("vendor", filepath.FromSlash(module))
+	}
+	want, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
 	if err != nil {
 		t.Fatalf("pinned runtime %s not readable: %v", rel, err)
 	}

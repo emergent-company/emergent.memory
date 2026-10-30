@@ -38,8 +38,9 @@ unset _port
 # never served.
 (cd gateway && {
   if ! compgen -G '*_templ.go' >/dev/null; then
-    # `go run` pins templ to the go.mod version (same invocation as the
-    # gateway CI job) and needs only the Go toolchain — no global templ binary.
+    # `go run` pins templ to the go.mod version and needs only the Go toolchain
+    # — no global templ binary. (CI installs the pinned binary instead: it runs
+    # in module mode, where `go run` cannot resolve the CLI's own dependencies.)
     go run github.com/a-h/templ/cmd/templ generate ./...
   fi
   if [ ! -f webui/static/css/app.css ]; then
