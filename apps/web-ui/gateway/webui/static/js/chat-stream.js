@@ -314,6 +314,8 @@
     // rendered as a quiet footer under the bubble when set; every other call
     // site (live stream, history, side panel) omits it → no footer.
     function addUserMessage(text, silent, meta) {
+      // A user turn is a new run boundary: the previous turn's run is final.
+      closeLiveRun();
       ctx.hideEmpty();
       var wrap = document.createElement("div");
       wrap.className = "chat chat-end memory-rise";
@@ -427,17 +429,56 @@
       return status === "running" || status === "awaiting_confirmation";
     }
 
+    // A turn's steps fold into one run. The run is created at the turn's first
+    // step and kept for the turn; it is settled when the turn ends. The page's
+    // run id (when it has one) keys the reader's open/closed choice, so the
+    // history render that replaces this DOM at settle keeps it.
+    var liveRun = null;
+    var liveTurn = 0;
+
+    function liveRunID() {
+      try {
+        return (ctx.currentRunId && ctx.currentRunId()) || "";
+      } catch (e) {
+        return "";
+      }
+    }
+
+    function closeLiveRun() {
+      var run = liveRun;
+      liveRun = null;
+      if (!run) return;
+      run.finish({ runId: liveRunID() });
+    }
+
+    function nextLiveRun() {
+      if (liveRun && liveRun.shell && !liveRun.shell.isConnected) liveRun = null;
+      if (!liveRun) {
+        liveTurn++;
+        // A page can only learn the turn's id once the run is under way, so the
+        // live key is local and the choice is re-keyed at settle.
+        liveRun = MemoryChatComponents.createToolRun(ctx.messages, "live-turn-" + liveTurn, {
+          openDefault: true,
+          runIdOf: liveRunID,
+        });
+      }
+      return liveRun;
+    }
+
     function toolChip(tool, status, detail, payload) {
       var p = payload || { tool: tool, status: status };
 
-      // Same chat-start shell as thinking/assistant bubbles so the chip aligns
-      // with (and is constrained to) the chat content column.
-      var wrap = document.createElement("div");
-      wrap.className = "chat chat-start memory-rise memory-aux";
-      wrap.innerHTML =
-        '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
-        '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
-      ctx.messages.appendChild(wrap);
+      // History passes the run body it is being painted into (so the recorded
+      // transcript groups the same way the live one did); a live step lands in
+      // the turn's run, which owns the chat-start shell. Same chat-start shell as
+      // thinking/assistant bubbles so the row aligns with (and is constrained to)
+      // the chat content column.
+      var run = null;
+      var host = p.host || null;
+      if (!host) {
+        run = nextLiveRun();
+        host = run.body;
+      }
 
       // The step names itself in the console's vocabulary (category verb + the
       // subject the call's arguments gave), not by its wire name — that stays in
@@ -450,7 +491,7 @@
         label: MemoryChatComponents.toolLabel(category, tool, inFlight(status), p.subject),
         live: status === "running",
         dataStatus: status,
-        container: wrap,
+        container: host,
         renderDetails: function (detailEl, rootEl) {
           MemoryChatComponents.renderToolDetails(detailEl, rootEl._payload || {});
         },
@@ -483,6 +524,15 @@
       p.tool = tool;
       p.status = status;
       setToolStatus(chip.root, status, detail);
+      // A live step joins the turn's run, which states the count, the span and
+      // any failure in one summary line.
+      if (run) {
+        run.addStep(chip.root, {
+          startedAt: Date.now(),
+          running: inFlight(status),
+          failed: status === "error",
+        });
+      }
       // Optional run-transcript annotation ("step N · 5m ago"): a quiet footer
       // under the chip, only when the caller set payload.meta (dedicated run
       // transcript page). Live streams / conversations / side panel omit it.
@@ -669,6 +719,7 @@
         target.setAttribute("data-status", cls.status);
         // An open step is re-rendered: the reader opened it to see the result.
         refreshOpenDetail(target);
+        if (liveRun) liveRun.settleStep(target, { failed: cls.status === "error" });
       } else {
         toolChip(tool, cls.status, detail, {
           tool: tool, status: cls.status, summary: cls.summary, error: cls.error,
@@ -1145,6 +1196,9 @@
 
     function finishStream(reason) {
       ctx.streaming = false;
+      // Settle the turn's run before the host re-renders the transcript, so the
+      // DOM the reader sees is final even on a host that keeps its live DOM.
+      closeLiveRun();
       ctx.onStreamFinish(reason); // chat: finalize + refresh (+ queue release); sidepanel: recordHistory
       updateBubbleText();
       ctx.setStreaming(false);
@@ -1164,6 +1218,7 @@
     function failStream(message) {
       streamFailed = true;
       ctx.streaming = false;
+      closeLiveRun();
       ctx.onStreamFail(); // chat: finalizeThinking; sidepanel: no-op
       updateBubbleText();
       ctx.setStreaming(false);

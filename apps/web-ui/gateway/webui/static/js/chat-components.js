@@ -471,6 +471,221 @@
     };
   }
 
+  /* ---------- tool runs (a turn's steps fold into one row) ---------- */
+
+  // A run is the consecutive steps of one turn. One summary line states the step
+  // count, the span from the first start to the last settle (wall clock, only
+  // once it reaches a second) and how many steps failed; opening it reveals the
+  // steps in execution order. The default is open while a step is still running
+  // and closed once the run settles — unless the reader opened or closed it,
+  // whose choice outranks the default. Choices are keyed by the turn and live
+  // for the page's lifetime: nothing is persisted, so a reload starts from the
+  // default.
+  var toolRunChoices = typeof Map === "function" ? new Map() : null;
+
+  function toolRunChoice(key) {
+    if (!key || !toolRunChoices) return null;
+    return toolRunChoices.has(key) ? toolRunChoices.get(key) : null;
+  }
+
+  function rememberToolRunChoice(key, open) {
+    if (!key || !toolRunChoices) return;
+    toolRunChoices.set(key, !!open);
+  }
+
+  // auxShell is the chat-start row a step and a run both sit in: the same shell,
+  // so a run summary lines up with the step it replaces, and a single-step turn
+  // can go back to being a plain step without moving its text.
+  function auxShell() {
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise memory-aux";
+    wrap.innerHTML =
+      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
+      '<span class="iconify lucide--bot size-5" aria-hidden="true"></span></div>';
+    return wrap;
+  }
+
+  // createToolRun builds the run for turnKey inside container. Steps arrive
+  // through addStep (the chip root) and settleStep (a terminal frame); finish()
+  // states the settled summary and applies the default, and a run that ends with
+  // a single step dissolves back into that step.
+  function createToolRun(container, turnKey, opts) {
+    opts = opts || {};
+    ensureBadgeStyle();
+    var steps = [];
+    var defaultOpen = opts.openDefault !== false;
+
+    var shell = auxShell();
+    var el = document.createElement("details");
+    el.className = "memory-tool-run col-start-2 row-start-2 w-full";
+    if (turnKey) el.setAttribute("data-turn", String(turnKey));
+    el.innerHTML =
+      '<summary class="memory-tool-run-summary text-xs text-muted">' +
+      '<span class="flex size-[22px] shrink-0 items-center justify-center">' +
+      '<span class="iconify lucide--list-checks size-4 text-muted-faint" aria-hidden="true"></span></span>' +
+      '<span class="memory-tool-run-count"></span>' +
+      '<span class="memory-tool-run-span hidden text-muted-faint"></span>' +
+      '<span class="memory-tool-run-failed hidden items-center gap-1 text-error">' +
+      '<span class="iconify lucide--alert-triangle size-3.5" aria-hidden="true"></span>' +
+      '<span class="memory-tool-run-failed-text"></span></span>' +
+      '<span class="memory-tool-run-chevron ml-auto flex shrink-0 items-center">' +
+      '<span class="iconify lucide--chevron-right size-3.5 text-muted-faint" aria-hidden="true"></span></span>' +
+      "</summary>" +
+      '<div class="memory-tool-run-body flex flex-col gap-0.5 pb-1"></div>';
+    if (defaultOpen) el.setAttribute("open", "");
+    shell.appendChild(el);
+    container.appendChild(shell);
+
+    var body = el.querySelector(".memory-tool-run-body");
+    var countEl = el.querySelector(".memory-tool-run-count");
+    var spanEl = el.querySelector(".memory-tool-run-span");
+    var failEl = el.querySelector(".memory-tool-run-failed");
+    var failText = el.querySelector(".memory-tool-run-failed-text");
+
+    function foundFailed() {
+      var n = 0;
+      for (var i = 0; i < steps.length; i++) if (steps[i].failed) n++;
+      return n;
+    }
+
+    function spanMs() {
+      // Wall clock, not the sum of durations: the first step's start to the last
+      // step's settle.
+      var first = steps.length ? steps[0].startedAt : 0;
+      var last = 0;
+      for (var i = 0; i < steps.length; i++) {
+        if (steps[i].settledAt > last) last = steps[i].settledAt;
+      }
+      if (!first || !last || last < first) return 0;
+      return last - first;
+    }
+
+    function paint() {
+      countEl.textContent = steps.length + " step" + (steps.length === 1 ? "" : "s");
+      var ms = spanMs();
+      var duration = ms >= 1000 ? formatDurationMs(ms) : "";
+      // The summary reads as one sentence to a screen reader: "3 steps · 1.6s,
+      // 1 failed". The spaces live in the text, not only in the flex gap.
+      spanEl.textContent = duration ? " · " + duration : "";
+      spanEl.classList.toggle("hidden", !duration);
+      // State never rests on colour alone: the failure indicator is a word, and
+      // the icon only repeats it.
+      var failed = foundFailed();
+      failEl.classList.toggle("hidden", failed === 0);
+      failEl.classList.toggle("flex", failed > 0);
+      failText.textContent = failed ? " " + failed + " failed" : "";
+    }
+
+    function desiredOpen() {
+      var choice = toolRunChoice(turnKey);
+      if (choice !== null) return choice;
+      return defaultOpen;
+    }
+
+    function applyOpen(open) {
+      open = !!open;
+      if (el.open === open) return;
+      el.open = open;
+    }
+
+    // The reader's click is the choice: the summary's default action flips the
+    // run after the event, so the state it is going to is `!el.open`. Recording
+    // it here — rather than from the `toggle` event, which is queued — is what
+    // lets a settle moments later still read the reader's choice. A page that
+    // knows the turn's run id (opts.runIdOf) gets the choice under both keys, so
+    // it holds whether the click lands before or after the recorded re-render.
+    function rememberChoice(open) {
+      rememberToolRunChoice(turnKey, open);
+      if (!opts.runIdOf) return;
+      var id = "";
+      try {
+        id = opts.runIdOf() || "";
+      } catch (e) {
+        id = "";
+      }
+      if (id && id !== turnKey) rememberToolRunChoice(id, open);
+    }
+
+    var summary = el.querySelector("summary");
+    summary.addEventListener("click", function () {
+      rememberChoice(!el.open);
+    });
+
+    var api = {
+      el: el,
+      shell: shell,
+      body: body,
+      key: turnKey,
+      addStep: function (chip, facts) {
+        facts = facts || {};
+        steps.push({
+          chip: chip || null,
+          startedAt: facts.startedAt || Date.now(),
+          settledAt: facts.settledAt || 0,
+          failed: !!facts.failed,
+          running: !!facts.running,
+        });
+        if (chip) body.appendChild(chip);
+        paint();
+        return chip;
+      },
+      settleStep: function (chip, facts) {
+        facts = facts || {};
+        for (var i = 0; i < steps.length; i++) {
+          if (chip && steps[i].chip === chip) {
+            steps[i].settledAt = facts.settledAt || Date.now();
+            steps[i].running = false;
+            if (facts.failed !== undefined) steps[i].failed = !!facts.failed;
+            paint();
+            return;
+          }
+        }
+      },
+      finish: function (finishOpts) {
+        finishOpts = finishOpts || {};
+        var now = Date.now();
+        var pending = false;
+        for (var i = 0; i < steps.length; i++) {
+          if (!steps[i].settledAt) steps[i].settledAt = now;
+          if (steps[i].running) pending = true;
+        }
+        paint();
+        // A page can only learn the turn's id once the run is under way. Keep
+        // the reader's choice under the id the history render will use, so
+        // replacing live DOM with the recorded transcript cannot re-close a run
+        // they opened.
+        if (finishOpts.runId && finishOpts.runId !== turnKey) {
+          var choice = toolRunChoice(turnKey);
+          if (choice !== null) rememberToolRunChoice(finishOpts.runId, choice);
+        }
+        if (steps.length <= 1 && !pending) {
+          api.dissolve();
+          return;
+        }
+        // A settled run closes unless the reader said otherwise; a run still
+        // holding a step (a pause, a reattach mid-turn) stays open.
+        defaultOpen = pending;
+        applyOpen(desiredOpen());
+      },
+      // dissolve replaces the run with the single step it holds: a one-step turn
+      // reads as a step, not as a run of one.
+      dissolve: function () {
+        var parent = shell.parentNode;
+        if (!parent) return;
+        for (var i = 0; i < steps.length; i++) {
+          var chip = steps[i].chip;
+          if (!chip) continue;
+          var row = auxShell();
+          row.appendChild(chip);
+          parent.insertBefore(row, shell);
+        }
+        parent.removeChild(shell);
+      },
+    };
+    paint();
+    return api;
+  }
+
   // Inject the badge + shimmer CSS once. Unlayered, so it sits above the
   // daisyUI/Tailwind layers in app.css; runs after the stylesheet link, so it
   // also wins the cascade against app.css's unlayered tool-chip rules.
@@ -550,7 +765,17 @@
       // the open state turns the chevron over; no motion when the reader asked for
       // less (the reduced-motion block above covers the transition)
       ".memory-raw-chevron{transition:transform .15s ease}" +
-      ".memory-raw-disclosure[open] .memory-raw-chevron{transform:rotate(180deg)}";
+      ".memory-raw-disclosure[open] .memory-raw-chevron{transform:rotate(180deg)}" +
+      // a run's summary is the same kind of control as the raw disclosure's: 44
+      // CSS pixels by its own rule (same root-font reason), no native marker, and
+      // a chevron that turns over when the run is open
+      ".memory-tool-run-summary{display:flex;align-items:center;min-height:44px;cursor:pointer;list-style:none;padding:0 .5rem}" +
+      ".memory-tool-run-summary::-webkit-details-marker{display:none}" +
+      ".memory-tool-run-chevron{transition:transform .15s ease}" +
+      ".memory-tool-run[open] .memory-tool-run-chevron{transform:rotate(90deg)}" +
+      // the reduced-motion rule for the run chevron comes last: same
+      // specificity, so it has to follow the transition it cancels
+      "@media (prefers-reduced-motion:reduce){.memory-tool-run-chevron{transition:none}}";
     document.head.appendChild(st);
   }
 
@@ -1752,6 +1977,68 @@
     return null;
   }
 
+  // planToolRuns maps a timeline index to the run a step belongs to. A run is
+  // the consecutive tool steps of one turn: same run id, with nothing that
+  // renders in between, so folding them cannot reorder the transcript. Items
+  // that never paint (system/tool messages, the invisible run boundaries) do not
+  // break a run; a question card or an assistant bubble does.
+  function planToolRuns(items, showRunMarkers) {
+    var CS = window.MemoryChatStream || {};
+    function paints(item) {
+      if (!item || typeof item !== "object") return false;
+      if (item.kind === "tool_call") return true;
+      if (item.kind === "run_start" || item.kind === "run_end") return !!showRunMarkers;
+      if (item.kind !== "message") return false;
+      var content = item.content || {};
+      var text = content.text || "";
+      var html = content.html || "";
+      if (item.role === "user") return !!(text && !(CS.isResumePrompt && CS.isResumePrompt(text)));
+      // tool results are shown by the preceding step; the system instruction is
+      // rendered once, as the prompt card — neither paints a row.
+      if (item.role === "tool" || item.role === "system") return false;
+      if (text && CS.isPauseNotice && CS.isPauseNotice(text)) return false;
+      return !!(text || html || content.reasoning);
+    }
+
+    var plan = {};
+    var i = 0;
+    while (i < items.length) {
+      var item = items[i];
+      if (!paints(item) || item.kind !== "tool_call" || item.tool_name === "ask_user") {
+        i++;
+        continue;
+      }
+      var key = item.run_id || "";
+      var members = [i];
+      var j = i + 1;
+      while (j < items.length) {
+        var next = items[j];
+        if (!paints(next)) {
+          j++;
+          continue;
+        }
+        if (next.kind === "tool_call" && next.tool_name !== "ask_user" && (next.run_id || "") === key) {
+          members.push(j);
+          j++;
+          continue;
+        }
+        break;
+      }
+      if (members.length > 1) {
+        for (var m = 0; m < members.length; m++) {
+          plan[members[m]] = {
+            key: key,
+            count: members.length,
+            first: m === 0,
+            last: m === members.length - 1,
+          };
+        }
+      }
+      i = members[members.length - 1] + 1;
+    }
+    return plan;
+  }
+
   // renderTimeline walks a raw history payload (conversation or run) and paints
   // it into ctx.container. It is the single implementation behind the /chat
   // page's renderTimelineItems (chat.js) and the side panel's renderHistoryItems
@@ -1838,6 +2125,12 @@
     var runCtx = null; // model/duration window for the run being rendered
     var turnFooters = []; // {el, ctx} — assistant bubbles, for footer attachment
     var newestRunId = ""; // active run id, resolved from the newest lifecycle item
+    // A turn's consecutive steps fold into one run. The groups are planned
+    // before the walk so a one-step turn still renders as a plain step and a
+    // multi-step one is a run from its first chip; `openRun` is the run being
+    // filled as the chips render.
+    var toolRuns = planToolRuns(items, showRunMarkers);
+    var openRun = null;
     var newestRunStatus = "";
     var newestRunEnded = false;
     for (var i = 0; i < items.length; i++) {
@@ -1929,7 +2222,29 @@
           var out = item.tool_output;
           var view = item.tool_view && typeof item.tool_view === "object" ? item.tool_view : null;
           var cls = CS.classifyTool(item.tool_status, out, view);
-          ctx.toolChip(item.tool_name || "tool", cls.status, cls.line || cls.summary || "", {
+          // Fold this turn's consecutive steps into one run: the group is created
+          // at its first step, filled as the chips render, and settled at its last.
+          var plannedRun = toolRuns[i];
+          if (!plannedRun) {
+            openRun = null;
+          } else if (!openRun || plannedRun.first) {
+            openRun = createToolRun(container, plannedRun.key, { openDefault: false });
+          }
+          // A step outside a run keeps its own row, exactly as it rendered before
+          // runs existed; the caller owns placement, so the chip builder never
+          // mistakes a recorded step for a live one.
+          var chipHost = openRun ? openRun.body : null;
+          if (!chipHost) {
+            chipHost = auxShell();
+            container.appendChild(chipHost);
+          }
+          var startedAt = item.created_at ? Date.parse(item.created_at) : 0;
+          if (!isFinite(startedAt)) startedAt = 0;
+          var settledAt = startedAt;
+          if (startedAt && typeof item.duration_ms === "number" && item.duration_ms > 0) {
+            settledAt = startedAt + item.duration_ms;
+          }
+          var chipEl = ctx.toolChip(item.tool_name || "tool", cls.status, cls.line || cls.summary || "", {
             tool: item.tool_name || "tool",
             status: cls.status,
             summary: cls.summary,
@@ -1944,7 +2259,20 @@
             id: item.id,
             durationMs: item.duration_ms,
             meta: meta,
+            host: chipHost,
           });
+          if (openRun) {
+            openRun.addStep(chipEl, {
+              startedAt: startedAt,
+              settledAt: settledAt,
+              failed: cls.status === "error",
+              running: cls.status === "running" || cls.status === "awaiting_confirmation",
+            });
+            if (plannedRun.last) {
+              openRun.finish();
+              openRun = null;
+            }
+          }
           break;
         case "message":
           var content = item.content || {};
@@ -2045,6 +2373,8 @@
     turnFooter: turnFooter,
     runMarker: runMarker,
     renderA2UISurface: renderA2UISurface,
+    auxShell: auxShell,
+    createToolRun: createToolRun,
     renderTimeline: renderTimeline,
     humanizeTypeName: humanizeTypeName,
     sourcesFooter: sourcesFooter,

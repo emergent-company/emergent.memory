@@ -254,6 +254,10 @@
     answerQuestion: answerQuestion,
     postDecision: postDecision,
     badgeCtx: badgeCtx,
+    // The turn's run id, once the page knows it (the refresh payload names it
+    // before the turn settles). Keys the reader's open/closed choice on a tool
+    // run so the history render that replaces the live DOM keeps it.
+    currentRunId: function () { return liveRunId; },
     handleEvent: handleEvent,
   };
 
