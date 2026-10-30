@@ -157,7 +157,7 @@ templ backupsEmpty() {
 // can be deleted via its confirm dialog.
 templ backupsTable(backups []Backup) {
 	@components.TableCard(nil) {
-		@table.TableWithProps(table.TableProps{Bordered: false}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Backup';--h2:'Status';--h3:'Size';--h4:'Created';--h5:''"}}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
 					@table.TableHeadCell("Backup")

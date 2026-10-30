@@ -94,7 +94,21 @@ test.describe('Mobile app shell', () => {
   });
 
   test('list and workspace pages do not overflow horizontally', async ({ page }) => {
-    const routes = ['/agents', '/objects', '/documents', '/inbox', '/board'];
+    const routes = [
+      '/agents',
+      '/objects',
+      '/documents',
+      '/inbox',
+      '/board',
+      '/orgs',
+      '/members',
+      '/skills',
+      '/schedules',
+      '/backups',
+      '/usage',
+      '/settings/tokens',
+      '/data-sources',
+    ];
 
     for (const width of [320, 390]) {
       await page.setViewportSize({ width, height: 800 });

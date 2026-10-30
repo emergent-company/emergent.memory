@@ -253,7 +253,7 @@ templ membersBody(data membersPageData) {
 		} else {
 			@ui.PopoverScript()
 			@components.TableCard(nil) {
-				@table.TableWithProps(table.TableProps{Bordered: false}) {
+				@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Member';--h2:'Role';--h3:'Activity';--h4:'Since';--h5:''"}}) {
 					@table.TableHead() {
 						@table.TableHeadRow() {
 							@table.TableHeadCell("Member")

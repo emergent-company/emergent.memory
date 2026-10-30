@@ -189,3 +189,21 @@ func TestChatBubbleShrinksToContent(t *testing.T) {
 		t.Errorf("chat-bubble override %q missing the 90%% max-width cap", rule)
 	}
 }
+
+// TestStackedMobileTables guards the mobile card fallback for dense list
+// tables: the table must collapse into one card per row below md and read its
+// column labels from the per-table --h1..--h8 variables.
+func TestStackedMobileTables(t *testing.T) {
+	css := compiledCSS(t)
+	for _, want := range []string{
+		".stacked-table table{width:100%;display:block}",
+		".stacked-table thead{display:none}",
+		".stacked-table tbody>tr>td{",
+		"content:var(--h1",
+		"content:var(--h8",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("compiled css missing stacked-table rule %q", want)
+		}
+	}
+}

@@ -31,7 +31,7 @@ templ DataSourcesPage(integrations []DSIntegration, providerNames map[string]str
 				@dataSourcesEmpty()
 			} else {
 				@components.TableCard(nil) {
-					<div class="overflow-x-auto">
+					<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Provider';--h3:'Status';--h4:'Sync';--h5:'Last sync';--h6:''">
 						<table class="table table-sm" data-testid="ds-source-table">
 							<thead>
 								<tr>

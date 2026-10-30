@@ -229,7 +229,7 @@ templ agentMCPKeysBlock(data agentSettingsData) {
 			} else {
 				<div class="mt-4">
 					@components.TableCard(templ.Attributes{"data-testid": "agent-mcp-key-list"}) {
-						<div class="overflow-x-auto">
+						<div class="overflow-x-auto stacked-table" style="--h1:'Label';--h2:'Created';--h3:'Last used';--h4:''">
 							<table class="table table-sm">
 								<thead>
 									<tr>

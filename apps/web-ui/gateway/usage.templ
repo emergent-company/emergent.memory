@@ -107,7 +107,7 @@ templ usageCharts(payload usageChartPayload) {
 // usageModelSection lists token usage grouped by model, sorted by cost.
 templ usageModelSection(summary *UsageSummaryResponse) {
 	@ui.Section("Per-model usage", ui.SectionProps{Margin: "mt-6", CardClass: "overflow-hidden", BodyClass: "memory-density-flush"}) {
-		@table.TableWithProps(table.TableProps{Bordered: false}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Model';--h2:'Provider';--h3:'Tokens';--h4:'Cost'"}}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
 					@table.TableHeadCell("Model")

@@ -1803,3 +1803,50 @@ html.keyboard-open #object-preview-panel:not(.object-preview-in-modal) { height:
   }
   #chat-rail:not(.hidden) #chat-rail-list { min-height: 0; }
 }
+
+/* ---------- Stacked tables (mobile cards) ---------- */
+/* Dense list tables keep their table markup on desktop and become one card per
+   row below md. Column labels come from per-table --h1..--h8 custom properties
+   (quoted strings) on the wrapper; action columns use an empty label. */
+@media (max-width: 767.98px) {
+  .stacked-table,
+  .stacked-table .overflow-x-auto { overflow-x: visible; }
+  .stacked-table table { display: block; width: 100%; }
+  .stacked-table thead { display: none; }
+  .stacked-table tbody { display: flex; flex-direction: column; gap: 0.5rem; }
+  .stacked-table tbody > tr {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.75rem;
+    border: 1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent);
+    border-radius: var(--radius-box);
+    background: var(--color-base-100);
+  }
+  .stacked-table tbody > tr:hover { background: var(--color-base-100); }
+  .stacked-table tbody > tr > td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+  }
+  .stacked-table tbody > tr > td::before {
+    color: var(--color-muted-faint);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .stacked-table tbody > tr > td:nth-child(1)::before { content: var(--h1, ""); }
+  .stacked-table tbody > tr > td:nth-child(2)::before { content: var(--h2, ""); }
+  .stacked-table tbody > tr > td:nth-child(3)::before { content: var(--h3, ""); }
+  .stacked-table tbody > tr > td:nth-child(4)::before { content: var(--h4, ""); }
+  .stacked-table tbody > tr > td:nth-child(5)::before { content: var(--h5, ""); }
+  .stacked-table tbody > tr > td:nth-child(6)::before { content: var(--h6, ""); }
+  .stacked-table tbody > tr > td:nth-child(7)::before { content: var(--h7, ""); }
+  .stacked-table tbody > tr > td:nth-child(8)::before { content: var(--h8, ""); }
+}

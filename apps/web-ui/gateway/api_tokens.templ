@@ -136,7 +136,7 @@ templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string)
 			})
 		} else {
 			@components.TableCard(nil) {
-				<div class="overflow-x-auto">
+				<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Prefix';--h3:'Scopes';--h4:'Created';--h5:'Last used';--h6:''">
 					@apiTokenRowsTable(active, actionBase)
 				</div>
 			}
@@ -181,7 +181,7 @@ templ apiTokenRevokedSection(revoked []APIToken, actionBase string) {
 		Attrs:        templ.Attributes{"data-testid": "revoked-tokens-section"},
 		SummaryAttrs: templ.Attributes{"data-testid": "revoked-tokens-toggle"},
 	}, apiTokenRevokedSummary(), countBadge(len(revoked), "token", "lucide--key-round")) {
-		<div class="overflow-x-auto">
+		<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Prefix';--h3:'Scopes';--h4:'Created';--h5:'Last used';--h6:''">
 			@apiTokenRowsTable(revoked, actionBase)
 		</div>
 	}

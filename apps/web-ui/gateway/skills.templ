@@ -132,7 +132,7 @@ templ skillsEmpty() {
 
 templ skillsTable(skills []Skill, usedBy map[string]int) {
 	@components.TableCard(nil) {
-		@table.TableWithProps(table.TableProps{Bordered: false}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Skill';--h2:'Used by';--h3:'Updated';--h4:''"}}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
 					@table.TableHeadCell("Skill")

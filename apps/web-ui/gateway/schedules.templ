@@ -69,7 +69,7 @@ templ schedulesEmpty() {
 // schedulesTable lists scheduled agents, mirroring the agents table style.
 templ schedulesTable(schedules []ScheduledAgent, defs []AgentDefinitionSummary) {
 	@components.TableCard(nil) {
-		@table.TableWithProps(table.TableProps{Bordered: false}) {
+		@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Schedule';--h2:'Cron';--h3:'Agent';--h4:'Last run';--h5:''"}}) {
 			@table.TableHead() {
 				@table.TableHeadRow() {
 					@table.TableHeadCell("Schedule")

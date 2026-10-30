@@ -370,7 +370,11 @@ templ orgProjectsToolbar(deletableCount int) {
 // single-column table whose rows are still openable.
 templ orgProjectsTable(projects []ProjectRef, isAdmin, canTransfer bool) {
 	{{ deletableCount := projectDeletableCount(projects) }}
-	@table.TableWithProps(table.TableProps{Bordered: false}) {
+	{{ stackStyle := "--h1:'Project';--h2:''"
+	if isAdmin {
+		stackStyle = "--h1:'';--h2:'Project';--h3:''"
+	} }}
+	@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": stackStyle}}) {
 		@table.TableHead() {
 			@table.TableHeadRow() {
 				if isAdmin {
@@ -703,7 +707,7 @@ templ OrgMembersPage(data orgMembersPageData) {
 			} else {
 				{{ soleAdmin := orgHasSoleAdmin(data.Members) }}
 				@components.TableCard(nil) {
-					@table.TableWithProps(table.TableProps{Bordered: false}) {
+					@table.TableWithProps(table.TableProps{Bordered: false, Attrs: templ.Attributes{"class": "stacked-table", "style": "--h1:'Member';--h2:'Role';--h3:'Activity';--h4:'Since';--h5:''"}}) {
 						@table.TableHead() {
 							@table.TableHeadRow() {
 								@table.TableHeadCell("Member")
