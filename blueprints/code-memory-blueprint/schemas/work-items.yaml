@@ -29,9 +29,11 @@ objectTypeSchemas:
         description: "Origin system: github, jira, slack, manual"
       source_id:
         type: string
+        title: Source ID
         description: "ID in the source system (e.g. '42')"
       source_url:
-        type: string
+        type: url
+        title: Source URL
         description: "URL to the item in the source system"
       assignee:
         type: string
@@ -58,9 +60,11 @@ objectTypeSchemas:
         description: "Origin system: github, jira, slack, manual"
       source_id:
         type: string
+        title: Source ID
         description: "ID in the source system (e.g. '15')"
       source_url:
-        type: string
+        type: url
+        title: Source URL
         description: "URL to the item in the source system"
       assignee:
         type: string

@@ -34,18 +34,23 @@ objectTypes:
         description: "1 = highest, 5 = lowest"
       tokensUsed:
         type: integer
+        title: Tokens used
         description: Total tokens consumed across the entire execution tree
       timeSpentMs:
         type: integer
+        title: Time spent
         description: Total wall-clock time spent on this work package (ms)
       rejectionCount:
         type: integer
+        title: Rejections
         description: Total number of task rejections within this work package
       humanApprovalRate:
         type: number
+        title: Human approval rate
         description: Fraction of orchestrator checkpoints that received human approval (0.0–1.0)
       closedAt:
         type: string
+        title: Closed
         description: ISO-8601 timestamp when the work package was closed
 
   - name: Task
@@ -60,6 +65,7 @@ objectTypes:
         description: Short description of what needs to be done
       type:
         type: string
+        title: Task type
         description: "Task category: research | enrichment | coding | review | planning | design | coordination"
       status:
         type: string
@@ -69,21 +75,27 @@ objectTypes:
         description: "1 = highest, 5 = lowest"
       tokensUsed:
         type: integer
+        title: Tokens used
         description: Tokens consumed for this specific task
       timeSpentMs:
         type: integer
+        title: Time spent
         description: Wall-clock time for this task (ms)
       rejectionCount:
         type: integer
+        title: Rejections
         description: How many times this task was rejected before completion
       parentKey:
         type: string
+        title: Parent
         description: Key of the parent Task or WorkPackage (null for root tasks)
       workPackageKey:
         type: string
+        title: Work package
         description: Key of the owning WorkPackage (denormalised for query efficiency)
       blockedBy:
         type: string
+        title: Blocked by
         description: Key of the task blocking this one (if status = blocked)
       notes:
         type: string
@@ -120,12 +132,15 @@ objectTypes:
         description: Full content or artifact produced (code, research text, design doc, etc.)
       selfAssessment:
         type: string
+        title: Self-assessment
         description: Agent's own evaluation of how well it met each acceptance criterion
       tokensUsed:
         type: integer
+        title: Tokens used
         description: Tokens consumed producing this result
       producedAt:
         type: string
+        title: Produced
         description: ISO-8601 timestamp
 
   - name: FeedbackSignal
@@ -149,6 +164,7 @@ objectTypes:
         description: "Scoring weight: 1.0 for agent feedback, 3.0 for human feedback"
       createdAt:
         type: string
+        title: Created
         description: ISO-8601 timestamp
 
   # ── System Layer ──────────────────────────────────────────────────────────
@@ -163,6 +179,7 @@ objectTypes:
     properties:
       agentType:
         type: string
+        title: Agent type
         description: "leaf | pool_manager | orchestrator | janitor"
       skills:
         type: string
@@ -172,24 +189,30 @@ objectTypes:
         description: "Comma-separated list of tool names"
       modelName:
         type: string
+        title: Model
         description: LLM model identifier (e.g. gemini-2.5-flash)
       tier:
         type: string
         description: "cheap | standard | premium"
       taskTypes:
         type: string
+        title: Task types
         description: "Comma-separated list of task types this agent handles"
       isActive:
         type: boolean
+        title: Active
         description: Whether this agent variant is currently in active use
       operationalDefinitionId:
         type: string
+        title: Agent definition
         description: ID of the corresponding Memory agent definition (for cross-reference)
       createdAt:
         type: string
+        title: Created
         description: ISO-8601 timestamp
       retiredAt:
         type: string
+        title: Retired
         description: ISO-8601 timestamp when this variant was retired
 
   - name: AgentPool
@@ -204,15 +227,19 @@ objectTypes:
         description: Human-readable pool name (e.g. "Research Pool")
       taskType:
         type: string
+        title: Task type
         description: The task type this pool serves (e.g. "research")
       selectionStrategy:
         type: string
+        title: Selection strategy
         description: "cheapest_first | round_robin | weighted | experiment_driven"
       proactiveTestRate:
         type: number
+        title: Proactive test rate
         description: "Fraction of tasks to proactively A/B test (0.0–1.0)"
       isActive:
         type: boolean
+        title: Active
         description: Whether this pool is accepting new task assignments
 
   - name: AgentRun
@@ -227,18 +254,23 @@ objectTypes:
         description: "running | completed | failed | timed_out"
       startedAt:
         type: string
+        title: Started
         description: ISO-8601 timestamp
       completedAt:
         type: string
+        title: Completed
         description: ISO-8601 timestamp
       tokensUsed:
         type: integer
+        title: Tokens used
         description: Total tokens consumed in this run
       durationMs:
         type: integer
+        title: Duration
         description: Wall-clock duration (ms)
       errorMessage:
         type: string
+        title: Error
         description: Error message if the run failed
 
   - name: Experiment
@@ -256,18 +288,23 @@ objectTypes:
         description: "rejection | proactive | manual"
       variantCount:
         type: integer
+        title: Variants
         description: Number of variants being compared
       winnerId:
         type: string
+        title: Winner
         description: Key of the AgentDefinitionRecord that won (set on conclusion)
       configRate:
         type: number
+        title: Test rate
         description: "The proactive test rate in effect when this experiment was triggered"
       startedAt:
         type: string
+        title: Started
         description: ISO-8601 timestamp
       concludedAt:
         type: string
+        title: Concluded
         description: ISO-8601 timestamp
 
   - name: ExperimentVariant
@@ -300,6 +337,7 @@ objectTypes:
         description: "percent | ms | tokens | count"
       targetValue:
         type: number
+        title: Target
         description: The goal value for this metric
       scope:
         type: string
@@ -319,12 +357,15 @@ objectTypes:
         description: The observed value
       sampleSize:
         type: integer
+        title: Sample size
         description: Number of data points used to compute this value
       workPackageKey:
         type: string
+        title: Work package
         description: Key of the work package that triggered this snapshot (if applicable)
       recordedAt:
         type: string
+        title: Recorded
         description: ISO-8601 timestamp
 
   - name: JanitorProposal
@@ -340,6 +381,7 @@ objectTypes:
         description: One-paragraph summary of what is being proposed and why
       changeType:
         type: string
+        title: Change type
         description: "new_agent_type | model_swap | template_update | tool_addition | retire_agent | pool_restructure"
       detail:
         type: string
@@ -349,15 +391,19 @@ objectTypes:
         description: "pending_approval | approved | rejected | implemented"
       humanFeedback:
         type: string
+        title: Human feedback
         description: Human's explanation of their accept/reject decision
       evidenceSummary:
         type: string
+        title: Evidence
         description: Summary of the data patterns that motivated this proposal
       proposedAt:
         type: string
+        title: Proposed
         description: ISO-8601 timestamp
       resolvedAt:
         type: string
+        title: Resolved
         description: ISO-8601 timestamp
 
   - name: Model
@@ -372,15 +418,18 @@ objectTypes:
         description: "openai | anthropic | google | mistral | local"
       contextWindow:
         type: integer
+        title: Context window
         description: Maximum context window in tokens
       tier:
         type: string
         description: "cheap | standard | premium"
       costPer1kTokens:
         type: number
+        title: Cost per 1k tokens
         description: Approximate cost in USD per 1000 tokens (combined input+output estimate)
       isAvailable:
         type: boolean
+        title: Available
         description: Whether this model is currently accessible in the project's provider config
       capabilities:
         type: string

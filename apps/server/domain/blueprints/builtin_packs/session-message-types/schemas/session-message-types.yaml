@@ -15,14 +15,17 @@ objectTypeSchemas:
         description: Title or name for this session
       started_at:
         type: string
+        title: Started
         format: date-time
         description: When the session started
       ended_at:
         type: string
+        title: Ended
         format: date-time
         description: When the session ended (optional)
       message_count:
         type: integer
+        title: Messages
         description: Number of messages in this session
         default: 0
       summary:
@@ -30,6 +33,7 @@ objectTypeSchemas:
         description: A summary of the session content (optional)
       agent_version:
         type: string
+        title: Agent version
         description: Version of the agent that ran this session (optional)
     required:
       - title
@@ -51,6 +55,7 @@ objectTypeSchemas:
         x-embedding-target: true
       sequence_number:
         type: integer
+        title: Sequence
         description: Order of this message within the session (1-indexed)
       timestamp:
         type: string
@@ -58,9 +63,11 @@ objectTypeSchemas:
         description: When the message was created
       token_count:
         type: integer
+        title: Tokens
         description: Number of tokens in the message (optional)
       tool_calls:
         type: array
+        title: Tool calls
         description: Tool calls made in this message (optional)
         items:
           type: object

@@ -42,3 +42,48 @@ memory blueprints install <source> --project <slug>
 ```
 
 Sources can be a local directory path or a GitHub URL (`github.com/org/repo/path`).
+
+## Authoring conventions
+
+A pack's schema is what most projects' types are made of, so the property
+definitions are worth a little care. In a `schemas/*.yaml` (or `packs/*.yaml`)
+file, each property takes the JSON-Schema keywords the registry understands:
+
+```yaml
+properties:
+  tokensUsed:
+    type: integer
+    title: Tokens used        # the label the UI shows, key stays visible beneath it
+    description: Total tokens consumed across the execution tree
+  homepage:
+    type: url                 # absolute http(s) URL, validated on write
+    title: Homepage
+  content_hash:
+    type: sha256              # exactly 64 hex characters, stored lower-case
+    title: Content hash
+  last_used:
+    type: date                # RFC 3339, validated on write
+    title: Last used
+```
+
+- **Label every key a reader cannot scan at a glance** — any `snake_case` key or
+  one with an internal capital. `event_time` → `Event time`, `tokensUsed` →
+  `Tokens used`. A label that merely repeats its key (`title: Status` on
+  `status`) is dead weight: the renderer shows the label and hides an
+  identical key. `TestShippedPackPropertyLabels` enforces this for every shipped
+  pack.
+- **Use `url` and the digest types (`md5`, `sha1`, `sha256`, `sha512`) for
+  values that are URLs or digests**, not plain `string`: they are validated on
+  write. Use `url` only for absolute `http`/`https` values — a route
+  (`/dashboard`), a host name or an env-var key stays `string`. These types have
+  no "empty" value: leave an unknown one out (or send `null`), never `""`.
+- **Use `date` for timestamps you are adding** rather than a `string` documented
+  as ISO 8601, and `number`/`integer`/`boolean` rather than strings — both are
+  validated on write. A few older packs still carry string timestamps;
+  converting those is tracked separately.
+- **Re-applying a blueprint is how an existing project picks up pack changes.**
+  Applying refreshes the pack's definitions from the manifest in place — for a
+  built-in pack too, which is otherwise created once on first apply and never
+  reseeded — so no version bump is needed for a label, description or type
+  change. Changing content under an unchanged version does move the pack's
+  checksum, which is what the blueprint's "update available" drift signal reads.

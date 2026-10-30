@@ -30,6 +30,7 @@ objectTypeSchemas:
         description: Confidence in the synthesized insight
       source_count:
         type: integer
+        title: Source count
         description: Number of source notes this dream consolidates
     labels:
       - dream

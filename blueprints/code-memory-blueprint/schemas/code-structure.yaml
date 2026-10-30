@@ -17,20 +17,25 @@ objectTypeSchemas:
     properties:
       app_type:
         type: string
+        title: Application type
         description: "Kind of application. E.g. frontend, backend, mobile, desktop, cli, library"
       platform:
         type: array
+        title: Platforms
         items: string
         description: "Target platforms. E.g. [web], [ios, android], [macos, linux]"
       root_path:
         type: string
+        title: Root path
         description: "Root directory relative to the repo. E.g. apps/web, services/auth"
       tech_stack:
         type: array
+        title: Tech stack
         items: string
         description: "Key technologies. E.g. [react, typescript, vite]"
       deployment_target:
         type: string
+        title: Deployment target
         description: "Where it deploys. E.g. vercel, kubernetes, app-store"
       port:
         type: number
@@ -76,21 +81,25 @@ objectTypeSchemas:
     properties:
       context_type:
         type: string
+        title: Context type
         description: >
           The medium or interaction paradigm this context lives in.
           E.g. web-view, mobile-screen, desktop-window, cli, notification,
           widget, poster, overlay, email, watch-face
       type:
         type: string
+        title: Surface type
         description: "Kind of surface within the medium. E.g. screen, modal, panel, drawer, bottom-sheet, toast"
       scope:
         type: string
+        title: Visibility
         description: "Visibility scope. E.g. internal, external"
       route:
         type: string
         description: "URL route or navigation path if applicable. E.g. /dashboard, /users/:id"
       platform:
         type: array
+        title: Platforms
         items: string
         description: "Target platforms. E.g. [ios], [android], [web]"
       description:
@@ -105,6 +114,7 @@ objectTypeSchemas:
     properties:
       type:
         type: string
+        title: Category
         description: "Component category. E.g. primitive, composite, layout, container"
       description:
         type: string
@@ -120,6 +130,7 @@ objectTypeSchemas:
     properties:
       type:
         type: string
+        title: Category
         description: "Helper category. E.g. hook, composable, store, trait, mixin, utility"
       description:
         type: string
@@ -133,9 +144,11 @@ objectTypeSchemas:
     properties:
       type:
         type: string
+        title: Category
         description: "Action category. E.g. navigation, mutation, trigger, toggle, external"
       display_label:
         type: string
+        title: Label
         description: "Human-readable label shown in the UI. E.g. Save Changes, Delete User"
       description:
         type: string
@@ -148,6 +161,7 @@ objectTypeSchemas:
     properties:
       display_name:
         type: string
+        title: Name
         description: "Human-readable name. E.g. Guest User, Admin"
       description:
         type: string
@@ -180,6 +194,7 @@ objectTypeSchemas:
         description: "Human-readable name of the domain"
       app:
         type: string
+        title: Application
         description: "The application this domain belongs to (e.g. web, api)"
       description:
         type: string
@@ -233,21 +248,26 @@ objectTypeSchemas:
         description: "The primary expected outcome. E.g. a new client record is created and linked to a case"
       and_also:
         type: array
+        title: And also
         items: string
         description: "Additional outcomes or side effects. E.g. [an audit log entry is created, the client appears in the clients list]"
       description:
         type: string
       planning_status:
         type: string
+        title: Planning status
         description: "Planning workflow state. One of: idle, in_progress, done. Managed automatically by next_scenario.py --claim / --complete / --release. Do not set manually."
       planning_started_at:
         type: string
+        title: Planning started
         description: "ISO 8601 timestamp set automatically by next_scenario.py --claim. Do not set manually."
       planning_finished_at:
         type: string
+        title: Planning finished
         description: "ISO 8601 timestamp set automatically by next_scenario.py --complete. Do not set manually."
       planning_assigned_to:
         type: string
+        title: Planning assignee
         description: "Identifier of who claimed this scenario. Set automatically by next_scenario.py --claim. Do not set manually."
 
   - name: ScenarioStep
@@ -299,6 +319,7 @@ objectTypeSchemas:
     properties:
       struct:
         type: string
+        title: Go struct
         description: "Go struct name. E.g. CasesService, AuthService"
       description:
         type: string
@@ -324,6 +345,7 @@ objectTypeSchemas:
     properties:
       language_type:
         type: string
+        title: Language type
         description: "Language-specific type name if different from the object name"
       fields:
         type: array
@@ -356,15 +378,18 @@ objectTypeSchemas:
     properties:
       method:
         type: string
+        title: HTTP method
         description: "HTTP method or RPC type. E.g. GET, POST, PUT, DELETE, rpc"
       path:
         type: string
         description: "URL path or RPC method name. E.g. /api/v1/users, GetUser"
       auth_required:
         type: boolean
+        title: Auth required
         description: "Whether authentication is required"
       min_role:
         type: string
+        title: Minimum role
         description: "Minimum RBAC role required. E.g. employee, manager, owner, admin"
       handler:
         type: string
@@ -374,6 +399,7 @@ objectTypeSchemas:
         description: "Source file path relative to repo root where this endpoint is registered. E.g. apps/server/domain/agents/routes.go"
       query_params:
         type: array
+        title: Query parameters
         items: string
         description: "Accepted query parameters. E.g. [search, status, limit, offset]"
       description:
@@ -393,6 +419,7 @@ objectTypeSchemas:
         description: "API version. E.g. v1, v2"
       base_url:
         type: string
+        title: Base URL
         description: "Base URL for the API"
       description:
         type: string
@@ -432,6 +459,7 @@ objectTypeSchemas:
     properties:
       kind:
         type: string
+        title: Job kind
         description: "River job kind string — the value returned by Args.Kind(). E.g. timesheet_sync, invoice_sync"
       schedule:
         type: string
@@ -465,12 +493,14 @@ objectTypeSchemas:
     properties:
       key:
         type: string
+        title: Variable name
         description: "The variable name. E.g. DATABASE_URL, STRIPE_SECRET_KEY"
       required:
         type: boolean
         description: "Whether the app fails to start without this value"
       default_value:
         type: string
+        title: Default value
         description: "Default value if not set"
       secret:
         type: boolean
@@ -486,12 +516,14 @@ objectTypeSchemas:
     properties:
       kind:
         type: string
+        title: Category
         description: "Category. E.g. architectural, ui, data-access, error-handling, concurrency"
       scope:
         type: string
         description: "Where this pattern applies. E.g. backend, frontend, data-layer, global"
       usage_guidance:
         type: string
+        title: Usage guidance
         description: "When and how to apply this pattern"
       description:
         type: string
@@ -504,12 +536,14 @@ objectTypeSchemas:
     properties:
       kind:
         type: string
+        title: Category
         description: "Test category. E.g. unit, integration, e2e, snapshot"
       framework:
         type: string
         description: "Test framework. E.g. jest, vitest, go-test, pytest, xctest"
       coverage_percent:
         type: number
+        title: Coverage
         description: "Approximate code coverage percentage"
       description:
         type: string
@@ -529,12 +563,15 @@ objectTypeSchemas:
         description: "DB table name without schema prefix. E.g. documents, agent_runs"
       db_schema:
         type: string
+        title: Database schema
         description: "DB schema namespace. E.g. kb, core, public"
       go_package:
         type: string
+        title: Go package
         description: "Go package import path. E.g. github.com/.../domain/documents"
       source_file:
         type: string
+        title: Source file
         description: "Relative path to the file defining this struct. E.g. apps/server/domain/documents/entity.go"
       description:
         type: string
@@ -554,27 +591,34 @@ objectTypeSchemas:
         description: "DB column name. E.g. project_id, created_at. Empty for relation-only fields."
       go_type:
         type: string
+        title: Go type
         description: "Go type as written in source. E.g. uuid.UUID, *string, []Chunk, time.Time"
       db_type:
         type: string
+        title: DB type
         description: "DB type hint from bun tag. E.g. uuid, text, timestamptz, jsonb, tsvector"
       nullable:
         type: boolean
         description: "True if the field is a pointer type or bun tag lacks notnull"
       is_pk:
         type: boolean
+        title: Primary key
         description: "True if bun tag contains pk"
       is_fk:
         type: boolean
+        title: Foreign key
         description: "True if field is a FK column (*_id pattern) or ORM relation (bun:rel:...)"
       default_val:
         type: string
+        title: Default value
         description: "Default value from bun tag. E.g. now(), gen_random_uuid(), false"
       bun_tags:
         type: string
+        title: Bun tags
         description: "Raw bun struct tag string for full fidelity. E.g. id,pk,type:uuid,default:uuid_generate_v4()"
       ordinal:
         type: number
+        title: Position
         description: "Field position in the struct (1-based) for diagram ordering"
       description:
         type: string
@@ -612,10 +656,12 @@ objectTypeSchemas:
         description: "Query kind. E.g. select, insert, update, delete"
       input_params:
         type: array
+        title: Input parameters
         items: string
         description: "Input parameter names and types. E.g. [org_id int64, status CaseStatusEnum]"
       return_type:
         type: string
+        title: Return type
         description: "Return type. SQLC tokens (one, many, exec) or Go types (e.g. Case, []Case, int64)"
       description:
         type: string

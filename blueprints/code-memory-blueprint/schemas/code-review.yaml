@@ -13,6 +13,7 @@ objectTypeSchemas:
     properties:
       number:
         type: number
+        title: PR number
         description: "GitHub PR number"
       title:
         type: string
@@ -22,12 +23,15 @@ objectTypeSchemas:
         description: "PR state: open, merged, closed"
       head_branch:
         type: string
+        title: Head branch
         description: "Feature branch name"
       base_branch:
         type: string
+        title: Base branch
         description: "Target branch name"
       url:
-        type: string
+        type: url
+        title: PR URL
         description: "GitHub PR URL"
       description:
         type: string
@@ -39,15 +43,18 @@ objectTypeSchemas:
     properties:
       github_id:
         type: string
+        title: GitHub ID
         description: "GitHub thread node ID (used for idempotent upserts)"
       author:
         type: string
         description: "Reviewer login"
       body:
         type: string
+        title: Comment
         description: "Comment text (truncated to 500 chars)"
       path:
         type: string
+        title: File path
         description: "File path the comment references"
       line:
         type: number
@@ -60,6 +67,7 @@ objectTypeSchemas:
         description: "Comment status: open, resolved, outdated, wont_fix"
       description:
         type: string
+        title: Summary
         description: "One-line human summary"
 
 relationshipTypeSchemas:

@@ -57,20 +57,25 @@ objectTypeSchemas:
         description: "archival (default, retrieved on demand) or core (injected into every session)"
       event_time:
         type: string
+        title: Event time
         description: "ISO 8601 timestamp of when the described event occurred. Used for temporal contradiction resolution."
       last_used:
         type: string
+        title: Last used
         description: "ISO 8601 timestamp of last recall. Updated by the retrieval path."
       use_count:
         type: number
+        title: Use count
         default: 0
         description: "Number of times this note has been recalled"
       needs_review:
         type: boolean
+        title: Needs review
         default: false
         description: "Flagged by the confidence decay job when confidence drops below threshold. Cleared on next recall."
       superseded_by:
         type: string
+        title: Superseded by
         description: "ID of a newer Note that replaces this one. Enables soft-deletion and version tracking."
     labels:
       - note

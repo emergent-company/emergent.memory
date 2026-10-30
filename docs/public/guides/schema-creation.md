@@ -199,6 +199,10 @@ length of hexadecimal characters (upper-case input is stored lower-case). A
 object forms), with the machine key shown beneath it; extraction still uses the
 keyed property name.
 
+These types have no "empty" value: an unknown URL, date or digest must be left
+out of the payload (or sent as `null`), not sent as `""` — `{"source_url": ""}`
+is rejected and fails the whole write.
+
 ---
 
 ## Relationship Type Schemas

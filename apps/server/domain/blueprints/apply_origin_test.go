@@ -57,6 +57,64 @@ func TestApply_OriginBuiltin_UsesGlobalPack(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestApply_OriginBuiltin_RefreshesStaleGlobalPack verifies that re-applying a
+// built-in blueprint syncs the global pack row from the embedded manifest.
+// Built-in schema packs are created on first apply and are never reseeded on
+// boot, so without the refresh a pack whose content changed under the same
+// version (a property label, a description, a type) would keep serving its
+// first-published definitions forever — while the re-apply reported success.
+func TestApply_OriginBuiltin_RefreshesStaleGlobalPack(t *testing.T) {
+	db := connectTestDB(t)
+	svc, _, schemasRepo := newMigrationService(t, db)
+	ctx := context.Background()
+
+	_, projectID := seedProject(t, db)
+	name := uniqueName("builtin-refresh")
+	version := "1.0.0"
+
+	// The pack row as a deployment created it before the property was labelled.
+	_, err := upsertBuiltinSchemaPack(ctx, schemasRepo.DB(), PackManifest{
+		Name: name, Version: version,
+		ObjectTypes: []ObjectTypeDef{{
+			Name: "Thing", Label: "Thing",
+			Properties: map[string]any{"event_time": map[string]any{"type": "string"}},
+		}},
+	})
+	require.NoError(t, err)
+
+	// The shipped manifest now carries the label.
+	manifest := json.RawMessage(mustJSON(t, BlueprintManifest{
+		Packs: []PackManifest{{
+			Name: name, Version: version,
+			ObjectTypes: []ObjectTypeDef{{
+				Name: "Thing", Label: "Thing",
+				Properties: map[string]any{"event_time": map[string]any{"type": "string", "title": "Event time"}},
+			}},
+		}},
+	}))
+	bp := testBlueprint(name, version)
+	bp.Manifest = manifest
+	bp.Checksum = manifestChecksum(manifest)
+	bp.Status = StatusPublished
+	bp.Origin = OriginBuiltin
+	require.NoError(t, svc.repo.Create(ctx, bp))
+
+	_, err = svc.Apply(ctx, bp.ID, projectID, uuid.NewString(), ApplyOptions{})
+	require.NoError(t, err)
+
+	pack, err := schemasRepo.GetBuiltinPackByNameVersion(ctx, name, version)
+	require.NoError(t, err)
+
+	var stored []struct {
+		Name       string                    `json:"name"`
+		Properties map[string]map[string]any `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(pack.ObjectTypeSchemas, &stored))
+	require.Len(t, stored, 1)
+	assert.Equal(t, "Event time", stored[0].Properties["event_time"]["title"],
+		"re-applying a built-in blueprint must refresh the global pack from the manifest")
+}
+
 // TestApply_OriginUser_ProjectScopedPack_NoCrossProjectReuse verifies that
 // origin='user'/'import' blueprints materialize a PROJECT-SCOPED pack only, and
 // that two projects applying the same (name, version) never share one pack (the

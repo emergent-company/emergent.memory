@@ -278,11 +278,21 @@ func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID
 // pack was newly created (vs reused).
 func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p PackManifest) (*schemas.GraphMemorySchema, bool, error) {
 	if origin == OriginBuiltin {
-		pack, err := s.schemasRepo.GetBuiltinPackByNameVersion(ctx, p.Name, p.Version)
+		_, err := s.schemasRepo.GetBuiltinPackByNameVersion(ctx, p.Name, p.Version)
 		switch {
 		case err == nil:
-			// The built-in seeder keeps the global pack synced from the manifest.
-			return pack, false, nil
+			// Built-in schema packs are created on first apply and are never
+			// reseeded on boot (see BuiltinSeeder), so refresh the global row
+			// from the manifest here. Without this, a pack whose content changed
+			// under the same version — a property label, a description, a type —
+			// would keep serving its first-published definitions forever, and the
+			// re-apply that was supposed to pick the change up would report
+			// success while changing nothing.
+			refreshed, uerr := upsertBuiltinSchemaPack(ctx, s.schemasRepo.DB(), p)
+			if uerr != nil {
+				return nil, false, uerr
+			}
+			return refreshed, false, nil
 		case isNotFound(err):
 			// Defensive: the seeder normally creates this on boot. Recreate it
 			// so a missing seeded pack cannot block apply.

@@ -27,9 +27,11 @@ var builtinPacksFS embed.FS
 // bundled pack becomes a global published blueprint (project_id NULL,
 // origin='builtin'). It runs on every boot and is idempotent by (name, version).
 //
-// It does NOT seed schema packs: built-in blueprint packs materialize only when
-// their blueprint is applied (the defensive resolvePack -> upsertBuiltinSchemaPack
-// path in apply.go), and are never auto-assigned to projects.
+// It does NOT seed schema packs: built-in blueprint packs materialize when their
+// blueprint is applied — and are refreshed from the embedded manifest on every
+// re-apply (resolvePack -> upsertBuiltinSchemaPack in apply.go), so a pack whose
+// content changes under the same version still reaches applied projects. They are
+// never auto-assigned to projects.
 type BuiltinSeeder struct {
 	repo *Repository
 	log  *slog.Logger
@@ -54,7 +56,8 @@ func RegisterBuiltinSeederLifecycle(lc fx.Lifecycle, seeder *BuiltinSeeder) {
 
 // Seed upserts every bundled pack as a global published blueprint. Idempotent by
 // (name, version); safe to call on every boot. Built-in schema packs are NOT
-// seeded here — they materialize only on blueprint apply.
+// seeded here — they materialize, and are refreshed from the manifest, only when
+// their blueprint is applied.
 func (s *BuiltinSeeder) Seed(ctx context.Context) error {
 	entries, err := fs.ReadDir(builtinPacksFS, "builtin_packs")
 	if err != nil {
