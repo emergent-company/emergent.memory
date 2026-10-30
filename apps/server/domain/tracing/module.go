@@ -3,6 +3,7 @@ package tracing
 import (
 	"context"
 	"log/slog"
+	"net/url"
 
 	"github.com/labstack/echo/v4"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
@@ -58,7 +59,7 @@ func NewTracerProvider(cfg *config.Config, log *slog.Logger) (tracerProviderResu
 
 	exp, err := otlptracehttp.New(
 		context.Background(),
-		otlptracehttp.WithEndpointURL(oc.ExporterEndpoint),
+		otlptracehttp.WithEndpointURL(signalEndpoint(oc.ExporterEndpoint)),
 		otlptracehttp.WithInsecure(),
 	)
 	if err != nil {
@@ -119,6 +120,26 @@ func NewTracerProvider(cfg *config.Config, log *slog.Logger) (tracerProviderResu
 	// are correctly rewritten and exported through the global path alone.
 
 	return tracerProviderResult{SDKProvider: tp}, nil
+}
+
+// signalEndpoint resolves the URL the OTLP/HTTP exporter POSTs spans to.
+//
+// OTEL_EXPORTER_OTLP_ENDPOINT is a *base* URL — our compose files, deploy
+// heredoc, ansible group_vars and preview env all set http://tempo:4318 — but
+// otlptracehttp.WithEndpointURL sends to the URL exactly as given and does not
+// append the signal path. A bare base URL therefore exported to "/" and Tempo
+// answered 404 ("traces export: failed to send to http://tempo:4318/: 404 Not
+// Found"), so no span ever landed. Append /v1/traces when the endpoint carries
+// no path of its own; keep an explicit path (e.g. a proxy prefix) untouched.
+func signalEndpoint(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Host == "" {
+		return endpoint
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/v1/traces"
+	}
+	return u.String()
 }
 
 // sdkProviderParam lets RegisterTracingLifecycle receive the optional SDK provider.
