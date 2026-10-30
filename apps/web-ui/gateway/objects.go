@@ -717,7 +717,7 @@ func (s *Server) uiObject(c echo.Context) error {
 
 	obj, err := s.memory.GetGraphObject(ctx, id)
 	if err != nil {
-		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil, nil))
+		return s.page(c, pageTitle("Object"), ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, userFacingError(err), "", flashErr, nil, nil, nil, nil, nil, ""))
 	}
 
 	// ?from= carries where the user came from (an extraction run's object list).
@@ -749,11 +749,16 @@ func (s *Server) uiObject(c echo.Context) error {
 	var propDefs []objectPropertyDef
 	var typeUIByType map[string]typeUI
 	var statusControl *objectStatusControl
+	// typeLabel titles the schema card ("Scenario Properties"). It stays empty
+	// when the schema could not be loaded, so the card falls back to the neutral
+	// "Type Properties" heading rather than naming a type it cannot describe.
+	var typeLabel string
 	if compiled != nil {
 		relTypes = compiled.RelationshipTypes
 		propDefs = compiledTypePropertyDefs(compiled.ObjectTypes, obj.Type)
 		typeUIByType = objectTypeUIMap(compiled.ObjectTypes)
 		statusControl = objectStatusControlFor(compiled.ObjectTypes, obj.Type)
+		typeLabel = objectPreviewTypeLabel(compiled.ObjectTypes, obj.Type)
 	} else {
 		// The schema could not be loaded, so we cannot tell whether the type
 		// declares a workflow; keep the stored status editable rather than
@@ -771,7 +776,7 @@ func (s *Server) uiObject(c echo.Context) error {
 	// (issue #1096): it is not fetched here. The detail page renders the section
 	// as a deferred HTMX partial (/objects/:id/similar) so a slow /similar can
 	// never hold the page render again. nil similar triggers that deferred path.
-	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusControl, trail))
+	return s.page(c, pageTitle(graphObjectLabel(*obj)), ObjectDetailPage(obj, branchRef, sources, relTypes, edges, related, nil, nil, flashMsg, flashErr, labelSuggestions, propDefs, typeUIByType, statusControl, trail, typeLabel))
 }
 
 // objectOriginTrail resolves an optional ?from= breadcrumb origin into a trail.
@@ -1004,6 +1009,72 @@ func (d objectPropertyDef) KeyHint() string {
 		return d.Name
 	}
 	return ""
+}
+
+// objectTypePropertyRow is one editable field of the object detail page's schema
+// card: the compiled definition when the type declares the key (Declared true),
+// the values the object stores, and the label/hint the field renders with.
+type objectTypePropertyRow struct {
+	Def      objectPropertyDef
+	Name     string
+	Label    string
+	Hint     string
+	Values   []string
+	Declared bool
+}
+
+// objectTypePropertyHint is the single muted hint line under a schema field: the
+// machine key when the label is an authored title — property-labels requires the
+// name to stay visible — otherwise the schema's own description, the same prose
+// the preview drawer shows under its row label. Never both: one line competes
+// with the field, not with itself.
+func objectTypePropertyHint(def objectPropertyDef) string {
+	if hint := def.KeyHint(); hint != "" {
+		return hint
+	}
+	return def.Description
+}
+
+// objectTypePropertyRows merges the type's declared properties with the stored
+// properties the type does not declare, so a declared property with no value yet
+// is still editable (the create form renders those too) and an agent-written key
+// is never hidden. Declared properties keep the schema's order; undeclared ones
+// follow in key order, humanised with the raw key as their hint — the preview
+// drawer's rule (objectPreviewTypeFields), applied to editable fields.
+func objectTypePropertyRows(o GraphObject, propDefs []objectPropertyDef) []objectTypePropertyRow {
+	declared := make(map[string]bool, len(propDefs))
+	out := make([]objectTypePropertyRow, 0, len(propDefs)+len(o.Properties))
+	for _, def := range propDefs {
+		if def.Name == "" {
+			continue
+		}
+		declared[def.Name] = true
+		out = append(out, objectTypePropertyRow{
+			Def:      def,
+			Name:     def.Name,
+			Label:    def.Label(),
+			Hint:     objectTypePropertyHint(def),
+			Values:   propValues(o.Properties[def.Name]),
+			Declared: true,
+		})
+	}
+	for _, p := range graphObjectProperties(o) {
+		if declared[p.Key] {
+			continue
+		}
+		label := objectPreviewFieldLabel(p.Key)
+		hint := ""
+		if !strings.EqualFold(label, p.Key) {
+			hint = p.Key
+		}
+		out = append(out, objectTypePropertyRow{
+			Name:   p.Key,
+			Label:  label,
+			Hint:   hint,
+			Values: []string{p.Value},
+		})
+	}
+	return out
 }
 
 // propertyHashLengths maps each hex-digest property type to its digest length in
@@ -1959,17 +2030,6 @@ func dateInputValue(v string) string {
 		return ""
 	}
 	return prefix
-}
-
-// objectPropertyDefByName returns the compiled schema def (with its Type) for a
-// stored property, so the edit form can render a type-appropriate input.
-func objectPropertyDefByName(defs []objectPropertyDef, name string) (objectPropertyDef, bool) {
-	for _, d := range defs {
-		if d.Name == name {
-			return d, true
-		}
-	}
-	return objectPropertyDef{}, false
 }
 
 // propValues converts a stored object property value to the []string form the

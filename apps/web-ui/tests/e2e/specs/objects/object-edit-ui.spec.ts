@@ -32,6 +32,23 @@ test('edit form save persists changes and shows a success toast', async ({ page 
   await createPerson(page, key);
   await expect(page.locator('#object-key')).toHaveValue(key);
 
+  // The detail page splits its editable fields the same way the read-only
+  // preview drawer does: platform fields in "Properties", the type's schema
+  // fields under "<Type> Properties". A schema field must never leak into the
+  // platform card.
+  const builtin = page.locator('[data-testid="object-builtin-properties"]');
+  const typeFields = page.locator('[data-testid="object-type-properties"]');
+  await expect(builtin.locator('#object-key')).toHaveValue(key);
+  await expect(builtin.locator('textarea[name="prop_notes"]')).toHaveCount(0);
+  await expect(typeFields.locator('textarea[name="prop_notes"]')).toHaveCount(1);
+  // Record facts sit under the editable platform fields.
+  await expect(page.locator('[data-testid="object-record-facts"]')).toContainText('Version');
+  // Exactly one terminal Save bar spans both cards.
+  await expect(page.getByRole('button', { name: 'Save changes' })).toHaveCount(1);
+  // The schema card is titled after the object's type.
+  const typeCard = page.locator('section').filter({ has: typeFields });
+  await expect(typeCard.locator('h2')).toHaveText(/\S+ Properties$/);
+
   // A type with no workflow renders no built-in status control at all.
   await expect(page.locator('#object-status')).toHaveCount(0);
   await expect(page.locator('select[name="status"]')).toHaveCount(0);

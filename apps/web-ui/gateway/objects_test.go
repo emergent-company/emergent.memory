@@ -555,7 +555,7 @@ func TestRenderObjectDetailPage(t *testing.T) {
 	}
 	edges := []GraphRelationship{{ID: "r1", Type: "assigned_to", SrcID: "c2", DstID: "c1"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "task", Key: "call dentist"}}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, edges, related, nil, nil, "", nil, nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, edges, related, nil, nil, "", nil, nil, nil, nil, nil, nil, ""))
 	for _, want := range []string{
 		"sam-lee", "person", "first_name", "Sam", "relationship", "colleague",
 		"assigned to", "call dentist", `href="/objects"`,
@@ -565,18 +565,18 @@ func TestRenderObjectDetailPage(t *testing.T) {
 		}
 	}
 
-	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
+	htmlNoEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, ""))
 	if !strings.Contains(htmlNoEdges, "No relationships") {
 		t.Error("no-relationships state missing")
 	}
 
-	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil, nil, nil))
+	htmlErr := renderHTML(t, ObjectDetailPage(nil, objectBranchRef{}, nil, nil, nil, nil, nil, errTest, "", nil, nil, nil, nil, nil, nil, ""))
 	if !strings.Contains(htmlErr, "Object unavailable") {
 		t.Error("error state missing")
 	}
 
 	// flash feedback renders an auto-dismissing toast carrying the message
-	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil, nil, nil))
+	htmlFlash := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", errTest, nil, nil, nil, nil, nil, ""))
 	if !strings.Contains(htmlFlash, "memory-toast") || !strings.Contains(htmlFlash, errTest.Error()) {
 		t.Error("flash toast missing")
 	}
@@ -587,7 +587,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	similar := []SimilarObject{
 		{ID: "o2", Type: "person", Key: "samuel-lee", Distance: 0.12},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, similar, nil, "", nil, nil, nil, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, similar, nil, "", nil, nil, nil, nil, nil, nil, ""))
 	for _, want := range []string{
 		"Similar objects", "samuel-lee", "88% match", "Merge", `href="/objects/o1/merge?with=o2"`,
 	} {
@@ -599,7 +599,7 @@ func TestRenderObjectDetailSimilar(t *testing.T) {
 	// Without similar data the page defers the section to /objects/:id/similar
 	// instead of rendering it inline, so a slow /similar cannot hold the render
 	// (issue #1096).
-	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil))
+	htmlDeferred := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, nil, ""))
 	for _, want := range []string{`hx-get="/objects/o1/similar"`, "Finding similar objects", `hx-target="this"`} {
 		if !strings.Contains(htmlDeferred, want) {
 			t.Errorf("deferred similar placeholder missing %q", want)
@@ -632,7 +632,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// supplied explicitly to exercise the workflow-status field (the only status
 	// editor for a type that declares a workflow).
 	status := objectStatusControlFor([]CompiledType{{Name: "person", BoardEnabled: true}}, "person")
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, status, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, nil, nil, nil, nil, "", nil, nil, nil, nil, status, nil, ""))
 
 	// properties form: common fields + one input per property
 	for _, want := range []string{
@@ -677,7 +677,7 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	// non-empty relationships still render the list rows
 	edges := []GraphRelationship{{ID: "r1", Type: "works_with", SrcID: "o1", DstID: "c2"}}
 	related := []GraphObject{{ID: "o2", CanonicalID: "c2", Type: "person", Key: "jamie-doe"}}
-	htmlEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil, nil, nil))
+	htmlEdges := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, relTypes, edges, related, nil, nil, "", nil, nil, nil, nil, nil, nil, ""))
 	for _, want := range []string{"works with", "jamie-doe", "Relationships"} {
 		if !strings.Contains(htmlEdges, want) {
 			t.Errorf("relationship list missing %q", want)
@@ -685,6 +685,148 @@ func TestRenderObjectDetailEditable(t *testing.T) {
 	}
 	if strings.Contains(htmlEdges, "No relationships") {
 		t.Error("non-empty relationship list should not show the empty state")
+	}
+}
+
+// TestRenderObjectDetailTwoPropertyCards pins the detail page's split into a
+// built-in "Properties" card and the type's "<Type> Properties" card — the same
+// two-panel rule the read-only preview drawer follows, applied to the editable
+// surface: platform fields never blur into schema fields.
+func TestRenderObjectDetailTwoPropertyCards(t *testing.T) {
+	obj := &GraphObject{
+		ID: "o1", Type: "Person", Key: "sam-lee", Assignee: "jamie",
+		Version: 3, CreatedAt: "2026-10-01T09:00:00Z",
+		CanonicalID: "11111111-1111-1111-1111-111111111111",
+		Labels:      []string{"contact"},
+		Properties:  map[string]any{"first_name": "Sam", "entry_point": "the door"},
+	}
+	propDefs := []objectPropertyDef{
+		{Name: "first_name", Type: "string", Title: "First name"},
+		{Name: "notes", Type: "string", Description: "Free-form notes."},
+	}
+	status := objectStatusControlFor([]CompiledType{{Name: "Person", BoardEnabled: true}}, "Person")
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, status, nil, "Person"))
+
+	if got := strings.Count(html, ">Properties</h2>"); got != 1 {
+		t.Errorf("built-in Properties heading rendered %d times, want 1:\n%s", got, html)
+	}
+	if !strings.Contains(html, ">Person Properties</h2>") {
+		t.Fatalf("schema card heading missing:\n%s", html)
+	}
+	if got := strings.Count(html, "Save changes"); got != 1 {
+		t.Errorf("Save rendered %d times, want a single terminal bar: %s", got, html)
+	}
+
+	builtin, schema, ok := strings.Cut(html, `data-testid="object-type-properties"`)
+	if !ok {
+		t.Fatalf("schema card container missing:\n%s", html)
+	}
+	// Card 1: the platform fields plus the read-only record facts.
+	for _, want := range []string{
+		`id="object-key"`, `id="object-status"`, `id="object-labels"`,
+		"Assignee", "jamie", "Version", "v3", "Created",
+		`11111111-1111-1111-1111-111111111111`,
+		`data-testid="object-record-facts"`,
+	} {
+		if !strings.Contains(builtin, want) {
+			t.Errorf("built-in card missing %q:\n%s", want, builtin)
+		}
+	}
+	for _, bad := range []string{`name="prop_first_name"`, `name="prop_notes"`, `name="prop_entry_point"`} {
+		if strings.Contains(builtin, bad) {
+			t.Errorf("built-in card must not carry the schema field %q", bad)
+		}
+	}
+
+	// Card 2: declared properties in schema order (including one with no stored
+	// value), then the stored key the schema does not declare, humanised with the
+	// raw key as its hint.
+	for _, want := range []string{
+		`name="prop_first_name"`, "First name", "first_name",
+		`name="prop_notes"`, "Free-form notes.",
+		`name="prop_entry_point"`, ">Entry point<", ">entry_point<",
+	} {
+		if !strings.Contains(schema, want) {
+			t.Errorf("schema card missing %q:\n%s", want, schema)
+		}
+	}
+	if strings.Contains(schema, `id="object-key"`) {
+		t.Errorf("schema card must not carry the platform key field:\n%s", schema)
+	}
+}
+
+// TestObjectTypePropertiesCardOmitted pins the card's absence rule: nothing to
+// edit means no card at all (matching the drawer), and an unresolved type label
+// falls back to a neutral heading rather than an unnamed one.
+func TestObjectTypePropertiesCardOmitted(t *testing.T) {
+	empty := renderHTML(t, objectTypePropertiesCard(&GraphObject{ID: "o1", Type: "Person", Key: "p1"}, nil, "Person"))
+	if strings.Contains(empty, "Properties") {
+		t.Errorf("schema card with no rows must not render:\n%s", empty)
+	}
+
+	obj := &GraphObject{ID: "o2", Type: "Person", Key: "p2", Properties: map[string]any{"nick": "sam"}}
+	html := renderHTML(t, objectTypePropertiesCard(obj, nil, ""))
+	if !strings.Contains(html, ">Type Properties</h2>") {
+		t.Errorf("unresolved type label should fall back to a neutral heading:\n%s", html)
+	}
+}
+
+// TestObjectTypePropertyHint pins the single hint line under a schema field: the
+// machine key when the label is an authored title (property-labels requires the
+// name stay visible), otherwise the schema's own description.
+func TestObjectTypePropertyHint(t *testing.T) {
+	cases := []struct {
+		name string
+		def  objectPropertyDef
+		want string
+	}{
+		{"authored title keeps the key visible", objectPropertyDef{Name: "first_name", Title: "First name"}, "first_name"},
+		{"title equal to the name adds no hint", objectPropertyDef{Name: "title", Title: "title"}, ""},
+		{"description stands in for an untitled field", objectPropertyDef{Name: "notes", Description: "Free-form notes."}, "Free-form notes."},
+		{"nothing to say", objectPropertyDef{Name: "notes"}, ""},
+	}
+	for _, tc := range cases {
+		if got := objectTypePropertyHint(tc.def); got != tc.want {
+			t.Errorf("%s: objectTypePropertyHint = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestObjectTypePropertyRows pins the merge order the schema card renders:
+// declared properties first in schema order (a declared-but-unstored one still
+// gets a row so it can be filled in), then stored keys the schema does not
+// declare, in key order, humanised with the raw key as the hint.
+func TestObjectTypePropertyRows(t *testing.T) {
+	obj := GraphObject{Properties: map[string]any{"zeta": "z", "entry_point": "the door", "b_declared": "b"}}
+	defs := []objectPropertyDef{{Name: "b_declared"}, {Name: "a_declared"}}
+	rows := objectTypePropertyRows(obj, defs)
+
+	got := make([]string, 0, len(rows))
+	for _, r := range rows {
+		got = append(got, r.Name)
+	}
+	want := []string{"b_declared", "a_declared", "entry_point", "zeta"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
+	}
+	if !rows[0].Declared || !reflect.DeepEqual(rows[0].Values, []string{"b"}) {
+		t.Errorf("declared stored row = %+v, want Declared with the stored value", rows[0])
+	}
+	if !rows[1].Declared || len(rows[1].Values) != 0 {
+		t.Errorf("declared unstored row = %+v, want Declared and empty", rows[1])
+	}
+	if rows[2].Declared || rows[2].Label != "Entry point" || rows[2].Hint != "entry_point" {
+		t.Errorf("undeclared row = %+v, want humanised label with the raw key as hint", rows[2])
+	}
+	if !reflect.DeepEqual(rows[2].Values, []string{"the door"}) {
+		t.Errorf("undeclared row values = %v, want [the door]", rows[2].Values)
+	}
+	// A key whose humanised label only differs by case needs no hint line.
+	if label := objectPreviewFieldLabel("zeta"); label != "Zeta" {
+		t.Errorf("humanised label = %q, want Zeta", label)
+	}
+	if rows[3].Hint != "" {
+		t.Errorf("case-only difference must not add a hint, got %q", rows[3].Hint)
 	}
 }
 
@@ -740,7 +882,7 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 		{Name: "priority", Type: "string", Enum: []string{"low", "high"}},
 		{Name: "title", Type: "string"},
 	}
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil, ""))
 
 	// boolean → hidden false + checked toggle (never a text input)
 	if !strings.Contains(html, `name="prop_cleared" value="false"`) {
@@ -2334,7 +2476,7 @@ func TestObjectStatusField(t *testing.T) {
 	renderSelect := func(current string) string {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: current}
 		objectTypes := []CompiledType{{Name: "Task", BoardEnabled: true, AllowedStatuses: boardStatuses}}
-		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil))
+		return renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Task"), nil, ""))
 	}
 
 	t.Run("edit page renders a select of the allowed statuses", func(t *testing.T) {
@@ -2409,7 +2551,7 @@ func TestObjectStatusField(t *testing.T) {
 			Name:       "Scenario",
 			Properties: json.RawMessage(`{"status":{"type":"string","enum":["proposed","active","archived"]}}`),
 		}}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlFor(objectTypes, "Scenario"), nil, ""))
 		if strings.Contains(html, `id="object-status"`) {
 			t.Errorf("no-workflow type must not render the built-in status field in:\n%s", html)
 		}
@@ -2450,7 +2592,7 @@ func TestObjectStatusField(t *testing.T) {
 
 	t.Run("degraded edit form keeps the value editable as text", func(t *testing.T) {
 		obj := &GraphObject{ID: "o1", Type: "Task", Key: "t1", Status: "in_progress"}
-		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil))
+		html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, objectStatusControlUnavailable(), nil, ""))
 		if !strings.Contains(html, `name="status" type="text"`) {
 			t.Errorf("unavailable schema should fall back to a text input in:\n%s", html)
 		}
@@ -2768,7 +2910,7 @@ func TestCharCountLabel(t *testing.T) {
 	}
 }
 
-func TestObjectPropertiesCardLongTextFallback(t *testing.T) {
+func TestObjectTypePropertiesCardLongTextFallback(t *testing.T) {
 	obj := &GraphObject{
 		ID: "o1", Type: "note", Key: "n1",
 		Properties: map[string]any{
@@ -2783,7 +2925,7 @@ func TestObjectPropertiesCardLongTextFallback(t *testing.T) {
 		{Name: "category", Type: "string", Enum: []string{"fact", "opinion"}},
 		{Name: "amount", Type: "number"},
 	}
-	html := renderHTML(t, objectPropertiesCard(obj, propDefs, nil, nil))
+	html := renderHTML(t, objectTypePropertiesCard(obj, propDefs, "Note"))
 
 	// the un-schema'd stored property renders the long-text field with a counter
 	if !strings.Contains(html, `name="prop_content"`) || !strings.Contains(html, `data-autogrow`) {
@@ -3271,7 +3413,7 @@ func TestRenderObjectDetailOriginTrail(t *testing.T) {
 	doc := &Document{ID: "d1", Filename: "Spec.md"}
 	getDoc := func(context.Context, string) (*Document, error) { return doc, nil }
 	trail := objectOriginTrail(context.Background(), "/documents/d1/extractions/job1", getDoc)
-	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, trail))
+	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, nil, nil, nil, trail, ""))
 
 	region := breadcrumbRegion(html)
 	if region == "" {
@@ -3373,7 +3515,7 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "Person", Key: "p1", Properties: map[string]any{"owner_notes": "hello"}}
-	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, defs, nil, nil, nil))
+	detail := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, defs, nil, nil, nil, ""))
 	if !strings.Contains(detail, labelledLegend) {
 		t.Errorf("detail properties card must label the property by its title:\n%s", detail)
 	}

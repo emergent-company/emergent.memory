@@ -146,10 +146,18 @@ type objectPreviewSchema struct {
 // "Properties", so a Scenario's schema fields read as "Scenario Properties"
 // rather than merging into the platform fields above them.
 func (s objectPreviewSchema) typePanelTitle() string {
-	if s.TypeLabel == "" {
+	return typePropertiesPanelTitle(s.TypeLabel)
+}
+
+// typePropertiesPanelTitle is the schema panel's heading on every surface that
+// splits platform fields from schema fields (the preview drawer and the object
+// detail page), so the two can never drift. An unresolved type label falls back
+// to a neutral title rather than a bare " Properties".
+func typePropertiesPanelTitle(typeLabel string) string {
+	if typeLabel == "" {
 		return "Type Properties"
 	}
-	return s.TypeLabel + " Properties"
+	return typeLabel + " Properties"
 }
 
 // objectPreviewTypeLabel resolves the object's type display label from the

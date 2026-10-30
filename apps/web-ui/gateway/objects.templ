@@ -614,8 +614,18 @@ templ longTextarea(name string, value string) {
 // as an auto-dismissing toast. typeUIByType carries the compiled types'
 // declared ui accents (icon/color) so the header chip can render the object
 // type's icon. trail is an optional origin trail (e.g. a document's extraction
-// history); when nil the header renders Objects > <object>.
-templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem) {
+// history); when nil the header renders Objects > <object>. typeLabel is the
+// object type's display label ("" when the schema could not be loaded), used
+// as the schema card's heading.
+//
+// The editable fields live in two cards, matching the read-only preview
+// drawer: "Properties" carries the platform fields (key, workflow status,
+// labels, then the read-only record facts) and "<Type> Properties" carries the
+// type's schema fields, so platform data and schema data never blur together.
+// One <form> spans both cards with a single terminal Save bar: uiObjectUpdate
+// always replaces labels with the submitted set, so a second, labels-less form
+// would wipe them.
+templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objectSource, relTypes []CompiledType, edges []GraphRelationship, related []GraphObject, similar []SimilarObject, loadErr error, flashMsg string, flashErr error, labelSuggestions []string, propDefs []objectPropertyDef, typeUIByType map[string]typeUI, status *objectStatusControl, trail []nav.BreadcrumbItem, typeLabel string) {
 	@flashToasts(flashMsg, flashErr)
 	@layout.Container(layout.ContainerLG, nil) {
 		if loadErr != nil {
@@ -623,7 +633,13 @@ templ ObjectDetailPage(obj *GraphObject, branch objectBranchRef, sources []objec
 		} else {
 			@objectDetailHeader(obj, branch, typeUIByType, trail)
 			@objectSourceCard(sources)
-			@objectPropertiesCard(obj, propDefs, labelSuggestions, status)
+			<form class="mt-6 flex flex-col gap-6" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
+				@objectBuiltinPropertiesCard(obj, labelSuggestions, status)
+				@objectTypePropertiesCard(obj, propDefs, typeLabel)
+				@components.StickyFormActions(components.StickyFormActionsProps{}) {
+					@components.SaveChangesButton()
+				}
+			</form>
 			@objectRelationships(obj, relTypes, edges, related)
 			if similar != nil {
 				@objectSimilarObjects(obj, similar)
@@ -767,19 +783,17 @@ templ objectSourceRow(src objectSource) {
 	</div>
 }
 
-// objectPropertiesCard renders the editable property form: common fields
-// (key, workflow status, labels) then one input per stored property
-// (prop_<key>). The workflow-status field is rendered only for a type that
-// declares a workflow — status carries the resolved control, and a
-// no-workflow type edits its own `status` schema property (when it has one)
-// like any other property. POST /objects/{id} delta-merges the submitted
-// fields.
-templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, labelSuggestions []string, status *objectStatusControl) {
+// objectBuiltinPropertiesCard renders the platform fields of the detail page:
+// the editable key, workflow status (only for a type that declares a workflow)
+// and labels, then the read-only record facts. It is the detail page's
+// counterpart to the preview drawer's "Properties" panel — the same split, so
+// platform data never blurs into the type's schema fields. POST /objects/{id}
+// delta-merges the submitted fields.
+templ objectBuiltinPropertiesCard(obj *GraphObject, labelSuggestions []string, status *objectStatusControl) {
 	@ui.Section("Properties", ui.SectionProps{
-		Margin:    "mt-6",
 		BodyClass: "memory-density-comfortable",
 	}) {
-		<form class="flex flex-col gap-4" method="post" action={ templ.URL("/objects/" + url.PathEscape(obj.ID)) } hx-disable="find button.memory-save-btn">
+		<div class="flex flex-col gap-4" data-testid="object-builtin-properties">
 			@fm.FormControl("object-key", "Key", fm.LabelAbove, "Unique identifier of this object.", "", nil) {
 				<input id="object-key" name="key" type="text" value={ obj.Key } class="input w-full"/>
 			}
@@ -791,21 +805,80 @@ templ objectPropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, label
 			@fm.FormControl("object-labels", "Labels/Tags", fm.LabelAbove, "Comma-separated labels — replaces the current set.", "", nil) {
 				@fm.TagList(fm.TagListProps{ID: "object-labels", Name: "labels", Values: obj.Labels, Suggestions: labelSuggestions, Placeholder: "Add a label..."})
 			}
-			for _, p := range graphObjectProperties(*obj) {
-				if def, ok := objectPropertyDefByName(propDefs, p.Key); ok {
-					@fm.FormControl(p.Key, def.Label(), fm.LabelAbove, def.KeyHint(), "", nil) {
-						@propertyInput(def, propValues(obj.Properties[p.Key]))
-					}
-				} else {
-					@fm.FormControl(p.Key, p.Key, fm.LabelAbove, "", "", nil) {
-						@longTextarea("prop_"+p.Key, p.Value)
-					}
-				}
+			@objectRecordFacts(obj)
+		</div>
+	}
+}
+
+// objectRecordFacts renders the object's read-only record facts beneath the
+// editable platform fields: the same rows the preview drawer's built-in panel
+// carries. They are not editable here (the key and labels above are), but the
+// page still answers "which version is this, and which object is it?" without
+// opening the drawer.
+templ objectRecordFacts(obj *GraphObject) {
+	<div class="border-base-content/10 flex flex-col gap-3 border-t pt-4" data-testid="object-record-facts">
+		<dl class="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+			if obj.Assignee != "" {
+				@objectRecordFact("Assignee", obj.Assignee, false)
 			}
-			<div class="flex flex-wrap items-center justify-end gap-2">
-				@components.SaveChangesButton()
+			@objectRecordFact("Version", objectPreviewVersionLabel(obj.Version), false)
+			@objectRecordFact("Created", objectPreviewCreated(obj.CreatedAt), false)
+			@objectRecordFact("ID", objectPreviewCanonicalID(*obj), true)
+		</dl>
+	</div>
+}
+
+// objectRecordFact is one read-only record fact: a small label over its value.
+// mono marks identifier values so they are scannable and copyable as a block.
+templ objectRecordFact(label string, value string, mono bool) {
+	<div class="flex min-w-0 flex-col gap-0.5">
+		<dt class="text-muted-faint text-xs font-medium">{ label }</dt>
+		<dd class={ "break-all", templ.KV("font-mono text-xs", mono), templ.KV("text-sm", !mono) }>
+			if value == "" {
+				@components.EmptyDash()
+			} else {
+				{ value }
+			}
+		</dd>
+	</div>
+}
+
+// objectTypePropertiesCard renders the object's schema fields under
+// "<Type> Properties" — the detail page's counterpart to the preview drawer's
+// second panel. Declared properties come first, in schema order, each with its
+// label and a type-appropriate input so a declared property with no stored value
+// can still be filled in; properties the type does not declare follow so an
+// agent-written key is never hidden. The card is omitted when there is nothing
+// to edit, matching the drawer.
+templ objectTypePropertiesCard(obj *GraphObject, propDefs []objectPropertyDef, typeLabel string) {
+	{{ rows := objectTypePropertyRows(*obj, propDefs) }}
+	if len(rows) > 0 {
+		@ui.Section(typePropertiesPanelTitle(typeLabel), ui.SectionProps{
+			BodyClass: "memory-density-comfortable",
+		}) {
+			<div class="flex flex-col gap-4" data-testid="object-type-properties">
+				for _, r := range rows {
+					@objectTypePropertyField(r)
+				}
 			</div>
-		</form>
+		}
+	}
+}
+
+// objectTypePropertyField renders one schema field: the declared widget when the
+// type defines the property, otherwise the free-form long-text field an
+// undeclared stored value gets.
+templ objectTypePropertyField(r objectTypePropertyRow) {
+	{{ value := ""
+	if len(r.Values) > 0 {
+		value = r.Values[0]
+	} }}
+	@fm.FormControl(r.Name, r.Label, fm.LabelAbove, r.Hint, "", nil) {
+		if r.Declared {
+			@propertyInput(r.Def, r.Values)
+		} else {
+			@longTextarea("prop_"+r.Name, value)
+		}
 	}
 }
 
