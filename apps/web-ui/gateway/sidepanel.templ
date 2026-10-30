@@ -106,7 +106,7 @@ templ sidePanel(agents []AgentDefinitionSummary, assistantAgent string, scope si
 						Shape:      ui.ButtonShapeCircle,
 						Icon:       "lucide--scan",
 						AriaLabel:  "Open assistant chat in a modal window",
-						ExtraClass: "sidepanel-drawer-only",
+						ExtraClass: "sidepanel-drawer-only hidden md:inline-flex",
 						Attrs:      templ.Attributes{"data-action": "sidepanel-open-modal"},
 					})
 					@ui.Button(ui.ButtonProps{

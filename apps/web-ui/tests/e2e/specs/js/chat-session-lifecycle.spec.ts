@@ -65,6 +65,7 @@ const SKELETON = `<!doctype html>
 </head>
 <body>
 <div id="chat-root" data-conv="">
+  <div id="chat-rail-backdrop" class="hidden" data-action="toggle-chat-rail" style="position:fixed;inset:0;background:rgba(0,0,0,.4)"></div>
   <aside id="chat-rail">
     <div id="chat-rail-resize" role="separator" aria-orientation="vertical" aria-label="Resize session list"></div>
     <div>
@@ -81,6 +82,7 @@ const SKELETON = `<!doctype html>
     </div>
   </aside>
   <div>
+    <button type="button" id="rail-toggle" data-action="toggle-chat-rail">Toggle sessions</button>
     <div><div id="chat-run-status" class="memory-run-status hidden" role="status" aria-live="polite"></div></div>
     <div id="chat-log">
       <div id="chat-empty">
@@ -433,5 +435,38 @@ test.describe('session lifecycle rail (#1318)', () => {
     expect(calls.some((c) => c.url === '/api/conversations/A/unarchive')).toBe(true);
 
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+});
+
+
+// Mobile overlay behaviour (web-app-shell): below md the rail is a fixed
+// overlay paired with a backdrop, and closing it restores aria/inert state.
+test.describe('mobile session rail overlay', () => {
+  test('toggle opens the overlay with a backdrop and closes it back to inert', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const errors = await bootstrap(page);
+
+    const rail = page.locator('#chat-rail');
+    const backdrop = page.locator('#chat-rail-backdrop');
+
+    // chat.js closes the rail as an overlay; app.css gives it position:fixed
+    // under the md breakpoint. Assert the class/aria contract chat.js owns.
+    await page.locator('#rail-toggle').click();
+    await expect(rail).toHaveClass(/hidden/);
+    await expect(backdrop).toHaveClass(/hidden/);
+    await expect(rail).toHaveAttribute('aria-hidden', 'true');
+    await expect(rail).toHaveAttribute('inert', '');
+
+    await page.locator('#rail-toggle').click();
+    await expect(rail).not.toHaveClass(/hidden/);
+    await expect(backdrop).not.toHaveClass(/hidden/);
+    await expect(rail).toHaveAttribute('aria-hidden', 'false');
+
+    // The backdrop shares the toggle action: tapping it closes the overlay.
+    await page.locator('#chat-rail-backdrop').click();
+    await expect(rail).toHaveClass(/hidden/);
+    await expect(backdrop).toHaveClass(/hidden/);
+
+    expect(errors).toEqual([]);
   });
 });

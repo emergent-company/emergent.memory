@@ -30,7 +30,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
 		<head>
 			<meta charset="UTF-8"/>
-			<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"/>
 			<meta name="htmx-config" content='{"implicitInheritance":true,"noSwap":[204,304]}'/>
 			<meta name="color-scheme" content="dark"/>
 			<meta name="theme-color" content="#171921"/>
@@ -86,7 +86,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			<!-- Alert modal: provider/model test results (filled + opened by app.js) -->
 			@components.AlertModal(nil)
 			@spotlightSearch(agents)
-			<div class="flex h-screen overflow-hidden">
+			<div class="app-shell flex overflow-hidden">
 				<input
 					type="checkbox"
 					id="_layout-sidebar-toggle-trigger"
@@ -101,7 +101,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 					@appSidebar(groups, providersMissing)
 				}
 				<div class="flex min-w-0 grow flex-col overflow-hidden">
-					<div class="bg-base-100 border-base-content/5 z-10 h-14 shrink-0 border-b">
+					<div id="_layout-topbar-wrap" class="bg-base-100 z-10 shrink-0">
 						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
 							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
 							if assistantAgent != "" {
@@ -118,7 +118,7 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 										"aria-expanded": "false",
 									},
 								}) {
-									Assistant
+									<span class="hidden sm:inline">Assistant</span>
 								}
 							}
 							@notificationsBell(unreadNotifications)

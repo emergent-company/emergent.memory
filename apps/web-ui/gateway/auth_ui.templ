@@ -183,7 +183,7 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			Type:       ui.ButtonTypeButton,
 			Variant:    ui.ButtonGhost,
 			Size:       ui.ButtonSM,
-			ExtraClass: "gap-1.5 font-normal",
+			ExtraClass: "gap-1.5 font-normal min-w-0 shrink",
 			Attrs: templ.Attributes{
 				"tabindex":      "0",
 				"aria-haspopup": "menu",
@@ -194,16 +194,16 @@ templ projectSwitcher(current *ProjectRef, currentOrgName string, activeOrg *Org
 			if current != nil {
 				if currentOrgName != "" {
 					<div class="flex min-w-0 flex-col text-left leading-tight">
-						<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ currentOrgName }</span>
-						<span class="max-w-[16rem] truncate text-sm">{ current.Name }</span>
+						<span class="max-w-[8rem] truncate sm:max-w-[16rem] text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ currentOrgName }</span>
+						<span class="max-w-[8rem] truncate sm:max-w-[16rem] text-sm">{ current.Name }</span>
 					</div>
 				} else {
-					<span class="max-w-[12rem] truncate text-sm">{ current.Name }</span>
+					<span class="max-w-[8rem] truncate sm:max-w-[12rem] text-sm">{ current.Name }</span>
 				}
 			} else if activeOrg != nil {
 				<div class="flex min-w-0 flex-col text-left leading-tight">
-					<span class="max-w-[16rem] truncate text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ activeOrg.Name }</span>
-					<span class="max-w-[16rem] truncate text-sm text-muted-strong">Select project</span>
+					<span class="max-w-[8rem] truncate sm:max-w-[16rem] text-[10px] font-medium tracking-[0.14em] uppercase text-muted-strong">{ activeOrg.Name }</span>
+					<span class="max-w-[8rem] truncate sm:max-w-[16rem] text-sm text-muted-strong">Select project</span>
 				</div>
 			} else {
 				<span class="text-sm text-muted-strong">Select project</span>

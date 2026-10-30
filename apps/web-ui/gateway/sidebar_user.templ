@@ -24,7 +24,7 @@ import (
 templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 	<div id="_layout-sidebar" class="flex flex-col bg-base-100">
 		<!-- Header: logo -->
-		<div class="flex h-14 items-center gap-3 px-5 shrink-0">
+		<div class="flex h-16 items-center gap-3 px-5 shrink-0">
 			@memoryLogo()
 		</div>
 		<!-- Nav menu (grows + scrolls) -->
@@ -49,12 +49,49 @@ templ appSidebar(groups []layout.SidebarGroup, providersMissing bool) {
 		var sidebar = document.getElementById('_layout-sidebar');
 		if (!sidebar) return;
 
+		// go-daisy renders the drawer trigger as a <label> for the hidden
+		// checkbox. Decorate it into a focusable, keyboard-operable button so
+		// the navigation is reachable without a pointer (WCAG 2.1.1); the
+		// checkbox stays visually hidden and the CSS :checked mechanics are
+		// untouched.
+		//
+		// This component is rendered BEFORE the topbar, so the trigger does not
+		// exist yet when this inline script runs. Defer the decoration until the
+		// document has parsed (or run immediately if it already has), otherwise
+		// the querySelector returns null and the trigger stays a plain label.
+		function decorateSidebarTrigger() {
+			var tgl = document.getElementById('_layout-sidebar-toggle-trigger');
+			var trigger = document.querySelector('#_layout-topbar label[for="_layout-sidebar-toggle-trigger"]');
+			if (!tgl || !trigger) return;
+			trigger.setAttribute('role', 'button');
+			trigger.setAttribute('tabindex', '0');
+			trigger.setAttribute('aria-controls', '_layout-sidebar');
+			function syncExpanded() { trigger.setAttribute('aria-expanded', tgl.checked ? 'true' : 'false'); }
+			syncExpanded();
+			tgl.addEventListener('change', syncExpanded);
+			trigger.addEventListener('keydown', function(e) {
+				if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+					e.preventDefault();
+					tgl.checked = !tgl.checked;
+					tgl.dispatchEvent(new Event('change', { bubbles: true }));
+				}
+			});
+		}
+		if (document.readyState === 'loading') {
+			document.addEventListener('DOMContentLoaded', decorateSidebarTrigger, { once: true });
+		} else {
+			decorateSidebarTrigger();
+		}
+
 		sidebar.addEventListener('click', function(e) {
 			if (window.innerWidth >= 1024) return;
 			var link = e.target.closest('a');
 			if (!link) return;
 			var cb = document.getElementById('_layout-sidebar-toggle-trigger');
-			if (cb) cb.checked = false;
+			if (cb) {
+				cb.checked = false;
+				cb.dispatchEvent(new Event('change', { bubbles: true }));
+			}
 		});
 
 		function updateActiveSidebarItem(path) {

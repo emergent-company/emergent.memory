@@ -128,6 +128,34 @@
     window.matchMedia("(display-mode: fullscreen)").matches;
   if (standalone) document.documentElement.setAttribute("data-standalone", "");
 
+  /* ---------- visual viewport (software keyboard) ---------- */
+  /* dvh tracks browser toolbars but not the software keyboard. Publish the
+     visual viewport height as --app-vh and flag an open keyboard so CSS can
+     shrink the shell and keep bottom-anchored composers visible. */
+  (function () {
+    var root = document.documentElement;
+    function syncViewportHeight() {
+      var vv = window.visualViewport;
+      /* visualViewport reports CSS pixels *at the current zoom*, so a pinch
+         zoom shrinks it exactly like a software keyboard does and would be
+         read as one: the shell collapsed and both drawers went blank while
+         the page reflowed at every zoom step. Scale back to layout pixels
+         before comparing, so zoom leaves --app-vh alone and only a real
+         keyboard (a layout-space loss) flags the shell. */
+      var h = vv ? vv.height * (vv.scale || 1) : window.innerHeight;
+      root.style.setProperty("--app-vh", Math.round(h) + "px");
+      var keyboard = !!vv && window.innerHeight - h > 120;
+      root.classList.toggle("keyboard-open", keyboard);
+    }
+    syncViewportHeight();
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", syncViewportHeight);
+      window.visualViewport.addEventListener("scroll", syncViewportHeight);
+    }
+    window.addEventListener("resize", syncViewportHeight);
+    window.addEventListener("orientationchange", syncViewportHeight);
+  })();
+
   /* ---------- toast ---------- */
   /* Push a toast into the Alpine toast queue (rendered by
      ui.ToastQueueWithProps in the app shell). Alpine owns the queue, dismissal

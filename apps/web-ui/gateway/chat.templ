@@ -56,6 +56,9 @@ templ ChatPage(agents []AgentDefinitionSummary, convs *ConversationList, appeara
 // the active conversation's server-rendered dock cards and session todos.
 templ chatWorkspace(agents []AgentDefinitionSummary, convs *ConversationList, appearances map[string]agentAppearance, schedRuns []scheduledRunRow, shared []sharedSessionRow, boardRuns []boardRunRow, preselect string, convID string, prompt string, voiceEnabled bool, modelWarnings map[string]string, runControl chatRunControl) {
 	<div id="chat-root" data-conv={ convID } data-prompt={ prompt } class="flex h-full flex-col md:flex-row">
+		<!-- Mobile-only scrim behind the session rail. chat.js toggles it with
+		     the rail; it never shows at md+ where the rail is in flow. -->
+		<div id="chat-rail-backdrop" class="fixed inset-0 z-30 hidden bg-black/40 md:hidden" data-chat-rail-backdrop data-action="toggle-chat-rail"></div>
 		<aside id="chat-rail" aria-label="Sessions" class="bg-base-100 border-base-content/5 relative hidden w-full shrink-0 flex-col border-r md:flex md:w-72">
 			<!-- Drag-to-resize grip on the right edge (desktop only; below md the
 			     rail is a full-width overlay). Width is driven by chat.js

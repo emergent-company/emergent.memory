@@ -223,11 +223,13 @@ html {
    go-daisy's CSS is no longer loaded, so the dark theme is authoritative. */
 
 body {
-  /* soft brass glow top-right, faint violet bottom-left */
+  /* soft brass glow top-right, faint violet bottom-left.
+     No `background-attachment: fixed`: the shell itself never scrolls (only
+     #main-content does), and WebKit repaints fixed backgrounds during
+     scroll/bounce, producing a band at the top edge. */
   background-image:
     radial-gradient(1100px 520px at 88% -12%, oklch(0.74 0.135 78 / 0.07), transparent 62%),
     radial-gradient(900px 600px at -10% 110%, oklch(0.64 0.105 240 / 0.05), transparent 60%);
-  background-attachment: fixed;
 }
 
 #_layout-sidebar {
@@ -235,12 +237,9 @@ body {
     radial-gradient(480px 320px at 0% 0%, oklch(0.74 0.135 78 / 0.06), transparent 60%);
 }
 
-/* Topbar wrapper is h-14 but its Navbar child has no height, so content was
-   top-aligned instead of vertically centered. Fill the wrapper so the Navbar's
-   items-center vertically centers its content to match the sidebar header. */
-#_layout-topbar {
-  height: 100%;
-}
+/* The Navbar supplies the topbar's height (min-h-16 = 4rem); the wrapper is
+   auto-sized so it can never be shorter than the bar. A percentage height here
+   would be defeated by the navbar's min-height and reintroduce the overflow. */
 
 main#main-content {
   background-image:
@@ -299,14 +298,15 @@ main#main-content {
    insets for the browser chrome areas, so these rules only kick in where the
    page genuinely runs edge-to-edge. */
 
-/* Top bar (appShell wraps the sticky #_layout-topbar Navbar in an id-less
-   h-14 div). Grow that wrapper by the top inset and pad its top, so the bar's
-   background extends behind the notch/status bar while the Navbar content
-   drops below it, in line with the sidebar header. */
-div:has(> #_layout-topbar) {
+/* Top bar (appShell's #_layout-topbar-wrap contains the #_layout-topbar
+   Navbar). The wrapper is auto-height: the navbar's own 4rem sets the bar.
+   Pad the wrapper's top by the inset so its background extends behind the
+   notch/status bar while the Navbar content drops below it, in line with the
+   sidebar header. Do NOT add a height here — the navbar's min-height would
+   overflow it and produce a second, darker border seam. */
+#_layout-topbar-wrap {
   padding-top: constant(safe-area-inset-top);
   padding-top: env(safe-area-inset-top, 0px);
-  height: calc(3.5rem + env(safe-area-inset-top, 0px));
 }
 
 /* Left drawer (#_layout-sidebar, sidebar_user.templ): fixed full-height on
@@ -319,6 +319,22 @@ div:has(> #_layout-topbar) {
   padding-top: env(safe-area-inset-top, 0px);
   padding-left: constant(safe-area-inset-left);
   padding-left: env(safe-area-inset-left, 0px);
+}
+/* Below lg the drawer is fixed and full-height; 100dvh keeps its last items
+   clear of mobile browser toolbars (100vh fallback first). */
+@media (max-width: 1023.98px) {
+  #_layout-sidebar {
+    height: 100vh;
+    max-height: 100vh;
+  }
+  /* dvh keeps the last items clear of mobile browser toolbars. Declared in a
+     feature query so the 100vh fallback above survives minification. */
+  @supports (height: 100dvh) {
+    #_layout-sidebar {
+      height: 100dvh;
+      max-height: 100dvh;
+    }
+  }
 }
 /* The nav menu is the drawer's scroll container; pad its scroll end so the
    last item clears the home indicator (iPad/landscape) instead of hiding
@@ -335,6 +351,7 @@ div:has(> #_layout-topbar) {
    The centered modal reuses this same DOM, so scope both rules to drawer mode
    (:not(.sidepanel-in-modal)) — in the modal nothing touches a screen edge. */
 #sidepanel-panel:not(.sidepanel-in-modal) {
+  height: 100vh;
   padding-top: constant(safe-area-inset-top);
   padding-top: env(safe-area-inset-top, 0px);
   padding-right: constant(safe-area-inset-right);
@@ -348,6 +365,7 @@ div:has(> #_layout-topbar) {
    fixed right edge as the assistant drawer, same safe-area treatment. Scoped to
    drawer mode so the centered modal touches no screen edge. */
 #object-preview-panel:not(.object-preview-in-modal) {
+  height: 100vh;
   padding-top: constant(safe-area-inset-top);
   padding-top: env(safe-area-inset-top, 0px);
   padding-right: constant(safe-area-inset-right);
@@ -1619,20 +1637,26 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
 .htmx-request .memory-save-btn__spinner,
 .memory-save-btn.htmx-request .memory-save-btn__spinner { display: inline-flex; }
 
-/* ---------- PWA: standalone display-mode hooks ---------- */
+/* ---------- PWA: standalone hooks ---------- */
 /* Installed launches ("Add to Home Screen" on iOS, installed on Android) run
-   in a standalone window with no browser chrome. Future PWA-only styling —
-   app-chrome refinements, install-prompt visuals, title-bar-area handling on
-   Android — lives here, scoped so it can never leak into regular browsing.
+   in a standalone window with no browser chrome. WebKit reports an installed
+   iOS web app as `display-mode: fullscreen` (bug 264218) and does NOT match
+   `display-mode: standalone`; app.js therefore also tags <html> with
+   `data-standalone`. Key PWA-only rules on that attribute and keep the media
+   query as a fallback for browsers that only expose it. */
+html[data-standalone],
+html[data-standalone] body {
+  /* The app is a full-viewport shell, so rubber-banding / pull-to-refresh on
+     the document does nothing but flash the overscroll glow (and, with a
+     black-translucent iOS status bar, exposes the darker page canvas above
+     the topbar). Kill it at the document level; inner scroll containers
+     (#main-content, #chat-log, #sidepanel-log, …) keep their own bounce. */
+  overscroll-behavior-y: none;
+}
 
-   It is intentionally small today: the env(safe-area-*) rules above already
-   handle the notch and home indicator, because insets are only nonzero when
-   the page truly runs edge-to-edge (installed standalone or fullscreen). */
 @media (display-mode: standalone) {
-  /* The app is an h-screen shell, so rubber-banding / pull-to-refresh on the
-     document does nothing but flash the overscroll glow. Kill it at the
-     document level; the inner scroll containers (#main-content, #chat-log,
-     #sidepanel-log, …) keep their own bounce. */
+  /* Fallback for browsers that report standalone only through the media
+     query (iOS reports fullscreen — see app.js). */
   html,
   body {
     overscroll-behavior-y: none;
@@ -1672,4 +1696,89 @@ pre.memory-scroll::-webkit-scrollbar-thumb { background: var(--color-base-300); 
   #object-preview-resize::after { transition: none; }
   /* Copy confirmation (#1964): the glyph swap still happens, just without the pop. */
   [data-copied] .iconify { animation: none; }
+}
+
+/* ---------- Mobile shell ---------- */
+/* Shell height: dynamic viewport with a 100vh fallback. `dvh` tracks the
+   collapsing URL bar in mobile browsers; older clients keep 100vh. The
+   fallback lives outside an @supports check so the minifier keeps both. */
+.app-shell { height: 100vh; }
+@supports (height: 100dvh) {
+  .app-shell { height: 100dvh; }
+}
+
+/* Fixed drawers: same dynamic-height upgrade for the drawer mode only (the
+   centered modal already sizes itself). */
+@supports (height: 100dvh) {
+  #sidepanel-panel:not(.sidepanel-in-modal),
+  #object-preview-panel:not(.object-preview-in-modal) {
+    height: 100dvh;
+  }
+}
+
+/* iOS software keyboard: dvh does NOT shrink for the keyboard. app.js sets
+   --app-vh from visualViewport.height and toggles .keyboard-open on <html>, so
+   shrinking the shell lifts bottom-anchored composers above the keyboard. */
+html.keyboard-open .app-shell { height: var(--app-vh, 100vh); }
+html.keyboard-open #sidepanel-panel:not(.sidepanel-in-modal) { height: var(--app-vh, 100vh); }
+
+/* Modal boxes: never taller than the dynamic viewport; the extra bottom padding
+   keeps the action row clear of the home indicator. */
+.modal-box {
+  max-height: 100vh;
+  padding-bottom: calc(1.5rem + env(safe-area-inset-bottom, 0px));
+}
+@supports (height: 100dvh) {
+  .modal-box { max-height: 100dvh; }
+}
+
+@media (max-width: 767.98px) {
+  /* Topbar can shrink: the vendor Navbar's two clusters are flex with no
+     min-width. Allowing them to shrink (and the project switcher to truncate)
+     keeps the right-most control — the account avatar — reachable. */
+  #_layout-topbar > div { min-width: 0; }
+  #_layout-topbar > div:first-child { flex-shrink: 1; }
+  #_layout-topbar > div:last-child { flex-shrink: 1; }
+
+  /* 44px touch targets for primary chrome, written as a literal pixel value:
+     Tailwind spacing utilities are rem-based and this app's root is 15px, so
+     min-h-11 would resolve to 41.25px (under the 44px target). */
+  #_layout-topbar .btn { min-height: 44px; }
+  #_layout-topbar .btn-square { min-width: 44px; }
+  #_layout-topbar .btn.w-9 { width: 44px; min-width: 44px; }
+  #_layout-topbar [data-testid="account-menu-trigger"] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    min-width: 44px;
+  }
+  #_layout-sidebar .menu-item { min-height: 44px; }
+  #sidepanel-panel .btn-square { min-width: 44px; min-height: 44px; }
+
+  /* iOS focus zoom: controls below 16px trigger it once user-scalable is
+     allowed. Keep form text at 16px on phones (desktop scale unchanged). */
+  .input, .select, .textarea,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  select, textarea { font-size: 16px; }
+
+  /* Chat session rail: fixed overlay instead of an in-flow block, so opening
+     it never pushes the transcript down. It is display:none until chat.js
+     removes `hidden`; the list scrolls inside the bounded overlay. */
+  #chat-rail:not(.hidden) {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    /* Leave a strip of backdrop visible so tapping outside closes the
+       drawer (a full-width sheet would bury the backdrop under the rail). */
+    width: min(88vw, 22rem);
+    max-width: 100%;
+    height: 100vh;
+    border-right: 0;
+  }
+  @supports (height: 100dvh) {
+    #chat-rail:not(.hidden) { height: 100dvh; }
+  }
+  #chat-rail:not(.hidden) #chat-rail-list { min-height: 0; }
 }

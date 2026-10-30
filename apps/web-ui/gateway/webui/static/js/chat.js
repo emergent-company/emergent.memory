@@ -457,8 +457,7 @@
           window.location.href = scopedPath("/share-sessions/" + encodeURIComponent(shareId));
         }
       } else if (t.getAttribute("data-action") === "toggle-chat-rail") {
-        var rail = document.getElementById("chat-rail");
-        if (rail) rail.classList.toggle("hidden");
+        toggleSessionRail();
       } else if (t.getAttribute("data-action") === "session-menu") {
         // The row action menu opens via the go-daisy popover runtime. The
         // delegated closest("[data-action]") above resolves to the innermost
@@ -674,13 +673,50 @@
     renderQueue();
   }
 
-  // On mobile the rail is an overlay toggled via the "hidden" class (the
-  // toggle/close buttons are md:hidden). After picking a session, collapse it
-  // so the user lands on the chat. Desktop keeps the rail pinned (md:flex).
-  function closeSessionRail() {
-    if (window.matchMedia("(min-width: 768px)").matches) return;
+  // On mobile the rail is a fixed overlay (see app.css) toggled via the
+  // "hidden" class; a matching backdrop sits behind it. Track the element that
+  // opened it so focus returns there on close. Desktop keeps the rail pinned
+  // (md:flex) and these helpers are no-ops for display purposes.
+  var railReturnFocus = null;
+
+  function isMobileRail() {
+    return window.matchMedia("(max-width: 767.98px)").matches;
+  }
+
+  function setSessionRail(open) {
     var rail = document.getElementById("chat-rail");
-    if (rail) rail.classList.add("hidden");
+    var backdrop = document.getElementById("chat-rail-backdrop");
+    if (!rail) return;
+    var mobile = isMobileRail();
+    if (open) {
+      railReturnFocus = document.activeElement;
+      rail.classList.remove("hidden");
+      rail.removeAttribute("inert");
+      rail.setAttribute("aria-hidden", "false");
+      if (backdrop && mobile) backdrop.classList.remove("hidden");
+    } else {
+      rail.classList.add("hidden");
+      if (backdrop) backdrop.classList.add("hidden");
+      if (mobile) {
+        rail.setAttribute("aria-hidden", "true");
+        rail.setAttribute("inert", "");
+      }
+      if (railReturnFocus && typeof railReturnFocus.focus === "function") {
+        railReturnFocus.focus();
+      }
+      railReturnFocus = null;
+    }
+  }
+
+  function toggleSessionRail() {
+    var rail = document.getElementById("chat-rail");
+    if (!rail) return;
+    setSessionRail(rail.classList.contains("hidden"));
+  }
+
+  function closeSessionRail() {
+    if (!isMobileRail()) return;
+    setSessionRail(false);
   }
 
   // Rail rows come in two flavors — resumable conversations
