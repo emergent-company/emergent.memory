@@ -15,7 +15,8 @@ import (
 // brand + card on the app's dark canvas with the same anti-white-flash paint
 // guard the shell uses. The "Sign in" action links to /auth/start, which runs
 // the real OIDC redirect.
-templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64) {
+templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, returnTo string) {
+	{{ startHref := "/auth/start"; if returnTo != "" { startHref = "/auth/start?return_to=" + url.QueryEscape(returnTo) } }}
 	<!DOCTYPE html>
 	<html lang="en" data-theme="dark" class="group/html">
 		<head>
@@ -141,7 +142,7 @@ templ loginPage(sentryDSN string, sentryEnvironment string, sentryTracesSampleRa
 					<div class="login-cta">
 						@ui.Button(ui.ButtonProps{
 							Type:    ui.ButtonTypeLink,
-							Href:    "/auth/start",
+							Href:    startHref,
 							Variant: ui.ButtonPrimary,
 							Size:    ui.ButtonLG,
 							Block:   true,

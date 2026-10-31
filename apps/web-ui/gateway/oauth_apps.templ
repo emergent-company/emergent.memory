@@ -1,0 +1,198 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// oauthConsentData is everything the consent screen needs. Fields mirror the
+// OAuth authorize query exactly so the form can round-trip them unchanged.
+type oauthConsentData struct {
+	ClientID            string
+	ClientName          string
+	RedirectURI         string
+	State               string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Scope               string
+	Scopes              []string
+	Projects            []OAuthProject
+	Error               string
+}
+
+// OAuthConsentPage is the gateway-rendered consent screen for a third-party
+// app asking to write to one Memory project. It is intentionally a normal
+// signed-in page: the user can inspect the client, scopes, and project before
+// approving.
+templ OAuthConsentPage(data oauthConsentData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		<div class="mb-6">
+			<p class="text-xs font-medium uppercase tracking-wider text-base-content/50">Authorize application</p>
+			<h1 class="mt-1 text-2xl font-semibold tracking-tight">{ data.ClientName }</h1>
+			<p class="mt-2 text-sm text-base-content/70">
+				<strong>{ data.ClientName }</strong> wants to connect to a Memory project on your behalf.
+			</p>
+		</div>
+
+		if data.Error != "" {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Message: data.Error})
+		}
+
+		<div class="rounded-box border border-base-content/10 bg-base-100 p-5">
+			<div class="flex flex-col gap-5">
+				<div>
+					<h2 class="text-sm font-semibold">Requested access</h2>
+					<ul class="mt-2 flex flex-col gap-1.5 text-sm text-base-content/70">
+						for _, scope := range data.Scopes {
+							<li class="flex items-start gap-2">
+								<span class="iconify lucide--check size-4 shrink-0 text-success" aria-hidden="true"></span>
+								<span>{ scopeDescription(scope) } <code class="ml-1 text-[11px] text-base-content/40">{ scope }</code></span>
+							</li>
+						}
+					</ul>
+				</div>
+
+				<form method="post" action="/oauth/authorize" class="flex flex-col gap-4">
+					<input type="hidden" name="client_id" value={ data.ClientID }/>
+					<input type="hidden" name="redirect_uri" value={ data.RedirectURI }/>
+					<input type="hidden" name="state" value={ data.State }/>
+					<input type="hidden" name="code_challenge" value={ data.CodeChallenge }/>
+					<input type="hidden" name="code_challenge_method" value={ data.CodeChallengeMethod }/>
+					<input type="hidden" name="scope" value={ data.Scope }/>
+
+					<label class="form-control w-full">
+						<span class="label-text mb-1 text-sm font-medium">Project</span>
+						<select name="project_id" class="select w-full" required>
+							if len(data.Projects) == 0 {
+								<option value="">No projects you can write to</option>
+							}
+							for _, p := range data.Projects {
+								<option value={ p.ID }>{ p.Name }</option>
+							}
+						</select>
+						<span class="label-text-alt mt-1 text-base-content/50">
+							The app will be able to read and write objects in this project only.
+						</span>
+					</label>
+
+					<div class="flex flex-wrap items-center justify-end gap-2 pt-1">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+							Attrs:   templ.Attributes{"name": "decision", "value": "deny", "formnovalidate": "formnovalidate"},
+						}) {
+							Cancel
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Attrs:   templ.Attributes{"name": "decision", "value": "approve"},
+						}) {
+							Authorize { data.ClientName }
+						}
+					</div>
+				</form>
+			</div>
+		</div>
+
+		<p class="mt-4 text-xs text-base-content/45">
+			You can revoke this access at any time under Settings → Connected apps.
+		</p>
+	}
+}
+
+// scopeDescription turns an OAuth scope into a human sentence.
+func scopeDescription(scope string) string {
+	switch scope {
+	case "graph:read":
+		return "Read objects in the project"
+	case "graph:write":
+		return "Create and update objects in the project"
+	case "schema:read":
+		return "Read the project's object types"
+	case "projects:read":
+		return "See the project's name and metadata"
+	default:
+		return scope
+	}
+}
+
+// connectedAppsData drives the Settings → Connected apps page.
+type connectedAppsData struct {
+	Grants          []OAuthGrant
+	LoadErr         string
+	Flash           string
+	FlashErr        string
+	ProvidersMissing bool
+}
+
+// ConnectedAppsPage lists the third-party applications the signed-in user has
+// authorized, with the project and scopes, and a revoke action.
+templ ConnectedAppsPage(data connectedAppsData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		<div class="mb-6">
+			<p class="text-xs font-medium uppercase tracking-wider text-base-content/50">Settings</p>
+			<h1 class="mt-1 text-2xl font-semibold tracking-tight">Connected apps</h1>
+			<p class="mt-2 max-w-2xl text-sm text-base-content/70">
+				Applications you have authorized to access Memory. Each grant is limited to one project and the scopes shown; revoking it immediately invalidates its token.
+			</p>
+		</div>
+
+		if data.Flash != "" {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertSuccess, Style: ui.AlertStyleSoft, Message: data.Flash})
+		}
+		if data.FlashErr != "" {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Message: data.FlashErr})
+		}
+		if data.LoadErr != "" {
+			@ui.Alert(ui.AlertProps{Type: ui.AlertError, Style: ui.AlertStyleOutline, Message: data.LoadErr})
+		}
+
+		@layout.Rail(settingsSubNav("connected-apps", data.ProvidersMissing), nil) {
+			if len(data.Grants) == 0 {
+				@ui.EmptyState(ui.EmptyStateProps{
+					Icon:        "lucide--link",
+					Title:       "No connected apps",
+					Description: "When an application asks to access Memory, it will appear here after you approve it.",
+					Bordered:    true,
+					Class:       "py-12",
+				})
+			} else {
+				<div class="flex flex-col gap-3">
+					for _, g := range data.Grants {
+						<div class="rounded-box border border-base-content/10 bg-base-100 p-4">
+							<div class="flex flex-wrap items-start justify-between gap-3">
+								<div class="min-w-0">
+									<p class="font-medium">{ g.ClientName }</p>
+									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+										{ g.ProjectName }
+									}
+									@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+										Authorized { relTime(g.CreatedAt.Format("2006-01-02T15:04:05Z07:00")) }
+									}
+									<div class="mt-2 flex flex-wrap gap-1">
+										for _, s := range g.Scopes {
+											@ui.Badge(ui.BadgeProps{Label: s, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, LabelClass: "font-mono"})
+										}
+									</div>
+								</div>
+								<form method="post" action={ templ.URL("/settings/connected-apps/" + g.ID + "/revoke") }>
+									@ui.Button(ui.ButtonProps{
+										Type:    ui.ButtonTypeSubmit,
+										Variant: ui.ButtonError,
+										Style:   ui.ButtonStyleOutline,
+										Size:    ui.ButtonSM,
+									}) {
+										Revoke
+									}
+								</form>
+							</div>
+						</div>
+					}
+				</div>
+			}
+		}
+	}
+}

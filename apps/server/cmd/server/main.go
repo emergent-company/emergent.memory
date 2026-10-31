@@ -57,6 +57,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/processingproblems"
 	"github.com/emergent-company/emergent.memory/domain/projects"
@@ -166,6 +167,7 @@ func coreFxOptions() fx.Option {
 		users.Module,
 		userprofile.Module,
 		apitoken.Module,
+		oauthas.Module,
 		graph.Module,
 		branches.Module,
 		embeddingpolicies.Module,

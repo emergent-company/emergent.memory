@@ -6237,6 +6237,137 @@ definitions:
       projectId:
         type: string
     type: object
+  domain_oauthas.AuthorizeContextResponse:
+    properties:
+      client_id:
+        type: string
+      client_name:
+        type: string
+      projects:
+        items:
+          $ref: '#/definitions/domain_oauthas.OAuthProject'
+        type: array
+      redirect_uri:
+        type: string
+      scopes_supported:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_oauthas.AuthorizeRequest:
+    properties:
+      client_id:
+        type: string
+      code_challenge:
+        type: string
+      code_challenge_method:
+        type: string
+      project_id:
+        type: string
+      redirect_uri:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+      state:
+        type: string
+    type: object
+  domain_oauthas.AuthorizeResponse:
+    properties:
+      redirect_url:
+        type: string
+    type: object
+  domain_oauthas.ClientRegistrationRequest:
+    properties:
+      client_name:
+        type: string
+      grant_types:
+        items:
+          type: string
+        type: array
+      redirect_uris:
+        items:
+          type: string
+        type: array
+      scope:
+        type: string
+      token_endpoint_auth_method:
+        type: string
+    type: object
+  domain_oauthas.ClientRegistrationResponse:
+    properties:
+      client_id:
+        type: string
+      client_id_issued_at:
+        type: integer
+      client_name:
+        type: string
+      grant_types:
+        items:
+          type: string
+        type: array
+      redirect_uris:
+        items:
+          type: string
+        type: array
+      scope:
+        type: string
+      token_endpoint_auth_method:
+        type: string
+    type: object
+  domain_oauthas.GrantDTO:
+    properties:
+      client_id:
+        type: string
+      client_name:
+        type: string
+      created_at:
+        type: string
+      id:
+        type: string
+      last_used_at:
+        type: string
+      project_id:
+        type: string
+      project_name:
+        type: string
+      revoked_at:
+        type: string
+      scopes:
+        items:
+          type: string
+        type: array
+    type: object
+  domain_oauthas.OAuthErrorResponse:
+    properties:
+      error:
+        type: string
+      error_description:
+        type: string
+    type: object
+  domain_oauthas.OAuthProject:
+    properties:
+      id:
+        type: string
+      name:
+        type: string
+      slug:
+        type: string
+    type: object
+  domain_oauthas.TokenResponse:
+    properties:
+      access_token:
+        type: string
+      project_id:
+        type: string
+      project_name:
+        type: string
+      scope:
+        type: string
+      token_type:
+        type: string
+    type: object
   domain_orgs.AddOrgMemberRequest:
     properties:
       email:
@@ -10650,6 +10781,18 @@ info:
   title: Memory API
   version: 0.88.4
 paths:
+  /.well-known/oauth-authorization-server:
+    get:
+      description: RFC 8414 metadata for the built-in project-scoped authorization
+        server.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Authorization-server metadata
+      summary: OAuth authorization-server metadata
+      tags:
+      - oauth
   /.well-known/oauth-protected-resource:
     get:
       description: Returns OAuth 2.0 Protected Resource Metadata per RFC 9728. Signals
@@ -17688,6 +17831,241 @@ paths:
       summary: Get notification statistics
       tags:
       - notifications
+  /api/oauth/authorize:
+    post:
+      consumes:
+      - application/json
+      description: Records consent after re-checking project write membership and
+        returns the redirect with a single-use code and the caller's state.
+      parameters:
+      - description: Consent decision
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_oauthas.AuthorizeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Redirect back to the client with a code
+          schema:
+            $ref: '#/definitions/domain_oauthas.AuthorizeResponse'
+        "400":
+          description: Invalid authorization request
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "403":
+          description: No write access to the project
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      security:
+      - bearerAuth: []
+      summary: Approve an OAuth authorization request
+      tags:
+      - oauth
+  /api/oauth/authorize/context:
+    get:
+      description: Returns the validated client, fixed redirect URI, supported scopes,
+        and projects the caller can write to.
+      parameters:
+      - description: Registered client id
+        in: query
+        name: client_id
+        required: true
+        type: string
+      - description: Client redirect URI
+        in: query
+        name: redirect_uri
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Consent-page bootstrap payload
+          schema:
+            $ref: '#/definitions/domain_oauthas.AuthorizeContextResponse'
+        "400":
+          description: Invalid client or redirect URI
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      security:
+      - bearerAuth: []
+      summary: Get consent-page context
+      tags:
+      - oauth
+  /api/oauth/grants:
+    get:
+      description: Returns the caller's OAuth grants with client/project names and
+        revocation state.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OAuth grants
+          schema:
+            items:
+              $ref: '#/definitions/domain_oauthas.GrantDTO'
+            type: array
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      security:
+      - bearerAuth: []
+      summary: List connected apps
+      tags:
+      - oauth
+  /api/oauth/grants/{id}:
+    delete:
+      description: Revokes one of the caller's OAuth grants and the API token minted
+        for it.
+      parameters:
+      - description: Grant ID (UUID)
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: Grant revoked
+        "401":
+          description: Authentication required
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "404":
+          description: Grant not found
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      security:
+      - bearerAuth: []
+      summary: Revoke a connected app
+      tags:
+      - oauth
+  /api/oauth/register:
+    post:
+      consumes:
+      - application/json
+      description: RFC 7591 dynamic client registration. Only public clients (token_endpoint_auth_method=none)
+        using the authorization_code grant are accepted.
+      parameters:
+      - description: Client registration request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/domain_oauthas.ClientRegistrationRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Registered public client
+          schema:
+            $ref: '#/definitions/domain_oauthas.ClientRegistrationResponse'
+        "400":
+          description: Invalid client metadata
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "401":
+          description: Invalid registration secret
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "403":
+          description: Registration disabled
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "429":
+          description: Rate limited
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      summary: Register an OAuth client
+      tags:
+      - oauth
+  /api/oauth/revoke:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: RFC 7009 revocation. Unknown tokens are reported as success so
+        the endpoint cannot be used to probe token validity.
+      parameters:
+      - description: Access token to revoke
+        in: formData
+        name: token
+        required: true
+        type: string
+      - description: Registered client id
+        in: formData
+        name: client_id
+        type: string
+      responses:
+        "200":
+          description: Token revoked (or already unknown)
+        "400":
+          description: Invalid form body
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      summary: Revoke a token
+      tags:
+      - oauth
+  /api/oauth/token:
+    post:
+      consumes:
+      - application/x-www-form-urlencoded
+      description: Redeems a single-use authorization code (PKCE S256) for a project-scoped
+        emt_ access token. No refresh token is issued.
+      parameters:
+      - description: Must be authorization_code
+        in: formData
+        name: grant_type
+        required: true
+        type: string
+      - description: Authorization code
+        in: formData
+        name: code
+        required: true
+        type: string
+      - description: Redirect URI used at authorization time
+        in: formData
+        name: redirect_uri
+        required: true
+        type: string
+      - description: Registered client id
+        in: formData
+        name: client_id
+        required: true
+        type: string
+      - description: PKCE code verifier
+        in: formData
+        name: code_verifier
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Issued project token
+          schema:
+            $ref: '#/definitions/domain_oauthas.TokenResponse'
+        "400":
+          description: Invalid or expired code
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+        "429":
+          description: Rate limited
+          schema:
+            $ref: '#/definitions/domain_oauthas.OAuthErrorResponse'
+      summary: Exchange an authorization code
+      tags:
+      - oauth
   /api/orgs:
     get:
       description: Returns all organizations the authenticated user is a member of

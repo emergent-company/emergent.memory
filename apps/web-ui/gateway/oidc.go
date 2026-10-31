@@ -117,8 +117,9 @@ type oauthStateClaims struct {
 	State        string `json:"state"`
 	CodeVerifier string `json:"code_verifier"`
 	Nonce        string `json:"nonce"`
-	Prompt       string `json:"prompt,omitempty"` // "select_account" marks the add-account flow
-	ExpiresAt    int64  `json:"exp"`              // unix seconds
+	Prompt       string `json:"prompt,omitempty"`    // "select_account" marks the add-account flow
+	ReturnTo     string `json:"return_to,omitempty"` // safe local path after sign-in
+	ExpiresAt    int64  `json:"exp"`                 // unix seconds
 }
 
 // oauthStateTTL bounds how long a login flow's state cookie stays valid.
@@ -133,11 +134,18 @@ func issueOAuthState(secret, state, codeVerifier, nonce string, now time.Time) (
 // recording the requested prompt so the callback can tell a plain sign-in from
 // an "add another account" flow.
 func issueOAuthStatePrompt(secret, state, codeVerifier, nonce, prompt string, now time.Time) (string, error) {
+	return issueOAuthStateWithReturn(secret, state, codeVerifier, nonce, prompt, "", now)
+}
+
+// issueOAuthStateWithReturn is issueOAuthStatePrompt plus a post-login
+// same-origin return path.
+func issueOAuthStateWithReturn(secret, state, codeVerifier, nonce, prompt, returnTo string, now time.Time) (string, error) {
 	payload, err := json.Marshal(oauthStateClaims{
 		State:        state,
 		CodeVerifier: codeVerifier,
 		Nonce:        nonce,
 		Prompt:       prompt,
+		ReturnTo:     returnTo,
 		ExpiresAt:    now.Add(oauthStateTTL).Unix(),
 	})
 	if err != nil {
@@ -182,7 +190,7 @@ func (s *Server) authLogin(c echo.Context) error {
 	if s.cfg.AuthMode != "session" {
 		return c.Redirect(http.StatusFound, "/")
 	}
-	render.RenderPage(c.Response().Writer, c.Request(), loginPage(s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate))
+	render.RenderPage(c.Response().Writer, c.Request(), loginPage(s.cfg.SentryDSN, s.cfg.SentryEnvironment, s.cfg.SentryTracesSampleRate, s.cfg.SentryReplaySessionSampleRate, s.cfg.SentryReplayOnErrorSampleRate, safeLocalPath(c.QueryParam("return_to"))))
 	return nil
 }
 
@@ -221,7 +229,8 @@ func (s *Server) authStartWithPrompt(c echo.Context, prompt string) error {
 	}
 	nonce := randomHex(32)
 
-	val, err := issueOAuthStatePrompt(s.cfg.SessionSecret, state, codeVerifier, nonce, prompt, time.Now())
+	returnTo := safeLocalPath(c.QueryParam("return_to"))
+	val, err := issueOAuthStateWithReturn(s.cfg.SessionSecret, state, codeVerifier, nonce, prompt, returnTo, time.Now())
 	if err != nil {
 		return oidcErrorPage(c, http.StatusInternalServerError, err.Error())
 	}
@@ -444,7 +453,11 @@ func (s *Server) authCallback(c echo.Context) error {
 	s.registerAccount(c, flow, claims)
 	s.setSessionCookie(c, claims)
 	s.clearOAuthStateCookie(c)
-	return c.Redirect(http.StatusFound, "/")
+	target := "/"
+	if rt := safeLocalPath(flow.ReturnTo); rt != "" {
+		target = rt
+	}
+	return c.Redirect(http.StatusFound, target)
 }
 
 // profileDisplayNameOf returns a profile's display name (DisplayName, falling

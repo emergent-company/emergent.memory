@@ -526,7 +526,13 @@ func (s *Server) requireSession(next echo.HandlerFunc) echo.HandlerFunc {
 			if !errors.Is(err, http.ErrNoCookie) {
 				s.clearSessionCookie(c) // drop tampered/expired/unrecoverable cookies
 			}
-			return c.Redirect(http.StatusFound, "/auth/login")
+			target := "/auth/login"
+			// Preserve a safe local GET target for the OAuth consent flow across
+			// the sign-in round trip. Other routes keep the historical redirect.
+			if c.Request().Method == http.MethodGet && strings.HasPrefix(c.Request().URL.Path, "/oauth/authorize") && safeLocalPath(c.Request().URL.RequestURI()) != "" {
+				target += "?return_to=" + url.QueryEscape(c.Request().URL.RequestURI())
+			}
+			return c.Redirect(http.StatusFound, target)
 		}
 		s.attachSession(c, claims)
 		return next(c)
@@ -735,6 +741,40 @@ func (s *Server) resolveDefaultProject(next echo.HandlerFunc) echo.HandlerFunc {
 		sc.OrgID = orgID
 		return next(c)
 	}
+}
+
+// safeLocalPath returns v when it is a same-origin absolute path safe to use
+// as a post-login redirect target. It rejects schemes, protocol-relative URLs,
+// backslashes, and auth/API routes to avoid open redirects and loops.
+func safeLocalPath(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || !strings.HasPrefix(v, "/") || strings.HasPrefix(v, "//") || strings.Contains(v, "\\") {
+		return ""
+	}
+	u, err := url.Parse(v)
+	if err != nil || u.IsAbs() || u.Host != "" {
+		return ""
+	}
+	// Browsers strip ASCII control characters from URLs before parsing. A
+	// value such as "/\t/evil.example" would otherwise become "//evil.example"
+	// (protocol-relative) after the redirect. Check both the raw value and the
+	// decoded path so percent-encoded controls are rejected too.
+	for _, s := range []string{v, u.Path} {
+		for _, r := range s {
+			if r < 0x20 || r == 0x7f {
+				return ""
+			}
+		}
+	}
+	// Reject paths that normalize to a protocol-relative URL (e.g. /%2f%2fhost)
+	// and any path with a backslash, which browsers may treat as a separator.
+	if strings.HasPrefix(u.Path, "//") || strings.Contains(u.Path, "\\") {
+		return ""
+	}
+	if strings.HasPrefix(v, "/auth/") || strings.HasPrefix(v, "/api/") {
+		return ""
+	}
+	return v
 }
 
 // publicAuthPath reports whether a request path needs no auth in session mode.

@@ -173,6 +173,12 @@ type Service struct {
 	// the server's own address (e.g. containerised deployments).
 	internalBaseURL string
 
+	// Built-in OAuth authorization server advertisement (RFC 9728). When
+	// enabled, the protected-resource metadata lists this issuer so MCP clients
+	// can run the OAuth flow instead of being told to use a static token.
+	oauthASEnabled bool
+	oauthASIssuer  string
+
 	// MCP share-instance persistence, credential lifecycle, and agent
 	// directory. Defaults are derived from DB/ApitokenSvc in NewService but are
 	// overridable in tests.
@@ -268,6 +274,8 @@ func NewService(p ServiceParams) *Service {
 		tempoBaseURL:              tempoURL,
 		serverPort:                cfg.ServerPort,
 		internalBaseURL:           cfg.InternalBaseURL,
+		oauthASEnabled:            cfg.OAuthAS.Enabled,
+		oauthASIssuer:             strings.TrimRight(cfg.OAuthAS.IssuerURL, "/"),
 		journalSvc:                p.JournalSvc,
 		schemasSvc:                p.SchemasSvc,
 		sessionTodoSvc:            p.SessionTodoSvc,

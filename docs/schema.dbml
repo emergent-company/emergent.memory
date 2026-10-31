@@ -121,6 +121,55 @@ Table "core"."mcp_share_instances" {
 }
 // core.mcp_share_instances: Named MCP access grants binding an API token to tool/agent allowlists
 
+Table "core"."oauth_authorization_codes" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "code_hash" text [not null, unique]
+  "client_id" text [not null]
+  "user_id" uuid [not null]
+  "project_id" uuid [not null]
+  "scopes" jsonb [not null]
+  "redirect_uri" text [not null]
+  "code_challenge" text [not null]
+  "code_challenge_method" text [not null, default: 'S256']
+  "expires_at" timestamptz [not null]
+  "consumed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+}
+// core.oauth_authorization_codes: Single-use OAuth authorization codes stored only as a SHA-256 hash; 5 minute TTL
+
+Table "core"."oauth_clients" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "client_id" text [not null, unique]
+  "client_name" text [not null]
+  "redirect_uris" jsonb [not null]
+  "grant_types" jsonb [not null, default: '["authorization_code"]']
+  "token_endpoint_auth_method" text [not null, default: 'none']
+  "scope" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+}
+// core.oauth_clients: Dynamically registered OAuth 2.1 public clients (RFC 7591); no client secrets are stored
+
+Table "core"."oauth_grants" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "client_id" text [not null]
+  "user_id" uuid [not null]
+  "project_id" uuid [not null]
+  "scopes" jsonb [not null]
+  "token_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+
+  Indexes {
+    (client_id) [name: "idx_oauth_grants_client_id"]
+    (token_id) [name: "idx_oauth_grants_token_id"]
+    (user_id) [name: "idx_oauth_grants_user_id"]
+  }
+}
+// core.oauth_grants: Links a registered OAuth client to the project-scoped API token minted for it
+
 Table "core"."superadmins" {
   "user_id" uuid [pk]
   "granted_by" uuid

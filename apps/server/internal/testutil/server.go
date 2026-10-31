@@ -43,6 +43,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -442,6 +443,13 @@ func newTestServerWithDB(testDB *TestDB, db bun.IDB) *TestServer {
 	apitokenSvc := apitoken.NewService(db, apitokenRepo, encryptionSvc, log)
 	apitokenHandler := apitoken.NewHandler(apitokenSvc, userSvc)
 	apitoken.RegisterRoutes(e, apitokenHandler, authMiddleware)
+
+	// Register OAuth authorization-server routes (public AS endpoints + the
+	// session-authenticated consent/grant surface).
+	oauthRepo := oauthas.NewRepository(db, log)
+	oauthSvc := oauthas.NewService(oauthRepo, apitokenSvc, apitokenRepo, testDB.Config, log)
+	oauthHandler := oauthas.NewHandler(oauthSvc, testDB.Config, log)
+	oauthas.RegisterRoutes(e, oauthHandler, authMiddleware)
 
 	// Register graph routes
 	testGraphCfg := &config.Config{}

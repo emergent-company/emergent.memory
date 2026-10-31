@@ -66,10 +66,22 @@ func (h *Handler) HandleOAuthProtectedResource(c echo.Context) error {
 	}
 	resourceURL := scheme + "://" + c.Request().Host
 
+	// When the built-in authorization server is enabled, advertise it so MCP
+	// clients can run the OAuth flow. The issuer comes from config when set,
+	// else from the request origin.
+	authorizationServers := []string{}
+	if h.svc != nil && h.svc.oauthASEnabled {
+		issuer := h.svc.oauthASIssuer
+		if issuer == "" {
+			issuer = resourceURL
+		}
+		authorizationServers = []string{issuer}
+	}
+
 	return c.JSON(http.StatusOK, map[string]any{
 		"resource":                 resourceURL,
 		"bearer_methods_supported": []string{"header"},
-		"authorization_servers":    []string{},
+		"authorization_servers":    authorizationServers,
 	})
 }
 

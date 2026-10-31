@@ -45,7 +45,7 @@ func switcherMenu(html string) string {
 // document: brand, exact copy, and a "Sign in" action pointing at /auth/start
 // (which performs the real OIDC redirect).
 func TestRenderLoginPage(t *testing.T) {
-	html := renderHTML(t, loginPage("", "development", 0, 0, 0))
+	html := renderHTML(t, loginPage("", "development", 0, 0, 0, ""))
 	for _, want := range []string{
 		"<title>Sign in — Memory</title>",
 		"Sign in to Memory",
@@ -69,10 +69,10 @@ func TestRenderLoginPage(t *testing.T) {
 	}
 
 	// Sentry DSN set → the loader script is included; unset → not.
-	if h := renderHTML(t, loginPage("", "development", 0, 0, 0)); strings.Contains(h, "browser.sentry-cdn.com") {
+	if h := renderHTML(t, loginPage("", "development", 0, 0, 0, "")); strings.Contains(h, "browser.sentry-cdn.com") {
 		t.Error("empty Sentry DSN must not inject the Sentry loader")
 	}
-	if h := renderHTML(t, loginPage("https://dsn.example/1", "prod", 0, 0, 0)); !strings.Contains(h, "browser.sentry-cdn.com") {
+	if h := renderHTML(t, loginPage("https://dsn.example/1", "prod", 0, 0, 0, "")); !strings.Contains(h, "browser.sentry-cdn.com") {
 		t.Error("configured Sentry DSN should inject the Sentry loader")
 	}
 }
@@ -82,7 +82,7 @@ func TestRenderLoginPage(t *testing.T) {
 // HTTP layer in oidc_test.go), so here we only assert the page template is a
 // full document the handler can render in session mode.
 func TestRenderLoginPageIsFullDocument(t *testing.T) {
-	html := renderHTML(t, loginPage("", "development", 0, 0, 0))
+	html := renderHTML(t, loginPage("", "development", 0, 0, 0, ""))
 	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(html)), "<!doctype html>") {
 		t.Error("login page must be a standalone <!DOCTYPE html> document")
 	}

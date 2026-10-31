@@ -118,6 +118,11 @@ type Config struct {
 	// WebSource configures the first-class web-scraper data-source connector.
 	WebSource WebSourceConfig
 
+	// OAuthAS configures the built-in OAuth 2.1 authorization server that lets
+	// third-party apps obtain narrow, project-scoped Memory API tokens after a
+	// user consents. Zitadel remains the login provider.
+	OAuthAS OAuthASConfig
+
 	// AppURL is the base URL of the application frontend (used for invite links in emails).
 	// In production this is https://memory.emergent-company.ai; set APP_URL to override.
 	AppURL string `env:"APP_URL" envDefault:"https://memory.emergent-company.ai"`
@@ -946,6 +951,37 @@ type WebSourceConfig struct {
 	// crawler (test/dev). Link-local/metadata, multicast, unspecified, CGNAT,
 	// and reserved ranges stay blocked regardless.
 	AllowPrivate bool `env:"WEB_SOURCE_ALLOW_PRIVATE_HOSTS" envDefault:"false"`
+}
+
+// OAuthASConfig configures the built-in OAuth 2.1 authorization server (the
+// server side of the third-party app consent flow). Values are read from the
+// environment; the authorize URL points at the gateway consent page.
+type OAuthASConfig struct {
+	// Enabled gates registration of the whole authorization-server route set.
+	// Token minting is unaffected: existing OAuth tokens keep working.
+	Enabled bool `env:"OAUTH_AS_ENABLED" envDefault:"true"`
+
+	// IssuerURL is the advertised RFC 8414 issuer. Empty derives the issuer from
+	// the request scheme + host (honouring X-Forwarded-Proto/Host) so proxied
+	// deployments work without extra configuration.
+	IssuerURL string `env:"OAUTH_ISSUER_URL" envDefault:""`
+
+	// AuthorizeURL is the gateway base URL hosting the consent page,
+	// e.g. https://app.example.com. The metadata authorization_endpoint is
+	// <AuthorizeURL>/oauth/authorize. Empty falls back to
+	// <issuer>/oauth/authorize.
+	AuthorizeURL string `env:"OAUTH_AUTHORIZE_URL" envDefault:""`
+
+	// RegistrationEnabled gates POST /api/oauth/register.
+	RegistrationEnabled bool `env:"OAUTH_REGISTRATION_ENABLED" envDefault:"true"`
+
+	// RegistrationSecret, when set, must be presented in the
+	// X-Registration-Secret header on registration.
+	RegistrationSecret string `env:"OAUTH_REGISTRATION_SECRET" envDefault:""`
+
+	// AllowedRedirectHosts is an optional comma-separated allowlist of hostnames.
+	// When set, every registered redirect URI host must match one entry.
+	AllowedRedirectHosts string `env:"OAUTH_ALLOWED_REDIRECT_HOSTS" envDefault:""`
 }
 
 // OAuthClientDefaults is the deployment-default OAuth client material for one

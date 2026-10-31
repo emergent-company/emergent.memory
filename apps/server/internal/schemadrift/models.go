@@ -39,6 +39,7 @@ import (
 	"github.com/emergent-company/emergent.memory/domain/modelconfig"
 	"github.com/emergent-company/emergent.memory/domain/monitoring"
 	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/oauthas"
 	"github.com/emergent-company/emergent.memory/domain/orgs"
 	"github.com/emergent-company/emergent.memory/domain/projects"
 	"github.com/emergent-company/emergent.memory/domain/provider"
@@ -104,6 +105,11 @@ var models = []any{
 
 	// domain/apitoken
 	(*apitoken.ApiToken)(nil),
+
+	// domain/oauthas
+	(*oauthas.OAuthClient)(nil),
+	(*oauthas.OAuthAuthorizationCode)(nil),
+	(*oauthas.OAuthGrant)(nil),
 
 	// domain/modelconfig
 	(*modelconfig.ProjectModelConfig)(nil),

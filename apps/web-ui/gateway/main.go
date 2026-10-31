@@ -309,6 +309,9 @@ func main() {
 	e.GET("/auth/callback", s.authCallback)
 	e.POST("/auth/logout", s.authLogout)
 	e.POST("/auth/switch", s.authSwitch)
+	// OAuth 2.1 authorization-server consent (session-gated by authDispatch).
+	e.GET("/oauth/authorize", s.uiOAuthAuthorize)
+	e.POST("/oauth/authorize", s.uiOAuthAuthorizeDecision)
 	// Public agent-share (anonymous end users; see share.go). The share key
 	// arrives in the URL fragment and is exchanged once for a sealed cookie;
 	// every /share/api/* call rides that cookie. Exempt from the session/key
@@ -499,6 +502,8 @@ func main() {
 	e.GET("/settings/providers/:provider/edit", s.uiProjectProviderEdit)
 	e.GET("/settings/voice", s.uiProjectVoiceSettings)
 	e.GET("/settings/devices", s.uiConnectedDevices)
+	e.GET("/settings/connected-apps", s.uiConnectedApps)
+	e.POST("/settings/connected-apps/:id/revoke", s.uiRevokeConnectedApp)
 	e.GET("/settings/budget", s.uiProjectBudgetSettings)
 	// Project-level OAuth clients for data-source providers (project-admin only;
 	// the handler 404s for anyone else). Context-addressed like the rest of the

@@ -34,6 +34,10 @@ routes:
       level: public
       note: ""
     - method: GET
+      path: /.well-known/oauth-authorization-server
+      level: public
+      note: ""
+    - method: GET
       path: /.well-known/oauth-protected-resource
       level: public
       note: ""
@@ -1069,6 +1073,34 @@ routes:
       path: /api/notifications/stats
       level: auth
       note: RequireAuth
+    - method: POST
+      path: /api/oauth/authorize
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/oauth/authorize/context
+      level: auth
+      note: RequireAuth
+    - method: GET
+      path: /api/oauth/grants
+      level: auth
+      note: RequireAuth
+    - method: DELETE
+      path: /api/oauth/grants/:id
+      level: auth
+      note: RequireAuth
+    - method: POST
+      path: /api/oauth/register
+      level: public
+      note: ""
+    - method: POST
+      path: /api/oauth/revoke
+      level: public
+      note: ""
+    - method: POST
+      path: /api/oauth/token
+      level: public
+      note: ""
     - method: GET
       path: /api/orgs
       level: auth
