@@ -42,11 +42,10 @@ jobs:
         with:
           fetch-depth: 0  # mike needs full history
 
-      # The pool is heterogeneous — it spans two hosts and only one is Debian.
-      # There, the distro Python has no `ensurepip` (it ships in `python3-venv`),
-      # so `python3 -m venv` fails, and `actions/setup-python` resolves no
-      # version. uv provisions its own interpreter, so docs build identically on
-      # every runner in the pool.
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -80,11 +79,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The pool is heterogeneous — it spans two hosts and only one is Debian.
-      # There, the distro Python has no `ensurepip` (it ships in `python3-venv`),
-      # so `python3 -m venv` fails, and `actions/setup-python` resolves no
-      # version. uv provisions its own interpreter, so docs build identically on
-      # every runner in the pool.
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:
@@ -150,11 +148,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The pool is heterogeneous — it spans two hosts and only one is Debian.
-      # There, the distro Python has no `ensurepip` (it ships in `python3-venv`),
-      # so `python3 -m venv` fails, and `actions/setup-python` resolves no
-      # version. uv provisions its own interpreter, so docs build identically on
-      # every runner in the pool.
+      # uv pins one interpreter, so the docs build is identical on both hosts of
+      # the self-hosted pool whatever their distro Python looks like. They do
+      # differ — only one is Debian, and the other's Python state is not
+      # recorded — and that divergence is the reason for the pin.
       - name: Set up Python 3.12 (uv)
         uses: astral-sh/setup-uv@v10.3.0
         with:

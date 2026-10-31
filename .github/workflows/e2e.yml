@@ -470,10 +470,11 @@ jobs:
   # the host-side reaper that sweeps leftover stacks on the CI hosts.
   #
   # It reaps only the Docker daemon it lands on. The self-hosted `memory` pool
-  # spans two hosts — the Linux runners and the macOS runners — each with its
-  # own daemon, and the runners carry no host label to
-  # target one (they all expose exactly `self-hosted, Linux, X64, memory`). A
-  # leftover on the other host is therefore reaped by a later attempt or run
+  # spans two Linux hosts, each with its own Docker daemon, and the runners
+  # carry no host label to target one (they all expose exactly `self-hosted,
+  # Linux, X64, memory`); the macOS runner is not in the pool at all, it
+  # carries the separate `mac` label and runs no `memory` job. A leftover on
+  # the other host is therefore reaped by a later attempt or run
   # whose teardown job lands there; deterministic per-host reaping needs a host
   # label on the runners, which is fleet-owned.
   # ───────────────────────────────────────────────────────────────────────────

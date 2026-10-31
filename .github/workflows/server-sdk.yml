@@ -69,10 +69,11 @@ jobs:
 
   test:
     name: Test
-    # Hosted runner: `-race` needs cgo and the self-hosted `memory` pool is not
-    # guaranteed to have a C compiler — the Debian host has no gcc today, and
-    # the other host is outside this repo's control. Hosted ubuntu ships gcc,
-    # and running this unprivileged test job there is safe for fork PRs.
+    # Hosted runner by choice, not for a missing toolchain: both hosts of the
+    # self-hosted `memory` pool can build cgo now, so `-race` would work there.
+    # It stays hosted because this unprivileged test job is fork-safe on hosted
+    # ubuntu, its 30-minute timeout fits that runner, and `-race` would compete
+    # with the jobs sharing the pool. Revisit together with those, not alone.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     if: "!startsWith(github.ref, 'refs/tags/')"

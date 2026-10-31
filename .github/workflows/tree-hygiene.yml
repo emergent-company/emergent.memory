@@ -35,76 +35,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Scan tracked files
+        # The scan, its pattern and its exemption rules live in
+        # .github/scripts/tree-hygiene.sh so they can be tested
+        # (.github/scripts/tree-hygiene.test.sh, run from ci.yml's meta job);
+        # the script is the single copy, and the test fails if this step stops
+        # calling it. Dependency-free: bash + git + grep, no setup needed.
         shell: bash
-        run: |
-          set -euo pipefail
-          ALLOWLIST=".github/tree-hygiene-allowlist.txt"
-          BASELINE=".github/tree-hygiene-baseline.txt"
-          ALWAYS_EXEMPT=(".github/workflows/tree-hygiene.yml" "$ALLOWLIST" "$BASELINE")
-
-          exempt() {
-            local path="$1" p
-            for p in "${ALWAYS_EXEMPT[@]}"; do
-              [[ "$path" == "$p" ]] && return 0
-            done
-            # Allowlist = legitimate permanent references. Baseline = pre-existing
-            # internal dev-host debt, a ratchet: entries may be removed, never added.
-            while IFS= read -r line || [[ -n "$line" ]]; do
-              [[ -z "$line" || "$line" == \#* ]] && continue
-              p="${line%%#*}"        # drop inline comment
-              p="${p//[[:space:]]/}" # drop surrounding whitespace
-              p="${p%/}"             # accept a directory prefix with or without a trailing slash
-              [[ -z "$p" ]] && continue
-              if [[ "$path" == "$p" || "$path" == "$p"/* ]]; then
-                return 0
-              fi
-            done < <(cat "$ALLOWLIST" "$BASELINE" 2>/dev/null || true)
-            return 1
-          }
-
-          # Raw dev tailnet IPs are not hostnames, so they need their own
-          # alternatives. The 100.64.0.0/10 range appears legitimately in SSRF
-          # guards/tests; match the specific leaked hosts, not the whole range.
-          #
-          # Coverage:
-          #   - tailnet names / public DNS of our own hosts (.ts.net, dev.emergent-company.ai)
-          #   - rig, dev, prod and Mac build host names (`memory-hetzner` = prod,
-          #     `memory-dev` = dev) and their addresses, plus the `mcj-` prefixed
-          #     machine, runner and build-target names as a family (matching the
-          #     prefix, not the particular machine names known today)
-          #   - the agent-rig filesystem layout (~/.paseo, /Users/mcj, and rig checkouts
-          #     under /root: emergent, blueprints, workspace-memory, doc-processing, files-memory)
-          #   - private repo names that must never be named from the product repo
-          #     (the infra repo under both its current and its former name, and the
-          #     fleet repo)
-          #   - prefixed issue numbers in those repos, which resolve to unrelated
-          #     issues here: `infra #123`, `infra issue #123`,
-          #     `infra tracking issue #123`, plus the spellings a case-sensitive,
-          #     single-space pattern let through — any capitalisation (`Infra`,
-          #     `INFRA`), any run of spaces or a tab where one space was expected
-          #     (`infra  #123`, `infra<TAB>issue<TAB>#123`), a colon separator
-          #     (`infra: #123`) and no separator at all (`infra#123`). The whole
-          #     scan is case-insensitive, not just this
-          #     alternative: `MEMORY-HETZNER` is the same leak as `memory-hetzner`.
-          #     "Infra #123" in prose is therefore a violation too — reword it.
-          #     A bare `#123` cannot be distinguished from a product issue, so the
-          #     gate cannot catch it: reword or drop such references by hand.
-          #   - a tenant name that leaked once and must not come back
-          raw="$(git grep -n -I -i -E '\.ts\.net\b|emergent-dev|10\.10\.10\.|100\.69\.175\.118|100\.91\.139\.28|emergent\.memory\.infra|emergent-infra|b4ng-link|\.dev\.emergent-company\.ai|memory-home|memory-hetzner|\bmemory-dev\b|\bmemory-prod\b|mcj-|/Users/mcj|\bmcj@|Mac\.banglab|\bbanglab\b|100\.118\.32\.29|100\.119\.120\.71|100\.121\.213\.124|100\.84\.125\.23|100\.67\.61\.62|95\.216\.38\.217|195\.201\.196\.144|46\.4\.253\.156|emergent\.memory\.mac|emergent\.memory\.website|emergent\.memory-archive|/root/(emergent|blueprints|workspace-memory|doc-processing|files-memory)|/opt/emergent-dev|\.paseo/|legalplant|infra([[:space:]]*:[[:space:]]*|[[:space:]]+)?(issue[[:space:]]+|tracking[[:space:]]+issue[[:space:]]+)?[[:space:]]*#[0-9]+' -- . 2>/dev/null || true)"
-
-          violations=""
-          while IFS= read -r hit; do
-            [[ -z "$hit" ]] && continue
-            path="${hit%%:*}"
-            if exempt "$path"; then
-              continue
-            fi
-            violations+="${hit}"$'\n'
-          done <<< "$raw"
-
-          if [[ -n "$violations" ]]; then
-            echo "::error::Internal hostnames / private-repo references found in tracked files:"
-            printf '%s' "$violations"
-            exit 1
-          fi
-          echo "Tree hygiene OK — no internal hostnames / private-repo references in tracked files."
+        run: .github/scripts/tree-hygiene.sh
