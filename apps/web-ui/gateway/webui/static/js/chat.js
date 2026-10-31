@@ -189,10 +189,11 @@
         // A message parked on a brand-new (id-less) conversation moves with it
         // once the server assigns the id, so it is never stranded or delivered
         // to another conversation.
-        if (!prevId && queueStore["__new__"]) {
-          queueStore[conversationId] = queueStore["__new__"];
-          delete queueStore["__new__"];
-          try { localStorage.removeItem("memory.chat.queue.v1.__new__"); } catch (e) {}
+        var newKey = newChatQueueKey();
+        if (!prevId && queueStore[newKey]) {
+          queueStore[conversationId] = queueStore[newKey];
+          delete queueStore[newKey];
+          try { localStorage.removeItem("memory.chat.queue.v1." + newKey); } catch (e) {}
           persistQueue();
           renderQueue();
         }
@@ -2490,7 +2491,17 @@
 
   // --- composer queue (client-side, per conversation) ---------------------
 
-  function activeQueueKey() { return conversationId || "__new__"; }
+  // A staged queue for an unsaved chat must be scoped to the tenancy it was
+  // typed in: the old browser-global "__new__" key leaked draft text between
+  // projects (#2223). Conversation ids are already project-scoped.
+  function newChatQueueKey() {
+    var body = document.body;
+    var org = (body && body.getAttribute("data-org-id")) || "";
+    var project = (body && body.getAttribute("data-project-id")) || "";
+    return "new." + encodeURIComponent(org) + "." + encodeURIComponent(project);
+  }
+
+  function activeQueueKey() { return conversationId || newChatQueueKey(); }
 
   function activeQueue() {
     var k = activeQueueKey();
@@ -2502,6 +2513,9 @@
     var items = [];
     var armed = false;
     try {
+      // The retired unscoped new-chat key carries no tenancy and cannot be
+      // attributed safely — drop it instead of adopting another project's draft.
+      localStorage.removeItem("memory.chat.queue.v1.__new__");
       var raw = localStorage.getItem("memory.chat.queue.v1." + k);
       if (raw) {
         var d = JSON.parse(raw);

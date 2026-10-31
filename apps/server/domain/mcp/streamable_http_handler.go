@@ -62,6 +62,15 @@ type SSEStream struct {
 	Done        chan struct{}
 	LastEventID int64
 	CreatedAt   time.Time
+	closeOnce   sync.Once
+}
+
+// Close signals the stream's reader exactly once. Both the GET handler's
+// deferred cleanup and session termination (DELETE) can reach a stream, so a
+// bare close(stream.Done) raced and panicked with "close of closed channel"
+// (#2338).
+func (s *SSEStream) Close() {
+	s.closeOnce.Do(func() { close(s.Done) })
 }
 
 // NewStreamableHTTPHandler creates a new spec-compliant MCP handler
@@ -325,7 +334,7 @@ func (h *StreamableHTTPHandler) handleGET(c echo.Context, protocolVersion string
 			}
 		}
 		h.streamsMu.Unlock()
-		close(stream.Done)
+		stream.Close()
 	}()
 
 	h.log.Info("SSE stream opened",
@@ -396,7 +405,7 @@ func (h *StreamableHTTPHandler) handleDELETE(c echo.Context) error {
 	h.streamsMu.Lock()
 	streams := h.streams[sessionID]
 	for _, stream := range streams {
-		close(stream.Done)
+		stream.Close()
 	}
 	delete(h.streams, sessionID)
 	h.streamsMu.Unlock()
