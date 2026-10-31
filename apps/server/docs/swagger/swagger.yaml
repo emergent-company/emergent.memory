@@ -10779,7 +10779,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.88.4
+  version: 0.88.5
 paths:
   /.well-known/oauth-authorization-server:
     get:
