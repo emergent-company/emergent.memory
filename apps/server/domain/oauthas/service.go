@@ -33,7 +33,7 @@ const (
 // SupportedScopes is the complete scope allowlist advertised in metadata. A
 // client can never widen beyond this set, and an authorization code stores only
 // a validated subset.
-var SupportedScopes = []string{"graph:read", "graph:write", "schema:read", "projects:read"}
+var SupportedScopes = []string{"graph:read", "graph:write", "schema:read", "projects:read", "chat:use"}
 
 var supportedScopeSet = func() map[string]bool {
 	m := make(map[string]bool, len(SupportedScopes))

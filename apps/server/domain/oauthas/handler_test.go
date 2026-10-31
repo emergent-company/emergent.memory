@@ -91,7 +91,7 @@ func TestMetadataShape(t *testing.T) {
 	require.Equal(t, []any{"authorization_code"}, body["grant_types_supported"])
 	require.Equal(t, []any{"S256"}, body["code_challenge_methods_supported"])
 	require.Equal(t, []any{"none"}, body["token_endpoint_auth_methods_supported"])
-	require.Equal(t, []any{"graph:read", "graph:write", "schema:read", "projects:read"}, body["scopes_supported"])
+	require.Equal(t, []any{"graph:read", "graph:write", "schema:read", "projects:read", "chat:use"}, body["scopes_supported"])
 }
 
 func TestMetadataDerivesIssuerFromRequest(t *testing.T) {
