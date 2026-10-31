@@ -548,14 +548,17 @@ templ propertyInput(def objectPropertyDef, vals []string) {
 			v = vals[0]
 		}
 	}}
+	// Marker: this property was rendered in the form. It lets an empty (or
+	// emptied TagList) submission clear a stored value instead of being skipped
+	// (#2330). The prefix is distinct so the prop_* parser ignores it.
+	<input type="hidden" name={ "propm_present_" + def.Name } value="1"/>
 	if def.Type == "boolean" {
-		<input type="hidden" name={ "prop_" + def.Name } value="false"/>
-		@fm.ToggleInput(fm.ToggleInputProps{
-			Name:    "prop_" + def.Name,
-			Value:   "true",
-			Checked: v == "true",
-			Class:   "toggle",
-		})
+		// Three-state so "unset" (omit/delete) and "false" stay distinguishable.
+		<select name={ "prop_" + def.Name } class="select w-full" aria-label={ def.Label() }>
+			<option value="" selected?={ v != "true" && v != "false" }>Not set</option>
+			<option value="true" selected?={ v == "true" }>Yes</option>
+			<option value="false" selected?={ v == "false" }>No</option>
+		</select>
 	} else if def.Type == "date" {
 		<input name={ "prop_" + def.Name } type="date" value={ dateInputValue(v) } class="input w-full"/>
 	} else if def.Type == "number" {
@@ -877,6 +880,7 @@ templ objectTypePropertyField(r objectTypePropertyRow) {
 		if r.Declared {
 			@propertyInput(r.Def, r.Values)
 		} else {
+			<input type="hidden" name={ "propm_present_" + r.Name } value="1"/>
 			@longTextarea("prop_"+r.Name, value)
 		}
 	}

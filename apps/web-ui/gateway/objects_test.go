@@ -884,14 +884,15 @@ func TestRenderObjectDetailTypeAwareWidgets(t *testing.T) {
 	}
 	html := renderHTML(t, ObjectDetailPage(obj, objectBranchRef{}, nil, nil, nil, nil, nil, nil, "", nil, nil, propDefs, nil, nil, nil, ""))
 
-	// boolean → hidden false + checked toggle (never a text input)
-	if !strings.Contains(html, `name="prop_cleared" value="false"`) {
-		t.Error("boolean prop: missing hidden false input")
+	// boolean → three-state select (unset/true/false), never a text input
+	if !strings.Contains(html, `<select name="prop_cleared"`) {
+		t.Error("boolean prop: expected a select")
 	}
-	// Pins ToggleInput's canonical attribute order (class before checked) —
-	// semantically identical to the former hand-rolled markup.
-	if !strings.Contains(html, `type="checkbox" name="prop_cleared" value="true" class="toggle" checked`) {
-		t.Error("boolean prop: expected a checked toggle, got something else")
+	if !strings.Contains(html, `<option value="true" selected>Yes</option>`) {
+		t.Error("boolean prop: expected Yes selected for a stored true")
+	}
+	if strings.Contains(html, `name="prop_cleared" value="false"`) {
+		t.Error("boolean prop must not post a hidden false (that invents a value)")
 	}
 	if strings.Contains(html, `type="text" name="prop_cleared"`) {
 		t.Error("boolean prop must not render as a text input")
@@ -1870,6 +1871,72 @@ func TestUIObjectUpdate(t *testing.T) {
 		}
 	})
 
+	t.Run("clearing a stored property submits an explicit delete", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := newServer(f)
+		e := echo.New()
+		e.POST("/objects/:id", s.uiObjectUpdate)
+
+		form := url.Values{}
+		form.Set("propm_present_title", "1")
+		form.Set("prop_title", "")
+		req := httptest.NewRequest(http.MethodPost, "/objects/o1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		got := f.lastUpdateReq
+		if got == nil {
+			t.Fatal("UpdateObject not called")
+		}
+		v, ok := got.Properties["title"]
+		if !ok || v != nil {
+			t.Errorf("emptied title = %#v (present=%v), want an explicit nil delete", v, ok)
+		}
+	})
+
+	t.Run("untouched boolean stays unset instead of persisting false", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := newServer(f)
+		e := echo.New()
+		e.POST("/objects/:id", s.uiObjectUpdate)
+
+		form := url.Values{}
+		form.Set("key", "renamed")
+		form.Set("propm_present_active", "1")
+		form.Set("prop_active", "") // Not set
+		req := httptest.NewRequest(http.MethodPost, "/objects/o1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		got := f.lastUpdateReq
+		v, ok := got.Properties["active"]
+		if !ok || v != nil {
+			t.Errorf("unset boolean = %#v (present=%v), want nil delete, not false", v, ok)
+		}
+	})
+
+	t.Run("emptied tag list deletes the stored array", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := newServer(f)
+		e := echo.New()
+		e.POST("/objects/:id", s.uiObjectUpdate)
+
+		form := url.Values{}
+		form.Set("propm_present_tags", "1")
+		req := httptest.NewRequest(http.MethodPost, "/objects/o1", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		got := f.lastUpdateReq
+		v, ok := got.Properties["tags"]
+		if !ok || v != nil {
+			t.Errorf("emptied tags = %#v (present=%v), want nil delete", v, ok)
+		}
+	})
+
 	t.Run("update error redirects back to the submitted object with err flash", func(t *testing.T) {
 		f := &fakeMemory{updateObjectErr: fmt.Errorf("boom")}
 		s := newServer(f)
@@ -2360,10 +2427,10 @@ func TestRenderObjectCreatePage(t *testing.T) {
 			`name="prop_born" type="date"`,
 			// number → numeric input
 			`name="prop_age" type="number" step="any"`,
-			// boolean → hidden false + daisyUI toggle switch
-			`type="hidden" name="prop_active" value="false"`,
-			`type="checkbox" name="prop_active" value="true"`,
-			`class="toggle"`,
+			// boolean → three-state select
+			`<select name="prop_active"`,
+			`<option value="true"`,
+			`Not set`,
 			// array/object → TagList chip inputs (no suggestions)
 			`id="prop-tags"`, `placeholder="Add an item..."`,
 			`id="prop-meta"`,
@@ -2395,9 +2462,8 @@ func TestRenderObjectCreatePage(t *testing.T) {
 	t.Run("boolean toggle reflects a true form value", func(t *testing.T) {
 		form := objectCreateForm{Type: "person", Props: map[string][]string{"active": {"true"}}}
 		html := renderHTML(t, ObjectCreatePage(objectTypes, propDefs, form, nil, nil, nil))
-		// Pins ToggleInput's canonical attribute order (class before checked).
-		if !strings.Contains(html, `type="checkbox" name="prop_active" value="true" class="toggle" checked`) {
-			t.Errorf("checked toggle missing in:\n%s", html)
+		if !strings.Contains(html, `<option value="true" selected>Yes</option>`) {
+			t.Errorf("stored true must select Yes in:\n%s", html)
 		}
 	})
 
@@ -2818,24 +2884,27 @@ func TestPropertyInput(t *testing.T) {
 		t.Errorf("date input missing value in:\n%s", htmlVal)
 	}
 
-	// boolean renders the hidden false + daisyUI toggle pair, reflecting the value
+	// boolean renders a three-state select and never posts a hidden false
 	html := renderHTML(t, propertyInput(objectPropertyDef{Name: "active", Type: "boolean"}, []string{"true"}))
 	for _, want := range []string{
-		`type="hidden" name="prop_active" value="false"`,
-		// Pins ToggleInput's canonical attribute order (class before checked).
-		`type="checkbox" name="prop_active" value="true" class="toggle" checked`,
-		`class="toggle"`,
+		`name="propm_present_active" value="1"`,
+		`<select name="prop_active"`,
+		`<option value="true" selected>Yes</option>`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("boolean HTML missing %q in:\n%s", want, html)
 		}
 	}
-	if strings.Contains(html, "checkbox checkbox-sm") || strings.Contains(html, ">true</span>") {
-		t.Errorf("boolean should render a toggle, not a labeled checkbox:\n%s", html)
+	if strings.Contains(html, `name="prop_active" value="false"`) {
+		t.Errorf("boolean must not post an implicit false:\n%s", html)
 	}
-	htmlUnchecked := renderHTML(t, propertyInput(objectPropertyDef{Name: "active", Type: "boolean"}, []string{"false"}))
-	if strings.Contains(htmlUnchecked, "checked") {
-		t.Errorf("unchecked boolean should not render checked:\n%s", htmlUnchecked)
+	htmlUnset := renderHTML(t, propertyInput(objectPropertyDef{Name: "active", Type: "boolean"}, nil))
+	if !strings.Contains(htmlUnset, `<option value="" selected>Not set</option>`) {
+		t.Errorf("unset boolean must default to Not set:\n%s", htmlUnset)
+	}
+	htmlFalse := renderHTML(t, propertyInput(objectPropertyDef{Name: "active", Type: "boolean"}, []string{"false"}))
+	if !strings.Contains(htmlFalse, `<option value="false" selected>No</option>`) {
+		t.Errorf("stored false must select No:\n%s", htmlFalse)
 	}
 
 	// multi-line string fields carry a live character counter, seeded with the

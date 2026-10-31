@@ -493,6 +493,35 @@
     toolRunChoices.set(key, !!open);
   }
 
+  // captureLiveToolRunChoice / adoptNewestToolRunChoice carry the reader's
+  // open/closed choice across the live-DOM -> history re-render on a surface
+  // whose stream never names the turn's run id (the public share page, #2323).
+  // The live run is keyed "live-turn-N"; after the history render its
+  // replacement is keyed by the item's run id.
+  function captureLiveToolRunChoice(container) {
+    if (!container) return null;
+    var live = container.querySelector('details.memory-tool-run[data-turn^="live-turn-"]');
+    if (!live) return null;
+    return live.hasAttribute("open");
+  }
+
+  function adoptNewestToolRunChoice(container, open) {
+    if (!container || open === null || open === undefined) return false;
+    var runs = container.querySelectorAll('details.memory-tool-run[data-turn]');
+    var newest = null;
+    for (var i = 0; i < runs.length; i++) {
+      var key = runs[i].getAttribute("data-turn") || "";
+      if (key.indexOf("live-turn-") === 0) continue;
+      newest = runs[i];
+    }
+    if (!newest) return false;
+    var runKey = newest.getAttribute("data-turn") || "";
+    if (runKey) rememberToolRunChoice(runKey, open);
+    if (open) newest.setAttribute("open", "");
+    else newest.removeAttribute("open");
+    return true;
+  }
+
   // auxShell is the chat-start row a step and a run both sit in: the same shell,
   // so a run summary lines up with the step it replaces, and a single-step turn
   // can go back to being a plain step without moving its text.
@@ -2375,6 +2404,8 @@
     renderA2UISurface: renderA2UISurface,
     auxShell: auxShell,
     createToolRun: createToolRun,
+    captureLiveToolRunChoice: captureLiveToolRunChoice,
+    adoptNewestToolRunChoice: adoptNewestToolRunChoice,
     renderTimeline: renderTimeline,
     humanizeTypeName: humanizeTypeName,
     sourcesFooter: sourcesFooter,

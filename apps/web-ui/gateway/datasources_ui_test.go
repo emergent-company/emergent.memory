@@ -565,6 +565,42 @@ func TestRenderDataSourceDetailPage(t *testing.T) {
 	}
 }
 
+// TestRenderDataSourceDetailPageHidesOAuthCardForConfigProvider pins #2295: a
+// provider that authenticates with config fields (no oauth method) must not
+// render the OAuth credentials card or its "set one up" warning, while an OAuth
+// provider still does.
+func TestRenderDataSourceDetailPageHidesOAuthCardForConfigProvider(t *testing.T) {
+	webSrc := DSIntegration{ID: "s1", Name: "Crawler", ProviderType: "web", Status: "active"}
+	configOnly := &dsCredentialSummary{
+		ProviderName: "web",
+		SourceID:     "s1",
+		AccountLabel: "Web account",
+		GrantedLabel: "Not recorded at connect",
+		NoOAuth:      true,
+	}
+	html := renderHTML(t, DataSourceDetailPage(&webSrc, "Web", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, configOnly, "", nil))
+	if strings.Contains(html, `data-testid="ds-credentials-card"`) {
+		t.Error("config-only provider must not render the OAuth credentials card")
+	}
+	if strings.Contains(html, "No OAuth app is resolved") {
+		t.Error("config-only provider must not warn about a missing OAuth app")
+	}
+
+	oauthSrc := DSIntegration{ID: "s2", Name: "Drive", ProviderType: "google_drive", Status: "active"}
+	oauthSummary := &dsCredentialSummary{
+		ProviderName: "google_drive",
+		SourceID:     "s2",
+		AccountLabel: "Google account",
+		GrantedLabel: "Read-only Drive access (drive.readonly)",
+		GrantedTone:  "success",
+		Configured:   true,
+	}
+	oauthHTML := renderHTML(t, DataSourceDetailPage(&oauthSrc, "Google Drive", nil, nil, dsSavedCredentialPicker{}, nil, nil, nil, oauthSummary, "", nil))
+	if !strings.Contains(oauthHTML, `data-testid="ds-credentials-card"`) {
+		t.Error("OAuth provider must keep rendering the credentials card")
+	}
+}
+
 // TestRenderDataSourceDetailPageResourceBanner asserts a source whose config is
 // missing its sync target shows the "finish connecting" banner linking to the
 // resource step, and a complete source does not.

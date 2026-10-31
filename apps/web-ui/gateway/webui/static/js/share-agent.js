@@ -673,6 +673,10 @@
   // or a decision lands.
   function reloadTranscript() {
     if (!state.sessionId) return;
+    // The share stream does not carry the turn's run id, so the live run is
+    // keyed "live-turn-N". Capture the reader's state before the history render
+    // replaces it, then re-key it onto the newest recorded run id (#2323).
+    var liveRunOpen = MemoryChatComponents.captureLiveToolRunChoice(els.messages);
     fetch(API + "/sessions/" + encodeURIComponent(state.sessionId), {
       credentials: "include",
       headers: { Accept: "application/json" },
@@ -681,6 +685,7 @@
       .then(function (body) {
         if (!body) return;
         renderTimelineItems(body.items || [], body.pending_approvals || []);
+        MemoryChatComponents.adoptNewestToolRunChoice(els.messages, liveRunOpen);
         highlightActive();
       })
       .catch(function () { /* keep the live transcript on failure */ });

@@ -836,7 +836,10 @@ templ DataSourceDetailPage(src *DSIntegration, providerName string, configFields
 				@dsSyncScopeCard(src, credentialSummary)
 			}
 			@dsConnectionCard(src)
-			if credentialSummary != nil {
+			// The credentials card is an OAuth-app summary; a config/credentials
+			// provider has no OAuth app to resolve, so showing it (and its "set one
+			// up" warning) would report a healthy source as broken (#2295).
+			if credentialSummary != nil && !credentialSummary.NoOAuth {
 				@dsCredentialCard(*credentialSummary)
 			}
 			@dsEditCard(src, dsSyncOptionsNote(configFields, credentialFields), dsSettingsConfigFields(configFields), credentialFields, picker)

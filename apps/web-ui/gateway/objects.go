@@ -868,22 +868,45 @@ func (s *Server) uiObjectUpdate(c echo.Context) error {
 	}
 	req.Labels = indexedFormValues(c.Request().PostForm, "labels")
 
+	// Every rendered property carries a `propm_present_<name>` marker. Start
+	// from "delete" for each rendered property, then overwrite the ones with a
+	// submitted value: emptying a field (or a TagList) now clears the stored key
+	// instead of being silently skipped (#2330). nil is the server's delete
+	// sentinel; an untouched boolean stays unset instead of persisting false.
 	props := map[string]any{}
+	for field := range c.Request().PostForm {
+		if name, ok := strings.CutPrefix(field, "propm_present_"); ok && name != "" {
+			props[name] = nil
+		}
+	}
 	for field, vals := range c.Request().PostForm {
 		name, ok := strings.CutPrefix(field, "prop_")
 		if !ok || name == "" {
 			continue
 		}
+		if i := strings.IndexByte(name, '['); i >= 0 {
+			name = name[:i] // TagList field prop_x[0] → x
+		}
+		if indexed := indexedFormValues(c.Request().PostForm, "prop_"+name); indexed != nil {
+			if len(indexed) > 0 {
+				props[name] = indexed
+			}
+			continue
+		}
+		last := ""
 		for _, v := range vals {
-			if v == "" {
-				continue
+			if v != "" {
+				last = v
 			}
-			var parsed any
-			if json.Unmarshal([]byte(v), &parsed) == nil {
-				props[name] = parsed
-			} else {
-				props[name] = v
-			}
+		}
+		if last == "" {
+			continue
+		}
+		var parsed any
+		if json.Unmarshal([]byte(last), &parsed) == nil {
+			props[name] = parsed
+		} else {
+			props[name] = last
 		}
 	}
 	if len(props) > 0 {

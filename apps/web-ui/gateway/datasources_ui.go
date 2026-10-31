@@ -1147,6 +1147,11 @@ type dsCredentialSummary struct {
 	// static app is missing for a provider that needs none, which is the exact
 	// symptom of #2213 — so the "set one up" warning is suppressed instead.
 	ProviderUnknown bool
+	// NoOAuth reports that a resolved provider does not advertise the OAuth auth
+	// method. Its config/credentials auth has no OAuth app to resolve, so the
+	// OAuth credentials card (and its "set one up" warning) does not apply
+	// (#2295). The zero value keeps the card for OAuth/unknown providers.
+	NoOAuth bool
 	// SourceID is the source this summary belongs to, so an action can target
 	// that source instead of starting a new connect flow (#2107).
 	SourceID string
@@ -1259,6 +1264,9 @@ func (s *Server) dsCredentialSummary(ctx context.Context, src *DSIntegration, pr
 		GrantedLabel:    "Not recorded at connect",
 		GrantedStrategy: src.OAuthGrantedStrategy,
 		ProviderUnknown: provider == nil,
+		// Unknown catalog entry keeps the existing behaviour (the warning is
+		// already suppressed); only a resolved provider without oauth hides it.
+		NoOAuth: provider != nil && !slices.Contains(provider.AuthMethods, "oauth"),
 	}
 	// A self-registering provider (Trale) registers its OAuth client through
 	// RFC 7591 at connect time: there is no admin app to resolve, nothing to set
