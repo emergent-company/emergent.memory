@@ -18,18 +18,34 @@ import (
 // they stay correct after htmx appends a page of rows.
 const objectsBrowserSelectionJS = `{
 	sel: [],
-	get count() { return this.sel.length },
-	get all() {
+	// The desktop table and the mobile card list are both in the DOM (one is
+	// hidden by CSS), so every object has two selection inputs. All getters and
+	// bulk toggles work on unique values, otherwise the select-all checkbox
+	// never reaches "all" and toggleAll doubles the selection count.
+	uniqueIDs(values) {
+		var seen = Object.create(null), out = [];
+		for (var i = 0; i < values.length; i++) {
+			var v = values[i];
+			if (!seen[v]) { seen[v] = true; out.push(v); }
+		}
+		return out;
+	},
+	allIDs() {
 		var boxes = this.$root.querySelectorAll('input[data-object-select]');
-		return boxes.length > 0 && this.sel.length === boxes.length;
+		return this.uniqueIDs(Array.prototype.map.call(boxes, function (el) { return el.value; }));
+	},
+	get count() { return this.uniqueIDs(this.sel).length },
+	get all() {
+		var ids = this.allIDs();
+		return ids.length > 0 && this.uniqueIDs(this.sel).length === ids.length;
 	},
 	get some() {
-		var boxes = this.$root.querySelectorAll('input[data-object-select]');
-		return this.sel.length > 0 && this.sel.length < boxes.length;
+		var selected = this.uniqueIDs(this.sel).length;
+		var total = this.allIDs().length;
+		return selected > 0 && selected < total;
 	},
 	toggleAll(checked) {
-		var boxes = this.$root.querySelectorAll('input[data-object-select]');
-		this.sel = checked ? Array.prototype.map.call(boxes, function (el) { return el.value }) : [];
+		this.sel = checked ? this.allIDs() : [];
 	},
 	clear() { this.sel = [] }
 }`

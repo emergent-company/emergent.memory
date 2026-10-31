@@ -672,3 +672,43 @@ func TestObjectsBrowserRowsPartialAppendsBothLists(t *testing.T) {
 		}
 	}
 }
+
+// TestObjectsBrowserMobileRowsAreSelectable pins the mobile counterpart of the
+// table selection surface (#2237): each mobile card carries a checkbox that
+// feeds the same Alpine `sel` model, and the checkbox is a SIBLING of the card
+// anchor (interactive content nested in a link is invalid and would navigate).
+func TestObjectsBrowserMobileRowsAreSelectable(t *testing.T) {
+	html := renderHTML(t, ObjectsPage(objectsBrowserSampleData("")))
+
+	start := strings.Index(html, `id="objects-mobile-list"`)
+	if start < 0 {
+		t.Fatal("mobile object list missing")
+	}
+	end := strings.Index(html[start:], `id="objects-load-more"`)
+	if end < 0 {
+		end = len(html) - start
+	}
+	mobile := html[start : start+end]
+
+	if !strings.Contains(mobile, `data-testid="objects-mobile-row"`) {
+		t.Error("mobile rows missing their row marker")
+	}
+	if !strings.Contains(mobile, `data-object-select`) || !strings.Contains(mobile, `x-model="sel"`) {
+		t.Error("mobile rows must feed the shared Alpine selection model")
+	}
+	// The checkbox must come before the card anchor closes over the row: check
+	// the row's label/input precedes the anchor and that no anchor wraps it.
+	row := strings.Index(mobile, `data-testid="objects-mobile-row"`)
+	checkbox := strings.Index(mobile[row:], `data-object-select`)
+	labelClose := strings.Index(mobile[row:], `</label>`)
+	anchor := strings.Index(mobile[row+labelClose:], `<a `)
+	if row < 0 || checkbox < 0 || labelClose < 0 || anchor < 0 {
+		t.Fatalf("unexpected mobile row structure (row=%d checkbox=%d labelClose=%d anchor=%d)", row, checkbox, labelClose, anchor)
+	}
+	if checkbox > labelClose {
+		t.Error("mobile checkbox must live inside its own label, before the card anchor")
+	}
+	if !strings.Contains(mobile, `href="/objects/`) {
+		t.Error("mobile card anchor missing (tap must still open the object)")
+	}
+}

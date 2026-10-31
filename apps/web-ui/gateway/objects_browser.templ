@@ -433,8 +433,9 @@ templ objectsObjectMeta(r objectsBrowserRowView) {
 }
 
 // objectsBrowserMobileRows is the small-screen browse list: one compact card
-// per object with the same type accent and badges as the table row. Selection
-// stays a table affordance; the mobile list is for opening objects.
+// per object with the same type accent and badges as the table row. The card
+// body opens the object; the checkbox is a sibling of the anchor so a phone can
+// drive the same Alpine selection model (and bulk bar) as the table.
 templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
 	@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
 		<div id="objects-mobile-list" class="divide-base-200 divide-y">
@@ -450,31 +451,43 @@ templ objectsBrowserMobileRows(rows []objectsBrowserRowView, unified bool) {
 // hidden on small screens, so paginating only #objects-list would load rows no
 // phone can see.
 templ objectsBrowserMobileRow(r objectsBrowserRowView, unified bool) {
-	<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="hover:bg-base-200/40 flex items-start gap-3 px-4 py-3 transition-colors">
-		@typeIconTile(r.UI.Icon, r.UI.Color)
-		<div class="min-w-0 flex-1">
-			@objectsObjectMeta(r)
-			<div class="truncate text-sm font-medium">{ r.Label }</div>
-			<div class="mt-1 flex flex-wrap items-center gap-1">
-				if !unified {
-					if r.Status != "" {
-						@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
-							Size:  ui.BadgeSizeXS,
-							Dot:   true,
-							Attrs: templ.Attributes{"data-status": r.Status},
-						})
+	<div class="hover:bg-base-200/40 flex items-start gap-2 py-3 pr-2 pl-3 transition-colors" data-testid="objects-mobile-row">
+		<label class="mt-1.5 flex shrink-0 items-center">
+			<input
+				type="checkbox"
+				class="checkbox checkbox-sm"
+				value={ r.ID }
+				data-object-select
+				aria-label={ "Select " + r.Label }
+				x-model="sel"
+			/>
+		</label>
+		<a href={ templ.URL("/objects/" + url.PathEscape(r.ID)) } class="flex min-w-0 flex-1 items-start gap-3">
+			@typeIconTile(r.UI.Icon, r.UI.Color)
+			<div class="min-w-0 flex-1">
+				@objectsObjectMeta(r)
+				<div class="truncate text-sm font-medium">{ r.Label }</div>
+				<div class="mt-1 flex flex-wrap items-center gap-1">
+					if !unified {
+						if r.Status != "" {
+							@components.StatusBadge(r.StatusLabel, r.StatusIntent, "", components.StatusBadgeOpts{
+								Size:  ui.BadgeSizeXS,
+								Dot:   true,
+								Attrs: templ.Attributes{"data-status": r.Status},
+							})
+						}
+						if r.EmbeddingLabel != "" {
+							@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
+						}
 					}
-					if r.EmbeddingLabel != "" {
-						@ui.Badge(ui.BadgeProps{Label: r.EmbeddingLabel, Variant: r.EmbeddingVariant, Size: ui.BadgeSizeXS})
+					for _, l := range firstLabels(r.Labels, 2) {
+						@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
 					}
-				}
-				for _, l := range firstLabels(r.Labels, 2) {
-					@ui.Badge(ui.BadgeProps{Label: l, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
-				}
+				</div>
 			</div>
-		</div>
-		@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
-	</a>
+			@ui.IconSpan("lucide--chevron-right", "mt-2 size-4 shrink-0 text-muted-faint")
+		</a>
+	</div>
 }
 
 // objectsBrowserFooter sits below the table: the sort note on the left and the
