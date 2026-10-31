@@ -55,11 +55,12 @@ env:
 jobs:
   guard:
     name: guard
-    # Self-hosted: this job reads the PR body from the event payload and calls
-    # `gh api` — it never checks out PR code. Fork guard is defence in depth
-    # (forking is disabled here) and matches the other runner jobs.
+    # Hosted (#552): reads the PR body from the event payload and calls `gh api`
+    # — no checkout, no toolchain — so it must not hold a scarce self-hosted
+    # `memory` slot. Sub-minute runs are free once the repo is public. Fork
+    # guard is defence in depth (forking is disabled here).
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, memory]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check the linked issue is claimed
@@ -142,10 +143,12 @@ jobs:
     # a full audit on every close would scan for nothing and could churn the
     # tracking issue.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    # Self-hosted: schedule/dispatch only, from the default branch — never PR
-    # input. Needs `gh` and `jq`; the jq prerequisite is asserted below so a
-    # pool runner without it fails loudly instead of producing a broken report.
-    runs-on: [self-hosted, linux, x64, memory]
+    # Hosted (#552): schedule/dispatch only, from the default branch — never PR
+    # input — so it must not hold a self-hosted slot. Needs `gh` and `jq`
+    # (both preinstalled on ubuntu-latest); the prerequisite step below still
+    # asserts them so a bare runner fails loudly instead of producing a broken
+    # report.
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check runner prerequisites
@@ -314,8 +317,9 @@ jobs:
   close:
     name: close
     if: github.event_name == 'issues'
-    # Self-hosted: clears claim labels via `gh issue edit`; no checkout.
-    runs-on: [self-hosted, linux, x64, memory]
+    # Hosted (#552): clears claim labels via `gh issue edit`; no checkout, no
+    # toolchain — keep it off the self-hosted pool.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Clear the claim labels

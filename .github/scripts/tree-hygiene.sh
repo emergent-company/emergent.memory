@@ -11,8 +11,8 @@
 # of being noticed in production or by a reviewer reading the spellings off a
 # diff.
 #
-# Dependency-free on purpose (bash + git + grep): it runs on the self-hosted
-# runner before any toolchain step, and the workflow deliberately has no setup.
+# Dependency-free on purpose (bash + git + grep): it runs on a hosted runner
+# before any toolchain step, and the workflow deliberately has no setup.
 #
 # Coverage of the scan (case-insensitive, whitespace-flexible):
 #   - tailnet names / public DNS of our own hosts (.ts.net, dev.emergent-company.ai)

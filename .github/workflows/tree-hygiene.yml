@@ -24,12 +24,13 @@ permissions:
 jobs:
   tree-hygiene:
     name: Scan for internal hostnames
-    # Self-hosted: pure bash/grep over tracked files — no toolchain and no
-    # secrets. Fork guard keeps PR-controlled workflow/script content off the
-    # persistent runner; it is not a required check (branch protection requires
-    # only `ci` and `merge-guard`), so a skip on fork PRs blocks nothing.
+    # Hosted (#552): pure bash/grep over tracked files — no toolchain and no
+    # secrets — so it must not occupy a scarce self-hosted `memory` slot that
+    # build/test jobs need. Sub-minute runs are free once the repo is public;
+    # revert to the self-hosted label only if hosted minutes become a problem.
+    # Fork guard is kept so a fork PR still reports a clean skip (not required).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, memory]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
