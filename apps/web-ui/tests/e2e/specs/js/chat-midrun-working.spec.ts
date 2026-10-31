@@ -637,3 +637,44 @@ test.describe('chat.js mid-run open (chat-components/chat-host/chat-stream/chat)
     expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
   });
 });
+
+// Regression: chat.js wires onThinking through a closure because
+// `handleThinkingEvent` is a var assigned after makeHandleEvent() runs.
+// Capturing the var directly left it undefined, so live thinking frames were
+// silently dropped on /chat.
+test('a live thinking frame reaches the chat dispatcher', async ({ page }) => {
+  const errors = await bootstrap(page);
+  await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+
+  // The durable EventSource replays in-flight frames through the same
+  // dispatcher as the live one-shot stream.
+  await emitSSE(page, {
+    type: 'live_replay',
+    frames: [{ type: 'thinking', id: 'think-1', role: 'operator', text: 'live plan', done: false }],
+  });
+  const badge = page.locator('#chat-messages .memory-thinking');
+  await expect(badge).toHaveCount(1);
+  await expect(badge).toHaveClass(/memory-badge-live/);
+  await expect(badge.locator('.memory-thinking-body')).toHaveText('live plan');
+
+  expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+});
+
+test('a done thinking frame stops the live shimmer', async ({ page }) => {
+  const errors = await bootstrap(page);
+  await expect(page.locator('#chat-messages [data-memory-working]')).toHaveCount(1);
+
+  await emitSSE(page, {
+    type: 'live_replay',
+    frames: [
+      { type: 'thinking', id: 'think-1', role: 'operator', text: 'live plan', done: false },
+      { type: 'thinking', id: 'think-1', text: '', done: true },
+    ],
+  });
+  const badge = page.locator('#chat-messages .memory-thinking');
+  await expect(badge).toHaveCount(1);
+  await expect(badge).not.toHaveClass(/memory-badge-live/);
+  await expect(badge.locator('.memory-thinking-body')).toHaveText('live plan');
+
+  expect(errors, `uncaught page errors: ${errors.join(' | ')}`).toEqual([]);
+});

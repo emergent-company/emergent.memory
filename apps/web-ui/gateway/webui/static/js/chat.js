@@ -148,9 +148,10 @@
 
   // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
   // page-local (rail refresh + URL), and the thinking frame is chat-only
-  // (onThinking). handleThinkingEvent / railHas / updateUrl /
-  // refreshSessionRail are hoisted function declarations, so forward refs are
-  // fine.
+  // (onThinking). railHas / updateUrl / refreshSessionRail are hoisted function
+  // declarations. handleThinkingEvent is bound later (`var thinking.handle`), so
+  // onThinking forwards through a closure — capturing the var directly here
+  // would pin its hoisted `undefined` and silently drop every live frame.
   var handleEvent = MemoryChatHost.makeHandleEvent({
     getStreaming: function () { return streaming; },
     setBubbleHTML: function (v) { bubbleHTML = v; },
@@ -177,7 +178,7 @@
     },
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
-    onThinking: handleThinkingEvent,
+    onThinking: function (evt) { handleThinkingEvent(evt); },
     onMeta: function (evt) {
       if (evt.conversationId) {
         // A brand-new conversation (id not yet in the rail) should appear

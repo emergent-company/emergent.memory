@@ -1287,7 +1287,7 @@ func (s *Server) uiObjectNew(c echo.Context) error {
 	}
 	var objectTypes []CompiledType
 	if compiled != nil {
-		objectTypes = compiled.ObjectTypes
+		objectTypes = visibleCompiledTypes(compiled.ObjectTypes)
 	}
 	selectedType := c.QueryParam("type")
 	propDefs := compiledTypePropertyDefs(objectTypes, selectedType)
@@ -1344,7 +1344,7 @@ func (s *Server) uiObjectCreate(c echo.Context) error {
 	}
 	var objectTypes []CompiledType
 	if compiled != nil {
-		objectTypes = compiled.ObjectTypes
+		objectTypes = visibleCompiledTypes(compiled.ObjectTypes)
 	}
 	suggestions := s.objectLabelSuggestions(ctx)
 
@@ -2117,6 +2117,7 @@ func groupDigits(n int64) string {
 // object of the given type: those whose source or target is that type,
 // falling back to all types when objType is empty or nothing matches.
 func relationshipOptions(relTypes []CompiledType, objType string) []CompiledType {
+	relTypes = visibleCompiledTypes(relTypes)
 	if objType == "" {
 		return relTypes
 	}

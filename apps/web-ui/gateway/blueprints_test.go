@@ -1116,7 +1116,9 @@ func TestPropertyTypeToneHuesSeparated(t *testing.T) {
 	}
 
 	// The accepted registry vocabulary (see propertyTypeIntent), so every mapped
-	// type — not just the editor's options — is covered.
+	// type — not just the editor's options — is covered. This catches a new type
+	// whose intent has no measured tone; it does not compare per-type hues (two
+	// aliases may share a tone deliberately).
 	accepted := []string{
 		"string", "url", "number", "integer", "boolean", "date",
 		"md5", "sha1", "sha256", "sha512", "array", "object",
@@ -1143,6 +1145,35 @@ func TestPropertyTypeToneHuesSeparated(t *testing.T) {
 	}
 	if minSep < minSeparation {
 		t.Fatalf("minimum type-tone hue separation %.1f° is below the %.0f° floor (hues %v)", minSep, minSeparation, hues)
+	}
+}
+
+// TestDiffPropertiesTitleOnlyIsLabelChange pins that a title-only edit is a
+// label change, not a value/type change on the property row.
+func TestDiffPropertiesTitleOnlyIsLabelChange(t *testing.T) {
+	base := []PropertyDetail{{Name: "homepage", Type: "string"}}
+	target := []PropertyDetail{{Name: "homepage", Type: "string", Title: "Homepage"}}
+
+	diffs := diffProperties(base, target)
+	if len(diffs) != 1 {
+		t.Fatalf("diffs = %+v, want one property", diffs)
+	}
+	p := diffs[0]
+	if p.Title.Change == DiffChangeNone || p.Title.After != "Homepage" {
+		t.Errorf("title diff = %+v, want a Homepage label change", p.Title)
+	}
+	for name, fd := range map[string]FieldDiff{
+		"type":        p.Type,
+		"widget":      p.Widget,
+		"description": p.Description,
+		"required":    p.Required,
+	} {
+		if fd.Change != DiffChangeNone {
+			t.Errorf("%s change = %v, want none (a label edit is not a value/type change)", name, fd.Change)
+		}
+	}
+	if p.Change != DiffChangeChanged {
+		t.Errorf("row change = %v, want changed so the label surfaces", p.Change)
 	}
 }
 

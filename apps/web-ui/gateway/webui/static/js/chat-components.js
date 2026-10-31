@@ -871,7 +871,7 @@
   // in one object, so the pages that render thinking (/chat, the global
   // assistant drawer, public share pages) share one implementation instead of a
   // copy each.
-  //   opts.badgeCtx          passed to createThinkingBlock (may be a getter)
+  //   opts.badgeCtx          passed to createThinkingBlock
   //   opts.scrollToBottom()  called after a live delta lands
   // Returns:
   //   handle(evt)            live frame: a new id starts a badge in stream

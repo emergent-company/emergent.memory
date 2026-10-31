@@ -1,8 +1,8 @@
 /* Memory web UI — shared chat streaming engine.
-   Loaded by BOTH the /chat page (chat.js) and the global side panel
-   (sidepanel.js) so streaming, bubbles, tool chips, and question/approval
-   cards behave identically everywhere and there is exactly one
-   implementation to keep in sync.
+   Loaded by the /chat page (chat.js), the global side panel (sidepanel.js) and
+   the public share page (share-agent.js) so streaming, bubbles, tool chips, and
+   question/approval cards behave identically everywhere and there is exactly
+   one implementation to keep in sync.
 
    Pure helpers (normalizeStatus, summarizeText, relTime, …) are
    self-contained. The stateful engine (createEngine) takes a ctx object —
@@ -1120,7 +1120,7 @@
     /* ---------- streaming ---------- */
 
     async function streamChat(agent, text) {
-      ctx.onStreamStart(); // chat: clearThinking; sidepanel: no-op
+      ctx.onStreamStart(); // page hook: each host clears/restarts its thinking state
       // The shared wire transport (chat-transport.js) owns fetch + the
       // ReadableStream/TextDecoder/`data:`-frame loop and JSON-parses each
       // frame. This engine keeps only the page-facing behaviour: the stop-guard,
@@ -1219,7 +1219,7 @@
       streamFailed = true;
       ctx.streaming = false;
       closeLiveRun();
-      ctx.onStreamFail(); // chat: finalizeThinking; sidepanel: no-op
+      ctx.onStreamFail(); // page hook: each host finalizes its thinking state
       updateBubbleText();
       ctx.setStreaming(false);
       if (ctx.bubble) {

@@ -355,3 +355,19 @@ func TestFindCompiledObjectTypePrefersWinner(t *testing.T) {
 		t.Fatalf("only-shadowed Person = %+v, want the shadowed fallback", got)
 	}
 }
+
+// TestRelationshipDetailsForSkipsShadowed pins that an object type's detail page
+// lists an overridden relationship type once, in either list order.
+func TestRelationshipDetailsForSkipsShadowed(t *testing.T) {
+	winner := CompiledType{Name: "works_for", Label: "Works for", SourceType: "person", TargetType: "company"}
+	loser := CompiledType{Name: "works_for", Label: "Old label", SourceType: "person", TargetType: "company", Shadowed: true}
+	for _, rels := range [][]CompiledType{{loser, winner}, {winner, loser}} {
+		got := relationshipDetailsFor("person", rels)
+		if len(got) != 1 {
+			t.Fatalf("details = %+v, want one visible works_for (order %+v)", got, rels)
+		}
+		if got[0].Label != "Works for" {
+			t.Errorf("detail label = %q, want the winner's label", got[0].Label)
+		}
+	}
+}

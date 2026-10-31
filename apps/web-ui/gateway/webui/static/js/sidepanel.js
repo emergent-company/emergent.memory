@@ -535,6 +535,11 @@
     if (opts.keepLocalOnEmpty && items.length === 0 && history.length) return;
 
     conversationId = id;
+    // The persisted transcript is a first-boot paint only: once the server
+    // answers, the rendered timeline is authoritative and the local copy is
+    // dropped (a later offline boot has nothing to restore). Preferring the
+    // server is deliberate; keeping a compact copy as a fallback is a future
+    // improvement, not a current guarantee.
     history = [];
     if (messages) messages.innerHTML = "";
     if (empty) empty.classList.add("hidden");

@@ -182,15 +182,18 @@ Entity type schemas use **JSON Schema** to define object properties, validation 
 | **Object**     | `object`    | `"type": "object", "properties": {...}`        |
 | **Enum**       | `enum`      | `"enum": ["draft", "published", "archived"]`   |
 | **Format**     | `format`    | `"format": "email"` — documentation only (not enforced) |
-| **Validation** | constraints | `minLength`, `maxLength`, `minimum`, `maximum` |
+| **Validation** | constraints | `minLength`, `maxLength`, `minimum`, `maximum` — documentation only (not enforced) |
 | **Required**   | `required`  | `"required": ["field1", "field2"]`             |
 
 Only the types above are interpreted: `type` drives coercion and validation for
 `date`, `url`, the four hex-digest types, `number`, `boolean`, `array` and
-`object`. The remaining JSON-Schema keywords (`format`, `pattern`, `minLength`,
-`minItems`, `minimum`, …) are carried through for documentation and tooling but
-are **not** enforced when an object is written — use `date`, `url` or a
-hex-digest type when you need validation.
+`object`. `required` is interpreted per property, `default` is applied when an
+object is created, and `enum` drives the editor's select. The remaining
+JSON-Schema keywords (`format`, `pattern`, `minLength`, `maxLength`, `minItems`,
+`maxItems`, `minimum`, `maximum`) are carried through for documentation and
+tooling but are **not** enforced when an object is written — including `enum`:
+a write that bypasses the form is not rejected. Use `date`, `url` or a
+hex-digest type when you need write-time validation.
 
 `url` and the four hex-digest types are validated on write: a URL must be an
 absolute `http`/`https` URL with a host, and a hash must be exactly its digest

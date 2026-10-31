@@ -110,6 +110,26 @@ func visibleCompiledTypes(types []CompiledType) []CompiledType {
 	return out
 }
 
+// relationshipDetailsFor lists the visible (non-shadowed) relationship types
+// touching one object type, deduplicated by the compiled-type visibility rule so
+// an overridden declaration cannot render a second row.
+func relationshipDetailsFor(name string, relTypes []CompiledType) []RelationshipTypeDetail {
+	var out []RelationshipTypeDetail
+	for _, r := range visibleCompiledTypes(relTypes) {
+		if r.SourceType == name || r.TargetType == name {
+			out = append(out, RelationshipTypeDetail{
+				Name:        r.Name,
+				Label:       r.Label,
+				Description: r.Description,
+				SourceType:  r.SourceType,
+				TargetType:  r.TargetType,
+			})
+		}
+	}
+	sortRelationshipDetailsByName(out)
+	return out
+}
+
 // sortCompiledTypesByName sorts compiled types by name (case-insensitive,
 // stable) so the schema browser renders a deterministic alphabetical list.
 func sortCompiledTypesByName(types []CompiledType) {
@@ -146,18 +166,7 @@ func (s *Server) uiSchemaObjectType(c echo.Context) error {
 		SchemaName:    found.SchemaName,
 		SchemaVersion: found.SchemaVersion,
 	}
-	for _, r := range compiled.RelationshipTypes {
-		if r.SourceType == name || r.TargetType == name {
-			view.Relationships = append(view.Relationships, RelationshipTypeDetail{
-				Name:        r.Name,
-				Label:       r.Label,
-				Description: r.Description,
-				SourceType:  r.SourceType,
-				TargetType:  r.TargetType,
-			})
-		}
-	}
-	sortRelationshipDetailsByName(view.Relationships)
+	view.Relationships = relationshipDetailsFor(name, compiled.RelationshipTypes)
 	view.Provenance = provenanceFor(s.buildProvenanceIndex(ctx), *found)
 	s.attachSchemaHistory(ctx, view, found.SchemaID)
 	if c.QueryParam("updated") != "" {

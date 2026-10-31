@@ -194,6 +194,25 @@ func TestObjectPreviewStatusPlacement(t *testing.T) {
 	})
 }
 
+// TestObjectPreviewDeclaredLabel pins the title-precedence rule: a declared
+// JSON-Schema title is the row label, otherwise the drawer humanises the key.
+func TestObjectPreviewDeclaredLabel(t *testing.T) {
+	cases := []struct {
+		name string
+		def  objectPropertyDef
+		want string
+	}{
+		{"title wins", objectPropertyDef{Name: "entry_point", Title: "Entry point (URL)"}, "Entry point (URL)"},
+		{"untitled humanises", objectPropertyDef{Name: "entry_point"}, "Entry point"},
+		{"untitled single word", objectPropertyDef{Name: "email"}, "Email"},
+	}
+	for _, c := range cases {
+		if got := objectPreviewDeclaredLabel(c.def); got != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // TestObjectPreviewFieldLabel pins the humanised field label used by the type
 // panel, with the raw schema name kept separately as the row tooltip.
 func TestObjectPreviewFieldLabel(t *testing.T) {

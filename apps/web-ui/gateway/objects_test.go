@@ -2095,6 +2095,27 @@ func TestUIObjectNew(t *testing.T) {
 		}
 	})
 
+	t.Run("shadowed duplicate types render one option", func(t *testing.T) {
+		withShadow := &CompiledSchemaTypes{ObjectTypes: []CompiledType{
+			{Name: "person", Label: "Person (overridden)", Shadowed: true},
+			{Name: "person", Label: "Person"},
+		}}
+		f := &fakeMemory{compiled: withShadow}
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.GET("/objects/new", s.uiObjectNew)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/objects/new", nil))
+
+		body := rec.Body.String()
+		if got := strings.Count(body, `value="person"`); got != 1 {
+			t.Errorf("create form rendered %d person options, want 1 (shadowed duplicate leaked)", got)
+		}
+		if strings.Contains(body, "Person (overridden)") {
+			t.Error("create form rendered the shadowed declaration's label")
+		}
+	})
+
 	t.Run("compiled types failure renders the error state", func(t *testing.T) {
 		f := &fakeMemory{blueprintErr: fmt.Errorf("boom")}
 		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
@@ -3567,19 +3588,19 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 		{Name: "plain", Type: "string"},
 	}
 	const labelledLegend = `<legend class="fieldset-legend">Owner notes</legend>`
-	const keyHint = `<span class="label-text-alt text-base-content/60">owner_notes</span>`
+	const keyHintText = `>owner_notes</span>`
 
 	form := renderHTML(t, ObjectCreatePage([]CompiledType{{Name: "Person"}}, defs, objectCreateForm{Type: "Person"}, nil, nil, nil))
 	if !strings.Contains(form, labelledLegend) {
 		t.Errorf("create form must label the property by its title:\n%s", form)
 	}
-	if !strings.Contains(form, keyHint) {
-		t.Errorf("create form must keep the machine key visible as the hint:\n%s", form)
+	if !strings.Contains(form, keyHintText) {
+		t.Errorf("create form must keep the machine key visible as text:\n%s", form)
 	}
 	if !strings.Contains(form, `<legend class="fieldset-legend">plain</legend>`) {
 		t.Errorf("unlabelled property must keep its key as the label:\n%s", form)
 	}
-	if strings.Contains(form, `<span class="label-text-alt text-base-content/60">plain</span>`) {
+	if strings.Contains(form, `>plain</span>`) {
 		t.Errorf("unlabelled property must not repeat its key as a hint:\n%s", form)
 	}
 
@@ -3588,7 +3609,23 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	if !strings.Contains(detail, labelledLegend) {
 		t.Errorf("detail properties card must label the property by its title:\n%s", detail)
 	}
-	if !strings.Contains(detail, keyHint) {
-		t.Errorf("detail properties card must keep the machine key as the hint:\n%s", detail)
+	if !strings.Contains(detail, keyHintText) {
+		t.Errorf("detail properties card must keep the machine key as text:\n%s", detail)
+	}
+}
+
+// TestRelationshipOptionsSkipsShadowed pins that the connect-object dialog never
+// offers an overridden relationship declaration.
+func TestRelationshipOptionsSkipsShadowed(t *testing.T) {
+	rels := []CompiledType{
+		{Name: "works_for", Label: "Old label", SourceType: "person", Shadowed: true},
+		{Name: "works_for", Label: "Works for", SourceType: "person"},
+	}
+	got := relationshipOptions(rels, "person")
+	if len(got) != 1 {
+		t.Fatalf("options = %+v, want one visible works_for", got)
+	}
+	if got[0].Shadowed || got[0].Label != "Works for" {
+		t.Errorf("option = %+v, want the non-shadowed winner", got[0])
 	}
 }
