@@ -1718,6 +1718,24 @@ const server = http.createServer((req, res) => {
 
   // --- documents + version history ------------------------------------------
 
+  // Listing: enough seeded documents for the documents page (and its upload
+  // dialog) to render in the gateway-smoke lane.
+  if (path === "/api/documents" && req.method === "GET") {
+    const docs = Object.values(mockDocuments);
+    return json(res, {
+      documents: docs,
+      total: docs.length,
+      statusCounts: {
+        all: docs.length,
+        processing: 0,
+        ready: docs.length,
+        extracted: 0,
+        failed: 0,
+      },
+      next_cursor: "",
+    });
+  }
+
   const docVersionsMatch = path.match(/^\/api\/documents\/([^/]+)\/versions$/);
   if (docVersionsMatch && req.method === "GET") {
     return json(res, { versions: mockDocumentVersions[docVersionsMatch[1]] || [] });

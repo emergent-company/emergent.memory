@@ -77,6 +77,12 @@ tasks:
     cmds:
       - npx playwright test --config=datasources.config.ts
 
+  e2e:smoke:
+    desc: Run the per-PR gateway browser smoke (upload dialog, mobile shell, chat rail) against the hermetic mock harness (starts run-e2e.sh; run `npm ci` + `npx playwright install chromium` first)
+    dir: tests/e2e
+    cmds:
+      - npx playwright test --config=gateway-smoke.config.ts
+
   e2e:mcp:
     desc: Run the MCP servers inspect e2e suite against the hermetic mock harness (starts run-e2e.sh; run `npm ci` + `npx playwright install chromium` first)
     dir: tests/e2e

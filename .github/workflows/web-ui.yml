@@ -265,6 +265,64 @@ jobs:
         run: npx playwright test --config=datasources.config.ts
 
   # ───────────────────────────────────────────────────────────────────────────
+  # gateway-smoke: per-PR browser smoke (#564). The `*-ui.spec.ts` mutations
+  # specs are the only real gateway-UI coverage but need a session-mode gateway
+  # + Zitadel user and run only on a schedule, so dialog/markup regressions
+  # (#2287) merged green. This lane boots the same dev-mode mock harness as
+  # `datasources`/`share` and drives the highest-risk browser contracts —
+  # documents upload dialog, mobile shell, chat rail — on every PR. Ports are
+  # disjoint from the other hermetic lanes (8097/5301 and 8098/5302).
+  # ───────────────────────────────────────────────────────────────────────────
+  gateway-smoke:
+    name: Gateway UI smoke (Playwright)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 20
+    env:
+      MEMORY_PORT: '8096'
+      MOCK_PORT: '5304'
+    defaults:
+      run:
+        working-directory: apps/web-ui/tests/e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - name: Add gateway toolchain to PATH
+        run: echo "/root/go/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install e2e deps
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
+
+      - name: Install Playwright Chromium
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
+
+      - name: Run gateway smoke specs
+        run: npx playwright test --config=gateway-smoke.config.ts
+
+  # ───────────────────────────────────────────────────────────────────────────
   # share: hermetic agent-public-share e2e. `share.config.ts` boots the same
   # dev-mode mock harness as `datasources` (`bash run-e2e.sh`: mock-memory.mjs +
   # gateway AUTH_MODE=dev), and its spec is anonymous — no OIDC session, no live
@@ -341,7 +399,7 @@ jobs:
     # Fork PRs must not run on the self-hosted runner.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64, memory]
-    needs: [gateway, js, datasources, share]
+    needs: [gateway, js, datasources, share, gateway-smoke]
     steps:
       - name: CI gate
         run: echo "CI passed"
@@ -355,12 +413,12 @@ jobs:
     # this summary off the self-hosted runner and it needs no secrets.
     runs-on: ubuntu-latest
     if: always()
-    needs: [gateway, js, datasources, share]
+    needs: [gateway, js, datasources, share, gateway-smoke]
     steps:
       - name: CI gate
         run: |
           failed=0
-          for result in "${{ needs['gateway'].result }}" "${{ needs['js'].result }}" "${{ needs['datasources'].result }}" "${{ needs['share'].result }}"; do
+          for result in "${{ needs['gateway'].result }}" "${{ needs['js'].result }}" "${{ needs['datasources'].result }}" "${{ needs['share'].result }}" "${{ needs['gateway-smoke'].result }}"; do
             echo "dependency result: ${result}"
             case "${result}" in
               success|skipped) ;;

@@ -498,6 +498,28 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 (`specs/datasources/**`), so a local full-suite run never schedules it behind
 `setup`.
 
+### Hermetic gateway browser smoke gate
+
+`specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
+gate (#564): the highest-risk UI contracts run on every PR without credentials.
+It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on
+`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`), disjoint
+from the `datasources` (`8097/5301`) and `share` (`8098/5302`) lanes.
+
+It covers the documents upload dialog (the #2287 regression class — opener,
+modal dialog, file input and submit must stay together), the mobile shell
+(zoomable viewport, no horizontal overflow at 390px, keyboard-operable sidebar
+trigger) and the chat session rail overlay. The session-mode `*-ui` mutations
+suite stays schedule-only because it needs Zitadel; this lane is what makes
+dialog/markup drift fail before merge.
+
+```bash
+cd tests/e2e
+npm ci
+npx playwright install chromium   # once
+npx playwright test --config=gateway-smoke.config.ts   # or: task e2e:smoke
+```
+
 ### Live Google Drive gate (manual, never CI)
 
 `specs/gdrive-live/gdrive-datasource-live.spec.ts` (the `gdrive-live` project)
@@ -629,7 +651,7 @@ no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.
   compile until you run `PATH="/root/go/bin:$PATH" templ generate` (or
   `-f <file>.templ` for one file) and `PATH="/root/go/bin:$PATH" task css`.
   Run them before `go build ./...` in any worktree-based lane. The mock-harness
-  configs (`datasources.config.ts`, `dev-gallery.config.ts`, `share.config.ts`)
+  configs (`datasources.config.ts`, `gateway-smoke.config.ts`, `dev-gallery.config.ts`, `share.config.ts`)
   generate both on the fly via `run-e2e.sh`, so they boot on a cold tree.
 - **One suite at a time per tenant.** All runs share the same bootstrap `E2E Main`
   tenant and the same running gateway. Two suites running concurrently (e.g. another
