@@ -776,6 +776,54 @@ func TestObjectTypesFromMapsBoardFields(t *testing.T) {
 	}
 }
 
+// TestObjectTypesFromMapsUIPAccent pins the parser mapping for a type's declared
+// `ui: {icon, color}` accent (present, partial and absent). The blueprint page
+// used to drop the block entirely, so an Issue row showed no icon and no tint
+// while the same type on the schema page showed both.
+func TestObjectTypesFromMapsUIPAccent(t *testing.T) {
+	types := objectTypesFromMaps([]map[string]any{
+		{"name": "Issue", "ui": map[string]any{"icon": "🐞", "color": "#E11D48"}},
+		{"name": "ColourOnly", "ui": map[string]any{"color": "#7C3AED"}},
+		{"name": "Note"},
+		{"name": "Malformed", "ui": "not-a-map"},
+	})
+	if len(types) != 4 {
+		t.Fatalf("types = %+v", types)
+	}
+	if types[0].Icon != "🐞" || types[0].Color != "#E11D48" {
+		t.Errorf("Issue accent = %q/%q, want the declared icon and colour", types[0].Icon, types[0].Color)
+	}
+	if types[1].Icon != "" || types[1].Color != "#7C3AED" {
+		t.Errorf("partial accent = %q/%q, want an empty icon and the colour", types[1].Icon, types[1].Color)
+	}
+	if types[2].Icon != "" || types[2].Color != "" {
+		t.Errorf("absent accent = %q/%q, want the zero accent", types[2].Icon, types[2].Color)
+	}
+	if types[3].Icon != "" || types[3].Color != "" {
+		t.Errorf("malformed accent = %q/%q, want the zero accent", types[3].Icon, types[3].Color)
+	}
+}
+
+// TestBlueprintDetailRendersTypeAccent pins that the blueprint object-type row
+// actually renders the declared accent, so the two browsers agree.
+func TestBlueprintDetailRendersTypeAccent(t *testing.T) {
+	d := &BlueprintDetail{ObjectTypes: []ObjectTypeDetail{
+		{Name: "Issue", Label: "Issue", Icon: "🐞", Color: "#E11D48"},
+	}}
+	html := renderHTML(t, BlueprintDetailPage(d, nil))
+	for _, want := range []string{"🐞", "#E11D48"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("blueprint object type missing %q in:\n%s", want, html)
+		}
+	}
+
+	// A type that declares nothing keeps today's plain row: no tile, no tint.
+	plain := &BlueprintDetail{ObjectTypes: []ObjectTypeDetail{{Name: "Note", Label: "Note"}}}
+	if got := renderHTML(t, BlueprintDetailPage(plain, nil)); strings.Contains(got, "color:#") {
+		t.Errorf("unstyled object type must not render an accent style:\n%s", got)
+	}
+}
+
 // TestBlueprintDetailBoardWorkStatuses pins the rendered contract for a
 // board-enabled object type row.
 func TestBlueprintDetailBoardWorkStatuses(t *testing.T) {
@@ -1046,10 +1094,11 @@ func TestPropertyTypeIntent(t *testing.T) {
 	}
 }
 
-// TestPropertyNameRendersLabelAndKey pins the label-first, key-second display:
-// a schema `title` becomes the property's visible name, with the machine key
-// beneath it as secondary mono text; a property without a title renders exactly
-// as before (the key alone).
+// TestPropertyNameRendersLabelAndKey pins the label-first, key-second display: a
+// schema `title` becomes the property's visible name, with the machine key
+// beneath it as secondary mono text. A property without a title still gets a
+// label — the key humanised into prose ("owner_notes" → "Owner notes") — so a
+// row never reads as a bare machine key.
 func TestPropertyNameRendersLabelAndKey(t *testing.T) {
 	labelled := renderHTML(t, propertyName(PropertyDetail{Name: "owner_notes", Title: "Owner notes"}))
 	if got := strings.Count(labelled, "Owner notes"); got != 1 {
@@ -1065,10 +1114,26 @@ func TestPropertyNameRendersLabelAndKey(t *testing.T) {
 		t.Errorf("key must render in mono in:\n%s", labelled)
 	}
 
-	// No title: the key alone, in the pre-existing style.
+	// No title: the humanised key is the label, and the raw key stays beneath it.
 	unlabelled := renderHTML(t, propertyName(PropertyDetail{Name: "owner_notes"}))
-	if !strings.Contains(unlabelled, "owner_notes") || strings.Contains(unlabelled, "font-medium") {
-		t.Errorf("unlabelled property must render just the key in:\n%s", unlabelled)
+	if !strings.Contains(unlabelled, ">Owner notes</span>") {
+		t.Errorf("unlabelled property must render the humanised key as its label:\n%s", unlabelled)
+	}
+	if !strings.Contains(unlabelled, ">owner_notes</span>") {
+		t.Errorf("unlabelled property must still show the machine key:\n%s", unlabelled)
+	}
+	if !strings.Contains(unlabelled, "font-mono") {
+		t.Errorf("the machine key must stay mono:\n%s", unlabelled)
+	}
+
+	// A single-word key humanises to itself, so it renders once as prose — not as
+	// a mono key, and not twice.
+	single := renderHTML(t, propertyName(PropertyDetail{Name: "source"}))
+	if got := strings.Count(single, "Source"); got != 1 {
+		t.Errorf("single-word label occurrences = %d, want 1 in:\n%s", got, single)
+	}
+	if strings.Contains(single, "font-mono") {
+		t.Errorf("a humanised label must not render as a mono key:\n%s", single)
 	}
 
 	// A label identical to the key renders once, not twice — including when the

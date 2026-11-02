@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/emergent-company/go-daisy/components/ui"
 	"github.com/labstack/echo/v4"
@@ -16,27 +17,39 @@ import (
 // board always renders a stable, predictable set of lanes.
 var boardStatusOrder = []string{"ready", "in_progress", "review", "revision", "blocked", "done"}
 
-// boardStatusLabel humanises a work status for the column header.
+// boardStatusLabel humanises a work status for the column header, in sentence
+// case ("in_progress" → "In progress", "needs-info" → "Needs info"). Both `_`
+// and `-` separate words, because a pack may spell a two-word status either way.
+// A couple of statuses carry an authored label whose punctuation the generic
+// rule cannot produce.
 func boardStatusLabel(status string) string {
-	if status == "in_progress" {
-		return "In progress"
+	switch status {
+	case "":
+		return "Unknown"
+	case "wont-fix", "wont_fix":
+		return "Won't fix"
 	}
-	if status == "" {
+	words := strings.FieldsFunc(status, func(r rune) bool { return r == '_' || r == '-' })
+	if len(words) == 0 {
 		return "Unknown"
 	}
-	parts := strings.Split(status, "_")
-	for i, p := range parts {
-		if p == "" {
-			continue
-		}
-		parts[i] = strings.ToUpper(p[:1]) + p[1:]
-	}
-	return strings.Join(parts, " ")
+	label := strings.ToLower(strings.Join(words, " "))
+	// Capitalise the first rune, not the first byte: a status may start with a
+	// multi-byte character.
+	first, size := utf8.DecodeRuneInString(label)
+	return strings.ToUpper(string(first)) + label[size:]
 }
 
 // boardStatusIntent maps a work status to its badge tone (L1 adapter).
+//
+// The canonical task-board vocabulary comes first; the triage vocabulary used by
+// the webpage-feedback pack (new → triaged / needs-info / wont-fix) follows, so
+// a schema-declared status never collapses into the same neutral badge as its
+// siblings. Unknown statuses stay neutral, which keeps custom vocabularies
+// readable without inventing a colour for them.
 func boardStatusIntent(status string) ui.BadgeIntent {
 	switch status {
+	// Task-board work path.
 	case "done":
 		return ui.BadgeSuccess
 	case "review":
@@ -47,6 +60,19 @@ func boardStatusIntent(status string) ui.BadgeIntent {
 		return ui.BadgeInfo
 	case "blocked":
 		return ui.BadgeError
+
+	// Triage work path (webpage-feedback): open → classified → waiting or closed.
+	case "new":
+		return ui.BadgeInfo
+	case "triaged":
+		return ui.BadgeAccent
+	case "needs-info", "needs_info":
+		return ui.BadgeWarning
+	case "wont-fix", "wont_fix":
+		return ui.BadgeNeutral
+	case "resolved":
+		return ui.BadgeSuccess
+
 	default:
 		return ui.BadgeNeutral
 	}

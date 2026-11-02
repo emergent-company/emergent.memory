@@ -993,7 +993,7 @@ templ blueprintObjectTypes(d *BlueprintDetail) {
 		EmptyIcon: "lucide--box", EmptyTitle: "No object types", EmptyDesc: "This blueprint defines no object types.",
 	}) {
 		for _, ot := range d.ObjectTypes {
-			@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", "", "", ot.BoardEnabled, ot.AllowedStatuses)
+			@objectTypeRow(ot.Name, ot.Label, ot.Description, ot.Properties, "", "", ot.Icon, ot.Color, ot.BoardEnabled, ot.AllowedStatuses)
 		}
 	}
 }
@@ -1022,9 +1022,9 @@ templ objectTypeWorkStatuses(boardEnabled bool, allowedStatuses []string) {
 // tooltip when it differs, plus description and inline properties. Shared by
 // the blueprint browser and the schema browser. schemaLabel appends the mono
 // source-schema line used on the schema page (empty on the blueprint page).
-// icon/color carry the type's declared ui accent (schema page only — blueprint
-// rows pass empty, so they render exactly as before). boardEnabled/allowedStatuses
-// carry the type's work-status config and render a summary when present.
+// icon/color carry the type's declared ui accent, so the same tinted type tile
+// appears on both browsers. boardEnabled/allowedStatuses carry the type's
+// work-status config and render a summary when present.
 templ objectTypeRow(name string, label string, description string, properties []PropertyDetail, href string, schemaLabel string, icon string, color string, boardEnabled bool, allowedStatuses []string) {
 	<div class="px-4 py-3">
 		<div class="flex flex-wrap items-center gap-2">
@@ -1135,9 +1135,9 @@ templ propertyName(p PropertyDetail) {
 			<span class="font-mono text-[11px] break-all text-muted-subtle">{ p.Name }</span>
 		</div>
 	} else {
-		// No distinct key to show: render the label (the key itself when the
-		// property declares no title), keeping today's mono style.
-		<span class="font-mono text-xs break-all text-muted-bright">{ p.PropertyLabel() }</span>
+		// The label is the only readable form of the name (no distinct key to
+		// show), so it renders as prose — never as a bare machine key.
+		<span class="text-xs font-medium break-all text-base-content">{ p.PropertyLabel() }</span>
 	}
 }
 

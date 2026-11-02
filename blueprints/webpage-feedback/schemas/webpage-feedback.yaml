@@ -32,6 +32,7 @@ objectTypes:
         description: The page where the feedback was captured.
       repo:
         type: string
+        title: Repository
         description: GitHub repository in "owner/name" form.
       source:
         type: string

@@ -1017,21 +1017,22 @@ type objectPropertyDef struct {
 }
 
 // Label is the property's display name: the schema's declared title (JSON-Schema
-// `title`), falling back to the machine key when none is set.
+// `title`), falling back to the key humanised into prose ("page_url" → "Page
+// url") so a field never renders as a bare machine key.
 func (d objectPropertyDef) Label() string {
 	if d.Title != "" {
 		return d.Title
 	}
-	return d.Name
+	return objectPreviewFieldLabel(d.Name)
 }
 
 // KeyHint is the machine key rendered as secondary hint text under the field, or
-// "" when the label already is the key (nothing extra to show).
+// "" when the label already spells the key out (nothing extra to show).
 func (d objectPropertyDef) KeyHint() string {
-	if d.Title != "" && !strings.EqualFold(d.Title, d.Name) {
-		return d.Name
+	if strings.EqualFold(d.Label(), d.Name) {
+		return ""
 	}
-	return ""
+	return d.Name
 }
 
 // objectTypePropertyRow is one editable field of the object detail page's schema
@@ -1047,10 +1048,10 @@ type objectTypePropertyRow struct {
 }
 
 // objectTypePropertyHint is the single muted hint line under a schema field: the
-// machine key when the label is an authored title — property-labels requires the
-// name to stay visible — otherwise the schema's own description, the same prose
-// the preview drawer shows under its row label. Never both: one line competes
-// with the field, not with itself.
+// machine key when the display label differs from it beyond letter case, so the
+// exact key stays visible and copyable; otherwise the schema's own description,
+// the same prose the preview drawer shows under its row label. Never both: one
+// line competes with the field, not with itself.
 func objectTypePropertyHint(def objectPropertyDef) string {
 	if hint := def.KeyHint(); hint != "" {
 		return hint

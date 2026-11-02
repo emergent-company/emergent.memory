@@ -2817,12 +2817,23 @@ func TestObjectPropertyDefLabel(t *testing.T) {
 		t.Errorf("key hint = %q, want the machine key", got)
 	}
 
+	// No title: the key humanised into prose is the label, and the raw key stays
+	// visible as the hint so it remains copyable.
 	unlabelled := objectPropertyDef{Name: "owner_notes"}
-	if got := unlabelled.Label(); got != "owner_notes" {
-		t.Errorf("unlabelled label = %q, want the key", got)
+	if got := unlabelled.Label(); got != "Owner notes" {
+		t.Errorf("unlabelled label = %q, want the humanised key", got)
 	}
-	if got := unlabelled.KeyHint(); got != "" {
-		t.Errorf("unlabelled key hint = %q, want empty", got)
+	if got := unlabelled.KeyHint(); got != "owner_notes" {
+		t.Errorf("unlabelled key hint = %q, want the machine key", got)
+	}
+
+	// A single-word key humanises to itself, so there is no second name to show.
+	single := objectPropertyDef{Name: "source"}
+	if got := single.Label(); got != "Source" {
+		t.Errorf("single-word label = %q, want the humanised key", got)
+	}
+	if got := single.KeyHint(); got != "" {
+		t.Errorf("single-word key hint = %q, want empty", got)
 	}
 
 	same := objectPropertyDef{Name: "title", Title: "title"}
@@ -3580,8 +3591,8 @@ func TestObjectDetailFromHandler(t *testing.T) {
 
 // TestObjectFormPropertyLabels pins the label-first mapping on both object form
 // surfaces: the create form and the detail properties card name the property by
-// its display label and keep the machine key as the hint. An unlabelled property
-// keeps the key as its label and shows no hint.
+// its display label (the authored title, or the humanised key when none is
+// declared) and keep the machine key as the hint whenever it differs.
 func TestObjectFormPropertyLabels(t *testing.T) {
 	defs := []objectPropertyDef{
 		{Name: "owner_notes", Title: "Owner notes", Type: "string"},
@@ -3597,11 +3608,11 @@ func TestObjectFormPropertyLabels(t *testing.T) {
 	if !strings.Contains(form, keyHintText) {
 		t.Errorf("create form must keep the machine key visible as text:\n%s", form)
 	}
-	if !strings.Contains(form, `<legend class="fieldset-legend">plain</legend>`) {
-		t.Errorf("unlabelled property must keep its key as the label:\n%s", form)
+	if !strings.Contains(form, `<legend class="fieldset-legend">Plain</legend>`) {
+		t.Errorf("untitled property must label the field with the humanised key:\n%s", form)
 	}
 	if strings.Contains(form, `>plain</span>`) {
-		t.Errorf("unlabelled property must not repeat its key as a hint:\n%s", form)
+		t.Errorf("a label that spells the key out must not repeat it as a hint:\n%s", form)
 	}
 
 	obj := &GraphObject{ID: "o1", Type: "Person", Key: "p1", Properties: map[string]any{"owner_notes": "hello"}}

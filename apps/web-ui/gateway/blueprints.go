@@ -380,6 +380,12 @@ type ObjectTypeDetail struct {
 	Description string
 	Properties  []PropertyDetail
 
+	// Icon and Color carry the type's declared `ui` accent (an iconify name or
+	// plain glyph, and an arbitrary CSS colour). Both are optional; empty means
+	// "not declared" and the row renders without a tinted type tile.
+	Icon  string
+	Color string
+
 	// BoardEnabled reports whether this type is board-enabled, and
 	// AllowedStatuses lists the work statuses it allows (declaration order).
 	// Both come from the schema definition; zero values mean "not a board type".
@@ -399,19 +405,22 @@ type PropertyDetail struct {
 	Required    bool
 }
 
-// PropertyLabel is the property's display name: its Title when declared, else
-// the machine key. The key stays visible in the UI as secondary text.
+// PropertyLabel is the property's display name: its Title when declared,
+// otherwise the key humanised into prose ("page_url" → "Page url"). A property
+// never renders as a bare machine key, so every row carries a label; the key
+// itself stays visible as secondary text (see ShowsKey).
 func (p PropertyDetail) PropertyLabel() string {
 	if p.Title != "" {
 		return p.Title
 	}
-	return p.Name
+	return objectPreviewFieldLabel(p.Name)
 }
 
 // ShowsKey reports whether the machine key should be rendered as secondary text
-// — only when a distinct label makes it worth showing.
+// — only when the label differs from it beyond letter case, so a humanised
+// single word ("Source" for "source") does not repeat itself.
 func (p PropertyDetail) ShowsKey() bool {
-	return p.Title != "" && !strings.EqualFold(p.Title, p.Name)
+	return !strings.EqualFold(p.PropertyLabel(), p.Name)
 }
 
 // RelationshipTypeDetail is one relationship type definition.
@@ -584,16 +593,40 @@ func buildSchemaDetail(s *BlueprintSchema) *BlueprintDetail {
 func objectTypesFromMaps(types []map[string]any) []ObjectTypeDetail {
 	out := make([]ObjectTypeDetail, 0, len(types))
 	for _, t := range types {
+		accent := uiAccentFromMap(t["ui"])
 		out = append(out, ObjectTypeDetail{
 			Name:            strAny(t["name"]),
 			Label:           strAny(t["label"]),
 			Description:     strAny(t["description"]),
 			Properties:      propertiesFromMap(t["properties"]),
+			Icon:            accent.Icon,
+			Color:           accent.Color,
 			BoardEnabled:    boolAny(t["boardEnabled"]),
 			AllowedStatuses: strSlice(t["allowedStatuses"]),
 		})
 	}
 	return out
+}
+
+// uiAccent is a type's optional declared `ui: {icon, color}` accent.
+type uiAccent struct {
+	Icon  string
+	Color string
+}
+
+// uiAccentFromMap reads a type definition's `ui` block. The block is authored
+// YAML that survives the manifest round-trip as a raw map, so both keys are
+// optional; anything else in the block is ignored here. A missing or malformed
+// block yields the zero accent, which renders exactly as before.
+func uiAccentFromMap(v any) uiAccent {
+	m, _ := v.(map[string]any)
+	if m == nil {
+		return uiAccent{}
+	}
+	return uiAccent{
+		Icon:  strAny(m["icon"]),
+		Color: strAny(m["color"]),
+	}
 }
 
 func propertiesFromMap(v any) []PropertyDetail {
