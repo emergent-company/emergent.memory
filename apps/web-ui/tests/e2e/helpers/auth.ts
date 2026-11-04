@@ -9,6 +9,79 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** A one-line-per-fact snapshot of the login page, for failure messages. */
+async function describeLoginPage(page: Page): Promise<string> {
+  const info = await page
+    .evaluate(() => ({
+      url: location.href,
+      inputs: Array.from(document.querySelectorAll('input')).map((i) => {
+        const el = i as HTMLElement;
+        const shown = !!(el.offsetWidth || el.offsetHeight);
+        return `${i.getAttribute('name') || i.id || '(unnamed)'}:${i.type}${shown ? '' : ' (hidden)'}`;
+      }),
+      buttons: Array.from(document.querySelectorAll('button'))
+        .map((b) => b.innerText.trim())
+        .filter(Boolean),
+      body: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 400),
+    }))
+    .catch(() => null);
+
+  if (!info) return `  landed on: ${page.url()} (page state unavailable)`;
+  return [
+    `  landed on: ${info.url}`,
+    `  inputs: ${JSON.stringify(info.inputs)}`,
+    `  buttons: ${JSON.stringify(info.buttons)}`,
+    `  body: ${info.body}`,
+  ].join('\n');
+}
+
+/**
+ * Wait until the Zitadel login form is showing the password field, taking the
+ * password route when the UI interposes a passkey step.
+ *
+ * A user with no registered passkey still lands on
+ * `/ui/v2/login/passkey?…&altPassword=true` after submitting the login name:
+ * the page reports that the device could not answer the challenge and offers
+ * **Use password** as the way forward. Waiting for `input[name="password"]`
+ * alone therefore times out on every run, so click that button when it is
+ * offered and keep the direct path for environments without a passkey step.
+ *
+ * Returns the locator, or `null` when `required` is false and the field never
+ * appeared (some flows are already authenticated and skip the password).
+ */
+async function reachPasswordField(
+  page: Page,
+  timeoutMs: number,
+  { required = false }: { required?: boolean } = {},
+): Promise<Locator | null> {
+  const passwordInput = page.locator('input[name="password"], input#password').first();
+  const usePassword = page.getByRole('button', { name: /use password|passwort verwenden/i }).first();
+
+  const deadline = Date.now() + timeoutMs;
+  let clicked = false;
+  while (Date.now() < deadline) {
+    if (await passwordInput.isVisible().catch(() => false)) return passwordInput;
+    if (!clicked && (await usePassword.isVisible().catch(() => false))) {
+      await usePassword.click();
+      clicked = true;
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+    }
+    await page.waitForTimeout(200);
+  }
+
+  if (!required) return null;
+
+  throw new Error(
+    'The login name was submitted but no password field appeared within ' +
+      `${Math.round(timeoutMs / 1000)}s, and no "Use password" alternative was offered.\n` +
+      `${await describeLoginPage(page)}\n` +
+      '  If a passkey step is showing, the UI changed again — capture the buttons ' +
+      'above. Otherwise the login name may not exist on this issuer, or an ' +
+      'unexpected screen is interposed. The Playwright report for this run has ' +
+      'the screenshot and trace.',
+  );
+}
+
 /**
  * Drive the full OIDC sign-in: /auth/login → /auth/start → Zitadel login form
  * (loginName → Next → password → Next) → gateway callback → app. The session
@@ -49,9 +122,8 @@ export async function login(page: Page): Promise<void> {
   await loginName.fill(email);
   await page.getByRole('button', { name: /next|continue|weiter/i }).first().click();
 
-  const passwordInput = page.locator('input[name="password"], input#password').first();
-  await passwordInput.waitFor({ state: 'visible', timeout: 30_000 });
-  await passwordInput.fill(password);
+  const passwordInput = await reachPasswordField(page, 30_000, { required: true });
+  await passwordInput!.fill(password);
   await page.getByRole('button', { name: /next|continue|sign in|weiter|anmelden/i }).first().click();
 
   const gateway = new RegExp(escapeRegex(BASE_URL));
@@ -207,9 +279,10 @@ export async function completeZitadelLogin(
   }
 
   // Step 2: password. It appears for a normal fresh login; tolerate flows that
-  // skip it (already authenticated). Retry when an invalid/early submit leaves
-  // us on the password form.
-  const passwordAppeared = await waitForProgress(20_000);
+  // skip it (already authenticated). The UI may also interpose a passkey step,
+  // which `reachPasswordField` settles by choosing "Use password". Retry when an
+  // invalid/early submit leaves us on the password form.
+  const passwordAppeared = (await reachPasswordField(page, 20_000)) !== null;
   if (passwordAppeared && (await passwordInput.isVisible().catch(() => false))) {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (await isDone()) break;
