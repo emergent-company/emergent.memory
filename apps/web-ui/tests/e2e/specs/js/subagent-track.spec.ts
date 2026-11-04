@@ -205,6 +205,31 @@ test.describe('subagent composer track — history', () => {
     await expect(mount.locator('[data-run-id="old-child"]')).toHaveCount(0);
   });
 
+  test('drops a queued trigger_agent row rebuilt from persisted history', async ({ page }) => {
+    await load(page);
+    await bootTrack(page);
+    await page.evaluate((t0) => {
+      const w = window as unknown as { __track: { rebuild: (i: unknown[]) => void } };
+      w.__track.rebuild([
+        { kind: 'run_start', run_id: 'r1', run_status: 'working', created_at: t0 },
+        {
+          kind: 'tool_call',
+          id: 't1',
+          run_id: 'r1',
+          tool_name: 'trigger_agent',
+          tool_status: 'completed',
+          tool_input: { agent_name: 'Queued', message: 'later' },
+          // Persisted runstatus.Queued is "submitted". It has no parent-stream
+          // terminal projection, so it must not become a permanent working row.
+          tool_output: { run_id: 'c-queued', status: 'submitted' },
+          created_at: t0,
+        },
+      ]);
+    }, T0);
+    await expect(page.locator('#chat-subagents')).toHaveClass(/hidden/);
+    await expect(page.locator('#chat-subagents')).not.toContainText('working');
+  });
+
   test('all-completed rows fall back to the plain subagent count', async ({ page }) => {
     await load(page);
     await bootTrack(page);

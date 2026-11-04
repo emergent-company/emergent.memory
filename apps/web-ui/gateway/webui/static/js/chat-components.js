@@ -2635,7 +2635,11 @@
   // is not silently dropped.
   function normalizeSubagentStatus(raw) {
     var t = String(raw == null ? "" : raw).trim().toLowerCase();
-    if (t === "submitted" || t === "in_progress" || t === "in-progress") return "running";
+    // Persisted runstatus values: "submitted" = queued, "working" = running.
+    // Keeping these distinct is what lets history rebuild drop a queued child
+    // (it runs in another worker and has no parent-stream terminal projection).
+    if (t === "submitted") return "queued";
+    if (t === "working" || t === "in_progress" || t === "in-progress") return "running";
     if (t === "input-required" || t === "input_required") return "paused";
     if (t === "error") return "failed";
     if (t === "cancelled") return "canceled";
