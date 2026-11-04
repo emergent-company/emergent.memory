@@ -29,6 +29,18 @@ func toolJSON(id, tool, status string) string {
 	return string(b)
 }
 
+func subagentJSON(id, runID, agentName, status string) string {
+	m := map[string]any{"type": "subagent", "agentName": agentName, "status": status, "task": "do work"}
+	if id != "" {
+		m["id"] = id
+	}
+	if runID != "" {
+		m["runId"] = runID
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
 func frameTypes(t *testing.T, p liveReplayPayload) []string {
 	t.Helper()
 	var types []string
@@ -110,6 +122,60 @@ func TestLiveHubToolRetainedUntilTerminal(t *testing.T) {
 	h.observeTool("c1", toolJSON("call3", "shell", "error"))
 	if got := len(h.replay("c1").Frames); got != 0 {
 		t.Fatalf("errored tool frames = %d, want 0", got)
+	}
+}
+
+// TestLiveHubSubagentRetainedUntilTerminal asserts an open subagent row
+// (queued/running) is retained (latest update wins) until a terminal status
+// drops it, and that a non-terminal update for the same run replaces the row.
+func TestLiveHubSubagentRetainedUntilTerminal(t *testing.T) {
+	h := newLiveStateHub()
+	h.beginRun("c1", "parent-run")
+
+	h.observeSubagent("c1", subagentJSON("spawn-1", "child-1", "research-agent", "queued"))
+	p := h.replay("c1")
+	if len(p.Frames) != 1 || frameTypes(t, p)[0] != "subagent" {
+		t.Fatalf("queued subagent frames = %v, want one subagent frame", frameTypes(t, p))
+	}
+
+	// Running update for the same child run replaces the queued row.
+	h.observeSubagent("c1", subagentJSON("child-1", "child-1", "research-agent", "running"))
+	p = h.replay("c1")
+	if len(p.Frames) != 1 {
+		t.Fatalf("running update frames = %d, want 1 (upsert by runId)", len(p.Frames))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(p.Frames[0], &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["status"] != "running" {
+		t.Errorf("retained subagent status = %v, want running", m["status"])
+	}
+
+	// Terminal statuses all drop the row.
+	for _, status := range []string{"completed", "failed", "paused", "canceled"} {
+		h.observeSubagent("c1", subagentJSON("child-1", "child-1", "research-agent", "running"))
+		h.observeSubagent("c1", subagentJSON("child-1", "child-1", "research-agent", status))
+		if got := len(h.replay("c1").Frames); got != 0 {
+			t.Fatalf("terminal status %q must drop the row, frames = %d", status, got)
+		}
+	}
+}
+
+// TestLiveHubSubagentKeysByIDWhenRunIDMissing asserts a pre-run failure row
+// (synthetic stable id, no runId) is correlated by id and retained until its
+// terminal update.
+func TestLiveHubSubagentKeysByIDWhenRunIDMissing(t *testing.T) {
+	h := newLiveStateHub()
+	h.beginRun("c1", "parent-run")
+
+	h.observeSubagent("c1", subagentJSON("spawn-123", "", "missing-agent", "running"))
+	if got := len(h.replay("c1").Frames); got != 1 {
+		t.Fatalf("id-keyed subagent frames = %d, want 1", got)
+	}
+	h.observeSubagent("c1", subagentJSON("spawn-123", "", "missing-agent", "failed"))
+	if got := len(h.replay("c1").Frames); got != 0 {
+		t.Fatalf("terminal id-keyed subagent frames = %d, want 0", got)
 	}
 }
 
@@ -207,6 +273,36 @@ func TestLiveTeeForwardsAndRecords(t *testing.T) {
 	}
 	if types := frameTypes(t, p); len(types) != 2 || types[0] != "thinking" || types[1] != "mcp_tool" {
 		t.Fatalf("recorded frames = %v, want [thinking mcp_tool]", types)
+	}
+}
+
+// TestLiveTeeRecordsSubagentFrames asserts the tee observes rewritten
+// `subagent` frames: a running row lands in live_replay and its terminal update
+// removes it.
+func TestLiveTeeRecordsSubagentFrames(t *testing.T) {
+	h := newLiveStateHub()
+	var out bytes.Buffer
+	tee := newLiveTee(&out, h, "")
+
+	stream := `data: {"type":"meta","conversationId":"c9","runId":"r9"}` + "\n\n" +
+		`data: ` + subagentJSON("child-1", "child-1", "research-agent", "running") + "\n\n"
+	if _, err := tee.Write([]byte(stream)); err != nil {
+		t.Fatal(err)
+	}
+
+	p := h.replay("c9")
+	if types := frameTypes(t, p); len(types) != 1 || types[0] != "subagent" {
+		t.Fatalf("recorded frames = %v, want [subagent]", types)
+	}
+	if !bytes.Contains(p.Frames[0], []byte(`"runId":"child-1"`)) {
+		t.Errorf("retained subagent frame missing run id: %s", p.Frames[0])
+	}
+
+	if _, err := tee.Write([]byte(`data: ` + subagentJSON("child-1", "child-1", "research-agent", "completed") + "\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(h.replay("c9").Frames); got != 0 {
+		t.Fatalf("terminal subagent frames = %d, want 0", got)
 	}
 }
 

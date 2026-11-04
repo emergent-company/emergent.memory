@@ -14,6 +14,7 @@ enum ChatStreamFixtures {
     static let html = #"{"type":"html","html":"<p>Hello there</p>"}"#
     static let thinking = #"{"type":"thinking","id":"t1","role":"reasoning","text":"Checking the graph.","done":false}"#
     static let thinkingDone = #"{"type":"thinking","id":"t1","role":"reasoning","text":"","done":true}"#
+    static let subagent = #"{"type":"subagent","id":"s1","parentRunId":"p1","runId":"r1","agentName":"Researcher","task":"scan","status":"running"}"#
     static let toolStarted = #"{"type":"mcp_tool","tool":"search","status":"started","id":"call-1"}"#
     static let toolCompleted = #"{"type":"mcp_tool","tool":"search","status":"completed","id":"call-1","result":{"count":2}}"#
     static let approval = #"{"type":"approval","tool":"delete_document","input":{"id":"doc-1"},"questionId":"q-approve"}"#
@@ -87,9 +88,21 @@ struct ChatStreamFrameDecoderTests {
     }
 
     @Test func thinkingDeltasBecomeActivity() {
-        #expect(decode(ChatStreamFixtures.thinking) == .activity(.thinking(delta: "Checking the graph.")))
+        #expect(decode(ChatStreamFixtures.thinking) == .activity(.thinking(id: "t1", delta: "Checking the graph.")))
         // A segment-closing frame carries no new text.
         #expect(decode(ChatStreamFixtures.thinkingDone) == nil)
+    }
+
+    @Test func subagentFrameBecomesActivity() {
+        #expect(decode(ChatStreamFixtures.subagent) == .activity(.subagent(ChatSubagentEvent(
+            id: "s1",
+            parentRunId: "p1",
+            runId: "r1",
+            agentName: "Researcher",
+            task: "scan",
+            status: "running",
+            error: nil
+        ))))
     }
 
     @Test func toolFramesCorrelateOnTheServerId() {
@@ -169,7 +182,7 @@ struct ChatStreamFrameDecoderTests {
 
     @Test func liveReplayFlattensItsFrames() {
         #expect(decode(ChatStreamFixtures.liveReplay) == .replay([
-            .activity(.thinking(delta: "replayed")),
+            .activity(.thinking(id: "t1", delta: "replayed")),
             .done,
         ]))
     }

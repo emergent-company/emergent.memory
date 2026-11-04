@@ -149,7 +149,7 @@ const SKELETON = `<!doctype html>
 <html>
 <head>
 <meta charset="utf-8" />
-<style>.hidden { display: none !important; }</style>
+<style>.hidden { display: none !important; } .memory-typing { display: inline-flex; align-items: center; gap: 4px; min-width: 1rem; min-height: 1rem; }</style>
 </head>
 <body>
 <div id="chat-root" data-conv="${CONV_ID}">

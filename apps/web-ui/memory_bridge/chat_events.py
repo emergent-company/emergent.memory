@@ -31,6 +31,9 @@ Worker -> client (``lk.chat.events``, one JSON object per message):
     ``conversation`` {type, conversationId}       (sent once when memory first
                      reveals a new conversation id via its ``meta`` event; lets
                      iOS record the id for a newly created chat)
+    ``subagent``    {type, id, parentRunId, runId, agentName, task, status,
+                     error}                         (fields optional; status is
+                     queued|running|completed|failed|paused|canceled)
 
 Memory's own event shapes (see apps/server/pkg/sse/events.go in the memory repo):
 
@@ -40,6 +43,7 @@ Memory's own event shapes (see apps/server/pkg/sse/events.go in the memory repo)
     ``thinking``   {type, id, role, text, done}  (text is the incremental part)
     ``approval``   {type, tool, input, questionId}
     ``ui``         {type, surfaceId, messages}   (A2UI surface messages)
+    ``subagent``   {type, id, parentRunId, runId, agentName, task, status, error}
 """
 
 from __future__ import annotations
@@ -183,6 +187,8 @@ class ChatEventMapper:
             return [self._handle_approval(event)]
         if kind == "ui":
             return self._handle_ui(event)
+        if kind == "subagent":
+            return self._handle_subagent(event)
         logger.debug("chat mapper: ignoring memory event type %r", kind)
         return []
 
@@ -325,6 +331,42 @@ class ChatEventMapper:
             logger.debug("ui event without messages: %s", event)
             return []
         return [{"type": "ui", "surfaceId": surface_id, "messages": messages}]
+
+    # --- subagents ---------------------------------------------------------
+
+    _SUBAGENT_FIELDS = (
+        "id",
+        "parentRunId",
+        "runId",
+        "agentName",
+        "task",
+        "status",
+        "error",
+    )
+
+    @classmethod
+    def _handle_subagent(cls, event: dict) -> list[dict]:
+        """Forward a memory ``subagent`` event to the iOS contract verbatim.
+
+        Fields are optional: whatever the server includes is passed through and
+        anything missing/empty is omitted, so the client can still decode a
+        partial lifecycle update (e.g. a terminal status for a known run id).
+        An event carrying no identifying or status data at all is dropped.
+        """
+        payload: dict = {"type": "subagent"}
+        for key in cls._SUBAGENT_FIELDS:
+            value = event.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                if value:
+                    payload[key] = value
+            else:
+                payload[key] = str(value)
+        if len(payload) == 1:
+            logger.debug("subagent event without fields: %s", event)
+            return []
+        return [payload]
 
 
 # --- client -> worker parsing ----------------------------------------------
