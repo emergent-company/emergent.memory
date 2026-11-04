@@ -164,10 +164,10 @@ TestCLIInstalled_(Version|Help|SetToken|StatusAuthenticated|ConfigShowAndSet)|Te
 The two suites select tests differently. **API Tests** passes no `-run` filter,
 so it runs every test in `tests/api/...`. **CLI Install Tests** runs only the
 allowlist above, because `entrypoint.sh` supplies that default when `TEST_RUN`
-is unset. `runlog test` runs the whole module on demand — `tests/api`,
+is unset. `runlog test` runs every package under `tests/` on demand — `tests/api`,
 `tests/cli`, `tests/integration`, `tests/blueprints`, `tests/docs`, `tests/tools`
-and `tests/acp`, per `testCommand` in `.runlog.yaml` — which is how a CLI test
-outside the allowlist gets verified locally.
+and `tests/acp` — which is how a CLI test outside the allowlist gets verified
+locally.
 
 The consequence is worth stating plainly: **a green CLI Install Tests check does
 not mean an arbitrary `TestCLIInstalled_*` test ran.** When a change adds one,
