@@ -79,6 +79,15 @@ jobs:
           else
             BASE="${BEFORE}"
           fi
+          # A push that creates a ref has no `before` commit — GitHub sends the
+          # null SHA — so "new issues" has no meaning: every pre-existing finding
+          # would be counted, and the ratchet fails on debt it is supposed to
+          # preserve. Skip the check there. The next push uses this commit as its
+          # base, so the baseline is kept, not reset.
+          if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "no base commit to diff against (ref created by this push) — skipping the new-issues ratchet"
+            exit 0
+          fi
           golangci-lint run --new-from-rev="$BASE" ./...
 
       - name: Architectural debt ratchet
