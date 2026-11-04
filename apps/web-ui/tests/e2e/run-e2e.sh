@@ -5,10 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."   # repo root
 
 # Ports. The gateway defaults to 8097 (avoids the shared dev gateway on 8095) and
-# the mock to 5301; both are overridable so two suites can run concurrently on
-# one machine/runner without sharing a server. CI sets a distinct MEMORY_PORT/
-# MOCK_PORT per job (see .github/workflows/web-ui.yml), so the `datasources` and
-# `share` lanes never collide.
+# the mock to 5301; both are overridable so a second harness can run on the same
+# machine without sharing a server. CI runs the suites sequentially in one job
+# (see .github/workflows/web-ui.yml), so it sets neither and each suite boots on
+# these defaults — one stack at a time, so they cannot collide with each other.
 PORT="${MEMORY_PORT:-8097}"
 MOCK_PORT="${MOCK_PORT:-5301}"
 

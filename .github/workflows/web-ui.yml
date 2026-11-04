@@ -10,6 +10,22 @@ name: Web UI CI
 # status check: the branch-protection-required context on main is Meta CI's
 # `ci` (.github/workflows/ci.yml), which is unfiltered and reports for every PR.
 # This workflow's aggregate gate is named `web-ui-ci` (advisory).
+#
+# Shape: ONE self-hosted job (#825). It used to fan out to five jobs that each
+# stood up their own gateway + browser stack; on the 7-slot `memory` pool that
+# was the largest burst a product PR could create (~700 s of work occupying five
+# slots, 3–9 min of queue per job, and the Playwright browser cache restored
+# four times in parallel against one key). The work is small and serial, so it
+# now runs in one job: toolchain, generated assets, build, checks, browser
+# install — once — then the suites as separate sequential steps. Slot occupancy
+# drops 5 → 1, and the build/browser-install cost is paid once instead of four
+# times.
+#
+# A suite failure does not abort its siblings: every check and suite runs with
+# `continue-on-error` and the verdict is decided by the final `Report` step from
+# each step's `outcome` (which, unlike `conclusion`, keeps the real result). An
+# honest red that names every failing suite is worth more here than a fast abort
+# that hides two of the four behind the first one.
 
 on:
   push:
@@ -19,7 +35,7 @@ on:
       - '.github/workflows/web-ui.yml'
   pull_request:
     branches: [main]
-    # `ready_for_review` is NOT a default type: the heavy jobs below skip drafts,
+    # `ready_for_review` is NOT a default type: the job below skips drafts,
     # so the suites must be triggered when the draft is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -42,20 +58,39 @@ permissions:
   contents: read
 
 jobs:
-  gateway:
-    name: Gateway
+  # ───────────────────────────────────────────────────────────────────────────
+  # The single stack. Everything below runs in this one job, in this order, and
+  # each Playwright suite is its own step.
+  #
+  # The three gateway suites (`datasources`, `smoke`, `share`) share one
+  # *harness contract* — each config declares
+  # `webServer: { command: 'bash run-e2e.sh', reuseExistingServer: false }`, so
+  # Playwright boots a freshly seeded `mock-memory.mjs` + gateway for that
+  # invocation and tears it down after. They must NOT share one long-lived
+  # stack: the mock is stateful and seeds per boot (share's "one active session"
+  # timeline, gmail's seeded source `s2`, …) and `run-e2e.sh` refuses to attach
+  # to a server it did not start, precisely so a suite never runs against
+  # another lane's state. Sequential steps give the same thing without that risk:
+  # only one stack is ever up in this job, so the per-job port pins (#810) are
+  # gone and every suite uses its config's own default ports.
+  # ───────────────────────────────────────────────────────────────────────────
+  web-ui:
+    name: Web UI (gateway + Playwright)
     runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 20
-    # Resolve through apps/web-ui/gateway/go.mod alone, never the repo-root
-    # go.work: the image builds this module without a workspace (its Dockerfile
-    # copies only gateway/), and workspace MVS silently picks the highest
-    # version any *other* module requires. Before #2299 that gap shipped
-    # google.golang.org/grpc v1.83.1 while this job tested v1.84.0; after it, a
-    # move to v1.83.2 would still have been exercised here only as v1.84.0
-    # (#2300).
+    # Was 10–20 min per job across five jobs; the work is now serial here, so
+    # this is the sum plus headroom, not a new allowance per suite.
+    timeout-minutes: 45
+    # Fork PRs must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
+    # Module mode, like the shipped image: the gateway image builds
+    # apps/web-ui/gateway without a workspace, and resolving through the
+    # repo-root go.work would test a different dependency set than the image
+    # ships (#2314). For the build/vet/test/lint steps the reason is MVS: a
+    # workspace silently picks the highest version any *other* module requires
+    # (before #2299 that gap shipped grpc v1.83.1 while this job tested
+    # v1.84.0).
     env:
       GOWORK: "off"
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -73,8 +108,33 @@ jobs:
           # the 10GB cache limit.
           cache: false
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No `cache:` here. setup-node's cache input accepts only a package
+          # manager (npm/yarn/pnpm), not a boolean, and its cache step throws
+          # "Some specified paths were not resolved, unable to cache
+          # dependencies" when `glob.hashFiles(<cache-dependency-path>)` fails
+          # to resolve the lockfile in the job workspace — intermittently
+          # reddening the job before any step runs (#1758). The exact mechanism
+          # is not fully confirmed there (the npm cache root `/srv/cache/npm`
+          # does exist), but dropping the input removes the failure mode while
+          # `npm ci` still installs deps.
+
+      - name: Add gateway toolchain to PATH
+        # run-e2e.sh shells out to `task` (in /root/go/bin) to compile app.css
+        # on a cold tree and installs the pinned `templ` binary into GOPATH/bin
+        # (it cannot `go run` templ in module mode), so expose /root/go/bin.
+        run: echo "/root/go/bin" >> "$GITHUB_PATH"
+
+      - name: Install e2e deps
+        working-directory: apps/web-ui/tests/e2e
+        run: npm ci
+
       # `*_templ.go` is generated and gitignored, so the checkout has no templ
-      # output until this runs; `go build ./...` depends on it.
+      # output until this runs; `go build ./...` depends on it, and so does
+      # every `run-e2e.sh` suite below (`go build -o memory .`).
       #
       # Installed as a binary rather than `go run github.com/a-h/templ/cmd/templ`:
       # `go run` resolves the CLI's own dependencies through the caller's module
@@ -90,21 +150,31 @@ jobs:
 
       # app.css is generated by `task css` (Tailwind v4 + daisyUI) and is
       # gitignored; `go build ./...` embeds webui/static via go:embed, so the
-      # CSS must be compiled before the build.
+      # CSS must be compiled before the build. Doing it once here means each
+      # `run-e2e.sh` below finds both assets present and skips its cold-tree
+      # branch.
       - name: Compile CSS
         working-directory: apps/web-ui/gateway
         run: PATH="/root/go/bin:$PATH" task css
 
+      # Precondition for every suite below — a compile error is reported here and
+      # stops the job, because nothing below can produce a meaningful result from
+      # an unbuildable tree.
       - name: Build
+        id: build
         working-directory: apps/web-ui/gateway
         run: go build ./...
 
       - name: Vet
+        id: vet
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         run: go vet ./...
 
       - name: Test
+        id: test
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         run: go test ./...
 
       - name: Install golangci-lint
@@ -113,301 +183,131 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: golangci-lint
+        id: lint
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         env:
           # Per-job cache dir: the self-hosted runner shares HOME across
           # concurrent jobs, which makes the default golangci-lint lock collide.
           GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
         run: golangci-lint run ./...
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # js: hermetic JS-wiring gate. The full Playwright suite (tests/e2e) needs a
-  # live gateway in session mode + a Zitadel test user + the real memory API, so
-  # it cannot run in CI. The DOM specs under tests/e2e/specs/js/ instead load
-  # the shipped static JS verbatim into a real Chromium engine and drive its
-  # event wiring — no gateway, no auth, no `.env.e2e`. This is the automated
-  # guard for the #1216 class (a handler referencing an undefined identifier is
-  # a runtime ReferenceError, invisible to `go test` and to `node --check`).
-  # ───────────────────────────────────────────────────────────────────────────
-  js:
-    name: JS wiring (Playwright DOM)
-    # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: apps/web-ui/tests/e2e
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      # ── Browser install: once, for all four Playwright suites ──────────────
+      # This restore cost 51–101 s per job and was paid four times in parallel
+      # against the same cache key; it is paid once here.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
         with:
-          node-version: '20'
-          # No `cache:` here — see the `datasources` job below for the full note.
-          # Short version: setup-node's cache step can fail resolving the
-          # lockfile glob and red this job before any step runs (#1758), and
-          # `npm ci` installs deps regardless.
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
 
-      - name: Install e2e deps
-        run: npm ci
+      - name: Install Playwright Chromium
+        # The `memory` pool spans two hosts and only one is apt-based: there
+        # `--with-deps` installs the Chromium runtime libs, while on the other
+        # host Playwright does not recognise the distribution — it falls back to
+        # the ubuntu24.04 build and installs no dependencies. The guard is what
+        # keeps both halves working.
+        working-directory: apps/web-ui/tests/e2e
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            npx playwright install --with-deps chromium
+          else
+            npx playwright install chromium
+          fi
 
+      # ── Suite 1: static-JS wiring (no gateway) ─────────────────────────────
+      # Hermetic DOM gate. The full Playwright suite (playwright.config.ts) needs
+      # a live gateway in session mode + a Zitadel test user + the real memory
+      # API, so it cannot run in CI. The DOM specs under tests/e2e/specs/js/
+      # instead load the shipped static JS verbatim into a real Chromium engine
+      # and drive its event wiring — no gateway, no auth, no `.env.e2e`. This is
+      # the automated guard for the #1216 class (a handler referencing an
+      # undefined identifier is a runtime ReferenceError, invisible to `go test`
+      # and to `node --check`).
+      #
       # Cheap syntax gate first: a malformed static JS file fails fast with a
-      # precise message, before the browser install/run.
+      # precise message, before the browser run.
       - name: Syntax-check static JS
+        id: js_syntax
         working-directory: apps/web-ui
+        continue-on-error: true
         run: |
           for f in gateway/webui/static/js/*.js; do
             node --check "$f"
           done
 
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
-
-      - name: Install Playwright Chromium
-        # The `memory` pool spans two hosts and only one is apt-based: there
-        # `--with-deps` installs the Chromium runtime libs, while on the other
-        # host Playwright does not recognise the distribution — it falls back to
-        # the ubuntu24.04 build and installs no dependencies. The guard is what
-        # keeps both halves working.
-        run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            npx playwright install --with-deps chromium
-          else
-            npx playwright install chromium
-          fi
-
       - name: Run DOM wiring specs
+        id: js
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
         run: npx playwright test --config=js-dom.config.ts
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # datasources: hermetic Data Sources (Google Drive) e2e. The specs drive the
-  # gateway against the dev-mode mock harness (`datasources.config.ts` boots
-  # `bash run-e2e.sh`, which starts mock-memory.mjs + the gateway with
-  # AUTH_MODE=dev), so it is credential-free and deterministic — no live Drive,
-  # no OIDC session. Unlike the `js` gate it needs the gateway binary, so it
-  # also provisions the Go toolchain + `templ` + `task` (the same generated
-  # templ/CSS prerequisites as the `gateway` job; run-e2e.sh generates them on
-  # a cold tree).
-  # ───────────────────────────────────────────────────────────────────────────
-  datasources:
-    name: Data sources e2e (Playwright)
-    # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 20
-    # Pinned gateway + mock ports, disjoint from the `share` job below. The
-    # runner is shared, so two hermetic lanes can be live at once; `run-e2e.sh`
-    # fails fast if a port is already served rather than attaching to the
-    # sibling's server. These are the harness defaults, set explicitly to keep
-    # the two jobs provably disjoint.
-    #
-    # GOWORK off, like the `gateway` job: `run-e2e.sh` builds the gateway in
-    # apps/web-ui/gateway, and the shipped image builds that module without a
-    # workspace. Resolving through the repo-root go.work would test a different
-    # dependency set than the image ships (#2314).
-    env:
-      GOWORK: "off"
-      MEMORY_PORT: '8097'
-      MOCK_PORT: '5301'
-    defaults:
-      run:
+      # ── Suite 2: hermetic Data Sources (Google Drive) e2e ──────────────────
+      # The specs drive the gateway against the dev-mode mock harness
+      # (`datasources.config.ts` boots `bash run-e2e.sh`, which starts
+      # mock-memory.mjs + the gateway with AUTH_MODE=dev), so it is
+      # credential-free and deterministic — no live Drive, no OIDC session.
+      - name: Run data sources specs
+        id: datasources
         working-directory: apps/web-ui/tests/e2e
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
-      - name: Add gateway toolchain to PATH
-        # run-e2e.sh shells out to `task` (in /root/go/bin) to compile app.css
-        # on a cold tree and installs the pinned `templ` binary into GOPATH/bin
-        # (it cannot `go run` templ in module mode), so expose /root/go/bin.
-        run: echo "/root/go/bin" >> "$GITHUB_PATH"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          # No `cache:` here. setup-node's cache input accepts only a package
-          # manager (npm/yarn/pnpm), not a boolean, and its cache step throws
-          # "Some specified paths were not resolved, unable to cache
-          # dependencies" when `glob.hashFiles(<cache-dependency-path>)` fails
-          # to resolve the lockfile in the job workspace — intermittently
-          # reddening this job before any step runs (#1758). The exact mechanism
-          # is not fully confirmed there (the npm cache root `/srv/cache/npm`
-          # does exist), but dropping the input removes the failure mode while
-          # `npm ci` still installs deps.
-
-      - name: Install e2e deps
-        run: npm ci
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
-
-      - name: Install Playwright Chromium
-        # The `memory` pool spans two hosts and only one is apt-based: there
-        # `--with-deps` installs the Chromium runtime libs, while on the other
-        # host Playwright does not recognise the distribution — it falls back to
-        # the ubuntu24.04 build and installs no dependencies. The guard is what
-        # keeps both halves working.
-        run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            npx playwright install --with-deps chromium
-          else
-            npx playwright install chromium
-          fi
-
-      - name: Run datasources specs
+        continue-on-error: true
         run: npx playwright test --config=datasources.config.ts
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # gateway-smoke: per-PR browser smoke (#564). The `*-ui.spec.ts` mutations
-  # specs are the only real gateway-UI coverage but need a session-mode gateway
-  # + Zitadel user and run only on a schedule, so dialog/markup regressions
-  # (#2287) merged green. This lane boots the same dev-mode mock harness as
-  # `datasources`/`share` and drives the highest-risk browser contracts —
-  # documents upload dialog, mobile shell, chat rail — on every PR. Ports are
-  # disjoint from the other hermetic lanes (8097/5301 and 8098/5302).
-  # ───────────────────────────────────────────────────────────────────────────
-  gateway-smoke:
-    name: Gateway UI smoke (Playwright)
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 20
-    # Same module-mode posture as `datasources`/`share`: this lane boots the
-    # gateway through run-e2e.sh, so it must resolve apps/web-ui/gateway/go.mod
-    # and not the repo-root go.work (#2314).
-    env:
-      GOWORK: "off"
-      MEMORY_PORT: '8096'
-      MOCK_PORT: '5304'
-    defaults:
-      run:
-        working-directory: apps/web-ui/tests/e2e
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
-      - name: Add gateway toolchain to PATH
-        run: echo "/root/go/bin" >> "$GITHUB_PATH"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install e2e deps
-        run: npm ci
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
-
-      - name: Install Playwright Chromium
-        run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            npx playwright install --with-deps chromium
-          else
-            npx playwright install chromium
-          fi
-
+      # ── Suite 3: per-PR gateway browser smoke (#564) ───────────────────────
+      # The `*-ui.spec.ts` mutations specs are the only real gateway-UI coverage
+      # but need a session-mode gateway + Zitadel user and run only on a
+      # schedule, so dialog/markup regressions (#2287) merged green. This suite
+      # boots the same dev-mode mock harness and drives the highest-risk browser
+      # contracts — documents upload dialog, mobile shell, chat rail, provider
+      # save scope.
       - name: Run gateway smoke specs
+        id: smoke
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
         run: npx playwright test --config=gateway-smoke.config.ts
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # share: hermetic agent-public-share e2e. `share.config.ts` boots the same
-  # dev-mode mock harness as `datasources` (`bash run-e2e.sh`: mock-memory.mjs +
-  # gateway AUTH_MODE=dev), and its spec is anonymous — no OIDC session, no live
-  # memory backend — so it belongs in the PR lane. Until #1911 it was authored
-  # but never invoked, so the whole surface could regress green. It runs on
-  # :8098/:5302 (distinct from `datasources`' :8097/:5301) because both jobs can
-  # be live on the shared self-hosted runner at once.
-  # ───────────────────────────────────────────────────────────────────────────
-  share:
-    name: Agent public share e2e (Playwright)
-    # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, memory]
-    timeout-minutes: 20
-    # Disjoint from `datasources`: this lane's own gateway + mock, so neither job
-    # can attach to the other's stateful mock (see run-e2e.sh).
-    #
-    # GOWORK off for the same reason as `datasources`: run-e2e.sh builds the
-    # gateway from its own module, like the shipped image (#2314).
-    env:
-      GOWORK: "off"
-      MEMORY_PORT: '8098'
-      MOCK_PORT: '5302'
-    defaults:
-      run:
-        working-directory: apps/web-ui/tests/e2e
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
-      - name: Add gateway toolchain to PATH
-        # run-e2e.sh shells out to `task` (in /root/go/bin) to compile app.css
-        # on a cold tree and installs the pinned `templ` binary into GOPATH/bin
-        # (it cannot `go run` templ in module mode), so expose /root/go/bin.
-        run: echo "/root/go/bin" >> "$GITHUB_PATH"
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          # No `cache:` — see the `datasources` job above for the full note.
-
-      - name: Install e2e deps
-        run: npm ci
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ms-playwright-${{ runner.os }}-${{ hashFiles('apps/web-ui/tests/e2e/package-lock.json') }}
-
-      - name: Install Playwright Chromium
-        # The `memory` pool spans two hosts and only one is apt-based: there
-        # `--with-deps` installs the Chromium runtime libs, while on the other
-        # host Playwright does not recognise the distribution — it falls back to
-        # the ubuntu24.04 build and installs no dependencies. The guard is what
-        # keeps both halves working.
-        run: |
-          if command -v apt-get >/dev/null 2>&1; then
-            npx playwright install --with-deps chromium
-          else
-            npx playwright install chromium
-          fi
-
+      # ── Suite 4: hermetic agent-public-share e2e ───────────────────────────
+      # `share.config.ts` boots the same dev-mode mock harness, and its spec is
+      # anonymous — no OIDC session, no live memory backend. Until #1911 it was
+      # authored but never invoked, so the whole surface could regress green.
       - name: Run share specs
+        id: share
+        working-directory: apps/web-ui/tests/e2e
+        continue-on-error: true
         run: npx playwright test --config=share.config.ts
+
+      # ── The verdict ────────────────────────────────────────────────────────
+      # Turns the run red when any check or suite above did not succeed, and
+      # names which ones — this is what keeps the `continue-on-error` steps from
+      # reading as a partial green. `steps.<id>.outcome` holds the real result
+      # even when `conclusion` was softened by `continue-on-error`. A step that
+      # never ran (because `Build` failed) reports `skipped`; the job is already
+      # red in that case from `Build`.
+      - name: Report
+        if: always()
+        run: |
+          failed=()
+          report() {
+            printf '%-24s %s\n' "$1" "$2"
+            case "$2" in
+              success|skipped) ;;
+              *) failed+=("$1") ;;
+            esac
+          }
+          report "gateway build"      "${{ steps.build.outcome }}"
+          report "gateway vet"        "${{ steps.vet.outcome }}"
+          report "gateway test"       "${{ steps.test.outcome }}"
+          report "gateway lint"       "${{ steps.lint.outcome }}"
+          report "js syntax"          "${{ steps.js_syntax.outcome }}"
+          report "js wiring"          "${{ steps.js.outcome }}"
+          report "datasources e2e"    "${{ steps.datasources.outcome }}"
+          report "gateway smoke e2e"  "${{ steps.smoke.outcome }}"
+          report "agent share e2e"    "${{ steps.share.outcome }}"
+          if [ "${#failed[@]}" -ne 0 ]; then
+            echo "::error::Web UI CI failed: ${failed[*]}"
+            exit 1
+          fi
+          echo "Web UI CI passed"
 
   web-ui-ci:
     name: web-ui-ci
@@ -417,26 +317,26 @@ jobs:
     # Fork PRs must not run on the self-hosted runner.
     if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
-    needs: [gateway, js, datasources, share, gateway-smoke]
+    needs: [web-ui]
     steps:
       - name: CI gate
         run: echo "CI passed"
 
   web-ui-ci-status:
     name: web-ui-ci-status
-    # Always-run, hosted aggregate so a fork PR (whose self-hosted jobs are
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted job is
     # skipped by the fork guard) still yields a single satisfiable status check.
-    # 'skipped' is treated as pass — guarded jobs are legitimately skipped on
+    # 'skipped' is treated as pass — the guarded job is legitimately skipped on
     # fork PRs — so only 'failure'/'cancelled' fail the gate. ubuntu-latest keeps
     # this summary off the self-hosted runner and it needs no secrets.
     runs-on: ubuntu-latest
     if: always()
-    needs: [gateway, js, datasources, share, gateway-smoke]
+    needs: [web-ui]
     steps:
       - name: CI gate
         run: |
           failed=0
-          for result in "${{ needs['gateway'].result }}" "${{ needs['js'].result }}" "${{ needs['datasources'].result }}" "${{ needs['share'].result }}" "${{ needs['gateway-smoke'].result }}"; do
+          for result in "${{ needs['web-ui'].result }}"; do
             echo "dependency result: ${result}"
             case "${result}" in
               success|skipped) ;;
@@ -444,7 +344,7 @@ jobs:
             esac
           done
           if [ "${failed}" -ne 0 ]; then
-            echo "CI gate failed: one or more required jobs did not succeed"
+            echo "CI gate failed: the Web UI job did not succeed (see the failing suite in its Report step)"
             exit 1
           fi
           echo "Web UI CI passed"
