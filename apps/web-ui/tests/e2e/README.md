@@ -27,7 +27,11 @@ globalTeardown    delete the bootstrap org (idempotent, runs on failure)
    (`AUTH_MODE=session`, Zitadel configured). Start it with `task dev`; set
    `E2E_BASE_URL` if it is not `http://localhost:8095`.
 2. A Zitadel **test user** with no MFA exists on the deployment's issuer
-   (e.g. `https://zitadel.example.com`).
+   (e.g. `https://zitadel.example.com`). The issuer shows a **passkey panel**
+   after the login name even for a user with no registered passkey; the login
+   helper takes its "Use password" alternative, so both states work — but a user
+   that *requires* a passkey (password login disabled) cannot be driven
+   headlessly.
 
 The gateway-backed projects read `E2E_MEMORY_API_URL` at the start of the
 `setup` project they depend on, and fail loudly there when it is unset. The
