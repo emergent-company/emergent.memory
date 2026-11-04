@@ -8,10 +8,11 @@ import { defineConfig, devices } from '@playwright/test';
 //
 // Run:  npx playwright test --config=share.config.ts
 //
-// The gateway port is overridable so this suite can run concurrently with
-// `datasources` on one machine/runner without sharing a server: CI sets
-// MEMORY_PORT=8098 (and a matching MOCK_PORT) for the `share` job, while the
-// default stays 8097 for local runs. `run-e2e.sh` reads the same variables.
+// The gateway port is overridable so this suite can run alongside another
+// harness on one machine without sharing a server: set MEMORY_PORT (and a
+// matching MOCK_PORT) when something else already holds 8097. CI runs the
+// suites sequentially in one job, so it sets neither and this default applies.
+// `run-e2e.sh` reads the same variables.
 const port = process.env.MEMORY_PORT ?? '8097';
 const baseURL = `http://localhost:${port}`;
 

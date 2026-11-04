@@ -498,8 +498,8 @@ npx playwright install chromium   # once
 npx playwright test --config=datasources.config.ts   # or: task e2e:datasources
 ```
 
-The CI job provisions the same generated-asset prerequisites as the `gateway`
-job (Go toolchain + `templ` + `task`) plus Node/Playwright, and the suite stays
+The CI job provisions the generated-asset prerequisites once for every suite
+(Go toolchain + `templ` + `task`) plus Node/Playwright, and the suite stays
 excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 (`specs/datasources/**`), so a local full-suite run never schedules it behind
 `setup`.
@@ -509,9 +509,12 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 `specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
 gate (#564): the highest-risk UI contracts run on every PR without credentials.
 It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on
-`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`), its own
-pair because each suite boots its own stack; the suites in the single CI job run
-sequentially, so the three pairs never overlap.
+`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`). That pair
+is this suite's own because each suite boots its own stack, but it is not
+reserved against the other two: `datasources` and `share` both default to
+8097/5301. What keeps them apart is time, not port number — in the single CI job
+the suites run sequentially, so each boots its stack, runs, and tears it down
+before the next one starts, and two suites never hold a port at once.
 
 It covers the documents upload dialog (the #2287 regression class — opener,
 modal dialog, file input and submit must stay together), the mobile shell

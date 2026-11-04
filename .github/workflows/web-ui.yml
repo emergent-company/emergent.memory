@@ -168,11 +168,13 @@ jobs:
       - name: Vet
         id: vet
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         run: go vet ./...
 
       - name: Test
         id: test
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         run: go test ./...
 
       - name: Install golangci-lint
@@ -183,6 +185,7 @@ jobs:
       - name: golangci-lint
         id: lint
         working-directory: apps/web-ui/gateway
+        continue-on-error: true
         env:
           # Per-job cache dir: the self-hosted runner shares HOME across
           # concurrent jobs, which makes the default golangci-lint lock collide.

@@ -9,8 +9,9 @@ import { defineConfig } from '@playwright/test';
 // and drives the highest-risk browser contracts on the pages UI PRs touch:
 // the upload dialog, the app shell, the chat rail. No auth, no live backend.
 //
-// Ports are overridable and disjoint from the `datasources` (8097/5301) and
-// `share` (8098/5302) lanes so all three can be live on the shared runner.
+// Ports are overridable so this suite can run alongside another harness on one
+// machine. CI runs the suites sequentially in one job — one stack at a time —
+// so these defaults only have to be free when it is this suite's turn.
 const port = process.env.MEMORY_PORT ?? '8096';
 const mockPort = process.env.MOCK_PORT ?? '5304';
 const baseURL = `http://localhost:${port}`;
