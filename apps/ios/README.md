@@ -1,8 +1,17 @@
 # Memory iOS Client
 
-Native iOS voice client for talking to **Memory** (`alfred`) over the
-self-hosted LiveKit infrastructure. Voice only: no camera, no screen share, no
-text chat UI.
+Native iOS client for talking to **Memory** (`alfred`). Two transports, one
+conversation:
+
+- **Text** goes over the gateway's HTTP chat stream (`POST /api/chat`, SSE) with
+  the device credential. It needs no LiveKit server, no token endpoint and no
+  bridge worker, so it works on a project with voice disabled and on a
+  deployment with no voice stack.
+- **Voice** goes over the self-hosted LiveKit infrastructure (a server-minted
+  room token, agent dispatch, mic capture). No camera, no screen share.
+
+The Text | Voice switch joins or leaves the room for the same conversation;
+leaving a call keeps the chat.
 
 ## Provenance
 
@@ -16,6 +25,15 @@ Forked from [`livekit-examples/agent-starter-swift`](https://github.com/livekit-
 - Targets: iOS 18.0+, Swift 6.0 (strict concurrency). Pure SwiftUI.
 
 ## What this app does
+
+Text turns (`HTTPChatTransport`) POST `{ agentDefinitionId?, conversationId?, message }`
+to the gateway's `/api/chat` and render the SSE frames (`meta`, `token`,
+`thinking`, `mcp_tool`, `question`, `approval`, `ui`, `citations`, `error`,
+`done`) through the same transcript, activity and A2UI stores voice uses.
+Decisions go to `/api/chat/questions/{id}/respond|cancel`, stop reads the run id
+from the conversation timeline and POSTs `/api/chat/runs/{id}/cancel`.
+
+Voice turns:
 
 1. Reads connection settings from `UserDefaults` (see `MemoryConfig` below).
 2. POSTs `{ identity, room, agent }` to the Memory token endpoint

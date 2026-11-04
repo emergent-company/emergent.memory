@@ -4,17 +4,19 @@ import LiveKit
 import LiveKitComponents
 import SwiftUI
 
-/// One chat room: the recorded conversation and the live session stitched into
-/// a single transcript, with a Text | Voice switch over the same LiveKit room.
+/// One chat: the recorded conversation and the live turn stitched into a single
+/// transcript, with a Text | Voice switch.
 ///
-/// History comes from `GET /api/session` (``ChatSessionTranscriptStore``) and
-/// live turns stream in from the room (`session.messages` plus the rich
-/// ``ChatActivityStore``). Both share the same bubbles, tool cards and approval
-/// cards, so reopening a conversation reads like it did live.
+/// Text is served over the gateway's HTTP chat stream (`POST /api/chat`, SSE) —
+/// no room, no token, no worker — so it works on a deployment with no LiveKit
+/// stack and on a project with voice disabled. Voice mints a token and joins the
+/// LiveKit room for the same conversation; switching back leaves the room and
+/// keeps the transcript.
 ///
-/// Switching mode never reconnects or changes the conversation: text enables
-/// the composer, voice shows the same in-call surface as the Conversation tab
-/// and turns the microphone on.
+/// History comes from `GET /api/session` (``ChatSessionTranscriptStore``), live
+/// text turns from ``HTTPChatTransport``, and live voice turns from the room
+/// (`session.messages` plus the rich ``ChatActivityStore``). All of them share
+/// the same bubbles, tool cards and approval cards.
 struct ChatSessionView: View {
     let route: ChatRoute
 
@@ -23,9 +25,12 @@ struct ChatSessionView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var localMedia: LocalMedia
     @Environment(ChatActivityStore.self) private var activity
+    @Environment(\.voiceEnabled) private var voiceEnabled
     @Environment(\.dismiss) private var dismiss
 
     @State private var transcript = ChatSessionTranscriptStore()
+    /// Text turns: the HTTP transport the web chat uses (no LiveKit at all).
+    @State private var transport = HTTPChatTransport()
     @State private var messageText = ""
     /// The conversation id whose history is loaded, so a re-render (or a
     /// controller rebuild for the same room) never fetches twice.
@@ -46,7 +51,17 @@ struct ChatSessionView: View {
             .navigationBarBackButtonHidden(true)
         #endif
             .task(id: ObjectIdentifier(controller)) { await start() }
+            .onChange(of: voiceEnabled) { _, enabled in
+                // Voice was turned off for the project while a call was open:
+                // fall back to text instead of leaving a dead call surface.
+                if !enabled, activeSession.mode == .voice {
+                    setMode(.text)
+                }
+            }
             .onReceive(session.objectWillChange) { _ in
+                // Only the voice room feeds the transcript from LiveKit; a text
+                // session has no room and must keep its HTTP live turns.
+                guard activeSession.mode == .voice else { return }
                 // `objectWillChange` fires before the value is stored; defer a
                 // tick so the fresh message list is read.
                 Task { @MainActor in
@@ -63,7 +78,9 @@ struct ChatSessionView: View {
             title: headerTitle,
             subtitle: Text(headerSubtitle),
             subtitleFont: route.conversationID == nil ? MemoryFont.meta : MemoryFont.metaMono,
-            trailing: AnyView(modePicker)
+            // No mode picker when the project has voice disabled: there is no
+            // call to switch to, and text must not look conditional.
+            trailing: voiceEnabled ? AnyView(modePicker) : nil
         ) {
             dismiss()
         }
@@ -77,14 +94,14 @@ struct ChatSessionView: View {
     }
 
     private var headerSubtitle: String {
-        if let conversationID = route.conversationID {
+        if let conversationID = openConversationID {
             return conversationID
         }
         return String(localized: "chats.new")
     }
 
-    /// Text / Voice switch for the room. Changing it only flips local capture
-    /// state — the room, conversation and controller stay exactly as they are.
+    /// Text / Voice switch. Voice joins the conversation's room; text leaves it.
+    /// The conversation itself never changes.
     private var modePicker: some View {
         Picker("chat.mode.title", selection: modeBinding) {
             Text("chat.mode.text").tag(ChatMode.text)
@@ -107,7 +124,34 @@ extension ChatSessionView {
     private func setMode(_ mode: ChatMode) {
         guard activeSession.mode != mode else { return }
         activeSession.mode = mode
-        Task { await applyCaptureForMode() }
+        Task {
+            switch mode {
+            case .voice:
+                // Voice is the only mode that needs a room: mint a token and
+                // join the conversation's room now.
+                await connectVoiceIfNeeded()
+                await applyCaptureForMode()
+            case .text:
+                // Leaving voice releases the room; the conversation (and its
+                // transcript) stays open for text.
+                await endVoiceSession()
+            }
+        }
+    }
+
+    /// Connects the voice session for the open conversation if it is not
+    /// already running. A new chat's conversation id is learned by the worker
+    /// (or by the HTTP `meta` frame before the switch).
+    private func connectVoiceIfNeeded() async {
+        guard controller.phase == .idle else { return }
+        await controller.start()
+    }
+
+    /// Ends the room (if any) without touching the conversation or its
+    /// transcript.
+    private func endVoiceSession() async {
+        guard controller.phase != .idle else { return }
+        await controller.endSession()
     }
 
     /// Capture follows the mode, including after a fresh connect: text sessions
@@ -148,7 +192,7 @@ extension ChatSessionView {
                     onSurfaceAction: submitSurfaceAction
                 )
             }
-            if case let .failed(failure) = controller.phase {
+            if activeSession.mode == .voice, case let .failed(failure) = controller.phase {
                 MemoryFailureView(failure: failure) {
                     Task { await controller.retry() }
                 }
@@ -179,7 +223,46 @@ extension ChatSessionView {
     private func decideApproval(_ request: ApprovalRequest, _ decision: ApprovalDecision) {
         guard !request.isAnswered else { return }
         activity.submitApproval(questionId: request.questionId, decision: decision)
+        if activeSession.mode == .text {
+            let response: String
+            let message: String
+            switch decision {
+            case .approve:
+                response = "approve"
+                message = ""
+            case let .reject(reason):
+                response = "reject"
+                message = reason ?? ""
+            }
+            respondOverHTTP(questionId: request.questionId, response: response, message: message)
+            return
+        }
         Task { await controller.sendDecision(chatDecision(for: decision, questionId: request.questionId)) }
+    }
+
+    /// The open conversation: the route's, the id the HTTP `meta` frame taught
+    /// us, or the worker's reported id.
+    private var openConversationID: String? {
+        route.conversationID ?? transport.conversationID ?? activeSession.liveConversationID
+    }
+
+    /// Answers a live card over HTTP (text mode): the gateway resumes the paused
+    /// run in the background, so the transcript is polled for the continuation.
+    private func respondOverHTTP(questionId: String, response: String, message: String) {
+        guard let conversationID = openConversationID else { return }
+        let baseline = transcript.lastRecordCount
+        Task {
+            do {
+                try await transport.respond(questionID: questionId, response: response, message: message)
+                await pollResumedHistory(
+                    client: SessionLogClient(config: MemoryConfig()),
+                    conversationID: conversationID,
+                    baseline: baseline
+                )
+            } catch {
+                transcript.historyLoadFailed(error.localizedDescription)
+            }
+        }
     }
 
     /// Recorded approvals belong to a run that is not attached to this room's
@@ -187,7 +270,7 @@ extension ChatSessionView {
     /// Memory resumes the run in the background; the transcript is polled for
     /// the continuation because it does not stream back over LiveKit.
     private func decideHistoryApproval(_ request: ApprovalRequest, _ decision: ApprovalDecision) {
-        guard let conversationID = route.conversationID ?? activeSession.liveConversationID else {
+        guard let conversationID = openConversationID else {
             return
         }
         let client = SessionLogClient(config: MemoryConfig())
@@ -236,10 +319,19 @@ extension ChatSessionView {
     private func answerQuestion(_ request: QuestionRequest, answer: String) {
         guard !request.isAnswered else { return }
         activity.submitQuestion(questionId: request.questionId, answer: answer)
+        if activeSession.mode == .text {
+            respondOverHTTP(questionId: request.questionId, response: answer, message: "")
+            return
+        }
         Task { await controller.sendDecision(.answer(questionId: request.questionId, value: answer)) }
     }
 
     private func submitSurfaceAction(_ surface: ChatUISurface, _ action: ChatUIAction) {
+        // A generic A2UI surface action has no HTTP transport yet (product #66),
+        // so a text session renders surfaces read-only — the same thing the web
+        // chat can do today. Voice keeps the worker round-trip. Approval- and
+        // question-shaped cards are answered through the routes above.
+        guard activeSession.mode == .voice else { return }
         activity.submitSurfaceAction(
             surfaceId: surface.id,
             componentId: action.componentId,
@@ -261,20 +353,49 @@ extension ChatSessionView {
 
     private var bottomBar: some View {
         VStack(spacing: 0) {
-            if session.isConnected {
+            // Hang-up belongs to a call, not to a chat: a text session has no
+            // room to leave.
+            if activeSession.mode == .voice, session.isConnected {
                 ChatSessionControls(mode: activeSession.mode, onHangUp: hangUp)
             }
             if activeSession.mode == .text {
-                if session.isConnected {
-                    ChatInputView(keyboardFocus: $keyboardFocus, text: $messageText)
-                } else if controller.phase == .connecting {
-                    LoadingStateView(title: "chat.connecting", fillsHeight: false)
-                        .padding(.bottom, 4 * .grid)
+                if let error = transport.errorMessage {
+                    Text(error)
+                        .font(MemoryFont.meta)
+                        .foregroundStyle(.fgSerious)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4 * .grid)
+                        .padding(.bottom, 1 * .grid)
                 }
+                ChatInputView(
+                    keyboardFocus: $keyboardFocus,
+                    text: $messageText,
+                    onSend: sendText,
+                    onStop: stopTextTurn
+                )
             }
         }
         .animation(.default, value: activeSession.mode)
         .animation(.default, value: session.isConnected)
+    }
+
+    // MARK: - Text turns
+
+    /// Sends a text turn over the HTTP chat stream. Never mints a token and
+    /// never joins a room.
+    private func sendText(_ text: String) {
+        transport.send(
+            text,
+            conversationID: openConversationID,
+            agentName: route.agentName,
+            transcript: transcript,
+            activity: activity
+        )
+    }
+
+    /// Stops a text turn: cancels the stream and the server-side run.
+    private func stopTextTurn() async {
+        await transport.stop(activity: activity)
     }
 
     // MARK: - Lifecycle
@@ -289,25 +410,27 @@ extension ChatSessionView {
         case restartInPlace
     }
 
-    /// Runs when the room appears (or its controller is replaced): adopt the
-    /// route, fetch recorded history once, then connect.
+    /// Runs when the view appears (or its controller is replaced): adopt the
+    /// route, fetch recorded history once, and connect only if the session is in
+    /// voice mode. Text needs no connection.
     private func start() async {
+        transport.onConversationLearned = { conversationID in
+            activeSession.learnConversationID(conversationID)
+        }
         switch adoptRoute() {
         case .unchanged:
             await loadHistoryIfNeeded()
-            if controller.phase == .idle {
-                await controller.start()
-            }
         case .restartInPlace:
-            if controller.phase != .idle {
-                await controller.endSession()
-            }
+            await endVoiceSession()
             resetTranscript()
-            await controller.start()
+            await loadHistoryIfNeeded()
         case .rebuiltController:
-            // The root rebuilds the controller for the new launch key; that
-            // controller's own task does the history load and connect.
-            break
+            // The root rebuilds the controller for the new launch key; this
+            // view's task re-runs with that controller and takes `.unchanged`.
+            await loadHistoryIfNeeded()
+        }
+        if activeSession.mode == .voice {
+            await connectVoiceIfNeeded()
         }
         await applyCaptureForMode()
     }
@@ -344,6 +467,7 @@ extension ChatSessionView {
 
     private func resetTranscript() {
         transcript.reset()
+        transport.reset()
         loadedConversationID = nil
     }
 

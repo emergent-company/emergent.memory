@@ -4,6 +4,10 @@ import SwiftUI
 /// A multiplatform view that shows the chat input text field, the send button
 /// (which becomes a stop/interrupt button while the agent is replying), and
 /// the focused composer text (lifted so suggested-prompt chips can fill it).
+///
+/// Sending and stopping are injectable so the same composer serves the LiveKit
+/// voice room (`session.send` / `lk.chat.interrupt`) and the HTTP text
+/// transport, which has no room at all.
 struct ChatInputView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var controller: MemorySessionController
@@ -13,12 +17,24 @@ struct ChatInputView: View {
     @FocusState.Binding var keyboardFocus: Bool
     @Binding var text: String
 
+    /// Overrides the default (LiveKit room) send behaviour.
+    private let onSend: ((String) async -> Void)?
+    /// Overrides the default (LiveKit room) stop/interrupt behaviour.
+    private let onStop: (() async -> Void)?
+
     /// Bumped on each send to drive the send haptic.
     @State private var sendFeedback = 0
 
-    init(keyboardFocus: FocusState<Bool>.Binding, text: Binding<String>) {
+    init(
+        keyboardFocus: FocusState<Bool>.Binding,
+        text: Binding<String>,
+        onSend: ((String) async -> Void)? = nil,
+        onStop: (() async -> Void)? = nil
+    ) {
         _keyboardFocus = keyboardFocus
         _text = text
+        self.onSend = onSend
+        self.onStop = onStop
     }
 
     var body: some View {
@@ -114,8 +130,12 @@ struct ChatInputView: View {
     @ViewBuilder
     private func stopButton() -> some View {
         AsyncButton {
-            store.stopGenerating()
-            await controller.interrupt()
+            if let onStop {
+                await onStop()
+            } else {
+                store.stopGenerating()
+                await controller.interrupt()
+            }
         } label: {
             Image(systemName: "stop.fill")
                 .frame(width: 8 * .grid, height: 8 * .grid)
@@ -145,7 +165,11 @@ struct ChatInputView: View {
         TraceLog.log("text_sent", ["text": message])
         keyboardFocus = false
         sendFeedback += 1
-        await session.send(text: message)
+        if let onSend {
+            await onSend(message)
+        } else {
+            await session.send(text: message)
+        }
     }
 }
 
