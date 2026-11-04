@@ -29,6 +29,18 @@ name: Meta CI
 # skipped), satisfying the required context; a maintainer must re-run from a
 # trusted ref to actually validate a fork.
 #
+# DRAFT PRS (2026-11-04). Every path-filtered suite (`server.yml`,
+# `web-ui.yml`, `e2e.yml`, `cli.yml`, `connector.yml`, `server-sdk.yml`,
+# `python-sdk.yml`, `ios-test.yml`) skips its heavy jobs while the PR is a
+# draft and adds `ready_for_review` to its `pull_request.types`. Measure that
+# drove it: a draft PR in flight carried 22 check runs against a tree nobody
+# could merge, on a 7-slot pool where the same runs were queueing 3-9 minutes
+# each. `ci` deliberately keeps running on drafts — it is the cheap, always
+# applicable guard and the author needs its feedback before requesting review.
+# The `whatever-ci` / `*-ci-status` aggregates report success on a draft because
+# every dependency is skipped, which is the documented "a skipped job satisfies
+# its check" rule (see above), not a hole.
+#
 # There is no review bot: a maintainer posts the review verdict before a merge.
 # That verdict is process, not a check — the required `ci` check does not read it.
 on:

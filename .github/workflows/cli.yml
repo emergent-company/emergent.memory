@@ -15,6 +15,8 @@ on:
       - 'v*'
   pull_request:
     branches: [master, main]
+    # `ready_for_review` is not a default type; the heavy jobs skip drafts.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/cli/**'
       # apps/cli/go.mod carries a `replace` to the local SDK module, so CLI
@@ -39,7 +41,7 @@ jobs:
     name: Lint
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
-    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository))"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -179,7 +181,7 @@ jobs:
     name: Test
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
-    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository))"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -223,9 +225,13 @@ jobs:
   build:
     name: Build (${{ matrix.label }})
     # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ matrix.runs_on }}
-    needs: [lint, test]
+    # No `needs:` on lint/test. The cross-compiles read the tree, not their
+    # results, and chaining them put the three-platform build behind ~2×10
+    # minutes of unrelated work — 27 minutes of wall clock for an advisory
+    # suite that then blocked the merge while it was IN_PROGRESS. The aggregate
+    # `cli-ci` still needs all three, so a lint failure still fails the run.
     strategy:
       matrix:
         include:

@@ -8,6 +8,10 @@ on:
       - '.github/workflows/server.yml'
   pull_request:
     branches: [main]
+    # `ready_for_review` is NOT a default pull_request activity type. A draft PR
+    # skips the heavy jobs below (see their `if:`), so without this the suites
+    # would never run when the PR is marked ready without a further push.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/server/**'
       - '.github/workflows/server.yml'
@@ -40,7 +44,7 @@ jobs:
     name: Lint
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -124,7 +128,7 @@ jobs:
     name: Build
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -157,7 +161,7 @@ jobs:
     name: Unit Tests
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -219,7 +223,7 @@ jobs:
     name: DB-backed Tests
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 30
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     env:
       # A missing/unreachable DSN must fail this job, not skip its tests.
       REQUIRE_DB: '1'
@@ -344,10 +348,17 @@ jobs:
 
   docker:
     name: Docker Build
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 45
-    needs: [lint, build, test-unit]
+    # No `needs:` on the lint/build/test jobs. This is a build of the shipped
+    # image and depends on none of their artifacts; ordering it behind them put
+    # it at the back of a 10-minute chain, so by the time it started it was
+    # IN_PROGRESS at every merge decision — and `merge-reviewed-pr.sh` blocks a
+    # merge on ANY started check, advisory or not. Starting it immediately means
+    # it finishes (98 s measured) while the review is still being read. Its own
+    # failure still fails the aggregate below.
+    needs: [build]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -485,7 +496,7 @@ jobs:
 
   server-ci:
     name: server-ci
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     # Aggregate gate for this path-filtered server workflow. It is NOT a required
     # status check: the required context on main is Meta CI's `ci`
