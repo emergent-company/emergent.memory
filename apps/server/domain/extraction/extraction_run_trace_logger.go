@@ -2,7 +2,6 @@ package extraction
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -15,14 +14,23 @@ import (
 // implements it against the database; tests use a fake so the mapping from
 // pipeline callbacks to chat messages is verifiable without a database.
 type runMessageRecorder interface {
-	RecordMessage(ctx context.Context, runID, role string, step int, text string) error
+	RecordMessage(ctx context.Context, runID string, msg RunMessage) error
 }
+
+// Stage kinds recorded on a message so the transcript can label it without
+// embedding markup in the text (which plain-text surfaces rendered literally as
+// "**EntityProcessor** · stage output").
+const (
+	stageKindHeader = "header" // the run-level opening message
+	stageKindPrompt = "prompt" // the stage's input
+	stageKindOutput = "output" // the stage's answer, or a processor's status line
+	stageKindError  = "error"  // a stage failure
+)
 
 // runTraceLogger bridges the extraction pipeline's TraceLogger callbacks to the
 // job's agent run, so the stage prompts and model responses appear as a chat
 // transcript. It is a decorator: every callback is still forwarded to the
-// underlying logger, which keeps the full-fidelity per-job log file (the
-// transcript is truncated to stay readable).
+// underlying logger, which keeps the full-fidelity per-job log file.
 //
 // Only content a reader can use becomes a message: the prompt (what the stage
 // was asked), the stage's output (the model's answer, or a processor's own
@@ -56,14 +64,15 @@ func newRunTraceLogger(rec runMessageRecorder, runID string, delegate agents.Tra
 	}
 	l := &runTraceLogger{delegate: delegate, rec: rec, runID: runID, log: log, lastAnswer: map[string]string{}}
 	if header != "" {
-		l.record("user", header)
+		l.record("user", extractionRunAgentName, stageKindHeader, header)
 	}
 	return l
 }
 
-// record persists one message, advancing the step counter. Failures are logged
-// and swallowed: the transcript is diagnostics and must never fail extraction.
-func (l *runTraceLogger) record(role, text string) {
+// record persists one message, carrying its stage provenance, and advancing the
+// step counter. Failures are logged and swallowed: the transcript is
+// diagnostics and must never fail extraction.
+func (l *runTraceLogger) record(role, stage, stageKind, text string) {
 	if l.rec == nil || l.runID == "" {
 		return
 	}
@@ -71,7 +80,8 @@ func (l *runTraceLogger) record(role, text string) {
 	l.step++
 	step := l.step
 	l.mu.Unlock()
-	if err := l.rec.RecordMessage(context.Background(), l.runID, role, step, text); err != nil {
+	msg := RunMessage{Role: role, Step: step, Text: text, Stage: stage, StageKind: stageKind}
+	if err := l.rec.RecordMessage(context.Background(), l.runID, msg); err != nil {
 		l.log.Warn("failed to record extraction transcript message",
 			slog.String("run_id", l.runID),
 			logger.Error(err))
@@ -94,7 +104,7 @@ func (l *runTraceLogger) LogPrompt(agentName string, prompt string) {
 	// extractions are the common case — would lose its answer even though many
 	// messages were recorded in between.
 	l.forgetAnswer(agentName)
-	l.record("user", fmt.Sprintf("**%s** · extraction prompt\n\n%s", agentName, prompt))
+	l.record("user", agentName, stageKindPrompt, prompt)
 }
 
 func (l *runTraceLogger) LogResponse(agentName string, response string) {
@@ -105,7 +115,7 @@ func (l *runTraceLogger) LogResponse(agentName string, response string) {
 	if !l.claimResponse(agentName, response) {
 		return
 	}
-	l.record("assistant", fmt.Sprintf("**%s** · model response\n\n%s", agentName, response))
+	l.record("assistant", agentName, stageKindOutput, response)
 }
 
 func (l *runTraceLogger) LogParsedResult(stageName string, result any) {
@@ -135,7 +145,7 @@ func (l *runTraceLogger) LogQualityCheck(iteration int, orphanRate float64, thre
 func (l *runTraceLogger) LogError(stage string, err error) {
 	l.delegate.LogError(stage, err)
 	if err != nil {
-		l.record("assistant", fmt.Sprintf("**%s** · error\n\n%s", stage, err.Error()))
+		l.record("assistant", stage, stageKindError, err.Error())
 	}
 }
 
@@ -165,7 +175,7 @@ func (l *runTraceLogger) LogEvent(eventType string, author string, content strin
 	// carry both the model's answer and a stage's own synthetic lines (the
 	// processors' "Processed N entities", the quality check's pass/fail), and
 	// only the author distinguishes them. A neutral label is accurate for both.
-	l.record("assistant", fmt.Sprintf("**%s** · stage output\n\n%s", author, content))
+	l.record("assistant", author, stageKindOutput, content)
 }
 
 // forgetAnswer clears the repeat guard for a stage that is starting a new turn.

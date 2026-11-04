@@ -161,6 +161,26 @@ func runTimelineItems(full *AgentRunFull, questions []AgentQuestionItem) []json.
 		if r, ok := m.Content["reasoning"].(string); ok && strings.TrimSpace(r) != "" {
 			content["reasoning"] = r
 		}
+		// Carry the producer's stage provenance so the transcript can label the
+		// message ("EntityExtractor · prompt") without the label living inside
+		// the text as markdown — which plain-text surfaces rendered literally and
+		// which the CoT heuristic mistook for reasoning.
+		for _, key := range []string{"stage", "stage_kind"} {
+			if v, ok := m.Content[key].(string); ok && v != "" {
+				content[key] = v
+			}
+		}
+		// Older extraction transcripts embedded the label in the text. Lift it
+		// into the same structured fields so those rows render (and stop being
+		// mistaken for chain-of-thought) without re-running the extraction — the
+		// cut text cannot be recovered, but the label can stop being literal.
+		if _, hasStage := content["stage"]; !hasStage {
+			if stage, kind, rest, ok := legacyStageLabel(text); ok {
+				content["text"] = rest
+				content["stage"] = stage
+				content["stage_kind"] = kind
+			}
+		}
 		entries = append(entries, timelineEntry{
 			created: keyTime(m.CreatedAt, fallbackCreated),
 			step:    m.StepNumber,
@@ -245,6 +265,14 @@ func (s *Server) runTimelineWithRun(ctx context.Context, runID string) (*Convers
 	var run *ScheduledAgentRun
 	if full != nil {
 		run = full.Run
+	}
+	if run != nil {
+		// The run's own agent — not the chat page's selected agent — is who the
+		// transcript belongs to. The chat workspace has no other source for it:
+		// without this, an opened extraction run is headed and attributed to
+		// whichever chat agent happens to be selected.
+		hist.AgentID = run.AgentID
+		hist.AgentName = run.AgentName
 	}
 	return hist, run, nil
 }

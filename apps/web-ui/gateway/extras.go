@@ -30,8 +30,14 @@ type ConversationDetail struct {
 }
 
 type ConversationHistory struct {
-	SessionID        string                `json:"session_id"`
-	ConversationID   string                `json:"conversation_id"`
+	SessionID      string `json:"session_id"`
+	ConversationID string `json:"conversation_id"`
+	// AgentID/AgentName identify the agent that produced a RUN transcript, so
+	// the chat workspace can head the pane and label its bubbles with the run's
+	// own agent instead of the selected chat agent. Empty for a conversation
+	// transcript (the conversation already carries its agent).
+	AgentID          string                `json:"agent_id,omitempty"`
+	AgentName        string                `json:"agent_name,omitempty"`
 	Items            []json.RawMessage     `json:"items"`
 	PendingApprovals []PendingApprovalItem `json:"pending_approvals,omitempty"`
 }

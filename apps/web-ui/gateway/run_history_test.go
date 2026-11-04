@@ -253,6 +253,11 @@ func TestGetRunHistoryRoute(t *testing.T) {
 		`"response":"sure"`,
 		`"html"`,          // assistant markdown rendered
 		`"question_html"`, // pending question markdown rendered
+		// The run's own agent heads the transcript: the chat workspace has no
+		// other source, and without it the pane attributes the run to whichever
+		// chat agent happens to be selected.
+		`"agent_name":"Daily briefing"`,
+		`"agent_id":"a1"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("run history body missing %q", want)
@@ -273,6 +278,95 @@ func TestGetRunHistoryRoute(t *testing.T) {
 	if out.PendingApprovals[0].Tool != "deploy" {
 		t.Errorf("approval tool = %q", out.PendingApprovals[0].Tool)
 	}
+}
+
+func TestRunTimelineCarriesStageProvenance(t *testing.T) {
+	// A pipeline transcript records the producing stage on the message and keeps
+	// the label out of the text. The history must pass that provenance through
+	// untouched, and the legacy chain-of-thought heuristic must not steal a
+	// first line as "reasoning" — it used to turn a stage's status line into a
+	// Thinking block that contained nothing but its own label.
+	full := &AgentRunFull{
+		Run: &ScheduledAgentRun{ID: "run-x", AgentID: "a2", AgentName: "Extraction", Status: "completed"},
+		Messages: []*AgentRunMessage{
+			{Role: "assistant", Content: map[string]any{"text": "Processed 55 entities with temp_ids", "stage": "EntityProcessor", "stage_kind": "output"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 2},
+			{Role: "user", Content: map[string]any{"text": "Extract of document doc-1", "stage": "Extraction", "stage_kind": "header"}, CreatedAt: "2026-08-26T08:00:01Z", StepNumber: 1},
+		},
+	}
+	hist, run, err := (&Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{runFull: full}}).runTimelineWithRun(context.Background(), "run-x")
+	if err != nil {
+		t.Fatalf("runTimelineWithRun: %v", err)
+	}
+	if run == nil || hist.AgentName != "Extraction" || hist.AgentID != "a2" {
+		t.Errorf("agent = %q/%q, want the run's own agent (Extraction/a2)", hist.AgentID, hist.AgentName)
+	}
+
+	rendered := renderHistoryHTML(hist.Items)
+	if len(rendered) != 2 {
+		t.Fatalf("items = %d, want 2", len(rendered))
+	}
+	for i, wantStage := range []string{"Extraction", "EntityProcessor"} {
+		var m map[string]any
+		if err := json.Unmarshal(rendered[i], &m); err != nil {
+			t.Fatalf("decode item %d: %v", i, err)
+		}
+		content, _ := m["content"].(map[string]any)
+		if content["stage"] != wantStage {
+			t.Errorf("item %d stage = %v, want %q", i, content["stage"], wantStage)
+		}
+		if _, ok := content["stage_kind"]; !ok {
+			t.Errorf("item %d lost stage_kind", i)
+		}
+		if reasoning, ok := content["reasoning"]; ok && reasoning != "" {
+			t.Errorf("item %d reasoning = %v, want none (a stage label is not chain-of-thought)", i, reasoning)
+		}
+	}
+}
+
+func TestRunTimelineLiftsLegacyStageLabel(t *testing.T) {
+	// Transcripts written before stage provenance was structured carry the label
+	// inside the text. Those rows are immutable, but the label must still be
+	// lifted out: it rendered as literal "**…** · stage output", and the history
+	// renderer's first-line heuristic turned it into a Thinking block containing
+	// nothing but the label.
+	full := &AgentRunFull{
+		Run: &ScheduledAgentRun{ID: "run-l", AgentName: "Extraction", Status: "completed"},
+		Messages: []*AgentRunMessage{
+			{Role: "assistant", Content: map[string]any{"text": "**EntityProcessor** · stage output\n\nProcessed 55 entities"}, CreatedAt: "2026-08-26T08:00:02Z", StepNumber: 1},
+			// A genuine reply that opens with a bold run is not a label.
+			{Role: "assistant", Content: map[string]any{"text": "**Bold claim** · a normal reply\n\nbody"}, CreatedAt: "2026-08-26T08:00:03Z", StepNumber: 2},
+		},
+	}
+	rendered := renderHistoryHTML(runTimelineItems(full, nil))
+	if len(rendered) != 2 {
+		t.Fatalf("items = %d, want 2", len(rendered))
+	}
+	var legacy map[string]any
+	if err := json.Unmarshal(rendered[0], &legacy); err != nil {
+		t.Fatalf("decode legacy item: %v", err)
+	}
+	lc, _ := legacy["content"].(map[string]any)
+	if lc["stage"] != "EntityProcessor" || lc["stage_kind"] != "output" {
+		t.Errorf("legacy label = %v/%v, want EntityProcessor/output", lc["stage"], lc["stage_kind"])
+	}
+	if lc["text"] != "Processed 55 entities" {
+		t.Errorf("legacy text = %v, want the text without the label line", lc["text"])
+	}
+	if r, ok := lc["reasoning"]; ok && r != "" {
+		t.Errorf("legacy reasoning = %v, want none (the label is not chain-of-thought)", r)
+	}
+
+	var plain map[string]any
+	if err := json.Unmarshal(rendered[1], &plain); err != nil {
+		t.Fatalf("decode plain item: %v", err)
+	}
+	pc, _ := plain["content"].(map[string]any)
+	if _, has := pc["stage"]; has {
+		t.Errorf("a genuine bold opener was read as a stage label: %v", pc["stage"])
+	}
+	// The pre-existing first-line heuristic may still re-split such a reply (that
+	// is what lifts the label in the first place); the point here is only that it
+	// was not mistaken for recorded stage provenance.
 }
 
 func TestGetRunHistoryRouteMemoryError(t *testing.T) {

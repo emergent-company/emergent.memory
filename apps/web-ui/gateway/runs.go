@@ -137,6 +137,48 @@ func runMessageText(content map[string]any) string {
 	return ""
 }
 
+// legacyStageLabel recognises the label an extraction transcript used to embed
+// in its message text — "**EntityExtractor** · stage output\n\n<text>" — and
+// splits it into the structured provenance the transcript renders today. Rows
+// written before that provenance was structured are immutable (the recorded
+// text is what it is), but their label can still be lifted out so it renders as
+// a label instead of literal markup, and so the chain-of-thought heuristic stops
+// treating it as the message's reasoning.
+//
+// Only the exact phrases the recorder emitted are recognised, so a genuine
+// reply that opens with a bold run is left alone.
+func legacyStageLabel(text string) (stage, kind, rest string, ok bool) {
+	line, remainder, found := strings.Cut(text, "\n")
+	if !found {
+		return "", "", text, false
+	}
+	line = strings.TrimSpace(line)
+	remainder = strings.TrimLeft(remainder, "\n")
+	if line == "**Extraction failed**" {
+		return "Extraction", "error", remainder, true
+	}
+	if !strings.HasPrefix(line, "**") {
+		return "", "", text, false
+	}
+	body := line[2:]
+	end := strings.Index(body, "**")
+	if end <= 0 {
+		return "", "", text, false
+	}
+	tail := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(body[end+2:]), "·"))
+	kinds := map[string]string{
+		"extraction prompt": "prompt",
+		"model response":    "output",
+		"stage output":      "output",
+		"error":             "error",
+	}
+	kind, known := kinds[tail]
+	if !known {
+		return "", "", text, false
+	}
+	return strings.TrimSpace(body[:end]), kind, remainder, true
+}
+
 // runDescription builds the header subtitle: which agent ran and when.
 func runDescription(run *ScheduledAgentRun) string {
 	name := run.AgentName

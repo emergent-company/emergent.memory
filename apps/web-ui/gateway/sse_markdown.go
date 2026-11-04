@@ -477,6 +477,14 @@ func renderHistoryHTML(items []json.RawMessage) []json.RawMessage {
 			content["html"] = renderCitedMarkdown(text, cites)
 		} else if reasoning, hasReasoning := content["reasoning"].(string); hasReasoning && reasoning != "" {
 			content["html"] = renderCitedMarkdown(text, cites)
+		} else if stage, hasStage := content["stage"].(string); hasStage && stage != "" {
+			// A pipeline stage message carries its label as metadata, not as the
+			// first line of the text. Running the legacy heuristic over it stole
+			// that label as "reasoning", so the transcript showed a Thinking block
+			// containing nothing but "**EntityProcessor** · stage output" while
+			// the actual answer rendered label-less. The text is the stage's
+			// content, whole.
+			content["html"] = renderCitedMarkdown(text, cites)
 		} else if reasoning, answer := splitLeadingReasoning(text); reasoning != "" {
 			content["reasoning"] = reasoning
 			content["text"] = answer
