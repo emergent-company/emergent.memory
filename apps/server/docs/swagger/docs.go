@@ -25915,6 +25915,81 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery-jobs/{jobId}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Re-runs a finished (completed, failed or cancelled) discovery job over the same documents. The new job records trigger=manual.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "discovery-jobs"
+                ],
+                "summary": "Retry a discovery job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID (UUID)",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional overrides (batch_size)",
+                        "name": "request",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/domain_discoveryjobs.RetryDiscoveryRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Retry started",
+                        "schema": {
+                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Job not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Job is still running",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/docs": {
             "get": {
                 "description": "Returns the Swagger UI HTML page for browsing API documentation",
@@ -31299,6 +31374,12 @@ const docTemplate = `{
                     "type": "array",
                     "items": {}
                 },
+                "document_count": {
+                    "type": "integer"
+                },
+                "error_message": {
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -31309,6 +31390,13 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
+                    "type": "string"
+                },
+                "total_documents": {
+                    "type": "integer"
+                },
+                "trigger": {
+                    "description": "Trigger/scope/document counts describe what the run covered, so a caller\ncan distinguish an automatic sync run from an explicit one and tell the\nuser when the per-run cap limited a project-wide run.",
                     "type": "string"
                 }
             }
@@ -31350,11 +31438,18 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_discoveryjobs.RetryDiscoveryRequest": {
+            "type": "object",
+            "properties": {
+                "batch_size": {
+                    "type": "integer",
+                    "maximum": 50,
+                    "minimum": 1
+                }
+            }
+        },
         "domain_discoveryjobs.StartDiscoveryRequest": {
             "type": "object",
-            "required": [
-                "document_ids"
-            ],
             "properties": {
                 "batch_size": {
                     "type": "integer",
@@ -31362,14 +31457,19 @@ const docTemplate = `{
                     "minimum": 1
                 },
                 "document_ids": {
+                    "description": "DocumentIDs names the documents to analyse. Required when Scope is empty\nor DiscoveryScopeDocuments; ignored when Scope is DiscoveryScopeProject.",
                     "type": "array",
-                    "minItems": 1,
                     "items": {
                         "type": "string"
                     }
                 },
                 "include_relationships": {
                     "type": "boolean"
+                },
+                "limit": {
+                    "description": "Limit caps a DiscoveryScopeProject run. Zero means the server default;\na value above the server cap is clamped to it.",
+                    "type": "integer",
+                    "minimum": 1
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -31380,14 +31480,30 @@ const docTemplate = `{
                     "type": "number",
                     "maximum": 1,
                     "minimum": 0
+                },
+                "scope": {
+                    "description": "Scope selects what to analyse: DiscoveryScopeDocuments (default) or\nDiscoveryScopeProject.",
+                    "type": "string",
+                    "enum": [
+                        "documents",
+                        "project"
+                    ]
                 }
             }
         },
         "domain_discoveryjobs.StartDiscoveryResponse": {
             "type": "object",
             "properties": {
+                "document_count": {
+                    "description": "DocumentCount is how many documents this job will analyse.",
+                    "type": "integer"
+                },
                 "job_id": {
                     "type": "string"
+                },
+                "total_documents": {
+                    "description": "TotalDocuments is how many head documents the project had when the run\nstarted. It is larger than DocumentCount when the per-run cap applied, so\na caller can tell the user the run covered a subset.",
+                    "type": "integer"
                 }
             }
         },
@@ -36871,6 +36987,10 @@ const docTemplate = `{
         "domain_projects.Project": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "description": "AutoDiscoveryEnabled starts a schema-discovery job after a source sync\ncreates documents (added in migration 00260). It defaults to true so a\nproject keeps the behaviour it had before the flag existed; when false,\ndiscovery only runs through the explicit start/retry endpoints.",
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -36942,6 +37062,10 @@ const docTemplate = `{
         "domain_projects.ProjectDTO": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "description": "AutoDiscoveryEnabled is always emitted (unlike the other booleans): the\ncolumn defaults to true, so an absent field would read as \"off\" in a UI\nthat renders a toggle and silently disable discovery for every project.",
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}
@@ -37090,6 +37214,9 @@ const docTemplate = `{
         "domain_projects.UpdateProjectRequest": {
             "type": "object",
             "properties": {
+                "auto_discovery_enabled": {
+                    "type": "boolean"
+                },
                 "auto_extract_config": {
                     "type": "object",
                     "additionalProperties": {}

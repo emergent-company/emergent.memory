@@ -336,9 +336,111 @@ func TestBuildTypeDiscoveryPrompt_IncludesKBPurpose(t *testing.T) {
 	docs := []DocumentContent{
 		{Content: "Alice reports to Bob. Bob is VP of Engineering."},
 	}
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose)
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, 0)
 	if !strings.Contains(prompt, kbPurpose) {
 		t.Errorf("D1 FAIL: kbPurpose not found in prompt\nkbPurpose: %q\nprompt (first 500 chars): %.500s", kbPurpose, prompt)
 	}
 	t.Log("D1 PASS: kbPurpose appears verbatim in buildTypeDiscoveryPrompt output")
+}
+
+// TestBuildTypeDiscoveryPrompt_TypeBudget pins the requested type count to the
+// budget: the reduced budget is what makes a truncation retry shorter.
+func TestBuildTypeDiscoveryPrompt_TypeBudget(t *testing.T) {
+	s := testService()
+	docs := []DocumentContent{{Content: "Alice reports to Bob."}}
+
+	if p := s.buildTypeDiscoveryPrompt(docs, "hr", 0); !strings.Contains(p, "up to 20 important entity types") {
+		t.Errorf("default budget not in prompt: %.200s", p)
+	}
+	if p := s.buildTypeDiscoveryPrompt(docs, "hr", discoveryReducedMaxTypes); !strings.Contains(p, "up to 5 important entity types") {
+		t.Errorf("reduced budget not in prompt: %.200s", p)
+	}
+}
+
+// TestDecideDiscoveryBatch_SingleDocumentTruncationRetriesWithFewerTypes
+// covers the failure that stalled discovery on a 1-document job: a batch that
+// cannot be split has to shrink the answer instead of failing outright.
+func TestDecideDiscoveryBatch_SingleDocumentTruncationRetriesWithFewerTypes(t *testing.T) {
+	s := testService()
+	// A response cut off before the first type object completed, so nothing is
+	// salvageable by JSON repair.
+	raw := `{"discovered_types":[{"type_name":"Per`
+	outcome := s.decideDiscoveryBatch(raw, ErrOutputTruncated, 1)
+	if !outcome.RetryReducedTypes {
+		t.Fatalf("single-document truncation should retry with a reduced type budget; got %+v", outcome)
+	}
+	if outcome.RetrySmaller {
+		t.Fatal("a 1-document batch cannot be split, so RetrySmaller must be false")
+	}
+}
+
+// TestDecideDiscoveryBatch_MultiDocumentTruncationSplits keeps the existing
+// behaviour: a multi-document batch is split, not retried at a reduced budget.
+func TestDecideDiscoveryBatch_MultiDocumentTruncationSplits(t *testing.T) {
+	s := testService()
+	raw := `{"discovered_types":[{"type_name":"Per`
+	outcome := s.decideDiscoveryBatch(raw, ErrOutputTruncated, 4)
+	if !outcome.RetrySmaller || outcome.RetryReducedTypes {
+		t.Fatalf("multi-document truncation should split; got %+v", outcome)
+	}
+}
+
+// TestDecideDiscoveryBatch_SingleDocumentEmptyBodyFails keeps an empty body out
+// of the reduced-budget retry: it is not an output-limit failure, so retrying
+// would repeat the same call for nothing.
+func TestDecideDiscoveryBatch_SingleDocumentEmptyBodyFails(t *testing.T) {
+	s := testService()
+	outcome := s.decideDiscoveryBatch("", nil, 1)
+	if outcome.RetryReducedTypes || outcome.RetrySmaller {
+		t.Fatalf("empty body on a single document should fail, not retry; got %+v", outcome)
+	}
+	if outcome.Err == nil {
+		t.Fatal("empty body should produce an error")
+	}
+}
+
+// TestDecideDiscoveryBatch_NonTruncationParseErrorFails ensures a malformed
+// (not truncated) response is a failure rather than a silent retry, which would
+// hide a prompt/model problem behind repeated spend.
+func TestDecideDiscoveryBatch_NonTruncationParseErrorFails(t *testing.T) {
+	s := testService()
+	outcome := s.decideDiscoveryBatch("not json at all", nil, 1)
+	if outcome.RetryReducedTypes || outcome.RetrySmaller {
+		t.Fatalf("a non-truncation parse error should fail; got %+v", outcome)
+	}
+	if outcome.Err == nil {
+		t.Fatal("expected an error")
+	}
+}
+
+// TestDecideDiscoveryBatch_CompleteEmptyAnswerIsValid pins the distinction the
+// function was introduced for: a complete answer with zero types is not a
+// failure (the job-level check reports "no entity types").
+func TestDecideDiscoveryBatch_CompleteEmptyAnswerIsValid(t *testing.T) {
+	s := testService()
+	outcome := s.decideDiscoveryBatch(`{"discovered_types":[]}`, nil, 1)
+	if outcome.Err != nil || outcome.RetryReducedTypes || outcome.RetrySmaller {
+		t.Fatalf("complete empty answer should be valid; got %+v", outcome)
+	}
+	if len(outcome.Types) != 0 {
+		t.Fatalf("expected no types, got %d", len(outcome.Types))
+	}
+}
+
+// TestDocumentCap_DefaultsAndOverride pins the per-run document cap.
+func TestDocumentCap_DefaultsAndOverride(t *testing.T) {
+	if got := (&Service{}).documentCap(); got != DefaultDiscoveryMaxDocuments {
+		t.Fatalf("zero Service cap = %d, want %d", got, DefaultDiscoveryMaxDocuments)
+	}
+	if got := (&Service{maxDocuments: 7}).documentCap(); got != 7 {
+		t.Fatalf("explicit cap = %d, want 7", got)
+	}
+	t.Setenv("DISCOVERY_MAX_DOCUMENTS", "12")
+	if got := maxDocumentsFromEnv(); got != 12 {
+		t.Fatalf("env cap = %d, want 12", got)
+	}
+	t.Setenv("DISCOVERY_MAX_DOCUMENTS", "not-a-number")
+	if got := maxDocumentsFromEnv(); got != DefaultDiscoveryMaxDocuments {
+		t.Fatalf("invalid env cap = %d, want default", got)
+	}
 }

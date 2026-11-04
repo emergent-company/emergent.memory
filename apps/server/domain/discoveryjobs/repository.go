@@ -207,6 +207,91 @@ func (r *Repository) GetProjectInfo(ctx context.Context, projectID uuid.UUID) (s
 	return projectInfo, nil
 }
 
+// ActiveJobForProject returns the project's non-terminal discovery job, if any.
+// Allowing one run per project at a time keeps a second start from doubling the
+// model spend and from finalising two packs over the same documents.
+func (r *Repository) ActiveJobForProject(ctx context.Context, projectID uuid.UUID) (*DiscoveryJob, error) {
+	job := &DiscoveryJob{}
+	err := r.db.NewSelect().
+		Model(job).
+		Where("project_id = ?", projectID).
+		Where("status NOT IN (?)", bun.In([]string{StatusCompleted, StatusFailed, StatusCancelled})).
+		Order("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		r.log.Error("failed to find active discovery job", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return job, nil
+}
+
+// ProjectDocumentIDs returns the ids of a project's analysable documents,
+// newest first, capped at limit. It mirrors the document listing's canonical
+// filters: HEAD rows only (superseded versions are history) and no documents
+// deleted at the source. Documents with no content are skipped — there is
+// nothing for the model to read and they would only pad the prompt.
+func (r *Repository) ProjectDocumentIDs(ctx context.Context, projectID uuid.UUID, limit int) ([]uuid.UUID, error) {
+	ids := []uuid.UUID{}
+	query := r.db.NewSelect().
+		Table("kb.documents").
+		Column("id").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("source_status IS DISTINCT FROM ?", "deleted_from_source").
+		Where("COALESCE(content, '') <> ''").
+		Order("created_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Scan(ctx, &ids); err != nil {
+		r.log.Error("failed to list project documents", logger.Error(err))
+		return nil, apperror.ErrInternal.WithInternal(err)
+	}
+	return ids, nil
+}
+
+// CountProjectDocuments counts the documents ProjectDocumentIDs would return
+// without a limit, so a caller can tell the user a run covered a subset.
+func (r *Repository) CountProjectDocuments(ctx context.Context, projectID uuid.UUID) (int, error) {
+	count, err := r.db.NewSelect().
+		Table("kb.documents").
+		Where("project_id = ?", projectID).
+		Where("supersedes_id IS NULL").
+		Where("source_status IS DISTINCT FROM ?", "deleted_from_source").
+		Where("COALESCE(content, '') <> ''").
+		Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count project documents", logger.Error(err))
+		return 0, apperror.ErrInternal.WithInternal(err)
+	}
+	return count, nil
+}
+
+// AutoDiscoveryEnabled reports the project's auto-discovery setting. It is read
+// through the discovery repository because the sync worker only has this
+// domain wired, and a project lookup here avoids a cross-domain dependency for
+// one boolean.
+func (r *Repository) AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	var enabled bool
+	err := r.db.NewSelect().
+		Table("kb.projects").
+		Column("auto_discovery_enabled").
+		Where("id = ?", projectID).
+		Scan(ctx, &enabled)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, apperror.ErrNotFound.WithMessage("project not found")
+		}
+		r.log.Error("failed to read auto_discovery_enabled", logger.Error(err))
+		return false, apperror.ErrInternal.WithInternal(err)
+	}
+	return enabled, nil
+}
+
 // CreateTypeCandidate creates a new type candidate
 func (r *Repository) CreateTypeCandidate(ctx context.Context, candidate *DiscoveryTypeCandidate) error {
 	_, err := r.db.NewInsert().Model(candidate).Exec(ctx)

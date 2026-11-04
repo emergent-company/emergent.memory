@@ -2,6 +2,9 @@ package discoveryjobs
 
 import (
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
 
 	"go.uber.org/fx"
 
@@ -32,7 +35,23 @@ func NewService(repo *Repository, docSvc *documents.Service, cfg *config.Config,
 		cfg:          cfg,
 		modelFactory: modelFactory,
 		log:          log.With(slog.String("scope", "discoveryjobs.svc")),
+		maxDocuments: maxDocumentsFromEnv(),
 	}
+}
+
+// maxDocumentsFromEnv reads the per-run document cap, defaulting to
+// DefaultDiscoveryMaxDocuments. An unparsable or non-positive value is ignored
+// rather than failing startup: the default is the safe value for a tuning knob.
+func maxDocumentsFromEnv() int {
+	raw := strings.TrimSpace(os.Getenv("DISCOVERY_MAX_DOCUMENTS"))
+	if raw == "" {
+		return DefaultDiscoveryMaxDocuments
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return DefaultDiscoveryMaxDocuments
+	}
+	return n
 }
 
 // provideDiscoveryServiceWithMCP exposes the discovery service as mcp.DiscoveryFinalizer

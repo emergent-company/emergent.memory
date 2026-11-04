@@ -54,8 +54,17 @@ func (a *discoveryStarterAdapter) StartDiscovery(ctx context.Context, projectID 
 	if len(documentIDs) == 0 {
 		return nil
 	}
-	_, err := a.svc.StartDiscovery(ctx, projectID, &discoveryjobs.StartDiscoveryRequest{DocumentIDs: documentIDs})
+	_, err := a.svc.StartDiscovery(ctx, projectID, &discoveryjobs.StartDiscoveryRequest{
+		DocumentIDs: documentIDs,
+		Trigger:     discoveryjobs.DiscoveryTriggerSourceSync,
+	})
 	return err
+}
+
+// AutoDiscoveryEnabled reports the project's auto-discovery setting, read
+// through the discovery domain so the worker needs no project repository.
+func (a *discoveryStarterAdapter) AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error) {
+	return a.svc.AutoDiscoveryEnabled(ctx, projectID)
 }
 
 // NewDiscoveryStarter provides DiscoveryStarter backed by the discovery module.

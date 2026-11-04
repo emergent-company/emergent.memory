@@ -70,6 +70,12 @@ const (
 	StatusCancelled          = "cancelled"
 )
 
+// IsTerminalStatus reports whether a discovery job has finished running. A
+// terminal job can be retried (which creates a new job) but never advanced.
+func IsTerminalStatus(status string) bool {
+	return status == StatusCompleted || status == StatusFailed || status == StatusCancelled
+}
+
 // Valid candidate statuses
 const (
 	CandidateStatusCandidate = "candidate"

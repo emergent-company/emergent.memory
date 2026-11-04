@@ -22,6 +22,7 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 			ChatPromptTemplate:          "be helpful",
 			AutoExtractObjects:          boolPtr(true),
 			AutoMergeExtractionBranches: boolPtr(false),
+			AutoDiscoveryEnabled:        boolPtr(true),
 		},
 		RememberAgent:  "memory",
 		DedupThreshold: "0.8",
@@ -32,6 +33,8 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 		`name="name"`, `value="Home"`, `name="project_info"`, "family",
 		`name="chat_prompt_template"`, "be helpful",
 		`name="auto_extract_objects"`, `name="auto_merge_extraction_branches"`,
+		`name="auto_discovery_enabled"`,
+		`hx-post="/settings/project/auto_discovery_enabled"`,
 		`hx-post="/settings/project/name"`,
 		`name="remember_agent"`, `value="memory"`,
 		`name="dedup_threshold"`, `value="0.8"`,
@@ -53,6 +56,9 @@ func TestRenderProjectSettingsPage(t *testing.T) {
 	}
 	if strings.Contains(html, `name="auto_merge_extraction_branches" class="toggle" checked`) {
 		t.Error("off toggle must not render checked")
+	}
+	if !strings.Contains(html, `name="auto_discovery_enabled" class="toggle" checked`) {
+		t.Error("auto-discovery defaults on, so an on value must render checked")
 	}
 }
 
@@ -720,5 +726,16 @@ func TestRenderAssistantPanel(t *testing.T) {
 	}
 	if !strings.Contains(lu, `<option value="a1">memory</option>`) {
 		t.Error("listed agents should still render")
+	}
+}
+
+// TestRenderProjectSettingsPageAutoDiscoveryDefaultsOn pins that a memory which
+// omits auto_discovery_enabled (an older build) still renders the toggle on: the
+// column defaults to true server-side, so an unset pointer must not read as off
+// and silently contradict the server's behaviour.
+func TestRenderProjectSettingsPageAutoDiscoveryDefaultsOn(t *testing.T) {
+	html := renderHTML(t, ProjectSettingsPage(projectSettingsData{Project: &Project{ID: "p1", Name: "Home"}}))
+	if !strings.Contains(html, `name="auto_discovery_enabled" class="toggle" checked`) {
+		t.Error("absent auto_discovery_enabled must render checked (the server default is on)")
 	}
 }

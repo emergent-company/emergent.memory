@@ -23,6 +23,10 @@ import (
 // documents, or a container without the discovery module, skips delegation.
 type DiscoveryStarter interface {
 	StartDiscovery(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error
+	// AutoDiscoveryEnabled reports the project's auto-discovery setting. When
+	// it returns false, a sync must not start discovery; an error means the
+	// setting could not be read and delegation is skipped.
+	AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error)
 }
 
 // SyncWorker polls for pending sync jobs and drives them through
@@ -635,17 +639,30 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// leave a stale actionable item behind (#2414).
 	w.svc.resolveSourceNotification(ctx, job.ProjectID, job.SourceID)
 
-	// Delegate schema discovery with newly ingested documents.
+	// Delegate schema discovery with newly ingested documents, unless the
+	// project has turned automatic discovery off. The gate is read per sync
+	// rather than cached so a settings change applies to the next sync; a
+	// failed lookup skips delegation (the explicit Schema → discovery actions
+	// remain available) instead of spending model calls on a guess.
 	if len(createdDocIDs) > 0 && w.discovery != nil {
-		ids := make([]uuid.UUID, 0, len(createdDocIDs))
-		for _, id := range createdDocIDs {
-			if u, err := uuid.Parse(id); err == nil {
-				ids = append(ids, u)
+		enabled, gateErr := w.discovery.AutoDiscoveryEnabled(ctx, job.ProjectID)
+		switch {
+		case gateErr != nil:
+			jobLog.Warn("auto-discovery setting lookup failed; skipping discovery delegation", "error", gateErr)
+		case !enabled:
+			jobLog.Info("auto-discovery disabled for project; skipping discovery delegation",
+				"project_id", job.ProjectID.String(), "documents", len(createdDocIDs))
+		default:
+			ids := make([]uuid.UUID, 0, len(createdDocIDs))
+			for _, id := range createdDocIDs {
+				if u, err := uuid.Parse(id); err == nil {
+					ids = append(ids, u)
+				}
 			}
-		}
-		if len(ids) > 0 {
-			if err := w.discovery.StartDiscovery(ctx, job.ProjectID, ids); err != nil {
-				jobLog.Warn("discovery delegation failed", "error", err)
+			if len(ids) > 0 {
+				if err := w.discovery.StartDiscovery(ctx, job.ProjectID, ids); err != nil {
+					jobLog.Warn("discovery delegation failed", "error", err)
+				}
 			}
 		}
 	}

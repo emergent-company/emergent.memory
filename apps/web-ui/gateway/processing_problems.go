@@ -350,8 +350,8 @@ type processingRetryAction struct {
 // for queues with a per-unit retry, independent of the failure's Retryable
 // flag: a configuration failure is a deliberate "never retry automatically"
 // decision, not a reason to leave the user without a button after they fixed
-// Providers. Queues with no safe retry (schema, blueprints, email, sessions)
-// return false and keep navigation only.
+// Providers. Queues with no safe retry (schema migrations, blueprints, email,
+// sessions) return false and keep navigation only.
 func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
 	// An internal failure is a bug in the pipeline: re-running the same input
 	// reproducibly stops in the same place, so the row keeps the remediation
@@ -390,6 +390,17 @@ func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
 			return processingRetryAction{
 				Href:    "/data-sources/" + url.PathEscape(p.SourceID) + "/sync",
 				Label:   "Sync now",
+				Confirm: confirm,
+			}, true
+		}
+	case "discovery":
+		// Re-runs the failed job over exactly the documents it covered; the
+		// gateway reports the outcome on the Schema page, where the run's
+		// progress and its resulting pack live.
+		if p.JobID != "" {
+			return processingRetryAction{
+				Href:    "/schema/discovery/retry/" + url.PathEscape(p.JobID),
+				Label:   "Retry",
 				Confirm: confirm,
 			}, true
 		}

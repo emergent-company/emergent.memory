@@ -235,7 +235,12 @@ func actionFor(queue string, row problemRow) Action {
 	case QueueBlueprintUpdate:
 		return Action{Kind: ActionOpen, Label: "Open blueprints", Href: "/blueprints"}
 
-	case QueueDiscovery, QueueSchemaMigration:
+	case QueueDiscovery:
+		// Anchor the discovery card: the schema page as a whole is the compiled
+		// type browser, and landing at the top left the user hunting for the
+		// run this row is about.
+		return Action{Kind: ActionOpen, Label: "Open discovery", Href: "/schema#discovery"}
+	case QueueSchemaMigration:
 		return Action{Kind: ActionOpen, Label: "Open schema", Href: "/schema"}
 
 	default:
@@ -272,6 +277,8 @@ func drilldownFor(queue string, row problemRow) string {
 		return "/sessions"
 	case QueueBlueprintUpdate:
 		return "/blueprints"
+	case QueueDiscovery:
+		return "/schema#discovery"
 	default:
 		return "/schema"
 	}
