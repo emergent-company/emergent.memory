@@ -1,0 +1,293 @@
+import Foundation
+
+// MARK: - Gateway chat stream (`POST /api/chat`, SSE)
+
+/// One decoded frame from the gateway chat stream.
+///
+/// The gateway forwards memory's SSE events and rewrites a few of them (see
+/// `gateway/sse_markdown.go`): `token` stays a raw markdown delta, `html` is the
+/// authoritative snapshot emitted just before `done`, and `ask_user` tool calls
+/// become `question` frames. Everything the LiveKit worker path delivers on
+/// `lk.chat.events` arrives here as ordinary frames instead.
+enum ChatStreamEvent: Equatable {
+    /// Conversation identity, plus the run id when the server already has one.
+    case meta(conversationID: String?, runID: String?)
+    /// One raw markdown delta of the reply.
+    case text(String)
+    /// Tool/thinking/approval/question/A2UI activity, mapped onto the same
+    /// events the LiveKit worker path feeds the activity store.
+    case activity(ChatEvent)
+    /// Grounded citations for the turn (parsed, not yet rendered).
+    case citations(count: Int)
+    /// A terminal failure for the turn.
+    case failure(String)
+    /// The turn finished.
+    case done
+    /// Retained in-flight frames replayed for a stream this client did not run.
+    case replay([ChatStreamEvent])
+}
+
+/// Incremental Server-Sent-Events parser: feed it one line at a time and it
+/// returns the joined `data:` payload on every dispatch (blank line).
+///
+/// Comments (`: ping` keepalives) and other fields are ignored, matching the
+/// browser's `EventSource` semantics closely enough for this stream.
+struct SSEFrameParser {
+    private var dataLines: [String] = []
+
+    /// Feeds `line` (without its trailing newline). Returns the payload when
+    /// the line dispatches an event.
+    mutating func consume(_ line: String) -> String? {
+        if line.isEmpty {
+            return dispatch()
+        }
+        if line.hasPrefix(":") {
+            return nil
+        }
+        guard let separator = line.firstIndex(of: ":") else {
+            return nil
+        }
+        let field = String(line[line.startIndex ..< separator])
+        var value = String(line[line.index(after: separator)...])
+        if value.hasPrefix(" ") {
+            value.removeFirst()
+        }
+        if field == "data" {
+            dataLines.append(value)
+        }
+        return nil
+    }
+
+    /// Flushes a payload when the connection ends without a trailing blank
+    /// line.
+    mutating func finish() -> String? {
+        dispatch()
+    }
+
+    private mutating func dispatch() -> String? {
+        guard !dataLines.isEmpty else { return nil }
+        let payload = dataLines.joined(separator: "\n")
+        dataLines.removeAll(keepingCapacity: true)
+        return payload.isEmpty ? nil : payload
+    }
+}
+
+/// Decodes one SSE `data:` payload into a ``ChatStreamEvent``.
+enum ChatStreamFrameDecoder {
+    /// Decodes `payload`. `fallbackToolID` supplies an id for a tool frame the
+    /// server sent without one, so a start/end pair can still be correlated.
+    static func decode(
+        _ payload: String,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        guard let data = payload.data(using: .utf8) else { return nil }
+        return decode(data: data, fallbackToolID: fallbackToolID)
+    }
+
+    static func decode(
+        data: Data,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        let decoder = JSONDecoder()
+        guard let envelope = try? decoder.decode(ChatStreamEnvelope.self, from: data) else {
+            return nil
+        }
+        switch envelope.type {
+        case "meta", "token", "html", "thinking":
+            return contentEvent(envelope)
+        case "mcp_tool", "approval", "question":
+            return interactionEvent(envelope, fallbackToolID: fallbackToolID)
+        case "ui", "citations", "error", "done":
+            return surfaceEvent(envelope)
+        case "live_replay":
+            return replay(data: data, fallbackToolID: fallbackToolID)
+        default:
+            // Unknown frame kind — ignored so the stream keeps working when the
+            // server adds new ones.
+            return nil
+        }
+    }
+
+    /// The session envelope, markdown deltas and thinking segments.
+    private static func contentEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        switch envelope.type {
+        case "meta":
+            return .meta(
+                conversationID: envelope.conversationId?.nonEmpty,
+                runID: envelope.runId?.nonEmpty
+            )
+        case "token":
+            guard let token = envelope.token, !token.isEmpty else { return nil }
+            return .text(token)
+        case "html":
+            // The authoritative snapshot is rendered from the accumulated
+            // `token` deltas instead; the snapshot exists for hosts that render
+            // server-side HTML.
+            return nil
+        default:
+            guard let text = envelope.text, !text.isEmpty, envelope.done != true else {
+                // A segment-closing `done: true` carries no new text.
+                return nil
+            }
+            return .activity(.thinking(delta: text))
+        }
+    }
+
+    /// The cards a turn can pause on: tool activity, approvals and questions.
+    private static func interactionEvent(
+        _ envelope: ChatStreamEnvelope,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        switch envelope.type {
+        case "mcp_tool":
+            return toolEvent(envelope, fallbackToolID: fallbackToolID)
+        case "approval":
+            guard let questionID = envelope.questionId?.nonEmpty else { return nil }
+            return .activity(.approval(ChatApprovalEvent(
+                questionId: questionID,
+                tool: envelope.tool ?? "",
+                arguments: envelope.input?.displayText ?? ""
+            )))
+        default:
+            return questionEvent(envelope)
+        }
+    }
+
+    private static func toolEvent(
+        _ envelope: ChatStreamEnvelope,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        guard let tool = envelope.tool, !tool.isEmpty else { return nil }
+        let id = envelope.id?.nonEmpty ?? fallbackToolID()
+        if envelope.status == "started" {
+            return .activity(.toolCall(ChatToolCallEvent(
+                id: id,
+                tool: tool,
+                arguments: envelope.result?.displayText ?? ""
+            )))
+        }
+        let failed = envelope.status == "error" || envelope.status == "failed"
+        let output = envelope.error?.nonEmpty
+            ?? envelope.result?.displayText
+            ?? envelope.status
+            ?? ""
+        return .activity(.toolResult(ChatToolResultEvent(
+            id: id,
+            tool: tool,
+            result: output,
+            isError: failed
+        )))
+    }
+
+    private static func questionEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        guard let questionID = envelope.questionId?.nonEmpty else { return nil }
+        let options = (envelope.options ?? []).map { option in
+            ChatQuestionOption(
+                label: option.label,
+                value: option.value,
+                description: option.description
+            )
+        }
+        return .activity(.question(ChatQuestionEvent(
+            questionId: questionID,
+            question: envelope.question ?? "",
+            interactionType: Self.interactionType(envelope.interactionType),
+            options: options,
+            placeholder: envelope.placeholder?.nonEmpty,
+            maxLength: envelope.maxLength
+        )))
+    }
+
+    /// Rendered surfaces and the turn's terminal frames.
+    private static func surfaceEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        switch envelope.type {
+        case "ui":
+            guard let surfaceID = envelope.surfaceId?.nonEmpty,
+                  let messages = envelope.messages
+            else { return nil }
+            return .activity(.ui(ChatUISurfaceEvent(
+                surfaceId: surfaceID,
+                messages: messages
+            )))
+        case "citations":
+            return .citations(count: envelope.citations?.count ?? 0)
+        case "error":
+            return .failure(envelope.error?.nonEmpty ?? "The agent hit an error.")
+        default:
+            return .done
+        }
+    }
+
+    /// `live_replay` re-runs the per-frame switch over its in-order `frames`
+    /// array, so retained in-flight state renders exactly like the live path.
+    private static func replay(
+        data: Data,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        guard
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let frames = object["frames"] as? [Any]
+        else { return nil }
+        var events: [ChatStreamEvent] = []
+        for frame in frames {
+            guard let frameData = try? JSONSerialization.data(withJSONObject: frame),
+                  let event = decode(data: frameData, fallbackToolID: fallbackToolID)
+            else { continue }
+            if case let .replay(nested) = event {
+                events.append(contentsOf: nested)
+            } else {
+                events.append(event)
+            }
+        }
+        return events.isEmpty ? nil : .replay(events)
+    }
+
+    /// The stream's question kinds differ from the worker's: HTTP uses `text`
+    /// where `lk.chat.events` uses `free_text`.
+    private static func interactionType(_ raw: String?) -> QuestionInteractionType {
+        switch raw {
+        case "text", "free_text": .freeText
+        case "multi_select": .multiSelect
+        default: .buttons
+        }
+    }
+}
+
+/// The union of the fields the gateway's frames carry. Every field is optional
+/// except `type`; each frame kind reads only its own.
+private struct ChatStreamEnvelope: Decodable {
+    struct Option: Decodable {
+        let label: String
+        let value: String
+        let description: String?
+    }
+
+    let type: String
+    let conversationId: String?
+    let runId: String?
+    let token: String?
+    let text: String?
+    let done: Bool?
+    let id: String?
+    let tool: String?
+    let status: String?
+    let input: ChatUIPropValue?
+    let result: ChatUIPropValue?
+    let error: String?
+    let questionId: String?
+    let question: String?
+    let interactionType: String?
+    let options: [Option]?
+    let placeholder: String?
+    let maxLength: Int?
+    let surfaceId: String?
+    let messages: [ChatUIMessage]?
+    let citations: [ChatUIPropValue]?
+}
+
+private extension String {
+    /// The value when it is not empty, so an empty `""` reads as absent.
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
