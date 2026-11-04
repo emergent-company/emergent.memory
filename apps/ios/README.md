@@ -28,8 +28,10 @@ Forked from [`livekit-examples/agent-starter-swift`](https://github.com/livekit-
 
 Text turns (`HTTPChatTransport`) POST `{ agentDefinitionId?, conversationId?, message }`
 to the gateway's `/api/chat` and render the SSE frames (`meta`, `token`,
-`thinking`, `mcp_tool`, `question`, `approval`, `ui`, `citations`, `error`,
+`thinking`, `subagent`, `mcp_tool`, `question`, `approval`, `ui`, `error`,
 `done`) through the same transcript, activity and A2UI stores voice uses.
+`citations` is decoded and then ignored — this client has no citation UI, so it
+does not pretend to have one.
 Decisions go to `/api/chat/questions/{id}/respond|cancel`. A text turn cannot be
 interrupted server-side yet — memory runs the agent on a detached context, and a
 device credential has no run-cancellation route — so text mode offers no stop
