@@ -182,6 +182,28 @@ jobs:
       - name: Run DOM wiring specs
         run: npx playwright test --config=js-dom.config.ts
 
+      # A red run otherwise leaves only a log line: the Playwright configs write
+      # reports and per-test traces under the e2e directory, but nothing ever
+      # uploaded them (#63). Upload on failure only — this is a debugging aid,
+      # not a record of the run. `if-no-files-found: ignore` matters: a failure
+      # before Playwright writes anything (port collision, webServer timeout)
+      # must not become a second, confusing failure in this step.
+      #
+      # `defaults.run.working-directory` does not apply to `uses:` steps, so the
+      # paths are workspace-relative. The per-config output dirs differ:
+      # `test-results-js/` here, `test-results-share/` in the `share` job.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: js-wiring-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+            apps/web-ui/tests/e2e/test-results-js/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ───────────────────────────────────────────────────────────────────────────
   # datasources: hermetic Data Sources (Google Drive) e2e. The specs drive the
   # gateway against the dev-mode mock harness (`datasources.config.ts` boots
@@ -270,6 +292,19 @@ jobs:
       - name: Run datasources specs
         run: npx playwright test --config=datasources.config.ts
 
+      # See the `js` job for why this is upload-on-failure only (#63). The HTML
+      # report and traces both land under `test-results/` for this config.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-sources-e2e-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # ───────────────────────────────────────────────────────────────────────────
   # gateway-smoke: per-PR browser smoke (#564). The `*-ui.spec.ts` mutations
   # specs are the only real gateway-UI coverage but need a session-mode gateway
@@ -331,6 +366,19 @@ jobs:
 
       - name: Run gateway smoke specs
         run: npx playwright test --config=gateway-smoke.config.ts
+
+      # See the `js` job for why this is upload-on-failure only (#63). The HTML
+      # report and traces both land under `test-results/` for this config.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-ui-smoke-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ───────────────────────────────────────────────────────────────────────────
   # share: hermetic agent-public-share e2e. `share.config.ts` boots the same
@@ -405,6 +453,21 @@ jobs:
 
       - name: Run share specs
         run: npx playwright test --config=share.config.ts
+
+      # See the `js` job for why this is upload-on-failure only (#63). This
+      # config writes both the HTML report and the traces to
+      # `test-results-share/`, not the default `playwright-report/`.
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-share-e2e-playwright-report
+          path: |
+            apps/web-ui/tests/e2e/playwright-report/
+            apps/web-ui/tests/e2e/test-results/
+            apps/web-ui/tests/e2e/test-results-share/
+          retention-days: 7
+          if-no-files-found: ignore
 
   web-ui-ci:
     name: web-ui-ci
