@@ -36080,6 +36080,10 @@ const docTemplate = `{
                 "other": {
                     "type": "integer"
                 },
+                "requiresAction": {
+                    "description": "RequiresAction counts the action-required notifications in the current\nscope: not cleared, not snoozed, requires_action = true.",
+                    "type": "integer"
+                },
                 "snoozed": {
                     "type": "integer"
                 },

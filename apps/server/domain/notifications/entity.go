@@ -104,6 +104,9 @@ type NotificationCounts struct {
 	Other     int64 `json:"other"`
 	Snoozed   int64 `json:"snoozed"`
 	Cleared   int64 `json:"cleared"`
+	// RequiresAction counts the action-required notifications in the current
+	// scope: not cleared, not snoozed, requires_action = true.
+	RequiresAction int64 `json:"requiresAction"`
 }
 
 // NotificationTab represents the notification tab filter

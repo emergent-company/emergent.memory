@@ -10,8 +10,10 @@
 //     event the server never sends;
 //   - counts are reconciled from /api/notifications/counts on load, on every
 //     htmx settle (scope/tab switch), and on every received event;
-//   - the inbox list refreshes in place through htmx (server-rendered partial),
-//     so notification text is never re-inserted via innerHTML.
+//   - the inbox list refreshes through the server-rendered
+//     /partial/inbox-list fragment (the list plus an out-of-band tab strip), so
+//     notification text is never re-inserted via innerHTML and the page around
+//     the list — scroll, focus, open rows — survives the swap.
 //
 // Inline actions are delegated clicks that call the gateway JSON API and then
 // reconcile counts + refresh the list. Everything degrades to a no-op when its
@@ -119,19 +121,26 @@
     fetchUnread(scope, pid).then(setBell);
   }
 
-  // refreshList re-renders the inbox partial through htmx (server-rendered).
+  // refreshList re-renders the inbox list fragment through htmx. The server
+  // returns #inbox-list plus an out-of-band tab strip, so counts stay live while
+  // the page around the list keeps its scroll, focus and open rows. Swapping
+  // #main-content here (the pre-fragment behaviour) re-rendered the whole page
+  // on every event and every inline action.
   function refreshList() {
     var page = qs(PAGE_SEL);
     if (!page) return;
     var scope = page.getAttribute("data-scope") || "all";
     var tab = page.getAttribute("data-tab") || "all";
     var project = page.getAttribute("data-project-filter") || "";
-    var path = window.MemoryScope ? MemoryScope.path("/inbox") : "/inbox";
+    var base = "/partial/inbox-list";
+    var path = window.MemoryScope ? MemoryScope.path(base) : base;
     var url =
       path + "?scope=" + encodeURIComponent(scope) + "&tab=" + encodeURIComponent(tab);
     if (project) url += "&project=" + encodeURIComponent(project);
     if (window.htmx && window.htmx.ajax) {
-      window.htmx.ajax("GET", url, { target: "#main-content", swap: "innerHTML" });
+      // outerHTML: the response's root IS #inbox-list, so innerHTML would nest a
+      // second #inbox-list inside the target (duplicate id) on the first swap.
+      window.htmx.ajax("GET", url, { target: "#inbox-list", swap: "outerHTML" });
     } else {
       window.location.reload();
     }
