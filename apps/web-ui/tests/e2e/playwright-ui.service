@@ -1,0 +1,17 @@
+[Unit]
+Description=Playwright UI (e2e) — hot-reload via air
+After=network.target
+
+[Service]
+# %h is the home directory of the user the unit runs as, so a checkout at
+# ~/emergent.memory and a toolchain in ~/go work for any user. Install with:
+#   sudo cp tests/e2e/playwright-ui.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now playwright-ui
+WorkingDirectory=%h/emergent.memory/apps/web-ui/tests/e2e
+ExecStart=%h/go/bin/air -c %h/emergent.memory/apps/web-ui/tests/e2e/.air.toml
+Restart=always
+RestartSec=3
+Environment=PATH=%h/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

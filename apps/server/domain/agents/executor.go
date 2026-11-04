@@ -1,0 +1,4839 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/agent/llmagent"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/adk/v2/runner"
+	"google.golang.org/adk/v2/session"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/genai"
+
+	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/a2ui"
+	"github.com/emergent-company/emergent.memory/pkg/adk"
+	"github.com/emergent-company/emergent.memory/pkg/agentexec"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
+)
+
+// StreamEventType identifies the kind of streaming event.
+type StreamEventType int
+
+const (
+	// StreamEventTextDelta is emitted for each partial text token from the LLM.
+	StreamEventTextDelta StreamEventType = iota
+	// StreamEventToolCallStart is emitted before a tool is executed.
+	StreamEventToolCallStart
+	// StreamEventToolCallEnd is emitted after a tool finishes executing.
+	StreamEventToolCallEnd
+	// StreamEventError is emitted when an error occurs during execution.
+	StreamEventError
+	// StreamEventToolApproval is emitted when a tool-policy confirmation gate
+	// intercepts a tool call and pauses the run awaiting user approval.
+	StreamEventToolApproval
+	// StreamEventThinking is emitted for the agent's reasoning/planning text
+	// (non-final assistant text) so callers can surface it separately from the
+	// final answer.
+	StreamEventThinking
+	// StreamEventA2UI is emitted when the agent produces declarative A2UI
+	// surface messages (structured cards) in a ```a2ui fenced block.
+	StreamEventA2UI
+)
+
+// StreamEvent is a single event emitted during agent execution via StreamCallback.
+type StreamEvent struct {
+	Type       StreamEventType
+	Text       string         // For TextDelta: the incremental text token
+	Tool       string         // For ToolCallStart/End/Approval: the tool name
+	Input      map[string]any // For ToolCallStart/Approval: the tool arguments
+	Output     map[string]any // For ToolCallEnd: the tool result
+	Error      string         // For Error/ToolCallEnd: error message
+	QuestionID string         // For ToolApproval: the confirmation question ID
+	Role       string         // For Thinking: "operator" (planning text) or "reasoning" (chain-of-thought)
+	SurfaceID  string         // For A2UI: the stable surface identifier
+	A2UI       []a2ui.Message // For A2UI: the ordered surface messages
+	// ID is a stable correlation key:
+	//   - For Thinking: the segment id ("step-<n>-<role>") shared by every delta
+	//     of one reasoning/planning segment and its closing event.
+	//   - For ToolCallStart/End: the ADK function-call id, identical on a tool's
+	//     start and terminal events so parallel/repeated invocations correlate.
+	ID string
+	// Done is true only on the thinking segment-closing event (Text is empty on
+	// close); every incremental delta carries Done:false.
+	Done bool
+	// Status is the explicit terminal status of a ToolCallEnd event:
+	// "completed", "error", or "awaiting_confirmation". It is carried explicitly
+	// (rather than inferred from Error) so a paused/blocked tool is reported
+	// faithfully instead of as success.
+	Status string
+}
+
+// StreamCallback is an optional function invoked for each streaming event during execution.
+// When set on ExecuteRequest, it enables real-time streaming of text tokens and tool calls.
+type StreamCallback func(event StreamEvent)
+
+// redactToolArgs returns a copy of the tool arguments for audit storage. Values
+// are preserved so a human reviewer sees exactly what the agent proposed, except
+// for obvious secret keys which are replaced with a redaction marker.
+func redactToolArgs(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		if isSecretKey(k) {
+			out[k] = "[redacted]"
+		} else {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// isSecretKey reports whether a tool-argument key looks like a credential or
+// secret that should never be persisted to the audit trail.
+func isSecretKey(k string) bool {
+	lk := strings.ToLower(k)
+	for _, frag := range []string{"token", "secret", "password", "passwd", "authorization", "api_key", "apikey", "credential", "private_key"} {
+		if strings.Contains(lk, frag) {
+			return true
+		}
+	}
+	return false
+}
+
+// thinkingTexts splits an assistant event's parts into the planning text
+// (non-Thought parts — the pre-tool monologue) and the reasoning text (Thought
+// parts — the model's chain-of-thought). Nil and empty parts are skipped.
+func thinkingTexts(parts []*genai.Part) (operator, reasoning []string) {
+	for _, part := range parts {
+		if part == nil || part.Text == "" {
+			continue
+		}
+		if part.Thought {
+			reasoning = append(reasoning, part.Text)
+		} else {
+			operator = append(operator, part.Text)
+		}
+	}
+	return operator, reasoning
+}
+
+// persistedEventText joins an event's parts into the persisted reply text and
+// its Thought (chain-of-thought) text. Thought parts are kept out of the reply
+// and returned separately so persistEventContent can store them under
+// content["reasoning"]; the client renders that as a Thinking block instead of
+// the assistant reply.
+//
+// isFinal mirrors the streaming classification in finalResponseStreamEvents
+// (issue #1263): for a FINAL response that carries no plain (non-Thought) text
+// part, the Thought text IS the answer — e.g. a reasoner in thinking mode that
+// answers entirely in reasoning_content — so it is returned as the reply text
+// rather than as reasoning, exactly as streaming emits it as a text delta. Non-
+// final (intermediate) events keep Thought text in the reasoning bucket, since
+// the executor streams those as thinking events rather than answer tokens.
+func persistedEventText(parts []*genai.Part, isFinal bool) (text, reasoning string) {
+	operator, thought := thinkingTexts(parts)
+	text = strings.Join(operator, "\n")
+	reasoning = strings.Join(thought, "\n")
+	if isFinal && text == "" && reasoning != "" {
+		return reasoning, ""
+	}
+	return text, reasoning
+}
+
+// thinkingSegmentID derives the stable segment id for a (step, role) thinking
+// segment. Every delta of one segment shares this id so clients can group
+// incremental deltas and stop their in-progress state when the closing event
+// (done:true) arrives.
+func thinkingSegmentID(step int, role string) string {
+	return fmt.Sprintf("step-%d-%s", step, role)
+}
+
+// resolveToolStreamStatus derives the SSE terminal status of a tool call from
+// the execution error and any status carried by beforeToolCb (set for tools
+// that did not execute: policy-blocked, share-denied, or awaiting confirmation).
+func resolveToolStreamStatus(toolErr error, carried string) string {
+	if toolErr != nil {
+		return "error"
+	}
+	if carried != "" {
+		return carried
+	}
+	return "completed"
+}
+
+// thinkingTracker assigns stable segment ids to thinking events and emits
+// exactly one done:true close per segment. It owns the currently-open
+// (step, role) segment, emitting a close before switching segments, and tracks
+// which steps already streamed partial reasoning deltas so the whole non-partial
+// block does not append the reasoning a second time.
+type thinkingTracker struct {
+	cb               StreamCallback
+	open             bool
+	openStep         int
+	openRole         string
+	openID           string
+	reasoningPartial map[int]bool
+}
+
+func newThinkingTracker(cb StreamCallback) *thinkingTracker {
+	return &thinkingTracker{
+		cb:               cb,
+		reasoningPartial: map[int]bool{},
+	}
+}
+
+// emit streams a thinking delta for the given step and role, closing the
+// previously-open segment first if the (step, role) changed.
+func (t *thinkingTracker) emit(step int, role, text string) {
+	id := thinkingSegmentID(step, role)
+	if t.open && (t.openStep != step || t.openRole != role) {
+		t.close()
+	}
+	if t.cb != nil {
+		t.cb(StreamEvent{
+			Type: StreamEventThinking,
+			ID:   id,
+			Role: role,
+			Text: text,
+			Done: false,
+		})
+	}
+	t.open = true
+	t.openStep = step
+	t.openRole = role
+	t.openID = id
+}
+
+// close emits the terminal done:true for the currently-open segment, if any.
+// It is a no-op when no segment is open, so it is safe to call defensively.
+func (t *thinkingTracker) close() {
+	if !t.open {
+		return
+	}
+	if t.cb != nil {
+		t.cb(StreamEvent{
+			Type: StreamEventThinking,
+			ID:   t.openID,
+			Role: t.openRole,
+			Done: true,
+		})
+	}
+	t.open = false
+}
+
+// markReasoningPartial records that a step streamed partial reasoning deltas.
+func (t *thinkingTracker) markReasoningPartial(step int) {
+	t.reasoningPartial[step] = true
+}
+
+// reasoningWasPartial reports whether the step already streamed partial
+// reasoning deltas, in which case the whole non-partial reasoning block for the
+// same step must be suppressed to avoid emitting the reasoning twice.
+func (t *thinkingTracker) reasoningWasPartial(step int) bool {
+	return t.reasoningPartial[step]
+}
+
+// finalResponseStreamEvents classifies the parts of a final-response event into
+// the stream events the executor emits for it.
+//
+// Plain (non-Thought) text is always an answer and becomes a text delta. A
+// Thought part is usually chain-of-thought and is surfaced as reasoning, but
+// when the final content carries no plain text at all (e.g. a reasoner in
+// thinking mode that answers entirely in reasoning_content) the Thought text IS
+// the answer and is emitted as a text delta so callers still receive a non-empty
+// final response. Nil and empty parts are skipped.
+//
+// When the plain answer text contains a valid ```a2ui fenced block, the surface
+// messages are emitted as a single StreamEventA2UI and the remaining text
+// (fences stripped) is emitted as a text delta, preserving reasoning alongside.
+func finalResponseStreamEvents(parts []*genai.Part) []StreamEvent {
+	hasAnswerText := false
+	for _, part := range parts {
+		if part != nil && part.Text != "" && !part.Thought {
+			hasAnswerText = true
+			break
+		}
+	}
+
+	// If there is plain answer text, check it for an embedded A2UI surface.
+	if hasAnswerText {
+		if msgs, plainText, surfaceID := extractA2UIFromParts(parts); len(msgs) > 0 {
+			var events []StreamEvent
+			events = append(events, StreamEvent{
+				Type:      StreamEventA2UI,
+				SurfaceID: surfaceID,
+				A2UI:      msgs,
+			})
+			if plainText != "" {
+				events = append(events, StreamEvent{
+					Type: StreamEventTextDelta,
+					Text: plainText,
+				})
+			}
+			for _, part := range parts {
+				if part != nil && part.Text != "" && part.Thought {
+					events = append(events, StreamEvent{
+						Type: StreamEventThinking,
+						Role: "reasoning",
+						Text: part.Text,
+					})
+				}
+			}
+			return events
+		}
+	}
+
+	var events []StreamEvent
+	for _, part := range parts {
+		if part == nil || part.Text == "" {
+			continue
+		}
+		if part.Thought && hasAnswerText {
+			events = append(events, StreamEvent{
+				Type: StreamEventThinking,
+				Role: "reasoning",
+				Text: part.Text,
+			})
+		} else {
+			events = append(events, StreamEvent{
+				Type: StreamEventTextDelta,
+				Text: part.Text,
+			})
+		}
+	}
+	return events
+}
+
+// extractA2UIFromParts concatenates the non-Thought text of a final response and
+// attempts to extract an A2UI surface from any ```a2ui fenced block. It returns
+// the decoded messages, the remaining plain text (fences stripped when found,
+// otherwise the full concatenated text), and the derived stable surface id.
+func extractA2UIFromParts(parts []*genai.Part) (a2uiMsgs []a2ui.Message, plainText string, surfaceID string) {
+	var b strings.Builder
+	for _, part := range parts {
+		if part == nil || part.Text == "" || part.Thought {
+			continue
+		}
+		b.WriteString(part.Text)
+	}
+	text := b.String()
+
+	msgs, rest, found := a2ui.ExtractFromText(text)
+	if !found {
+		return nil, text, ""
+	}
+	return msgs, rest, deriveSurfaceID(msgs)
+}
+
+// deriveSurfaceID returns the first createSurface surfaceId if present, else a
+// stable default identifier.
+func deriveSurfaceID(msgs []a2ui.Message) string {
+	for _, m := range msgs {
+		if m.CreateSurface != nil && m.CreateSurface.SurfaceID != "" {
+			return m.CreateSurface.SurfaceID
+		}
+	}
+	return "surface-1"
+}
+
+// ModelLimitsLookup is a narrow interface for querying model token limits
+// from the provider catalog. It is satisfied by *provider.Repository but
+// declared here to avoid a direct import of the provider domain package into
+// the agents package.
+type ModelLimitsLookup interface {
+	GetModelOutputLimit(ctx context.Context, modelName string) (int, error)
+	GetModelInputLimit(ctx context.Context, modelName string) (int, error)
+}
+
+// ephemeralTokenSvc is the narrow surface of the API-token service used by the
+// executor to mint and revoke per-run ephemeral sandbox tokens. It is satisfied
+// by *apitoken.Service but declared as an interface so teardown revocation can
+// be asserted with a fake in tests.
+type ephemeralTokenSvc interface {
+	CreateEphemeral(ctx context.Context, projectID, orgID, userID string, ttl time.Duration) (tokenID, rawToken string, err error)
+	RevokeEphemeral(ctx context.Context, tokenID string)
+}
+
+// BudgetExceededError is returned by Execute when a project's monthly spending
+// limit has been reached and BUDGET_ENFORCEMENT_ENABLED=true.
+type BudgetExceededError struct {
+	ProjectID string
+	Message   string
+}
+
+func (e *BudgetExceededError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("project %s has exceeded its monthly budget", e.ProjectID)
+}
+
+// ErrExecutionDisabled is the sentinel error returned by every agent execution
+// entry point (Execute, ExecuteWithRun, Resume) when the AGENT_EXECUTION_ENABLED
+// kill switch is off. It is distinct from budget/queue errors so callers can
+// detect a system-wide disable and surface it cleanly.
+//
+// It aliases agentexec.ErrExecutionDisabled so that consumers which cannot import
+// this package (domain/mcp — importing agents would create a cycle) still detect
+// the same value and share the same canonical message.
+var ErrExecutionDisabled = agentexec.ErrExecutionDisabled
+
+// QueueFullError is returned when an agent already has too many pending jobs in the queue.
+// This prevents queue explosion by rejecting new runs when the queue is at capacity.
+type QueueFullError struct {
+	AgentID        string
+	PendingJobs    int
+	MaxPendingJobs int
+}
+
+func (e *QueueFullError) Error() string {
+	return fmt.Sprintf("agent %s has %d pending jobs (max %d); run rejected to prevent queue explosion",
+		e.AgentID, e.PendingJobs, e.MaxPendingJobs)
+}
+
+// callerRunIDKey is the context key used to propagate the calling agent's run ID
+// through the execution pipeline so that tool calls (e.g. trigger_agent) can
+// identify which run is making the request.
+type callerRunIDKey struct{}
+
+// contextWithCallerRunID stores the current run's ID in context so downstream
+// tool handlers can read it without needing it in their function signatures.
+func contextWithCallerRunID(ctx context.Context, runID string) context.Context {
+	return context.WithValue(ctx, callerRunIDKey{}, runID)
+}
+
+// callerRunIDFromContext retrieves the calling run's ID from context.
+// Returns empty string if not set.
+func callerRunIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(callerRunIDKey{}).(string)
+	return v
+}
+
+// runDispatchContext derives the tool-dispatch context for a run at the
+// agent-run boundary. It strips any TransportEnforced marker inherited from an
+// HTTP transport dispatch — that marker is per-dispatch evidence (one
+// ExecuteTool call was already authorized), NOT run authority, and must not be
+// inherited by a nested run's own tool calls — and stamps the run's own
+// TrustedInternal marker. The strip is what makes the transport-enforced
+// authorization non-inheritable across a run boundary (issue #1133).
+func runDispatchContext(ctx context.Context, trusted bool) context.Context {
+	ctx = mcp.ContextWithoutTransportEnforced(ctx)
+	return mcp.ContextWithTrustedInternal(ctx, trusted)
+}
+
+// inheritedTrust resolves the trust to apply to a run started through a
+// delegation/coordination tool (trigger_agent, call_agent) from the invoking
+// context, so these tools inherit the caller's trust exactly as spawn_agents
+// does via CoordinationToolDeps.TrustedInternal. A direct authenticated MCP
+// client has no parent run in context, so it resolves to untrusted (false): the
+// MCP surface is external-facing, not the session UI. Fail-closed: a missing or
+// unreadable parent run also resolves to false.
+func inheritedTrust(ctx context.Context, findRun func(context.Context, string) (*AgentRun, error)) bool {
+	callerRunID := callerRunIDFromContext(ctx)
+	if callerRunID == "" {
+		return false
+	}
+	run, err := findRun(ctx, callerRunID)
+	if err != nil || run == nil {
+		return false
+	}
+	return run.TrustedInternal
+}
+
+// sessionIDKey is the context key used to propagate the session ID
+// through the execution pipeline so that built-in tools (e.g. set_session_title)
+// can update session metadata without needing it in their function signatures.
+// NOTE: defined here as a bridge — mcp.ContextWithSessionID / mcp.SessionIDFromContext
+// use this same exported mechanism via the mcp package.
+
+// ExecuteRequest defines the parameters for executing an agent.
+type ExecuteRequest struct {
+	Agent           *Agent
+	AgentDefinition *AgentDefinition
+	ProjectID       string
+	OrgID           string
+	UserMessage     string
+	// RejectMessage carries an optional human-written reason attached to a
+	// tool-policy rejection, surfaced to the agent in the rejected result.
+	RejectMessage   string
+	ParentRunID     *string
+	RootRunID       *string // top-level orchestration run ID; propagated unchanged through all sub-agent spawns
+	MaxSteps        *int
+	Timeout         *time.Duration
+	Depth           int
+	MaxDepth        int
+	TriggerSource   *string
+	TriggerMetadata map[string]any
+	StreamCallback  StreamCallback // Optional: enables streaming of text deltas and tool call events
+	Model           string         // Optional per-run model override; takes precedence over AgentDefinition.Model
+
+	// SubjectObjectID/SubjectObjectType identify the reaction target for this
+	// execution. The reaction dispatcher sets them from the trusted event target;
+	// they are never read from model/tool input. They are not persisted on the
+	// run: kb.agent_runs.subject_object_id is reserved for work-owned queued
+	// runs (work maintenance and human board actions key on it), while inline
+	// reaction runs keep using TriggerMetadata for concurrency dedupe.
+	SubjectObjectID   *string
+	SubjectObjectType *string
+
+	// ReasoningEffort, when non-empty, is applied to the resolved model via the
+	// provider.ReasoningEffortConfigurator interface (OpenAI Responses-only
+	// graded efforts such as "max"). Empty leaves the provider default in place.
+	// Sourced from the agentcompat request DTO (`reasoning_effort`).
+	ReasoningEffort string
+
+	// Ephemeral sandbox token — set by the chat handler before calling Execute.
+	// AuthToken is the raw emt_* token value to inject into sandbox containers as MEMORY_ACCOUNT_API_KEY.
+	// EphemeralTokenID is the DB id of the token; the executor revokes it on workspace teardown.
+	AuthToken        string
+	EphemeralTokenID string
+
+	// EnvVars are runtime environment variables passed per-run by the caller.
+	// They are merged into the sandbox container environment with lower priority
+	// than system keys (MEMORY_ACCOUNT_API_KEY, MEMORY_PROJECT_ID, MEMORY_SERVER_URL).
+	EnvVars map[string]string
+
+	// SessionID links this run to a session so built-in tools like
+	// set_session_title can update session metadata during execution.
+	SessionID string
+
+	// SystemPromptAppendix is appended to the resolved system instruction at execution time.
+	// Use this to inject per-call constraints (e.g. response format, verbosity) without
+	// modifying the persisted agent definition. It is never written to the DB.
+	SystemPromptAppendix string
+
+	// ProjectInfo is the project's project_info (kb.projects.project_info) to
+	// inject into the system instruction as a "## Knowledge base context" block.
+	// It is populated once per run by runPipeline when the agent definition opts
+	// in via includeProjectInfo, so every execution surface (HTTP trigger, A2A,
+	// chat sessions, /v1/chat/completions) gets the same block. It is ignored
+	// when the definition has not opted in, so a caller can never force
+	// project context onto an agent that does not want it (issue #1694).
+	ProjectInfo string
+
+	// UserID is the authenticated user who initiated this run (empty for system/background runs).
+	// Passed to ask_user tool so notifications target the correct user.
+	UserID string
+
+	// ConversationKey is a caller-supplied stable key for sharing the ADK conversation session
+	// across multiple trigger calls (cross-run conversation history). When set, the ADK
+	// session key is derived from this value instead of the run ID, so successive triggers
+	// with the same ConversationKey share the same session events. Empty = per-run session (default).
+	ConversationKey string
+
+	// PreCreatedRun is an already-created AgentRun to use for this Resume call.
+	// When set, Resume skips CreateRunWithOptions and uses this run directly.
+	// This allows callers to obtain the resume run ID synchronously before launching
+	// the background goroutine, so the ID can be returned in the HTTP response.
+	PreCreatedRun *AgentRun
+
+	// PreApprovedToolName is set by Resume when the user approved a tool-policy confirmation.
+	// beforeToolCb will skip the policy gate for the first call to this tool name.
+	PreApprovedToolName string
+
+	// ExtraTools are additional ADK tool.Tool values injected per-request.
+	// They are appended to the resolved tool set after all standard tools.
+	// Used by the agentcompat layer to inject caller-supplied (client) tools.
+	ExtraTools []tool.Tool
+
+	// TrustedInternal marks a run started through a trusted surface (session UI,
+	// scheduler/worker runs, MCP tools, agent→agent delegation). It is set by the
+	// transport, never inferred from the agent's own visibility. The zero value is
+	// false = untrusted/external-facing (A2A message:send/stream, agentcompat,
+	// public share), which fails closed: a transport that forgets to declare
+	// itself cannot reach internal-visible agents. Trusted surfaces set it true to
+	// keep full internal coordination. The value is fixed at run creation and
+	// inherited unchanged through delegation and resume (issue #954).
+	TrustedInternal bool
+
+	// ShareToolDeny lists tool names hard-blocked on this run (public agent-share
+	// allowlist). beforeToolCb enforces it BEFORE the confirm gate, so an
+	// approval can never override a deny-listed tool.
+	ShareToolDeny []string
+
+	// ShareLinkID is the public agent-share link backing this run. When non-empty
+	// it is recorded on tool-approval audit rows for share provenance.
+	ShareLinkID string
+
+	// DisableAuthMint prevents the executor from minting an ephemeral org token
+	// for this run when no raw token is present. Share runs set this so anonymous
+	// end users never run with the owner's project/org credentials.
+	DisableAuthMint bool
+}
+
+// ExecuteResult is the outcome of an agent execution.
+type ExecuteResult struct {
+	RunID    string
+	Status   AgentRunStatus
+	Summary  map[string]any
+	Steps    int
+	Duration time.Duration
+
+	// Cleanup tears down the workspace (container + ephemeral token) provisioned
+	// for this run. Teardown is bound to the run's lifetime by the executor,
+	// which invokes it before returning, so it runs exactly once on every exit
+	// path — normal return, error return, context cancellation, and panic — with
+	// no caller action required.
+	//
+	// The value is still exposed as an explicit handle for callers. Because the
+	// executor has already run it before returning, calling it is an idempotent
+	// no-op (sync.Once) and surfaces no error.
+	Cleanup func()
+}
+
+// runCleanup binds a run's sandbox teardown to the run lifetime. The executor
+// creates exactly one per run and defers Cleanup immediately, so teardown is
+// guaranteed regardless of how the run exits (normal return, error,
+// cancellation, panic). Cleanup is idempotent: the teardown body runs at most
+// once however many times it is invoked.
+type runCleanup struct {
+	once sync.Once
+	fn   func()
+}
+
+// newRunCleanup returns a run-lifetime cleanup bound to fn.
+func newRunCleanup(fn func()) *runCleanup {
+	return &runCleanup{fn: fn}
+}
+
+// Cleanup runs the bound teardown at most once. It is a safe no-op on a nil
+// receiver or when no teardown body was bound.
+func (c *runCleanup) Cleanup() {
+	if c == nil || c.fn == nil {
+		return
+	}
+	c.once.Do(c.fn)
+}
+
+// toolPool is the subset of *ToolPool the executor depends on. It is extracted
+// as an interface so tests can inject a stub that captures the tool-dispatch
+// context (see transport_enforced_wiring_test.go, issue #1133).
+type toolPool interface {
+	ResolveTools(projectID string, agentDef *AgentDefinition, depth int, maxDepth int) ([]tool.Tool, error)
+	StripOperatorTools(ctx context.Context, tools []tool.Tool) []tool.Tool
+	ToolScopes() map[string]string
+	CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error)
+}
+
+// AgentExecutor is the core execution engine for running agents via ADK.
+// It builds an LLM agent pipeline with tools from the ToolPool, runs it
+// via the ADK runner, tracks steps, detects doom loops, and persists
+// all messages and tool calls to the database for full state recovery.
+//
+// When workspace provisioning is enabled and an agent definition has a
+// workspace_config, the executor automatically provisions a sandboxed
+// container before the run starts and tears it down after the run completes.
+type AgentExecutor struct {
+	modelFactory     *adk.ModelFactory
+	toolPool         toolPool
+	repo             *Repository
+	skillRepo        skills.SkillRepo
+	embeddingsSvc    *embeddings.Service
+	provisioner      *sandbox.AutoProvisioner // nil if workspaces are disabled
+	wsEnabled        bool                     // cached feature flag
+	sessionService   session.Service
+	modelLimits      ModelLimitsLookup // nil if provider module is not registered
+	apiTokenSvc      ephemeralTokenSvc // nil if not configured; used for ephemeral sandbox tokens
+	memoryAPIURL     string            // API endpoint injected into sandbox sessions
+	usageService     *provider.UsageService
+	eventsSvc        *events.Service        // nil if events module not registered; used by ask_user SSE notification
+	notificationsSvc *notifications.Service // nil-safe; central notification producer for ask_user
+	safeguards       config.AgentSafeguardsConfig
+	toolBounds       ToolResultBounds // model-context bound for tool results (issue #1205)
+	log              *slog.Logger
+
+	// runCancels tracks in-flight runs by id so an explicit cancel request can
+	// stop a run whose lifetime is detached from the request context that
+	// started it (see issue #1149). Value type so a zero-value executor (as
+	// built by tests) is safe; the map is lazily initialised.
+	runCancels runCancelRegistry
+
+	// workObjects is the graph work-object surface used to build the
+	// run-finalizing work_complete / work_block terminator tools for
+	// object-driven runs. Nil disables those tools (e.g. in unit tests).
+	workObjects WorkObjectStore
+}
+
+// SetWorkObjectStore injects the graph work-object surface used by the
+// run-finalizing terminator tools.
+func (ae *AgentExecutor) SetWorkObjectStore(store WorkObjectStore) {
+	ae.workObjects = store
+}
+
+// userCancelReason is the terminal reason recorded when a run is stopped by an
+// explicit cancel request (POST …/runs/:runId/cancel) rather than by a server
+// fault. It distinguishes a user-initiated stop from a watchdog/doom-loop
+// cancellation so the run is reported as cancelled, not errored.
+const userCancelReason = "Run cancelled by user"
+
+// DetachedRunContext returns a context carrying every value from parent (auth,
+// project/namespace, trace span) but not its cancellation. An HTTP surface uses
+// it to start an agent run whose lifetime is detached from the request: when
+// the client disconnects and the request context is cancelled, the run keeps
+// going instead of being aborted with "context canceled" (issue #1149).
+//
+// Only cancellation is dropped. The run is still bounded by the executor's own
+// per-step watchdog (resolveRunTimeout/defaultRunTimeout) and can still be
+// stopped explicitly through AgentExecutor.Cancel, which is routed by run id
+// rather than through the request context.
+func DetachedRunContext(parent context.Context) context.Context {
+	if parent == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(parent)
+}
+
+// runCancelRegistry maps a run id to the cancel handle for its in-flight,
+// detached lifetime. It exists because a run may outlive the HTTP request that
+// triggered it: the request context no longer reaches the executor, so an
+// explicit cancel must be routed by run id instead.
+type runCancelRegistry struct {
+	mu      sync.Mutex
+	handles map[string]*runCancelHandle
+}
+
+// runCancelHandle is the cancel handle for one in-flight run. It records the
+// first cancellation reason so the run can distinguish an explicit user cancel
+// from a watchdog timeout or doom-loop stop.
+type runCancelHandle struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	reason string
+}
+
+// register records cancel for runID and returns the handle the caller must pass
+// to unregister when the run finishes.
+func (r *runCancelRegistry) register(runID string, cancel context.CancelFunc) *runCancelHandle {
+	h := &runCancelHandle{cancel: cancel}
+	r.mu.Lock()
+	if r.handles == nil {
+		r.handles = make(map[string]*runCancelHandle)
+	}
+	r.handles[runID] = h
+	r.mu.Unlock()
+	return h
+}
+
+// unregister removes the handle only if it is still the current one, so a late
+// unregister from a finished run cannot evict a newer run that reused the id.
+func (r *runCancelRegistry) unregister(runID string, h *runCancelHandle) {
+	r.mu.Lock()
+	if r.handles[runID] == h {
+		delete(r.handles, runID)
+	}
+	r.mu.Unlock()
+}
+
+// cancel stops the run registered under runID, if any, recording reason. It
+// returns false when the run is not in flight (already finished or unknown).
+func (r *runCancelRegistry) cancel(runID, reason string) bool {
+	r.mu.Lock()
+	h := r.handles[runID]
+	r.mu.Unlock()
+	if h == nil {
+		return false
+	}
+	h.cancelWithReason(reason)
+	return true
+}
+
+func (h *runCancelHandle) cancelWithReason(reason string) {
+	h.mu.Lock()
+	if h.reason == "" {
+		h.reason = reason
+	}
+	cancel := h.cancel
+	h.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// Reason returns the first reason recorded for this handle, or "" if none.
+func (h *runCancelHandle) Reason() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reason
+}
+
+// Cancel stops an in-flight run by id, if one is currently executing. It is the
+// entry point used by the explicit cancel endpoint so a run whose lifetime is
+// detached from its triggering request can still be stopped. It returns false
+// when no such run is in flight, so the caller can fall back to marking the
+// persisted run row cancelled.
+func (ae *AgentExecutor) Cancel(runID, reason string) bool {
+	if ae == nil || runID == "" {
+		return false
+	}
+	return ae.runCancels.cancel(runID, reason)
+}
+
+// durablyCancelling reports whether the run carries the durable cancel intent
+// (status "cancelling") in Postgres, committed by any instance. It is the
+// authoritative check the executor uses at step boundaries: the per-process
+// registry (AgentExecutor.Cancel) is only a fast-path notification and cannot
+// see a cancel served by a different instance, so correctness must not depend
+// on it (issue #1166). A read error is treated as "not cancelling" so a
+// transient DB problem does not abort a run; the guard on the terminal write
+// still preserves the cancel promise.
+func (ae *AgentExecutor) durablyCancelling(runID string) bool {
+	if ae == nil || ae.repo == nil || runID == "" {
+		return false
+	}
+	cancelling, err := ae.repo.RunIsCancelling(context.Background(), runID)
+	if err != nil {
+		if ae.log != nil {
+			ae.log.Warn("failed to observe durable cancel status",
+				slog.String("run_id", runID),
+				slog.String("error", err.Error()),
+			)
+		}
+		return false
+	}
+	return cancelling
+}
+
+// NewAgentExecutor creates a new AgentExecutor.
+func NewAgentExecutor(
+	modelFactory *adk.ModelFactory,
+	toolPool *ToolPool,
+	repo *Repository,
+	skillRepo *skills.Repository,
+	embeddingsSvc *embeddings.Service,
+	provisioner *sandbox.AutoProvisioner,
+	cfg *config.Config,
+	sessionService session.Service,
+	modelLimits ModelLimitsLookup,
+	apiTokenSvc *apitoken.Service,
+	usageService *provider.UsageService,
+	eventsSvc *events.Service,
+	notificationsSvc *notifications.Service,
+	log *slog.Logger,
+) *AgentExecutor {
+	wsEnabled := cfg.Sandbox.IsEnabled()
+	if wsEnabled {
+		log.Info("agent executor: workspace provisioning enabled")
+	}
+	memoryAPIURL := cfg.Sandbox.MemoryAPIURL
+	if memoryAPIURL == "" {
+		memoryAPIURL = sandbox.DefaultMemoryAPIURL
+	}
+	return &AgentExecutor{
+		modelFactory:     modelFactory,
+		toolPool:         toolPool,
+		repo:             repo,
+		skillRepo:        skillRepo,
+		embeddingsSvc:    embeddingsSvc,
+		provisioner:      provisioner,
+		wsEnabled:        wsEnabled,
+		sessionService:   sessionService,
+		modelLimits:      modelLimits,
+		apiTokenSvc:      apiTokenSvc,
+		memoryAPIURL:     memoryAPIURL,
+		usageService:     usageService,
+		eventsSvc:        eventsSvc,
+		notificationsSvc: notificationsSvc,
+		safeguards:       cfg.AgentSafeguards,
+		toolBounds:       toolResultBoundsFromConfig(cfg.MCP),
+		log:              log.With(logger.Scope("agents.executor")),
+	}
+}
+
+// EnsureExecutionEnabled reports whether agent execution is currently permitted
+// by the AGENT_EXECUTION_ENABLED kill switch, returning ErrExecutionDisabled when
+// it is off. Callers that create or claim work before reaching an executor entry
+// point (creating a run row, claiming a pending question, resuming an A2A task)
+// SHOULD call this BEFORE consuming that work, so a disabled system refuses
+// cleanly instead of stranding a paused run with no pending question.
+func (ae *AgentExecutor) EnsureExecutionEnabled() error {
+	if !ae.safeguards.ExecutionEnabled {
+		return ErrExecutionDisabled
+	}
+	return nil
+}
+
+// ensureExecutionEnabled is the in-pipeline form of EnsureExecutionEnabled: it
+// logs the block (with request identity) and returns the sentinel. It is called
+// by every execution entry point before any run-row mutation so a disabled
+// executor never creates or updates agent run records. Trust is a reachability
+// marker, not an executability one: there is no TrustedInternal exemption — a
+// disabled system blocks trusted and external paths alike.
+func (ae *AgentExecutor) ensureExecutionEnabled(req ExecuteRequest) error {
+	if err := ae.EnsureExecutionEnabled(); err != nil {
+		ae.log.Error("agent execution blocked by kill switch",
+			slog.String("project_id", req.ProjectID),
+			slog.String("agent_id", ae.resolveAgentID(req)),
+		)
+		return err
+	}
+	return nil
+}
+
+// runFailer is the narrow run-failure surface failRunIfExecutionDisabled needs.
+// *Repository and the share service's ShareRepo both satisfy it, so the same
+// kill-switch reconciliation is reused on both the HTTP/worker and share paths.
+type runFailer interface {
+	FailRunWithSteps(ctx context.Context, runID, errorMessage string, stepCount int) error
+}
+
+// failRunIfExecutionDisabled marks a pre-created run terminal when execution was
+// refused by the kill switch. Such runs are created by callers before the
+// executor's guard runs, so without this they would sit `running` until the
+// stale-run reaper reports a misleading idle-timeout. It is a no-op for nil runs
+// and for any error other than ErrExecutionDisabled.
+func failRunIfExecutionDisabled(ctx context.Context, repo runFailer, run *AgentRun, execErr error, log *slog.Logger) {
+	if run == nil || execErr == nil || !errors.Is(execErr, ErrExecutionDisabled) {
+		return
+	}
+	if repoErr := repo.FailRunWithSteps(ctx, run.ID, execErr.Error(), run.StepCount); repoErr != nil {
+		log.Error("failed to mark run terminal after disabled execution",
+			slog.String("run_id", run.ID),
+			slog.String("error", repoErr.Error()),
+		)
+	}
+}
+
+// Execute runs an agent from scratch using the provided request.
+func (ae *AgentExecutor) Execute(ctx context.Context, req ExecuteRequest) (*ExecuteResult, error) {
+	startTime := time.Now()
+	dbCtx := context.Background()
+
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+
+	// Budget pre-flight check — hard stop when project has exceeded its monthly budget.
+	if ae.usageService != nil && req.ProjectID != "" {
+		exceeded, err := ae.usageService.CheckBudgetExceeded(ctx, req.ProjectID)
+		if err != nil {
+			// Fail-open: log warning but proceed so a broken budget query never halts agents.
+			ae.log.Warn("budget pre-flight check failed, proceeding",
+				slog.String("project_id", req.ProjectID),
+				slog.String("error", err.Error()),
+			)
+		} else if exceeded && ae.safeguards.BudgetEnforcementEnabled {
+			ae.log.Warn("agent execution blocked: project budget exceeded",
+				slog.String("project_id", req.ProjectID),
+				slog.String("agent_id", ae.resolveAgentID(req)),
+			)
+			return nil, &BudgetExceededError{
+				ProjectID: req.ProjectID,
+				Message:   fmt.Sprintf("project %s has exceeded its monthly spending budget", req.ProjectID),
+			}
+		}
+	}
+
+	// Validate depth
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	if req.Depth > maxDepth {
+		return nil, fmt.Errorf("max agent depth %d exceeded (current depth: %d)", maxDepth, req.Depth)
+	}
+
+	// Determine max steps for this run: per-request override > definition > default
+	maxSteps := DefaultMaxStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 {
+		maxSteps = *req.MaxSteps
+	} else if req.AgentDefinition != nil && req.AgentDefinition.MaxSteps != nil && *req.AgentDefinition.MaxSteps > 0 {
+		maxSteps = *req.AgentDefinition.MaxSteps
+	}
+
+	// Create the run record
+	createOpts := CreateRunOptions{
+		AgentID:         ae.resolveAgentID(req),
+		ParentRunID:     req.ParentRunID,
+		RootRunID:       req.RootRunID,
+		MaxSteps:        &maxSteps,
+		TriggerSource:   req.TriggerSource,
+		TriggerMetadata: req.TriggerMetadata,
+		TrustedInternal: req.TrustedInternal,
+	}
+	if req.AgentDefinition != nil {
+		createOpts.AgentDefinitionID = &req.AgentDefinition.ID
+	}
+
+	var run *AgentRun
+	if req.PreCreatedRun != nil {
+		run = req.PreCreatedRun
+		// The pre-created run was inserted by the caller without the trust marker;
+		// the request is authoritative here, so carry it onto the run row.
+		run.TrustedInternal = req.TrustedInternal
+		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
+			ae.log.Warn("failed to persist trusted_internal on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	} else {
+		var createErr error
+		run, createErr = ae.repo.CreateRunWithOptions(dbCtx, createOpts)
+		if createErr != nil {
+			return nil, fmt.Errorf("failed to create agent run: %w", createErr)
+		}
+	}
+
+	// Link to session if provided via request (e.g. trigger_agent sync path).
+	if req.SessionID != "" {
+		run.SessionID = &req.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, run.ID, req.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", updateErr.Error()),
+			)
+		}
+	}
+
+	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
+	rootRunID := resolveRootRunID(run, req.RootRunID)
+	req.RootRunID = &rootRunID
+
+	// Start OTel span now that we have the run ID
+	agentName := ae.resolveAgentName(req)
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		modelName = req.AgentDefinition.Model.Name
+	}
+	ctx, span := tracing.Start(ctx, "agent.run",
+		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.name", agentName),
+		attribute.String("memory.agent.run_id", run.ID),
+		attribute.String("memory.agent.root_run_id", *req.RootRunID),
+		attribute.String("memory.project.id", req.ProjectID),
+		attribute.String("memory.agent.model", modelName),
+	)
+	defer span.End()
+
+	// Persist trace_id and root_run_id back to the run row so the reverse link
+	// (run → trace, run → orchestration root) is queryable without OTEL.
+	ae.persistRunLinkage(dbCtx, run.ID, *req.RootRunID, span.SpanContext())
+
+	ae.log.Info("executing agent",
+		slog.String("run_id", run.ID),
+		slog.String("project_id", req.ProjectID),
+		slog.String("agent_name", agentName),
+		slog.Int("depth", req.Depth),
+		slog.Int("max_steps", maxSteps),
+	)
+
+	// Inject auth token into context so internal loopback calls (e.g. search-knowledge → /query)
+	// can authenticate. For HTTP-triggered runs the raw token is already in ctx via auth middleware;
+	// for background/scheduled runs there is none, so mint a short-lived ephemeral token.
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent run",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
+	// Propagate the run's originating principal into the run context so in-process
+	// authority checks (e.g. the MCP operator-tool superadmin gate in
+	// Service.ExecuteTool, issue #948) resolve the CALLER, not the agent
+	// definition or the ephemeral token. This deliberately overwrites any
+	// transport-injected user (notably the share-link owner, whose credentials
+	// must never confer authority on an anonymous share run): req.UserID is the
+	// authoritative principal, and when it is empty (anonymous/system runs) the
+	// overwritten empty-ID principal makes every operator-tool check fail closed.
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
+
+	// Bind teardown to this run's lifetime BEFORE provisioning. The cleanup is
+	// deferred so it runs exactly once on every exit path — normal return, error
+	// return, context cancellation, and a panic inside runPipeline. Binding
+	// before provisioning matters because the ephemeral token is minted above:
+	// a provisioning failure returns below and must still revoke that token.
+	// teardownWorkspace is nil-safe on the result. ExecuteResult.Cleanup exposes
+	// the same idempotent function; a caller that also invokes it (e.g.
+	// asynchronously after flushing an SSE response) gets a no-op because
+	// teardown has already run.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat: keep last_step_at fresh from before workspace
+	// provisioning through the whole pipeline, so a live executor is never
+	// reaped during a long blocking phase (sandbox build, slow model/tool call).
+	// It stops when this function returns; a dead executor stops ticking and is
+	// reaped as before.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	if wsErr != nil {
+		// Fatal provisioning failure (e.g. image not ready) — fail the run
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
+		span.RecordError(wsErr)
+		span.SetStatus(codes.Error, errMsg)
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    0,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	// Build and run the pipeline
+	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
+	if err != nil {
+		// Mark run as failed
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, err.Error(), 0)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": err.Error()},
+			Steps:    0,
+			Duration: time.Since(startTime),
+			Cleanup:  cleanup.Cleanup,
+		}, nil
+	}
+
+	// Record final run outcome on the span
+	span.SetAttributes(
+		attribute.Int("memory.agent.step_count", result.Steps),
+		attribute.String("memory.agent.run_status", string(result.Status)),
+	)
+	switch result.Status {
+	case RunStatusPaused:
+		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
+			attribute.Int("memory.agent.step_count", result.Steps),
+		))
+		span.SetStatus(codes.Ok, "")
+	case RunStatusError:
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		span.SetStatus(codes.Error, errMsg)
+	default:
+		span.SetStatus(codes.Ok, "")
+	}
+
+	result.Cleanup = cleanup.Cleanup
+	return result, nil
+}
+
+// ExecuteWithRun executes an agent using a pre-created run record.
+// This is used by the HTTP trigger endpoint to decouple run creation
+// (synchronous, returns immediately) from actual execution (async).
+func (ae *AgentExecutor) ExecuteWithRun(ctx context.Context, run *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
+	startTime := time.Now()
+	dbCtx := context.Background()
+
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+
+	// The pre-created run was inserted by the caller without the trust marker;
+	// the request is authoritative here, so persist it before the pipeline runs.
+	// This keeps the row fail-closed (trusted_internal defaults false) and makes
+	// the value recoverable on a later resume.
+	run.TrustedInternal = req.TrustedInternal
+	if err := ae.repo.UpdateRunTrustedInternal(dbCtx, run.ID, req.TrustedInternal); err != nil {
+		ae.log.Warn("failed to persist trusted_internal on agent run",
+			slog.String("run_id", run.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Validate depth
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	if req.Depth > maxDepth {
+		return nil, fmt.Errorf("max agent depth %d exceeded (current depth: %d)", maxDepth, req.Depth)
+	}
+
+	// Determine max steps for this run: per-request override > definition > default
+	maxSteps := DefaultMaxStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 {
+		maxSteps = *req.MaxSteps
+	} else if req.AgentDefinition != nil && req.AgentDefinition.MaxSteps != nil && *req.AgentDefinition.MaxSteps > 0 {
+		maxSteps = *req.AgentDefinition.MaxSteps
+	}
+
+	// Establish root_run_id: top-level runs own it; sub-agents receive it from the parent.
+	// Prefer the caller's override, then the root already persisted on the run row
+	// (e.g. a re-enqueued queued run), then self-root for a top-level run.
+	rootRunID := resolveRootRunID(run, req.RootRunID)
+	req.RootRunID = &rootRunID
+
+	// Start OTel span
+	agentName := ae.resolveAgentName(req)
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		modelName = req.AgentDefinition.Model.Name
+	}
+	ctx, span := tracing.Start(ctx, "agent.run",
+		attribute.String("memory.agent.id", ae.resolveAgentID(req)),
+		attribute.String("memory.agent.name", agentName),
+		attribute.String("memory.agent.run_id", run.ID),
+		attribute.String("memory.agent.root_run_id", *req.RootRunID),
+		attribute.String("memory.project.id", req.ProjectID),
+		attribute.String("memory.agent.model", modelName),
+	)
+	defer span.End()
+
+	// Persist trace_id and root_run_id back to the run row so the reverse link
+	// (run → trace, run → orchestration root) is queryable without OTEL.
+	ae.persistRunLinkage(ctx, run.ID, *req.RootRunID, span.SpanContext())
+
+	// Persist the resolved model name on the run record for observability (#141)
+	if modelName != "" {
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, modelName, "", "", ""); err != nil {
+			ae.log.Warn("failed to persist model on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	ae.log.Info("executing agent (async)",
+		slog.String("run_id", run.ID),
+		slog.String("project_id", req.ProjectID),
+		slog.String("agent_name", agentName),
+		slog.Int("depth", req.Depth),
+		slog.Int("max_steps", maxSteps),
+	)
+
+	// Inject auth token into context so internal loopback calls (e.g.
+	// search-knowledge → /query) can authenticate. ExecuteWithRun is invoked from
+	// background paths (worker pool, async A2A) where the caller passes no
+	// AuthToken and the context may carry none, so mint a short-lived ephemeral
+	// token here — before provisioning — so the run-lifetime teardown closure in
+	// this function can revoke it via req.EphemeralTokenID. The DisableAuthMint
+	// guard keeps anonymous/share paths from minting owner credentials.
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent run",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
+
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — covers provisioning and long
+	// blocking phases for this async entry point too.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(run.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, run.ID, req)
+	if wsErr != nil {
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, 0)
+		span.RecordError(wsErr)
+		span.SetStatus(codes.Error, errMsg)
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    0,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	result, err := ae.runPipeline(ctx, run, req, maxSteps, 0, startTime, wsResult, nil)
+	if err != nil {
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, err.Error(), 0)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(
+			attribute.Int("memory.agent.step_count", 0),
+			attribute.String("memory.agent.run_status", string(RunStatusError)),
+		)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": err.Error()},
+			Steps:    0,
+			Duration: time.Since(startTime),
+			Cleanup:  cleanup.Cleanup,
+		}, nil
+	}
+
+	span.SetAttributes(
+		attribute.Int("memory.agent.step_count", result.Steps),
+		attribute.String("memory.agent.run_status", string(result.Status)),
+	)
+	switch result.Status {
+	case RunStatusPaused:
+		span.AddEvent("agent.max_steps_reached", trace.WithAttributes(
+			attribute.Int("memory.agent.step_count", result.Steps),
+		))
+		span.SetStatus(codes.Ok, "")
+	case RunStatusError:
+		errMsg := ""
+		if e, ok := result.Summary["error"].(string); ok {
+			errMsg = e
+		}
+		span.SetStatus(codes.Error, errMsg)
+	default:
+		span.SetStatus(codes.Ok, "")
+	}
+
+	result.Cleanup = cleanup.Cleanup
+	return result, nil
+}
+
+// defaultRunTimeout is the fallback per-step no-progress budget applied to a
+// run when neither the request nor the agent definition specifies a timeout. It
+// is the resettable watchdog budget, NOT a fixed wall-clock ceiling: a run that
+// keeps making progress (new steps / tool calls) is never killed by it. It
+// exists so a hung LLM/tool call that makes no progress cannot block the
+// executor goroutine forever.
+const defaultRunTimeout = 10 * time.Minute
+
+// resolveRunTimeout returns the per-step watchdog budget for a run, in
+// precedence order:
+//  1. an explicit per-request timeout (ExecuteRequest.Timeout, when > 0);
+//  2. the agent definition's default_timeout (seconds, when > 0) — so an
+//     operator can opt a slow-but-legitimate agent into a longer budget on the
+//     primary surfaces (chat/A2A/scheduler/worker), not just on sub-agent spawns;
+//  3. the hard-coded defaultRunTimeout.
+//
+// The budget is a resettable per-step no-progress limit (issue #1072), not a
+// fixed wall-clock ceiling; see stepWatchdog.
+func resolveRunTimeout(req ExecuteRequest) time.Duration {
+	if req.Timeout != nil && *req.Timeout > 0 {
+		return *req.Timeout
+	}
+	if req.AgentDefinition != nil && req.AgentDefinition.DefaultTimeout != nil && *req.AgentDefinition.DefaultTimeout > 0 {
+		return time.Duration(*req.AgentDefinition.DefaultTimeout) * time.Second
+	}
+	return defaultRunTimeout
+}
+
+func (ae *AgentExecutor) Resume(ctx context.Context, priorRun *AgentRun, req ExecuteRequest) (*ExecuteResult, error) {
+	startTime := time.Now()
+	dbCtx := context.Background()
+
+	if err := ae.ensureExecutionEnabled(req); err != nil {
+		return nil, err
+	}
+
+	if priorRun.Status != RunStatusPaused {
+		return nil, fmt.Errorf("cannot resume run %s: status is %s (expected paused)", priorRun.ID, priorRun.Status)
+	}
+
+	// No fixed wall-clock deadline here: a resumed run can legitimately keep
+	// taking steps past the old 10-minute budget. The per-step watchdog applied
+	// inside runPipeline (issue #1072) still terminates a step that makes no
+	// progress, and workspace provisioning carries its own timeouts — matching
+	// the non-resume Execute path.
+
+	// Determine max steps, considering cumulative step count
+	maxSteps := MaxTotalStepsPerRun
+	if req.MaxSteps != nil && *req.MaxSteps > 0 && *req.MaxSteps < maxSteps {
+		maxSteps = *req.MaxSteps
+	}
+	if priorRun.StepCount >= maxSteps {
+		return nil, fmt.Errorf("run %s already at step limit (%d/%d)", priorRun.ID, priorRun.StepCount, maxSteps)
+	}
+
+	// Create a new run record that tracks the resume chain (or reuse pre-created run).
+	// The resumed run INHERITS the prior run's trust marker: trust is fixed at run
+	// creation and must never be re-derived (or upgraded) by a resume transport. A
+	// suspended external-facing run re-woken through a trusted path (parent wake,
+	// MCP respond, session UI) stays external-facing (issue #954).
+	var newRun *AgentRun
+	resumedFrom := priorRun.ID
+	if req.PreCreatedRun != nil {
+		newRun = req.PreCreatedRun
+		newRun.TrustedInternal = priorRun.TrustedInternal
+		if err := ae.repo.UpdateRunTrustedInternal(dbCtx, newRun.ID, priorRun.TrustedInternal); err != nil {
+			ae.log.Warn("failed to persist trusted_internal on resumed run",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	} else {
+		var err error
+		newRun, err = ae.repo.CreateRunWithOptions(dbCtx, CreateRunOptions{
+			AgentID:          priorRun.AgentID,
+			ParentRunID:      req.ParentRunID,
+			MaxSteps:         &maxSteps,
+			ResumedFrom:      &resumedFrom,
+			InitialStepCount: priorRun.StepCount,
+			TriggerMetadata:  priorRun.TriggerMetadata,
+			TrustedInternal:  priorRun.TrustedInternal,
+			// The resumed run owns the work item from here: MarkRunResumed
+			// finalizes the paused checkpoint.
+			SubjectObjectID:   priorRun.SubjectObjectID,
+			SubjectObjectType: priorRun.SubjectObjectType,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resumed run: %w", err)
+		}
+	}
+
+	// Transition the prior paused run to running so it no longer appears stuck.
+	// The new run (newRun) carries the actual execution; the prior run's role is to
+	// serve as a checkpoint that has now been resumed.
+	if err := ae.repo.MarkRunResumed(dbCtx, priorRun.ID); err != nil {
+		ae.log.Warn("failed to mark prior run as resumed",
+			slog.String("prior_run_id", priorRun.ID),
+			slog.String("new_run_id", newRun.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Copy session_id from prior run so the resumed run stays linked to the same session.
+	if priorRun.SessionID != nil {
+		newRun.SessionID = priorRun.SessionID
+		if updateErr := ae.repo.UpdateRunSessionID(dbCtx, newRun.ID, *priorRun.SessionID); updateErr != nil {
+			ae.log.Warn("failed to persist session_id on resumed run",
+				slog.String("run_id", newRun.ID),
+				slog.String("error", updateErr.Error()),
+			)
+		}
+	}
+
+	// Establish root_run_id for resumed runs: inherit the caller's override if
+	// set, otherwise inherit the prior run's root so the whole resume chain
+	// shares a single root. Only fall back to the new run's own ID when the
+	// prior run has no root (e.g. a legacy run that predates root_run_id).
+	if req.RootRunID == nil {
+		if priorRun.RootRunID != nil && *priorRun.RootRunID != "" {
+			req.RootRunID = priorRun.RootRunID
+		} else {
+			req.RootRunID = &newRun.ID
+		}
+	}
+
+	// Persist root_run_id on the resumed run row. trace_id is omitted here since
+	// Resume has no dedicated agent.run span — the caller's HTTP span context is
+	// not meaningful to store as the run's trace.
+	if err := ae.repo.UpdateTraceAndRootRun(dbCtx, newRun.ID, "", *req.RootRunID); err != nil {
+		ae.log.Warn("failed to persist root_run_id on resumed agent run",
+			slog.String("run_id", newRun.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	ae.log.Info("resuming agent",
+		slog.String("run_id", newRun.ID),
+		slog.String("resumed_from", priorRun.ID),
+		slog.Int("prior_steps", priorRun.StepCount),
+		slog.Int("max_steps", maxSteps),
+	)
+
+	// Inject auth token into context (same logic as Execute — handles background/scheduled resumes).
+	{
+		effectiveToken := req.AuthToken
+		if effectiveToken == "" {
+			effectiveToken = auth.RawTokenFromContext(ctx)
+		}
+		if effectiveToken == "" && !req.DisableAuthMint && ae.apiTokenSvc != nil && req.ProjectID != "" && req.OrgID != "" {
+			if ephID, ephToken, mintErr := ae.apiTokenSvc.CreateEphemeral(ctx, req.ProjectID, req.OrgID, "", 2*time.Hour); mintErr == nil {
+				effectiveToken = ephToken
+				req.EphemeralTokenID = ephID
+			} else {
+				ae.log.Warn("failed to mint ephemeral token for background agent resume",
+					slog.String("project_id", req.ProjectID),
+					slog.String("error", mintErr.Error()),
+				)
+			}
+		}
+		if effectiveToken != "" {
+			ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+		}
+	}
+
+	// Propagate the run's originating principal into the run context (see Execute).
+	ctx = auth.ContextWithUser(ctx, &auth.AuthUser{ID: req.UserID})
+
+	// Propagate the run's trust marker into the context so the in-process tool
+	// dispatch (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary
+	// consistently with the HTTP transports. This covers the resume confirm gate
+	// (injectToolResponse → confirmResponseBody → CallTool) which runs before
+	// runPipeline re-injects the marker (issue #994). runDispatchContext also
+	// strips any transport-enforced marker inherited from the triggering HTTP
+	// dispatch so the confirm gate is re-gated on the run's own trust (issue #1133).
+	ctx = runDispatchContext(ctx, newRun.TrustedInternal)
+
+	// Bind teardown to this run's lifetime BEFORE provisioning (see Execute):
+	// deferred so it runs exactly once on every exit path, including a panic in
+	// runPipeline and a provisioning failure — the latter must still revoke the
+	// ephemeral token minted above.
+	var wsResult *sandbox.ProvisioningResult
+	var wsErr error
+	cleanup := newRunCleanup(func() {
+		ae.teardownWorkspace(ctx, wsResult, req.EphemeralTokenID)
+	})
+	defer cleanup.Cleanup()
+
+	// Run-lifetime heartbeat (see Execute) — resumed runs can also block in
+	// provisioning/tool phases, so cover them with the same ticker.
+	stopHeartbeat := ae.repo.StartRunHeartbeat(newRun.ID, defaultRunHeartbeatInterval)
+	defer stopHeartbeat()
+
+	wsResult, wsErr = ae.provisionWorkspace(ctx, newRun.ID, req)
+	if wsErr != nil {
+		errMsg := wsErr.Error()
+		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, errMsg, priorRun.StepCount)
+		return &ExecuteResult{
+			RunID:    newRun.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": errMsg},
+			Steps:    priorRun.StepCount,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	// Inject the pending tool result into the ADK session as a proper FunctionResponse,
+	// replacing the legacy text-based prompt injection. This gives the LLM an accurate
+	// view of the tool call/response pair without any synthetic "here is what happened" text.
+	if sc := SuspendSignalFromMap(priorRun.SuspendContext); sc != nil && (sc.PendingToolCallID != "" || len(sc.PendingToolConfirmations) > 0) {
+		// Ensure auth context has OrgID/ProjectID before calling tools directly (e.g. finalize-discovery
+		// reads org_id from context — without this injection it gets empty string and fails uuid.Parse).
+		if req.OrgID != "" {
+			ctx = auth.ContextWithOrgID(ctx, req.OrgID)
+		}
+		if req.ProjectID != "" {
+			ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+		}
+		rootRunID := ae.getRootRunID(ctx, newRun)
+		if injErr := ae.injectToolResponse(ctx, rootRunID, newRun.ID, req.ProjectID, sc, &req); injErr != nil {
+			ae.log.Warn("failed to inject FunctionResponse into ADK session, falling back to text injection",
+				slog.String("run_id", newRun.ID),
+				slog.String("pending_tool_call_id", sc.PendingToolCallID),
+				slog.String("error", injErr.Error()),
+			)
+		} else {
+			// Successfully injected FunctionResponse — clear UserMessage so runPipeline
+			// does not also inject a synthetic text turn.
+			req.UserMessage = ""
+		}
+	}
+
+	// Build and run the pipeline with accumulated step count
+	result, err := ae.runPipeline(ctx, newRun, req, maxSteps, priorRun.StepCount, startTime, wsResult, nil)
+	if err != nil {
+		_ = ae.repo.FailRunWithSteps(dbCtx, newRun.ID, err.Error(), priorRun.StepCount)
+		return &ExecuteResult{
+			RunID:    newRun.ID,
+			Status:   RunStatusError,
+			Summary:  map[string]any{"error": err.Error()},
+			Steps:    priorRun.StepCount,
+			Duration: time.Since(startTime),
+			Cleanup:  cleanup.Cleanup,
+		}, nil
+	}
+
+	// Update prior run status to reflect resume outcome so it doesn't stay stuck on "working".
+	switch result.Status {
+	case RunStatusSuccess:
+		_ = ae.repo.CompleteRun(dbCtx, priorRun.ID, result.Summary)
+	case RunStatusError:
+		errMsg := ""
+		if result.Summary != nil {
+			if msg, ok := result.Summary["error"]; ok {
+				errMsg = fmt.Sprintf("%v", msg)
+			}
+		}
+		_ = ae.repo.FailRun(dbCtx, priorRun.ID, errMsg)
+	}
+
+	result.Cleanup = cleanup.Cleanup
+	return result, nil
+}
+
+// injectToolResponse delivers the resumed tool response (human answer, child
+// output, client-tool result, or approved/rejected tool result) to the ADK
+// session so the LLM sees a proper tool call/response pair. It replaces the
+// synthetic sentinel FunctionResponse(s) that the paused run recorded for the
+// same call IDs rather than appending duplicates. The session is identified by
+// rootRunID (the original non-resumed run ID). req is a pointer so callers can
+// inspect any mutations made during injection.
+func (ae *AgentExecutor) injectToolResponse(ctx context.Context, rootRunID, runID, projectID string, sc *SuspendSignal, req *ExecuteRequest) error {
+	sessionID := rootRunID // matches getRootRunID result used in runPipeline
+
+	getResp, err := ae.sessionService.Get(ctx, &session.GetRequest{
+		AppName:   "agents",
+		UserID:    "system",
+		SessionID: sessionID,
+	})
+	if err != nil || getResp == nil || getResp.Session == nil {
+		return fmt.Errorf("failed to load ADK session %s: %w", sessionID, err)
+	}
+
+	// Build the FunctionResponse content — the human's answer (or child run output)
+	// is delivered as one or more tool responses keyed to their function call IDs.
+	// Batch confirmations produce N parts in ONE event (matches ADK parallel merge).
+	var parts []*genai.Part
+	switch sc.Reason {
+	case SuspendReasonAwaitingToolConfirm:
+		if len(sc.PendingToolConfirmations) > 0 {
+			for _, c := range sc.PendingToolConfirmations {
+				parts = append(parts, &genai.Part{
+					FunctionResponse: &genai.FunctionResponse{
+						ID:       c.FunctionCallID,
+						Name:     c.ToolName,
+						Response: ae.confirmResponseBody(ctx, runID, projectID, c.Decision, c.Message, c.ToolName, c.ToolArgs),
+					},
+				})
+			}
+		} else {
+			// Legacy single confirmation (in-flight runs created before batch support).
+			parts = append(parts, &genai.Part{
+				FunctionResponse: &genai.FunctionResponse{
+					ID:       sc.PendingToolCallID,
+					Name:     orDefaultToolName(sc.PendingToolName),
+					Response: ae.confirmResponseBody(ctx, runID, projectID, req.UserMessage, req.RejectMessage, sc.PendingToolName, sc.PendingToolConfirmArgs),
+				},
+			})
+		}
+	case SuspendReasonAwaitingHuman:
+		responseBody := map[string]any{"answer": req.UserMessage}
+		if sc.QuestionID != "" {
+			responseBody["question_id"] = sc.QuestionID
+		}
+		parts = append(parts, &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       sc.PendingToolCallID,
+				Name:     orDefaultToolName(sc.PendingToolName),
+				Response: responseBody,
+			},
+		})
+	case SuspendReasonAwaitingChild:
+		responseBody := map[string]any{"child_run_id": sc.WaitingForRunID, "status": "completed"}
+		if req.UserMessage != "" {
+			responseBody["output"] = req.UserMessage
+		}
+		parts = append(parts, &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       sc.PendingToolCallID,
+				Name:     orDefaultToolName(sc.PendingToolName),
+				Response: responseBody,
+			},
+		})
+	case SuspendReasonAwaitingClientTool:
+		// The agentcompat layer POSTed the client tool result content string in UserMessage.
+		result := req.UserMessage
+		var decoded any
+		responseBody := map[string]any{}
+		if result != "" {
+			if jsonErr := json.Unmarshal([]byte(result), &decoded); jsonErr == nil {
+				responseBody["result"] = decoded
+			} else {
+				responseBody["result"] = result
+			}
+		} else {
+			responseBody["result"] = ""
+		}
+		parts = append(parts, &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       sc.PendingToolCallID,
+				Name:     orDefaultToolName(sc.PendingToolName),
+				Response: responseBody,
+			},
+		})
+	default:
+		parts = append(parts, &genai.Part{
+			FunctionResponse: &genai.FunctionResponse{
+				ID:       sc.PendingToolCallID,
+				Name:     orDefaultToolName(sc.PendingToolName),
+				Response: map[string]any{"answer": req.UserMessage},
+			},
+		})
+	}
+
+	// ADK convention: the event author must equal the ADK agent name (which is
+	// sanitized), else the event is treated as a foreign reply, textualized, and
+	// the function-response rearrange is skipped — leaving a synthetic
+	// reasoning-less assistant turn that DeepSeek thinking-mode rejects.
+	author := "user"
+	if name := ae.resolveAgentName(*req); name != "" {
+		author = sanitizeAgentName(name)
+	}
+
+	content := &genai.Content{
+		Role:  "user",
+		Parts: parts,
+	}
+
+	event := session.NewEvent(ctx, "")
+	event.Author = author
+	event.LLMResponse = model.LLMResponse{
+		Content: content,
+	}
+
+	// The paused run already recorded synthetic sentinel FunctionResponses for
+	// these call IDs (e.g. "awaiting_confirmation"). Appending a second response
+	// for the same ID leaves two responses for one call and confuses the model.
+	// Rebuild the session instead: replace the sentinel(s) with the real
+	// response(s) and drop the trailing pause-announcement that follows them.
+	toolCallIDs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != nil && p.FunctionResponse != nil && p.FunctionResponse.ID != "" {
+			toolCallIDs = append(toolCallIDs, p.FunctionResponse.ID)
+		}
+	}
+	replaced, rebuildErr := ae.replaceInjectedToolResponses(ctx, getResp.Session, sessionID, toolCallIDs, event)
+	if rebuildErr != nil {
+		ae.log.Warn("failed to rebuild session for injected tool response, falling back to append",
+			slog.String("session_id", sessionID),
+			slog.String("error", rebuildErr.Error()),
+		)
+		replaced = false
+	}
+	if !replaced {
+		if appendErr := ae.sessionService.AppendEvent(ctx, getResp.Session, event); appendErr != nil {
+			return fmt.Errorf("failed to append FunctionResponse event: %w", appendErr)
+		}
+	}
+
+	ae.log.Info("injected FunctionResponse into ADK session",
+		slog.String("session_id", sessionID),
+		slog.Int("parts", len(parts)),
+		slog.Bool("rebuilt", replaced),
+	)
+	return nil
+}
+
+// replaceInjectedToolResponses rebuilds the ADK session so the sentinel
+// FunctionResponse(s) recorded for toolCallIDs (when the run paused) are
+// replaced with the real response event. Trailing events after the first
+// sentinel — the model's "Execution paused…" announcement — are dropped.
+// It returns (true, nil) when a sentinel was found and replaced, and
+// (false, nil) when no matching sentinel exists (so the caller can fall back
+// to a plain append).
+func (ae *AgentExecutor) replaceInjectedToolResponses(ctx context.Context, sess session.Session, sessionID string, toolCallIDs []string, replacement *session.Event) (bool, error) {
+	idSet := make(map[string]struct{}, len(toolCallIDs))
+	for _, id := range toolCallIDs {
+		if id != "" {
+			idSet[id] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return false, nil
+	}
+
+	events := sess.Events()
+	n := events.Len()
+
+	matchIdx := -1
+	for i := 0; i < n; i++ {
+		ev := events.At(i)
+		if ev == nil || ev.Content == nil {
+			continue
+		}
+		for _, part := range ev.Content.Parts {
+			if part != nil && part.FunctionResponse != nil {
+				if _, ok := idSet[part.FunctionResponse.ID]; ok {
+					matchIdx = i
+					break
+				}
+			}
+		}
+		if matchIdx >= 0 {
+			break
+		}
+	}
+	if matchIdx < 0 {
+		return false, nil
+	}
+
+	if err := ae.sessionService.Delete(ctx, &session.DeleteRequest{
+		AppName:   "agents",
+		UserID:    "system",
+		SessionID: sessionID,
+	}); err != nil {
+		return false, fmt.Errorf("delete session: %w", err)
+	}
+	createResp, err := ae.sessionService.Create(ctx, &session.CreateRequest{
+		AppName:   "agents",
+		UserID:    "system",
+		SessionID: sessionID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("create replacement session: %w", err)
+	}
+	newSess := createResp.Session
+
+	// Replay events up to (but excluding) the first sentinel, then append the
+	// replacement. Events after the sentinel are intentionally dropped.
+	for i := 0; i < matchIdx; i++ {
+		if appendErr := ae.sessionService.AppendEvent(ctx, newSess, events.At(i)); appendErr != nil {
+			ae.log.Warn("failed to replay event during session rebuild",
+				slog.String("session_id", sessionID),
+				slog.Int("event_index", i),
+				slog.String("error", appendErr.Error()),
+			)
+		}
+	}
+	if appendErr := ae.sessionService.AppendEvent(ctx, newSess, replacement); appendErr != nil {
+		return false, fmt.Errorf("append replacement event: %w", appendErr)
+	}
+
+	return true, nil
+}
+
+// confirmResponseBody builds the FunctionResponse body for a single tool-policy
+// confirmation decision: approve executes the tool, cancel is "not_taken", and
+// anything else is a structured rejection (optionally with a reason). On approve
+// the executed result is also persisted to run history so the conversation
+// timeline shows the real tool output rather than only the "awaiting_confirmation"
+// sentinel on the prior run.
+func (ae *AgentExecutor) confirmResponseBody(ctx context.Context, runID, projectID, decision, message, toolName string, toolArgs map[string]any) map[string]any {
+	responseBody := map[string]any{}
+	switch strings.TrimSpace(strings.ToLower(decision)) {
+	case "approve":
+		start := time.Now()
+		toolResult, callErr := ae.toolPool.CallTool(ctx, projectID, toolName, toolArgs)
+		durationMs := int(time.Since(start).Milliseconds())
+		status := "completed"
+		if callErr != nil {
+			responseBody["error"] = fmt.Sprintf("tool execution failed: %v", callErr)
+			status = "failed"
+		} else {
+			for k, v := range toolResult {
+				responseBody[k] = v
+			}
+			if len(responseBody) == 0 {
+				responseBody["status"] = "ok"
+			}
+		}
+		// Persist the real result so the conversation timeline (and the gateway's
+		// session dump) shows what the approved tool returned.
+		if runID != "" {
+			tcRecord := &AgentRunToolCall{
+				RunID:      runID,
+				ToolName:   toolName,
+				Input:      toolArgs,
+				Output:     responseBody,
+				Status:     status,
+				StepNumber: 0,
+				DurationMs: &durationMs,
+			}
+			if persistErr := ae.repo.CreateToolCall(ctx, tcRecord); persistErr != nil {
+				ae.log.Warn("failed to persist approved tool result",
+					slog.String("run_id", runID),
+					slog.String("tool", toolName),
+					slog.String("error", persistErr.Error()),
+				)
+			}
+		}
+	case "cancel":
+		responseBody["policy_decision"] = "cancelled"
+		responseBody["status"] = "not_taken"
+	default:
+		responseBody["policy_decision"] = "rejected"
+		responseBody["status"] = "rejected"
+		if message != "" {
+			responseBody["reason"] = message
+		}
+	}
+	return responseBody
+}
+
+// orDefaultToolName returns name, or "ask_user" when empty.
+func orDefaultToolName(name string) string {
+	if name == "" {
+		return "ask_user"
+	}
+	return name
+}
+
+// maybeWakeParent checks whether a parent run is suspended waiting for childRunID.
+// If found, it enqueues a resume for the parent in a background goroutine.
+func (ae *AgentExecutor) maybeWakeParent(ctx context.Context, childRunID string, childReq ExecuteRequest, childSummary map[string]any) {
+	parent, err := ae.repo.FindParentAwaitingChild(ctx, childRunID)
+	if err != nil {
+		ae.log.Warn("maybeWakeParent: error looking up parent",
+			slog.String("child_run_id", childRunID),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	if parent == nil {
+		return // no parent waiting
+	}
+
+	ae.log.Info("maybeWakeParent: waking parent run",
+		slog.String("child_run_id", childRunID),
+		slog.String("parent_run_id", parent.ID),
+	)
+
+	// Build output description for injection as tool response
+	outputMsg := ""
+	if v, ok := childSummary["output"].(string); ok {
+		outputMsg = v
+	} else if v, ok := childSummary["text"].(string); ok {
+		outputMsg = v
+	}
+
+	// Look up parent's agent and definition for the resume request
+	parentAgent, _ := ae.repo.FindByID(ctx, parent.AgentID, nil)
+	var parentDef *AgentDefinition
+	if parentAgent != nil {
+		parentDef, _ = ae.repo.ResolveDefinitionForAgent(ctx, parentAgent)
+	}
+
+	parentProjectID := ""
+	if parentAgent != nil {
+		parentProjectID = parentAgent.ProjectID
+	}
+	parentOrgID := ""
+	if parentProjectID != "" {
+		parentOrgID, _ = ae.repo.GetOrgIDByProjectID(ctx, parentProjectID)
+	}
+
+	go func() {
+		bgCtx := context.Background()
+		// Resume's own deferred teardown always runs before it returns, so the
+		// returned ExecuteResult.Cleanup is already a no-op (sync.Once); no need
+		// to invoke it here.
+		_, err := ae.Resume(bgCtx, parent, ExecuteRequest{
+			Agent:           parentAgent,
+			AgentDefinition: parentDef,
+			ProjectID:       parentProjectID,
+			OrgID:           parentOrgID,
+			UserMessage:     outputMsg,
+		})
+		if err != nil {
+			ae.log.Error("maybeWakeParent: parent resume failed",
+				slog.String("parent_run_id", parent.ID),
+				slog.String("child_run_id", childRunID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}()
+}
+
+// provisionWorkspace provisions a workspace for the agent run if configured.
+// Returns (nil, nil) if workspace provisioning is disabled, not configured, or not needed.
+// Returns (result, nil) on success or degraded provisioning.
+// Returns (nil, error) for fatal pre-provisioning failures (e.g. image not ready) —
+// callers must fail the run with RunStatusError.
+func (ae *AgentExecutor) provisionWorkspace(ctx context.Context, runID string, req ExecuteRequest) (*sandbox.ProvisioningResult, error) {
+	// Check preconditions: feature enabled, provisioner available, definition has workspace config
+	if !ae.wsEnabled || ae.provisioner == nil {
+		return nil, nil
+	}
+	if req.AgentDefinition == nil || len(req.AgentDefinition.SandboxConfig) == 0 {
+		return nil, nil
+	}
+
+	ae.log.Info("provisioning workspace for agent run",
+		slog.String("run_id", runID),
+		slog.String("agent_definition_id", req.AgentDefinition.ID),
+	)
+
+	// Check image readiness before attempting provisioning.
+	// If the image is still pulling or in error state, fail the run immediately
+	// rather than silently degrading to stub tools.
+	if err := ae.provisioner.WaitForImageReady(ctx, req.ProjectID, req.AgentDefinition.SandboxConfig); err != nil {
+		ae.log.Error("sandbox image not ready, failing run",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("sandbox image not ready: %w", err)
+	}
+
+	// Convert TriggerMetadata (map[string]any) to pass as taskMetadata
+	taskMeta := make(map[string]any, len(req.TriggerMetadata))
+	for k, v := range req.TriggerMetadata {
+		taskMeta[k] = v
+	}
+	result, err := ae.provisioner.ProvisionForSession(ctx, req.AgentDefinition.ID, req.ProjectID, req.AgentDefinition.SandboxConfig, taskMeta, req.AuthToken, req.EnvVars)
+	if err != nil {
+		ae.log.Error("workspace provisioning failed, failing run",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+		return nil, fmt.Errorf("workspace provisioning failed: %w", err)
+	}
+	if result == nil {
+		// Workspace not enabled in agent definition config
+		return nil, nil
+	}
+
+	// Link workspace to this run
+	if result.Workspace != nil {
+		if linkErr := ae.provisioner.LinkToRun(ctx, result.Workspace, runID); linkErr != nil {
+			ae.log.Warn("failed to link workspace to run",
+				slog.String("run_id", runID),
+				slog.String("workspace_id", result.Workspace.ID),
+				slog.String("error", linkErr.Error()),
+			)
+		}
+	}
+
+	if result.Degraded {
+		ae.log.Error("workspace provisioning degraded, failing run",
+			slog.String("run_id", runID),
+			slog.String("error", result.Error.Error()),
+		)
+		return nil, fmt.Errorf("workspace provisioning failed: %w", result.Error)
+	} else if result.Workspace != nil {
+		ae.log.Info("workspace provisioned successfully",
+			slog.String("run_id", runID),
+			slog.String("workspace_id", result.Workspace.ID),
+		)
+	}
+
+	return result, nil
+}
+
+// teardownWorkspace destroys the provisioned workspace after the agent run completes.
+// Called via defer so it runs regardless of how the run exits.
+func (ae *AgentExecutor) teardownWorkspace(ctx context.Context, result *sandbox.ProvisioningResult, tokenID string) {
+	// Use a detached context for teardown since the run context may be cancelled
+	teardownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Revoke the ephemeral token unconditionally. The token is minted BEFORE
+	// provisioning, so it must be revoked even when provisioning produced no
+	// workspace (e.g. sandbox disabled/unconfigured returns (nil, nil)) — otherwise
+	// every sandbox-disabled run leaks a live admin-scoped token.
+	if tokenID != "" && ae.apiTokenSvc != nil {
+		ae.apiTokenSvc.RevokeEphemeral(teardownCtx, tokenID)
+	}
+
+	if result == nil || result.Workspace == nil || ae.provisioner == nil {
+		return
+	}
+
+	ae.provisioner.TeardownWorkspace(teardownCtx, result.Workspace)
+}
+
+// resolveRootRunID determines the orchestration root for a run. It prefers the
+// caller's override (propagated unchanged through spawned children), then the
+// root already persisted on the run row (e.g. a re-enqueued queued run), then
+// the run's own ID (top-level runs, whose root is only known after creation).
+func resolveRootRunID(run *AgentRun, reqRoot *string) string {
+	if reqRoot != nil && *reqRoot != "" {
+		return *reqRoot
+	}
+	if run.RootRunID != nil && *run.RootRunID != "" {
+		return *run.RootRunID
+	}
+	return run.ID
+}
+
+// rootOverrideFromContext returns the caller's orchestration root as a pointer,
+// or nil when the context carries none (tracing is not involved — the root is
+// injected by runPipeline for every run). Callers that build a child request or
+// a queued run use it so a delegated child inherits the delegator's root instead
+// of self-rooting.
+func rootOverrideFromContext(ctx context.Context) *string {
+	if rootRunID := provider.RootRunIDFromContext(ctx); rootRunID != "" {
+		return &rootRunID
+	}
+	return nil
+}
+
+// persistRunLinkage writes the run's trace_id and root_run_id back to the DB row.
+// root_run_id is always persisted so the orchestration tree survives even when
+// tracing is disabled; trace_id is empty (written as NULL) unless the span
+// context is valid. Persistence failures are logged, not returned.
+func (ae *AgentExecutor) persistRunLinkage(ctx context.Context, runID, rootRunID string, sc trace.SpanContext) {
+	traceID := ""
+	if sc.IsValid() {
+		traceID = sc.TraceID().String()
+	}
+	if err := ae.repo.UpdateTraceAndRootRun(ctx, runID, traceID, rootRunID); err != nil {
+		ae.log.Warn("failed to persist trace_id/root_run_id on agent run",
+			slog.String("run_id", runID),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+func (ae *AgentExecutor) getRootRunID(ctx context.Context, run *AgentRun) string {
+	// root_run_id is persisted on the run row (at insert for spawned/queued runs,
+	// via a follow-up UPDATE for top-level runs) so we can read it directly
+	// without walking the resumed-from chain.
+	if run.RootRunID != nil && *run.RootRunID != "" {
+		return *run.RootRunID
+	}
+	// Fallback for legacy runs that predate root_run_id storage.
+	current := run
+	for current.ResumedFrom != nil {
+		prev, err := ae.repo.FindRunByID(ctx, *current.ResumedFrom)
+		if err != nil || prev == nil {
+			break
+		}
+		current = prev
+	}
+	return current.ID
+}
+
+// reactionWorkStatusSubject returns the trusted subject id for a plain reaction
+// agent that may set that subject's board status directly. It returns "" for
+// queued/work-config agents (which must use work_complete/work_block), for
+// non-reaction runs, and for runs without a trusted reaction target.
+func reactionWorkStatusSubject(agent *Agent, def *AgentDefinition, subjectID *string) string {
+	if agent == nil || agent.TriggerType != TriggerTypeReaction {
+		return ""
+	}
+	if def == nil || def.DispatchMode == DispatchModeQueued || !def.WorkConfig.IsZero() {
+		return ""
+	}
+	if subjectID == nil {
+		return ""
+	}
+	return *subjectID
+}
+
+// runPipeline builds the ADK agent, resolves tools, creates the runner, and
+// iterates over events until the agent is done or a safety limit is reached.
+func (ae *AgentExecutor) runPipeline(
+	ctx context.Context,
+	run *AgentRun,
+	req ExecuteRequest,
+	maxSteps int,
+	initialSteps int,
+	startTime time.Time,
+	wsResult *sandbox.ProvisioningResult,
+	askPauseState *AskPauseState,
+) (*ExecuteResult, error) {
+	dbCtx := context.Background()
+
+	// The run row is the source of truth for the trust marker. Override the
+	// request with the persisted value so coordination tools (and any child they
+	// spawn) inherit the run's trust rather than whatever the current transport
+	// happened to carry — a resume or re-wake must never upgrade trust.
+	req.TrustedInternal = run.TrustedInternal
+
+	// Propagate the trust marker into the context so the in-process tool dispatch
+	// (mcp.Service.ExecuteTool) can enforce the AgentOnly boundary consistently
+	// with the HTTP transports. The marker is fail-closed: it is true only for
+	// trusted/internal surfaces; external surfaces (webhook, A2A, agentcompat,
+	// public share) carry false and cannot reach agent-only tools (issue #994).
+	// runDispatchContext also strips any transport-enforced marker inherited from
+	// the triggering HTTP dispatch, so a child run's tools are re-gated on its
+	// own trust rather than the parent's per-dispatch authorization (issue #1133).
+	ctx = runDispatchContext(ctx, req.TrustedInternal)
+
+	// Intra-run tool-result cache (issue #1192): install a FRESH cache for this
+	// run so an identical read-only tool call later in the same run reuses the
+	// earlier result, while any mutating tool clears it. Installing a new cache
+	// here (rather than inheriting one from a parent run's context) guarantees a
+	// nested run never reads its parent's entries and that nothing survives the
+	// run. HTTP transports never install a cache, so they stay uncached.
+	ctx = mcp.ContextWithNewToolResultCache(ctx)
+
+	// Identify the ADK session ID.
+	// If the caller supplied a stable ConversationKey (cross-run conversation history),
+	// derive a namespaced key from it so triggers with the same ConversationKey share
+	// the same ADK session and accumulate conversation history.
+	// Otherwise fall back to the root run ID (current per-run behavior).
+	var sessionID string
+	if req.ConversationKey != "" {
+		sessionID = agentADKSessionKey(req.ProjectID, req.ConversationKey)
+	} else {
+		sessionID = ae.getRootRunID(ctx, run)
+	}
+
+	// Inject the current run ID into context so downstream tools (e.g. trigger_agent)
+	// can propagate it as the parent_run_id when spawning child runs.
+	ctx = contextWithCallerRunID(ctx, run.ID)
+	// Inject session ID into context so built-in tools (e.g. set_session_title)
+	// can update session metadata. If the run was created without the session ID set
+	// in-memory (e.g. via trigger_agent async path), fetch it from DB as a fallback.
+	if run.SessionID != nil && *run.SessionID != "" {
+		ctx = mcp.ContextWithSessionID(ctx, *run.SessionID)
+	} else if run.ID != "" {
+		if freshRun, fetchErr := ae.repo.FindRunByID(dbCtx, run.ID); fetchErr == nil && freshRun != nil && freshRun.SessionID != nil && *freshRun.SessionID != "" {
+			run.SessionID = freshRun.SessionID
+			ctx = mcp.ContextWithSessionID(ctx, *freshRun.SessionID)
+		}
+	}
+	// Also inject into the provider context so the tracking model can attribute
+	// LLM usage events to this run.
+	ctx = provider.ContextWithRunID(ctx, run.ID)
+	// Inject the root orchestration run ID so the tracking model can attribute
+	// cost to the full orchestration tree, not just the immediate run.
+	if req.RootRunID != nil {
+		ctx = provider.ContextWithRootRunID(ctx, *req.RootRunID)
+	}
+
+	// Inject project and org IDs into context so the credential resolver can look up
+	// the org-level provider config via the DB hierarchy (project → org), and so
+	// the tracking model can attribute LLM usage events to the correct tenant.
+	if req.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+	}
+	// Prefer explicitly supplied token; fall back to one already in context (e.g.
+	// when the executor is called from a trigger, worker pool, or spawned agent
+	// where the caller doesn't set AuthToken but the context carries a token from
+	// the auth middleware or a parent executor call).
+	//
+	// Ephemeral-token minting for runs that have no token at all happens in the
+	// entry points (Execute, ExecuteWithRun, Resume) BEFORE provisioning, so the
+	// minted token id is visible to the run-lifetime teardown closure and can be
+	// revoked. This function only forwards whatever token is already present.
+	effectiveToken := req.AuthToken
+	if effectiveToken == "" {
+		effectiveToken = auth.RawTokenFromContext(ctx)
+	}
+	if effectiveToken != "" {
+		ctx = auth.ContextWithRawToken(ctx, effectiveToken)
+	}
+	if req.ProjectID != "" {
+		ctx = auth.ContextWithProjectID(ctx, req.ProjectID)
+	}
+	if req.OrgID != "" {
+		ctx = auth.ContextWithOrgID(ctx, req.OrgID)
+	}
+
+	// Per-step watchdog (issue #1072): instead of a single fixed wall-clock
+	// deadline that kills a legitimately slow multi-step run at 10 minutes, arm a
+	// resettable per-step budget. Progress (a new model step, a tool invocation,
+	// a tool completing) resets the budget; only a step that makes no progress
+	// for the whole budget is terminated. The budget honours the same precedence
+	// as the old wall-clock timeout (request > agent default_timeout > 10m default).
+	stepTimeout := resolveRunTimeout(req)
+	var cancelReason string // set before a run is cancelled to give a meaningful error message
+	watchdog := newStepWatchdog(ctx, stepTimeout, &cancelReason, ae.log, run.ID)
+	ctx = watchdog.ctx
+	defer watchdog.stop()
+
+	// Create a cancellable context so the doom loop detector can hard-stop the run.
+	var cancelRun context.CancelFunc
+	ctx, cancelRun = context.WithCancel(ctx)
+	defer cancelRun()
+
+	// Register the run's cancel handle so an explicit cancel request (routed by
+	// run id, not by a request context) can stop a run whose lifetime may be
+	// detached from the request that started it. Unregistered on every exit path.
+	cancelHandle := ae.runCancels.register(run.ID, cancelRun)
+	defer ae.runCancels.unregister(run.ID, cancelHandle)
+
+	// A run may already carry a durable cancel before it starts executing — for
+	// example a queued run cancelled by another instance before a worker claimed
+	// it. Read the authoritative status once here and, if it is "cancelling",
+	// stop before doing any work: cancel the handle and take the guarded terminal
+	// transition to cancelled (issue #1166).
+	if ae.durablyCancelling(run.ID) {
+		cancelHandle.cancelWithReason(userCancelReason)
+		_, _ = ae.repo.CancelRunWithSteps(context.Background(), run.ID, userCancelReason, initialSteps)
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusCancelled,
+			Summary:  map[string]any{"error": userCancelReason, "reason": "user_cancelled"},
+			Steps:    initialSteps,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	// Create the LLM model — per-run override takes precedence
+	modelName := req.Model
+	if modelName == "" && req.AgentDefinition != nil && req.AgentDefinition.Model != nil && req.AgentDefinition.Model.Name != "" {
+		modelName = req.AgentDefinition.Model.Name
+		// Structured override: an explicit provider instance (slug) is combined
+		// with the bare model name, unless the name already carries a prefix.
+		if p := req.AgentDefinition.Model.Provider; p != "" && !strings.Contains(modelName, "/") {
+			modelName = p + "/" + modelName
+		}
+	}
+
+	var llm model.LLM
+	var err error
+	if modelName != "" {
+		llm, err = ae.modelFactory.CreateModelWithName(ctx, modelName)
+	} else {
+		llm, err = ae.modelFactory.CreateModel(ctx)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LLM model: %w", err)
+	}
+
+	// Apply thinking config from agent definition when the model supports it.
+	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil &&
+		req.AgentDefinition.Model.EnableThinking != nil {
+		if tc, ok := llm.(adk.ThinkingConfigurator); ok {
+			tc.SetEnableThinking(req.AgentDefinition.Model.EnableThinking)
+		}
+	}
+
+	// Apply a per-run graded reasoning effort (agentcompat `reasoning_effort`)
+	// when the provider adapter supports it. Only the OpenAI Responses adapter
+	// implements ReasoningEffortConfigurator today; TrackingModel delegates so
+	// the wrapped model stays configurable. Non-supporting providers ignore it.
+	if req.ReasoningEffort != "" {
+		if rc, ok := llm.(adk.ReasoningEffortConfigurator); ok {
+			rc.SetReasoningEffort(req.ReasoningEffort)
+		}
+	}
+
+	// Persist the resolved model name (and provider when available) on the run record.
+	// llm.Name() reflects the actual model used (including factory/credential defaults),
+	// which may differ from the modelName variable when a credential-level default applies.
+	if resolvedModelName := llm.Name(); resolvedModelName != "" {
+		var providerName, providerSlug string
+		if tm, ok := llm.(*provider.TrackingModel); ok {
+			providerName = tm.ProviderName()
+			providerSlug = tm.ProviderSlugName()
+		}
+		if err := ae.repo.UpdateRunModel(dbCtx, run.ID, resolvedModelName, providerName, providerSlug, providerName); err != nil {
+			ae.log.Warn("failed to persist model on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("model", resolvedModelName),
+				slog.String("provider", providerName),
+				slog.String("error", err.Error()),
+			)
+		}
+		// Update the agent.run span attribute now that the resolved model name is
+		// known. At span-start time only the pre-resolution name was available.
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.String("memory.agent.model", resolvedModelName),
+		)
+	}
+
+	// Resolve tools from the tool pool
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+	resolvedTools, err := ae.toolPool.ResolveTools(req.ProjectID, req.AgentDefinition, req.Depth, maxDepth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve tools: %w", err)
+	}
+
+	// Strip superadmin-only operator tools from non-superadmin runs (issue #948).
+	// Service.ExecuteTool also enforces the same authority at dispatch, so this is
+	// resolution-level defence in depth: a non-superadmin principal's agent never
+	// sees the operator tools in its toolset at all.
+	resolvedTools = ae.toolPool.StripOperatorTools(ctx, resolvedTools)
+
+	// Filter out banned tools
+	if req.AgentDefinition != nil && len(req.AgentDefinition.BannedTools) > 0 {
+		banned := make(map[string]bool)
+		for _, name := range req.AgentDefinition.BannedTools {
+			banned[name] = true
+		}
+		filtered := make([]tool.Tool, 0, len(resolvedTools))
+		for _, t := range resolvedTools {
+			if !banned[t.Name()] {
+				filtered = append(filtered, t)
+			}
+		}
+		resolvedTools = filtered
+	}
+
+	// Add coordination tools (spawn_agents, list_available_agents) for top-level or opted-in agents
+	coordTools, coordDeps, err := ae.buildCoordinationTools(req, run.ID)
+	if err != nil {
+		ae.log.Warn("failed to build coordination tools, continuing without them",
+			slog.String("error", err.Error()),
+		)
+	} else {
+		resolvedTools = append(resolvedTools, coordTools...)
+	}
+
+	// Add workspace tools if a non-degraded workspace was provisioned.
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded {
+		wsTools, wsToolErr := ae.resolveWorkspaceTools(wsResult, req)
+		if wsToolErr != nil {
+			ae.log.Warn("failed to build workspace tools, continuing without them",
+				slog.String("run_id", run.ID),
+				slog.String("error", wsToolErr.Error()),
+			)
+		} else if len(wsTools) > 0 {
+			resolvedTools = append(resolvedTools, wsTools...)
+			ae.log.Info("workspace tools added to agent pipeline",
+				slog.String("run_id", run.ID),
+				slog.Int("count", len(wsTools)),
+			)
+		}
+	}
+
+	// Add ask_user tool if opted in via agent definition
+	if askPauseState == nil {
+		askPauseState = &AskPauseState{}
+	}
+	// Work terminator state: set by work_complete / work_block, read by
+	// beforeModelCb (stop the loop) and the final-status detection (report the
+	// outcome). Declared before the work tools are built so both share it.
+	terminatorState := &WorkTerminatorState{}
+	askUserTool, askErr := ae.buildAskUserTool(req, run.ID, askPauseState)
+	if askErr != nil {
+		ae.log.Warn("failed to build ask_user tool, continuing without it",
+			slog.String("error", askErr.Error()),
+		)
+	} else if askUserTool != nil {
+		resolvedTools = append(resolvedTools, askUserTool)
+		ae.log.Info("ask_user tool added to agent pipeline",
+			slog.String("run_id", run.ID),
+		)
+	}
+
+	// Add skill tool if opted in via agent definition
+	if skillTool, skillErr := ae.buildSkillTool(ctx, run, req); skillErr != nil {
+		ae.log.Warn("failed to build skill tool, continuing without it",
+			slog.String("run_id", run.ID),
+			slog.String("error", skillErr.Error()),
+		)
+	} else if skillTool != nil {
+		resolvedTools = append(resolvedTools, skillTool)
+		ae.log.Info("skill tool added to agent pipeline",
+			slog.String("run_id", run.ID),
+		)
+	}
+
+	// Add the run-finalizing work terminator tools for object-driven runs.
+	if workTools, workErr := ae.buildWorkTools(req, run, terminatorState); workErr != nil {
+		ae.log.Warn("failed to build work tools, continuing without them",
+			slog.String("run_id", run.ID),
+			slog.String("error", workErr.Error()),
+		)
+	} else if len(workTools) > 0 {
+		resolvedTools = append(resolvedTools, workTools...)
+		ae.log.Info("work terminator tools added to agent pipeline",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(workTools)),
+		)
+	}
+
+	// Add caller-injected extra tools (e.g. client tools from the agentcompat layer).
+	if len(req.ExtraTools) > 0 {
+		resolvedTools = append(resolvedTools, req.ExtraTools...)
+		ae.log.Info("extra tools added to agent pipeline",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(req.ExtraTools)),
+		)
+	}
+
+	// Persist the final tool list on the run record for observability
+	if len(resolvedTools) > 0 {
+		toolNames := make([]string, len(resolvedTools))
+		for i, t := range resolvedTools {
+			toolNames[i] = t.Name()
+		}
+		if err := ae.repo.UpdateRunTools(dbCtx, run.ID, toolNames); err != nil {
+			ae.log.Warn("failed to persist tools on agent run",
+				slog.String("run_id", run.ID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	// Build the LLM agent
+	agentName := ae.resolveAgentName(req)
+	// Populate project context for the instruction in one place, so every
+	// surface that reaches runPipeline (trigger, A2A, chat, chat-completions,
+	// resume, sub-agent spawns) gets it identically when the definition opts in.
+	req.ProjectInfo = ae.resolveProjectInfo(ctx, req.AgentDefinition, req.ProjectID)
+	// Derive the per-agent graph type allowlist once per run and thread it into
+	// the tool layer via context, so every graph-touching tool enforces the same
+	// scope on every surface (trigger, A2A, chat, chat-completions, resume,
+	// sub-agent spawns). A nil scope (no allowlist configured) is the
+	// backwards-compatible "all types" default (issue #1695).
+	//
+	// When the incoming context ALREADY carries a scope — a delegated caller's
+	// scope, or the search-knowledge loopback's caller scope — the definition's
+	// scope is NARROWED by it, never allowed to replace and widen it (#1695
+	// follow-up). Without this, a definition that gained an allowlist (including
+	// the internal graph-query-agent) could silently widen an inherited caller
+	// boundary.
+	ctx = mcp.ContextWithTypeScope(ctx, mcp.NarrowTypeScope(mcp.TypeScopeFromContext(ctx), resolveTypeScope(req.AgentDefinition)))
+	instruction := ae.resolveInstruction(req)
+
+	// Augment system instruction with workspace context if available.
+	// If workspace was requested but provisioning failed or is degraded, inject a clear
+	// unavailability notice so the model doesn't attempt to call workspace tools that
+	// have no registered handler (which would cause silent tool-call drops).
+	// Skip injection when contextInjection is set to "never" — the agent owns its prompt.
+	if wsResult != nil && wsResult.Workspace != nil && !wsResult.Degraded &&
+		contextInjectionMode(req.AgentDefinition) != "never" {
+		instruction = ae.augmentInstructionWithWorkspace(instruction, wsResult)
+	}
+
+	// TriggerMetadata is per-run dynamic context (e.g. title, source, caller-supplied keys).
+	// It is injected as a prefix on the first user-turn message rather than the system
+	// instruction, so the system instruction remains byte-identical across runs and can
+	// be served from Gemini's implicit prompt cache (requires a stable prefix).
+	var triggerContextPrefix string
+	if len(run.TriggerMetadata) > 0 {
+		if ctxJSON, err := json.Marshal(run.TriggerMetadata); err == nil {
+			triggerContextPrefix = "<context>\n" + string(ctxJSON) + "\n</context>\n\n"
+		}
+	}
+
+	// Inject namespace from TriggerMetadata into the context so that MCP tools
+	// (entity-create, relationship-create) scope writes to the correct namespace
+	// without requiring the LLM to pass it explicitly in every tool call.
+	if ns, ok := run.TriggerMetadata["namespace"].(string); ok && ns != "" {
+		ctx = auth.ContextWithNamespace(ctx, ns)
+	}
+
+	genConfig := ae.modelFactory.DefaultGenerateConfig()
+	if req.AgentDefinition != nil && req.AgentDefinition.Model != nil {
+		if req.AgentDefinition.Model.Temperature != nil {
+			genConfig.Temperature = req.AgentDefinition.Model.Temperature
+		}
+		if req.AgentDefinition.Model.MaxTokens != nil {
+			// Explicit per-agent override takes highest priority.
+			genConfig.MaxOutputTokens = int32(*req.AgentDefinition.Model.MaxTokens)
+		} else if ae.modelLimits != nil && modelName != "" {
+			// Fall back to the models.dev catalog limit for this model.
+			if limit, err := ae.modelLimits.GetModelOutputLimit(ctx, modelName); err == nil && limit > 0 {
+				genConfig.MaxOutputTokens = int32(limit)
+			}
+		}
+		// Inject Google-native tools (google_search, url_context, code_execution).
+		// Only tools that are both requested by the agent definition AND supported
+		// by the resolved model are activated — unsupported combinations are skipped.
+		if len(req.AgentDefinition.Model.NativeTools) > 0 {
+			supported := adk.SupportedNativeTools(modelName)
+			enabled := adk.IntersectNativeTools(req.AgentDefinition.Model.NativeTools, supported)
+			if len(enabled) > 0 {
+				nativeGenaiTools := adk.BuildNativeGenaiTools(enabled)
+				genConfig.Tools = append(genConfig.Tools, nativeGenaiTools...)
+				ae.log.Info("google native tools enabled for agent",
+					slog.String("run_id", run.ID),
+					slog.String("model", modelName),
+					slog.Any("tools", enabled),
+				)
+			}
+		}
+	}
+
+	// Create the step tracker
+	tracker := newStepTracker(maxSteps, initialSteps)
+
+	// Create the doom loop detector
+	doomDetector := newDoomLoopDetector(ae.log)
+
+	// Create tool confirmation pause state
+	toolConfirmState := &ToolConfirmPauseState{}
+	// preApprovedUsed tracks whether the one-shot PreApprovedToolName bypass has fired.
+	var preApprovedUsed sync.Once
+
+	// Resolve agentID once for use in question creation
+	agentID := ae.resolveAgentID(req)
+
+	// Stamp the acting agent on the context so graph mutations performed by this
+	// run's tools attribute to THIS agent rather than the HTTP principal or a
+	// parent run. Each nested/delegated run re-stamps its own id here, so a
+	// sub-agent's writes attribute to the sub-agent (issue #1193).
+	//
+	// The stamped id is the agent DEFINITION id (kb.agent_definitions.id) — the
+	// single canonical actor_id for actor_type='agent' — NOT the kb.agents run
+	// entity id (resolveAgentID).
+	//
+	// We ALWAYS stamp (resolvable → agent+id, unresolvable → the empty "clear"
+	// form) so a delegated run whose definition cannot be resolved does NOT
+	// inherit the parent's agent actor — it falls back to the normal user/system
+	// attribution instead of misattributing the child's writes to the parent.
+	if agentUUID := ae.actorAgentID(req); agentUUID != nil {
+		ctx = auth.WithActor(ctx, graph.ActorAgent, agentUUID)
+	} else {
+		ctx = auth.WithActor(ctx, "", nil)
+	}
+
+	// Record the run alongside the actor (#2376). The actor pair stays the agent
+	// DEFINITION id by design, so the run is stamped separately: without it a
+	// write can be attributed to an agent but never to the session that produced
+	// it. root_run_id is the top-level run of the delegation chain, so a whole
+	// session's writes can be recovered with one filter.
+	var rootRunIDValue string
+	if req.RootRunID != nil {
+		rootRunIDValue = *req.RootRunID
+	}
+	ctx = auth.ContextWithRunIDs(ctx, ptrUUID(run.ID), ptrUUID(rootRunIDValue))
+
+	// Always clear any inherited subject so a delegated child run cannot inherit
+	// the parent reaction exemption. Then stamp only the trusted target of a
+	// plain reaction agent (sync dispatch, zero work config); queued/work agents
+	// keep using work_complete/work_block so the work lifecycle stays
+	// authoritative. See the webpage-feedback issue-triager.
+	ctx = auth.WithAgentWorkStatusSubject(ctx, reactionWorkStatusSubject(req.Agent, req.AgentDefinition, req.SubjectObjectID))
+
+	// Accumulate cached token counts across all LLM steps in this run.
+	// Used to surface cache hit visibility in the run summary.
+	var cachedTokensMu sync.Mutex
+	var totalCachedTokens int64
+
+	// toolStartTimes records each tool invocation's start instant, keyed by its
+	// ADK function-call id, so the after-tool callback can compute the actual
+	// execution window (duration_ms) even across parallel tool calls.
+	var toolStartTimes sync.Map // functionCallID -> time.Time
+
+	// toolStreamStatuses records the explicit stream status of tool calls that
+	// did not execute normally (policy-blocked, share-denied, or awaiting
+	// confirmation), keyed by the ADK function-call id, so afterToolCb reports
+	// the honest terminal status instead of inferring it from the result shape.
+	var toolStreamStatuses sync.Map // functionCallID -> string
+
+	// thinkTrack owns thinking segment boundaries: it assigns stable segment ids,
+	// emits done:false on open deltas and exactly one done:true per close, and
+	// suppresses the whole-block reasoning path when a step already streamed
+	// partial reasoning deltas.
+	thinkTrack := newThinkingTracker(req.StreamCallback)
+	defer thinkTrack.close()
+
+	// Set up before-model callback for step tracking
+	beforeModelCb := func(cbCtx agent.Context, llmReq *model.LLMRequest) (*model.LLMResponse, error) {
+		// Observe a durable cancel at this step boundary (issue #1166). A cancel
+		// served by another instance persists the "cancelling" status; this
+		// instance's local context and cancel registry know nothing about it, so
+		// the authoritative row must be read here. Recording the user-cancel
+		// reason on the handle makes the cancellation block below finalize the
+		// run as cancelled rather than failed. The read is not gated on
+		// ctx.Err(): a durable cancel must win even when a timeout/doom-loop has
+		// already cancelled the context, so a requested cancel is never reported
+		// as failed.
+		if ae.durablyCancelling(run.ID) {
+			cancelHandle.cancelWithReason(userCancelReason)
+		}
+
+		// Check if context was cancelled (timeout or manual cancellation)
+		if ctx.Err() != nil {
+			msg := cancelReason
+			if msg == "" {
+				// An explicit cancel request (detached run) records its reason on
+				// the handle; prefer it over the generic context-canceled text so
+				// a user stop is not reported as a server fault.
+				if r := cancelHandle.Reason(); r != "" {
+					msg = r
+				} else if ctx.Err() == context.DeadlineExceeded {
+					msg = "agent stopped: timeout exceeded"
+				} else {
+					msg = "agent stopped: context canceled"
+				}
+			}
+			ae.log.Warn("context cancelled, stopping agent",
+				slog.String("run_id", run.ID),
+				slog.String("reason", msg),
+			)
+			return nil, fmt.Errorf("%s", msg)
+		}
+
+		currentStep := tracker.increment()
+
+		// A new model step is progress: reset the per-step watchdog so a run that
+		// keeps taking steps is never killed by the aggregate duration.
+		watchdog.progress()
+
+		// Heartbeat: bump last_step_at so the stale-run reaper keys off recent
+		// activity rather than started_at, keeping long-running-but-active runs alive.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
+		// A run-finalizing terminator (work_complete / work_block) ends the run:
+		// persist the run as complete with the terminator summary and stop the
+		// model loop so no further steps run.
+		if terminatorState.ShouldFinalize() {
+			termSummary := terminatorState.Summary()
+			if termSummary == nil {
+				termSummary = map[string]any{"work_terminator": terminatorState.Kind()}
+			}
+			_ = ae.repo.CompleteRunWithSteps(dbCtx, run.ID, termSummary, currentStep, int(time.Since(startTime).Milliseconds()))
+			ae.log.Info("work terminator finalized run",
+				slog.String("run_id", run.ID),
+				slog.String("terminator", terminatorState.Kind()),
+			)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Work finalized. The run is complete.", genai.RoleModel),
+			}, nil
+		}
+
+		// Check step limit
+		if tracker.exceeded() {
+			ae.log.Warn("step limit reached, stopping agent",
+				slog.String("run_id", run.ID),
+				slog.Int("step", currentStep),
+				slog.Int("max_steps", maxSteps),
+			)
+			// Pause the run instead of failing
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Step limit reached. Run has been paused.", genai.RoleModel),
+			}, nil
+		}
+
+		// Check if ask_user requested a pause
+		if askPauseState != nil && askPauseState.ShouldPause() {
+			ae.log.Info("ask_user pause requested, pausing agent",
+				slog.String("run_id", run.ID),
+				slog.String("question_id", askPauseState.QuestionID()),
+				slog.Int("step", currentStep),
+			)
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Execution paused. Waiting for user response to your question.", genai.RoleModel),
+			}, nil
+		}
+
+		// Check if tool-policy confirmations are pending (single or batch).
+		if confirmations := toolConfirmState.Confirmations(); len(confirmations) > 0 {
+			sig := SuspendSignal{
+				Reason:                   SuspendReasonAwaitingToolConfirm,
+				PendingToolConfirmations: confirmations,
+			}
+			ae.log.Info("tool_policy confirmation pending, pausing agent",
+				slog.String("run_id", run.ID),
+				slog.Int("confirmations", len(confirmations)),
+				slog.Int("step", currentStep),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for tool confirm",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+			return &model.LLMResponse{
+				Content: genai.NewContentFromText("Execution paused. Waiting for user approval of tool call(s).", genai.RoleModel),
+			}, nil
+		}
+
+		// Periodically persist step count
+		if currentStep%5 == 0 {
+			_ = ae.repo.UpdateStepCount(dbCtx, run.ID, currentStep)
+		}
+
+		// Bound tool results before the model sees them (issue #1205). ADK deep
+		// clones session content into llmReq.Contents, so this truncates only the
+		// model request: the session transcript, the persisted tool-call and
+		// message rows, and the streamed UI events keep the full payload.
+		if stats := boundModelRequestToolResults(llmReq, ae.toolBounds); stats.TruncatedResults > 0 || stats.ElidedResults > 0 {
+			ae.log.Info("bounded tool results for model context",
+				slog.String("run_id", run.ID),
+				slog.Int("step", currentStep),
+				slog.Int("truncated_results", stats.TruncatedResults),
+				slog.Int("elided_results", stats.ElidedResults),
+				slog.Int("bytes_before", stats.BytesBefore),
+				slog.Int("bytes_after", stats.BytesAfter),
+			)
+		}
+
+		return nil, nil
+	}
+
+	// Build the tool name→scope map once for the run so group policy resolution
+	// matches the read DTO for dynamic tools (e.g. document-* → documents). This
+	// is an in-memory catalog read, not a per-tool-call DB scan.
+	toolScopes := ae.toolPool.ToolScopes()
+
+	// Set up before-tool callback for streaming ToolCallStart events and tool policy enforcement
+	beforeToolCb := func(tCtx agent.Context, t tool.Tool, args map[string]any) (map[string]any, error) {
+		// FunctionCallID is stable across the before/after callback pair, even
+		// for parallel tool calls. Capture it once so the start event, the
+		// terminal status, and the duration window all share the same id.
+		id := tCtx.FunctionCallID()
+
+		// Stamp the invocation start so afterToolCb can compute the real
+		// execution window (duration_ms).
+		if id != "" {
+			toolStartTimes.Store(id, time.Now())
+		}
+
+		// A tool invocation is progress: reset the per-step watchdog.
+		watchdog.progress()
+
+		// Heartbeat on tool invocation so long tool phases (sandbox build, MCP
+		// round-trips) between model steps keep refreshing last_step_at.
+		_ = ae.repo.TouchRun(dbCtx, run.ID)
+
+		// A tool start closes any open thinking segment: the pre-tool
+		// monologue/reasoning phase has ended.
+		thinkTrack.close()
+
+		if req.StreamCallback != nil {
+			req.StreamCallback(StreamEvent{
+				Type:  StreamEventToolCallStart,
+				Tool:  t.Name(),
+				ID:    id,
+				Input: args,
+			})
+		}
+
+		// Resolve the effective tool policy (explicit entry → group → default),
+		// using the catalog's RequiredScope so dynamic tools resolve to the same
+		// group the read DTO reports.
+		var policy ToolPolicy
+		var hasPolicy bool
+		if req.AgentDefinition != nil {
+			policy, hasPolicy = req.AgentDefinition.effectiveToolPolicyFor(t.Name(), toolScopes[t.Name()])
+		}
+
+		// Disabled (deny): hard-block the tool before execution (policy enforcement).
+		if toolPolicyBlocks(policy, hasPolicy) {
+			ae.log.Info("tool_policy: tool disabled by policy, blocking call",
+				slog.String("run_id", run.ID),
+				slog.String("tool", t.Name()),
+			)
+			if id != "" {
+				toolStreamStatuses.Store(id, "error")
+			}
+			return map[string]any{
+				"error":  fmt.Sprintf("tool %q is disabled by policy and cannot be called", t.Name()),
+				"policy": "disabled",
+			}, nil
+		}
+
+		// Share-run allowlist: deny-listed tools are hard-blocked BEFORE the
+		// confirm gate, so an approval can never override a deny-listed tool.
+		if len(req.ShareToolDeny) > 0 {
+			for _, denied := range req.ShareToolDeny {
+				if denied == t.Name() {
+					ae.log.Info("share_deny: tool denied by share link allowlist, blocking call",
+						slog.String("run_id", run.ID),
+						slog.String("tool", t.Name()),
+					)
+					if id != "" {
+						toolStreamStatuses.Store(id, "error")
+					}
+					return map[string]any{
+						"error":  fmt.Sprintf("tool %q is not allowed on this share link", t.Name()),
+						"policy": "share_deny",
+					}, nil
+				}
+			}
+		}
+
+		// Confirm (ask): pause the run and ask the user before executing.
+		if hasPolicy && policy.Confirm {
+			// If this tool was pre-approved on resume, allow it through once.
+			bypassed := false
+			if req.PreApprovedToolName == t.Name() {
+				preApprovedUsed.Do(func() { bypassed = true })
+			}
+			if !bypassed {
+				msg := policy.Message
+				if msg == "" {
+					msg = fmt.Sprintf("Agent wants to call tool **%s**. Do you approve?", t.Name())
+				}
+				q, qErr := CreateAndEmitQuestion(tCtx, CreateQuestionParams{
+					Repo:             ae.repo,
+					Logger:           ae.log,
+					ProjectID:        req.ProjectID,
+					AgentID:          agentID,
+					RunID:            run.ID,
+					UserID:           req.UserID,
+					EventsSvc:        ae.eventsSvc,
+					NotificationsSvc: ae.notificationsSvc,
+					Question:         msg,
+					Options: []AgentQuestionOption{
+						{Label: "Approve", Value: "approve"},
+						{Label: "Reject", Value: "reject"},
+					},
+					InteractionType: QuestionInteractionButtons,
+					SkipCancel:      true,
+				})
+				if qErr != nil {
+					ae.log.Warn("tool_policy: failed to create confirmation question, proceeding without confirmation",
+						slog.String("run_id", run.ID),
+						slog.String("tool", t.Name()),
+						slog.String("error", qErr.Error()),
+					)
+					// Fall through and let the tool execute
+					return nil, nil
+				}
+				// Record the pending approval for the audit trail (args redacted).
+				approval := &AgentToolApproval{
+					RunID:       run.ID,
+					ProjectID:   req.ProjectID,
+					AgentID:     agentID,
+					QuestionID:  q.ID,
+					ToolName:    t.Name(),
+					ArgsSummary: redactToolArgs(args),
+					Decision:    "pending",
+				}
+				if req.ShareLinkID != "" {
+					approval.ShareLinkID = &req.ShareLinkID
+				}
+				if aErr := ae.repo.CreateToolApproval(tCtx, approval); aErr != nil {
+					ae.log.Warn("tool_policy: failed to record approval, continuing",
+						slog.String("run_id", run.ID),
+						slog.String("tool", t.Name()),
+						slog.String("error", aErr.Error()),
+					)
+				}
+				// Emit an in-stream approval event so the gateway can surface an
+				// approval card in the chat stream (in addition to the out-of-band notice).
+				if req.StreamCallback != nil {
+					req.StreamCallback(StreamEvent{
+						Type:       StreamEventToolApproval,
+						Tool:       t.Name(),
+						Input:      args,
+						QuestionID: q.ID,
+					})
+				}
+				ae.log.Info("tool_policy: confirmation required, pausing run",
+					slog.String("run_id", run.ID),
+					slog.String("tool", t.Name()),
+					slog.String("question_id", q.ID),
+				)
+				toolConfirmState.AddConfirmation(ToolConfirmation{
+					QuestionID:     q.ID,
+					FunctionCallID: tCtx.FunctionCallID(),
+					ToolName:       t.Name(),
+					ToolArgs:       args,
+				})
+				// The tool did not execute: carry its non-terminal status so
+				// afterToolCb reports awaiting_confirmation instead of success.
+				if id != "" {
+					toolStreamStatuses.Store(id, "awaiting_confirmation")
+				}
+				// Return synthetic result — skips actual tool.Run(); afterToolCb will still fire.
+				return map[string]any{
+					"status":      "awaiting_confirmation",
+					"question_id": q.ID,
+					"message":     "Tool execution paused, awaiting user confirmation.",
+				}, nil
+			}
+		}
+
+		// Return nil to let the ADK framework proceed with actual tool execution.
+		// Returning a non-nil result tells the framework the callback already handled
+		// the tool call and skips tool.Run() entirely (Bug 6 fix).
+		return nil, nil
+	}
+
+	// Set up after-tool callback for doom loop detection and state persistence
+	afterToolCb := func(tCtx agent.Context, t tool.Tool, args, result map[string]any, toolErr error) (map[string]any, error) {
+		toolName := t.Name()
+		currentStep := tracker.current()
+
+		// A completed tool call is progress: reset the per-step watchdog.
+		watchdog.progress()
+
+		// Compute the tool's actual execution window from the start stamped in
+		// beforeToolCb. A tool blocked by policy or awaiting confirmation never
+		// runs, so its window is ~0ms — which accurately reflects no execution.
+		var durationMs *int
+		if id := tCtx.FunctionCallID(); id != "" {
+			if v, ok := toolStartTimes.LoadAndDelete(id); ok {
+				if start, ok := v.(time.Time); ok {
+					d := int(time.Since(start).Milliseconds())
+					durationMs = &d
+				}
+			}
+		}
+
+		// Record the tool call
+		status := "completed"
+		if toolErr != nil {
+			status = "failed"
+		}
+		// Stream status is distinct from the persisted status: it reports the
+		// honest terminal state for the SSE surface, including non-execution.
+		// A tool that was policy-blocked, share-denied, or awaiting confirmation
+		// carries its explicit status from beforeToolCb.
+		var carried string
+		if v, ok := toolStreamStatuses.LoadAndDelete(tCtx.FunctionCallID()); ok {
+			carried, _ = v.(string)
+		}
+		streamStatus := resolveToolStreamStatus(toolErr, carried)
+		output := result
+		if output == nil {
+			output = map[string]any{}
+		}
+		if toolErr != nil {
+			output["error"] = toolErr.Error()
+		}
+		tcRecord := &AgentRunToolCall{
+			RunID:      run.ID,
+			ToolName:   toolName,
+			Input:      args,
+			Output:     output,
+			Status:     status,
+			StepNumber: currentStep,
+			DurationMs: durationMs,
+		}
+		if persistErr := ae.repo.CreateToolCall(dbCtx, tcRecord); persistErr != nil {
+			ae.log.Warn("failed to persist tool call",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolName),
+				slog.String("error", persistErr.Error()),
+			)
+		}
+
+		// If a client tool (injected via ExtraTools) returned the sentinel value,
+		// pause the run so the agentcompat layer can return tool_calls to the caller.
+		if isClientToolSentinel(result) {
+			functionCallID := tCtx.FunctionCallID()
+			callID, _ := result["call_id"].(string)
+			sig := SuspendSignal{
+				Reason:                SuspendReasonAwaitingClientTool,
+				PendingToolCallID:     functionCallID,
+				PendingToolName:       toolName,
+				PendingClientToolArgs: args,
+			}
+			if callID != "" {
+				sig.QuestionID = callID // reuse QuestionID as the OpenAI call_id
+			}
+			ae.log.Info("client tool afterToolCb: pausing run awaiting client tool result",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolName),
+				slog.String("pending_tool_call_id", functionCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for client tool",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+		}
+
+		// If ask_user was just called, pause the run immediately so the LLM
+		// cannot produce a final response that would mark the run as success
+		// before beforeModelCb fires (race condition fix).
+		if toolName == ToolNameAskUser && askPauseState != nil && askPauseState.ShouldPause() {
+			functionCallID := tCtx.FunctionCallID()
+			sig := SuspendSignal{
+				Reason:            SuspendReasonAwaitingHuman,
+				QuestionID:        askPauseState.QuestionID(),
+				PendingToolCallID: functionCallID,
+				PendingToolName:   ToolNameAskUser,
+			}
+			ae.log.Info("ask_user afterToolCb: pausing run with suspend_context",
+				slog.String("run_id", run.ID),
+				slog.String("question_id", sig.QuestionID),
+				slog.String("pending_tool_call_id", functionCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+		}
+
+		// Tool-policy confirmations are handled in beforeModelCb (single sync
+		// point after all parallel tool calls complete), not per-tool here.
+
+		// Check for spawn cascade: if a spawned child paused, propagate suspend upward.
+		if coordDeps != nil && coordDeps.SuspendSignal != nil {
+			sig := coordDeps.SuspendSignal
+			sig.PendingToolCallID = tCtx.FunctionCallID()
+			sig.PendingToolName = toolName
+			ae.log.Info("spawn cascade: child paused, propagating suspend to parent",
+				slog.String("run_id", run.ID),
+				slog.String("waiting_for_run_id", sig.WaitingForRunID),
+				slog.String("pending_tool_call_id", sig.PendingToolCallID),
+			)
+			if scErr := ae.repo.UpdateSuspendContext(dbCtx, run.ID, sig.ToMap()); scErr != nil {
+				ae.log.Warn("failed to persist suspend_context for spawn cascade",
+					slog.String("run_id", run.ID),
+					slog.String("error", scErr.Error()),
+				)
+			}
+			_ = ae.repo.PauseRun(dbCtx, run.ID, currentStep)
+		}
+
+		// Check for doom loop
+		action := doomDetector.recordCall(toolName, args)
+		switch action {
+		case doomActionWarn:
+			ae.log.Warn("doom loop warning: consecutive identical tool calls detected",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolName),
+				slog.Int("consecutive", doomDetector.consecutiveCount),
+			)
+		case doomActionStop:
+			ae.log.Error("doom loop detected, stopping agent",
+				slog.String("run_id", run.ID),
+				slog.String("tool", toolName),
+				slog.Int("consecutive", doomDetector.consecutiveCount),
+			)
+			cancelReason = fmt.Sprintf("agent stopped: doom loop detected — %d consecutive identical calls to %q", doomDetector.consecutiveCount, toolName)
+			cancelRun()
+			return nil, fmt.Errorf("DOOM_LOOP_DETECTED: %d consecutive identical calls to %q — agent is stuck in a loop and has been stopped", doomDetector.consecutiveCount, toolName)
+		}
+
+		// Emit ToolCallEnd streaming event
+		if req.StreamCallback != nil {
+			evt := StreamEvent{
+				Type:   StreamEventToolCallEnd,
+				Tool:   toolName,
+				ID:     tCtx.FunctionCallID(),
+				Status: streamStatus,
+				Output: output,
+			}
+			if toolErr != nil {
+				evt.Error = toolErr.Error()
+			} else if streamStatus == "error" {
+				// Blocked tools surface the synthetic error carried in the result.
+				if errStr, ok := output["error"].(string); ok {
+					evt.Error = errStr
+				}
+			}
+			req.StreamCallback(evt)
+		}
+
+		return result, toolErr
+	}
+
+	// Log final resolved tool names for diagnostics
+	if len(resolvedTools) > 0 {
+		toolNames := make([]string, len(resolvedTools))
+		for i, t := range resolvedTools {
+			toolNames[i] = t.Name()
+		}
+		ae.log.Info("final resolved tools for agent",
+			slog.String("run_id", run.ID),
+			slog.Int("count", len(resolvedTools)),
+			slog.Any("tools", toolNames),
+		)
+	}
+
+	// After-model callback: accumulate cached token counts for summary visibility.
+	afterModelCb := func(cbCtx agent.Context, llmResp *model.LLMResponse, llmErr error) (*model.LLMResponse, error) {
+		if llmResp != nil && llmResp.UsageMetadata != nil && llmResp.UsageMetadata.CachedContentTokenCount > 0 {
+			cachedTokensMu.Lock()
+			totalCachedTokens += int64(llmResp.UsageMetadata.CachedContentTokenCount)
+			cachedTokensMu.Unlock()
+		}
+		return nil, nil
+	}
+
+	llmAgent, err := llmagent.New(llmagent.Config{
+		Name:                  sanitizeAgentName(agentName),
+		Description:           ae.resolveDescription(req),
+		Instruction:           instruction,
+		Model:                 llm,
+		Tools:                 resolvedTools,
+		GenerateContentConfig: genConfig,
+		BeforeModelCallbacks:  []llmagent.BeforeModelCallback{beforeModelCb},
+		AfterModelCallbacks:   []llmagent.AfterModelCallback{afterModelCb},
+		BeforeToolCallbacks:   []llmagent.BeforeToolCallback{beforeToolCb},
+		AfterToolCallbacks:    []llmagent.AfterToolCallback{afterToolCb},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create LLM agent: %w", err)
+	}
+
+	// Retrieve or create the persistent session
+	sessionService := ae.sessionService
+	var sess session.Session
+
+	if sessionID != run.ID {
+		// It's a resumed run — load the existing session with a token-aware
+		// sliding window so long-lived sessions don't exceed the model's
+		// context window.
+		//
+		// Strategy (2-pass):
+		//   1. Fetch the full history (no NumRecentEvents limit).
+		//   2. Walk backwards to find the most recent LLM event with
+		//      UsageMetadata.PromptTokenCount (cumulative context size).
+		//   3. If current context ≥ 80 % of the model's context window,
+		//      binary-search backwards to find how many trailing events fit
+		//      within 75 % of the context window, then re-fetch with that count.
+		//   4. Fall back to a safe default of 50 events when the context
+		//      window is unknown or on any error.
+		const defaultMaxSessionEvents = 50
+
+		// --- Pass 1: full fetch ---
+		getResp, err := sessionService.Get(ctx, &session.GetRequest{
+			AppName:   "agents",
+			UserID:    "system",
+			SessionID: sessionID,
+		})
+		if err == nil && getResp != nil && getResp.Session != nil {
+			sess = getResp.Session
+
+			// --- Token-aware trim (Pass 2) and LLM compression (Phase 2) ---
+			//
+			// Pass 2a: sliding-window trim — discard the oldest events so
+			//   the session fits within 75 % of the model's context window.
+			// Pass 2b: LLM compression — if the session is still over the
+			//   threshold (or the context window is unknown and event count
+			//   is large), summarise the oldest half of events via an LLM
+			//   and replace them with a compact placeholder.
+			var contextWindow int
+			trimmed := false
+			if ae.modelLimits != nil && modelName != "" {
+				var limErr error
+				contextWindow, limErr = ae.modelLimits.GetModelInputLimit(ctx, modelName)
+				if limErr != nil {
+					ae.log.Warn("failed to look up model context window, skipping token trim",
+						slog.String("model", modelName), logger.Error(limErr))
+				}
+			}
+
+			if contextWindow > 0 {
+				events := sess.Events()
+				n := events.Len()
+
+				// Find most recent LLM event that has usage metadata.
+				var lastPromptTokens int32
+				for i := n - 1; i >= 0; i-- {
+					ev := events.At(i)
+					if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
+						lastPromptTokens = ev.UsageMetadata.PromptTokenCount
+						break
+					}
+				}
+
+				highWatermark := int32(float64(contextWindow) * 0.80)
+				if lastPromptTokens > 0 && lastPromptTokens >= highWatermark {
+					// Pass 2a: sliding-window trim.
+					targetTokens := int32(float64(contextWindow) * 0.75)
+
+					numKeep := 0
+					for i := n - 1; i >= 0; i-- {
+						ev := events.At(i)
+						if ev.UsageMetadata != nil && ev.UsageMetadata.PromptTokenCount > 0 {
+							if ev.UsageMetadata.PromptTokenCount <= targetTokens {
+								numKeep = n - i
+								break
+							}
+						}
+					}
+					if numKeep < 1 {
+						numKeep = defaultMaxSessionEvents
+					}
+
+					trimResp, trimErr := sessionService.Get(ctx, &session.GetRequest{
+						AppName:         "agents",
+						UserID:          "system",
+						SessionID:       sessionID,
+						NumRecentEvents: numKeep,
+					})
+					if trimErr == nil && trimResp != nil && trimResp.Session != nil {
+						sess = trimResp.Session
+						trimmed = true
+						ae.log.Info("token-aware session trim applied",
+							slog.String("session_id", sessionID),
+							slog.String("model", modelName),
+							slog.Int("context_window", contextWindow),
+							slog.Int("prompt_tokens_before", int(lastPromptTokens)),
+							slog.Int("events_kept", numKeep),
+							slog.Int("events_total", n),
+						)
+					} else {
+						ae.log.Warn("token-aware session re-fetch failed, using full history",
+							slog.String("session_id", sessionID),
+							logger.Error(trimErr),
+						)
+					}
+
+					// Pass 2b: LLM compression — summarise the dropped head.
+					// Only runs when the trim was successful and a significant
+					// portion of history was dropped (i.e. we're genuinely
+					// near the limit, not just a precautionary trim).
+					if trimmed && numKeep < n/2 {
+						compressed, compErr := ae.compressSession(ctx, sess, sessionID, contextWindow, modelName)
+						if compErr != nil {
+							ae.log.Warn("session compression failed, proceeding with trimmed session",
+								slog.String("session_id", sessionID), logger.Error(compErr))
+						} else {
+							sess = compressed
+						}
+					}
+				}
+			} else {
+				// Context window unknown — fall back to event-count guard.
+				// Compress if session is very long (>200 events) to prevent
+				// unbounded growth even without token data.
+				const largeSessionThreshold = 200
+				if sess.Events().Len() > largeSessionThreshold {
+					compressed, compErr := ae.compressSession(ctx, sess, sessionID, 0, modelName)
+					if compErr != nil {
+						ae.log.Warn("session compression (no context window) failed, proceeding",
+							slog.String("session_id", sessionID), logger.Error(compErr))
+					} else {
+						sess = compressed
+						trimmed = true
+					}
+				}
+			}
+
+			if !trimmed {
+				ae.log.Info("resumed ADK session from database",
+					slog.String("session_id", sessionID),
+					slog.Int("history_events", sess.Events().Len()),
+				)
+			}
+		} else {
+			ae.log.Warn("failed to load existing ADK session, deleting stale session before creating fresh one",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+			// Delete the stale session so the Create below can succeed.
+			_ = sessionService.Delete(ctx, &session.DeleteRequest{
+				AppName:   "agents",
+				UserID:    "system",
+				SessionID: sessionID,
+			})
+		}
+	}
+
+	if sess == nil {
+		// Create a new session
+		createResp, err := sessionService.Create(ctx, &session.CreateRequest{
+			AppName:   "agents",
+			UserID:    "system",
+			SessionID: sessionID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create session: %w", err)
+		}
+		sess = createResp.Session
+	}
+
+	r, err := runner.New(runner.Config{
+		Agent:          llmAgent,
+		SessionService: sessionService,
+		AppName:        "agents",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create runner: %w", err)
+	}
+
+	// Build the user message. Prepend TriggerMetadata context if present so the
+	// system instruction stays static (enabling Gemini implicit prompt caching).
+	userContent := genai.NewContentFromText(triggerContextPrefix+req.UserMessage, genai.RoleUser)
+
+	// Persist the composed system instruction so the recorded transcript carries
+	// the prompt the model actually saw (base prompt + skills block + appendix +
+	// workspace context). It is written before the user turn so it orders first
+	// in the run's message list. IsAgentReplyRole excludes role "system", so this
+	// record is never mistaken for the agent's reply.
+	if instruction != "" {
+		ae.persistMessage(dbCtx, run.ID, "system", instruction, initialSteps)
+	}
+
+	// Persist the user message
+	ae.persistMessage(dbCtx, run.ID, "user", req.UserMessage, initialSteps)
+
+	// Run the agent with MALFORMED_FUNCTION_CALL retry logic.
+	// When the LLM emits a malformed function call we inject a recovery turn
+	// ("Your previous response was malformed — please try again") and restart
+	// the iterator on the same ADK session, up to maxMalformedRetries times.
+	// Similarly, when the LLM calls an unknown/hallucinated tool name we inject
+	// a correction turn listing the available tools.
+	const maxMalformedRetries = 3
+	const maxTransientRetries = 5
+	var lastEvent *session.Event
+	var lastTextEvent *session.Event // fallback: last non-empty text event
+	runCfg := agent.RunConfig{}
+	if req.StreamCallback != nil {
+		runCfg.StreamingMode = agent.StreamingModeSSE
+	}
+	malformedCount := 0
+	unknownToolCount := 0
+	transientErrCount := 0
+	currentContent := userContent
+	for {
+		malformed := false
+		unknownTool := false
+		transientErr := false
+		for event, eventErr := range r.Run(ctx, "system", sess.ID(), currentContent, runCfg) {
+			if eventErr != nil {
+				// A cancelled run context — per-step watchdog, doom loop, or an
+				// explicit cancel request (issue #1149) — must be finalized by the
+				// post-loop cancellation handling, not reported as a generic
+				// pipeline error. Break out so the terminal status and reason
+				// reflect why the run actually stopped.
+				if ctx.Err() != nil {
+					break
+				}
+				steps := tracker.current()
+				errStr := eventErr.Error()
+
+				// RESOURCE_EXHAUSTED / spending cap: treat as permanent after 1 retry.
+				// On first occurrence, log and retry once (5s sleep). On second, disable
+				// the agent to prevent infinite billing loops.
+				isSpendingCapErr := strings.Contains(errStr, "RESOURCE_EXHAUSTED") ||
+					strings.Contains(errStr, "spending cap")
+				if isSpendingCapErr {
+					agentID := ae.resolveAgentID(req)
+					if transientErrCount == 0 {
+						transientErrCount++
+						ae.log.Warn("agent run received RESOURCE_EXHAUSTED, retrying once then disabling",
+							slog.String("run_id", run.ID),
+							slog.String("agent_id", agentID),
+							slog.String("error", errStr),
+						)
+						transientErr = true
+						time.Sleep(5 * time.Second)
+						break
+					}
+					// Second occurrence: disable the agent permanently.
+					ae.log.Error("agent run received RESOURCE_EXHAUSTED on retry, disabling agent",
+						slog.String("run_id", run.ID),
+						slog.String("agent_id", agentID),
+						slog.String("error", errStr),
+					)
+					if agentID != "" {
+						if disableErr := ae.repo.DisableAgent(ctx, agentID, "AI provider quota exhausted (RESOURCE_EXHAUSTED)"); disableErr != nil {
+							ae.log.Error("failed to disable agent after RESOURCE_EXHAUSTED",
+								slog.String("agent_id", agentID),
+								slog.String("error", disableErr.Error()),
+							)
+						}
+					}
+					_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, "AI provider quota exhausted — agent disabled. This is a provider-level limit (Google AI RESOURCE_EXHAUSTED), not your project budget.", steps)
+					return &ExecuteResult{
+						RunID:  run.ID,
+						Status: RunStatusError,
+					}, fmt.Errorf("AI provider quota exhausted, agent disabled")
+				}
+
+				// Retry on transient Google AI API errors (503 UNAVAILABLE, 429 rate-limit)
+				// without injecting a new message — simply re-run from current content.
+				// Explicitly exclude Postgres FK violations (SQLSTATE 23503) whose error
+				// string contains "503" as a substring — those are hard errors, not retryable.
+				isFKViolation := strings.Contains(errStr, "23503") || strings.Contains(errStr, "foreign key constraint")
+				isTransient := !isFKViolation && (strings.Contains(errStr, "503") ||
+					strings.Contains(errStr, "UNAVAILABLE") ||
+					strings.Contains(errStr, "429"))
+				if isTransient && transientErrCount < maxTransientRetries {
+					transientErrCount++
+					// Fixed 5s delay — rate limit errors need a brief pause, not
+					// an escalating backoff that burns through test timeouts.
+					const transientDelay = 5 * time.Second
+					ae.log.Warn("agent run received transient API error, retrying",
+						slog.String("run_id", run.ID),
+						slog.String("error", errStr),
+						slog.Int("attempt", transientErrCount),
+						slog.Int("max_retries", maxTransientRetries),
+						slog.Duration("backoff", transientDelay),
+					)
+					transientErr = true
+					time.Sleep(transientDelay)
+					break // break inner loop to restart r.Run() with same content
+				}
+				// Retry when the LLM calls a hallucinated/unknown tool name.
+				// Extract the bad name, suggest the closest real tool, and inject
+				// a helpful correction message.
+				if strings.Contains(errStr, "unknown tool:") && unknownToolCount < maxMalformedRetries {
+					unknownToolCount++
+					var toolNames []string
+					for _, t := range resolvedTools {
+						toolNames = append(toolNames, t.Name())
+					}
+					// Extract the called name from the error string (format: `unknown tool: "foo"`)
+					calledName := errStr
+					if idx := strings.Index(errStr, "unknown tool:"); idx >= 0 {
+						calledName = strings.TrimSpace(errStr[idx+len("unknown tool:"):])
+						calledName = strings.Trim(calledName, `"`)
+					}
+					// Find the closest real tool name by edit distance.
+					suggestion := closestToolName(calledName, toolNames)
+					var suggestionMsg string
+					if suggestion != "" {
+						suggestionMsg = fmt.Sprintf(
+							" Did you mean %q? That tool can help you accomplish the same goal.",
+							suggestion,
+						)
+					}
+					correction := fmt.Sprintf(
+						"You called a tool named %q which does not exist.%s "+
+							"The tools available to you are: %s. "+
+							"Please try again using only those tools.",
+						calledName,
+						suggestionMsg,
+						strings.Join(toolNames, ", "),
+					)
+					ae.log.Warn("agent called unknown tool, injecting correction",
+						slog.String("run_id", run.ID),
+						slog.String("called_tool", calledName),
+						slog.String("suggestion", suggestion),
+						slog.Int("attempt", unknownToolCount),
+						slog.Int("max_retries", maxMalformedRetries),
+					)
+					currentContent = genai.NewContentFromText(correction, genai.RoleUser)
+					unknownTool = true
+					time.Sleep(time.Duration(unknownToolCount) * 2 * time.Second)
+					break
+				}
+				if req.StreamCallback != nil {
+					req.StreamCallback(StreamEvent{
+						Type:  StreamEventError,
+						Error: errStr,
+					})
+				}
+				_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errStr, steps)
+				return &ExecuteResult{
+					RunID:    run.ID,
+					Status:   RunStatusError,
+					Summary:  map[string]any{"error": errStr},
+					Steps:    steps,
+					Duration: time.Since(startTime),
+				}, nil
+			}
+
+			if event == nil {
+				continue
+			}
+
+			// Treat non-empty ErrorCode that indicates a genuine LLM malfunction as
+			// a fatal run error, so the result is properly marked RunStatusError and
+			// the parent is re-enqueued with status:error rather than status:success.
+			//
+			// "STOP" and "FINISH_REASON_UNSPECIFIED" are normal terminations: the
+			// model finished cleanly but produced no content (e.g. it called tools
+			// and then stopped). All other codes represent abnormal terminations —
+			// safety blocks, malformed function calls, recitation filters, etc.
+			//
+			// MALFORMED_FUNCTION_CALL is special: we retry by injecting a recovery
+			// turn, up to maxMalformedRetries times.
+			if event.ErrorCode != "" && event.ErrorCode != "STOP" && event.ErrorCode != "FINISH_REASON_UNSPECIFIED" {
+				steps := tracker.current()
+				errMsg := fmt.Sprintf("LLM returned error: %s", event.ErrorCode)
+				if event.ErrorMessage != "" {
+					errMsg = fmt.Sprintf("LLM returned error: %s: %s", event.ErrorCode, event.ErrorMessage)
+				}
+				if event.ErrorCode == "MALFORMED_FUNCTION_CALL" && malformedCount < maxMalformedRetries {
+					malformedCount++
+					ae.log.Warn("agent run received MALFORMED_FUNCTION_CALL, retrying",
+						slog.String("run_id", run.ID),
+						slog.Int("attempt", malformedCount),
+						slog.Int("max_retries", maxMalformedRetries),
+						slog.Int("steps", steps),
+					)
+					// Inject a recovery turn so the LLM can correct its call.
+					currentContent = genai.NewContentFromText(
+						"Your previous response contained a malformed function call. "+
+							"Please review what you were trying to do and try again with "+
+							"properly formatted arguments.",
+						genai.RoleUser,
+					)
+					malformed = true
+					break // break inner loop to restart r.Run() with recovery message
+				}
+				ae.log.Warn("agent run aborted due to LLM error code",
+					slog.String("run_id", run.ID),
+					slog.String("error_code", event.ErrorCode),
+					slog.String("error_message", event.ErrorMessage),
+					slog.Int("steps", steps),
+				)
+				if req.StreamCallback != nil {
+					req.StreamCallback(StreamEvent{
+						Type:  StreamEventError,
+						Error: errMsg,
+					})
+				}
+				_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+				return &ExecuteResult{
+					RunID:    run.ID,
+					Status:   RunStatusError,
+					Summary:  map[string]any{"error": errMsg, "error_code": event.ErrorCode},
+					Steps:    steps,
+					Duration: time.Since(startTime),
+				}, nil
+			}
+
+			// Stream partial text deltas to the callback. Thought (reasoning) parts
+			// are emitted as thinking events rather than answer tokens, so a
+			// provider that streams chain-of-thought incrementally never leaks
+			// reasoning into the final answer stream.
+			if event.Partial && event.Content != nil && req.StreamCallback != nil {
+				for _, part := range event.Content.Parts {
+					if part == nil || part.Text == "" {
+						continue
+					}
+					if part.Thought {
+						step := tracker.current()
+						thinkTrack.markReasoningPartial(step)
+						thinkTrack.emit(step, "reasoning", part.Text)
+					} else {
+						req.StreamCallback(StreamEvent{
+							Type: StreamEventTextDelta,
+							Text: part.Text,
+						})
+					}
+				}
+			}
+
+			// Persist assistant messages from events
+			if event.Content != nil && !event.Partial {
+				ae.persistEventContent(dbCtx, run.ID, event, tracker.current())
+			}
+
+			// Stream the agent's reasoning/planning text (non-final assistant
+			// text) as thinking events so callers can surface it separately from
+			// the final answer. Thought parts → "reasoning"; regular text (the
+			// pre-tool planning monologue) → "operator".
+			if event.Content != nil && !event.Partial && !event.IsFinalResponse() && req.StreamCallback != nil {
+				step := tracker.current()
+				operatorText, reasoningText := thinkingTexts(event.Content.Parts)
+				if len(operatorText) > 0 {
+					thinkTrack.emit(step, "operator", strings.Join(operatorText, "\n"))
+				}
+				// If this step already streamed partial reasoning deltas, the
+				// whole-block reasoning is a duplicate — skip it (the operator
+				// text is never partial-streamed and stays on this path).
+				if len(reasoningText) > 0 && !thinkTrack.reasoningWasPartial(step) {
+					thinkTrack.emit(step, "reasoning", strings.Join(reasoningText, "\n"))
+				}
+			}
+
+			if event.IsFinalResponse() {
+				lastEvent = event
+				// The final answer begins: close any open thinking segment from a
+				// prior step (the planning/reasoning phase has ended). A reasoning
+				// segment at this same step continues below.
+				if step := tracker.current(); thinkTrack.open && thinkTrack.openStep != step {
+					thinkTrack.close()
+				}
+				// Emit the final answer as token events. Thought (reasoning) parts
+				// are surfaced as thinking events rather than dropped, so a reasoner
+				// that returns chain-of-thought alongside its final answer is not
+				// silently stripped.
+				//
+				// The final assistant message must always deliver its answer as a
+				// TextDelta — never leave it as thinking-only. When the final content
+				// carries no plain (non-Thought) text part (e.g. a reasoner in
+				// thinking mode that answers entirely in reasoning_content, which is
+				// mapped to a Thought part), the Thought text IS the answer: emit it
+				// as text deltas so callers receive a non-empty final response.
+				if event.Content != nil && req.StreamCallback != nil {
+					step := tracker.current()
+					for _, streamEvent := range finalResponseStreamEvents(event.Content.Parts) {
+						if streamEvent.Type == StreamEventThinking {
+							thinkTrack.emit(step, streamEvent.Role, streamEvent.Text)
+						} else {
+							req.StreamCallback(streamEvent)
+						}
+					}
+				}
+			}
+
+			// Track the last non-partial event that carries text — used as fallback
+			// when IsFinalResponse() never fires (e.g. agent ends with a tool call).
+			if !event.Partial && event.Content != nil {
+				stepHasText := false
+				for _, part := range event.Content.Parts {
+					if part != nil && part.Text != "" {
+						lastTextEvent = event
+						stepHasText = true
+						break
+					}
+				}
+				// Check for consecutive tool-only steps (issue #146).
+				// recordStep resets its counter when text is produced; if the step
+				// contained only tool calls it increments and may abort the run.
+				toolOnlyAction := doomDetector.recordStep(stepHasText)
+				switch toolOnlyAction {
+				case doomActionWarn:
+					ae.log.Warn("tool-only loop warning: consecutive steps with no assistant text",
+						slog.String("run_id", run.ID),
+						slog.Int("consecutive_tool_only_steps", doomDetector.toolOnlySteps),
+					)
+				case doomActionStop:
+					ae.log.Error("tool-only loop detected, stopping agent",
+						slog.String("run_id", run.ID),
+						slog.Int("consecutive_tool_only_steps", doomDetector.toolOnlySteps),
+					)
+					cancelReason = fmt.Sprintf("agent stopped: tool-only loop detected — %d consecutive steps with no assistant text", doomDetector.toolOnlySteps)
+					cancelRun()
+				}
+			}
+		} // end inner for-range r.Run(...)
+
+		// A cancelled context is terminal: exit the outer retry loop so the
+		// post-loop cancellation block records the terminal status/reason.
+		if ctx.Err() != nil {
+			break
+		}
+
+		if !malformed && !transientErr && !unknownTool {
+			break // normal completion — exit outer retry loop
+		}
+		// MALFORMED_FUNCTION_CALL retry: brief pause then re-enter inner loop
+		// (transient errors already slept their backoff above before breaking;
+		// unknown tool errors already slept before breaking too)
+		if malformed {
+			time.Sleep(time.Duration(malformedCount) * 2 * time.Second)
+		}
+	} // end outer retry loop
+
+	// A durable cancel (issue #1166) may have landed after the last step
+	// boundary — or during a long tool call — without this instance's context
+	// being cancelled. Read the authoritative row before deciding the terminal
+	// outcome: if it is "cancelling", record the user-cancel reason so the
+	// cancellation block below finalizes the run as cancelled instead of
+	// reporting a success/failure the endpoint never promised. The read is not
+	// gated on ctx.Err(): a durable cancel must be honoured even when a timeout
+	// or doom-loop has already cancelled the context, otherwise the in-process
+	// result is reported as failed while the row is persisted as cancelled. The
+	// terminal writers are also cancel-aware, so even a cancel landing after this
+	// read finalizes as cancelled rather than clobbering it.
+	if ae.durablyCancelling(run.ID) {
+		cancelHandle.cancelWithReason(userCancelReason)
+	}
+
+	// Check if we exited due to context cancellation (timeout or manual cancellation)
+	if ctx.Err() != nil {
+		steps := tracker.current()
+		errMsg := "Run cancelled"
+		reason := "unknown"
+		status := RunStatusError
+
+		if ctx.Err() == context.DeadlineExceeded {
+			reason = "timeout"
+			errMsg = "Run cancelled: timeout exceeded"
+		} else if ctx.Err() == context.Canceled {
+			reason = "cancelled"
+			errMsg = "Run cancelled: context cancelled"
+		}
+
+		// A cancellation with an explicit reason (step watchdog timeout or doom
+		// loop) overrides the generic message so the failure is self-explanatory.
+		if cancelReason != "" {
+			errMsg = cancelReason
+		}
+
+		// An explicit cancel request (POST …/runs/:runId/cancel) is not a server
+		// fault: record the run as cancelled, not errored, and use the recorded
+		// reason. This is the only path a detached run can be stopped by, so it
+		// must be honest about why it ended.
+		if cancelHandle.Reason() == userCancelReason {
+			status = RunStatusCancelled
+			errMsg = userCancelReason
+			reason = "user_cancelled"
+		}
+
+		ae.log.Warn("run cancelled by context",
+			slog.String("run_id", run.ID),
+			slog.String("reason", reason),
+			slog.Int("steps", steps),
+		)
+
+		if status == RunStatusCancelled {
+			_, _ = ae.repo.CancelRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		} else {
+			_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, errMsg, steps)
+		}
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   status,
+			Summary:  map[string]any{"error": errMsg, "reason": reason},
+			Steps:    steps,
+			Duration: time.Since(startTime),
+		}, nil
+	}
+
+	// Determine final status
+	steps := tracker.current()
+	duration := time.Since(startTime)
+	durationMs := int(duration.Milliseconds())
+
+	// Check if we were paused by the step limit callback or ask_user tool
+	currentRun, _ := ae.repo.FindRunByID(dbCtx, run.ID)
+	if currentRun != nil && currentRun.Status == RunStatusPaused {
+		pauseReason := "step_limit_reached"
+		pauseSummary := map[string]any{"reason": pauseReason, "steps": steps}
+		if askPauseState != nil && askPauseState.ShouldPause() {
+			pauseReason = "awaiting_user_input"
+			pauseSummary["reason"] = pauseReason
+			pauseSummary["question_id"] = askPauseState.QuestionID()
+		}
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusPaused,
+			Summary:  pauseSummary,
+			Steps:    steps,
+			Duration: duration,
+		}, nil
+	}
+
+	// Build summary from the last event
+	summary := ae.buildSummary(lastEvent, lastTextEvent, steps)
+
+	// Carry the work terminator marker (if any) into the returned summary so the
+	// worker pool can distinguish "success with a terminator" from a protocol
+	// violation (success without one).
+	if terminatorState.ShouldFinalize() {
+		summary["work_terminator"] = terminatorState.Kind()
+		if ts := terminatorState.Summary(); ts != nil {
+			for k, v := range ts {
+				summary[k] = v
+			}
+		}
+	}
+
+	// Include cache hit visibility — non-zero means Gemini implicit cache fired.
+	if totalCachedTokens > 0 {
+		summary["cached_tokens"] = totalCachedTokens
+	}
+
+	// Include workspace info in summary if provisioned
+	if wsResult != nil && wsResult.Workspace != nil {
+		summary["workspace_id"] = wsResult.Workspace.ID
+		if wsResult.Degraded {
+			summary["workspace_degraded"] = true
+		}
+	}
+
+	// If workspace was required but ended up degraded, mark as error.
+	// The agent completed but could not actually use its sandbox — this is not success.
+	if wsResult != nil && wsResult.Degraded {
+		summary["error"] = "workspace provisioning failed: " + wsResult.Error.Error()
+		_ = ae.repo.FailRunWithSteps(dbCtx, run.ID, summary["error"].(string), steps)
+
+		if req.Agent != nil && req.Agent.ID != "" {
+			_ = ae.repo.UpdateLastRun(dbCtx, req.Agent.ID, string(RunStatusError))
+		}
+
+		ae.log.Warn("agent run completed with degraded workspace, marking as error",
+			slog.String("run_id", run.ID),
+			slog.Int("steps", steps),
+		)
+
+		return &ExecuteResult{
+			RunID:    run.ID,
+			Status:   RunStatusError,
+			Summary:  summary,
+			Steps:    steps,
+			Duration: duration,
+		}, nil
+	}
+
+	// Mark run as complete
+	if err := ae.repo.CompleteRunWithSteps(dbCtx, run.ID, summary, steps, durationMs); err != nil {
+		ae.log.Warn("failed to complete run record",
+			slog.String("run_id", run.ID),
+			slog.String("error", err.Error()),
+		)
+	}
+
+	// Spawn cascade wakeup: if a parent run is suspended waiting for this run,
+	// enqueue a resume for it now that this child has completed.
+	ae.maybeWakeParent(dbCtx, run.ID, req, summary)
+
+	// Update the agent's last run status
+	if req.Agent != nil && req.Agent.ID != "" {
+		_ = ae.repo.UpdateLastRun(dbCtx, req.Agent.ID, string(RunStatusSuccess))
+	}
+
+	ae.log.Info("agent execution completed",
+		slog.String("run_id", run.ID),
+		slog.Int("steps", steps),
+		slog.Duration("duration", duration),
+	)
+
+	return &ExecuteResult{
+		RunID:    run.ID,
+		Status:   RunStatusSuccess,
+		Summary:  summary,
+		Steps:    steps,
+		Duration: duration,
+	}, nil
+}
+
+// augmentInstructionWithWorkspace appends workspace context to the system instruction
+// so the agent knows it has a sandboxed environment available.
+func (ae *AgentExecutor) augmentInstructionWithWorkspace(instruction string, wsResult *sandbox.ProvisioningResult) string {
+	if wsResult == nil || wsResult.Workspace == nil {
+		return instruction
+	}
+
+	wsContext := "\n\n## Workspace Environment\n" +
+		"You have a sandboxed workspace container available for this run.\n" +
+		fmt.Sprintf("- Workspace ID: %s\n", wsResult.Workspace.ID)
+
+	if wsResult.RepoURL != "" {
+		wsContext += fmt.Sprintf("- Repository: %s\n", wsResult.RepoURL)
+		if wsResult.Branch != "" {
+			wsContext += fmt.Sprintf("- Branch: %s\n", wsResult.Branch)
+		}
+		wsContext += "- Working directory: /workspace\n"
+	}
+
+	wsContext += `
+Workspace tools are prefixed with workspace_ and run inside the sandboxed container.
+
+### Tool preference rules
+- Reading files:    workspace_read   (NOT workspace_bash with cat/head/tail)
+- Writing files:    workspace_write  (NOT workspace_bash with echo > or cat <<EOF)
+- Editing files:    workspace_edit   (NOT workspace_bash with sed/awk)
+- Finding files:    workspace_glob   (NOT workspace_bash with find or ls)
+- Searching code:   workspace_grep   (NOT workspace_bash with grep)
+- Terminal ops:     workspace_bash   (builds, tests, package managers, git via workspace_git)
+- Git operations:   workspace_git    (structured git: status, diff, commit, checkout, clone)
+
+### workspace_bash guidance
+- Use the workdir parameter instead of "cd <dir> && <command>".
+- Chain dependent commands with &&; independent commands can be parallel tool calls.
+- Default timeout is 120 seconds. Increase timeout_ms for long builds or test suites.
+- Avoid echo/printf for file creation — use workspace_write instead.
+`
+
+	return instruction + wsContext
+}
+
+// contextInjectionMode returns the context_injection setting from the agent
+// definition's Config map. Valid values: "full" (default) and "never".
+// When set to "never", automatic workspace/bootstrap context is not appended
+// to the system instruction — the agent fully owns its prompt lifecycle.
+func contextInjectionMode(def *AgentDefinition) string {
+	if def == nil {
+		return "full"
+	}
+	if v, ok := def.Config["contextInjection"].(string); ok && v != "" {
+		return v
+	}
+	return "full"
+}
+
+// agentLanguage returns the response language from the agent definition's
+// Config map (key "language"). Empty string when unset or not a string.
+func agentLanguage(def *AgentDefinition) string {
+	if def == nil {
+		return ""
+	}
+	if v, ok := def.Config["language"].(string); ok {
+		return strings.TrimSpace(v)
+	}
+	return ""
+}
+
+// resolveWorkspaceTools builds ADK tools that let the agent interact with its
+// provisioned workspace container (bash, read, write, edit, glob, grep, git).
+// Returns nil if the provisioner can't provide a provider for the workspace.
+func (ae *AgentExecutor) resolveWorkspaceTools(wsResult *sandbox.ProvisioningResult, req ExecuteRequest) ([]tool.Tool, error) {
+	if ae.provisioner == nil || wsResult == nil || wsResult.Workspace == nil {
+		return nil, nil
+	}
+
+	// Get the provider for this workspace
+	provider, err := ae.provisioner.GetProviderForWorkspace(wsResult.Workspace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider for workspace %s: %w", wsResult.Workspace.ID, err)
+	}
+
+	// Parse workspace config for tool filtering
+	var wsCfg *sandbox.AgentSandboxConfig
+	if req.AgentDefinition != nil && len(req.AgentDefinition.SandboxConfig) > 0 {
+		wsCfg, _ = sandbox.ParseAgentSandboxConfig(req.AgentDefinition.SandboxConfig)
+	}
+
+	// Build per-session env vars so that tools executing inside the container
+	// (run_python, bash) have credentials even when a warm-pool container was
+	// used (warm containers are pre-booted without session-specific env vars).
+	//
+	// Merge priority (later wins):
+	//   1. Static env vars from agent definition (cfg.EnvVars)
+	//   2. Runtime env vars from trigger request (req.EnvVars)
+	//   3. System keys (MEMORY_ACCOUNT_API_KEY, etc.) — always win
+	sessionEnv := map[string]string{}
+
+	// 1. Static env vars from agent sandbox config
+	if wsCfg != nil {
+		for k, v := range wsCfg.EnvVars {
+			sessionEnv[k] = v
+		}
+	}
+
+	// 2. Runtime env vars from trigger request
+	for k, v := range req.EnvVars {
+		sessionEnv[k] = v
+	}
+
+	// 3. System keys — always win
+	if req.AuthToken != "" {
+		// Inject under both canonical and deprecated names for container compat.
+		sessionEnv["MEMORY_ACCOUNT_API_KEY"] = req.AuthToken
+		sessionEnv["MEMORY_API_KEY"] = req.AuthToken // deprecated alias — remove in a future release
+		sessionEnv["MEMORY_PROJECT_ID"] = req.ProjectID
+		// Respect WORKSPACE_MEMORY_API_URL so the endpoint matches the sandbox
+		// network (host gateway vs. service DNS name).
+		sessionEnv["MEMORY_SERVER_URL"] = ae.memoryAPIURL
+	}
+
+	return BuildWorkspaceTools(WorkspaceToolDeps{
+		Provider:        provider,
+		ProviderID:      wsResult.Workspace.ProviderWorkspaceID,
+		WorkspaceID:     wsResult.Workspace.ID,
+		Config:          wsCfg,
+		Logger:          ae.log,
+		CheckoutService: ae.provisioner.CheckoutService(),
+		SessionEnv:      sessionEnv,
+	})
+}
+
+// buildCoordinationTools creates spawn_agents and list_available_agents tools
+// if the agent is at a depth that allows coordination.
+func (ae *AgentExecutor) buildCoordinationTools(req ExecuteRequest, runID string) ([]tool.Tool, *CoordinationToolDeps, error) {
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+
+	// Sub-agents at max depth don't get coordination tools
+	if req.Depth >= maxDepth {
+		return nil, nil, nil
+	}
+
+	// Agents with an explicit non-empty tools whitelist only get coordination tools
+	// if they explicitly opted in (i.e. whitelist contains spawn_agents or list_available_agents).
+	// This applies at all depths — top-level agents are not exempt.
+	// Agents with no definition (legacy) or empty whitelist fall through to the default behaviour:
+	//   - no definition → all tools (legacy), coordination tools included
+	//   - empty whitelist → no tools at all (filterToolDefs returns nil), but coordination
+	//     tools were still being injected here — now blocked too.
+	if req.AgentDefinition != nil && len(req.AgentDefinition.Tools) > 0 {
+		hasCoordTool := false
+		for _, t := range req.AgentDefinition.Tools {
+			if coordinationTools[t] {
+				hasCoordTool = true
+				break
+			}
+		}
+		if !hasCoordTool {
+			return nil, nil, nil
+		}
+	}
+
+	deps := CoordinationToolDeps{
+		Executor:        ae,
+		Repo:            ae.repo,
+		Logger:          ae.log,
+		ProjectID:       req.ProjectID,
+		ParentRunID:     runID,
+		RootRunID:       derefString(req.RootRunID),
+		Depth:           req.Depth,
+		MaxDepth:        maxDepth,
+		SpawnPolicy:     extractSpawnPolicy(req.AgentDefinition),
+		TrustedInternal: req.TrustedInternal,
+		ParentMetadata:  req.TriggerMetadata,
+	}
+
+	var tools []tool.Tool
+
+	listTool, err := BuildListAvailableAgentsTool(deps)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build list_available_agents: %w", err)
+	}
+	tools = append(tools, listTool)
+
+	spawnTool, err := BuildSpawnAgentsTool(&deps)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to build spawn_agents: %w", err)
+	}
+	tools = append(tools, spawnTool)
+
+	return tools, &deps, nil
+}
+
+// buildWorkTools creates the run-finalizing work_complete / work_block
+// terminators for an object-driven run. It returns nil when the run has no
+// subject object, the work-object store is unset, or the definition does not
+// list the terminator in its tools whitelist.
+func (ae *AgentExecutor) buildWorkTools(req ExecuteRequest, run *AgentRun, terminator *WorkTerminatorState) ([]tool.Tool, error) {
+	if ae.workObjects == nil || run.SubjectObjectID == nil || *run.SubjectObjectID == "" {
+		return nil, nil
+	}
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	hasTool := func(name string) bool {
+		for _, t := range req.AgentDefinition.Tools {
+			if t == name {
+				return true
+			}
+		}
+		return false
+	}
+
+	deps := WorkToolDeps{
+		Store:       ae.workObjects,
+		Repo:        ae.repo,
+		Logger:      ae.log,
+		ProjectID:   req.ProjectID,
+		CanonicalID: *run.SubjectObjectID,
+		ActorName:   ae.resolveAgentName(req),
+		RunID:       run.ID,
+		WorkConfig:  req.AgentDefinition.WorkConfig,
+		Terminator:  terminator,
+	}
+
+	var tools []tool.Tool
+	if hasTool(ToolNameWorkComplete) {
+		if t, err := BuildWorkCompleteTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_complete: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkBlock) {
+		if t, err := BuildWorkBlockTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build work_block: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	if hasTool(ToolNameWorkComment) {
+		if t, err := BuildWorkCommentTool(deps); err != nil {
+			return nil, fmt.Errorf("failed to build comment: %w", err)
+		} else {
+			tools = append(tools, t)
+		}
+	}
+	return tools, nil
+}
+
+// buildAskUserTool creates the ask_user tool if the agent definition opts in.
+// Returns nil if the agent doesn't have ask_user in its tools list.
+func (ae *AgentExecutor) buildAskUserTool(req ExecuteRequest, runID string, pauseState *AskPauseState) (tool.Tool, error) {
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	// Check if ask_user is in the agent definition's tools list
+	hasAskUser := false
+	for _, t := range req.AgentDefinition.Tools {
+		if t == ToolNameAskUser {
+			hasAskUser = true
+			break
+		}
+	}
+	if !hasAskUser {
+		return nil, nil
+	}
+
+	agentID := ae.resolveAgentID(req)
+
+	deps := AskUserToolDeps{
+		Repo:             ae.repo,
+		Logger:           ae.log,
+		ProjectID:        req.ProjectID,
+		AgentID:          agentID,
+		RunID:            runID,
+		PauseState:       pauseState,
+		UserID:           req.UserID,
+		EventsSvc:        ae.eventsSvc,
+		NotificationsSvc: ae.notificationsSvc,
+	}
+
+	return BuildAskUserTool(deps)
+}
+
+// buildSkillTool constructs the skill tool for an agent run if "skill" is
+// listed in the agent definition's Tools whitelist. Returns (nil, nil) when
+// skill tool is not opted in. Non-fatal: callers should log + continue on error.
+func (ae *AgentExecutor) buildSkillTool(ctx context.Context, run *AgentRun, req ExecuteRequest) (tool.Tool, error) {
+	if req.AgentDefinition == nil {
+		return nil, nil
+	}
+
+	// Opt-in check: inject skill tool when skills field is non-empty, autoLoadSkills is set, OR legacy "skill" in tools list.
+	hasSkillsField := len(req.AgentDefinition.Skills) > 0 || req.AgentDefinition.AutoLoadSkills
+	hasSkillInTools := false
+	for _, t := range req.AgentDefinition.Tools {
+		if t == "skill" {
+			hasSkillInTools = true
+			break
+		}
+	}
+	if !hasSkillsField && !hasSkillInTools {
+		return nil, nil
+	}
+
+	// Extract trigger message for semantic retrieval query
+	triggerMsg := ""
+	if run.TriggerMessage != nil {
+		triggerMsg = *run.TriggerMessage
+	}
+
+	agentName := ""
+	agentDesc := ""
+	if req.AgentDefinition != nil {
+		agentName = req.AgentDefinition.Name
+		if req.AgentDefinition.Description != nil {
+			agentDesc = *req.AgentDefinition.Description
+		}
+	}
+
+	// Use the skills field when present; fall back to wildcard for legacy "skill" in tools.
+	skillNames := req.AgentDefinition.Skills
+	if len(skillNames) == 0 {
+		skillNames = []string{"*"}
+	}
+
+	deps := skills.SkillToolDeps{
+		Repo:             ae.skillRepo,
+		EmbeddingsSvc:    ae.embeddingsSvc,
+		Logger:           ae.log,
+		ProjectID:        req.ProjectID,
+		OrgID:            req.OrgID,
+		TriggerMessage:   triggerMsg,
+		AgentName:        agentName,
+		AgentDescription: agentDesc,
+		Skills:           skillNames,
+	}
+
+	return skills.BuildSkillTool(ctx, deps)
+}
+
+// resolveAgentID returns the agent ID for the run record.
+// If the Agent entity has an ID, use it. Otherwise, try the definition.
+func (ae *AgentExecutor) resolveAgentID(req ExecuteRequest) string {
+	if req.Agent != nil && req.Agent.ID != "" {
+		return req.Agent.ID
+	}
+	// If there's no runtime Agent entity, we need a placeholder
+	// This shouldn't happen in normal flow since triggers.go creates the Agent entity
+	if req.AgentDefinition != nil {
+		return req.AgentDefinition.ID
+	}
+	return "unknown"
+}
+
+// actorAgentID returns the agent DEFINITION id (kb.agent_definitions.id) to
+// stamp as the actor_id for actor_type='agent', or nil when no definition is
+// available. The definition id is the single canonical id the agent-scoped
+// object view filters on; the kb.agents run entity id (see resolveAgentID) is a
+// separate id space and must never be used for provenance attribution.
+func (ae *AgentExecutor) actorAgentID(req ExecuteRequest) *uuid.UUID {
+	if req.AgentDefinition == nil || req.AgentDefinition.ID == "" {
+		return nil
+	}
+	id, err := uuid.Parse(req.AgentDefinition.ID)
+	if err != nil {
+		return nil
+	}
+	return &id
+}
+
+// resolveAgentName returns a display name for the agent.
+func (ae *AgentExecutor) resolveAgentName(req ExecuteRequest) string {
+	if req.AgentDefinition != nil && req.AgentDefinition.Name != "" {
+		return req.AgentDefinition.Name
+	}
+	if req.Agent != nil && req.Agent.Name != "" {
+		return req.Agent.Name
+	}
+	return "agent"
+}
+
+// resolveDescription returns a description for the agent.
+func (ae *AgentExecutor) resolveDescription(req ExecuteRequest) string {
+	if req.AgentDefinition != nil && req.AgentDefinition.Description != nil {
+		return *req.AgentDefinition.Description
+	}
+	if req.Agent != nil && req.Agent.Description != nil {
+		return *req.Agent.Description
+	}
+	return ""
+}
+
+// resolveInstruction returns the system prompt for the agent.
+// If the agent definition declares skills, an <available_skills> index is
+// appended so the agent sees all bound skills before it starts reasoning
+// (zero-turn discovery) rather than only through the skill tool description.
+// toolPolicyResultInstruction teaches the model how to interpret structured
+// tool-policy outcomes injected by the executor (approve/reject/cancel).
+const toolPolicyResultInstruction = `Tool policy: some of your tool calls may require human approval before executing. When a tool result contains "policy_decision": "rejected", the human declined that action — do not retry it and do not attempt to accomplish it another way; stop that direction. When it contains "policy_decision": "cancelled" or "status": "not_taken", the action was withdrawn — continue without it. Only proceed with a tool when its result reflects actual execution.`
+
+// citationInstruction is appended to the system prompt of knowledge-base-backed
+// agents so their answers cite the objects and relationships they actually used,
+// with the exact identifiers the tools returned. It is shared across the
+// graph-query-agent and personal-kb-agent literal prompts and the executor's
+// resolveInstruction path.
+const citationInstruction = `Citing sources: cite every graph object you use as [Name](/objects/<object-id>) and every relationship as [Source —type→ Target](/objects/<source-id>#relationship-<relationship-id>). Use the exact ids from the tool results — never invent an id.`
+
+// isKnowledgeBaseAgent reports whether the agent definition is KB-backed, i.e.
+// it can retrieve graph objects/relationships and should therefore cite them.
+func isKnowledgeBaseAgent(d *AgentDefinition) bool {
+	if d == nil {
+		return false
+	}
+	for _, tool := range d.Tools {
+		switch tool {
+		case "search-hybrid", "entity-query", "entity-edges-get", "relationship-list",
+			"entity-get", "entity-search", "graph-traverse", "search-similar",
+			"entity-history", "entity-type-list":
+			return true
+		}
+	}
+	return false
+}
+
+// knowledgeBaseContextHeading is the heading that introduces the injected
+// project_info block. It is shared by the executor's system-instruction
+// resolver so every surface emits the identical block (issue #1694).
+const knowledgeBaseContextHeading = "## Knowledge base context"
+
+// knowledgeBaseContextBlock renders the project context appendix. It is a single
+// function so the block text cannot drift between surfaces.
+func knowledgeBaseContextBlock(projectInfo string) string {
+	return knowledgeBaseContextHeading + "\n\n" + projectInfo
+}
+
+// resolveTypeScope derives the per-agent-run graph type allowlist from the
+// definition's config. It returns nil when the definition is nil or configures
+// no allowlist, which the tool layer treats as "all types" (backwards
+// compatible). It is the single derivation point shared by every execution
+// surface, so trigger, A2A, chat and /v1/chat/completions enforce the identical
+// scope (issue #1695).
+func resolveTypeScope(def *AgentDefinition) *mcp.TypeScope {
+	return mcp.NewTypeScope(def.ObjectTypes(), def.RelationshipTypes())
+}
+
+// resolveProjectInfo returns the project's project_info for injection into the
+// system instruction. It returns "" unless the agent definition opts in via
+// includeProjectInfo, so the default is no injection on every surface. It is
+// nil-repo safe (unit tests build a zero-value executor) and never fails a run:
+// a lookup error degrades to no context and is logged.
+func (ae *AgentExecutor) resolveProjectInfo(ctx context.Context, def *AgentDefinition, projectID string) string {
+	if !def.IncludeProjectInfo() || ae.repo == nil || projectID == "" {
+		return ""
+	}
+	info, err := ae.repo.GetProjectInfo(ctx, projectID)
+	if err != nil {
+		if ae.log != nil {
+			ae.log.Warn("failed to load project_info for agent instruction",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+		}
+		return ""
+	}
+	return info
+}
+
+func (ae *AgentExecutor) resolveInstruction(req ExecuteRequest) string {
+	inst := ""
+	if req.AgentDefinition != nil && req.AgentDefinition.SystemPrompt != nil {
+		inst = *req.AgentDefinition.SystemPrompt
+	} else if req.Agent != nil && req.Agent.Prompt != nil {
+		inst = *req.Agent.Prompt
+	} else {
+		inst = "You are a helpful assistant."
+	}
+
+	if lang := agentLanguage(req.AgentDefinition); lang != "" {
+		inst += "\n\nAlways respond in " + lang + "."
+	}
+
+	if appendix := ae.buildSkillsSystemPrompt(req); appendix != "" {
+		inst += "\n\n" + appendix
+	}
+
+	// Project-level context is injected here, at one fixed position, for every
+	// surface, and only when the definition opts in. The flag check makes a
+	// caller-supplied ProjectInfo inert unless the agent wants it (issue #1694).
+	if req.ProjectInfo != "" && req.AgentDefinition.IncludeProjectInfo() {
+		inst += "\n\n" + knowledgeBaseContextBlock(req.ProjectInfo)
+	}
+
+	if req.SystemPromptAppendix != "" {
+		inst += "\n\n" + req.SystemPromptAppendix
+	}
+
+	// KB-backed agents cite the objects/relationships they use. Skip when the
+	// resolved instruction already carries the instruction (the literal prompts
+	// include it) so it is never injected twice.
+	if isKnowledgeBaseAgent(req.AgentDefinition) && !strings.Contains(inst, citationInstruction) {
+		inst += "\n\n" + citationInstruction
+	}
+
+	// If tool policies can reject or cancel a tool call, tell the model how to
+	// read those structured results so a "rejected" result stops the direction
+	// rather than being retried as a transient failure.
+	if req.AgentDefinition != nil && hasToolPolicy(req.AgentDefinition) {
+		inst += "\n\n" + toolPolicyResultInstruction
+	}
+
+	return inst
+}
+
+// hasToolPolicy reports whether the agent definition configures any tool policy
+// that could reject or cancel a tool call.
+func hasToolPolicy(d *AgentDefinition) bool {
+	if len(d.ToolPolicies) > 0 {
+		return true
+	}
+	return d.DefaultToolPolicy == ToolPolicyDefaultDeny || d.DefaultToolPolicy == ToolPolicyDefaultAsk
+}
+
+// buildSkillsSystemPrompt builds the <available_skills> block that is appended
+// to the system instruction when the agent definition declares bound skills.
+// Returns an empty string when there are no skills to inject.
+func (ae *AgentExecutor) buildSkillsSystemPrompt(req ExecuteRequest) string {
+	if req.AgentDefinition == nil {
+		return ""
+	}
+	hasExplicit := len(req.AgentDefinition.Skills) > 0
+	hasAutoLoad := req.AgentDefinition.AutoLoadSkills
+	if !hasExplicit && !hasAutoLoad {
+		return ""
+	}
+
+	ctx := context.Background()
+	all, err := ae.skillRepo.FindForAgent(ctx, req.ProjectID, req.OrgID)
+	if err != nil || len(all) == 0 {
+		return ""
+	}
+
+	// Build the set of matched skills.
+	// Explicit "*" means all; otherwise merge explicit names + auto-prefix matches.
+	declared := req.AgentDefinition.Skills
+	isWildcard := len(declared) == 1 && declared[0] == "*"
+	var matched []*skills.Skill
+	if isWildcard {
+		matched = all
+	} else {
+		seen := make(map[string]struct{})
+		// Explicit names first (they take precedence for deduplication).
+		nameSet := make(map[string]struct{}, len(declared))
+		for _, n := range declared {
+			nameSet[n] = struct{}{}
+		}
+		for _, s := range all {
+			if _, ok := nameSet[s.Name]; ok {
+				matched = append(matched, s)
+				seen[s.Name] = struct{}{}
+			}
+		}
+		// Auto-load: prefix match — any skill named "{agentName}.{anything}".
+		if hasAutoLoad && req.AgentDefinition.Name != "" {
+			prefix := req.AgentDefinition.Name + "."
+			for _, s := range all {
+				if _, already := seen[s.Name]; !already && strings.HasPrefix(s.Name, prefix) {
+					matched = append(matched, s)
+					seen[s.Name] = struct{}{}
+				}
+			}
+		}
+	}
+	if len(matched) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("## Skills (mandatory)\n")
+	b.WriteString("Before replying, scan the skills below. If a skill matches or is even partially ")
+	b.WriteString("relevant to your task, you MUST load it with the skill tool and follow its ")
+	b.WriteString("instructions. Err on the side of loading.\n\n")
+	b.WriteString("<available_skills>\n")
+	for _, s := range matched {
+		fmt.Fprintf(&b, "  - %s: %s\n", s.Name, s.Description)
+	}
+	b.WriteString("</available_skills>\n\n")
+	b.WriteString("Only proceed without loading a skill if genuinely none are relevant to the task.")
+
+	return b.String()
+}
+
+// persistMessage persists a single message to the database.
+func (ae *AgentExecutor) persistMessage(ctx context.Context, runID, role, text string, stepNumber int) {
+	msg := &AgentRunMessage{
+		RunID:      runID,
+		Role:       role,
+		Content:    map[string]any{"text": text},
+		StepNumber: stepNumber,
+	}
+	if err := ae.repo.CreateMessage(ctx, msg); err != nil {
+		ae.log.Warn("failed to persist message",
+			slog.String("run_id", runID),
+			slog.String("role", role),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
+// persistEventContent persists assistant/tool response content from an ADK event.
+// It writes one message for the assistant turn (text + function_calls) and one
+// separate "tool" message per FunctionResponse so the UI can display both sides
+// of every tool interaction.
+func (ae *AgentExecutor) persistEventContent(ctx context.Context, runID string, event *session.Event, stepNumber int) {
+	if event.Content == nil {
+		return
+	}
+
+	role := "assistant"
+	if event.Author != "" {
+		role = event.Author
+	}
+
+	// Separate parts into text/function-calls (assistant turn) and function
+	// responses (tool turn). Thought (chain-of-thought) parts are never merged
+	// into the reply text: they are persisted separately as content["reasoning"]
+	// so clients render them as a Thinking block instead of the answer, EXCEPT
+	// for a final response with no plain text at all, where the Thought IS the
+	// answer — see persistedEventText (issue #1263). This mirrors the streaming
+	// split in finalResponseStreamEvents.
+	contentMap := make(map[string]any)
+	var functionCalls []map[string]any
+	var functionResponses []map[string]any
+
+	for _, part := range event.Content.Parts {
+		if part == nil {
+			continue
+		}
+		if part.FunctionCall != nil {
+			functionCalls = append(functionCalls, map[string]any{
+				"id":   part.FunctionCall.ID,
+				"name": part.FunctionCall.Name,
+				"args": part.FunctionCall.Args,
+			})
+		}
+		if part.FunctionResponse != nil {
+			functionResponses = append(functionResponses, map[string]any{
+				"id":       part.FunctionResponse.ID,
+				"name":     part.FunctionResponse.Name,
+				"response": part.FunctionResponse.Response,
+			})
+		}
+	}
+
+	text, reasoning := persistedEventText(event.Content.Parts, event.IsFinalResponse())
+	if text != "" {
+		contentMap["text"] = text
+	}
+	if reasoning != "" {
+		contentMap["reasoning"] = reasoning
+	}
+	if len(functionCalls) > 0 {
+		contentMap["function_calls"] = functionCalls
+	}
+
+	// Persist assistant message (text + function_calls).
+	if len(contentMap) > 0 {
+		msg := &AgentRunMessage{
+			RunID:      runID,
+			Role:       role,
+			Content:    contentMap,
+			StepNumber: stepNumber,
+		}
+		if err := ae.repo.CreateMessage(ctx, msg); err != nil {
+			ae.log.Warn("failed to persist event content",
+				slog.String("run_id", runID),
+				slog.String("role", role),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	// Persist tool responses as a separate "tool" role message so callers can
+	// correlate call→response pairs in the UI.
+	if len(functionResponses) > 0 {
+		toolMsg := &AgentRunMessage{
+			RunID:      runID,
+			Role:       "tool",
+			Content:    map[string]any{"function_responses": functionResponses},
+			StepNumber: stepNumber,
+		}
+		if err := ae.repo.CreateMessage(ctx, toolMsg); err != nil {
+			ae.log.Warn("failed to persist tool response content",
+				slog.String("run_id", runID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+}
+
+// buildSummary creates a summary map from the final event.
+// If lastEvent has no text content (e.g. agent ended with a tool call),
+// falls back to lastTextEvent — the last non-partial event that carried text.
+func (ae *AgentExecutor) buildSummary(lastEvent *session.Event, lastTextEvent *session.Event, steps int) map[string]any {
+	summary := map[string]any{
+		"steps": steps,
+	}
+
+	// Helper to extract the last text part from an event.
+	extractText := func(ev *session.Event) string {
+		if ev == nil || ev.Content == nil {
+			return ""
+		}
+		var last string
+		for _, part := range ev.Content.Parts {
+			if part != nil && part.Text != "" {
+				last = part.Text
+			}
+		}
+		return last
+	}
+
+	// Prefer the canonical final-response event; fall back to last text event.
+	text := extractText(lastEvent)
+	if text == "" {
+		text = extractText(lastTextEvent)
+	}
+	if text != "" {
+		summary["final_response"] = text
+	}
+
+	return summary
+}
+
+// sanitizeAgentName ensures the agent name is valid for ADK (no spaces, etc.).
+func sanitizeAgentName(name string) string {
+	// Replace spaces and special chars with underscores
+	result := make([]byte, 0, len(name))
+	for _, c := range name {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-' {
+			result = append(result, byte(c))
+		} else {
+			result = append(result, '_')
+		}
+	}
+	if len(result) == 0 {
+		return "agent"
+	}
+	return string(result)
+}
+
+// --- Step Tracker ---
+
+// stepTracker is a thread-safe counter for tracking LLM invocation steps.
+// The step count is CUMULATIVE across resumes, unlike systems that reset on each run.
+type stepTracker struct {
+	mu       sync.Mutex
+	steps    int
+	maxSteps int
+}
+
+func newStepTracker(maxSteps, initialSteps int) *stepTracker {
+	return &stepTracker{
+		steps:    initialSteps,
+		maxSteps: maxSteps,
+	}
+}
+
+func (st *stepTracker) increment() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.steps++
+	return st.steps
+}
+
+func (st *stepTracker) current() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.steps
+}
+
+func (st *stepTracker) exceeded() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.steps >= st.maxSteps
+}
+
+// --- Doom Loop Detector ---
+
+// doomAction defines what the doom loop detector recommends.
+type doomAction int
+
+const (
+	doomActionNone doomAction = iota
+	doomActionWarn
+	doomActionStop
+
+	// doomWarnThreshold is the number of consecutive identical calls before warning.
+	doomWarnThreshold = 5
+	// doomStopThreshold is the number of consecutive identical calls before stopping.
+	doomStopThreshold = 10
+
+	// toolOnlyWarnThreshold is the number of consecutive tool-only steps (no
+	// assistant text produced) before issuing a warning.
+	toolOnlyWarnThreshold = 10
+	// toolOnlyStopThreshold is the number of consecutive tool-only steps before
+	// aborting the run. This catches loops where different tools cycle without
+	// ever producing meaningful output — the failure mode from issue #146.
+	// Raised from 10→20 to accommodate legitimate multi-file write sequences
+	// (issue #172); the identical-call doom detector handles true stuck loops.
+	toolOnlyStopThreshold = 20
+)
+
+// doomLoopDetector tracks two loop patterns:
+//  1. Consecutive identical tool calls (same tool + same args).
+//  2. Consecutive tool-only steps where the LLM produces no assistant text.
+type doomLoopDetector struct {
+	log              *slog.Logger
+	lastToolName     string
+	lastArgsHash     string
+	consecutiveCount int
+	// toolOnlySteps counts LLM steps that produced only tool calls, no text.
+	toolOnlySteps int
+}
+
+func newDoomLoopDetector(log *slog.Logger) *doomLoopDetector {
+	return &doomLoopDetector{log: log}
+}
+
+// recordStep is called once per completed LLM step with whether the step
+// produced any assistant text. It resets the tool-only counter on text output
+// and returns an action recommendation when the counter exceeds thresholds.
+func (d *doomLoopDetector) recordStep(hasText bool) doomAction {
+	if hasText {
+		d.toolOnlySteps = 0
+		return doomActionNone
+	}
+	d.toolOnlySteps++
+	if d.toolOnlySteps >= toolOnlyStopThreshold {
+		return doomActionStop
+	}
+	if d.toolOnlySteps >= toolOnlyWarnThreshold {
+		return doomActionWarn
+	}
+	return doomActionNone
+}
+
+// closestToolName returns the tool name from candidates that is most similar
+// to called (by Levenshtein edit distance). Returns "" if candidates is empty.
+func closestToolName(called string, candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	best := candidates[0]
+	bestDist := levenshtein(called, best)
+	for _, c := range candidates[1:] {
+		if d := levenshtein(called, c); d < bestDist {
+			bestDist = d
+			best = c
+		}
+	}
+	// Only suggest if reasonably close — threshold: half the longer string's length.
+	maxLen := len(called)
+	if len(best) > maxLen {
+		maxLen = len(best)
+	}
+	if maxLen == 0 || bestDist > maxLen/2 {
+		return ""
+	}
+	return best
+}
+
+// derefString safely dereferences a *string pointer.
+// Returns the pointed-to value or "" if the pointer is nil.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// recordCall records a tool call and returns an action recommendation.
+func (d *doomLoopDetector) recordCall(toolName string, args map[string]any) doomAction {
+	argsHash := fmt.Sprintf("%v", args) // Simple hash — good enough for consecutive comparison
+
+	if toolName == d.lastToolName && argsHash == d.lastArgsHash {
+		d.consecutiveCount++
+	} else {
+		d.lastToolName = toolName
+		d.lastArgsHash = argsHash
+		d.consecutiveCount = 1
+		// A different tool call (different name or args) is evidence of real
+		// progress — reset the tool-only step counter so legitimate multi-file
+		// write sequences (workspace_write with different paths) are not killed
+		// by the tool-only loop detector (issue #172).
+		d.toolOnlySteps = 0
+	}
+
+	if d.consecutiveCount >= doomStopThreshold {
+		return doomActionStop
+	}
+	if d.consecutiveCount >= doomWarnThreshold {
+		return doomActionWarn
+	}
+	return doomActionNone
+}
+
+// isClientToolSentinel reports whether a tool result map is the sentinel value
+// returned by a client-supplied tool injected via ExecuteRequest.ExtraTools.
+// These tools cannot be executed server-side; instead they signal the executor
+// to pause so the caller can execute the tool and POST the result back.
+func isClientToolSentinel(result map[string]any) bool {
+	v, ok := result["_client_tool"]
+	if !ok {
+		return false
+	}
+	b, _ := v.(bool)
+	return b
+}
+
+// ptrUUID parses an id into a *uuid.UUID, returning nil for an empty or
+// malformed value. Used for the write-stamp run ids (#2376): an unusable id
+// leaves the stamp's run empty rather than failing the run.
+func ptrUUID(s string) *uuid.UUID {
+	if s == "" {
+		return nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil
+	}
+	return &id
+}

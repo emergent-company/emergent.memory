@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Memory</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Memory</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.emergent.memory.connector</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.emergent.memory.connector</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>15.0</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- The connector's hosted-MCP-server management API is loopback HTTP
+		     (http://127.0.0.1:8931). This permits local networking only; ATS
+		     still applies to non-local connections. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Sparkle 2 auto-update configuration. SUFeedURL is baked into every
+	     shipped build, so it must never change, and each channel needs one
+	     permanent path: releases/latest/download/ skips prereleases so it cannot
+	     serve the dev channel, and the rolling mac-dev release is deleted and
+	     recreated on every dev build. The feed is therefore hosted on the GitHub
+	     Pages docs site (gh-pages branch) under appcast/<channel>/, which gives one
+	     fixed path per channel and still resolves for an install several releases
+	     behind. The public EdDSA key pairs with the private key held only in the
+	     release pipeline. Sandbox XPC keys are intentionally absent — the app is
+	     not sandboxed. -->
+	<key>SUFeedURL</key>
+	<string>https://emergent-company.github.io/emergent.memory/appcast/stable/appcast.xml</string>
+	<!-- Per-channel feed URLs for the in-app update-channel switch. The updater
+	     resolves the effective feed through SPUUpdaterDelegate
+	     -feedURLStringForUpdater: from the user's selected channel, falling back
+	     to SUFeedURL above for the stable channel. build-dmg.sh rewrites
+	     SUFeedURL to the channel's URL for a channel-specific build default. -->
+	<key>MemoryUpdateFeedURLStable</key>
+	<string>https://emergent-company.github.io/emergent.memory/appcast/stable/appcast.xml</string>
+	<key>MemoryUpdateFeedURLDev</key>
+	<string>https://emergent-company.github.io/emergent.memory/appcast/dev/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>PmNdMg8V1L//noPSUCvjjmBy14WQfnlyeVPAFySIE2A=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<!-- Prompt before installing; never silently install in the background. -->
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 Emergent Company. Licensed under the MIT License (Diane-derived).</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Memory lets an agent list, add, edit, complete, move, and delete your reminders when you ask it to.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Memory lets an agent view and manage your reminders when you ask it to.</string>
+</dict>
+</plist>

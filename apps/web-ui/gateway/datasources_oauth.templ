@@ -1,0 +1,363 @@
+package main
+
+import (
+	"net/url"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- resource selection step (§5.3 scaffold) ---
+
+// DataSourceResourceSelectPage renders the resource-selection step's page shell
+// for a source: the provider-driven header, description, search filter, and a
+// deferred container that loads the folder list asynchronously after first
+// paint. Listing the resources (which can take many seconds on a large Google
+// Drive) is off the critical path, so the page opens immediately with a spinner
+// instead of blocking on ListDSResources.
+templ DataSourceResourceSelectPage(src *DSIntegration, providerName string, query string, loadErr error, flashMsg string, flashErr error) {
+	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, false, dsResourceListDeferred(src, providerName, query))
+}
+
+// DataSourceResourceSelectPageStatic is the no-JavaScript fallback: the same
+// shell with the resource list server-rendered inline instead of deferred (the
+// page handler serves it for ?static=1).
+templ DataSourceResourceSelectPageStatic(src *DSIntegration, providerName string, query string, resources []DSResource, truncated bool, loadErr error, flashMsg string, flashErr error) {
+	@dsResourceSelectShell(src, providerName, query, loadErr, flashMsg, flashErr, true, DataSourceResourceList(src, providerName, resources, truncated, query, loadErr))
+}
+
+// dsResourceSelectShell is the shared chrome for the resource-selection step:
+// header, description, flash, the search filter, and a list slot (deferred
+// container or inline static list).
+templ dsResourceSelectShell(src *DSIntegration, providerName string, query string, loadErr error, flashMsg string, flashErr error, static bool, list templ.Component) {
+	@layout.Container(layout.ContainerLG, nil) {
+		<div data-testid="ds-resource-step">
+			if src == nil {
+				@pageError("Data source unavailable", loadErr)
+			} else {
+				@detailHeader(crumbsActive(nav.Crumbs("Data Sources", "/data-sources", dsSourceName(*src), "/data-sources/"+url.PathEscape(src.ID), "Select resources")), "", dsResourceStepTitle(*src), providerName) {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/data-sources/" + url.PathEscape(src.ID),
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--arrow-left",
+					}) {
+						Back to source
+					}
+				}
+				@flashToasts(flashMsg, flashErr)
+				@components.PanelCard("", nil) {
+					<div class="flex items-start gap-3">
+						@ui.IconTile("lucide--folder-tree", ui.IconTileProps{Tone: "neutral"})
+						<div>
+							<h2 class="text-base font-semibold">{ dsResourceStepTitle(*src) }</h2>
+							@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) { { dsResourceStepDescription(*src) } }
+						</div>
+					</div>
+					{{/* Native GET navigation: the app shell boosts forms, and a boosted
+					     submit makes the filtered view depend on a swap landing (the
+					     boosted banner link intermittently no-ops live). No action
+					     attribute, so the request stays on the scoped resource URL. */}}
+					<form method="get" class="mt-4 flex items-center gap-2" hx-boost="false">
+						if static {
+							<input type="hidden" name="static" value="1"/>
+						}
+						<input type="search" name="q" value={ query } placeholder="Search folders by name…" class="input w-full" autocomplete="off" data-testid="ds-resource-search"/>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--search",
+							Attrs:   templ.Attributes{"data-testid": "ds-resource-search-submit"},
+						}) {
+							Search
+						}
+					</form>
+					@list
+				}
+			}
+		</div>
+	}
+}
+
+// dsResourceListDeferred is the first-paint placeholder for the resource list:
+// a loading indicator plus the deferred /data-sources/:id/resources/list fetch,
+// which swaps the real list in after paint. Keeping ListDSResources off the
+// critical path means a slow Drive listing can no longer freeze the page.
+//
+// hx-target="this" is required, not optional: the page shell's <main> carries
+// hx-target="#main-content" and htmx's implicit attribute inheritance
+// (implicitInheritance=true) would otherwise apply that target here, so the
+// swap would replace the whole main-content region instead of just this
+// placeholder.
+templ dsResourceListDeferred(src *DSIntegration, providerName string, query string) {
+	<div
+		id="ds-resource-list-root"
+		hx-get={ dsResourceListURL(src.ID, query) }
+		hx-trigger="load"
+		hx-target="this"
+		hx-swap="outerHTML"
+	>
+		<div class="mt-4 flex items-center gap-2" data-testid="ds-resource-loading">
+			<span class="htmx-indicator loading loading-spinner loading-sm" aria-hidden="true"></span>
+			<span class="text-muted text-sm">Loading folders from { providerName }…</span>
+		</div>
+		<noscript>
+			<p class="mt-2 text-sm">
+				<a href={ dsResourceStaticURL(src.ID, query) }>View folders without JavaScript</a>
+			</p>
+		</noscript>
+	</div>
+}
+
+// DataSourceResourceList is the HTMX fragment returned by
+// /data-sources/:id/resources/list: the truncation hint and the two listing
+// states (rows / empty-with-retry). Google Drive never reaches it — the page and
+// this fragment both bounce to the picker on the detail page — so there is no
+// Drive-specific empty state here.
+templ DataSourceResourceList(src *DSIntegration, providerName string, resources []DSResource, truncated bool, query string, loadErr error) {
+	<div id="ds-resource-list-root">
+		if truncated {
+			@ui.EmptyNote(ui.EmptyNoteProps{
+				Class: "mt-2",
+				Attrs: templ.Attributes{"data-testid": "ds-resource-truncated"},
+			}) {
+				Only the first 5,000 folders are shown — search by name to narrow the list.
+			}
+		}
+		if loadErr != nil {
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-error">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: loadErr.Error(),
+				})
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    dsResourceStaticURL(src.ID, query),
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-resource-error-retry",
+						"hx-get":      dsResourceListURL(src.ID, query),
+						"hx-target":   "closest #ds-resource-list-root",
+						"hx-swap":     "outerHTML",
+					},
+				}) {
+					Try again
+				}
+			</div>
+		} else if len(resources) == 0 {
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-empty">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "No resources were returned for " + providerName + ". If you just authorized this connection, try again in a moment.",
+				})
+				// A link, not a button: the retry must also work on the
+				// ?static=1 no-JS path, where hx-get never runs. With HTMX
+				// the hx-get below wins and only the fragment is re-requested;
+				// without it the href reloads the server-rendered static page.
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    dsResourceStaticURL(src.ID, query),
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--refresh-cw",
+					Attrs: templ.Attributes{
+						"data-testid": "ds-resource-retry",
+						"hx-get":      dsResourceListURL(src.ID, query),
+						"hx-target":   "closest #ds-resource-list-root",
+						"hx-swap":     "outerHTML",
+					},
+				}) {
+					Try again
+				}
+			</div>
+		} else {
+			<div class="mt-4 flex flex-col gap-2" data-testid="ds-resource-list">
+				for _, r := range resources {
+					<form method="post" action={ templ.URL("/data-sources/" + url.PathEscape(src.ID) + "/resources") } class="flex items-center gap-3 rounded-box border border-base-content/10 px-4 py-3" data-testid="ds-resource-row">
+						<input type="hidden" name="resource_id" value={ r.ID }/>
+						@ui.IconSpan("lucide--folder", "size-4 shrink-0 text-muted-faint")
+						<div class="min-w-0 grow">
+							<p class="truncate text-sm font-medium">{ r.Name }</p>
+							if r.Type != "" {
+								@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { { r.Type } }
+							}
+						</div>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--check",
+							Attrs:   templ.Attributes{"data-testid": "ds-resource-select"},
+						}) {
+							{ dsResourceUseLabel(*src) }
+						}
+					</form>
+				}
+			</div>
+		}
+	</div>
+}
+
+// --- OAuth-client settings (org- and project-scoped, §5.4) ---
+
+// OrgOAuthClientsPage renders the ORG's OAuth client configuration: one card per
+// provider that advertises the oauth method. A project-level client overrides
+// this org-wide one for that project; the same card serves both scopes.
+templ OrgOAuthClientsPage(orgID, orgName string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@dsOAuthClientsPage(orgSettingsSubNav(orgID, "oauth-clients", true), orgCrumbs(orgID, orgName, "Settings", "/orgs/"+url.PathEscape(orgID)+"/settings", "Data source OAuth clients"), "Data source OAuth clients", dsOAuthClientsSubtitle(orgName), "/orgs/"+url.PathEscape(orgID)+"/settings/oauth-clients", providers, clients, loadErr, flashMsg, flashErr)
+}
+
+// ProjectOAuthClientsPage was replaced by the project Credentials table
+// (CredentialsPage at /settings/credentials); the org page remains the
+// organization-wide editor.
+
+// dsOAuthClientsPage is the org-scoped OAuth-client settings page. It renders
+// one card per provider that advertises the oauth method, with the write-only
+// secret and the provider's console setup guide.
+templ dsOAuthClientsPage(rail templ.Component, crumbs []nav.BreadcrumbItem, title, subtitle, actionBase string, providers []DSProvider, clients map[string]DSOAuthClientConfig, loadErr error, flashMsg string, flashErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbs, "", title, subtitle, detailHeaderOpts{Margin: "mb-6"})
+		@flashToasts(flashMsg, flashErr)
+		if loadErr != nil {
+			@pageError("OAuth clients unavailable", loadErr)
+		} else {
+			@layout.Rail(rail, nil) {
+				<div class="flex flex-col gap-4" data-testid="ds-oauth-clients">
+					for _, p := range providers {
+						if p.DSProviderSupportsOAuth() {
+							@dsOAuthClientCard(actionBase, p, clients[p.Type])
+						}
+					}
+				</div>
+			}
+		}
+	}
+}
+
+// dsOAuthClientCard is one provider's OAuth client config card. Saving posts the
+// client id/secret/scopes/strategy to <actionBase>/<provider>; a blank secret
+// preserves the stored one. When the server resolves the deployment's callback
+// values, the card also shows the Google Cloud Console setup: the redirect URI
+// and JavaScript origin to register, then the steps to obtain the client
+// id/secret. The values are provider-driven (rendered only when present), never
+// hard-coded.
+templ dsOAuthClientCard(actionBase string, p DSProvider, cfg DSOAuthClientConfig) {
+	@components.PanelCard("", templ.Attributes{"id": p.Type, "data-testid": "ds-oauth-client-card"}) {
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex items-center gap-3">
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "neutral"})
+				<div>
+					<h2 class="text-base font-semibold">{ dsCredentialAppLabel(p) }</h2>
+					@ui.EmptyNote() { OAuth app used when connecting { p.Name }. }
+				</div>
+			</div>
+			if cfg.Configured {
+				@ui.Badge(ui.BadgeProps{Label: "Configured", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: "Not configured", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Dot: true})
+			}
+		</div>
+		if cfg.RedirectURI != "" || cfg.JavascriptOrigin != "" {
+			@ui.SoftBox(ui.SoftBoxProps{Padding: "p-4", Class: "mt-4 flex flex-col gap-3", Attrs: templ.Attributes{"data-testid": "ds-oauth-console-guide"}}) {
+				<h3 class="text-sm font-semibold">Set up this app in the Google Cloud Console</h3>
+				<ol class="text-muted flex list-decimal flex-col gap-1 pl-5 text-sm">
+					<li>Create or select a Google Cloud project.</li>
+					<li>Enable the Google Drive API for that project.</li>
+					<li>Configure the OAuth consent screen (audience and test users).</li>
+					<li>Create an <span class="font-medium">OAuth client ID</span> of type <span class="font-medium">Web application</span>.</li>
+					<li>Add the authorized redirect URI and JavaScript origin below to that client.</li>
+					<li>Copy the generated client ID and client secret into the form below.</li>
+				</ol>
+				<div class="flex flex-col gap-2">
+					if cfg.RedirectURI != "" {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for={ "redirect_uri-" + p.Type }>Authorized redirect URI</label>
+							<input id={ "redirect_uri-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.RedirectURI } data-testid="ds-oauth-redirect-uri"/>
+						</div>
+					}
+					if cfg.JavascriptOrigin != "" {
+						<div class="flex flex-col gap-1">
+							<label class="text-sm font-medium" for={ "js_origin-" + p.Type }>Authorized JavaScript origin</label>
+							<input id={ "js_origin-" + p.Type } type="text" readonly class="input input-bordered w-full font-mono text-xs" value={ cfg.JavascriptOrigin } data-testid="ds-oauth-js-origin"/>
+						</div>
+					}
+				</div>
+			}
+		}
+		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type)) } data-testid="ds-oauth-client-form" class="mt-4 flex flex-col gap-4">
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "client_id-" + p.Type }>Client ID <span class="text-error" aria-hidden="true">*</span></label>
+				<input id={ "client_id-" + p.Type } name="client_id" type="text" class="input input-bordered w-full" value={ cfg.ClientID } data-testid="ds-field-client_id"/>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "client_secret-" + p.Type }>Client secret</label>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Stored encrypted and never shown again. Leave blank to keep the stored secret. }
+				<input id={ "client_secret-" + p.Type } name="client_secret" type="password" autocomplete="new-password" class="input input-bordered w-full" data-testid="ds-field-client_secret"/>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "scopes-" + p.Type }>Scopes</label>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { One scope per line; commas are also accepted. Optional — the provider default is used when empty. }
+				<textarea id={ "scopes-" + p.Type } name="scopes" rows="3" class="textarea textarea-bordered w-full font-mono text-xs" data-testid="ds-field-scopes">{ dsScopesText(cfg.Scopes) }</textarea>
+			</div>
+			<div class="flex flex-col gap-1">
+				<label class="text-sm font-medium" for={ "strategy-" + p.Type }>Strategy</label>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional provider strategy override. }
+				if len(p.Strategies) > 0 {
+					<select id={ "strategy-" + p.Type } name="strategy" class="select select-bordered w-full" data-testid="ds-field-strategy">
+						<option value="" selected?={ cfg.Strategy == "" }>Provider default</option>
+						for _, s := range dsStrategyOptions(p, cfg.Strategy) {
+							<option value={ s } selected?={ cfg.Strategy == s }>{ s }</option>
+						}
+					</select>
+				} else {
+					<input id={ "strategy-" + p.Type } name="strategy" type="text" class="input input-bordered w-full" value={ cfg.Strategy } data-testid="ds-field-strategy"/>
+				}
+			</div>
+			if p.DSProviderSupportsStrategy("drive.file") {
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "picker_developer_key-" + p.Type }>Picker developer key</label>
+					<input id={ "picker_developer_key-" + p.Type } name="picker_developer_key" type="text" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerDeveloperKey") } data-testid="ds-field-picker_developer_key"/>
+				</div>
+				<div class="flex flex-col gap-1">
+					<label class="text-sm font-medium" for={ "picker_app_id-" + p.Type }>Picker app ID (Cloud project number)</label>
+					<input id={ "picker_app_id-" + p.Type } name="picker_app_id" type="text" inputmode="numeric" class="input input-bordered w-full" value={ dsConfigString(cfg.Config, "pickerAppId") } data-testid="ds-field-picker_app_id"/>
+				</div>
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) { Optional, non-secret; required for the folder picker. The developer key is a Google API key from a Cloud project with the <span class="font-medium">Google Picker API</span> enabled, allowed for this site's origin. The app ID is that project's numeric number (for example 123456789012), not its project id — a wrong value opens an empty picker. }
+			}
+			<div class="flex flex-wrap items-center gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+				}) {
+					Save
+				}
+			</div>
+		</form>
+		if cfg.Configured {
+			<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(p.Type) + "/delete") } data-testid="ds-oauth-client-delete" class="mt-4 border-t border-base-content/10 pt-4">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Style:   ui.ButtonStyleOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Remove client
+				}
+			</form>
+		}
+	}
+}

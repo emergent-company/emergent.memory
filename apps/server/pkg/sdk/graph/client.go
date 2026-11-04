@@ -1,0 +1,2133 @@
+// Package graph provides the Graph service client for the Memory API SDK.
+// This includes objects, relationships, graph search, traversal, branch merge,
+// and analytics functionality.
+package graph
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/auth"
+	sdkerrors "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/errors"
+)
+
+// Client provides access to the Graph API.
+type Client struct {
+	http      *http.Client
+	base      string
+	auth      auth.Provider
+	mu        sync.RWMutex
+	orgID     string
+	projectID string
+}
+
+// NewClient creates a new Graph service client.
+func NewClient(httpClient *http.Client, baseURL string, authProvider auth.Provider, orgID, projectID string) *Client {
+	return &Client{
+		http:      httpClient,
+		base:      baseURL,
+		auth:      authProvider,
+		orgID:     orgID,
+		projectID: projectID,
+	}
+}
+
+// SetContext sets the organization and project context.
+func (c *Client) SetContext(orgID, projectID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.orgID = orgID
+	c.projectID = projectID
+}
+
+// =============================================================================
+// SDK Types — GraphObject
+// =============================================================================
+
+// GraphObject represents a graph object response from the API.
+//
+// The dual-ID model:
+//   - ID / VersionID is the version-specific identifier. It changes on every
+//     update — each version of an object gets a new, immutable ID.
+//   - CanonicalID / EntityID is the stable entity identifier. It stays the same
+//     across all versions of an object.
+//
+// When storing references to objects (e.g., for relationship creation), prefer
+// EntityID (CanonicalID) — it remains valid even after the object is updated.
+type GraphObject struct {
+	// ID is the version-specific identifier for this object. It changes on every
+	// UpdateObject call — each version gets a new, unique ID.
+	//
+	// Deprecated: Use VersionID instead.
+	ID        string  `json:"id"`
+	OrgID     *string `json:"org_id,omitempty"`
+	ProjectID string  `json:"project_id"`
+	BranchID  *string `json:"branch_id,omitempty"`
+	// CanonicalID is the stable entity identifier. It remains constant across all
+	// versions of an object.
+	//
+	// Deprecated: Use EntityID instead.
+	CanonicalID string `json:"canonical_id"`
+	// VersionID is the preferred name for the version-specific identifier (same as ID).
+	VersionID string `json:"version_id"`
+	// EntityID is the preferred name for the stable entity identifier (same as CanonicalID).
+	EntityID          string         `json:"entity_id"`
+	SupersedesID      *string        `json:"supersedes_id,omitempty"`
+	Version           int            `json:"version"`
+	Type              string         `json:"type"`
+	Key               *string        `json:"key,omitempty"`
+	Status            *string        `json:"status,omitempty"`
+	Properties        map[string]any `json:"properties"`
+	Labels            []string       `json:"labels"`
+	SchemaVersion     *string        `json:"schema_version,omitempty"`
+	DeletedAt         *time.Time     `json:"deleted_at,omitempty"`
+	ChangeSummary     map[string]any `json:"change_summary,omitempty"`
+	ContentHash       *string        `json:"content_hash,omitempty"`
+	ExternalSource    *string        `json:"external_source,omitempty"`
+	ExternalID        *string        `json:"external_id,omitempty"`
+	ExternalURL       *string        `json:"external_url,omitempty"`
+	ExternalParentID  *string        `json:"external_parent_id,omitempty"`
+	SyncedAt          *time.Time     `json:"synced_at,omitempty"`
+	ExternalUpdatedAt *time.Time     `json:"external_updated_at,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	RevisionCount     *int           `json:"revision_count,omitempty"`
+	RelationshipCount *int           `json:"relationship_count,omitempty"`
+
+	// Write stamp (#2376). The server records who wrote each version: the actor
+	// pair, the credential that authenticated the write, the agent run it
+	// happened in, and the class of data the row is.
+	//
+	// These were absent from this struct while the server already returned them,
+	// which silently dropped attribution from every SDK/CLI JSON consumer.
+	// CredentialKind is never empty for a disclosed write; it is "none" when no
+	// credential was identifiable.
+	ActorType      *string `json:"actor_type,omitempty"`
+	ActorID        *string `json:"actor_id,omitempty"`
+	CredentialKind string  `json:"credential_kind,omitempty"`
+	CredentialID   *string `json:"credential_id,omitempty"`
+	RunID          *string `json:"run_id,omitempty"`
+	RootRunID      *string `json:"root_run_id,omitempty"`
+	DataClass      string  `json:"data_class,omitempty"`
+	OwnerSourceID  *string `json:"owner_source_id,omitempty"`
+	InputHash      *string `json:"input_hash,omitempty"`
+}
+
+// UnmarshalJSON populates both old (ID, CanonicalID) and new (VersionID, EntityID)
+// fields regardless of which JSON field names the server sends. This ensures
+// callers using either naming convention always see correct values.
+func (o *GraphObject) UnmarshalJSON(data []byte) error {
+	type Alias GraphObject
+	aux := &struct {
+		*Alias
+	}{Alias: (*Alias)(o)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	// Cross-populate: ensure all four fields are set
+	if o.VersionID == "" && o.ID != "" {
+		o.VersionID = o.ID
+	} else if o.ID == "" && o.VersionID != "" {
+		o.ID = o.VersionID
+	}
+	if o.EntityID == "" && o.CanonicalID != "" {
+		o.EntityID = o.CanonicalID
+	} else if o.CanonicalID == "" && o.EntityID != "" {
+		o.CanonicalID = o.EntityID
+	}
+	return nil
+}
+
+// =============================================================================
+// SDK Types — GraphRelationship
+// =============================================================================
+
+// GraphRelationship represents a graph relationship response from the API.
+type GraphRelationship struct {
+	// Deprecated: Use VersionID instead.
+	ID        string  `json:"id"`
+	ProjectID string  `json:"project_id"`
+	BranchID  *string `json:"branch_id,omitempty"`
+	// Deprecated: Use EntityID instead.
+	CanonicalID string `json:"canonical_id"`
+	// VersionID is the preferred name for the version-specific identifier.
+	VersionID string `json:"version_id"`
+	// EntityID is the preferred name for the stable entity identifier.
+	EntityID      string         `json:"entity_id"`
+	SupersedesID  *string        `json:"supersedes_id,omitempty"`
+	Version       int            `json:"version"`
+	Type          string         `json:"type"`
+	SrcID         string         `json:"src_id"`
+	DstID         string         `json:"dst_id"`
+	Properties    map[string]any `json:"properties"`
+	Weight        *float32       `json:"weight,omitempty"`
+	DeletedAt     *time.Time     `json:"deleted_at,omitempty"`
+	ChangeSummary map[string]any `json:"change_summary,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	// InverseRelationship is populated when an inverse relationship was auto-created
+	// based on the template pack's inverseType declaration.
+	InverseRelationship *GraphRelationship `json:"inverse_relationship,omitempty"`
+
+	// Write stamp (#2376): the actor pair, the credential and the agent run that
+	// produced this version. Relationships record no data class or input hash, so
+	// those fields are absent by design rather than missing here.
+	ActorType      *string `json:"actor_type,omitempty"`
+	ActorID        *string `json:"actor_id,omitempty"`
+	CredentialKind string  `json:"credential_kind,omitempty"`
+	CredentialID   *string `json:"credential_id,omitempty"`
+	RunID          *string `json:"run_id,omitempty"`
+	RootRunID      *string `json:"root_run_id,omitempty"`
+}
+
+// UnmarshalJSON populates both old (ID, CanonicalID) and new (VersionID, EntityID)
+// fields regardless of which JSON field names the server sends.
+func (r *GraphRelationship) UnmarshalJSON(data []byte) error {
+	type Alias GraphRelationship
+	aux := &struct {
+		*Alias
+	}{Alias: (*Alias)(r)}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	if r.VersionID == "" && r.ID != "" {
+		r.VersionID = r.ID
+	} else if r.ID == "" && r.VersionID != "" {
+		r.ID = r.VersionID
+	}
+	if r.EntityID == "" && r.CanonicalID != "" {
+		r.EntityID = r.CanonicalID
+	} else if r.CanonicalID == "" && r.EntityID != "" {
+		r.CanonicalID = r.EntityID
+	}
+	return nil
+}
+
+// =============================================================================
+// SDK Types — Request types
+// =============================================================================
+
+// CreateObjectRequest is the request body for creating a graph object.
+type CreateObjectRequest struct {
+	Type       string         `json:"type"`
+	Key        *string        `json:"key,omitempty"`
+	Status     *string        `json:"status,omitempty"`
+	Assignee   *string        `json:"assignee,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+}
+
+// UpdateObjectRequest is the request body for patching a graph object.
+type UpdateObjectRequest struct {
+	Key           *string        `json:"key,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
+}
+
+// ListObjectsOptions holds query parameters for listing/searching objects.
+type ListObjectsOptions struct {
+	Type            string
+	Types           []string
+	Label           string
+	Labels          []string
+	Status          string
+	Key             string
+	BranchID        string
+	IncludeDeleted  bool
+	Limit           int
+	Cursor          string
+	Order           string // "asc" or "desc"
+	PropertyOrder   string // e.g. "ds_score:desc"
+	RelatedToID     string
+	IDs             []string
+	Keys            []string
+	ExtractionJobID string
+	PropertyFilters []PropertyFilter // JSONB property filters (JSON-encoded in query param)
+
+	// Actor provenance filter (issue #1193). ActorID requires ActorType; the
+	// pair is always sent together. Provenance is created|updated|any ("" sends
+	// nothing and the server defaults to "any").
+	ActorType  string
+	ActorID    string
+	Provenance string
+
+	// Write-stamp filters (#2468). RunID matches run_id or root_run_id, so a
+	// root run returns the writes of its delegation subtree. CredentialKind is
+	// api_key|mcp_link|session|none; DataClass is source|synthesized|adopted.
+	RunID          string
+	CredentialID   string
+	CredentialKind string
+	DataClass      string
+
+	// SkipTotal sends include_total=false: the server then skips the exact
+	// COUNT(*) and omits the response's `total` field (SearchObjectsResponse.Total
+	// stays 0). Use it for cursor-only iteration or list views that ignore the
+	// total — the count is the endpoint's latency floor on very large projects.
+	SkipTotal bool
+}
+
+// CountObjectsOptions holds query parameters for counting objects.
+// Same filters as ListObjectsOptions but without pagination fields (Limit, Cursor, Order).
+type CountObjectsOptions struct {
+	Type            string
+	Types           []string
+	Label           string
+	Labels          []string
+	Status          string
+	Key             string
+	BranchID        string
+	IncludeDeleted  bool
+	IDs             []string
+	ExtractionJobID string
+	PropertyFilters []PropertyFilter
+
+	// Write-stamp filters (#2468) — same semantics as on ListObjectsOptions.
+	RunID          string
+	CredentialID   string
+	CredentialKind string
+	DataClass      string
+}
+
+// PropertyFilter defines a filter condition on the JSONB properties column.
+type PropertyFilter struct {
+	Path  string `json:"path"`            // Property path (dot-notation for nested, e.g. "address.city")
+	Op    string `json:"op"`              // Operator: eq, neq, gt, gte, lt, lte, contains, exists, in
+	Value any    `json:"value,omitempty"` // Filter value (omitted for "exists" operator)
+}
+
+// FTSSearchOptions holds query parameters for full-text search.
+type FTSSearchOptions struct {
+	Query          string
+	Types          []string
+	Labels         []string
+	Status         string
+	BranchID       string
+	IncludeDeleted bool
+	Limit          int
+	Offset         int
+}
+
+// VectorSearchRequest is the request body for vector similarity search.
+type VectorSearchRequest struct {
+	Vector         []float32 `json:"vector"`
+	Types          []string  `json:"types,omitempty"`
+	Labels         []string  `json:"labels,omitempty"`
+	Status         *string   `json:"status,omitempty"`
+	BranchID       *string   `json:"branchId,omitempty"`
+	IncludeDeleted bool      `json:"includeDeleted,omitempty"`
+	MaxDistance    *float32  `json:"maxDistance,omitempty"`
+	Limit          int       `json:"limit,omitempty"`
+	Offset         int       `json:"offset,omitempty"`
+}
+
+// FindSimilarOptions holds query parameters for finding similar objects.
+type FindSimilarOptions struct {
+	Limit       int
+	MaxDistance *float32
+	MinScore    *float32
+	Type        string
+	BranchID    string
+	KeyPrefix   string
+	LabelsAll   []string
+	LabelsAny   []string
+}
+
+// BulkUpdateStatusRequest is the request for bulk status updates.
+type BulkUpdateStatusRequest struct {
+	IDs    []string `json:"ids"`
+	Status string   `json:"status"`
+}
+
+// HybridSearchRequest is the request for hybrid (FTS + vector) search.
+type HybridSearchRequest struct {
+	Query          string    `json:"query"`
+	Vector         []float32 `json:"vector,omitempty"`
+	Types          []string  `json:"types,omitempty"`
+	Labels         []string  `json:"labels,omitempty"`
+	Status         *string   `json:"status,omitempty"`
+	BranchID       *string   `json:"branchId,omitempty"`
+	IncludeDeleted bool      `json:"includeDeleted,omitempty"`
+	LexicalWeight  *float32  `json:"lexicalWeight,omitempty"`
+	VectorWeight   *float32  `json:"vectorWeight,omitempty"`
+	Limit          int       `json:"limit,omitempty"`
+	Offset         int       `json:"offset,omitempty"`
+	IncludeDebug   bool      `json:"includeDebug,omitempty"`
+}
+
+// SearchWithNeighborsRequest is the request for search with neighbors.
+type SearchWithNeighborsRequest struct {
+	Query            string   `json:"query"`
+	Limit            int      `json:"limit,omitempty"`
+	IncludeNeighbors bool     `json:"includeNeighbors,omitempty"`
+	MaxNeighbors     int      `json:"maxNeighbors,omitempty"`
+	MaxDistance      *float32 `json:"maxDistance,omitempty"`
+	BranchID         *string  `json:"branchId,omitempty"`
+	Types            []string `json:"types,omitempty"`
+	Labels           []string `json:"labels,omitempty"`
+}
+
+// GraphExpandRequest is the request for graph expand.
+type GraphExpandRequest struct {
+	RootIDs                       []string               `json:"root_ids"`
+	Direction                     string                 `json:"direction,omitempty"`
+	MaxDepth                      int                    `json:"max_depth,omitempty"`
+	MaxNodes                      int                    `json:"max_nodes,omitempty"`
+	MaxEdges                      int                    `json:"max_edges,omitempty"`
+	RelationshipTypes             []string               `json:"relationship_types,omitempty"`
+	ObjectTypes                   []string               `json:"object_types,omitempty"`
+	Labels                        []string               `json:"labels,omitempty"`
+	Projection                    *GraphExpandProjection `json:"projection,omitempty"`
+	IncludeRelationshipProperties bool                   `json:"include_relationship_properties,omitempty"`
+}
+
+// GraphExpandProjection specifies property projection options.
+type GraphExpandProjection struct {
+	IncludeObjectProperties []string `json:"include_object_properties,omitempty"`
+	ExcludeObjectProperties []string `json:"exclude_object_properties,omitempty"`
+}
+
+// TraverseGraphRequest is the request for graph traversal.
+type TraverseGraphRequest struct {
+	RootIDs           []string        `json:"root_ids"`
+	Direction         string          `json:"direction,omitempty"`
+	MaxDepth          int             `json:"max_depth,omitempty"`
+	MaxNodes          int             `json:"max_nodes,omitempty"`
+	MaxEdges          int             `json:"max_edges,omitempty"`
+	RelationshipTypes []string        `json:"relationship_types,omitempty"`
+	ObjectTypes       []string        `json:"object_types,omitempty"`
+	Labels            []string        `json:"labels,omitempty"`
+	Limit             int             `json:"limit,omitempty"`
+	PageDirection     string          `json:"page_direction,omitempty"`
+	Cursor            *string         `json:"cursor,omitempty"`
+	EdgePhases        []EdgePhase     `json:"edgePhases,omitempty"`
+	NodeFilter        *Predicate      `json:"nodeFilter,omitempty"`
+	EdgeFilter        *Predicate      `json:"edgeFilter,omitempty"`
+	ReturnPaths       bool            `json:"returnPaths,omitempty"`
+	MaxPathsPerNode   int             `json:"maxPathsPerNode,omitempty"`
+	TemporalFilter    *TemporalFilter `json:"temporalFilter,omitempty"`
+	FieldStrategy     string          `json:"fieldStrategy,omitempty"`
+}
+
+// EdgePhase defines a phase in multi-phase traversal.
+type EdgePhase struct {
+	RelationshipTypes []string `json:"relationshipTypes,omitempty"`
+	Direction         string   `json:"direction"`
+	MaxDepth          int      `json:"maxDepth"`
+	ObjectTypes       []string `json:"objectTypes,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+}
+
+// Predicate defines a filter condition for nodes or edges.
+type Predicate struct {
+	Path     string `json:"path"`
+	Operator string `json:"operator"`
+	Value    any    `json:"value,omitempty"`
+}
+
+// TemporalFilter defines point-in-time query parameters.
+type TemporalFilter struct {
+	AsOf  string `json:"asOf"`
+	Field string `json:"field,omitempty"`
+}
+
+// BranchMergeRequest is the request for branch merge.
+type BranchMergeRequest struct {
+	SourceBranchID string `json:"source_branch_id"`
+	Execute        bool   `json:"execute,omitempty"`
+	Limit          *int   `json:"limit,omitempty"`
+}
+
+// ForkBranchRequest is the request for forking a branch.
+type ForkBranchRequest struct {
+	Name        string   `json:"name"`
+	Description *string  `json:"description,omitempty"`
+	FilterTypes []string `json:"filter_types,omitempty"`
+}
+
+// ForkBranchResponse is the response for a fork branch operation.
+type ForkBranchResponse struct {
+	BranchID             string `json:"branch_id"`
+	BranchName           string `json:"branch_name"`
+	SourceBranchID       string `json:"source_branch_id"`
+	CopiedObjects        int    `json:"copied_objects"`
+	CopiedRelationships  int    `json:"copied_relationships"`
+	SkippedRelationships int    `json:"skipped_relationships"`
+}
+
+// AnalyticsOptions holds query parameters for analytics endpoints.
+type AnalyticsOptions struct {
+	Limit    int
+	Types    []string
+	Labels   []string
+	BranchID string
+	Order    string
+}
+
+// UnusedOptions holds query parameters for unused objects endpoint.
+type UnusedOptions struct {
+	Limit    int
+	Types    []string
+	Labels   []string
+	BranchID string
+	DaysIdle int
+}
+
+// CreateRelationshipRequest is the request body for creating a relationship.
+type CreateRelationshipRequest struct {
+	Type       string         `json:"type"`
+	SrcID      string         `json:"src_id"`
+	DstID      string         `json:"dst_id"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Weight     *float32       `json:"weight,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+	// Upsert enables idempotent create-or-skip semantics.
+	// Dedup key: (type, src_id, dst_id). See server docs for full semantics.
+	Upsert bool `json:"upsert,omitempty"`
+}
+
+// UpdateRelationshipRequest is the request body for patching a relationship.
+type UpdateRelationshipRequest struct {
+	Properties map[string]any `json:"properties,omitempty"`
+	Weight     *float32       `json:"weight,omitempty"`
+}
+
+// ListRelationshipsOptions holds query parameters for listing relationships.
+type ListRelationshipsOptions struct {
+	Type           string
+	Types          []string
+	SrcID          string
+	DstID          string
+	ObjectID       string
+	BranchID       string
+	IncludeDeleted bool
+	Limit          int
+	Cursor         string
+
+	// Write-stamp filters (#2468). Relationships record no data class, so there
+	// is no DataClass field; the server rejects that filter for this endpoint.
+	RunID          string
+	CredentialID   string
+	CredentialKind string
+}
+
+// =============================================================================
+// SDK Types — Response types
+// =============================================================================
+
+// SearchObjectsResponse is the paginated response for listing objects.
+type SearchObjectsResponse struct {
+	Items      []*GraphObject `json:"items"`
+	NextCursor *string        `json:"next_cursor,omitempty"`
+	// Total is the exact number of matching objects. It is 0 when the request
+	// set ListObjectsOptions.SkipTotal (the field is omitted by the server).
+	Total int `json:"total"`
+}
+
+// CountResponse is the response for count endpoints.
+type CountResponse struct {
+	Count int `json:"count"`
+}
+
+// SearchRelationshipsResponse is the paginated response for listing relationships.
+type SearchRelationshipsResponse struct {
+	Items      []*GraphRelationship `json:"items"`
+	NextCursor *string              `json:"next_cursor,omitempty"`
+	Total      int                  `json:"total"`
+}
+
+// SearchResultItem represents a single search result with scores.
+type SearchResultItem struct {
+	Object       *GraphObject `json:"object"`
+	Score        float32      `json:"score"`
+	LexicalScore *float32     `json:"lexicalScore,omitempty"`
+	VectorScore  *float32     `json:"vectorScore,omitempty"`
+	VectorDist   *float32     `json:"vectorDist,omitempty"`
+}
+
+// SearchResponse is the response for FTS, vector, and hybrid search.
+type SearchResponse struct {
+	Data    []*SearchResultItem `json:"data"`
+	Total   int                 `json:"total"`
+	HasMore bool                `json:"hasMore"`
+	Offset  int                 `json:"offset"`
+	Meta    *SearchResponseMeta `json:"meta,omitempty"`
+}
+
+// SearchResponseMeta contains metadata about the search request.
+type SearchResponseMeta struct {
+	ElapsedMs    float64             `json:"elapsed_ms"`
+	Timing       *SearchTimingDebug  `json:"timing,omitempty"`
+	ChannelStats *SearchChannelStats `json:"channel_stats,omitempty"`
+}
+
+// SearchTimingDebug contains timing breakdown for debug mode.
+type SearchTimingDebug struct {
+	EmbeddingMs float64 `json:"embedding_ms"`
+	LexicalMs   float64 `json:"lexical_ms"`
+	VectorMs    float64 `json:"vector_ms"`
+	FusionMs    float64 `json:"fusion_ms"`
+	TotalMs     float64 `json:"total_ms"`
+}
+
+// SearchChannelStats contains per-channel statistics for debug mode.
+type SearchChannelStats struct {
+	Lexical *ChannelStat `json:"lexical,omitempty"`
+	Vector  *ChannelStat `json:"vector,omitempty"`
+}
+
+// ChannelStat represents statistics for a single search channel.
+type ChannelStat struct {
+	Mean  float64 `json:"mean"`
+	Std   float64 `json:"std"`
+	Count int     `json:"count"`
+}
+
+// ObjectHistoryResponse is the response for version history.
+type ObjectHistoryResponse struct {
+	Versions []*GraphObject `json:"versions"`
+}
+
+// GetObjectEdgesResponse is the response for listing edges of an object.
+// GetObjectEdgesOptions holds optional filters for retrieving object edges.
+type GetObjectEdgesOptions struct {
+	Type      string   // Filter by single relationship type
+	Types     []string // Filter by multiple relationship types
+	Direction string   // "incoming", "outgoing", or "" for both
+}
+
+type GetObjectEdgesResponse struct {
+	Incoming []*GraphRelationship `json:"incoming"`
+	Outgoing []*GraphRelationship `json:"outgoing"`
+}
+
+// SimilarObjectResult represents a single similar object with distance.
+type SimilarObjectResult struct {
+	ID          string         `json:"id"`
+	CanonicalID *string        `json:"canonical_id,omitempty"`
+	Version     *int           `json:"version,omitempty"`
+	Distance    float32        `json:"distance"`
+	ProjectID   *string        `json:"project_id,omitempty"`
+	BranchID    *string        `json:"branch_id,omitempty"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Status      string         `json:"status"`
+	Properties  map[string]any `json:"properties,omitempty"`
+	Labels      []string       `json:"labels,omitempty"`
+	CreatedAt   *string        `json:"created_at,omitempty"`
+}
+
+// BulkUpdateStatusResponse is the response for bulk status updates.
+type BulkUpdateStatusResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateStatusResult `json:"results"`
+}
+
+// BulkUpdateStatusResult is the result for a single object in bulk update.
+type BulkUpdateStatusResult struct {
+	ID      string  `json:"id"`
+	Success bool    `json:"success"`
+	Error   *string `json:"error,omitempty"`
+}
+
+// BulkCreateObjectsRequest is the request for bulk object creation.
+type BulkCreateObjectsRequest struct {
+	Items []CreateObjectRequest `json:"items"`
+}
+
+// BulkCreateObjectsResponse is the response for bulk object creation.
+type BulkCreateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkCreateObjectResult `json:"results"`
+}
+
+// BulkCreateObjectResult is the result for a single object in bulk creation.
+type BulkCreateObjectResult struct {
+	Index   int          `json:"index"`
+	Success bool         `json:"success"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkUpdateObjectsRequest is the request for bulk object updates.
+type BulkUpdateObjectsRequest struct {
+	Items []BulkUpdateObjectItem `json:"items"`
+}
+
+// BulkUpdateObjectItem represents a single object update in a bulk request.
+type BulkUpdateObjectItem struct {
+	ID            string         `json:"id"`
+	Key           *string        `json:"key,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels *bool          `json:"replaceLabels,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
+}
+
+// BulkUpdateObjectsResponse is the response for bulk object updates.
+type BulkUpdateObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateObjectResult `json:"results"`
+}
+
+// BulkUpdateObjectResult is the result for a single object in bulk update.
+type BulkUpdateObjectResult struct {
+	Index   int          `json:"index"`
+	ID      string       `json:"id"`
+	Success bool         `json:"success"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkCreateRelationshipsRequest is the request for bulk relationship creation.
+type BulkCreateRelationshipsRequest struct {
+	Items []CreateRelationshipRequest `json:"items"`
+}
+
+// BulkCreateRelationshipsResponse is the response for bulk relationship creation.
+type BulkCreateRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkCreateRelationshipResult `json:"results"`
+}
+
+// BulkCreateRelationshipResult is the result for a single relationship in bulk creation.
+type BulkCreateRelationshipResult struct {
+	Index        int                `json:"index"`
+	Success      bool               `json:"success"`
+	Relationship *GraphRelationship `json:"relationship,omitempty"`
+	Error        *string            `json:"error,omitempty"`
+}
+
+// BulkUpsertObjectsRequest is the request for bulk object upserts by (type, key).
+type BulkUpsertObjectsRequest struct {
+	Items []CreateObjectRequest `json:"items"`
+}
+
+// BulkUpsertObjectsResponse is the response for bulk object upserts.
+type BulkUpsertObjectsResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpsertObjectResult `json:"results"`
+}
+
+// BulkUpsertObjectResult is the result for a single object in a bulk upsert.
+type BulkUpsertObjectResult struct {
+	Index   int          `json:"index"`
+	Success bool         `json:"success"`
+	Created bool         `json:"created"`
+	Object  *GraphObject `json:"object,omitempty"`
+	Error   *string      `json:"error,omitempty"`
+}
+
+// BulkUpsertRelationshipsRequest is the request for bulk relationship upserts.
+type BulkUpsertRelationshipsRequest struct {
+	Items []CreateRelationshipRequest `json:"items"`
+}
+
+// BulkUpsertRelationshipsResponse is the response for bulk relationship upserts.
+type BulkUpsertRelationshipsResponse struct {
+	Success int                            `json:"success"`
+	Failed  int                            `json:"failed"`
+	Results []BulkUpsertRelationshipResult `json:"results"`
+}
+
+// BulkUpsertRelationshipResult is the result for a single relationship in a bulk upsert.
+type BulkUpsertRelationshipResult struct {
+	Index        int                `json:"index"`
+	Success      bool               `json:"success"`
+	Created      bool               `json:"created"`
+	Relationship *GraphRelationship `json:"relationship,omitempty"`
+	Error        *string            `json:"error,omitempty"`
+}
+
+// SubgraphObjectRequest is a single object in a subgraph creation request.
+// _ref is a client-side placeholder used by relationships in the same request.
+type SubgraphObjectRequest struct {
+	Ref        string         `json:"_ref"`
+	Type       string         `json:"type"`
+	Key        *string        `json:"key,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// SubgraphRelationshipRequest is a single relationship in a subgraph creation request.
+// Endpoints may be specified as _ref placeholders (SrcRef/DstRef) for objects defined
+// in the same request, or as real UUIDs (SrcID/DstID) for pre-existing objects.
+// SrcRef takes precedence over SrcID; DstRef takes precedence over DstID.
+type SubgraphRelationshipRequest struct {
+	Type       string         `json:"type"`
+	SrcRef     string         `json:"src_ref,omitempty"`
+	DstRef     string         `json:"dst_ref,omitempty"`
+	SrcID      string         `json:"src_id,omitempty"`
+	DstID      string         `json:"dst_id,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// CreateSubgraphRequest is the request body for atomic subgraph creation.
+// Max 500 objects and 500 relationships per call.
+type CreateSubgraphRequest struct {
+	Objects       []SubgraphObjectRequest       `json:"objects"`
+	Relationships []SubgraphRelationshipRequest `json:"relationships,omitempty"`
+}
+
+// CreateSubgraphResponse is the response for atomic subgraph creation.
+type CreateSubgraphResponse struct {
+	Objects       []*GraphObject       `json:"objects"`
+	Relationships []*GraphRelationship `json:"relationships"`
+	RefMap        map[string]string    `json:"ref_map"`
+}
+
+// SearchWithNeighborsResponse is the response for search with neighbors.
+type SearchWithNeighborsResponse struct {
+	PrimaryResults []*SearchWithNeighborsResultItem `json:"primaryResults"`
+	Neighbors      map[string][]*GraphObject        `json:"neighbors,omitempty"`
+}
+
+// SearchWithNeighborsResultItem wraps a primary result with its search score.
+type SearchWithNeighborsResultItem struct {
+	Object *GraphObject `json:"object"`
+	Score  float32      `json:"score"`
+}
+
+// GraphExpandResponse is the response for graph expand.
+type GraphExpandResponse struct {
+	Roots           []string         `json:"roots"`
+	Nodes           []*ExpandNode    `json:"nodes"`
+	Edges           []*ExpandEdge    `json:"edges"`
+	Truncated       bool             `json:"truncated"`
+	MaxDepthReached int              `json:"max_depth_reached"`
+	TotalNodes      int              `json:"total_nodes"`
+	Meta            *GraphExpandMeta `json:"meta"`
+}
+
+// ExpandNode represents a node in the expand response.
+type ExpandNode struct {
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	Depth       int            `json:"depth"`
+	Type        string         `json:"type"`
+	Key         *string        `json:"key,omitempty"`
+	Labels      []string       `json:"labels"`
+	Properties  map[string]any `json:"properties,omitempty"`
+}
+
+// ExpandEdge represents an edge in the expand response.
+type ExpandEdge struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	SrcID      string         `json:"src_id"`
+	DstID      string         `json:"dst_id"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// GraphExpandMeta contains metadata about the expand request.
+type GraphExpandMeta struct {
+	Requested       GraphExpandRequested `json:"requested"`
+	NodeCount       int                  `json:"node_count"`
+	EdgeCount       int                  `json:"edge_count"`
+	Truncated       bool                 `json:"truncated"`
+	MaxDepthReached int                  `json:"max_depth_reached"`
+	ElapsedMs       float64              `json:"elapsed_ms"`
+	Filters         *GraphExpandFilters  `json:"filters,omitempty"`
+}
+
+// GraphExpandRequested contains the original request parameters.
+type GraphExpandRequested struct {
+	MaxDepth  int    `json:"max_depth"`
+	MaxNodes  int    `json:"max_nodes"`
+	MaxEdges  int    `json:"max_edges"`
+	Direction string `json:"direction"`
+}
+
+// GraphExpandFilters contains the filters applied to the expand.
+type GraphExpandFilters struct {
+	RelationshipTypes             []string               `json:"relationship_types,omitempty"`
+	ObjectTypes                   []string               `json:"object_types,omitempty"`
+	Labels                        []string               `json:"labels,omitempty"`
+	Projection                    *GraphExpandProjection `json:"projection,omitempty"`
+	IncludeRelationshipProperties bool                   `json:"include_relationship_properties,omitempty"`
+}
+
+// TraverseGraphResponse is the response for graph traversal.
+type TraverseGraphResponse struct {
+	Roots               []string        `json:"roots"`
+	Nodes               []*TraverseNode `json:"nodes"`
+	Edges               []*TraverseEdge `json:"edges"`
+	Truncated           bool            `json:"truncated"`
+	MaxDepthReached     int             `json:"max_depth_reached"`
+	TotalNodes          int             `json:"total_nodes"`
+	HasNextPage         bool            `json:"has_next_page"`
+	HasPreviousPage     bool            `json:"has_previous_page"`
+	NextCursor          *string         `json:"next_cursor,omitempty"`
+	PreviousCursor      *string         `json:"previous_cursor,omitempty"`
+	ApproxPositionStart int             `json:"approx_position_start"`
+	ApproxPositionEnd   int             `json:"approx_position_end"`
+	PageDirection       string          `json:"page_direction"`
+	QueryTimeMs         *float64        `json:"query_time_ms,omitempty"`
+	ResultCount         *int            `json:"result_count,omitempty"`
+}
+
+// TraverseNode represents a node in the traverse response.
+type TraverseNode struct {
+	ID          string     `json:"id"`
+	CanonicalID string     `json:"canonical_id"`
+	Depth       int        `json:"depth"`
+	Type        string     `json:"type"`
+	Key         *string    `json:"key,omitempty"`
+	Labels      []string   `json:"labels"`
+	PhaseIndex  *int       `json:"phaseIndex,omitempty"`
+	Paths       [][]string `json:"paths,omitempty"`
+}
+
+// TraverseEdge represents an edge in the traverse response.
+type TraverseEdge struct {
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	SrcID string `json:"src_id"`
+	DstID string `json:"dst_id"`
+}
+
+// BranchMergeResponse is the response for branch merge.
+type BranchMergeResponse struct {
+	TargetBranchID   string                      `json:"targetBranchId"`
+	SourceBranchID   string                      `json:"sourceBranchId"`
+	DryRun           bool                        `json:"dryRun"`
+	TotalObjects     int                         `json:"total_objects"`
+	UnchangedCount   int                         `json:"unchanged_count"`
+	AddedCount       int                         `json:"added_count"`
+	DeletedCount     *int                        `json:"deleted_count,omitempty"`
+	FastForwardCount int                         `json:"fast_forward_count"`
+	ConflictCount    int                         `json:"conflict_count"`
+	Objects          []*BranchMergeObjectSummary `json:"objects"`
+	Truncated        bool                        `json:"truncated,omitempty"`
+	HardLimit        *int                        `json:"hard_limit,omitempty"`
+	Applied          bool                        `json:"applied,omitempty"`
+	AppliedObjects   *int                        `json:"applied_objects,omitempty"`
+	// Relationship merge info
+	RelationshipsTotal            *int                              `json:"relationships_total,omitempty"`
+	RelationshipsUnchangedCount   *int                              `json:"relationships_unchanged_count,omitempty"`
+	RelationshipsAddedCount       *int                              `json:"relationships_added_count,omitempty"`
+	RelationshipsFastForwardCount *int                              `json:"relationships_fast_forward_count,omitempty"`
+	RelationshipsConflictCount    *int                              `json:"relationships_conflict_count,omitempty"`
+	Relationships                 []*BranchMergeRelationshipSummary `json:"relationships,omitempty"`
+}
+
+// BranchMergeObjectSummary represents merge status for a single object.
+type BranchMergeObjectSummary struct {
+	CanonicalID  string   `json:"canonical_id"`
+	Status       string   `json:"status"`
+	SourceHeadID *string  `json:"source_head_id,omitempty"`
+	TargetHeadID *string  `json:"target_head_id,omitempty"`
+	SourcePaths  []string `json:"source_paths,omitempty"`
+	TargetPaths  []string `json:"target_paths,omitempty"`
+	Conflicts    []string `json:"conflicts,omitempty"`
+}
+
+// BranchMergeRelationshipSummary represents merge status for a single relationship.
+type BranchMergeRelationshipSummary struct {
+	CanonicalID  string   `json:"canonical_id"`
+	Status       string   `json:"status"`
+	SourceHeadID *string  `json:"source_head_id,omitempty"`
+	TargetHeadID *string  `json:"target_head_id,omitempty"`
+	SourceSrcID  *string  `json:"source_src_id,omitempty"`
+	SourceDstID  *string  `json:"source_dst_id,omitempty"`
+	TargetSrcID  *string  `json:"target_src_id,omitempty"`
+	TargetDstID  *string  `json:"target_dst_id,omitempty"`
+	SourcePaths  []string `json:"source_paths,omitempty"`
+	TargetPaths  []string `json:"target_paths,omitempty"`
+	Conflicts    []string `json:"conflicts,omitempty"`
+}
+
+// MostAccessedResponse is the response for most-accessed analytics.
+type MostAccessedResponse struct {
+	Items []AnalyticsObjectItem `json:"items"`
+	Total int                   `json:"total"`
+	Meta  map[string]any        `json:"meta"`
+}
+
+// UnusedObjectsResponse is the response for unused objects analytics.
+type UnusedObjectsResponse struct {
+	Items []AnalyticsObjectItem `json:"items"`
+	Total int                   `json:"total"`
+	Meta  map[string]any        `json:"meta"`
+}
+
+// AnalyticsObjectItem represents an object in analytics responses.
+type AnalyticsObjectItem struct {
+	ID              string         `json:"id"`
+	CanonicalID     string         `json:"canonical_id"`
+	Type            string         `json:"type"`
+	Key             *string        `json:"key,omitempty"`
+	Properties      map[string]any `json:"properties"`
+	Labels          []string       `json:"labels"`
+	LastAccessedAt  *time.Time     `json:"last_accessed_at,omitempty"`
+	AccessCount     *int64         `json:"access_count,omitempty"`
+	DaysSinceAccess *int           `json:"days_since_access,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+}
+
+// RelationshipHistoryResponse is the response for relationship version history.
+type RelationshipHistoryResponse struct {
+	Versions []*GraphRelationship `json:"versions"`
+}
+
+// =============================================================================
+// Internal helpers
+// =============================================================================
+
+// prepareRequest creates an authenticated HTTP request with org/project headers.
+func (c *Client) prepareRequest(ctx context.Context, method, reqURL string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	c.mu.RLock()
+	orgID := c.orgID
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	if orgID != "" {
+		req.Header.Set("X-Org-ID", orgID)
+	}
+	if projectID != "" {
+		req.Header.Set("X-Project-ID", projectID)
+	}
+
+	return req, nil
+}
+
+// doJSON executes a request, checks for errors, and decodes JSON response.
+func (c *Client) doJSON(req *http.Request, result any) error {
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	if result != nil {
+		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}
+
+	return nil
+}
+
+// getJSON performs a GET request and decodes the JSON response.
+func (c *Client) getJSON(ctx context.Context, reqURL string, result any) error {
+	req, err := c.prepareRequest(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(req, result)
+}
+
+// postJSON performs a POST request with JSON body and decodes the response.
+func (c *Client) postJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, "POST", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return c.doJSON(req, result)
+}
+
+// patchJSON performs a PATCH request with JSON body and decodes the response.
+func (c *Client) patchJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, "PATCH", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return c.doJSON(req, result)
+}
+
+// putJSON performs a PUT request with JSON body and decodes the response.
+func (c *Client) putJSON(ctx context.Context, reqURL string, reqBody any, result any) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := c.prepareRequest(ctx, "PUT", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	return c.doJSON(req, result)
+}
+
+// doDelete performs a DELETE request and drains the response body.
+func (c *Client) doDelete(ctx context.Context, reqURL string) error {
+	req, err := c.prepareRequest(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return sdkerrors.ParseErrorResponse(resp)
+	}
+
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// =============================================================================
+// Object CRUD
+// =============================================================================
+
+// CreateObject creates a new graph object.
+func (c *Client) CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpsertObject creates or updates a graph object by (type, key).
+// If an object with the same type and key exists, it is updated; otherwise a new one is created.
+func (c *Client) UpsertObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.putJSON(ctx, c.base+"/api/graph/objects/upsert", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetObject retrieves a single graph object by ID.
+func (c *Client) GetObject(ctx context.Context, id string) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetByAnyID retrieves a graph object by either its version-specific ID or its
+// stable canonical (entity) ID. The server already resolves both forms, so this
+// is a semantic alias for GetObject that makes the caller's intent explicit:
+// "I have an ID that might be either kind — just give me the object."
+func (c *Client) GetByAnyID(ctx context.Context, id string) (*GraphObject, error) {
+	return c.GetObject(ctx, id)
+}
+
+// GetObjects retrieves multiple graph objects by their IDs in a single request.
+// This is a convenience wrapper around ListObjects with the IDs filter.
+func (c *Client) GetObjects(ctx context.Context, ids []string) ([]*GraphObject, error) {
+	resp, err := c.ListObjects(ctx, &ListObjectsOptions{
+		IDs:   ids,
+		Limit: len(ids),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// UpdateObject patches a graph object, creating a new version.
+//
+// WARNING: The returned object has a NEW ID (the old ID is now stale). Callers
+// MUST use the returned *GraphObject for all subsequent operations — do NOT
+// continue using the ID from before the update. The CanonicalID remains stable.
+//
+// Example:
+//
+//	updated, _ := client.UpdateObject(ctx, obj.ID, req)
+//	// WRONG: obj.ID is stale after this call
+//	// RIGHT: use updated.ID or updated.CanonicalID
+func (c *Client) UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.patchJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteObject soft-deletes a graph object.
+func (c *Client) DeleteObject(ctx context.Context, id string, branchID *string) error {
+	path := c.base + "/api/graph/objects/" + url.PathEscape(id)
+	if branchID != nil && *branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(*branchID)
+	}
+	return c.doDelete(ctx, path)
+}
+
+// RestoreObject restores a soft-deleted graph object.
+func (c *Client) RestoreObject(ctx context.Context, id string) (*GraphObject, error) {
+	var result GraphObject
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/objects/"+url.PathEscape(id)+"/restore", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.doJSON(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetObjectHistory retrieves the version history of a graph object.
+func (c *Client) GetObjectHistory(ctx context.Context, id string) (*ObjectHistoryResponse, error) {
+	var result ObjectHistoryResponse
+	if err := c.getJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/history", &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetObjectEdges retrieves incoming and outgoing relationships for an object.
+// GetObjectEdges retrieves incoming and outgoing relationships for an object.
+// Pass nil for opts to get all edges without filtering.
+func (c *Client) GetObjectEdges(ctx context.Context, id string, opts *GetObjectEdgesOptions) (*GetObjectEdgesResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/" + url.PathEscape(id) + "/edges")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.Direction != "" {
+			q.Set("direction", opts.Direction)
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result GetObjectEdgesResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Object Search
+// =============================================================================
+
+// ListObjects searches/lists graph objects with optional filters.
+// setWriteStampQuery writes the non-empty write-stamp filters (#2468) onto q.
+// Shared by the object and relationship list/count encoders so the three call
+// sites cannot drift.
+func setWriteStampQuery(q url.Values, runID, credentialID, credentialKind, dataClass string) {
+	if runID != "" {
+		q.Set("run_id", runID)
+	}
+	if credentialID != "" {
+		q.Set("credential_id", credentialID)
+	}
+	if credentialKind != "" {
+		q.Set("credential_kind", credentialKind)
+	}
+	if dataClass != "" {
+		q.Set("data_class", dataClass)
+	}
+}
+
+func (c *Client) ListObjects(ctx context.Context, opts *ListObjectsOptions) (*SearchObjectsResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/search")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.Label != "" {
+			q.Set("label", opts.Label)
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		if opts.Key != "" {
+			q.Set("key", opts.Key)
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.IncludeDeleted {
+			q.Set("include_deleted", "true")
+		}
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if opts.Cursor != "" {
+			q.Set("cursor", opts.Cursor)
+		}
+		if opts.Order != "" {
+			q.Set("order", opts.Order)
+		}
+		if opts.PropertyOrder != "" {
+			q.Set("order_by", opts.PropertyOrder)
+		}
+		if opts.RelatedToID != "" {
+			q.Set("related_to_id", opts.RelatedToID)
+		}
+		if len(opts.IDs) > 0 {
+			q.Set("ids", strings.Join(opts.IDs, ","))
+		}
+		if len(opts.Keys) > 0 {
+			q.Set("keys", strings.Join(opts.Keys, ","))
+		}
+		if opts.ExtractionJobID != "" {
+			q.Set("extraction_job_id", opts.ExtractionJobID)
+		}
+		if opts.ActorType != "" {
+			q.Set("actor_type", opts.ActorType)
+		}
+		if opts.ActorID != "" {
+			q.Set("actor_id", opts.ActorID)
+		}
+		if opts.Provenance != "" {
+			q.Set("provenance", opts.Provenance)
+		}
+		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, opts.DataClass)
+		if len(opts.PropertyFilters) > 0 {
+			pfJSON, err := json.Marshal(opts.PropertyFilters)
+			if err != nil {
+				return nil, fmt.Errorf("marshaling property filters: %w", err)
+			}
+			q.Set("property_filters", string(pfJSON))
+		}
+		if opts.SkipTotal {
+			q.Set("include_total", "false")
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result SearchObjectsResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CountObjects returns the count of graph objects matching the given filters.
+func (c *Client) CountObjects(ctx context.Context, opts *CountObjectsOptions) (int, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/count")
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.Label != "" {
+			q.Set("label", opts.Label)
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		if opts.Key != "" {
+			q.Set("key", opts.Key)
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.IncludeDeleted {
+			q.Set("include_deleted", "true")
+		}
+		if len(opts.IDs) > 0 {
+			q.Set("ids", strings.Join(opts.IDs, ","))
+		}
+		if opts.ExtractionJobID != "" {
+			q.Set("extraction_job_id", opts.ExtractionJobID)
+		}
+		if len(opts.PropertyFilters) > 0 {
+			pfJSON, err := json.Marshal(opts.PropertyFilters)
+			if err != nil {
+				return 0, fmt.Errorf("marshaling property filters: %w", err)
+			}
+			q.Set("property_filters", string(pfJSON))
+		}
+		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, opts.DataClass)
+	}
+	u.RawQuery = q.Encode()
+
+	var result CountResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return 0, err
+	}
+	return result.Count, nil
+}
+
+// FTSSearch performs a full-text search on graph objects.
+func (c *Client) FTSSearch(ctx context.Context, opts *FTSSearchOptions) (*SearchResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/fts")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Query != "" {
+			q.Set("q", opts.Query)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.Status != "" {
+			q.Set("status", opts.Status)
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.IncludeDeleted {
+			q.Set("include_deleted", "true")
+		}
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if opts.Offset > 0 {
+			q.Set("offset", fmt.Sprintf("%d", opts.Offset))
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result SearchResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// VectorSearch performs a vector similarity search on graph objects.
+func (c *Client) VectorSearch(ctx context.Context, req *VectorSearchRequest) (*SearchResponse, error) {
+	var result SearchResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/vector-search", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListTagsOptions specifies optional filters for listing tags.
+type ListTagsOptions struct {
+	Type   string // Filter to tags from objects of this type
+	Prefix string // Filter to tags starting with this prefix
+	Limit  int    // Maximum number of tags to return (0 = no limit)
+}
+
+// ListTags retrieves all tags used across graph objects.
+// Pass nil for opts to retrieve all tags without filtering.
+func (c *Client) ListTags(ctx context.Context, opts *ListTagsOptions) ([]string, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/tags")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	if opts != nil {
+		q := u.Query()
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if opts.Prefix != "" {
+			q.Set("prefix", opts.Prefix)
+		}
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	var result struct {
+		Tags []string `json:"tags"`
+	}
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return result.Tags, nil
+}
+
+// FindSimilar finds objects similar to the given object.
+func (c *Client) FindSimilar(ctx context.Context, id string, opts *FindSimilarOptions) ([]SimilarObjectResult, error) {
+	u, err := url.Parse(c.base + "/api/graph/objects/" + url.PathEscape(id) + "/similar")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if opts.MaxDistance != nil {
+			q.Set("maxDistance", fmt.Sprintf("%f", *opts.MaxDistance))
+		}
+		if opts.MinScore != nil {
+			q.Set("minScore", fmt.Sprintf("%f", *opts.MinScore))
+		}
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if opts.BranchID != "" {
+			q.Set("branchId", opts.BranchID)
+		}
+		if opts.KeyPrefix != "" {
+			q.Set("keyPrefix", opts.KeyPrefix)
+		}
+		if len(opts.LabelsAll) > 0 {
+			q.Set("labelsAll", strings.Join(opts.LabelsAll, ","))
+		}
+		if len(opts.LabelsAny) > 0 {
+			q.Set("labelsAny", strings.Join(opts.LabelsAny, ","))
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result []SimilarObjectResult
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// BulkUpdateStatus updates the status of multiple objects at once.
+func (c *Client) BulkUpdateStatus(ctx context.Context, req *BulkUpdateStatusRequest) (*BulkUpdateStatusResponse, error) {
+	var result BulkUpdateStatusResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-update-status", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkCreateObjects creates multiple graph objects in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkCreateObjects(ctx context.Context, req *BulkCreateObjectsRequest) (*BulkCreateObjectsResponse, error) {
+	var result BulkCreateObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkUpsertObjects creates or updates multiple graph objects by (type, key) in a
+// single request. Each item is processed independently — failures don't roll back
+// other successes. The result's Created flag reports whether a new object was
+// inserted (true) or an existing object was matched/updated (false).
+func (c *Client) BulkUpsertObjects(ctx context.Context, req *BulkUpsertObjectsRequest) (*BulkUpsertObjectsResponse, error) {
+	var result BulkUpsertObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-upsert", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkUpdateObjects updates multiple graph objects in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkUpdateObjects(ctx context.Context, req *BulkUpdateObjectsRequest) (*BulkUpdateObjectsResponse, error) {
+	var result BulkUpdateObjectsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-update", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// CreateSubgraph atomically creates objects and relationships in a single request.
+// Objects may carry a _ref placeholder; relationships reference objects via src_ref/dst_ref.
+// Maximum 100 objects and 200 relationships per call.
+func (c *Client) CreateSubgraph(ctx context.Context, req *CreateSubgraphRequest) (*CreateSubgraphResponse, error) {
+	var result CreateSubgraphResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/subgraph", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Graph Search
+// =============================================================================
+
+// HybridSearch performs a hybrid (FTS + vector) search.
+func (c *Client) HybridSearch(ctx context.Context, req *HybridSearchRequest) (*SearchResponse, error) {
+	var result SearchResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/search", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// SearchWithNeighbors performs a search and returns results with their neighbors.
+func (c *Client) SearchWithNeighbors(ctx context.Context, req *SearchWithNeighborsRequest) (*SearchWithNeighborsResponse, error) {
+	var result SearchWithNeighborsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/search-with-neighbors", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Graph Traversal
+// =============================================================================
+
+// ExpandGraph expands the graph from root nodes.
+func (c *Client) ExpandGraph(ctx context.Context, req *GraphExpandRequest) (*GraphExpandResponse, error) {
+	var result GraphExpandResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/expand", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// TraverseGraph performs a paginated graph traversal.
+func (c *Client) TraverseGraph(ctx context.Context, req *TraverseGraphRequest) (*TraverseGraphResponse, error) {
+	var result TraverseGraphResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/traverse", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Branch
+// =============================================================================
+
+// MergeBranch performs or previews a branch merge.
+func (c *Client) MergeBranch(ctx context.Context, targetBranchID string, req *BranchMergeRequest) (*BranchMergeResponse, error) {
+	var result BranchMergeResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(targetBranchID)+"/merge", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ForkBranch creates a new branch from a source branch and copies all HEAD objects and relationships.
+// sourceBranchID can be a UUID or "main" for the main graph.
+func (c *Client) ForkBranch(ctx context.Context, sourceBranchID string, req *ForkBranchRequest) (*ForkBranchResponse, error) {
+	var result ForkBranchResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/branches/"+url.PathEscape(sourceBranchID)+"/fork", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Analytics
+// =============================================================================
+
+// GetMostAccessed retrieves the most-accessed objects.
+func (c *Client) GetMostAccessed(ctx context.Context, opts *AnalyticsOptions) (*MostAccessedResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/analytics/most-accessed")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.Order != "" {
+			q.Set("order", opts.Order)
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result MostAccessedResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetUnused retrieves objects that haven't been accessed recently.
+func (c *Client) GetUnused(ctx context.Context, opts *UnusedOptions) (*UnusedObjectsResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/analytics/unused")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if len(opts.Labels) > 0 {
+			q.Set("labels", strings.Join(opts.Labels, ","))
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.DaysIdle > 0 {
+			q.Set("days_idle", fmt.Sprintf("%d", opts.DaysIdle))
+		}
+	}
+	u.RawQuery = q.Encode()
+
+	var result UnusedObjectsResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Relationship CRUD
+// =============================================================================
+
+// CreateRelationship creates a new graph relationship.
+//
+// Recommendation: Use CanonicalID (not ID) for SrcID and DstID in the request.
+// The server internally resolves both forms to canonical IDs before storing, but
+// passing CanonicalID directly makes intent explicit and avoids accidental use of
+// stale version-specific IDs after an UpdateObject call.
+func (c *Client) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
+	var result GraphRelationship
+	if err := c.postJSON(ctx, c.base+"/api/graph/relationships", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpsertRelationship creates a relationship or returns the existing one if it already exists.
+// Dedup key: (type, src_id, dst_id). If the relationship exists with the same properties,
+// it is returned as-is. If properties differ, a new version is created.
+// Safe to call multiple times — retries never produce duplicates.
+func (c *Client) UpsertRelationship(ctx context.Context, req *CreateRelationshipRequest) (*GraphRelationship, error) {
+	var result GraphRelationship
+	if err := c.putJSON(ctx, c.base+"/api/graph/relationships/upsert", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkCreateRelationships creates multiple graph relationships in a single request.
+// Each item is processed independently — failures don't roll back other successes.
+// Maximum 100 items per request.
+func (c *Client) BulkCreateRelationships(ctx context.Context, req *BulkCreateRelationshipsRequest) (*BulkCreateRelationshipsResponse, error) {
+	var result BulkCreateRelationshipsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/relationships/bulk", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// BulkUpsertRelationships creates or updates multiple graph relationships in a
+// single request. Idempotent upsert by (type, src_id, dst_id): a matching
+// relationship is updated, otherwise a new one is created. The result's Created
+// flag reports whether a new relationship was inserted (true) or an existing one
+// was matched/updated (false).
+func (c *Client) BulkUpsertRelationships(ctx context.Context, req *BulkUpsertRelationshipsRequest) (*BulkUpsertRelationshipsResponse, error) {
+	var result BulkUpsertRelationshipsResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/relationships/bulk-upsert", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetRelationship retrieves a single graph relationship by ID.
+func (c *Client) GetRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
+	var result GraphRelationship
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateRelationship patches a graph relationship.
+func (c *Client) UpdateRelationship(ctx context.Context, id string, req *UpdateRelationshipRequest) (*GraphRelationship, error) {
+	var result GraphRelationship
+	if err := c.patchJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id), req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// DeleteRelationship soft-deletes a graph relationship.
+// Pass a non-empty branchID to scope the deletion to a specific branch.
+func (c *Client) DeleteRelationship(ctx context.Context, id string, branchID ...string) error {
+	u := c.base + "/api/graph/relationships/" + url.PathEscape(id)
+	if len(branchID) > 0 && branchID[0] != "" {
+		u += "?branch_id=" + url.QueryEscape(branchID[0])
+	}
+	return c.doDelete(ctx, u)
+}
+
+// RestoreRelationship restores a soft-deleted graph relationship.
+func (c *Client) RestoreRelationship(ctx context.Context, id string) (*GraphRelationship, error) {
+	var result GraphRelationship
+	req, err := c.prepareRequest(ctx, "POST", c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/restore", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := c.doJSON(req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetRelationshipHistory retrieves the version history of a relationship.
+func (c *Client) GetRelationshipHistory(ctx context.Context, id string) (*RelationshipHistoryResponse, error) {
+	var result RelationshipHistoryResponse
+	if err := c.getJSON(ctx, c.base+"/api/graph/relationships/"+url.PathEscape(id)+"/history", &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListRelationships searches/lists graph relationships with optional filters.
+func (c *Client) ListRelationships(ctx context.Context, opts *ListRelationshipsOptions) (*SearchRelationshipsResponse, error) {
+	u, err := url.Parse(c.base + "/api/graph/relationships/search")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse URL: %w", err)
+	}
+
+	q := u.Query()
+	if opts != nil {
+		if opts.Type != "" {
+			q.Set("type", opts.Type)
+		}
+		if len(opts.Types) > 0 {
+			q.Set("types", strings.Join(opts.Types, ","))
+		}
+		if opts.SrcID != "" {
+			q.Set("src_id", opts.SrcID)
+		}
+		if opts.DstID != "" {
+			q.Set("dst_id", opts.DstID)
+		}
+		if opts.ObjectID != "" {
+			q.Set("object_id", opts.ObjectID)
+		}
+		if opts.BranchID != "" {
+			q.Set("branch_id", opts.BranchID)
+		}
+		if opts.IncludeDeleted {
+			q.Set("include_deleted", "true")
+		}
+		if opts.Limit > 0 {
+			q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+		}
+		if opts.Cursor != "" {
+			q.Set("cursor", opts.Cursor)
+		}
+		setWriteStampQuery(q, opts.RunID, opts.CredentialID, opts.CredentialKind, "")
+	}
+	u.RawQuery = q.Encode()
+
+	var result SearchRelationshipsResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// MoveObjectRequest is the request body for moving an object to a different branch.
+type MoveObjectRequest struct {
+	TargetBranchID *string `json:"target_branch_id"`
+}
+
+// MoveObjectResponse is the response for a move object operation.
+type MoveObjectResponse struct {
+	Object             *GraphObject `json:"object"`
+	MovedRelationships int          `json:"moved_relationships"`
+	SourceBranchID     *string      `json:"source_branch_id,omitempty"`
+	TargetBranchID     *string      `json:"target_branch_id,omitempty"`
+}
+
+// MoveObject moves a graph object to a different branch.
+// Pass nil for TargetBranchID to move to the main branch.
+func (c *Client) MoveObject(ctx context.Context, id string, req *MoveObjectRequest) (*MoveObjectResponse, error) {
+	var result MoveObjectResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/"+url.PathEscape(id)+"/move", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// HasRelationship checks whether at least one relationship of the given type
+// exists between srcID and dstID. Both version-specific and canonical (entity)
+// IDs are accepted — the server resolves either form.
+//
+// Returns true if one or more matching relationships are found, false otherwise.
+// Only non-deleted relationships are considered.
+func (c *Client) HasRelationship(ctx context.Context, relType, srcID, dstID string) (bool, error) {
+	resp, err := c.ListRelationships(ctx, &ListRelationshipsOptions{
+		Type:  relType,
+		SrcID: srcID,
+		DstID: dstID,
+		Limit: 1,
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(resp.Items) > 0, nil
+}
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkActionFilter defines what objects to target in a bulk operation.
+type BulkActionFilter struct {
+	Types           []string         `json:"types,omitempty"`
+	PropertyFilters []PropertyFilter `json:"property_filters,omitempty"`
+	Labels          []string         `json:"labels,omitempty"`
+}
+
+// BulkActionRequest is the request body for a filter-then-action bulk operation.
+type BulkActionRequest struct {
+	Filter     BulkActionFilter `json:"filter"`
+	Action     string           `json:"action"`
+	Value      string           `json:"value,omitempty"`
+	Properties map[string]any   `json:"properties,omitempty"`
+	Labels     []string         `json:"labels,omitempty"`
+	Limit      int              `json:"limit,omitempty"`
+	DryRun     bool             `json:"dry_run,omitempty"`
+}
+
+// BulkActionResponse is the response from a bulk action operation.
+type BulkActionResponse struct {
+	Matched  int  `json:"matched"`
+	Affected int  `json:"affected"`
+	Errors   int  `json:"errors"`
+	DryRun   bool `json:"dry_run"`
+}
+
+// BulkAction executes a filter-then-action operation on graph objects.
+func (c *Client) BulkAction(ctx context.Context, req *BulkActionRequest) (*BulkActionResponse, error) {
+	var result BulkActionResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/objects/bulk-action", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// =============================================================================
+// Session API
+// =============================================================================
+
+// CreateSessionRequest is the request body for creating a session.
+type CreateSessionRequest struct {
+	Title        string  `json:"title"`
+	Summary      *string `json:"summary,omitempty"`
+	AgentVersion *string `json:"agentVersion,omitempty"`
+}
+
+// AppendMessageRequest is the request body for appending a message to a session.
+type AppendMessageRequest struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content"`
+	TokenCount *int           `json:"tokenCount,omitempty"`
+	ToolCalls  []any          `json:"toolCalls,omitempty"`
+	ExtraProps map[string]any `json:"extraProps,omitempty"`
+}
+
+// ListSessionsResponse is the paginated response for listing sessions.
+type ListSessionsResponse struct {
+	Items      []*GraphObject `json:"items"`
+	NextCursor *string        `json:"nextCursor,omitempty"`
+	Total      int            `json:"total"`
+}
+
+// ListMessagesResponse is the paginated response for listing messages.
+type ListMessagesResponse struct {
+	Items      []*GraphObject `json:"items"`
+	NextCursor *string        `json:"nextCursor,omitempty"`
+	Total      int            `json:"total"`
+}
+
+// CreateSession creates a new Session graph object.
+func (c *Client) CreateSession(ctx context.Context, req *CreateSessionRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetSession retrieves a session by ID.
+func (c *Client) GetSession(ctx context.Context, id string) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.getJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(id), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListSessions returns a paginated list of sessions.
+func (c *Client) ListSessions(ctx context.Context, limit int, cursor string) (*ListSessionsResponse, error) {
+	u, _ := url.Parse(c.base + "/api/graph/sessions")
+	q := u.Query()
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	u.RawQuery = q.Encode()
+
+	var result ListSessionsResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// AppendMessage appends a message to a session.
+func (c *Client) AppendMessage(ctx context.Context, sessionID string, req *AppendMessageRequest) (*GraphObject, error) {
+	var result GraphObject
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(sessionID)+"/messages", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ListMessages returns a paginated list of messages for a session.
+func (c *Client) ListMessages(ctx context.Context, sessionID string, limit int, cursor string) (*ListMessagesResponse, error) {
+	u, _ := url.Parse(c.base + "/api/graph/sessions/" + url.PathEscape(sessionID) + "/messages")
+	q := u.Query()
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	u.RawQuery = q.Encode()
+
+	var result ListMessagesResponse
+	if err := c.getJSON(ctx, u.String(), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// SpawnSessionRequest is the request body for spawning a child session.
+type SpawnSessionRequest struct {
+	Title       string  `json:"title"`
+	ForkContext bool    `json:"forkContext"`
+	MaxMessages int     `json:"maxMessages,omitempty"`
+	Summary     *string `json:"summary,omitempty"`
+}
+
+// SpawnSessionResponse is returned by the spawn endpoint.
+type SpawnSessionResponse struct {
+	Session        *GraphObject `json:"session"`
+	ForkedMessages int          `json:"forkedMessages"`
+}
+
+// SpawnSession creates a child session from a parent session.
+// When forkContext is true, the parent's message history is copied into the child.
+func (c *Client) SpawnSession(ctx context.Context, parentID string, req *SpawnSessionRequest) (*SpawnSessionResponse, error) {
+	var result SpawnSessionResponse
+	if err := c.postJSON(ctx, c.base+"/api/graph/sessions/"+url.PathEscape(parentID)+"/spawn", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// StreamEvents opens the SSE event stream for the current project and returns
+// the raw response body as an io.ReadCloser. The caller is responsible for
+// closing it when done.
+//
+// The stream emits Server-Sent Events with data fields containing JSON-encoded
+// entity update payloads. Use bufio.Scanner to read line by line.
+//
+// GET /api/events/stream?projectId=<id>
+func (c *Client) StreamEvents(ctx context.Context) (io.ReadCloser, error) {
+	c.mu.RLock()
+	projectID := c.projectID
+	c.mu.RUnlock()
+
+	u := c.base + "/api/events/stream?projectId=" + url.QueryEscape(projectID)
+	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.auth.Authenticate(req); err != nil {
+		return nil, fmt.Errorf("authentication failed: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	return resp.Body, nil
+}

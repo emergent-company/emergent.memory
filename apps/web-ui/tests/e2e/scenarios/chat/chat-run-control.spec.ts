@@ -1,0 +1,310 @@
+import { test, expect, type Page } from '@playwright/test';
+import { goto } from '../../helpers/page';
+import {
+  API_KEY,
+  SKIP_NO_KEY,
+  cleanup,
+  createScratchAgent,
+  openChat,
+} from '../../helpers/live-chat';
+
+// Chat run-control scenarios (gateway lane A/B + the inline-card/queue/rail
+// surfaces): on a FRESH scratch project, a live agent run drives the pending
+// work rendered INLINE in the transcript, the client-side composer queue, and
+// the session-rail run bucket. These are the three signals tasks.md 9.4 calls
+// out, each proven against a real model turn rather than a stubbed stream.
+//
+// All three are live-LLM and env-gated on E2E_SCENARIO_LLM_API_KEY (the same
+// key the rest of the scenarios suite uses), so the default full run skips fast.
+// Model tool-use and turn length are non-deterministic, so each test skips with
+// an annotation when the model deviates (never answers with the expected tool,
+// or finishes before the signal can be observed) — mirroring
+// agent-proposal-card.spec.ts and mcp-servers-tool-call.spec.ts.
+//
+// Shared scaffolding (provider save, scratch agent, openChat, cleanup) lives in
+// helpers/live-chat.ts.
+
+// waitForPendingCard polls until the transcript (#chat-messages) is populated
+// with at least one inline card (question or approval), or the transcript
+// surfaces a run error. Returns the state.
+async function waitForPendingCard(
+  page: Page,
+): Promise<{ state: 'inline' | 'error'; cards: number; text: string }> {
+  const result = await page.waitForFunction(
+    () => {
+      const transcript = document.querySelector('#chat-messages');
+      const err = transcript?.querySelector('span.text-error');
+      if (err) {
+        return { state: 'error', cards: 0, text: (transcript?.textContent || '').slice(0, 500) };
+      }
+      if (transcript) {
+        const cards = transcript.querySelectorAll(
+          '[data-testid="chat-question-card"], [data-testid="chat-approval-card"]',
+        );
+        if (cards.length > 0) {
+          return {
+            state: 'inline',
+            cards: cards.length,
+            text: (transcript.textContent || '').slice(0, 500),
+          };
+        }
+      }
+      return null;
+    },
+    undefined,
+    { timeout: 120_000 },
+  );
+  const value = (await result.jsonValue()) as {
+    state: 'inline' | 'error';
+    cards: number;
+    text: string;
+  };
+  return value;
+}
+
+// skipOnTurnDeviation is the shared fail-vs-skip gate for model non-determinism:
+// a run error is an environment failure (skip), and a completed turn with no
+// signal is a model deviation (skip) — neither is a product regression.
+function skipOnTurnDeviation(reason: string): void {
+  test.info().annotations.push({ type: 'skipped-step', description: reason });
+  test.skip(true, reason);
+}
+
+test.describe('chat run-control scenarios', () => {
+  test('transcript renders a pending question inline with decision controls', async ({ page }) => {
+    // Provider save and the chat turn are both network-bound live calls.
+    test.setTimeout(300_000);
+    test.skip(!API_KEY, SKIP_NO_KEY);
+
+    const name = `E2E RunControl Dock ${Date.now()}`;
+    let projectId = '';
+    let agentId = '';
+
+    try {
+      // A single forced ask_user call surfaces as a pending QUESTION card inline
+      // in the transcript (submit/cancel controls), not a tool approval — the
+      // tool-approval card path is not covered here.
+      const systemPrompt =
+        `Automated test of the chat pending-work inline card. Your ONLY job in this turn is to ` +
+        `call the "ask_user" tool exactly once with interaction_type "buttons" and options ` +
+        `[{label "Yes, approve", value "yes"}, {label "No, reject", value "no"}], then stop. ` +
+        `Never answer in prose and never call any other tool. Do not wrap arguments in markdown.`;
+      const seeded = await createScratchAgent(page, name, systemPrompt, ['ask_user'], 'ask');
+      projectId = seeded.projectId;
+      agentId = seeded.agentId;
+
+      await openChat(page, agentId);
+      await page.locator('#chat-input').fill('Ask for approval now.');
+      await page.locator('#chat-send').click();
+
+      let result: { state: 'inline' | 'error'; cards: number; text: string };
+      try {
+        result = await waitForPendingCard(page);
+      } catch (err) {
+        const why = (err as Error).message;
+        skipOnTurnDeviation(
+          `no inline card rendered within 120s (${why}) — the turn may have stalled or the model answered without asking`,
+        );
+        return;
+      }
+
+      if (result.state === 'error') {
+        skipOnTurnDeviation(`chat run errored before rendering an inline card (provider/environment): ${result.text}`);
+        return;
+      }
+
+      // The transcript owns the pending decision. The selector accepts either
+      // card kind, but this scenario deterministically produces the question
+      // card.
+      const transcript = page.locator('#chat-messages');
+      await expect(transcript.locator('[data-testid="chat-question-card"]')).toBeVisible();
+      // A decision control is present for whichever card kind rendered.
+      await expect(transcript.locator('[data-testid="chat-question-submit"]')).toBeVisible();
+
+      // Inline cards carry no count badge — that dock-only signal no longer
+      // exists. The model can't be forced to produce two pending items, and the
+      // inline rendering has no equivalent of the old dock-count badge.
+      test.info().annotations.push({
+        type: 'skipped-step',
+        description: 'the dock-count signal no longer exists: inline cards render without a count badge',
+      });
+    } finally {
+      await cleanup(page, { agentIds: [agentId], projectId });
+    }
+  });
+
+  test('a queued follow-up auto-releases when the turn ends', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(!API_KEY, SKIP_NO_KEY);
+
+    const name = `E2E RunControl Queue ${Date.now()}`;
+    let projectId = '';
+    let agentId = '';
+
+    try {
+      // A verbose directive keeps the turn open long enough to queue into it.
+      const systemPrompt =
+        `You are an automated test assistant. When asked, write a long, detailed, ` +
+        `multi-paragraph answer (at least four paragraphs). Never call tools.`;
+      const seeded = await createScratchAgent(page, name, systemPrompt, [], 'allow');
+      projectId = seeded.projectId;
+      agentId = seeded.agentId;
+
+      await openChat(page, agentId);
+
+      const first = 'Write a long, detailed essay about the history of calendars.';
+      await page.locator('#chat-input').fill(first);
+      await page.locator('#chat-send').click();
+
+      // While the turn streams, park two follow-ups with Cmd/Ctrl+Enter (always
+      // queues, regardless of turn state). The queue renders .memory-queue rows.
+      await expect(page.locator('#chat-messages .memory-typing').first()).toBeVisible({ timeout: 60_000 });
+      const input = page.locator('#chat-input');
+      const queue = page.locator('#chat-queue');
+      for (const msg of ['Second: what is a leap second?', 'Third: who invented the Gregorian calendar?']) {
+        await input.fill(msg);
+        await input.press('Control+Enter');
+      }
+      await expect(queue).toBeVisible();
+      await expect(queue.locator('.memory-queue-row')).toHaveCount(2);
+
+      // When the running turn ends, the queue auto-releases in order: each parked
+      // message becomes its own turn, so both rows clear and their user bubbles
+      // land in the transcript in submission order.
+      await expect(queue.locator('.memory-queue-row')).toHaveCount(0, { timeout: 180_000 });
+      const userBubbles = page.locator('#chat-messages .chat.chat-end .chat-bubble');
+      await expect(userBubbles).toHaveCount(3);
+      await expect(userBubbles.nth(1)).toContainText('what is a leap second');
+      await expect(userBubbles.nth(2)).toContainText('Gregorian calendar');
+    } finally {
+      await cleanup(page, { agentIds: [agentId], projectId });
+    }
+  });
+
+  test('the session-rail badge reflects a bucket change without a reload', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(!API_KEY, SKIP_NO_KEY);
+
+    const name = `E2E RunControl Rail ${Date.now()}`;
+    let projectId = '';
+    let agentId = '';
+
+    try {
+      const systemPrompt =
+        `You are an automated test assistant. Answer the user's question in one short ` +
+        `sentence. Never call tools.`;
+      const seeded = await createScratchAgent(page, name, systemPrompt, [], 'allow');
+      projectId = seeded.projectId;
+      agentId = seeded.agentId;
+
+      // #1204: a brand-new conversation must subscribe to the durable
+      // conversation events stream once the meta event supplies its id (it
+      // previously opened no EventSource at all until a resume). Record the
+      // EventSource GET so the subscription is asserted, not assumed.
+      const eventsCalls: string[] = [];
+      page.on('request', (req) => {
+        try {
+          if (/^\/api\/conversations\/[^/]+\/events$/.test(new URL(req.url()).pathname)) {
+            eventsCalls.push(req.url());
+          }
+        } catch {
+          /* non-URL request */
+        }
+      });
+
+      await openChat(page, agentId);
+      await page.locator('#chat-input').fill('Say hello.');
+      await page.locator('#chat-send').click();
+
+      // During the run the active session row's badge carries a non-done bucket
+      // (running or needs_input), rendered server-side from the polled history.
+      const row = page.locator('[data-testid="session-row"][data-active="true"]').first();
+      await expect(row).toBeVisible();
+
+      // Poll until the active row's data-bucket leaves "done" (the run is live),
+      // then wait for it to return to "done" (the run ended) — all without a
+      // navigation: the page URL must stay on /chat the whole time.
+      await expect
+        .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 120_000 })
+        .not.toBe('done');
+
+      // While the turn streams, the active row's badge shows the running
+      // indicator (never a "Done" label on a live turn).
+      const badge = row.locator('.memory-rail-badge');
+      await expect(badge).toContainText('Running', { timeout: 30_000 });
+
+      // The brand-new conversation subscribed to its live channel (the meta
+      // event assigns the id mid-turn) — #1204.
+      await expect.poll(() => eventsCalls.length, { timeout: 60_000 }).toBeGreaterThan(0);
+
+      await expect
+        .poll(async () => (await row.getAttribute('data-bucket')) ?? '', { timeout: 180_000 })
+        .toBe('done');
+
+      // Once the run ends the badge clears to a plain row: hidden, with no
+      // lingering "Done" or "Running" label.
+      await expect(badge).toBeHidden();
+      await expect(badge).not.toContainText('Done');
+
+      expect(new URL(page.url()).pathname).toMatch(/\/chat$/);
+    } finally {
+      await cleanup(page, { agentIds: [agentId], projectId });
+    }
+  });
+
+  test('the standalone /runs/:runId page subscribes to its live events stream', async ({ page }) => {
+    test.setTimeout(300_000);
+    test.skip(!API_KEY, SKIP_NO_KEY);
+
+    const name = `E2E RunPage Stream ${Date.now()}`;
+    let projectId = '';
+    let agentId = '';
+
+    try {
+      const systemPrompt =
+        `You are an automated test assistant. Answer the user's question in one short ` +
+        `sentence. Never call tools.`;
+      const seeded = await createScratchAgent(page, name, systemPrompt, [], 'allow');
+      projectId = seeded.projectId;
+      agentId = seeded.agentId;
+
+      await openChat(page, agentId);
+      await page.locator('#chat-input').fill('Say hello.');
+      await page.locator('#chat-send').click();
+
+      // A turn on a new conversation assigns its id (meta event) and creates a
+      // run; read the newest run id back from the conversation history.
+      await expect
+        .poll(() => new URL(page.url()).searchParams.get('c') ?? '', { timeout: 60_000 })
+        .not.toBe('');
+      const cid = new URL(page.url()).searchParams.get('c')!;
+
+      const histResp = await page.request.get(`/api/conversations/${cid}/history`);
+      expect(histResp.ok()).toBeTruthy();
+      const items = ((await histResp.json()).items || []) as Array<{ run_id?: string }>;
+      let runId = '';
+      for (const it of items) if (it && it.run_id) runId = it.run_id;
+      if (!runId) {
+        test.skip(true, 'the turn has not persisted a run id yet — run page not exercised');
+        return;
+      }
+
+      // The standalone run page (#chat-root[data-run]) must open its run-scoped
+      // events stream, not just render once — otherwise it freezes mid-run.
+      const eventsCalls: string[] = [];
+      page.on('request', (req) => {
+        try {
+          if (new URL(req.url()).pathname === `/api/runs/${runId}/events`) eventsCalls.push(req.url());
+        } catch {
+          /* non-URL request */
+        }
+      });
+
+      await goto(page, `/runs/${runId}`);
+      await expect(page.locator('#chat-root[data-run]')).toBeVisible();
+      await expect.poll(() => eventsCalls.length, { timeout: 30_000 }).toBeGreaterThan(0);
+    } finally {
+      await cleanup(page, { agentIds: [agentId], projectId });
+    }
+  });
+});

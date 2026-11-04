@@ -1,0 +1,134 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SelectOption is one option of a grouped select.
+type SelectOption struct {
+	Value    string
+	Label    string
+	Selected bool
+}
+
+// SelectOptionGroup is a labelled group of options, rendered as an <optgroup>.
+type SelectOptionGroup struct {
+	Label   string
+	Options []SelectOption
+}
+
+// SelectOptionGroups renders grouped options for a select control. Grouping is
+// the caller's domain decision; this component only renders it.
+templ SelectOptionGroups(groups []SelectOptionGroup) {
+	for _, g := range groups {
+		<optgroup label={ g.Label }>
+			for _, o := range g.Options {
+				<option value={ o.Value } selected?={ o.Selected }>{ o.Label }</option>
+			}
+		</optgroup>
+	}
+}
+
+// SaveChangesButton renders the shared primary submit button every settings and
+// mutation form footer uses: primary, small, save icon, "Save changes" label.
+//
+// In-flight state: while the enclosing form runs an htmx request the save icon
+// is swapped for a spinner (the .htmx-request class htmx puts on the form/button
+// drives the swap via CSS) and the button is truly disabled — the form owns
+// `hx-disable="find button.memory-save-btn"`, since htmx v4 resolves hx-disable
+// from the request's source element (the form), not the submit button.
+//
+// The surrounding FormActions/margin wrapper stays at each call site because it
+// varies (gap-4 forms, cancel/create branches, raw footers with a cancel link),
+// so only the button itself is a clean shared unit.
+templ SaveChangesButton() {
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeSubmit,
+		Variant:    ui.ButtonPrimary,
+		Size:       ui.ButtonSM,
+		ExtraClass: "memory-save-btn",
+	}) {
+		<span class="memory-save-btn__icon inline-flex" aria-hidden="true">
+			@ui.IconSpan("lucide--save", "size-4")
+		</span>
+		<span class="memory-save-btn__spinner loading loading-spinner loading-xs" aria-hidden="true"></span>
+		<span>Save changes</span>
+	}
+}
+
+// StickyFormActionsProps configures StickyFormActions.
+type StickyFormActionsProps struct {
+	// Align is the horizontal alignment of the action buttons: "" (zero value)
+	// right-aligns, "start" left-aligns.
+	Align string
+	// Rail mirrors layout.Rail's grid so the actions align to the rail's
+	// content column on lg while the strip still spans the full pane.
+	Rail bool
+	// Class is appended to the bar root (caller-owned spacing/overrides).
+	Class string
+	// Attrs is spread last on the bar root element.
+	Attrs templ.Attributes
+}
+
+// StickyFormActions renders the pinned footer for a page-terminal form: a
+// pane-wide strip that sits flush with the bottom of the page scroll area
+// (#main-content) once the whole form fits, and — while the form is taller than
+// the viewport — sticks to that bottom edge with its chrome (top border +
+// translucent surface + blur) visible only while it is actually pinned.
+//
+// The bar is the LAST in-flow child of the form, and the form is a direct child
+// of main#main-content (not wrapped in layout.Container), so the strip spans
+// the full content pane and rests on the pane's bottom edge at max scroll; the
+// buttons are inset by the same padding as the page content. Pure CSS
+// `position: sticky` plus a `@container scroll-state(stuck: bottom)` query on
+// the surface, so it survives htmx swaps of #main-content with no re-init.
+//
+// Rail: pass true when the page lays its form out with layout.Rail so the
+// actions line up with the rail's content column on lg+.
+//
+// Do NOT use inside a <dialog>: a modal has its own scroll box, so bottom-0
+// would pin to the viewport bottom rather than the dialog. Keep the go-daisy
+// form.FormActions footer there.
+templ StickyFormActions(props StickyFormActionsProps) {
+	{{ align := "justify-end"
+	if props.Align == "start" {
+		align = "justify-start"
+	} }}
+	<div class={ "sticky-form-actions", props.Class } { props.Attrs... }>
+		<div class="sfa__surface">
+			if props.Rail {
+				<div class="mx-auto w-full max-w-6xl px-6 py-3 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-6 lg:px-8">
+					<div class="hidden lg:block" aria-hidden="true"></div>
+					<div class={ "flex flex-wrap items-center gap-2", align }>{ children... }</div>
+				</div>
+			} else {
+				<div class={ "mx-auto w-full max-w-6xl px-6 py-3 lg:px-8", "flex flex-wrap items-center gap-2", align }>{ children... }</div>
+			}
+		</div>
+	</div>
+}
+
+// ToggleField renders a settings row that pairs a toggle with a label and an
+// optional explanatory tip. attrs carries the row's htmx wiring.
+templ ToggleField(name, label, tip string, checked bool, attrs templ.Attributes) {
+	{{ // The tip must sit outside the <label>: its visually-hidden description
+	// would otherwise join the label's text and become part of the switch's
+	// accessible name instead of its description (#2393).
+	tipID := ""
+	if tip != "" {
+		tipID = "toggle-tip-" + name
+	}
+	inputAttrs := templ.Attributes{}
+	if tipID != "" {
+		inputAttrs["aria-describedby"] = tipID
+	} }}
+	<div class="flex items-center gap-1.5">
+		<label class="cursor-pointer label justify-start gap-3">
+			<input type="checkbox" id={ name } name={ name } class="toggle" checked?={ checked } { inputAttrs... } { attrs... }/>
+			<span class="label-text">{ label }</span>
+		</label>
+		if tipID != "" {
+			@HelpTip(tip, HelpTipProps{ID: tipID})
+		}
+	</div>
+}

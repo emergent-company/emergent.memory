@@ -1,0 +1,231 @@
+package main
+
+import (
+	"strconv"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Document chunks: inline editor + revision history ---
+//
+// The chunk list renders server-side and is hydrated by documents-chunks.js,
+// which calls the shipped chunk-curation JSON routes (PATCH /api/chunks/:id,
+// GET /api/chunks/:id/revisions, GET /api/chunks/:id/revisions/diff,
+// POST /api/chunks/:id/rollback). Without JS the chunk text stays readable;
+// the edit/history affordances are progressive enhancement over that text.
+//
+// Contract (asserted by documents_chunks_test.go and the js-dom spec):
+//   - [data-chunk-row] carries data-chunk-id / data-chunk-revision
+//   - [data-chunk-action="edit"|"history"|"cancel-edit"|"close-history"]
+//   - [data-chunk-editor] holds the <textarea> draft
+//   - [data-chunk-text] shows the saved text
+//   - [data-chunk-status] is the per-chunk aria-live save/rollback status
+//   - [data-chunk-history] / [data-chunk-revisions] / [data-chunk-diff]
+//   - #chunk-rollback-confirm is the shared destructive-action confirm dialog
+
+// chunkEditorID returns the editor element id for a chunk index.
+func chunkEditorID(index int) string { return "chunk-editor-" + strconv.Itoa(index) }
+
+// chunkHistoryID returns the history panel id for a chunk index.
+func chunkHistoryID(index int) string { return "chunk-history-" + strconv.Itoa(index) }
+
+// chunksSection lists a document's chunks, each with an inline editor and a
+// lazily-loaded revision history.
+templ chunksSection(chunks []Chunk) {
+	@cardList("Chunks", cardListProps{
+		Margin:    "mt-6",
+		Empty:     len(chunks) == 0,
+		EmptyIcon: "lucide--braces", EmptyTitle: "No chunks yet", EmptyDesc: "This document has not been chunked yet.",
+	}) {
+		for _, c := range chunks {
+			@chunkRow(c)
+		}
+	}
+}
+
+// chunkRow renders one chunk: metadata, the saved text, an inline editor, and
+// a revision-history panel. All mutation happens through documents-chunks.js.
+templ chunkRow(c Chunk) {
+	<div
+		class="px-4 py-3"
+		data-chunk-row
+		data-chunk-id={ c.ID }
+		data-chunk-index={ strconv.Itoa(c.Index) }
+		data-chunk-revision={ strconv.Itoa(c.CurrentRevision) }
+		data-testid={ "chunk-row-" + strconv.Itoa(c.Index) }
+	>
+		<div class="mb-1.5 flex flex-wrap items-center gap-2">
+			@ui.Badge(ui.BadgeProps{
+				Label:   "chunk " + strconv.Itoa(c.Index),
+				Variant: ui.BadgeNeutral,
+				Size:    ui.BadgeSizeXS,
+			})
+			if c.HasEmbedding {
+				@ui.Badge(ui.BadgeProps{
+					Label:   "embedded",
+					Variant: ui.BadgeSuccess,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--check",
+				})
+			}
+			<span data-chunk-size class="text-muted-faint text-xs">{ strconv.Itoa(c.Size) } chars</span>
+			<span data-chunk-edited-badge hidden?={ !c.Edited }>
+				@ui.Badge(ui.BadgeProps{
+					Label:   "edited",
+					Variant: ui.BadgeWarning,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--pencil",
+				})
+			</span>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeButton,
+				Variant:    ui.ButtonPrimary,
+				Style:      ui.ButtonStyleOutline,
+				Size:       ui.ButtonXS,
+				Icon:       "lucide--pencil",
+				ExtraClass: "ms-auto",
+				Attrs: templ.Attributes{
+					"data-chunk-action": "edit",
+					"aria-expanded":     "false",
+					"aria-controls":     chunkEditorID(c.Index),
+					"data-testid":       "chunk-edit-" + strconv.Itoa(c.Index),
+				},
+			}) {
+				Edit
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Style:   ui.ButtonStyleOutline,
+				Size:    ui.ButtonXS,
+				Icon:    "lucide--history",
+				Attrs: templ.Attributes{
+					"data-chunk-action": "history",
+					"aria-expanded":     "false",
+					"aria-controls":     chunkHistoryID(c.Index),
+					"data-testid":       "chunk-history-open-" + strconv.Itoa(c.Index),
+				},
+			}) {
+				History
+			}
+		</div>
+
+		<p data-chunk-text tabindex="-1" class="text-sm text-muted-bright rounded-field outline-none focus-visible:ring-2 focus-visible:ring-primary/40" style="white-space: pre-wrap">{ c.Text }</p>
+
+		<form
+			id={ chunkEditorID(c.Index) }
+			data-chunk-editor
+			hidden
+			data-testid={ "chunk-editor-" + strconv.Itoa(c.Index) }
+			class="mt-2"
+		>
+			<label class="sr-only" for={ "chunk-input-" + strconv.Itoa(c.Index) }>Chunk text</label>
+			<textarea
+				id={ "chunk-input-" + strconv.Itoa(c.Index) }
+				name="text"
+				rows="4"
+				class="textarea textarea-bordered w-full font-mono text-sm"
+				data-chunk-input
+				data-testid={ "chunk-input-" + strconv.Itoa(c.Index) }
+			></textarea>
+			<div class="mt-2 flex items-center gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--check",
+					Attrs: templ.Attributes{
+						"data-chunk-action": "save",
+						"data-testid":       "chunk-save-" + strconv.Itoa(c.Index),
+					},
+				}) {
+					Save
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs: templ.Attributes{
+						"data-chunk-action": "cancel-edit",
+						"data-testid":       "chunk-cancel-" + strconv.Itoa(c.Index),
+					},
+				}) {
+					Cancel
+				}
+			</div>
+		</form>
+
+		<div
+			id={ chunkHistoryID(c.Index) }
+			data-chunk-history
+			hidden
+			data-testid={ "chunk-history-" + strconv.Itoa(c.Index) }
+			class="mt-2 rounded-box border border-base-content/10 bg-base-200/30 p-3"
+		>
+			<div class="mb-2 flex items-center justify-between gap-2">
+				<h3 data-chunk-history-heading tabindex="-1" class="text-sm font-medium rounded-field outline-none focus-visible:ring-2 focus-visible:ring-primary/40">Revision history</h3>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonXS,
+					Icon:    "lucide--x",
+					Attrs: templ.Attributes{
+						"data-chunk-action": "close-history",
+						"data-testid":       "chunk-history-close-" + strconv.Itoa(c.Index),
+					},
+				}) {
+					Close
+				}
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Attrs: templ.Attributes{"data-chunk-revisions-status": "", "role": "status", "aria-live": "polite"}})
+			<ol data-chunk-revisions class="mt-1"></ol>
+			<div data-chunk-diff-region hidden class="mt-3">
+				<h4 data-chunk-diff-heading class="mb-1 text-xs font-medium">Differences</h4>
+				<pre data-chunk-diff aria-live="polite" aria-atomic="true" class="max-h-72 overflow-auto whitespace-pre-wrap rounded-field border border-base-content/10 bg-base-100 p-2 font-mono text-xs"></pre>
+			</div>
+		</div>
+
+		<p data-chunk-status role="status" aria-live="polite" aria-atomic="true" class="mt-1 min-h-4 text-xs"></p>
+	</div>
+}
+
+// chunkRollbackDialog is the shared confirmation for the destructive rollback
+// action. documents-chunks.js opens it with the target revision, and only
+// performs the POST when the user confirms.
+templ chunkRollbackDialog() {
+	@ui.Dialog(ui.DialogProps{
+		ID:      "chunk-rollback-confirm",
+		BoxClass: "max-w-md",
+		Attrs:   templ.Attributes{"data-chunk-rollback-confirm": "true", "data-testid": "chunk-rollback-confirm"},
+	}) {
+		@ui.DialogTitle() { Roll back chunk }
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "py-3", Attrs: templ.Attributes{"data-chunk-rollback-message": ""}})
+		<div class="modal-action">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs: templ.Attributes{
+					"data-chunk-rollback-dismiss": "true",
+					"data-testid":                 "chunk-rollback-cancel",
+				},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonError,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--rotate-ccw",
+				Attrs: templ.Attributes{
+					"data-chunk-rollback-approve": "true",
+					"data-testid":                 "chunk-rollback-confirm-button",
+				},
+			}) {
+				Roll back
+			}
+		</div>
+	}
+}

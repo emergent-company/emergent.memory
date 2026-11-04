@@ -1,0 +1,57 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build the macOS connector app on the Mac (sync + xcodegen + xcodebuild + sign)
+    cmds:
+      - Scripts/mac-build.sh {{.CLI_ARGS}}
+
+  gen:
+    desc: Regenerate the Xcode project on the Mac (sync + xcodegen, no build)
+    cmds:
+      - Scripts/mac-build.sh --gen
+
+  test:
+    desc: Run hosted unit tests (MemoryConnectorTests) over ssh (no GUI)
+    cmds:
+      - Scripts/mac-build.sh --test {{.CLI_ARGS}}
+
+  doctor:
+    desc: Verify the Mac build machine is reachable and usable (read-only)
+    cmds:
+      - Scripts/mac-doctor.sh --check
+
+  lint:
+    desc: SwiftFormat + SwiftLint over changed connector Swift files (ratchet)
+    cmds:
+      - Scripts/lint-swift.sh {{.CLI_ARGS}}
+
+  uitest:install:
+    desc: One-time bootstrap of the gui/<uid> LaunchAgent for the UI suite
+    cmds:
+      - Scripts/mac-uitest-agent.sh install
+
+  uitest:run:
+    desc: Build + run the UI suite from ssh via the LaunchAgent; exits with the suite's exit code
+    cmds:
+      - Scripts/mac-uitest-agent.sh run {{.CLI_ARGS}}
+
+  uitest:status:
+    desc: Show the UI suite LaunchAgent's launchd state + status/log tail
+    cmds:
+      - Scripts/mac-uitest-agent.sh status
+
+  uitest:logs:
+    desc: Tail the UI suite run log
+    cmds:
+      - Scripts/mac-uitest-agent.sh logs {{.CLI_ARGS}}
+
+  uitest:uninstall:
+    desc: Bootout + remove the UI suite LaunchAgent plist (keeps logs)
+    cmds:
+      - Scripts/mac-uitest-agent.sh uninstall
+
+  test:darwin:
+    desc: Run the darwin engine e2e suite on the Mac (real binary vs in-process fake hub)
+    cmds:
+      - bash -c '. Scripts/lib/mac-remote.sh; mac_resolve_target client/macos; mac_ssh "cd $MAC_CHECKOUT_PATH/apps/connector.linux && export PATH=\"\$PATH:/opt/homebrew/bin\" && go test -count=1 ./e2e/..."'

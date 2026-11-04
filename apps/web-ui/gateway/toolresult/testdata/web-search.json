@@ -1,0 +1,13 @@
+{
+  "query": "swiftui",
+  "resultCount": 1,
+  "results": [
+    {
+      "title": "SwiftUI",
+      "url": "https://developer.apple.com/documentation/swiftui",
+      "description": "Declarative UI",
+      "age": "2d"
+    }
+  ],
+  "ok": true
+}

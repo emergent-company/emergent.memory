@@ -1,0 +1,141 @@
+name: Memory CLI Dev
+
+# Dev channel: push to main touching apps/cli/** → rolling prerelease under the
+# fixed tag `cli-dev`, overwritten each build. The dev version embeds the short
+# commit sha so builds are identifiable. Cross-compiles on the self-hosted Linux
+# `memory` runners (CGO disabled), so it never needs a macOS runner or a runner
+# with Docker; keep that in mind when reasoning about runner capacity and egress.
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module; rebuild the
+      # dev channel when the linked SDK changes too.
+      - 'apps/server/pkg/sdk/**'
+      - '.github/workflows/cli-dev.yml'
+      - 'scripts/gen-manifest.sh'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cli-dev
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: '1.26'
+
+jobs:
+  version:
+    name: Derive version
+    runs-on: [self-hosted, linux, x64, memory]
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive
+        id: v
+        shell: bash
+        run: echo "version=0.0.0-dev.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-amd64
+            goos: linux
+            goarch: amd64
+          - label: darwin-amd64
+            goos: darwin
+            goarch: amd64
+          - label: darwin-arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # The memory runners are persistent: GOCACHE/GOMODCACHE live on local
+          # disk between jobs, so the built-in Actions cache only adds multi-GB
+          # uploads that blow the 10 GB repo budget (see runner-cache-hygiene.yml).
+          cache: false
+      # No build-cache restore here: the persistent runner already keeps
+      # GOCACHE on local disk, so this step only re-uploaded ~5 GB.
+      - name: Build binary
+        working-directory: apps/cli
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          GOWORK: off
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }} \
+            ./cmd
+
+      - name: Create archive
+        working-directory: apps/cli/dist
+        shell: bash
+        run: |
+          tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          sha256sum memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz > memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-cli-dev-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: apps/cli/dist/*.tar.gz*
+          retention-days: 7
+
+  release:
+    name: Publish rolling dev release
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: build
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: memory-cli-dev-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums + manifest
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          cat release-assets/*.sha256 > release-assets/checksums.txt
+          scripts/gen-manifest.sh memory-cli dev release-assets \
+            "${{ github.repository }}" cli-dev "${VERSION}"
+
+      - name: Publish rolling dev release
+        shell: bash
+        run: |
+          gh release delete cli-dev --cleanup-tag -y || true
+          gh release create cli-dev release-assets/* \
+            --prerelease \
+            --title "memory-cli dev (rolling)" \
+            --notes "Rolling dev build. Commit: ${GITHUB_SHA}"

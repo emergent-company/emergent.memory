@@ -1,0 +1,502 @@
+package cmd
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+
+	internalui "github.com/emergent-company/emergent.memory/apps/cli/internal/ui"
+	sdkdocs "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk/documents"
+	"github.com/spf13/cobra"
+)
+
+// ─────────────────────────────────────────────
+// Top-level command
+// ─────────────────────────────────────────────
+
+var documentsCmd = &cobra.Command{
+	Use:     "documents",
+	Short:   "Manage project documents",
+	Long:    "Commands for managing documents in the Memory platform",
+	GroupID: "knowledge",
+}
+
+// ─────────────────────────────────────────────
+// Flag variables
+// ─────────────────────────────────────────────
+
+var (
+	docsProjectFlag     string
+	docsOutputFlag      string
+	docsLimitFlag       int
+	docsAutoExtractFlag bool
+
+	docsCursorFlag     string
+	docsStatusFlag     string
+	docsSortFlag       string
+	docsOrderFlag      string
+	docsSearchFlag     string
+	docsSourceTypeFlag string
+)
+
+// ─────────────────────────────────────────────
+// Helper: resolve project + set context on client
+// ─────────────────────────────────────────────
+
+func getDocsClient(cmd *cobra.Command) (*sdkdocs.Client, error) {
+	c, err := getClient(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	projectID, err := resolveProjectContext(cmd, docsProjectFlag)
+	if err != nil {
+		return nil, err
+	}
+
+	c.SetContext("", projectID)
+	return c.SDK.Documents, nil
+}
+
+// resolveDocumentArgOrPick resolves a document ID from args[0], or, when args
+// is empty and stdin is a terminal, lists documents in the current project and
+// shows an interactive picker. Returns the resolved document ID and a display
+// name.
+func resolveDocumentArgOrPick(cmd *cobra.Command, c *sdkdocs.Client, args []string) (id, name string, err error) {
+	if len(args) > 0 && args[0] != "" {
+		return args[0], args[0], nil
+	}
+
+	if isNonInteractive() {
+		return "", "", fmt.Errorf("document ID is required — pass one or run interactively to pick from a list")
+	}
+
+	result, err := c.List(context.Background(), &sdkdocs.ListOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("failed to list documents: %w", err)
+	}
+	docs := result.Documents
+	if len(docs) == 0 {
+		return "", "", fmt.Errorf("no documents found in the current project")
+	}
+
+	items := make([]PickerItem, len(docs))
+	for i, doc := range docs {
+		label := doc.ID
+		if doc.Filename != nil && *doc.Filename != "" {
+			label = *doc.Filename
+		}
+		items[i] = PickerItem{ID: doc.ID, Name: label}
+	}
+
+	pickedID, pickedName, err := promptResourcePicker("Select a document", items)
+	if err != nil {
+		return "", "", err
+	}
+	if pickedID == "" {
+		return "", "", fmt.Errorf("document ID is required")
+	}
+	return pickedID, pickedName, nil
+}
+
+// ─────────────────────────────────────────────
+// documents list
+// ─────────────────────────────────────────────
+
+// documentsListOptions maps the list flags onto the SDK query options. Values
+// pass through unchanged: the server owns the vocabularies and returns a 400
+// for an unknown status/sort/order/source type.
+func documentsListOptions() *sdkdocs.ListOptions {
+	opts := &sdkdocs.ListOptions{
+		Cursor:     docsCursorFlag,
+		Status:     docsStatusFlag,
+		Sort:       docsSortFlag,
+		Order:      docsOrderFlag,
+		Query:      docsSearchFlag,
+		SourceType: docsSourceTypeFlag,
+	}
+	if docsLimitFlag > 0 {
+		opts.Limit = docsLimitFlag
+	}
+	return opts
+}
+
+var documentsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List documents",
+	Long: `List documents in the current project.
+
+Filters (values are validated by the server):
+  --status       processing | ready | extracted | failed
+  --source-type  upload | drive | repo | email | meeting | web
+  --search TEXT  metadata search (filename and source URL), NOT file content
+  --sort         created (default) | updated
+  --order        desc (default) | asc
+  --cursor TEXT  next-page cursor from a previous run (reuse the same --sort)
+
+Output is a table with columns: ID, Filename, MIME Type, Size (bytes), Status
+and Created, followed by the per-status breakdown. Use --output json to
+receive the full response (documents, total, statusCounts, next_cursor).`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		opts := documentsListOptions()
+
+		result, err := d.List(context.Background(), opts)
+		if err != nil {
+			return fmt.Errorf("failed to list documents: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(result)
+		}
+
+		if len(result.Documents) == 0 {
+			fmt.Fprintln(out, "No documents found.")
+			return nil
+		}
+
+		if compact {
+			for _, doc := range result.Documents {
+				filename := ""
+				if doc.Filename != nil {
+					filename = *doc.Filename
+				}
+				fmt.Fprintf(out, "%-50s  %s\n", filename, doc.ID)
+			}
+			return nil
+		}
+
+		table := internalui.NewTable(internalui.TableConfig{Compact: true})
+		table.SetHeaders([]string{"ID", "Filename", "MIME Type", "Size (bytes)", "Status", "Created"})
+		for _, doc := range result.Documents {
+			filename := ""
+			if doc.Filename != nil {
+				filename = *doc.Filename
+			}
+			mime := ""
+			if doc.MimeType != nil {
+				mime = *doc.MimeType
+			}
+			size := ""
+			if doc.FileSizeBytes != nil {
+				size = fmt.Sprintf("%d", *doc.FileSizeBytes)
+			}
+			status := ""
+			if doc.ProcessingStatus != nil {
+				status = *doc.ProcessingStatus
+			}
+			table.AddRow([]string{
+				doc.ID,
+				filename,
+				mime,
+				size,
+				status,
+				fmtTime(doc.CreatedAt),
+			})
+		}
+		fmt.Fprint(out, table.Render())
+		if result.StatusCounts != nil {
+			_, _ = fmt.Fprintf(out, "\n%d documents (%d processing, %d ready, %d extracted, %d failed)\n",
+				result.Total,
+				result.StatusCounts.Processing,
+				result.StatusCounts.Ready,
+				result.StatusCounts.Extracted,
+				result.StatusCounts.Failed,
+			)
+		}
+		if result.NextCursor != nil && *result.NextCursor != "" {
+			_, _ = fmt.Fprintf(out, "Next cursor: %s\n", *result.NextCursor)
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// documents get
+// ─────────────────────────────────────────────
+
+var documentsGetCmd = &cobra.Command{
+	Use:   "get <id>",
+	Short: "Get a document by ID",
+	Long: `Get details for a specific document by its ID.
+
+Prints ID, Filename, MIME Type, Size (bytes), Conversion Status, total Chunks,
+Embedded Chunks, and Created/Updated timestamps. Use --output json to receive
+the full document record as JSON instead.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		docID, _, err := resolveDocumentArgOrPick(cmd, d, args)
+		if err != nil {
+			return err
+		}
+
+		doc, err := d.Get(context.Background(), docID)
+		if err != nil {
+			return fmt.Errorf("failed to get document: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(doc)
+		}
+
+		filename := ""
+		if doc.Filename != nil {
+			filename = *doc.Filename
+		}
+		mime := ""
+		if doc.MimeType != nil {
+			mime = *doc.MimeType
+		}
+		convStatus := ""
+		if doc.ConversionStatus != nil {
+			convStatus = *doc.ConversionStatus
+		}
+
+		fmt.Fprintf(out, "ID:                 %s\n", doc.ID)
+		fmt.Fprintf(out, "Filename:           %s\n", filename)
+		fmt.Fprintf(out, "MIME Type:          %s\n", mime)
+		if doc.FileSizeBytes != nil {
+			fmt.Fprintf(out, "Size:               %d bytes\n", *doc.FileSizeBytes)
+		}
+		fmt.Fprintf(out, "Conversion Status:  %s\n", convStatus)
+		if doc.ProcessingStatus != nil {
+			fmt.Fprintf(out, "Processing Status:  %s\n", *doc.ProcessingStatus)
+		}
+		fmt.Fprintf(out, "Chunks:             %d\n", doc.Chunks)
+		fmt.Fprintf(out, "Embedded Chunks:    %d\n", doc.EmbeddedChunks)
+		if doc.ObjectsCreated != nil {
+			fmt.Fprintf(out, "Objects Created:    %d\n", *doc.ObjectsCreated)
+		}
+		if doc.RelationshipsCreated != nil {
+			fmt.Fprintf(out, "Relationships:      %d\n", *doc.RelationshipsCreated)
+		}
+		if doc.LastExtractionAt != nil {
+			fmt.Fprintf(out, "Last Extracted:     %s\n", fmtTimePTime(doc.LastExtractionAt))
+		}
+		fmt.Fprintf(out, "Created:            %s\n", fmtTime(doc.CreatedAt))
+		fmt.Fprintf(out, "Updated:            %s\n", fmtTime(doc.UpdatedAt))
+
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// documents upload
+// ─────────────────────────────────────────────
+
+var documentsUploadCmd = &cobra.Command{
+	Use:   "upload <file>",
+	Short: "Upload a file as a document",
+	Long:  "Upload a local file and create a document record. Use --auto-extract to trigger extraction after upload.",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		filePath := args[0]
+
+		f, err := os.Open(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to open file %s: %w", filePath, err)
+		}
+		defer f.Close()
+
+		// Extract just the filename from path
+		filename := filePath
+		for i := len(filePath) - 1; i >= 0; i-- {
+			if filePath[i] == '/' || filePath[i] == '\\' {
+				filename = filePath[i+1:]
+				break
+			}
+		}
+
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		input := &sdkdocs.UploadFileInput{
+			Filename: filename,
+			Reader:   f,
+		}
+
+		result, err := d.UploadWithOptions(context.Background(), input, docsAutoExtractFlag)
+		if err != nil {
+			return fmt.Errorf("failed to upload document: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			// Output the document directly (flat), consistent with other creation commands.
+			// Fall back to the full response if the document is nil (e.g. duplicate).
+			if result.Document != nil {
+				return json.NewEncoder(out).Encode(result.Document)
+			}
+			return json.NewEncoder(out).Encode(result)
+		}
+
+		if result.IsDuplicate {
+			fmt.Fprintf(out, "Document already exists (duplicate).\n")
+			if result.ExistingDocumentID != nil {
+				fmt.Fprintf(out, "  Existing ID: %s\n", *result.ExistingDocumentID)
+			}
+			return nil
+		}
+
+		fmt.Fprintf(out, "Document uploaded successfully!\n")
+		if result.Document != nil {
+			fmt.Fprintf(out, "  ID:       %s\n", result.Document.ID)
+			fmt.Fprintf(out, "  Name:     %s\n", result.Document.Name)
+			fmt.Fprintf(out, "  Status:   %s\n", result.Document.ConversionStatus)
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// documents delete
+// ─────────────────────────────────────────────
+
+var documentsDeleteCmd = &cobra.Command{
+	Use:   "delete <id>",
+	Short: "Delete a document",
+	Long: `Delete a document and all related entities.
+
+Prints the deletion status and a summary of removed entities: Chunks,
+Extraction jobs, Graph objects, and Graph relationships. Use --output json
+for a machine-readable response.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		docID, _, err := resolveDocumentArgOrPick(cmd, d, args)
+		if err != nil {
+			return err
+		}
+
+		result, err := d.Delete(context.Background(), docID)
+		if err != nil {
+			return fmt.Errorf("failed to delete document: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(result)
+		}
+
+		fmt.Fprintf(out, "Document deleted (status: %s).\n", result.Status)
+		if result.Summary != nil {
+			fmt.Fprintf(out, "  Chunks removed:             %d\n", result.Summary.Chunks)
+			fmt.Fprintf(out, "  Extraction jobs removed:    %d\n", result.Summary.ExtractionJobs)
+			fmt.Fprintf(out, "  Graph objects removed:      %d\n", result.Summary.GraphObjects)
+			fmt.Fprintf(out, "  Graph relationships removed:%d\n", result.Summary.GraphRelationships)
+		}
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// documents extraction-summary
+// ─────────────────────────────────────────────
+
+var documentsExtractionSummaryCmd = &cobra.Command{
+	Use:   "extraction-summary <id>",
+	Short: "Show extraction summary for a document",
+	Long: `Show the extraction summary for the most recently completed extraction
+job on a document.
+
+Displays counts of objects created (broken down by type), relationships
+created, chunks processed, and the completion timestamp. Use --output json
+for a machine-readable response.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		d, err := getDocsClient(cmd)
+		if err != nil {
+			return err
+		}
+
+		docID, _, err := resolveDocumentArgOrPick(cmd, d, args)
+		if err != nil {
+			return err
+		}
+
+		summary, err := d.GetExtractionSummary(context.Background(), docID)
+		if err != nil {
+			return fmt.Errorf("failed to get extraction summary: %w", err)
+		}
+
+		out := cmd.OutOrStdout()
+
+		if docsOutputFlag == "json" {
+			return json.NewEncoder(out).Encode(summary)
+		}
+
+		fmt.Fprintf(out, "Job ID:               %s\n", summary.JobID)
+		fmt.Fprintf(out, "Completed At:         %s\n", fmtTime(summary.CompletedAt))
+		fmt.Fprintf(out, "Objects Created:      %d\n", summary.ObjectsCreated)
+		fmt.Fprintf(out, "Relationships:        %d\n", summary.RelationshipsCreated)
+		fmt.Fprintf(out, "Chunks Processed:     %d / %d\n", summary.ChunksProcessed, summary.TotalChunks)
+		fmt.Fprintf(out, "Has Errors:           %v\n", summary.HasErrors)
+		if summary.ErrorSummary != nil && *summary.ErrorSummary != "" {
+			fmt.Fprintf(out, "Error Summary:        %s\n", *summary.ErrorSummary)
+		}
+
+		if len(summary.ObjectsByType) > 0 {
+			fmt.Fprintln(out, "\nObjects by Type:")
+			table := internalui.NewTable(internalui.TableConfig{Compact: true})
+			table.SetHeaders([]string{"Type", "Count"})
+			for typLabel, count := range summary.ObjectsByType {
+				table.AddRow([]string{typLabel, fmt.Sprintf("%d", count)})
+			}
+			fmt.Fprint(out, table.Render())
+		}
+
+		return nil
+	},
+}
+
+// ─────────────────────────────────────────────
+// init — wire up the command tree
+// ─────────────────────────────────────────────
+
+func init() {
+	// Persistent flags on the parent command
+	documentsCmd.PersistentFlags().StringVar(&docsProjectFlag, "project", "", "Project ID (overrides config/env)")
+	documentsCmd.PersistentFlags().StringVar(&docsOutputFlag, "output", "table", "Output format: table or json")
+
+	// Per-subcommand flags
+	documentsListCmd.Flags().IntVar(&docsLimitFlag, "limit", 50, "Maximum number of results")
+	documentsListCmd.Flags().StringVar(&docsCursorFlag, "cursor", "", "Next-page cursor from a previous listing (reuse the same --sort)")
+	documentsListCmd.Flags().StringVar(&docsStatusFlag, "status", "", "Filter by derived status: processing|ready|extracted|failed")
+	documentsListCmd.Flags().StringVar(&docsSortFlag, "sort", "", "Sort by created (default) or updated")
+	documentsListCmd.Flags().StringVar(&docsOrderFlag, "order", "", "Sort direction: desc (default) or asc")
+	documentsListCmd.Flags().StringVar(&docsSearchFlag, "search", "", "Metadata search (filename and source URL), not file content")
+	documentsListCmd.Flags().StringVar(&docsSourceTypeFlag, "source-type", "", "Filter by source type: upload|drive|repo|email|meeting|web")
+
+	documentsUploadCmd.Flags().BoolVar(&docsAutoExtractFlag, "auto-extract", false, "Trigger extraction after upload")
+
+	// Assemble
+	documentsCmd.AddCommand(documentsListCmd)
+	documentsCmd.AddCommand(documentsGetCmd)
+	documentsCmd.AddCommand(documentsUploadCmd)
+	documentsCmd.AddCommand(documentsDeleteCmd)
+	documentsCmd.AddCommand(documentsExtractionSummaryCmd)
+
+	rootCmd.AddCommand(documentsCmd)
+}

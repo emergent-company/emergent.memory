@@ -1,0 +1,192 @@
+package provider
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/emergent-company/emergent.memory/domain/scheduler"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+const (
+	// modelLimitsSyncSchedule runs the sync daily at 03:00 UTC.
+	// Scheduler uses seconds-precision (6-field) cron: "second minute hour dom month dow".
+	modelLimitsSyncSchedule = "0 0 3 * * *"
+
+	// modelLimitsFetchURL is the models.dev canonical API endpoint.
+	modelLimitsFetchURL = "https://models.dev/api.json"
+
+	// modelLimitsFetchTimeout is the maximum time allowed for the HTTP fetch.
+	modelLimitsFetchTimeout = 15 * time.Second
+
+	// modelLimitsFetchMaxBytes caps the response body. models.dev/api.json is
+	// several MB and grows over time; a cap that is too low silently truncates
+	// the JSON and fails the parse, which forces the static fallback on every
+	// run. The pricing fetcher shares the same feed and uses 64 MB.
+	modelLimitsFetchMaxBytes = 64 << 20
+)
+
+// modelLimits holds both the context-window (max input) and max output token
+// counts for a single model.
+type modelLimits struct {
+	MaxInputTokens  int
+	MaxOutputTokens int
+}
+
+// staticModelLimits maps model name → token limits.
+// These are fallback values from models.dev as of 2025 for the platform-known models.
+// Only generative models are included (embeddings are excluded).
+var staticModelLimits = map[string]modelLimits{
+	"gemini-1.5-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-1.5-flash-8b":           {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-1.5-pro":                {MaxInputTokens: 2_000_000, MaxOutputTokens: 8192},
+	"gemini-2.0-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 8192},
+	"gemini-2.5-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-2.5-pro":                {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-flash-lite-preview": {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-flash":              {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	"gemini-3.1-pro":                {MaxInputTokens: 1_000_000, MaxOutputTokens: 65536},
+	// DeepSeek models
+	"deepseek-v4-flash": {MaxInputTokens: 65536, MaxOutputTokens: 393216},
+	"deepseek-v4-pro":   {MaxInputTokens: 65536, MaxOutputTokens: 393216},
+	"deepseek-chat":     {MaxInputTokens: 65536, MaxOutputTokens: 8192},
+	"deepseek-reasoner": {MaxInputTokens: 65536, MaxOutputTokens: 65536},
+}
+
+// modelsDevResponse is the top-level shape of the models.dev /api.json response.
+// It maps provider slug → provider entry (which contains a models map).
+type modelsDevResponse map[string]modelsDevProviderEntry
+
+// modelsDevProviderEntry is a single provider entry in the models.dev response.
+type modelsDevProviderEntry struct {
+	Models map[string]modelsDevModel `json:"models"`
+}
+
+// modelsDevModel is a single model entry from models.dev. The feed no longer
+// emits a model `type` field (drop in the 2026 catalog — every entry is
+// type-less), so generative entries are identified by their token-limit block
+// instead of by type.
+type modelsDevModel struct {
+	Limit modelsDevLimit `json:"limit"`
+}
+
+// modelsDevLimit contains the model's token limits.
+type modelsDevLimit struct {
+	Context int `json:"context"`
+	Output  int `json:"output"`
+}
+
+// ModelLimitsSyncService fetches the latest per-model token limits from
+// models.dev and stores them in provider_supported_models.
+// A daily cron job drives this sync.
+type ModelLimitsSyncService struct {
+	repo   *Repository
+	sched  *scheduler.Scheduler
+	client *http.Client
+	url    string
+	log    *slog.Logger
+}
+
+// NewModelLimitsSyncService creates a ModelLimitsSyncService.
+// It registers a daily cron job via the provided scheduler and performs an
+// immediate sync at startup so that limit data is available from first run.
+func NewModelLimitsSyncService(repo *Repository, sched *scheduler.Scheduler, log *slog.Logger) *ModelLimitsSyncService {
+	s := &ModelLimitsSyncService{
+		repo:  repo,
+		sched: sched,
+		client: &http.Client{
+			Timeout: modelLimitsFetchTimeout,
+		},
+		url: modelLimitsFetchURL,
+		log: log.With(logger.Scope("provider.model_limits_sync")),
+	}
+
+	if err := sched.AddCronTask("provider:model_limits:sync", modelLimitsSyncSchedule, func(ctx context.Context) error {
+		return s.Sync(ctx)
+	}); err != nil {
+		log.Warn("failed to register model limits sync cron job", logger.Error(err))
+	}
+
+	return s
+}
+
+// Sync fetches the latest model token limits from models.dev and upserts them
+// into provider_supported_models. Falls back to static values if the fetch fails.
+func (s *ModelLimitsSyncService) Sync(ctx context.Context) error {
+	limits, err := s.fetchRemoteLimits(ctx)
+	if err != nil {
+		s.log.Warn("failed to fetch remote model limits, using static fallback",
+			logger.Error(err),
+		)
+		limits = staticModelLimits
+	} else if len(limits) == 0 {
+		s.log.Warn("remote model limits returned empty map, using static fallback")
+		limits = staticModelLimits
+	}
+
+	if err := s.repo.UpdateModelLimits(ctx, limits); err != nil {
+		return fmt.Errorf("failed to update model limits: %w", err)
+	}
+
+	s.log.Info("model limits synced", slog.Int("models", len(limits)))
+	return nil
+}
+
+// fetchRemoteLimits downloads models.dev/api.json and extracts generative model
+// token limits for all providers.
+func (s *ModelLimitsSyncService) fetchRemoteLimits(ctx context.Context) (map[string]modelLimits, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("unexpected status %d from models.dev", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, modelLimitsFetchMaxBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	var raw modelsDevResponse
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse models.dev JSON: %w", err)
+	}
+
+	return parseModelLimits(raw), nil
+}
+
+// parseModelLimits extracts per-model token limits from the models.dev API
+// response. The feed no longer carries a model `type` field, so a positive
+// output-token limit is the presence signal that an entry is generative:
+// entries without one (embedding vectors are not output tokens, and
+// fixture/minimal entries carry zeros) are skipped. Model IDs are
+// provider-agnostic (same model name → same limits across google and
+// google-vertex), so we deduplicate by model ID.
+func parseModelLimits(raw modelsDevResponse) map[string]modelLimits {
+	limits := make(map[string]modelLimits)
+	for _, providerEntry := range raw {
+		for modelID, m := range providerEntry.Models {
+			if modelID == "" || m.Limit.Output <= 0 {
+				continue
+			}
+			limits[modelID] = modelLimits{
+				MaxInputTokens:  m.Limit.Context,
+				MaxOutputTokens: m.Limit.Output,
+			}
+		}
+	}
+	return limits
+}

@@ -1,0 +1,1162 @@
+package main
+
+import (
+	"context"
+	"io"
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/alpine"
+	"github.com/emergent-company/go-daisy/components/behaviors"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	"github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+)
+
+// appShell is the full document: HTML shell (dark theme) + sidebar + topbar +
+// scrollable main content. main carries id="main-content" so the sidebar's
+// HTMX navigation swaps partials into it.
+//
+// The shell is rendered here (not via go-daisy's layout.PageFull) so the app
+// can load its own self-contained htmx v4 build (webui/static/js/htmx.min.js)
+// instead of go-daisy's bundled htmx 2.x, with v2-compat config applied right
+// after load. Everything else mirrors PageFull's document structure.
+templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool, agents []AgentDefinitionSummary, assistantAgent string, currentProject *ProjectRef, currentOrgName string, activeOrg *Org, projectGroups []projectGroup, orgs []Org, recentProjects []ProjectRef, showRecent bool, unreadNotifications int, user *currentUser, accounts []currentUser, content templ.Component, objectTypes map[string]objectTypeUI, sentryDSN string, sentryEnvironment string, sentryTracesSampleRate float64, sentryReplaySessionSampleRate float64, sentryReplayOnErrorSampleRate float64, feedbackOverlayURL string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html" data-asset-track="reload">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"/>
+			<meta name="htmx-config" content='{"implicitInheritance":true,"noSwap":[204,304]}'/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="theme-color" content="#171921"/>
+			<!-- iOS / Android standalone PWA: without these, "Add to Home Screen"
+		     opens in Safari (not standalone) and full-page navigations or
+		     target=_blank links surface a native "Done"/X context instead of
+		     staying in-app. -->
+			<meta name="apple-mobile-web-app-capable" content="yes"/>
+			<meta name="mobile-web-app-capable" content="yes"/>
+			<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+			<meta name="apple-mobile-web-app-title" content={ appBrand }/>
+			<link rel="manifest" href="/assets/manifest.webmanifest"/>
+			<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>
+			<link rel="icon" type="image/png" sizes="512x512" href="/assets/icon-512.png"/>
+			@appleSplashLinks()
+			<title>{ title }</title>
+			<meta name="sentry-dsn" content={ sentryDSN }/>
+			<meta name="sentry-environment" content={ sentryEnvironment }/>
+			<meta name="sentry-traces-sample-rate" content={ sentryTracesSampleRate }/>
+			<meta name="sentry-replay-session-sample-rate" content={ sentryReplaySessionSampleRate }/>
+			<meta name="sentry-replay-on-error-sample-rate" content={ sentryReplayOnErrorSampleRate }/>
+			<!-- go-daisy behaviour-init runtime: defines window.gdOnce/gdBehaviour/
+			     gdRescan before any component inline script runs (clipboard copy,
+			     spinners, sidebar, data-table, htmx after-settle rescan). -->
+			@behaviors.Tag()
+			if sentryDSN != "" {
+				<script src="https://browser.sentry-cdn.com/10.73.0/bundle.tracing.replay.feedback.min.js" crossorigin="anonymous"></script>
+				<script>
+			(function () {
+				var m = function (n) { var e = document.querySelector('meta[name="' + n + '"]'); return e ? e.content : ""; };
+				Sentry.init({
+					dsn: m("sentry-dsn"),
+					environment: m("sentry-environment"),
+					integrations: [
+						Sentry.browserTracingIntegration(),
+						Sentry.replayIntegration({ maskAllText: true, maskAllInputs: true, blockAllMedia: true })
+					],
+					tracesSampleRate: parseFloat(m("sentry-traces-sample-rate")),
+					replaysSessionSampleRate: parseFloat(m("sentry-replay-session-sample-rate")),
+					replaysOnErrorSampleRate: parseFloat(m("sentry-replay-on-error-sample-rate"))
+				});
+			})();
+			</script>
+			}
+			@foucBackgroundGuard()
+			<meta name="view-transition" content="same-origin"/>
+		</head>
+		<body class="bg-base-200 min-h-screen" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
+			<!-- Modal container -->
+			<div id="modal-container"></div>
+			<!-- Toast container -->
+			@ui.ToastQueueWithProps(ui.ToastQueueProps{Position: ui.ToastQueueBottomCenter, PauseOnHover: true, Countdown: true})
+			<!-- Alert modal: provider/model test results (filled + opened by app.js) -->
+			@components.AlertModal(nil)
+			@spotlightSearch(agents)
+			<div class="app-shell flex overflow-hidden">
+				<input
+					type="checkbox"
+					id="_layout-sidebar-toggle-trigger"
+					class="hidden"
+					aria-label="Toggle layout sidebar"
+				/>
+				<label
+					for="_layout-sidebar-toggle-trigger"
+					id="_layout-sidebar-backdrop"
+				></label>
+				if groups != nil {
+					@appSidebar(groups, providersMissing)
+				}
+				<div class="flex min-w-0 grow flex-col overflow-hidden">
+					<div id="_layout-topbar-wrap" class="bg-base-100 z-10 shrink-0">
+						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
+							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
+							if assistantAgent != "" {
+								@ui.Button(ui.ButtonProps{
+									Type:      ui.ButtonTypeButton,
+									Variant:   ui.ButtonGhost,
+									Size:      ui.ButtonSM,
+									Icon:      "lucide--bot",
+									AriaLabel: "Open assistant panel",
+									Attrs: templ.Attributes{
+										"id":            "sidepanel-toggle",
+										"data-action":   "toggle-sidepanel",
+										"data-testid":   "sidepanel-toggle",
+										"aria-expanded": "false",
+									},
+								}) {
+									<span class="hidden sm:inline">Assistant</span>
+								}
+							}
+							@notificationsBell(unreadNotifications)
+							@userAccountMenu(user, accounts)
+						}
+					</div>
+					<main
+						id="main-content"
+						data-testid={ pageTestID(title) }
+						class="grow overflow-auto"
+						hx-boost="true"
+						hx-target="#main-content"
+						hx-swap="innerHTML"
+						hx-history-elt="true"
+					>
+						@content
+					</main>
+				</div>
+				if assistantAgent != "" {
+					@sidePanel(agents, assistantAgent, sidePanelScope{
+						OrgID:     currentOrgID(currentProject, activeOrg),
+						ProjectID: currentProjectID(currentProject),
+						UserID:    currentUserID(user),
+					})
+				}
+				<!-- Global read-only object preview, opened from inline chat
+				     references. Sibling of sidePanel and outside #main-content so
+				     HTMX navigation never destroys it. -->
+				@objectPreviewDrawer()
+			</div>
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
+			<!-- Compiled type name → {label,icon,color}. The chat client reads this
+			     to render human type labels on citation sources (with a humanized-
+			     name fallback when a type is absent). Server-derived schema metadata,
+			     HTML-escaped by objectTypeMapJSON so it cannot break out of <script>. -->
+			@objectTypeMapScript(objectTypes)
+			<!-- htmx v4, self-hosted (embedded via webui/static) -->
+			<script src={ templ.SafeURL(webui.AssetPath("/js/htmx.min.js")) }></script>
+			<script>
+			// Restore htmx 2.x behavior on v4 (see htmx v4 migration guide):
+			//  - attribute inheritance was made explicit (:inherited suffix)
+			//  - 4xx/5xx responses now swap by default
+			//  - defaultTimeout became 60000 (was 0)
+			// Guarded: if the htmx asset fails to load, the inline script would
+			// otherwise throw "ReferenceError: htmx is not defined" (MEMORY-UI-1R).
+			if (window.htmx) {
+				htmx.config.implicitInheritance = true;
+				htmx.config.noSwap = [204, 304, "4xx", "5xx"];
+				htmx.config.defaultTimeout = 0;
+			}
+		</script>
+			<script>
+			// aria-busy while an htmx request is in flight (v4 event names)
+			(function() {
+			document.addEventListener('htmx:before:request', function() {
+				document.documentElement.setAttribute('aria-busy', 'true');
+			});
+			document.addEventListener('htmx:after:settle', function() {
+				document.documentElement.removeAttribute('aria-busy');
+			});
+		})();
+		</script>
+		<!-- htmx v4 SSE extension (vendored from htmx 4.0.1). Must load after htmx
+		     (it calls htmx.registerExtension) and before any page element that
+		     uses hx-sse:connect is processed. Only the board subscribes today,
+		     via an anchor in board.templ. -->
+		<script src={ templ.SafeURL(webui.AssetPath("/js/hx-sse.js")) }></script>
+		<!-- htmx/Alpine compatibility extension. Must load AFTER htmx (it calls
+		     htmx.registerExtension) and BEFORE deferred Alpine (@alpine.Tag()
+		     emits <script defer src="/static/js/alpine.js">): the extension defers
+		     Alpine's MutationObserver for the duration of an htmx swap, so Alpine
+		     initialises swapped subtrees against the final post-settle DOM instead
+		     of the pre-restore DOM. Without it, htmx v4's same-id attribute-restore
+		     strips the inline `display:none` that x-show sets, un-hiding controls
+		     after a boosted swap (issue #1267). -->
+		<script src={ templ.SafeURL(webui.AssetPath("/js/hx-alpine-compat.js")) }></script>
+		@alpine.Tag()
+		<script src={ templ.SafeURL(webui.AssetPath("/js/app.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/agent-settings.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-transport.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-components.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-stream.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat-host.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/chat.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/inbox.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/sidepanel.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/object-preview.js")) }></script>
+			<script src={ templ.SafeURL(webui.AssetPath("/js/documents-chunks.js")) }></script>
+			if feedbackOverlayURL != "" {
+				<script src={ templ.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+			}
+		</body>
+	</html>
+}
+
+// memoryLogo is the brand mark used in the sidebar header.
+// foucBackgroundGuard paints the root dark before any stylesheet loads, so iOS
+// Safari (including Home-Screen PWAs) does not paint the page white during
+// navigation or bfcache restores. The colour duplicates --color-base-200
+// because a pre-paint guard cannot rely on the stylesheet that defines it;
+// app.css's "Atmosphere" block lists this as a static mirror to keep in sync.
+// This is the single source of the guard — do not inline it again.
+templ foucBackgroundGuard() {
+	<style>html{color-scheme:dark;background-color:#0E1017}</style>
+}
+
+templ memoryLogo() {
+	<div class="flex items-center gap-2.5 select-none">
+		<div class="memory-monogram grid place-items-center rounded-box font-bold">M</div>
+		<div class="leading-tight">
+			<span class="block text-[15px] font-semibold tracking-tight">Memory</span>
+		</div>
+	</div>
+}
+
+// pageError is the shared fetch-failure state.
+templ pageError(heading string, err error) {
+	<div class="mb-4">
+		<h1 class="text-2xl font-semibold tracking-tight">{ heading }</h1>
+	</div>
+	@ui.Alert(ui.AlertProps{
+		Type:    ui.AlertError,
+		Style:   ui.AlertStyleOutline,
+		Icon:    "lucide--alert-triangle",
+		Message: err.Error(),
+	})
+}
+
+// RootUnavailablePage renders the explicit "backend unavailable" state for the
+// landing route (GET /) when the org-list fetch fails. It deliberately never
+// renders the empty/onboarding state: an authenticated zero-org response is the
+// only trigger for the create flow, so a backend failure cannot masquerade as
+// data loss.
+templ RootUnavailablePage(err error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Home", "Memory", "") {}
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Your data is safe — Memory is temporarily unavailable and will retry automatically.
+		}
+		@pageError("Service temporarily unavailable", err)
+	}
+}
+
+// --- script blocks exposed to the page (call into window.MemoryApp) ---
+
+script openAgentForm(id string) {
+	window.MemoryApp && window.MemoryApp.openAgentForm(id)
+}
+
+script openDeleteConfirm(id string, name string) {
+	window.MemoryApp && window.MemoryApp.openDeleteConfirm(id, name)
+}
+
+// --- Agents ---
+// defaultModel is the project's pinned default generative model ("" when none
+// is pinned) — it names the create/edit dialog's "Auto" option.
+templ AgentsPage(agents []AgentDefinitionSummary, models []Model, defaultModel string, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@agentsHeader(len(agents), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Agents unavailable", loadErr)
+		} else if len(agents) == 0 {
+			@agentsEmpty()
+		} else {
+			<div class="hidden md:block">
+				@agentsTable(agents)
+			</div>
+			<div class="md:hidden">
+				@agentCardGrid(agents)
+			</div>
+		}
+		@agentFormDialog(agents, models, defaultModel)
+		@deleteConfirmDialog()
+	}
+}
+
+templ agentsHeader(count int, ok bool) {
+	@pageHeader("Control plane", "Agents", "The personas Memory can become — pick a model, set the tone, grant tools.") {
+		<div class="flex items-center gap-2">
+			if ok {
+				@countBadge(count, "agent", "lucide--bot")
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--plus",
+				OnClick: openAgentForm(""),
+			}) {
+				New agent
+			}
+		</div>
+	}
+}
+
+// agentsEmpty is the first-run full-surface empty state for the Agents page.
+// It replaces the whole list; py-12 keeps the panel present under the header
+// (compact scale of ui.EmptyState).
+templ agentsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--bot",
+		Title:       "No agents yet",
+		Description: "Create the first agent — a name, a model, a purpose. Memory will be ready to chat in seconds.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--plus",
+			OnClick: openAgentForm(""),
+		}) {
+			New agent
+		}
+	}
+}
+
+// StatRowOpts tunes a statRow layout.
+type StatRowOpts struct {
+	// Margin is the outer spacing utility class (for example "mt-6").
+	Margin string
+	// ColsClass optionally extends the responsive column count beyond the
+	// default two columns (for example "lg:grid-cols-3"), so a short row of
+	// stats can sit on one line at desktop widths. Empty keeps the default.
+	ColsClass string
+}
+
+// statRow lays out go-daisy StatCards in the app's responsive grid: one column
+// on mobile, two from sm up, and any extra columns from ColsClass (for example
+// lg:grid-cols-3) so all cards share one line once the viewport is wide enough.
+// Class order is grid → cols → gap → sm:cols → extra → margin, mirroring
+// MetaGrid so the column/gap rhythm does not drift per page.
+templ statRow(cards []ui.StatCardProps, opts StatRowOpts) {
+	{{ class := "grid grid-cols-1 gap-3 sm:grid-cols-2"
+	if opts.ColsClass != "" {
+		class += " " + opts.ColsClass
+	}
+	if opts.Margin != "" {
+		class += " " + opts.Margin
+	} }}
+	<div class={ class }>
+		for _, c := range cards {
+			@ui.StatCard(c)
+		}
+	</div>
+}
+
+// agentCardGrid is the mobile list (below md) of agents: one short card per
+// agent (name + bot icon + chat affordance), single-column on mobile and
+// denser from sm upward. From md up agentsTable takes over. Cards carry the
+// same entrance stagger (memory-rise) the table rows use.
+templ agentCardGrid(agents []AgentDefinitionSummary) {
+	<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+		for _, a := range agents {
+			@agentCard(a)
+		}
+	</div>
+}
+
+// agentCard is one agent in the grid. The whole card is one target: a
+// data-href on the shell opens the agent's dashboard (/agents/<id>) via the
+// app.js click delegate (same mechanism as the table rows elsewhere). The
+// right-aligned chat icon is the one exception — it is a real <a> to
+// /chat?agent=<id>, and the delegate ignores clicks inside anchors so the
+// native link wins.
+templ agentCard(a AgentDefinitionSummary) {
+	@components.PanelCard(
+		"memory-rise cursor-pointer group transition-all duration-200 hover:-translate-y-0.5 hover:border-base-content/25 hover:shadow-md",
+		templ.Attributes{"data-href": "/agents/" + url.PathEscape(a.ID)},
+		"memory-density-compact",
+	) {
+		<div class="flex items-center gap-3">
+			@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
+			<p class="min-w-0 grow truncate text-base font-medium transition-colors duration-200 group-hover:text-primary" title={ a.Name }>{ a.Name }</p>
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       "/chat?agent=" + url.QueryEscape(a.ID),
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				Shape:      ui.ButtonShapeCircle,
+				Icon:       "lucide--messages-square",
+				AriaLabel:  "Chat with " + a.Name,
+				ExtraClass: "shrink-0",
+			})
+		</div>
+	}
+}
+
+// agentsTable is the desktop list (md and up) of agents: the compact daisyUI
+// table used by the other resource pages. It is hidden below md, where
+// agentCardGrid takes over.
+templ agentsTable(agents []AgentDefinitionSummary) {
+	@components.TableCard(nil) {
+		@table.TableWithProps(table.TableProps{Bordered: false}) {
+			@table.TableHead() {
+				@table.TableHeadRow() {
+					@table.TableHeadCell("Agent")
+					@table.TableHeadCell("Model")
+					@table.TableHeadCell("Tools")
+					@table.TableHeadCell("Visibility")
+					@table.TableHeadCell("Updated")
+					@table.TableHeadCell("")
+				}
+			}
+			@table.TableBody() {
+				for _, a := range agents {
+					@agentRow(a)
+				}
+			}
+		}
+	}
+}
+
+// agentRow is one desktop table row. The agent cell is the clickable target
+// (an <a> to the agent dashboard); the row still carries the memory-rise
+// entrance stagger. Edit and delete live in the trailing actions cell.
+templ agentRow(a AgentDefinitionSummary) {
+	@table.TableRow(a.ID, true, templ.Attributes{"class": "memory-rise"}) {
+		@table.TableCell("", nil) {
+			<a class="flex items-center gap-3 hover:opacity-80" href={ templ.URL("/agents/" + url.PathEscape(a.ID)) }>
+				@agentIconTile(agentIcon(a.UIConfig), agentColor(a.UIConfig))
+				<div class="min-w-0">
+					<p class="truncate text-sm font-medium">{ a.Name }</p>
+					@monoMeta(shortID(a.ID), "text-muted-faint")
+				</div>
+			</a>
+		}
+		@table.TableCell("", nil) {
+			if a.EffectiveModel != "" {
+				<span class="font-mono text-[11px]">{ a.EffectiveModel }</span>
+			} else {
+				@components.EmptyDash()
+			}
+		}
+		@table.TableCell("", nil) {
+			if a.ToolCount > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(a.ToolCount) + " tool" + plural(a.ToolCount),
+					Variant: ui.BadgeGhost,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--wrench",
+				})
+			} else {
+				@components.EmptyDash()
+			}
+		}
+		@table.TableCell("", nil) {
+			@ui.Badge(ui.BadgeProps{
+				Label:   visibilityLabel(a.Visibility),
+				Variant: visibilityIntent(a.Visibility),
+				Size:    ui.BadgeSizeXS,
+				Dot:     true,
+			})
+		}
+		@table.TableCell("", nil) {
+			<span class="text-muted text-xs whitespace-nowrap">{ relTime(a.UpdatedAt) }</span>
+		}
+		@table.TableCell("text-right", nil) {
+			<div class="flex justify-end gap-1">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeLink,
+					Href:      "/agents/" + url.PathEscape(a.ID) + "/settings",
+					Variant:   ui.ButtonGhost,
+					Size:      ui.ButtonSM,
+					Shape:     ui.ButtonShapeSquare,
+					Icon:      "lucide--pencil",
+					AriaLabel: "Edit " + a.Name,
+				})
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeButton,
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					Shape:      ui.ButtonShapeSquare,
+					Icon:       "lucide--trash-2",
+					ExtraClass: "text-error hover:text-error",
+					AriaLabel:  "Delete " + a.Name,
+					OnClick:    openDeleteConfirm(a.ID, a.Name),
+				})
+			</div>
+		}
+	}
+}
+
+// agentFormDialog is the create/edit form (vanilla <dialog>, driven by app.js).
+// The model field is a catalog dropdown (optgroup per provider, full
+// provider/model option labels); the value submitted is the prefixed
+// provider/model name (e.g. openai/gpt-4o), matching what the memory backend
+// stores. Tools and skills are deliberately NOT configured here (#1305): both
+// keep the server defaults on create (empty whitelists) and are configured
+// afterwards on the agent's settings subpages (/agents/:id/settings/tools,
+// /agents/:id/settings/skills). The box is max-w-2xl (#1510) so the icon/color
+// row, model, and delegation fields breathe on wide screens. The delegation
+// section lists every agent by name so the owner can pick which ones this agent
+// may hand off to. defaultModel names the model the dialog's "Auto" option
+// resolves to (project pinned default; "" when none is pinned).
+templ agentFormDialog(agents []AgentDefinitionSummary, models []Model, defaultModel string) {
+	@ui.Dialog(ui.DialogProps{ID: "agent-form-modal", BoxClass: "w-full max-w-2xl"}) {
+		<div class="mb-5 flex items-start justify-between gap-4">
+			<div>
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "agent-form-title"}) { New agent }
+				@ui.EmptyNote(ui.EmptyNoteProps{ID: "agent-form-subtitle", Class: "mt-0.5"}) {
+					Define a persona and a brain.
+				}
+			</div>
+			@ui.Button(ui.ButtonProps{
+				Type:      ui.ButtonTypeButton,
+				Variant:   ui.ButtonGhost,
+				Size:      ui.ButtonSM,
+				Shape:     ui.ButtonShapeCircle,
+				Icon:      "lucide--x",
+				AriaLabel: "Close",
+				Attrs:     templ.Attributes{"data-action": "close-agent-form"},
+			})
+		</div>
+		<form id="agent-form" class="flex flex-col gap-4">
+			<input type="hidden" id="agent-id" name="id"/>
+			@form.FormControl("agent-name", "Name", form.LabelAbove, "", "", nil) {
+				<input id="agent-name" name="name" type="text" required placeholder="e.g. Support Butler" class="input w-full"/>
+			}
+			@form.FormControl("agent-prompt", "System prompt", form.LabelAbove, "Sets tone, constraints, and how the agent uses memory.", "", nil) {
+				<textarea id="agent-prompt" name="systemPrompt" rows="5" placeholder="You are Memory, the household agent. You answer concisely, with wit and precision…" class="textarea w-full resize-none"></textarea>
+			}
+			// This icon/color pair is intentionally NOT extracted into a shared
+			// AppearanceFields component: the three sites (agent create dialog
+			// here, agent settings, object type) diverge on the grid gap, the
+			// per-column wrapper divs, and the help copy, so one component would
+			// branch on its caller (web-ui-component-conventions).
+			<div class="grid gap-4 sm:grid-cols-2">
+				@form.FormControl("agent-icon", "Icon", form.LabelAbove, "Pick a supported Lucide icon. The default falls back to the bot.", "", nil) {
+					@ui.IconPicker(ui.IconPickerProps{
+						ID:           "agent-icon",
+						Name:         "icon",
+						Options:      supportedIconPickerOptions(),
+						DefaultValue: "",
+						DefaultLabel: "Default icon",
+						DefaultClass: "lucide--bot",
+					})
+				}
+				@form.FormControl("agent-color", "Color", form.LabelAbove, "Any CSS color; tints the agent tile and chip (e.g. #4F46E5).", "", nil) {
+					@ui.ColorPicker(ui.ColorPickerProps{
+						ID:         "agent-color",
+						Name:       "color",
+						AllowEmpty: true,
+						Presets:    schemaColorPresets,
+					})
+				}
+			</div>
+			@modelSelect("agent-model", models, nil, defaultModel, templ.Attributes{"data-testid": "model-select"})
+			@modelParamsGrid("agent", nil)
+			@form.FormControl("agent-delegation", "Delegation", form.LabelAbove, "If on, this agent can hand off to the agents you select.", "", nil) {
+				<label class="label flex w-full justify-between gap-3">
+					<span class="text-sm font-medium">Can delegate to other agents</span>
+					<input id="agent-delegation-enabled" name="delegationEnabled" type="checkbox" class="checkbox"/>
+				</label>
+				@checkboxPicker(checkboxPickerProps{
+					Name:          "delegation-target",
+					Wrapped:       true,
+					WrapID:        "agent-delegation-targets",
+					EmptyID:       "agent-delegation-empty",
+					EmptyContent:  delegateEmptyContent(),
+					LabelClass:    "gap-2 py-1",
+					CheckboxClass: "checkbox",
+					TitleClass:    "text-muted-bright text-sm",
+					Items:         delegatePickerItems(agents, "", nil),
+				})
+			}
+			@form.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-action": "close-agent-form"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"id": "agent-form-submit"},
+				}) {
+					Create agent
+				}
+			}
+		</form>
+	}
+}
+
+// deleteAgentDescription is the delete-confirm detail paragraph for agents
+// (the name span is filled by app.js's openDeleteConfirm).
+templ deleteAgentDescription() {
+	@components.DeleteWarning("", "and its definition. Irreversible.", components.DeleteWarningProps{SubjectID: "delete-agent-name"})
+}
+
+// deleteConfirmDialog confirms agent deletion before the DELETE call.
+templ deleteConfirmDialog() {
+	@ui.ConfirmDialog(ui.ConfirmDialogProps{ID: "delete-confirm-modal", Noun: "agent"}, deleteAgentDescription()) {
+		@form.FormActions("", "") {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-action": "close-delete-confirm"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonError,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"id": "delete-agent-go"},
+			}) {
+				Delete
+			}
+		}
+	}
+}
+
+// --- shared page chrome (extracted from repeated inline markup) ---
+
+// pageHeader renders the standard list-page header: kicker eyebrow + title +
+// subtitle on the left, right-side actions/badges via children.
+//
+// It is a thin delegate over nav.PageHeading (Flat + Dashboard + no-top-margin
+// variant), which reproduces this header's markup byte-for-byte. It is a plain
+// Go function (not a templ component) so its children forward into PageHeading's
+// Actions slot: templ components clear their children context before the body
+// runs, so a hand-written ComponentFunc reads GetChildren(ctx) directly.
+func pageHeader(kicker, title, subtitle string) templ.Component {
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
+		}
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:           title,
+			Kicker:          kicker,
+			Subtitle:        subtitle,
+			Actions:         children,
+			Margin:          "mb-6",
+			Dashboard:       true,
+			SubtitleFull:    true,
+			HideBreadcrumbs: true,
+			NoTopMargin:     true,
+			Flat:            true,
+		}).Render(ctx, w)
+	})
+}
+
+// detailHeaderOpts configures detailHeader variants. All fields optional.
+type detailHeaderOpts struct {
+	// Margin is the outer wrapper margin class. Default "mb-4".
+	Margin string
+	// Dashboard switches to the dashboard variant: baseline-aligned right-side
+	// actions (items-end), no min-w-0 on the title column, and the larger
+	// lg:text-3xl title.
+	Dashboard bool
+	// Bare drops the flex title/actions row entirely — title (+subtitle) only,
+	// no right-side children. For headers without any actions.
+	Bare bool
+	// SubtitleFull renders the subtitle at full width (no max-w-2xl).
+	SubtitleFull bool
+	// TitleLeading renders inline immediately BEFORE the h1, on the same flex
+	// line — e.g. an agent identity icon tile. nav.PageHeading has no slot for
+	// this (its Leading sits above the breadcrumbs, its TitleAdornment after the
+	// h1), so a non-nil TitleLeading switches detailHeader to a local render of
+	// the same markup. Nil (the default) keeps the header byte-identical for
+	// every existing caller. Ignored when Bare, like every other slot.
+	TitleLeading templ.Component
+	// TitleAdornment renders inline next to the h1 (same flex line), after it,
+	// e.g. a version badge. Nil (the default) keeps the h1 markup byte-identical
+	// for every existing caller.
+	TitleAdornment templ.Component
+}
+
+// detailHeader renders a detail-page header: breadcrumb trail, optional kicker
+// eyebrow, h1 (+ optional subtitle), and right-side badges/actions via children.
+//
+// It is a plain Go function (not a templ component) because its children must be
+// forwarded into the header's Actions slot, a templ.Component prop. templ
+// components clear their children context before the body runs, so `{ children... }`
+// cannot be converted into a Component value there; a hand-written ComponentFunc
+// reads GetChildren(ctx) directly. It delegates to nav.PageHeading by default;
+// a non-nil TitleLeading (an inline-before-h1 icon tile) routes through
+// detailHeaderWithTitleLeading, which renders the same markup locally because
+// PageHeading cannot place a component before its h1.
+func detailHeader(crumbs []nav.BreadcrumbItem, kicker, title, subtitle string, opts ...detailHeaderOpts) templ.Component {
+	o := detailHeaderOpts{}
+	if len(opts) > 0 {
+		o = opts[0]
+	}
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		children := templ.GetChildren(ctx)
+		if children == nil {
+			children = templ.NopComponent
+		}
+		// TitleLeading is ignored when Bare, matching every other slot (the
+		// leading tile only appears on the dashboard header, never bare).
+		if o.TitleLeading != nil && !o.Bare {
+			margin := o.Margin
+			if margin == "" {
+				margin = "mb-4"
+			}
+			return detailHeaderWithTitleLeading(crumbs, kicker, title, subtitle, margin, o.SubtitleFull, o.Dashboard, o.TitleLeading, o.TitleAdornment, children).Render(ctx, w)
+		}
+		return nav.PageHeading(nav.PageHeadingProps{
+			Title:          title,
+			Breadcrumbs:    crumbs,
+			Kicker:         kicker,
+			Subtitle:       subtitle,
+			TitleAdornment: o.TitleAdornment,
+			Actions:        children,
+			Margin:         o.Margin,
+			Dashboard:      o.Dashboard,
+			Bare:           o.Bare,
+			SubtitleFull:   o.SubtitleFull,
+		}).Render(ctx, w)
+	})
+}
+
+// detailHeaderWithTitleLeading mirrors nav.PageHeading's markup (both the
+// Dashboard and default variants) but renders titleLeading inline on the title's
+// flex line, immediately before the h1. It exists only for detailHeader's
+// TitleLeading path; every other header stays on PageHeading so its markup is
+// shared. subtitleFull/dashboard/kicker replicate PageHeading's rules.
+templ detailHeaderWithTitleLeading(crumbs []nav.BreadcrumbItem, kicker, title, subtitle, margin string, subtitleFull, dashboard bool, titleLeading, titleAdornment, actions templ.Component) {
+	<div class={ margin }>
+		@nav.Breadcrumbs(crumbs, nav.BreadcrumbsDividerDefault)
+		if dashboard {
+			<div class="mt-2 flex flex-wrap items-end justify-between gap-4">
+				<div>
+					<div class="flex flex-wrap items-center gap-2">
+						@titleLeading
+						<h1 class="text-2xl font-bold tracking-tight lg:text-3xl">{ title }</h1>
+						if titleAdornment != nil {
+							@titleAdornment
+						}
+					</div>
+					if subtitle != "" {
+						<p class={ "text-muted mt-1", templ.KV("max-w-2xl", !subtitleFull), "text-sm" }>{ subtitle }</p>
+					}
+				</div>
+				if actions != nil {
+					@actions
+				}
+			</div>
+		} else {
+			<div class="mt-2 flex flex-wrap items-center justify-between gap-4">
+				<div class="min-w-0">
+					if kicker != "" {
+						@ui.Eyebrow(kicker, ui.EyebrowProps{Size: "text-[11px]", Margin: "mb-1"})
+					}
+					<div class="flex flex-wrap items-center gap-2">
+						@titleLeading
+						<h1 class="text-2xl font-bold tracking-tight">{ title }</h1>
+						if titleAdornment != nil {
+							@titleAdornment
+						}
+					</div>
+					if subtitle != "" {
+						<p class={ "text-muted mt-1", templ.KV("max-w-2xl", !subtitleFull), "text-sm" }>{ subtitle }</p>
+					}
+				</div>
+				if actions != nil {
+					@actions
+				}
+			</div>
+		}
+	</div>
+}
+
+// crumbsActive marks the trailing crumb as the current page (active styling)
+// and drops its href. The current page is never a link: nav.Crumbs gives the
+// trailing item an href only when callers pass the page's own URL, and leaving
+// it clickable while styled as current renders an "active link" that no other
+// trail has. nav.Crumbs builds the trail without setting Active, so detail
+// headers pass their result through this helper.
+func crumbsActive(crumbs []nav.BreadcrumbItem) []nav.BreadcrumbItem {
+	if n := len(crumbs); n > 0 {
+		crumbs[n-1].Active = true
+		crumbs[n-1].Href = ""
+	}
+	return crumbs
+}
+
+// chipRow renders an eyebrow label above a flex-wrap row of chips/badges.
+// margin is the eyebrow margin class; wrapped adds an outer <div> so the group
+// renders as a single block (e.g. one grid cell in the migration plan).
+templ chipRow(label, margin string, wrapped bool) {
+	if wrapped {
+		<div>
+			@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[10px]", Margin: margin})
+			<div class="flex flex-wrap gap-1.5">
+				{ children... }
+			</div>
+		</div>
+	} else {
+		@ui.Eyebrow(label, ui.EyebrowProps{Size: "text-[10px]", Margin: margin})
+		<div class="flex flex-wrap gap-1.5">
+			{ children... }
+		</div>
+	}
+}
+
+// promptBlock renders the "System prompt" eyebrow above a scrollable
+// pre-formatted text block.
+templ promptBlock(text string) {
+	@ui.Eyebrow("System prompt", ui.EyebrowProps{Size: "text-[10px]", Margin: "mt-4 mb-2"})
+	<pre class="max-h-80 overflow-auto whitespace-pre-wrap rounded-box border border-base-content/10 bg-base-200/40 p-3 font-mono text-xs leading-relaxed">{ text }</pre>
+}
+
+// countBadge renders the "N noun(s)" ghost SM badge.
+templ countBadge(n int, noun, icon string) {
+	@countBadgeLabel(strconv.Itoa(n)+" "+noun+plural(n), icon)
+}
+
+// countBadgeLabel renders a ghost SM badge with a pre-built count label.
+templ countBadgeLabel(label, icon string) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   label,
+		Variant: ui.BadgeGhost,
+		Size:    ui.BadgeSizeSM,
+		Icon:    icon,
+	})
+}
+
+// cardListProps configures the optional aspects of cardList (mirrors
+// ui.SectionProps).
+type cardListProps struct {
+	// Margin is the section wrapper's margin class, e.g. "mt-6" or "mb-8".
+	// In the wrapperless (title-empty) branch it applies to the card element.
+	Margin string
+	// Empty switches to the section's empty state (still honoured when
+	// wrapperless).
+	Empty      bool
+	EmptyIcon  string
+	EmptyTitle string
+	EmptyDesc  string
+}
+
+// cardList renders a bordered card with a divide-y row list via ui.Section: the
+// titled branch is a normal Section, the title-empty branch is Section with
+// Wrapperless (Section always emitted a <section> wrapper before Wrapperless,
+// which the bare variant never had — Wrapperless drops it to preserve output).
+templ cardList(title string, props cardListProps) {
+	@ui.Section(title, ui.SectionProps{
+		Margin:      props.Margin,
+		CardClass:   "overflow-hidden",
+		BodyClass:   "memory-density-flush",
+		Empty:       props.Empty,
+		EmptyIcon:   props.EmptyIcon,
+		EmptyTitle:  props.EmptyTitle,
+		EmptyDesc:   props.EmptyDesc,
+		Rows:        true,
+		Wrapperless: title == "",
+	}) {
+		{ children... }
+	}
+}
+
+// modalBoxAttrs returns the optional id for an element ("" omits it). Shared by
+// checkboxPicker's wrapped variant, which sets an optional wrapper id.
+func modalBoxAttrs(boxID string) templ.Attributes {
+	if boxID == "" {
+		return nil
+	}
+	return templ.Attributes{"id": boxID}
+}
+
+// checkboxPickerItem is one checkbox option in a checkboxPicker list.
+type checkboxPickerItem struct {
+	Value   string
+	Title   string
+	Desc    string
+	Checked bool
+}
+
+// checkboxPickerProps configures a checkboxPicker list: a SoftBox of checkbox
+// rows (title + optional description) with a visible empty note and, when
+// EmptyID is set, a hidden duplicate note after the list (modal behavior).
+type checkboxPickerProps struct {
+	Name          string          // input name attribute
+	Wrapped       bool            // wrap the list in an outer <div class="mt-2">
+	WrapID        string          // outer wrapper div id (modal dialog)
+	EmptyID       string          // empty-note id ("" = plain visible note only)
+	EmptyContent  templ.Component // empty-note content (visible + hidden)
+	LabelClass    string          // label classes after "label flex"
+	CheckboxClass string          // checkbox class
+	TitleClass    string          // title span class
+	DescClass     string          // description span class ("" = title only)
+	WrapTitle     bool            // wrap title(+desc) in a min-w-0 span
+	Items         []checkboxPickerItem
+}
+
+// checkboxPicker renders the shared checkbox option list used by the agent
+// skill and delegation-target pickers.
+templ checkboxPicker(p checkboxPickerProps) {
+	if p.Wrapped {
+		<div { modalBoxAttrs(p.WrapID)... } class="mt-2">
+			@checkboxPickerBody(p)
+		</div>
+	} else {
+		@checkboxPickerBody(p)
+	}
+}
+
+// checkboxPickerBody renders the checkbox option list. WrapTitle rows wrap the
+// title (and optional description) in a `min-w-0 whitespace-normal` span: the
+// whitespace reset is required because daisyUI's `.label` sets
+// `white-space: nowrap`, which otherwise inherits here and lets a long
+// description render on a single unbreakable line that overflows the SoftBox
+// (issue #1741).
+templ checkboxPickerBody(p checkboxPickerProps) {
+	if len(p.Items) == 0 {
+		@pickerEmptyContent(p.EmptyID, p.EmptyContent)
+	} else {
+		@ui.SoftBox(ui.SoftBoxProps{Class: "flex flex-col"}) {
+			for _, it := range p.Items {
+				<label class={ "label flex " + p.LabelClass }>
+					<input
+						name={ p.Name }
+						type="checkbox"
+						value={ it.Value }
+						if it.Checked {
+							checked
+						}
+						class={ p.CheckboxClass }
+					/>
+					if p.WrapTitle {
+						<span class="min-w-0 whitespace-normal">
+							<span class={ p.TitleClass }>{ it.Title }</span>
+							if it.Desc != "" {
+								<span class={ p.DescClass }>{ it.Desc }</span>
+							}
+						</span>
+					} else {
+						<span class={ p.TitleClass }>{ it.Title }</span>
+					}
+				</label>
+			}
+			@pickerHiddenNote(p.EmptyID, p.EmptyContent)
+		}
+	}
+}
+
+// pickerEmptyContent is the visible "no items yet" note (carries emptyID when set,
+// as in the agent form dialog).
+templ pickerEmptyContent(emptyID string, content templ.Component) {
+	@ui.EmptyNote(ui.EmptyNoteProps{ID: emptyID, Tone: ui.EmptyNoteToneQuiet}) {
+		@content
+	}
+}
+
+// pickerHiddenNote is the hidden duplicate empty note rendered after the list
+// in the modal dialog (toggled by app.js).
+templ pickerHiddenNote(emptyID string, content templ.Component) {
+	if emptyID != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{ID: emptyID, Tone: ui.EmptyNoteToneQuiet, Hidden: true}) {
+			@content
+		}
+	}
+}
+
+// skillEmptyContent is the skill picker's empty-note content (links to /skills).
+templ skillEmptyContent() {
+	No skills yet — <a class="text-primary font-medium hover:underline" href="/skills">create one on the Skills page</a>.
+}
+
+// delegateEmptyContent is the delegation picker's empty-note content.
+templ delegateEmptyContent() {
+	No other agents to delegate to.
+}
+
+// objectTypeEmptyContent is the graph object-type picker's empty-note content.
+templ objectTypeEmptyContent() {
+	No object types in this project yet.
+}
+
+// relationshipTypeEmptyContent is the graph relationship-type picker's empty-note
+// content.
+templ relationshipTypeEmptyContent() {
+	No relationship types in this project yet.
+}
+
+// skillPickerItems builds checkboxPicker items from a skill list.
+func skillPickerItems(skills []Skill, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(skills))
+	for _, sk := range skills {
+		items = append(items, checkboxPickerItem{Value: sk.Name, Title: sk.Name, Desc: sk.Description, Checked: selected != nil && selected(sk.Name)})
+	}
+	return items
+}
+
+// compiledTypePickerItems builds checkboxPicker items from a project's compiled
+// object or relationship types. The type label (falling back to the name) is
+// the title, the type description the optional sub-line.
+func compiledTypePickerItems(types []CompiledType, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(types))
+	for _, ct := range types {
+		title := ct.Label
+		if title == "" {
+			title = ct.Name
+		}
+		items = append(items, checkboxPickerItem{Value: ct.Name, Title: title, Desc: ct.Description, Checked: selected != nil && selected(ct.Name)})
+	}
+	return items
+}
+
+// delegatePickerItems builds checkboxPicker items from an agent list, skipping
+// exclude (typically the agent being edited).
+func delegatePickerItems(agents []AgentDefinitionSummary, exclude string, selected func(string) bool) []checkboxPickerItem {
+	items := make([]checkboxPickerItem, 0, len(agents))
+	for _, a := range agents {
+		if a.Name == exclude {
+			continue
+		}
+		items = append(items, checkboxPickerItem{Value: a.Name, Title: a.Name, Checked: selected != nil && selected(a.Name)})
+	}
+	return items
+}
+
+// modelCurrentOption renders the synthetic "(current)" option when the
+// agent's stored model is not in the catalog (so it stays selectable).
+templ modelCurrentOption(current *ModelConfig, models []Model) {
+	if current != nil && current.Name != "" && !modelInCatalog(models, current.Name) {
+		<option value={ current.Name } selected>{ current.Name } (current)</option>
+	}
+}
+
+// modelSelect renders the model catalog dropdown (optgroup per provider, with
+// the "Auto — default model" option). Each catalog option's value and label is
+// the prefixed provider/model reference (#1441), so the closed native select
+// keeps the provider visible on the selected option; current is the agent's
+// stored model — its option renders selected, plus a "(current)" fallback when
+// it is not in the catalog (pass nil for a fresh form). defaultName is the
+// model the Auto option resolves to (the project's pinned default, or the
+// agent's EffectiveModel); when non-empty the option is labelled
+// "Auto — <defaultName> (default)" so the picker names what auto means,
+// mirroring the dashboard's "name (default)" treatment. It keeps value=""
+// either way: submitting empty still means "no explicit model / auto".
+templ modelSelect(id string, models []Model, current *ModelConfig, defaultName string, attrs templ.Attributes) {
+	@form.FormControl(id, "Model", form.LabelAbove, "Any model the bridge can reach — hosted or local.", "", nil) {
+		<select id={ id } { attrs... } name="modelName" class="select w-full">
+			if defaultName != "" {
+				<option value="">Auto — { defaultName } (default)</option>
+			} else {
+				<option value="">Auto — default model</option>
+			}
+			@components.SelectOptionGroups(modelOptionGroups(models, current))
+			@modelCurrentOption(current, models)
+		</select>
+	}
+}
+
+// modelParamsGrid renders the temperature/max-tokens 2-col input grid.
+// current is the agent's stored model for value prefill (pass nil for a fresh
+// form with placeholder-only inputs).
+templ modelParamsGrid(idPrefix string, current *ModelConfig) {
+	<div class="grid grid-cols-2 gap-3">
+		@form.FormControl(idPrefix+"-temperature", "Temperature", form.LabelAbove, "", "", nil) {
+			<input
+				id={ idPrefix + "-temperature" }
+				name="temperature"
+				type="number"
+				min="0"
+				max="2"
+				step="0.1"
+				if current != nil {
+					value={ temperatureInputValue(current) }
+				}
+				placeholder="0.7"
+				class="input w-full"
+			/>
+		}
+		@form.FormControl(idPrefix+"-max-tokens", "Max tokens", form.LabelAbove, "", "", nil) {
+			<input
+				id={ idPrefix + "-max-tokens" }
+				name="maxTokens"
+				type="number"
+				min="1"
+				step="1"
+				if current != nil {
+					value={ maxTokensInputValue(current) }
+				}
+				placeholder="4096"
+				class="input w-full"
+			/>
+		}
+	</div>
+}
+
+// flashToasts renders the standard PRG feedback pair: error toast first, then
+// success. Both are skipped when unset.
+templ flashToasts(flashMsg string, flashErr error) {
+	if flashErr != nil {
+		@flashToast("error", flashErr.Error())
+	}
+	if flashMsg != "" {
+		@flashToast("success", flashMsg)
+	}
+}
+
+// flashToastsWarn renders PRG feedback with a warning toast between error and
+// success (e.g. "Merged N; M left for review"). Each kind is skipped when unset.
+templ flashToastsWarn(flashMsg, warnMsg string, flashErr error) {
+	if flashErr != nil {
+		@flashToast("error", flashErr.Error())
+	}
+	if warnMsg != "" {
+		@flashToast("warning", warnMsg)
+	}
+	if flashMsg != "" {
+		@flashToast("success", flashMsg)
+	}
+}
+
+// chatWelcomeHero renders the empty-state hero shared by the chat workspace and
+// the assistant sidepanel: primary-tint icon tile + title/subtitle. headingLevel
+// selects h2 (default) or h3; children hold any extra content below the copy.
+templ chatWelcomeHero(id, icon, wrapClass, title string, headingLevel int, headingClass, subtitle, subClass string) {
+	<div id={ id } class={ "flex flex-col items-center justify-center", wrapClass, "text-center" }>
+		<div class="bg-primary/10 text-primary border-primary/15 grid size-14 place-items-center rounded-selector border">
+			@ui.IconSpan(icon, "size-7")
+		</div>
+		<div>
+			if headingLevel == 3 {
+				<h3 class={ headingClass, "font-semibold" }>{ title }</h3>
+			} else {
+				<h2 class={ headingClass, "font-semibold" }>{ title }</h2>
+			}
+			<p class={ "text-muted", subClass }>{ subtitle }</p>
+		</div>
+		{ children... }
+	</div>
+}
+
+// monoMeta renders a mono metadata line; pass the exact text color class.
+templ monoMeta(text, colorClass string) {
+	<span class={ "font-mono text-[11px] " + colorClass }>{ text }</span>
+}

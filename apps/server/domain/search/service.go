@@ -1,0 +1,1358 @@
+package search
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"os"
+	"sort"
+	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/rerank"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
+)
+
+// graphSearcher is the subset of graph.Service used by unified search. It is an
+// interface so the latency/embedding-bound tests can substitute a fake without a
+// database; *graph.Service satisfies it in production.
+type graphSearcher interface {
+	HybridSearch(ctx context.Context, projectID uuid.UUID, req *graph.HybridSearchRequest, opts *graph.HybridSearchOptions) (*graph.SearchResponse, error)
+	GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canonicalIDs []uuid.UUID, params graph.GetEdgesParams) (map[uuid.UUID]*graph.GetObjectEdgesResponse, error)
+	UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error
+}
+
+// queryEmbedder is the embedding client used by unified search, narrowed to the
+// one method it needs so tests can inject a stub. *embeddings.Service satisfies it.
+type queryEmbedder interface {
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
+// Service handles unified search combining graph and text results
+type Service struct {
+	repo         *Repository
+	graphService graphSearcher
+	embeddings   queryEmbedder
+	traceStore   *TraceStore
+	log          *slog.Logger
+	defaultLimit int
+	maxLimit     int
+	rrfConstant  int
+	graphWeight  float32
+	textWeight   float32
+	relWeight    float32
+
+	// reranker is the optional post-fusion vendor reranker. Nil (the default)
+	// keeps the existing in-house fused ranking unchanged. rerankTopN bounds the
+	// number of fused candidates sent to the provider.
+	reranker   rerank.Reranker
+	rerankTopN int
+}
+
+// NewService creates a new search service
+func NewService(
+	repo *Repository,
+	graphService *graph.Service,
+	embeddingsSvc *embeddings.Service,
+	log *slog.Logger,
+	traceStore *TraceStore,
+	opts ...Option,
+) *Service {
+	defaultLimit := 32
+	if v := os.Getenv("MEMORY_SEARCH_DEFAULT_LIMIT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 100 {
+			defaultLimit = n
+		}
+	}
+	svc := &Service{
+		repo:         repo,
+		graphService: graphService,
+		traceStore:   traceStore,
+		log:          log.With(logger.Scope("search.svc")),
+		defaultLimit: defaultLimit,
+		maxLimit:     envIntDefault("SEARCH_MAX_LIMIT", 100),
+		rrfConstant:  envIntDefault("SEARCH_RRF_CONSTANT", 60),
+		graphWeight:  envFloatDefault("SEARCH_GRAPH_WEIGHT", 0.25),
+		textWeight:   envFloatDefault("SEARCH_TEXT_WEIGHT", 0.75),
+		relWeight:    envFloatDefault("SEARCH_RELATIONSHIP_WEIGHT", 0),
+	}
+	// Keep a typed-nil out of the interface field so `s.embeddings != nil`
+	// remains a truthful "embedding is available" check.
+	if embeddingsSvc != nil {
+		svc.embeddings = embeddingsSvc
+	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
+}
+
+// envIntDefault reads an integer env var, returning def on empty/parse error.
+func envIntDefault(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+// envFloatDefault reads a float32 env var, returning def on empty/parse error.
+func envFloatDefault(key string, def float32) float32 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 32); err == nil {
+			return float32(f)
+		}
+	}
+	return def
+}
+
+// Search executes unified search combining graph and text results
+func (s *Service) Search(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext) (*UnifiedSearchResponse, error) {
+	ctx, span := tracing.Start(ctx, "search.execute",
+		attribute.Int("memory.search.query_length", len(req.Query)),
+		attribute.String("memory.project.id", projectID.String()),
+	)
+	defer span.End()
+
+	startTime := time.Now()
+
+	// Apply defaults
+	limit := s.clampLimit(req.Limit)
+	resultTypes := s.defaultResultType(req.ResultTypes)
+	fusionStrategy := s.defaultFusionStrategy(req.FusionStrategy)
+
+	// Pre-compute query embedding once for all search goroutines (D1: embedding deduplication)
+	queryVector := s.embedQuery(ctx, req.Query)
+
+	// Execute graph, text, and relationship searches in parallel
+	graphRes, textRes, relationshipRes := s.runParallelSearches(ctx, projectID, req, searchCtx, queryVector, resultTypes)
+
+	// Validate no search errors
+	if err := graphRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if err := textRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if err := relationshipRes.err; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	// Expand relationships for graph results if enabled
+	graphResults := graphRes.results
+	var relationshipElapsed time.Duration
+	if req.RelationshipOptions != nil && req.RelationshipOptions.Enabled && len(graphResults) > 0 {
+		start := time.Now()
+		graphResults = s.expandRelationships(ctx, projectID, graphResults, req.RelationshipOptions)
+		relationshipElapsed = time.Since(start)
+	}
+
+	// Option B: inject src/dst node stubs from relationship results into graph pool.
+	// This ensures relationship endpoints appear as graph objects in the fused output,
+	// giving the judge full node-level context even when graph object search returns nothing.
+	//
+	// Only inject when the relationship leg is a genuine first-class contributor
+	// (explicit relationship weight). When the weight is unset/0, injecting endpoint
+	// stubs with relationship scores lets relationship candidates displace the graph
+	// leg's ranking (issue #996).
+	if s.relationshipWeightEnabled(req.Weights) {
+		graphResults = s.injectRelationshipNodes(graphResults, relationshipRes.results)
+	}
+
+	span.SetAttributes(attribute.String("memory.search.strategy", string(fusionStrategy)))
+
+	// Fuse results
+	fusedResults, fusionElapsed := s.fuse(graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, limit)
+
+	// Fused cutoff: drop any fused item below the requested min score (nil/0 keeps baseline).
+	fusedResults = filterBelowMinScore(fusedResults, req.MinScore, func(i UnifiedSearchResultItem) float32 { return i.Score })
+
+	// Optional post-fusion vendor rerank (opt-in; nil reranker is a no-op).
+	fusedResults = s.applyRerank(ctx, req.Query, fusedResults)
+
+	// Count result types
+	graphCount, textCount, relationshipCount := s.countTypes(fusedResults)
+
+	// Build metadata
+	metadata := s.makeMetadata(fusedResults, graphCount, textCount, relationshipCount, fusionStrategy, fusionElapsed, graphRes, textRes, relationshipRes, resultTypes, relationshipElapsed, startTime)
+
+	// Build debug info if requested
+	var debug *UnifiedSearchDebug
+	if req.IncludeDebug {
+		debug = s.buildDebugInfo(graphRes.rawDebug, textRes.rawDebug, relationshipRes.rawDebug, graphResults, textRes.results, relationshipRes.results, fusionStrategy, req.Weights, len(fusedResults))
+	}
+
+	span.SetAttributes(attribute.Int("memory.search.result_count", len(fusedResults)))
+	span.SetStatus(codes.Ok, "")
+
+	resp := &UnifiedSearchResponse{
+		Results:  fusedResults,
+		Metadata: metadata,
+		Debug:    debug,
+	}
+
+	// Persist a retrieval trace (best-effort, asynchronous) when tracing is enabled
+	if s.traceStore != nil {
+		traceID := uuid.New()
+		traceIDStr := traceID.String()
+		resp.TraceID = &traceIDStr
+		s.persistTraceAsync(traceID, projectID, req, graphRes.results, textRes.results, relationshipRes.results, fusedResults)
+	}
+
+	return resp, nil
+}
+
+// persistTraceAsync writes a retrieval trace record in a background goroutine.
+// It is best-effort: failures only log a warning and never fail the request.
+func (s *Service) persistTraceAsync(traceID uuid.UUID, projectID uuid.UUID, req *UnifiedSearchRequest, graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, fusedResults []UnifiedSearchResultItem) {
+	go func() {
+		filters := map[string]any{
+			"resultTypes":    req.ResultTypes,
+			"fusionStrategy": req.FusionStrategy,
+		}
+		if req.Weights != nil {
+			filters["weights"] = req.Weights
+		}
+		if req.MinScore != nil {
+			filters["minScore"] = *req.MinScore
+		}
+		if len(req.Types) > 0 {
+			filters["types"] = req.Types
+		}
+		if len(req.Labels) > 0 {
+			filters["labels"] = req.Labels
+		}
+
+		const maxTraceCandidates = 200
+		candidates := make([]traceCandidate, 0, maxTraceCandidates)
+		addCandidate := func(id, typ string, score float32) {
+			if len(candidates) >= maxTraceCandidates {
+				return
+			}
+			candidates = append(candidates, traceCandidate{ID: id, Type: typ, Score: score})
+		}
+		for _, g := range graphResults {
+			addCandidate(g.ObjectID, string(ItemTypeGraph), g.Score)
+		}
+		for _, t := range textResults {
+			addCandidate(t.ID.String(), string(ItemTypeText), t.Score)
+		}
+		for _, r := range relationshipResults {
+			addCandidate(r.ID.String(), string(ItemTypeRelationship), r.Score)
+		}
+
+		selectedIDs := make([]string, len(fusedResults))
+		selectedScores := make([]float32, len(fusedResults))
+		for i, item := range fusedResults {
+			selectedIDs[i] = item.ID
+			selectedScores[i] = item.Score
+		}
+
+		trace := &RetrievalTrace{
+			ProjectID:   projectID,
+			TraceID:     traceID,
+			Query:       req.Query,
+			Filters:     marshalJSON(filters),
+			Candidates:  marshalJSON(candidates),
+			SelectedIDs: marshalJSON(selectedIDs),
+			Scores:      marshalJSON(selectedScores),
+		}
+
+		if err := s.traceStore.Insert(context.Background(), trace); err != nil {
+			s.log.Warn("failed to persist retrieval trace", logger.Error(err), slog.String("trace_id", traceID.String()))
+		}
+	}()
+}
+
+// traceCandidate is a compact (id, type, score) entry stored in the trace candidates list.
+type traceCandidate struct {
+	ID    string  `json:"id"`
+	Type  string  `json:"type"`
+	Score float32 `json:"score"`
+}
+
+// marshalJSON serializes v to JSON, returning nil on error.
+func marshalJSON(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return b
+}
+
+// graphOutcome wraps graph search results with timing and debug data
+type graphOutcome struct {
+	results  []*UnifiedSearchGraphResult
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// textOutcome wraps text search results with timing, mode, and debug data
+type textOutcome struct {
+	results  []*TextSearchResult
+	mode     string
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// relationshipOutcome wraps relationship search results with timing and debug data
+type relationshipOutcome struct {
+	results  []*RelationshipSearchResult
+	elapsed  time.Duration
+	rawDebug any
+	err      error
+}
+
+// clampLimit returns limit clamped to [1, 100]
+func (s *Service) clampLimit(limit int) int {
+	if limit <= 0 {
+		return s.defaultLimit
+	}
+	if limit > s.maxLimit {
+		return s.maxLimit
+	}
+	return limit
+}
+
+// defaultResultType returns ResultTypeBoth when input is empty
+func (s *Service) defaultResultType(t UnifiedSearchResultType) UnifiedSearchResultType {
+	if t == "" {
+		return ResultTypeBoth
+	}
+	return t
+}
+
+// defaultFusionStrategy returns FusionStrategyWeighted when input is empty
+func (s *Service) defaultFusionStrategy(strat UnifiedSearchFusionStrategy) UnifiedSearchFusionStrategy {
+	if strat == "" {
+		return FusionStrategyWeighted
+	}
+	return strat
+}
+
+// queryEmbedTimeout bounds the embedding provider call so a slow or hung
+// provider cannot stall the entire search. On timeout the search falls back to
+// lexical-only, matching the existing error path. It is a var (default 20s) so
+// the embedding-bound tests can shrink it, keeping them fast and deterministic.
+var queryEmbedTimeout = 20 * time.Second
+
+// embedQueryBounded embeds the query with the shared provider timeout, so a
+// slow or hung provider cannot stall the caller. Callers must ensure
+// s.embeddings is non-nil.
+func (s *Service) embedQueryBounded(ctx context.Context, query string) ([]float32, error) {
+	embedCtx, cancel := context.WithTimeout(ctx, queryEmbedTimeout)
+	defer cancel()
+	return s.embeddings.EmbedQuery(embedCtx, query)
+}
+
+// embedQuery generates a single embedding for all search goroutines
+func (s *Service) embedQuery(ctx context.Context, query string) []float32 {
+	if s.embeddings == nil {
+		return nil
+	}
+	// Bound the provider call independently of the caller's context so a stuck
+	// embedding service degrades the search to lexical-only rather than hanging it.
+	vec, err := s.embedQueryBounded(ctx, query)
+	if err != nil {
+		s.log.Warn("failed to generate query embedding, falling back to lexical-only search", logger.Error(err))
+		return nil
+	}
+	return vec
+}
+
+// runParallelSearches executes graph, text, and relationship searches concurrently
+func (s *Service) runParallelSearches(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32, resultTypes UnifiedSearchResultType) (graphOutcome, textOutcome, relationshipOutcome) {
+	graphCh := make(chan graphOutcome, 1)
+	textCh := make(chan textOutcome, 1)
+	relCh := make(chan relationshipOutcome, 1)
+
+	// Graph search
+	go func() {
+		if resultTypes == ResultTypeText {
+			graphCh <- graphOutcome{results: nil, elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, rawDebug, err := s.executeGraphSearch(ctx, projectID, req, searchCtx, queryVector, req.MinScore)
+		graphCh <- graphOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	// Text search
+	go func() {
+		if resultTypes == ResultTypeGraph {
+			textCh <- textOutcome{results: nil, mode: "", elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, mode, rawDebug, err := s.executeTextSearch(ctx, projectID, req, queryVector, req.MinScore)
+		textCh <- textOutcome{results: results, mode: mode, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	// Relationship search
+	go func() {
+		if shouldSkipRelationshipLeg(resultTypes, req) {
+			relCh <- relationshipOutcome{results: nil, elapsed: 0}
+			return
+		}
+		start := time.Now()
+		results, rawDebug, err := s.executeRelationshipSearch(ctx, projectID, req, queryVector, req.MinScore)
+		relCh <- relationshipOutcome{results: results, elapsed: time.Since(start), rawDebug: rawDebug, err: err}
+	}()
+
+	return <-graphCh, <-textCh, <-relCh
+}
+
+// shouldSkipRelationshipLeg reports whether the relationship-vector search leg
+// must be skipped: the requested result types exclude relationships, or the
+// request explicitly disabled them (IncludeRelationships=false). A nil
+// IncludeRelationships preserves existing behaviour (the leg runs when the
+// result types allow it).
+func shouldSkipRelationshipLeg(resultTypes UnifiedSearchResultType, req *UnifiedSearchRequest) bool {
+	if resultTypes == ResultTypeText || resultTypes == ResultTypeGraph {
+		return true
+	}
+	return req.IncludeRelationships != nil && !*req.IncludeRelationships
+}
+
+// fuse combines results using the specified strategy, returning fused slice and elapsed time
+func (s *Service) fuse(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, limit int) ([]UnifiedSearchResultItem, time.Duration) {
+	start := time.Now()
+	fusedResults := s.fuseResults(graphResults, textResults, relationshipResults, strategy, weights, limit)
+	return fusedResults, time.Since(start)
+}
+
+// countTypes counts graph, text, and relationship results in a fused result slice
+func (s *Service) countTypes(results []UnifiedSearchResultItem) (graph, text, relationship int) {
+	for _, r := range results {
+		switch r.Type {
+		case ItemTypeGraph:
+			graph++
+		case ItemTypeText:
+			text++
+		case ItemTypeRelationship:
+			relationship++
+		}
+	}
+	return graph, text, relationship
+}
+
+// makeMetadata assembles the search execution metadata
+func (s *Service) makeMetadata(
+	fusedResults []UnifiedSearchResultItem,
+	graphCount, textCount, relationshipCount int,
+	fusionStrategy UnifiedSearchFusionStrategy,
+	fusionElapsed time.Duration,
+	graphRes graphOutcome, textRes textOutcome, relRes relationshipOutcome,
+	resultTypes UnifiedSearchResultType,
+	relationshipElapsed time.Duration,
+	startTime time.Time,
+) UnifiedSearchMetadata {
+	metadata := UnifiedSearchMetadata{
+		TotalResults:            len(fusedResults),
+		GraphResultCount:        graphCount,
+		TextResultCount:         textCount,
+		RelationshipResultCount: relationshipCount,
+		FusionStrategy:          fusionStrategy,
+		ExecutionTime: UnifiedSearchExecutionTime{
+			FusionMs: int(fusionElapsed.Milliseconds()),
+			TotalMs:  int(time.Since(startTime).Milliseconds()),
+		},
+	}
+
+	if resultTypes != ResultTypeText {
+		gMs := int(graphRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.GraphSearchMs = &gMs
+		rMs := int(relRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.RelationshipSearchMs = &rMs
+	}
+	if resultTypes != ResultTypeGraph {
+		tMs := int(textRes.elapsed.Milliseconds())
+		metadata.ExecutionTime.TextSearchMs = &tMs
+	}
+	if relationshipElapsed > 0 {
+		reMs := int(relationshipElapsed.Milliseconds())
+		metadata.ExecutionTime.RelationshipExpansionMs = &reMs
+	}
+
+	return metadata
+}
+
+// hybridSearchRequestFromUnified builds the graph hybrid search request for the
+// unified search graph leg. Isolated as a pure function so the wiring (types,
+// labels, namespace, branch, boosts) can be unit-tested without a database.
+func hybridSearchRequestFromUnified(req *UnifiedSearchRequest, vector []float32) *graph.HybridSearchRequest {
+	hybridReq := &graph.HybridSearchRequest{
+		Query:           req.Query,
+		Vector:          vector,
+		Types:           req.Types,
+		Labels:          req.Labels,
+		Limit:           req.Limit,
+		Namespace:       req.Namespace,
+		RecencyBoost:    req.RecencyBoost,
+		RecencyHalfLife: req.RecencyHalfLife,
+		AccessBoost:     req.AccessBoost,
+	}
+	// When no query vector is available, the unified search has already run its
+	// bounded shared embed and the graph leg's bounded re-embed. Suppress graph
+	// hybrid search's own auto-embed so it cannot issue a further, unbounded
+	// provider call; the request stays lexical full-text. Weights are left at
+	// their defaults so lexical-only scoring is byte-for-byte unchanged. When a
+	// vector IS available it is passed through untouched and auto-embed is
+	// irrelevant (a supplied vector is always used).
+	if len(vector) == 0 {
+		hybridReq.DisableAutoEmbed = true
+	}
+	if req.BranchID != nil {
+		branchUUID, err := uuid.Parse(*req.BranchID)
+		if err == nil {
+			hybridReq.BranchID = &branchUUID
+		}
+	}
+	return hybridReq
+}
+
+// executeGraphSearch runs the graph search using the graph service.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeGraphSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, searchCtx *SearchContext, queryVector []float32, minScore *float32) ([]*UnifiedSearchGraphResult, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
+		vec, err := s.embedQueryBounded(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("failed to generate query embedding for graph search", logger.Error(err))
+			// Continue with lexical-only search
+		} else {
+			vector = vec
+		}
+	}
+
+	// Build hybrid search request
+	hybridReq := hybridSearchRequestFromUnified(req, vector)
+
+	// Execute search (pass nil opts since unified search has its own debug handling)
+	searchResp, err := s.graphService.HybridSearch(ctx, projectID, hybridReq, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Convert to unified search results
+	results := make([]*UnifiedSearchGraphResult, len(searchResp.Data))
+	graphObjectIDs := make([]uuid.UUID, 0, len(searchResp.Data))
+
+	for i, item := range searchResp.Data {
+		key := ""
+		if item.Object.Key != nil {
+			key = *item.Object.Key
+		}
+		results[i] = &UnifiedSearchGraphResult{
+			ObjectID:      item.Object.ID.String(),
+			CanonicalID:   item.Object.CanonicalID.String(),
+			ObjectType:    item.Object.Type,
+			Key:           key,
+			Fields:        item.Object.Properties,
+			Labels:        item.Object.Labels,
+			Score:         item.Score,
+			Rank:          i + 1,
+			LexicalScore:  item.LexicalScore,
+			VectorScore:   item.VectorScore,
+			Relationships: []UnifiedSearchRelationship{},
+		}
+		graphObjectIDs = append(graphObjectIDs, item.Object.ID)
+	}
+
+	// Per-mode cutoff: drop graph results below the requested min score (nil/0 keeps baseline).
+	results = filterBelowMinScore(results, minScore, func(g *UnifiedSearchGraphResult) float32 { return g.Score })
+
+	// Track access asynchronously (don't block response)
+	if len(graphObjectIDs) > 0 {
+		go func() {
+			bgCtx := context.Background()
+			if err := s.graphService.UpdateAccessTimestamps(bgCtx, graphObjectIDs); err != nil {
+				s.log.Warn("failed to update access timestamps", logger.Error(err))
+			}
+		}()
+	}
+
+	// Return raw debug items if debug is enabled
+	var rawDebug any
+	if req.IncludeDebug {
+		rawDebug = searchResp.Data
+	}
+
+	return results, rawDebug, nil
+}
+
+// executeTextSearch runs text search on document chunks.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeTextSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, queryVector []float32, minScore *float32) ([]*TextSearchResult, string, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
+		vec, err := s.embedQueryBounded(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("failed to generate query embedding for text search", logger.Error(err))
+			// Continue with lexical-only search
+		} else {
+			vector = vec
+		}
+	}
+
+	// Execute hybrid search (or lexical if no embedding)
+	params := TextSearchParams{
+		ProjectID:     projectID,
+		Query:         req.Query,
+		Vector:        vector,
+		Mode:          TextSearchModeHybrid,
+		LexicalWeight: 0.5,
+		VectorWeight:  0.5,
+		Limit:         req.Limit,
+		// Chunks carry no namespace, so a namespace-restricted search must scope
+		// them through the object→chunk link or the text leg leaks chunks from
+		// every namespace (#1902). A default MCP search (Namespace unset,
+		// NamespaceIsNull set) scopes them to the null namespace instead (#1910).
+		Namespace:       req.Namespace,
+		NamespaceIsNull: req.NamespaceIsNull,
+	}
+
+	var resp *TextSearchResponse
+	var err error
+
+	if len(vector) > 0 {
+		resp, err = s.repo.HybridSearch(ctx, params)
+	} else {
+		resp, err = s.repo.LexicalSearch(ctx, params)
+	}
+
+	if err != nil {
+		return nil, "", nil, err
+	}
+
+	// Per-mode cutoff: drop chunk results below the requested min score (nil/0 keeps baseline).
+	resp.Results = filterBelowMinScore(resp.Results, minScore, func(t *TextSearchResult) float32 { return t.Score })
+
+	// Return raw debug info
+	var rawDebug any
+	if req.IncludeDebug {
+		rawDebug = resp.Results
+	}
+
+	return resp.Results, string(resp.Mode), rawDebug, nil
+}
+
+// executeRelationshipSearch runs relationship vector search.
+// If queryVector is non-nil, it is used directly; otherwise falls back to embedding the query.
+func (s *Service) executeRelationshipSearch(ctx context.Context, projectID uuid.UUID, req *UnifiedSearchRequest, queryVector []float32, minScore *float32) ([]*RelationshipSearchResult, any, error) {
+	// Use pre-computed vector if available, otherwise embed independently (standalone call path)
+	vector := queryVector
+	if len(vector) == 0 && s.embeddings != nil {
+		vec, err := s.embedQueryBounded(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("failed to generate query embedding for relationship search", logger.Error(err))
+			return nil, nil, nil
+		}
+		vector = vec
+	}
+
+	if len(vector) == 0 {
+		return nil, nil, nil
+	}
+
+	params := RelationshipSearchParams{
+		ProjectID: projectID,
+		Vector:    vector,
+		Limit:     req.Limit,
+		Namespace: req.Namespace,
+	}
+
+	resp, err := s.repo.SearchRelationships(ctx, params)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Per-mode cutoff: drop relationship results below the requested min score (nil/0 keeps baseline).
+	resp.Results = filterBelowMinScore(resp.Results, minScore, func(r *RelationshipSearchResult) float32 { return r.Score })
+
+	var rawDebug any
+	if req.IncludeDebug {
+		rawDebug = resp.Results
+	}
+
+	return resp.Results, rawDebug, nil
+}
+
+// injectRelationshipNodes synthesizes graph result stubs from the src/dst metadata
+// already attached to relationship search results (Option C data). This ensures that
+// the nodes referenced by top relationship hits appear in the fused result set, giving
+// the judge full node context without an extra DB round-trip.
+// Nodes already present in graphResults (by key) are skipped to avoid duplicates.
+func (s *Service) injectRelationshipNodes(graphResults []*UnifiedSearchGraphResult, relResults []*RelationshipSearchResult) []*UnifiedSearchGraphResult {
+	if len(relResults) == 0 {
+		return graphResults
+	}
+
+	// Build a set of already-known keys
+	seen := make(map[string]bool, len(graphResults))
+	for _, g := range graphResults {
+		if g.Key != "" {
+			seen[g.Key] = true
+		}
+	}
+
+	// Inject src and dst nodes from each relationship result
+	for _, r := range relResults {
+		if r.SrcKey != "" && !seen[r.SrcKey] {
+			seen[r.SrcKey] = true
+			graphResults = append(graphResults, &UnifiedSearchGraphResult{
+				ObjectID:      r.SrcID.String(),
+				CanonicalID:   r.SrcID.String(),
+				ObjectType:    r.SrcType,
+				Key:           r.SrcKey,
+				Fields:        r.SrcProperties,
+				Score:         r.Score, // inherit parent relationship score
+				Rank:          0,
+				Relationships: []UnifiedSearchRelationship{},
+			})
+		}
+		if r.DstKey != "" && !seen[r.DstKey] {
+			seen[r.DstKey] = true
+			graphResults = append(graphResults, &UnifiedSearchGraphResult{
+				ObjectID:      r.DstID.String(),
+				CanonicalID:   r.DstID.String(),
+				ObjectType:    r.DstType,
+				Key:           r.DstKey,
+				Fields:        r.DstProperties,
+				Score:         r.Score,
+				Rank:          0,
+				Relationships: []UnifiedSearchRelationship{},
+			})
+		}
+	}
+
+	return graphResults
+}
+
+// relationshipWeightEnabled reports whether the relationship leg should act as a
+// first-class contributor to the weighted fusion. It is enabled when either the
+// env default (SEARCH_RELATIONSHIP_WEIGHT) or an explicit per-request weight is
+// greater than zero. When false, the relationship leg must not be promoted to
+// graphWeight and relationship nodes must not be injected onto their endpoints
+// (issue #996).
+func (s *Service) relationshipWeightEnabled(weights *UnifiedSearchWeights) bool {
+	if s.relWeight > 0 {
+		return true
+	}
+	return weights != nil && weights.RelationshipWeight > 0
+}
+
+// expandRelationships fetches relationships for graph results
+func (s *Service) expandRelationships(ctx context.Context, projectID uuid.UUID, results []*UnifiedSearchGraphResult, options *UnifiedSearchRelationshipOptions) []*UnifiedSearchGraphResult {
+	if options == nil || !options.Enabled || options.MaxDepth == 0 {
+		return results
+	}
+
+	// Collect canonical IDs (relationships are stored against canonical IDs).
+	// Dedupe so the batch query does not repeat the same object.
+	canonicalIDs := make([]uuid.UUID, 0, len(results))
+	seen := make(map[uuid.UUID]bool, len(results))
+	for _, r := range results {
+		cid := uuid.MustParse(r.CanonicalID)
+		if !seen[cid] {
+			seen[cid] = true
+			canonicalIDs = append(canonicalIDs, cid)
+		}
+	}
+
+	// Batch fetch edges for all objects in a single round-trip (N+1 elimination).
+	edgesByObject, err := s.graphService.GetEdgesBatch(ctx, projectID, canonicalIDs, graph.GetEdgesParams{})
+	if err != nil {
+		s.log.Warn("failed to expand relationships", logger.Error(err))
+		return results
+	}
+
+	// Build relationship map for each object
+	relationshipMap := make(map[string][]UnifiedSearchRelationship, len(results))
+
+	for _, r := range results {
+		cid := uuid.MustParse(r.CanonicalID)
+		edgesResp, ok := edgesByObject[cid]
+		if !ok {
+			continue
+		}
+
+		var rels []UnifiedSearchRelationship
+
+		// Add incoming relationships
+		if options.Direction == "" || options.Direction == "in" || options.Direction == "both" {
+			for _, rel := range edgesResp.Incoming {
+				rels = append(rels, UnifiedSearchRelationship{
+					ObjectID:   rel.SrcID.String(),
+					Type:       rel.Type,
+					Direction:  "in",
+					Properties: rel.Properties,
+				})
+			}
+		}
+
+		// Add outgoing relationships
+		if options.Direction == "" || options.Direction == "out" || options.Direction == "both" {
+			for _, rel := range edgesResp.Outgoing {
+				rels = append(rels, UnifiedSearchRelationship{
+					ObjectID:   rel.DstID.String(),
+					Type:       rel.Type,
+					Direction:  "out",
+					Properties: rel.Properties,
+				})
+			}
+		}
+
+		// Apply maxNeighbors limit
+		if options.MaxNeighbors > 0 && len(rels) > options.MaxNeighbors {
+			rels = rels[:options.MaxNeighbors]
+		}
+
+		relationshipMap[r.ObjectID] = rels
+	}
+
+	// Attach relationships to results
+	for _, r := range results {
+		if rels, ok := relationshipMap[r.ObjectID]; ok {
+			r.Relationships = rels
+		}
+	}
+
+	return results
+}
+
+// fuseResults combines graph and text results using the specified strategy
+func (s *Service) fuseResults(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
+	switch strategy {
+	case FusionStrategyWeighted:
+		return s.fuseWeighted(graphResults, textResults, relationshipResults, weights, limit)
+	case FusionStrategyRRF:
+		return s.fuseRRF(graphResults, textResults, relationshipResults, limit)
+	case FusionStrategyInterleave:
+		return s.fuseInterleave(graphResults, textResults, relationshipResults, limit)
+	case FusionStrategyGraphFirst:
+		return s.fuseGraphFirst(graphResults, textResults, relationshipResults, limit)
+	case FusionStrategyTextFirst:
+		return s.fuseTextFirst(graphResults, textResults, relationshipResults, limit)
+	default:
+		return s.fuseWeighted(graphResults, textResults, relationshipResults, weights, limit)
+	}
+}
+
+// fuseWeighted combines results using weighted scores
+func (s *Service) fuseWeighted(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, weights *UnifiedSearchWeights, limit int) []UnifiedSearchResultItem {
+	graphWeight := s.graphWeight
+	textWeight := s.textWeight
+	relationshipWeight := s.relWeight
+
+	if weights != nil {
+		if weights.GraphWeight > 0 {
+			graphWeight = weights.GraphWeight
+		}
+		if weights.TextWeight > 0 {
+			textWeight = weights.TextWeight
+		}
+		if weights.RelationshipWeight > 0 {
+			relationshipWeight = weights.RelationshipWeight
+		}
+	}
+
+	// Determine normalization mode based on whether RelationshipWeight is explicitly set
+	if relationshipWeight > 0 {
+		// Three-way normalize: all three weights participate in normalization
+		totalWeight := graphWeight + textWeight + relationshipWeight
+		if totalWeight > 0 {
+			graphWeight /= totalWeight
+			textWeight /= totalWeight
+			relationshipWeight /= totalWeight
+		}
+	} else {
+		// Two-way normalize graph+text only. The relationship leg is NOT promoted
+		// to graphWeight: an unset relationship weight means relationships are not a
+		// first-class contributor and must not displace graph results (issue #996).
+		// relationshipWeight remains 0, so relationship items score 0 and sort last.
+		totalWeight := graphWeight + textWeight
+		if totalWeight > 0 {
+			graphWeight /= totalWeight
+			textWeight /= totalWeight
+		}
+	}
+
+	type scoredItem struct {
+		item       UnifiedSearchResultItem
+		fusedScore float32
+	}
+
+	var combined []scoredItem
+
+	for _, g := range graphResults {
+		item := s.graphResultToItem(g)
+		combined = append(combined, scoredItem{
+			item:       item,
+			fusedScore: g.Score * graphWeight,
+		})
+	}
+
+	for _, t := range textResults {
+		item := s.textResultToItem(t)
+		combined = append(combined, scoredItem{
+			item:       item,
+			fusedScore: t.Score * textWeight,
+		})
+	}
+
+	for _, r := range relationshipResults {
+		item := s.relationshipResultToItem(r)
+		combined = append(combined, scoredItem{
+			item:       item,
+			fusedScore: r.Score * relationshipWeight,
+		})
+	}
+
+	sort.Slice(combined, func(i, j int) bool {
+		if combined[i].fusedScore != combined[j].fusedScore {
+			return combined[i].fusedScore > combined[j].fusedScore
+		}
+		return combined[i].item.ID < combined[j].item.ID
+	})
+
+	if len(combined) > limit {
+		combined = combined[:limit]
+	}
+
+	results := make([]UnifiedSearchResultItem, len(combined))
+	for i, c := range combined {
+		c.item.Score = c.fusedScore
+		results[i] = c.item
+	}
+
+	return results
+}
+
+// fuseRRF combines results using Reciprocal Rank Fusion
+func (s *Service) fuseRRF(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
+	k := s.rrfConstant
+
+	graphSet := rrfResultSet{results: make([]rrfResult, len(graphResults))}
+	for i, g := range graphResults {
+		graphSet.results[i] = rrfResult{id: g.ObjectID, rank: i}
+	}
+
+	textSet := rrfResultSet{results: make([]rrfResult, len(textResults))}
+	for i, t := range textResults {
+		textSet.results[i] = rrfResult{id: t.ID.String(), rank: i}
+	}
+
+	relationshipSet := rrfResultSet{results: make([]rrfResult, len(relationshipResults))}
+	for i, r := range relationshipResults {
+		relationshipSet.results[i] = rrfResult{id: r.ID.String(), rank: i}
+	}
+
+	merged := reciprocalRankFusion([]rrfResultSet{graphSet, textSet, relationshipSet}, k)
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+
+	idToGraph := make(map[string]*UnifiedSearchGraphResult)
+	for _, g := range graphResults {
+		idToGraph[g.ObjectID] = g
+	}
+
+	idToText := make(map[string]*TextSearchResult)
+	for _, t := range textResults {
+		idToText[t.ID.String()] = t
+	}
+
+	idToRelationship := make(map[string]*RelationshipSearchResult)
+	for _, r := range relationshipResults {
+		idToRelationship[r.ID.String()] = r
+	}
+
+	results := make([]UnifiedSearchResultItem, len(merged))
+	for i, scoredID := range merged {
+		if g, ok := idToGraph[scoredID.id]; ok {
+			item := s.graphResultToItem(g)
+			item.Score = scoredID.score
+			results[i] = item
+		} else if t, ok := idToText[scoredID.id]; ok {
+			item := s.textResultToItem(t)
+			item.Score = scoredID.score
+			results[i] = item
+		} else if r, ok := idToRelationship[scoredID.id]; ok {
+			item := s.relationshipResultToItem(r)
+			item.Score = scoredID.score
+			results[i] = item
+		}
+	}
+
+	return results
+}
+
+// fuseInterleave alternates between graph, text, and relationship results (three-way round-robin).
+// When one source is exhausted, continues alternating between the remaining sources.
+func (s *Service) fuseInterleave(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
+	var results []UnifiedSearchResultItem
+
+	graphIdx := 0
+	textIdx := 0
+	relIdx := 0
+
+	for len(results) < limit {
+		added := false
+
+		// Add graph result
+		if graphIdx < len(graphResults) {
+			results = append(results, s.graphResultToItem(graphResults[graphIdx]))
+			graphIdx++
+			added = true
+			if len(results) >= limit {
+				break
+			}
+		}
+
+		// Add text result
+		if textIdx < len(textResults) {
+			results = append(results, s.textResultToItem(textResults[textIdx]))
+			textIdx++
+			added = true
+			if len(results) >= limit {
+				break
+			}
+		}
+
+		// Add relationship result
+		if relIdx < len(relationshipResults) {
+			results = append(results, s.relationshipResultToItem(relationshipResults[relIdx]))
+			relIdx++
+			added = true
+			if len(results) >= limit {
+				break
+			}
+		}
+
+		// Stop if all sources exhausted
+		if !added {
+			break
+		}
+	}
+
+	return results
+}
+
+// fuseGraphFirst shows all graph results, then relationship results, then text results
+func (s *Service) fuseGraphFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
+	var results []UnifiedSearchResultItem
+
+	for _, g := range graphResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.graphResultToItem(g))
+	}
+
+	for _, r := range relationshipResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.relationshipResultToItem(r))
+	}
+
+	for _, t := range textResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.textResultToItem(t))
+	}
+
+	return results
+}
+
+// fuseTextFirst shows all text results, then relationship results, then graph results
+func (s *Service) fuseTextFirst(graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, limit int) []UnifiedSearchResultItem {
+	var results []UnifiedSearchResultItem
+
+	for _, t := range textResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.textResultToItem(t))
+	}
+
+	for _, r := range relationshipResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.relationshipResultToItem(r))
+	}
+
+	for _, g := range graphResults {
+		if len(results) >= limit {
+			break
+		}
+		results = append(results, s.graphResultToItem(g))
+	}
+
+	return results
+}
+
+// graphResultToItem converts a graph result to a unified search result item
+func (s *Service) graphResultToItem(g *UnifiedSearchGraphResult) UnifiedSearchResultItem {
+	return UnifiedSearchResultItem{
+		Type:          ItemTypeGraph,
+		ID:            g.ObjectID,
+		Score:         g.Score,
+		ObjectID:      g.ObjectID,
+		CanonicalID:   g.CanonicalID,
+		Rank:          g.Rank,
+		ObjectType:    g.ObjectType,
+		Key:           g.Key,
+		Fields:        g.Fields,
+		Labels:        g.Labels,
+		Relationships: g.Relationships,
+		Explanation:   g.Explanation,
+	}
+}
+
+// textResultToItem converts a text result to a unified search result item
+func (s *Service) textResultToItem(t *TextSearchResult) UnifiedSearchResultItem {
+	docID := t.DocumentID.String()
+	return UnifiedSearchResultItem{
+		Type:       ItemTypeText,
+		ID:         t.ID.String(),
+		Score:      t.Score,
+		Snippet:    t.Text,
+		Source:     t.Source,
+		Mode:       t.Mode,
+		DocumentID: &docID,
+	}
+}
+
+// relationshipResultToItem converts a relationship result to a unified search result item
+func (s *Service) relationshipResultToItem(r *RelationshipSearchResult) UnifiedSearchResultItem {
+	item := UnifiedSearchResultItem{
+		Type:             ItemTypeRelationship,
+		ID:               r.ID.String(),
+		Score:            r.Score,
+		RelationshipType: r.Type,
+		TripletText:      r.TripletText,
+		SourceID:         r.SrcID.String(),
+		TargetID:         r.DstID.String(),
+		Properties:       r.Properties,
+	}
+	if r.SrcKey != "" {
+		item.SourceObject = &RelationshipNodeInfo{
+			Key:        r.SrcKey,
+			ObjectType: r.SrcType,
+			Properties: r.SrcProperties,
+		}
+	}
+	if r.DstKey != "" {
+		item.TargetObject = &RelationshipNodeInfo{
+			Key:        r.DstKey,
+			ObjectType: r.DstType,
+			Properties: r.DstProperties,
+		}
+	}
+	return item
+}
+
+// buildDebugInfo creates debug information for the search response
+func (s *Service) buildDebugInfo(graphDebug, textDebug, relationshipDebug any, graphResults []*UnifiedSearchGraphResult, textResults []*TextSearchResult, relationshipResults []*RelationshipSearchResult, strategy UnifiedSearchFusionStrategy, weights *UnifiedSearchWeights, postFusionCount int) *UnifiedSearchDebug {
+	var scoreDistribution *UnifiedSearchScoreDistribution
+
+	if len(graphResults) > 0 || len(textResults) > 0 || len(relationshipResults) > 0 {
+		scoreDistribution = &UnifiedSearchScoreDistribution{}
+
+		if len(graphResults) > 0 {
+			graphScores := make([]float32, len(graphResults))
+			for i, g := range graphResults {
+				graphScores[i] = g.Score
+			}
+			min, max, mean := calcScoreStats(graphScores)
+			scoreDistribution.Graph = &ScoreStats{Min: min, Max: max, Mean: mean}
+		}
+
+		if len(textResults) > 0 {
+			textScores := make([]float32, len(textResults))
+			for i, t := range textResults {
+				textScores[i] = t.Score
+			}
+			min, max, mean := calcScoreStats(textScores)
+			scoreDistribution.Text = &ScoreStats{Min: min, Max: max, Mean: mean}
+		}
+
+		if len(relationshipResults) > 0 {
+			relationshipScores := make([]float32, len(relationshipResults))
+			for i, r := range relationshipResults {
+				relationshipScores[i] = r.Score
+			}
+			min, max, mean := calcScoreStats(relationshipScores)
+			scoreDistribution.Relationship = &ScoreStats{Min: min, Max: max, Mean: mean}
+		}
+	}
+
+	fusionDetails := &UnifiedSearchFusionDetails{
+		Strategy:        strategy,
+		Weights:         weights,
+		PostFusionCount: postFusionCount,
+		PreFusionCounts: &PreFusionCounts{
+			Graph:        len(graphResults),
+			Text:         len(textResults),
+			Relationship: len(relationshipResults),
+		},
+	}
+
+	return &UnifiedSearchDebug{
+		GraphSearch:       graphDebug,
+		TextSearch:        textDebug,
+		ScoreDistribution: scoreDistribution,
+		FusionDetails:     fusionDetails,
+	}
+}
+
+// filterBelowMinScore drops items whose score is below the configured min score
+// cutoff. No-op when minScore is nil or <= 0 so the exact baseline result set
+// is preserved unless a positive threshold is requested.
+func filterBelowMinScore[T any](results []T, minScore *float32, scoreOf func(T) float32) []T {
+	if minScore == nil || *minScore <= 0 {
+		return results
+	}
+	kept := results[:0]
+	for _, r := range results {
+		if scoreOf(r) >= *minScore {
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
+// GetTrace returns a persisted retrieval trace by its trace ID, reconstructing
+// the ordered list of selected result IDs stored at search time.
+func (s *Service) GetTrace(ctx context.Context, traceID uuid.UUID) (*UnifiedSearchTraceResponse, error) {
+	if s.traceStore == nil {
+		return nil, apperror.ErrNotFound.WithMessage("retrieval trace not found")
+	}
+
+	trace, err := s.traceStore.GetByTraceID(ctx, traceID)
+	if err != nil {
+		return nil, err
+	}
+	if trace == nil {
+		return nil, apperror.ErrNotFound.WithMessage("retrieval trace not found")
+	}
+
+	var selectedIDs []string
+	if len(trace.SelectedIDs) > 0 {
+		if err := json.Unmarshal(trace.SelectedIDs, &selectedIDs); err != nil {
+			s.log.Warn("failed to parse retrieval trace selected_ids", logger.Error(err), slog.String("trace_id", traceID.String()))
+		}
+	}
+
+	return &UnifiedSearchTraceResponse{
+		TraceID:     trace.TraceID.String(),
+		Query:       trace.Query,
+		SelectedIDs: selectedIDs,
+		CreatedAt:   trace.CreatedAt,
+	}, nil
+}
+
+// calcScoreStats calculates min, max, mean for a slice of scores
+func calcScoreStats(scores []float32) (min, max, mean float32) {
+	if len(scores) == 0 {
+		return 0, 0, 0
+	}
+
+	min = scores[0]
+	max = scores[0]
+	var sum float32
+
+	for _, s := range scores {
+		if s < min {
+			min = s
+		}
+		if s > max {
+			max = s
+		}
+		sum += s
+	}
+
+	mean = sum / float32(len(scores))
+	return min, max, mean
+}
+
+// rrfResultSet represents a ranked result set for RRF merging.
+// Each result is identified by a unique ID and has an original rank (0-based).
+type rrfResultSet struct {
+	results []rrfResult
+}
+
+type rrfResult struct {
+	id   string
+	rank int
+}
+
+// reciprocalRankFusion merges 2 or more ranked result sets using RRF algorithm.
+// Returns merged IDs with their RRF scores in descending score order.
+// k=60 is the standard RRF constant (balances rank importance).
+func reciprocalRankFusion(resultSets []rrfResultSet, k int) []rrfScoredID {
+	if k <= 0 {
+		k = 60
+	}
+
+	scoreMap := make(map[string]float32)
+
+	for _, set := range resultSets {
+		for _, result := range set.results {
+			rrfScore := float32(1.0) / float32(k+result.rank+1)
+			scoreMap[result.id] += rrfScore
+		}
+	}
+
+	type entry struct {
+		id    string
+		score float32
+	}
+	var entries []entry
+	for id, score := range scoreMap {
+		entries = append(entries, entry{id: id, score: score})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].score != entries[j].score {
+			return entries[i].score > entries[j].score
+		}
+		return entries[i].id < entries[j].id
+	})
+
+	merged := make([]rrfScoredID, len(entries))
+	for i, e := range entries {
+		merged[i] = rrfScoredID{id: e.id, score: e.score}
+	}
+
+	return merged
+}
+
+type rrfScoredID struct {
+	id    string
+	score float32
+}

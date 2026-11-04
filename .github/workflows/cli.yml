@@ -1,0 +1,714 @@
+name: Memory CLI & Release
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module, so CLI
+      # code links SDK source that lives outside apps/cli/**.
+      - 'apps/server/pkg/sdk/**'
+      - '.github/workflows/cli.yml'
+      - 'deploy/**'
+      - 'VERSION'
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - 'apps/cli/**'
+      # apps/cli/go.mod carries a `replace` to the local SDK module, so CLI
+      # code links SDK source that lives outside apps/cli/**.
+      - 'apps/server/pkg/sdk/**'
+      - '.github/workflows/cli.yml'
+      - 'deploy/**'
+      - 'VERSION'
+  workflow_dispatch:
+
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: '1.26'
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the --new-from-rev ratchet
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # Persistent self-hosted runner: GOMODCACHE/GOCACHE already survive
+          # between jobs on disk, so setup-go's GH cache is redundant — it tries
+          # to upload ~10GB and always exceeds the 10GB cache limit.
+          cache: false
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # The previous golangci-lint-action pin used `install-mode: goinstall`,
+      # which compiles golangci-lint v1 and needs a cgo toolchain (gcc) the
+      # self-hosted runner does not have. Mirror server.yml: install golangci-lint
+      # v2 with `go install` and ratchet with --new-from-rev so only new issues
+      # fail (the tree has pre-existing v2 findings).
+      - name: golangci-lint (new issues only)
+        working-directory: apps/cli
+        env:
+          GOWORK: off
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock collide
+          # ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+            BASE="origin/${GITHUB_BASE_REF}"
+          else
+            BASE="${BEFORE}"
+          fi
+          # A push that creates a ref has no `before` commit — GitHub sends the
+          # null SHA — and `workflow_dispatch` has none at all, so "new issues"
+          # has no meaning there: every pre-existing finding would be counted and
+          # the ratchet would fail on debt it exists to preserve. Skip only that
+          # case. The next push uses this commit as its base, so the baseline is
+          # kept, not reset.
+          #
+          # Any *other* unresolvable base is an error, not a skip: on a PR the
+          # base is `origin/${GITHUB_BASE_REF}`, which exists only because of the
+          # `git fetch ... || true` above — treating a failed fetch as "no base"
+          # would turn a red lint into a green one, and a finding skipped at PR
+          # time becomes baseline debt after merge.
+          case "$BASE" in
+            "" | 0000000000000000000000000000000000000000)
+              echo "::warning::no base commit (ref created by this push) — skipping the new-issues ratchet"
+              exit 0
+              ;;
+          esac
+          if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "::error::base '${BASE}' does not resolve, so the new-issues ratchet cannot run"
+            exit 1
+          fi
+          # `--allow-parallel-runners` drops golangci-lint's lock file. It is
+          # `os.TempDir()/golangci-lint.lock` — /tmp, which every runner install on
+          # a self-hosted host shares, and GOLANGCI_LINT_CACHE does not move it. So
+          # two lint jobs landing on different runners of the same host collide
+          # with "parallel golangci-lint is running" even though each job has its
+          # own cache dir. Safe here because those caches are per-job: the lock
+          # protects a cache nothing else writes.
+          golangci-lint run --allow-parallel-runners --new-from-rev="$BASE" ./...
+
+      # pin_matches <pin> <file> succeeds only when <file> has an `image:` entry
+      # whose value is byte-for-byte <pin>. Comparing the whole value (instead of
+      # grepping for the pin as a substring) rejects near-misses: a version
+      # prefix, an extra suffix tag, or a digest appended to the tag.
+      - name: Verify xberg image pin is in sync
+        working-directory: apps/cli
+        run: |
+          pin_matches() {
+            awk -v pin="$1" '
+              match($0, /^[[:space:]]*image:[[:space:]]+/) {
+                v = substr($0, RLENGTH + 1)
+                sub(/[[:space:]]+$/, "", v)
+                if (v == pin) found = 1
+              }
+              END { exit !found }
+            ' "$2"
+          }
+          PIN=$(grep -oP 'XbergImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
+          if [ -z "${PIN}" ]; then
+            echo "ERROR: could not read XbergImage from internal/installer/templates.go"
+            exit 1
+          fi
+          echo "XbergImage pin: ${PIN}"
+          for f in ../../deploy/self-hosted/docker-compose.yml \
+                   ../../deploy/self-hosted/docker-compose.local.yml \
+                   ../../deploy/self-hosted/install-online.sh; do
+            if ! pin_matches "${PIN}" "${f}"; then
+              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with XbergImage"
+              exit 1
+            fi
+          done
+          echo "OK: all self-hosted static copies match XbergImage"
+
+      - name: Verify object-store image pin is in sync
+        working-directory: apps/cli
+        run: |
+          pin_matches() {
+            awk -v pin="$1" '
+              match($0, /^[[:space:]]*image:[[:space:]]+/) {
+                v = substr($0, RLENGTH + 1)
+                sub(/[[:space:]]+$/, "", v)
+                if (v == pin) found = 1
+              }
+              END { exit !found }
+            ' "$2"
+          }
+          PIN=$(grep -oP 'ObjectStoreImage\s*=\s*"\K[^"]+' internal/installer/templates.go)
+          if [ -z "${PIN}" ]; then
+            echo "ERROR: could not read ObjectStoreImage from internal/installer/templates.go"
+            exit 1
+          fi
+          echo "ObjectStoreImage pin: ${PIN}"
+          for f in ../../deploy/self-hosted/docker-compose.yml \
+                   ../../deploy/self-hosted/docker-compose.local.yml \
+                   ../../deploy/self-hosted/install-online.sh \
+                   ../../e2e/docker-compose.yml; do
+            if ! pin_matches "${PIN}" "${f}"; then
+              echo "ERROR: ${f} does not pin image: ${PIN}; bump it together with ObjectStoreImage"
+              exit 1
+            fi
+          done
+          echo "OK: all self-hosted static copies match the object-store image pin"
+
+  test:
+    name: Test
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    if: "!startsWith(github.ref, 'refs/tags/') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      # No build-cache restore here: the persistent runner already keeps
+      # GOCACHE on local disk, so this step only re-uploaded ~5 GB.
+      - name: Run tests
+        working-directory: apps/cli
+        env:
+          GOWORK: off
+        run: |
+          # `-race` requires cgo, i.e. a C toolchain plus CGO_ENABLED=1. GitHub's
+          # ubuntu-latest image has gcc, but some self-hosted runners do not, where
+          # `go test -race` hard-fails with:
+          #   go: -race requires cgo; enable CGO_ENABLED=1
+          # Enable cgo when a compiler is present (keeps real race coverage); on a
+          # runner without one, fall back to a non-race run with a visible notice
+          # instead of failing the whole suite with a confusing error.
+          if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1; then
+            export CGO_ENABLED=1
+            echo "C toolchain found; running CLI tests with -race (CGO_ENABLED=1)."
+            go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          else
+            echo "::warning::No C toolchain found on this runner; running CLI tests without -race. Install a C compiler on the runner image (or route this job to a GitHub-hosted ubuntu-latest runner) to restore race coverage."
+            go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          fi
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: apps/cli/coverage.out
+          flags: memory-cli
+          fail_ci_if_error: false
+
+  build:
+    name: Build (${{ matrix.label }})
+    # Fork PRs must not run on the self-hosted runner.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runs_on }}
+    needs: [lint, test]
+    strategy:
+      matrix:
+        include:
+          # All three targets cross-compile with CGO_ENABLED=0, so the darwin
+          # binaries build on Linux too — no 10x-rated macOS runner needed.
+          - label: linux-amd64
+            runs_on: [self-hosted, linux, x64, memory]
+            goos: linux
+            goarch: amd64
+            ext: ''
+          - label: darwin-amd64
+            runs_on: [self-hosted, linux, x64, memory]
+            goos: darwin
+            goarch: amd64
+            ext: ''
+          - label: darwin-arm64
+            runs_on: [self-hosted, linux, x64, memory]
+            goos: darwin
+            goarch: arm64
+            ext: ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Get version info
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          VERSION="${VERSION#v}"
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      - name: Build binary
+        working-directory: apps/cli
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          GOWORK: off
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
+        run: |
+          go build \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
+            ./cmd
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: apps/cli/dist/memory-cli-*
+          # Reproducible from the commit and not downloaded by any later job
+          # (release assets are uploaded from the build workspace, not from this
+          # artifact), so one day is enough. Artifact storage is an account-wide
+          # quota shared with the sibling repo (emergent-company/emergent.memory#1834).
+          retention-days: 1
+
+  build-cross:
+    name: Build Cross-Platform Binaries
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+          # macOS
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          VERSION="${VERSION#v}"
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      - name: Warm module cache (retry)
+        working-directory: apps/cli
+        shell: bash
+        run: |
+          for i in 1 2 3 4 5; do
+            go mod download && exit 0
+            echo "go mod download retry $i"
+            sleep 3
+          done
+          exit 1
+      - name: Build binary
+        working-directory: apps/cli
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          GOWORK: off
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          BUILD_TIME: ${{ steps.version.outputs.build_time }}
+        run: |
+          EXT=""
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXT=".exe"
+          fi
+
+          go build \
+            -ldflags="-s -w -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Version=${VERSION} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.Commit=${COMMIT} -X github.com/emergent-company/emergent.memory/apps/cli/internal/cmd.BuildDate=${BUILD_TIME}" \
+            -o dist/memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}${EXT} \
+            ./cmd
+
+      - name: Create archive
+        working-directory: apps/cli/dist
+        run: |
+          tar czf memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz memory-cli-${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            apps/cli/dist/*.tar.gz
+            apps/cli/dist/*.zip
+          # Release artifacts are attached to the GitHub Release by the `release`
+          # job in the same run, so 90 days of artifact retention was excessive
+          # and fed the artifact-storage quota pressure (#1834). 30 days still
+          # covers post-release debugging, well above the CI debug-log floor.
+          retention-days: 30
+
+  release:
+    name: Create Unified GitHub Release
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: [build-cross]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: release-artifacts
+        run: |
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git tag --sort=-version:refname | grep "^v" | head -2 | tail -1 || echo "")
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "${GITHUB_REF_NAME}" ]; then
+            PREV_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+          fi
+          echo "tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          echo "Previous tag: $PREV_TAG"
+
+      - name: Get commit messages for changelog
+        id: commits
+        env:
+          PREV_TAG: ${{ steps.prev_tag.outputs.tag }}
+        run: |
+          echo "commits<<EOF" >> $GITHUB_OUTPUT
+          git log "${PREV_TAG}".."${GITHUB_REF_NAME}" --pretty=format:"- %s (%h)" >> $GITHUB_OUTPUT || echo "- Initial release" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # Pass the commit list via an env var, never by interpolating it into the
+      # JS source. Interpolating it into a template literal lets a backtick or
+      # ${...} in any commit message break the script's parse (v0.82.1: a commit
+      # message contained `memory acp`), which skipped this step AND every later
+      # step in the job (asset upload included), shipping a release with no CLI
+      # binaries. continue-on-error keeps a future changelog failure from ever
+      # blocking release creation again.
+      - name: Generate changelog
+        id: changelog
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          COMMITS: ${{ steps.commits.outputs.commits }}
+        with:
+          script: |
+            const commits = process.env.COMMITS || '';
+
+            const lines = commits.split('\n').filter(l => l.trim());
+
+            let features = [];
+            let fixes = [];
+            let other = [];
+
+            for (const line of lines) {
+              const lower = line.toLowerCase();
+              if (lower.includes('feat') || lower.includes('add') || lower.includes('new')) {
+                features.push(line);
+              } else if (lower.includes('fix') || lower.includes('bug') || lower.includes('patch')) {
+                fixes.push(line);
+              } else {
+                other.push(line);
+              }
+            }
+
+            let changelog = '';
+            if (features.length > 0) {
+              changelog += '### Features\n' + features.join('\n') + '\n\n';
+            }
+            if (fixes.length > 0) {
+              changelog += '### Bug Fixes\n' + fixes.join('\n') + '\n\n';
+            }
+            if (other.length > 0) {
+              changelog += '### Other Changes\n' + other.join('\n') + '\n\n';
+            }
+
+            if (!changelog) {
+              changelog = '### Initial Release\n\n';
+            }
+
+            core.setOutput('changelog', changelog);
+
+      - name: Compute image owner
+        id: owner
+        run: echo "lc=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Generate unified release notes
+        run: |
+          cat > release_notes.md << 'ENDOFNOTES'
+          ## What's Changed
+
+          ${{ steps.changelog.outputs.changelog }}
+
+          ---
+
+          ## Memory CLI
+
+          ### One-Line Install
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/apps/cli/install.sh | bash
+          ```
+
+          ### Manual Install
+
+          | OS | Architecture | Download |
+          |----|-------------|----------|
+          | Linux | amd64 | [memory-cli-linux-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-linux-amd64.tar.gz) |
+          | macOS | Apple Silicon | [memory-cli-darwin-arm64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-arm64.tar.gz) |
+          | macOS | Intel | [memory-cli-darwin-amd64.tar.gz](https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/memory-cli-darwin-amd64.tar.gz) |
+
+          Verify downloads: `sha256sum -c checksums.txt`
+
+          [CLI Documentation](https://github.com/${{ github.repository }}/blob/main/apps/cli/README.md)
+
+          ---
+
+          ## Go SDK
+
+          ```bash
+          go get github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@${{ github.ref_name }}
+          ```
+
+          ```go
+          import "github.com/emergent-company/emergent.memory/apps/server/pkg/sdk"
+          ```
+
+          [SDK Documentation](https://pkg.go.dev/github.com/emergent-company/emergent.memory/apps/server/pkg/sdk@${{ github.ref_name }}) | [Examples](https://github.com/${{ github.repository }}/tree/main/apps/server/pkg/sdk/examples)
+
+          ---
+
+          ## Docker Image
+
+          ```bash
+          docker pull ghcr.io/${{ steps.owner.outputs.lc }}/memory-server:${{ steps.version.outputs.version }}
+          ```
+
+          Available platforms: `linux/amd64, linux/arm64`
+
+          Includes: Memory API server, CLI, migration tooling, and Swagger docs.
+
+          [Deployment Guide](https://github.com/${{ github.repository }}/blob/main/deploy/self-hosted/README.md)
+          ENDOFNOTES
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Memory ${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          files: |
+            release-artifacts/*
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+
+      # Fail loudly if the published release is missing any of the CLI assets
+      # that build-cross must produce (and that install.sh + the release-notes
+      # table advertise). This would have caught v0.82.1, whose release object
+      # existed (created by the Connector Release workflow) but had no
+      # memory-cli-* binaries, because the changelog parse error skipped the
+      # upload. if: always() makes the job red even when an earlier step is
+      # skipped or fails, so a half-populated release can never ship silently.
+      - name: Verify CLI release assets
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          ASSETS=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" --jq '.assets[].name' 2>/dev/null || true)
+          echo "Assets on release ${TAG}:"
+          printf '%s\n' "${ASSETS}"
+          missing=0
+          for asset in \
+            memory-cli-linux-amd64.tar.gz \
+            memory-cli-darwin-amd64.tar.gz \
+            memory-cli-darwin-arm64.tar.gz; do
+            if ! printf '%s\n' "${ASSETS}" | grep -qx "${asset}"; then
+              echo "::error::missing expected asset: ${asset}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "::error::release ${TAG} is missing memory-cli-* assets"
+            exit 1
+          fi
+          echo "OK: all memory-cli-* assets present on ${TAG}"
+
+  docker:
+    name: Docker Build (CLI Container)
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: [build-cross]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Linux release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-linux-*
+          path: apps/cli/artifacts
+          merge-multiple: true
+
+      - name: Extract binaries for Docker
+        working-directory: apps/cli
+        run: |
+          echo "=== Downloaded artifacts ==="
+          ls -la artifacts/
+
+          # Extract Linux amd64 binary
+          tar xzf artifacts/memory-cli-linux-amd64.tar.gz -C .
+
+          echo "=== Extracted binaries ==="
+          ls -la memory-cli-linux-*
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "owner_lc=$OWNER_LC" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/cli
+          file: apps/cli/Dockerfile.prebuilt
+          push: true
+          tags: |
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:${{ steps.version.outputs.version }}
+            ghcr.io/${{ steps.version.outputs.owner_lc }}/memory-cli:latest
+          build-args: |
+            TARGETARCH=amd64
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ steps.version.outputs.commit }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.title=Memory CLI
+            org.opencontainers.image.description=Command-line interface for Memory Knowledge Base
+          platforms: linux/amd64
+          # Verified single-stage (apps/cli/Dockerfile.prebuilt): min already
+          # exports every layer of the image, so max would add nothing. Export
+          # errors stay fatal here so a broken cache stays visible on releases.
+          cache-from: type=gha,scope=memory-cli
+          cache-to: type=gha,scope=memory-cli,mode=min
+
+  cli-ci:
+    name: cli-ci
+    runs-on: [self-hosted, linux, x64, memory]
+    # Advisory aggregate gate for this path-filtered workflow. It is NOT a
+    # branch-protection-required status check: the required context on `main` is
+    # Meta CI's `ci` (.github/workflows/ci.yml). Renamed from `ci` to
+    # `cli-ci` (#1673/#1675 follow-up) so it no longer collides with the required
+    # `ci` context. always(): the tag-guarded lint/test jobs are legitimately
+    # skipped on tag pushes, so the gate treats 'skipped' as acceptable and fails
+    # only on 'failure'/'cancelled' (and still reports when a dependency fails).
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    needs: [lint, test, build]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs.lint.result }}" "${{ needs.test.result }}" "${{ needs.build.result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "CI passed"

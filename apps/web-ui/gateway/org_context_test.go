@@ -1,0 +1,1425 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+// orgContextUIServer mirrors main.go's org-context wiring: the session
+// middleware, the landing redirect, and the org context routes.
+func orgContextUIServer(s *Server) *echo.Echo {
+	e := echo.New()
+	e.Use(s.authDispatch)
+	e.GET("/", s.uiRoot)
+	e.GET("/orgs", s.uiOrgs)
+	e.GET("/orgs/:id", s.uiOrg)
+	e.GET("/settings", s.uiProjectSettings)
+	e.GET("/settings/budget", s.uiProjectBudgetSettings)
+	e.GET("/orgs/:id/members", s.uiOrgMembers)
+	e.GET("/orgs/:id/members/add", s.uiOrgMemberAddPage)
+	e.POST("/orgs/:id/members", s.uiOrgAddMember)
+	e.POST("/orgs/:id/members/:userId/role", s.uiOrgChangeMemberRole)
+	e.POST("/orgs/:id/members/:userId/remove", s.uiOrgRemoveMember)
+	e.POST("/orgs/:id/invites/:inviteId/resend", s.uiOrgResendInvite)
+	e.POST("/orgs/:id/invites/:inviteId/revoke", s.uiOrgRevokeInvite)
+	e.GET("/orgs/:id/invite", s.uiOrgInvitePage)
+	e.POST("/orgs/:id/invite", s.uiOrgInviteCreate)
+	e.GET("/orgs/:id/settings", s.uiOrgSettings)
+	e.GET("/orgs/:id/settings/general", s.uiOrgSettingsGeneral)
+	e.GET("/orgs/:id/settings/danger-zone", s.uiOrgSettingsDangerZone)
+	e.POST("/orgs/:id/rename", s.uiOrgRename)
+	e.POST("/orgs/:id/tool-settings/:toolName", s.uiOrgToolSettingUpdate)
+	e.POST("/orgs/:id/tool-settings/:toolName/delete", s.uiOrgToolSettingDelete)
+	e.POST("/orgs/:id/delete", s.uiDeleteOrg)
+	e.POST("/projects/delete", s.uiDeleteProjects)
+	e.POST("/projects/transfer", s.uiTransferProject)
+	e.GET("/agents", s.uiAgents)
+	return e
+}
+
+func sessionCookie(t *testing.T, secret string, claims sessionClaims) *http.Cookie {
+	t.Helper()
+	val, err := issueSession(secret, claims, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: sessionCookieName, Value: val, Path: "/"}
+}
+
+// lastSessionClaims decodes the last re-issued session cookie on the response
+// (the effective value when a handler writes the cookie more than once, e.g.
+// clearContext followed by activateOrg). Fails the test when no session cookie
+// is present or it does not verify.
+func lastSessionClaims(t *testing.T, rec *httptest.ResponseRecorder) *sessionClaims {
+	t.Helper()
+	var ck *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			ck = c
+		}
+	}
+	if ck == nil {
+		t.Fatal("session cookie not re-issued")
+	}
+	claims, err := verifySessionSignature("test-secret", ck.Value)
+	if err != nil {
+		t.Fatalf("verify re-issued session: %v", err)
+	}
+	return claims
+}
+
+// TestUIRootRedirect covers the GET / landing resolution across contexts.
+func TestUIRootRedirect(t *testing.T) {
+	t.Run("dev mode keeps the static-project landing", func(t *testing.T) {
+		s := &Server{cfg: Config{MemoryProjectID: "memory"}, memory: &fakeMemory{}}
+		e := orgContextUIServer(s)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/agents" {
+			t.Fatalf("/ in dev mode = %d %q, want 302 /agents", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("session project wins", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken:     "at",
+			ActiveProjectID: "p1",
+			ExpiresAt:       time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1/p/p1/agents" {
+			t.Fatalf("/ with project = %d %q, want 302 /o/o1/p/p1/agents", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("session org redirects to the org landing", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o1",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1" {
+			t.Fatalf("/ with org = %d %q, want 302 /o/o1", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("stale remembered org falls through to first live org", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgs: []Org{{ID: "o2", Name: "Globex"}, {ID: "o3", Name: "Initech"}}}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o-dead",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o2" {
+			t.Fatalf("/ with stale org = %d %q, want 302 /o/o2", rec.Code, rec.Header().Get("Location"))
+		}
+		// The stale org is cleared from the session and re-activated to the
+		// first live org: never the dead id. clearContext + activateOrg each
+		// re-issue the cookie, so the effective value is the last one.
+		claims := lastSessionClaims(t, rec)
+		if claims.OrgID != "o2" {
+			t.Errorf("session org = %q, want o2 (stale org cleared)", claims.OrgID)
+		}
+	})
+
+	t.Run("stale remembered org with no live orgs goes to the wizard", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			OrgID:       "o-dead",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/orgs/new" {
+			t.Fatalf("/ with stale org and no live orgs = %d %q, want 302 /orgs/new", rec.Code, rec.Header().Get("Location"))
+		}
+		claims := lastSessionClaims(t, rec)
+		if claims.OrgID != "" {
+			t.Errorf("session org = %q, want cleared to empty", claims.OrgID)
+		}
+	})
+
+	t.Run("first org auto-selected when none active", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/o/o1" {
+			t.Fatalf("/ with no org = %d %q, want 302 /o/o1", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("no orgs redirects to the wizard", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/orgs/new" {
+			t.Fatalf("/ with no orgs = %d %q, want 302 /orgs/new", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("backend failure renders unavailable state, never the wizard", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			listOrgsErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+		}}
+		e := orgContextUIServer(s)
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("/ with backend failure = %d, want 200 unavailable page (not a redirect)", rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, "Service temporarily unavailable") || !strings.Contains(body, "Your data is safe") {
+			t.Errorf("unavailable state missing explicit copy, got %q", body)
+		}
+		if strings.Contains(body, "Create organization") || strings.Contains(body, "Create the first project") {
+			t.Errorf("backend failure must never render the empty/onboarding state, got %q", body)
+		}
+	})
+}
+
+// TestUIOrgLanding covers the org landing: populated list, empty state, and
+// the org-context sidebar (not the project nav).
+func TestUIOrgLanding(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		projects: []ProjectRef{
+			{ID: "p1", Name: "Home", OrgID: "o1"},
+			{ID: "p2", Name: "Lab", OrgID: "o1"},
+			{ID: "p3", Name: "Archived", OrgID: "o1", DeletionStatus: "pending_deletion"},
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Acme", "Home", "Lab", "Archived"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing missing %q", want)
+		}
+	}
+	// Active project names are clickable: an activate button with a title.
+	for _, want := range []string{`hx-post="/projects/activate?projectId=p1"`, `title="Open Home"`, `hx-post="/projects/activate?projectId=p2"`, `title="Open Lab"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing active project affordance missing %q", want)
+		}
+	}
+	// The whole row for an active project is clickable too: a row-level
+	// activate target plus the pointer/hover affordance.
+	for _, want := range []string{
+		`data-activate-url="/projects/activate?projectId=p1"`,
+		`data-activate-url="/projects/activate?projectId=p2"`,
+		`class="cursor-pointer transition-colors hover:bg-base-200"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing clickable row affordance missing %q", want)
+		}
+	}
+	// Pending-deletion project name is a plain span, never an activate target.
+	if strings.Contains(body, `hx-post="/projects/activate?projectId=p3"`) {
+		t.Errorf("org landing must not render an activate target for pending project p3")
+	}
+	// ...and its row is not clickable either: no row-level target and no
+	// pointer affordance.
+	if strings.Contains(body, `data-activate-url="/projects/activate?projectId=p3"`) {
+		t.Errorf("org landing must not render a clickable row for pending project p3")
+	}
+	if !strings.Contains(body, `<tr id="p3">`) {
+		t.Errorf("pending project row must render without clickable affordances, want <tr id=\"p3\">")
+	}
+	// org-context sidebar renders, project nav does not
+	for _, want := range []string{`href="/o/o1/members"`, `href="/o/o1/settings"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org sidebar missing %q", want)
+		}
+	}
+	for _, absent := range []string{"Memory Browser", `href="/objects"`} {
+		if strings.Contains(body, absent) {
+			t.Errorf("project nav must not render in org context, found %q", absent)
+		}
+	}
+}
+
+// TestUIOrgLandingEmpty covers the empty-org state with the create CTA.
+func TestUIOrgLandingEmpty(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "No projects yet") || !strings.Contains(body, "Create project") {
+		t.Errorf("empty org landing missing empty state/CTA, got %q", body)
+	}
+}
+
+// TestUIOrgLandingNotFound covers the unknown-org error path.
+func TestUIOrgLandingNotFound(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{}}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/orgs/missing", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Organization unavailable") {
+		t.Errorf("unknown org = %d, want 200 with error state", rec.Code)
+	}
+}
+
+// TestUIOrgLandingProjectsUnavailable covers the backend-failure path for the
+// org landing: a projects-list error must render the unavailable state, never
+// the "No projects yet / Create project" empty state.
+func TestUIOrgLandingProjectsUnavailable(t *testing.T) {
+	f := &fakeMemory{
+		orgs:                []Org{{ID: "o1", Name: "Acme"}},
+		listProjectsInclErr: &memoryHTTPError{Status: http.StatusServiceUnavailable, Code: "service_unavailable", Message: "Token validation temporarily unavailable"},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 with backend failure = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Organization unavailable") {
+		t.Errorf("projects failure must render the unavailable state, got %q", body)
+	}
+	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
+		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestUIRootTransportErrorRedacted asserts a transport-level ListOrgs failure
+// renders the unavailable state with a sanitized message: no host, port,
+// "dial tcp", or "memory 5xx" detail leaks, and the onboarding wizard never
+// renders.
+func TestUIRootTransportErrorRedacted(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+		listOrgsErr: &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080/api/orgs",
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		},
+	}}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		Sub:         "sub-a",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ with transport failure = %d, want 200 unavailable page", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unavailable state missing sanitized message, got %q", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("transport failure leaked %q into the page", leak)
+		}
+	}
+	if strings.Contains(body, "Create organization") || strings.Contains(body, "Create the first project") {
+		t.Errorf("transport failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestUIOrgLandingProjectsTransportErrorRedacted asserts a transport-level
+// ListProjectsIncludingPending failure renders "Organization unavailable" with
+// a sanitized message and never the empty/onboarding state.
+func TestUIOrgLandingProjectsTransportErrorRedacted(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		listProjectsInclErr: &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080/api/projects",
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 with transport failure = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Organization unavailable") || !strings.Contains(body, memoryUnavailableMessage) {
+		t.Errorf("unavailable state missing sanitized message, got %q", body)
+	}
+	for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("transport failure leaked %q into the page", leak)
+		}
+	}
+	if strings.Contains(body, "Create project") || strings.Contains(body, "Create the first project in this organization.") {
+		t.Errorf("projects failure must never render the empty/onboarding state, got %q", body)
+	}
+}
+
+// TestUIOrgOrgLoadFailureRedacted asserts the org-load (GetOrg) failure path
+// renders the sanitized unavailable state — never the raw backend error. This
+// is the #1654 follow-up to #1645: a transport failure carries
+// "dial tcp <host>:<port>" and a memoryHTTPError renders a "memory <status>
+// <code>:" prefix, both of which must be redacted. The leak assertions fail if
+// userFacingMemoryError is bypassed at the resolveOrg call site.
+func TestUIOrgOrgLoadFailureRedacted(t *testing.T) {
+	transport := &url.Error{
+		Op:  "Get",
+		URL: "http://172.17.0.1:8080/api/orgs/o1",
+		Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+	}
+	serviceUnavailable := &memoryHTTPError{
+		Status:  http.StatusServiceUnavailable,
+		Code:    "service_unavailable",
+		Message: "Token validation temporarily unavailable",
+	}
+
+	for _, tc := range []struct {
+		name    string
+		path    string
+		heading string
+		err     error
+	}{
+		{"org landing transport", "/orgs/o1", "Organization unavailable", transport},
+		{"org landing service_unavailable", "/orgs/o1", "Organization unavailable", serviceUnavailable},
+		{"org settings sibling transport", "/orgs/o1/settings", "Settings unavailable", transport},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: sessionCfg(), memory: &fakeMemory{getOrgErr: tc.err}}
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+				AccessToken: "at",
+				OrgID:       "o1",
+				ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+			}))
+			rec := httptest.NewRecorder()
+			orgContextUIServer(s).ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s with org-load failure = %d, want 200", tc.path, rec.Code)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.heading) {
+				t.Errorf("GET %s missing unavailable heading %q, got %q", tc.path, tc.heading, body)
+			}
+			if !strings.Contains(body, memoryUnavailableMessage) {
+				t.Errorf("GET %s missing sanitized message, got %q", tc.path, body)
+			}
+			for _, leak := range []string{"172.17.0.1", "dial tcp", ":8080", "memory 5", "service_unavailable", "Token validation"} {
+				if strings.Contains(body, leak) {
+					t.Errorf("GET %s leaked %q into the page", tc.path, leak)
+				}
+			}
+		})
+	}
+}
+
+// TestTenancyLoadFailureRedactedSiblings asserts the audit companion to
+// TestUIOrgOrgLoadFailureRedacted: the other single-resource tenancy loads that
+// render an unavailable state — the org list (the caller's access tree) and the
+// project settings / budget pages (the current project) — render the sanitized
+// message, never the raw backend error (#1654).
+func TestTenancyLoadFailureRedactedSiblings(t *testing.T) {
+	transport := func(path string) error {
+		return &url.Error{
+			Op:  "Get",
+			URL: "http://172.17.0.1:8080" + path,
+			Err: errors.New("dial tcp 172.17.0.1:8080: connect: connection refused"),
+		}
+	}
+	leaks := []string{"172.17.0.1", "dial tcp", ":8080", "memory 5", "service_unavailable"}
+	check := func(t *testing.T, rec *httptest.ResponseRecorder, heading string) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d (Location %q), want 200", rec.Code, rec.Header().Get("Location"))
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, heading) {
+			t.Errorf("missing unavailable heading %q, got %q", heading, body)
+		}
+		if !strings.Contains(body, memoryUnavailableMessage) {
+			t.Errorf("missing sanitized message, got %q", body)
+		}
+		for _, leak := range leaks {
+			if strings.Contains(body, leak) {
+				t.Errorf("leaked %q into the page", leak)
+			}
+		}
+	}
+	get := func(t *testing.T, s *Server, path string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			Sub:         "sub-a",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		orgContextUIServer(s).ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("org list access tree", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{orgsAndProjectsErr: transport("/api/user/orgs-and-projects")}}
+		check(t, get(t, s, "/orgs"), "Organizations unavailable")
+	})
+
+	t.Run("project settings current project", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projectErr: transport("/api/projects/current"),
+			projects:   []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
+		check(t, get(t, s, "/settings"), "Project settings unavailable")
+	})
+
+	t.Run("budget settings current project", func(t *testing.T) {
+		s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+			projectErr: transport("/api/projects/current"),
+			projects:   []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+			orgsAndProjects: []OrgWithProjectsDto{
+				{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}},
+			},
+		}}
+		check(t, get(t, s, "/settings/budget"), "Budget settings unavailable")
+	})
+}
+
+// TestUIOrgMembers covers the org members page.
+func TestUIOrgMembers(t *testing.T) {
+	dn := "Ada Lovelace"
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		orgMembers: []OrgMemberDto{
+			{ID: "u1", Email: "ada@x.io", DisplayName: &dn, Role: "org_admin", JoinedAt: time.Now().Format(time.RFC3339)},
+		},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1/members", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/members = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Ada Lovelace", "ada@x.io", "org admin"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org members page missing %q", want)
+		}
+	}
+}
+
+// TestUIOrgInviteRoutes covers the org-level invite flow: the GET page renders
+// the form, the POST creates an organization-scoped org_admin invite (org id,
+// no projectId), invalid roles are rejected server-side, and a memory failure
+// surfaces honestly via the ?err= flash.
+func TestUIOrgInviteRoutes(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	// GET page renders the form bound to the org.
+	rec := orgGet(t, e, "/orgs/o1/invite")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/invite = %d, want 200", rec.Code)
+	}
+	for _, want := range []string{`action="/o/o1/invite"`, `name="orgId" value="o1"`, `value="org_admin"`, "Send invitation"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("GET /orgs/o1/invite missing %q", want)
+		}
+	}
+	if strings.Contains(rec.Body.String(), `name="projectId"`) {
+		t.Error("org invite form must not carry a projectId")
+	}
+
+	// POST org_admin invite → org-scoped invite (no projectId), 303 to members.
+	rec = orgPost(t, e, "/orgs/o1/invite", "email=newadmin@example.com&role=org_admin")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?invited=1" {
+		t.Fatalf("POST /orgs/o1/invite = %d %q, want 303 /orgs/o1/members?invited=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if len(f.createdInvites) != 1 {
+		t.Fatalf("CreateInvite not recorded: %+v", f.createdInvites)
+	}
+	inv := f.createdInvites[0]
+	if inv.OrgID != "o1" || inv.ProjectID != "" || inv.Email != "newadmin@example.com" || inv.Role != "org_admin" {
+		t.Errorf("created org invite fields wrong: %+v", inv)
+	}
+
+	// The members page surfaces the success flash.
+	rec = orgGet(t, e, "/orgs/o1/members?invited=1")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Invitation sent.") {
+		t.Errorf("org members invited flash = %d, want 200 with %q", rec.Code, "Invitation sent.")
+	}
+
+	// Invalid role (a project role) is rejected server-side, before memory.
+	rec = orgPost(t, e, "/orgs/o1/invite", "email=x@example.com&role=project_admin")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/orgs/o1/invite?err=invalid+role") {
+		t.Errorf("invalid role = %d %q, want /orgs/o1/invite error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	// Missing email is rejected before memory.
+	rec = orgPost(t, e, "/orgs/o1/invite", "email=&role=org_admin")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=email+is+required") {
+		t.Errorf("missing email = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	// Both local rejections leave the recorded invite list untouched.
+	if len(f.createdInvites) != 1 {
+		t.Errorf("local rejections must not call CreateInvite, recorded %+v", f.createdInvites)
+	}
+
+	// A memory rejection surfaces honestly as an error flash with no invite row.
+	f.createInviteErr = errTest
+	rec = orgPost(t, e, "/orgs/o1/invite", "email=admin2@example.com&role=org_admin")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=backend+unreachable") {
+		t.Errorf("memory error = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if len(f.createdInvites) != 1 {
+		t.Errorf("rejected invite must not be recorded, got %+v", f.createdInvites)
+	}
+}
+
+// TestUIOrgSettings covers the Tools section of the org Settings hub and the
+// toggle/delete PRG flows; TestUIOrgSettingsDangerZone covers the Danger zone
+// section with the delete-org form.
+func TestUIOrgSettings(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		orgToolSettings: []OrgToolSettingDto{
+			{ID: "ts1", OrgID: "o1", ToolName: "web_search", Enabled: true},
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1/settings", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings = %d, want 200", rec.Code)
+	}
+	for _, want := range []string{"web_search", `href="/o/o1/settings/danger-zone"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("org settings page missing %q", want)
+		}
+	}
+
+	// toggle → redirect back to the settings hub with ?updated=1
+	rec = orgPost(t, e, "/orgs/o1/tool-settings/web_search", "enabled=false")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/settings?updated=1" {
+		t.Errorf("toggle = %d %q, want 303 /orgs/o1/settings?updated=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.toolSettingOrg != "o1" {
+		t.Errorf("UpsertOrgToolSetting org = %q, want o1", f.toolSettingOrg)
+	}
+
+	// delete → redirect back
+	rec = orgPost(t, e, "/orgs/o1/tool-settings/web_search/delete", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/settings?updated=1" {
+		t.Errorf("delete = %d %q, want 303 updated", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// TestOrgSettingsSubNavOAuthClientsAdminOnly mirrors
+// TestSettingsSubNavOAuthClientsAdminOnly for the org settings rail: the
+// "Data source OAuth clients" entry renders for org admins and is hidden (not
+// merely disabled) for everyone else. Rendered via renderHTML (no scope
+// rewrite), so the href is the raw /orgs/{id} form.
+func TestOrgSettingsSubNavOAuthClientsAdminOnly(t *testing.T) {
+	admin := renderHTML(t, orgSettingsSubNav("org1", "tools", true))
+	for _, want := range []string{`href="/orgs/org1/settings/oauth-clients"`, "Data source OAuth clients"} {
+		if !strings.Contains(admin, want) {
+			t.Errorf("admin org settings sub-nav missing %q", want)
+		}
+	}
+
+	nonAdmin := renderHTML(t, orgSettingsSubNav("org1", "tools", false))
+	if strings.Contains(nonAdmin, `href="/orgs/org1/settings/oauth-clients"`) {
+		t.Error("non-admin org settings sub-nav must not render the oauth-clients entry")
+	}
+	if strings.Contains(nonAdmin, "Data source OAuth clients") {
+		t.Error("non-admin org settings sub-nav must not render the oauth-clients label")
+	}
+}
+
+func TestUIOrgSettingsDangerZone(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+	req := httptest.NewRequest(http.MethodGet, "/orgs/o1/settings/danger-zone", nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/danger-zone = %d, want 200", rec.Code)
+	}
+	for _, want := range []string{"Danger zone", `action="/o/o1/delete"`, `href="/o/o1/settings"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("danger-zone page missing %q", want)
+		}
+	}
+}
+
+// TestUIOrgRename covers the org General settings section and the rename PRG
+// flow: the GET form prefilled with the current name, the POST forwarding id +
+// name to memory (303 + ?renamed=1 flash), the local empty-name guard, and the
+// backend-error path.
+func TestUIOrgRename(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	// GET renders the rename form bound to the org's current name.
+	rec := orgGet(t, e, "/orgs/o1/settings/general")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/general = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`action="/o/o1/rename"`, `name="name"`, `value="Acme"`, "Save name", `href="/o/o1/settings/general"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org general page missing %q", want)
+		}
+	}
+
+	// POST renames via memory and redirects to the General section.
+	rec = orgPost(t, e, "/orgs/o1/rename", "name=Acme+Renamed")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/settings/general?renamed=1" {
+		t.Fatalf("POST /orgs/o1/rename = %d %q, want 303 /orgs/o1/settings/general?renamed=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.renamedOrgID != "o1" || f.renamedOrgName != "Acme Renamed" {
+		t.Errorf("UpdateOrg = (%q, %q), want (o1, Acme Renamed)", f.renamedOrgID, f.renamedOrgName)
+	}
+
+	// The success flash surfaces on the redirected page.
+	rec = orgGet(t, e, "/orgs/o1/settings/general?renamed=1")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Organization renamed.") {
+		t.Errorf("renamed flash = %d, want 200 with %q", rec.Code, "Organization renamed.")
+	}
+
+	// Empty name is rejected locally, before memory.
+	f.renamedOrgID, f.renamedOrgName = "", ""
+	rec = orgPost(t, e, "/orgs/o1/rename", "name=")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/orgs/o1/settings/general?err=name+is+required") {
+		t.Errorf("empty name = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.renamedOrgID != "" || f.renamedOrgName != "" {
+		t.Errorf("local rejection must not call UpdateOrg, got (%q, %q)", f.renamedOrgID, f.renamedOrgName)
+	}
+
+	// A memory rejection surfaces honestly via the ?err= flash, no state change.
+	f.updateOrgErr = errTest
+	rec = orgPost(t, e, "/orgs/o1/rename", "name=Nope")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "/orgs/o1/settings/general?err=backend+unreachable") {
+		t.Errorf("memory error = %d %q, want error redirect", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.renamedOrgID != "" {
+		t.Errorf("rejected rename must not record a call, got %q", f.renamedOrgID)
+	}
+}
+
+// orgPost issues an authenticated (session) urlencoded POST as org o1.
+func orgPost(t *testing.T, e *echo.Echo, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// TestUIDeleteOrg covers the delete-org flow: memory delete + context clear.
+func TestUIDeleteOrg(t *testing.T) {
+	f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	req := httptest.NewRequest(http.MethodPost, "/orgs/o1/delete", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/new" {
+		t.Errorf("delete org = %d %q, want 303 /orgs/new", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.deletedOrgID != "o1" {
+		t.Errorf("DeleteOrg id = %q, want o1", f.deletedOrgID)
+	}
+
+	t.Run("delete failure redirects to the danger zone", func(t *testing.T) {
+		f := &fakeMemory{orgs: []Org{{ID: "o1", Name: "Acme"}}, deleteOrgErr: fmt.Errorf("org has active projects")}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/orgs/o1/delete", "")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("delete failure = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/orgs/o1/settings/danger-zone?err=") {
+			t.Errorf("delete failure Location = %q, want /orgs/o1/settings/danger-zone?err=", loc)
+		}
+	})
+}
+
+// TestUIActivateProjectFromOrgContext asserts a project switch from the org
+// context lands on the project's scoped page (not back on the org page, which
+// would re-activate the org and undo the switch), regardless of the Referer.
+func TestUIActivateProjectFromOrgContext(t *testing.T) {
+	s := &Server{cfg: sessionCfg(), memory: &fakeMemory{
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Projects: []ProjectAccessDto{{ID: "p1", Name: "Home", OrgID: "o1"}}}},
+	}}
+	e := echo.New()
+	e.Use(s.authDispatch)
+	e.POST("/projects/activate", s.uiActivateProject)
+
+	post := func(referer string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/projects/activate", strings.NewReader("projectId=p1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if referer != "" {
+			req.Header.Set("Referer", referer)
+		}
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o1",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	for _, referer := range []string{"http://localhost:8095/orgs/o1", "http://localhost:8095/settings", ""} {
+		if rec := post(referer); rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1/p/p1/agents" {
+			t.Errorf("activate (referer %q) = %d %q, want 303 /o/o1/p/p1/agents", referer, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+}
+
+// TestUIDeleteProjects covers the delete-project flow on the org landing:
+// bulk via the table form (plain POST → 303), single via the row action menu
+// (HTMX → 200 + HX-Redirect), and the empty-selection error path.
+func TestUIDeleteProjects(t *testing.T) {
+	t.Run("bulk delete via plain form", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/delete", "orgId=o1&projectId=p1&projectId=p2")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1?deleted=2" {
+			t.Errorf("bulk delete = %d %q, want 303 /o/o1?deleted=2", rec.Code, rec.Header().Get("Location"))
+		}
+		if got := f.deletedProjectIDs; !reflect.DeepEqual(got, []string{"p1", "p2"}) {
+			t.Errorf("DeleteProject ids = %v, want [p1 p2]", got)
+		}
+	})
+
+	t.Run("single delete via HTMX", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/projects/delete?orgId=o1&projectId=p1", nil)
+		req.Header.Set("HX-Request", "true")
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o1",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/o1?deleted=1" {
+			t.Errorf("single HTMX delete = %d HX-Redirect %q, want 200 /o/o1?deleted=1", rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		if got := f.deletedProjectIDs; !reflect.DeepEqual(got, []string{"p1"}) {
+			t.Errorf("DeleteProject ids = %v, want [p1]", got)
+		}
+	})
+
+	t.Run("empty selection errors", func(t *testing.T) {
+		f := &fakeMemory{}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/delete", "orgId=o1")
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("empty selection = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("empty selection Location = %q, want ?err= flash", loc)
+		}
+		if len(f.deletedProjectIDs) != 0 {
+			t.Errorf("DeleteProject called with %v, want none", f.deletedProjectIDs)
+		}
+	})
+}
+
+// transferTree is a two-org access tree (source o1 org_admin + destination o2)
+// for the transfer handler/page tests.
+func transferTree() []OrgWithProjectsDto {
+	return []OrgWithProjectsDto{
+		{ID: "o1", Name: "Acme", Role: "org_admin"},
+		{ID: "o2", Name: "Globex", Role: "org_member"},
+	}
+}
+
+// TestUITransferProject covers the transfer-project flow on the org landing:
+// success via plain POST (303) and HTMX (200 + HX-Redirect) with the exact
+// TransferProject call args, the local guard short-circuits (source-as-
+// destination and missing destination never reach the backend), and the
+// backend-error path (error flash, no state change).
+func TestUITransferProject(t *testing.T) {
+	t.Run("success via plain form", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree()}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1&destinationOrgId=o2")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/o/o1?moved=o2&project=p1" {
+			t.Errorf("transfer = %d %q, want 303 /o/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.transferCount != 1 || f.transferredID != "p1" || f.transferredToOrg != "o2" {
+			t.Errorf("TransferProject = (%d, %q -> %q), want (1, p1 -> o2)", f.transferCount, f.transferredID, f.transferredToOrg)
+		}
+	})
+
+	t.Run("success via HTMX", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree()}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/projects/transfer?orgId=o1&projectId=p1&destinationOrgId=o2", nil)
+		req.Header.Set("HX-Request", "true")
+		req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+			AccessToken: "at",
+			OrgID:       "o1",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		}))
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || rec.Header().Get("HX-Redirect") != "/o/o1?moved=o2&project=p1" {
+			t.Errorf("HTMX transfer = %d HX-Redirect %q, want 200 /o/o1?moved=o2&project=p1", rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		if f.transferCount != 1 || f.transferredID != "p1" || f.transferredToOrg != "o2" {
+			t.Errorf("TransferProject = (%d, %q -> %q), want (1, p1 -> o2)", f.transferCount, f.transferredID, f.transferredToOrg)
+		}
+	})
+
+	t.Run("source as destination is rejected locally", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree()}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1&destinationOrgId=o1")
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("self transfer = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("self transfer Location = %q, want ?err= flash", loc)
+		}
+		if f.transferCount != 0 {
+			t.Errorf("TransferProject called %d times, want 0 (local guard)", f.transferCount)
+		}
+	})
+
+	t.Run("missing destination is rejected locally", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree()}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1")
+		if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "?err=") {
+			t.Errorf("missing destination = %d %q, want 303 with ?err= flash", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.transferCount != 0 {
+			t.Errorf("TransferProject called %d times, want 0 (local guard)", f.transferCount)
+		}
+	})
+
+	t.Run("destination outside the user's orgs is rejected locally", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree()}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1&destinationOrgId=o-other")
+		if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "?err=") {
+			t.Errorf("unknown destination = %d %q, want 303 with ?err= flash", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.transferCount != 0 {
+			t.Errorf("TransferProject called %d times, want 0 (local guard)", f.transferCount)
+		}
+	})
+
+	t.Run("backend error surfaces and leaves state unchanged", func(t *testing.T) {
+		f := &fakeMemory{orgsAndProjects: transferTree(), transferProjectErr: fmt.Errorf("memory 403 forbidden: not an admin of the destination org")}
+		s := &Server{cfg: sessionCfg(), memory: f}
+		e := orgContextUIServer(s)
+		rec := orgPost(t, e, "/projects/transfer", "orgId=o1&projectId=p1&destinationOrgId=o2")
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("backend error = %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); !strings.Contains(loc, "?err=") {
+			t.Errorf("backend error Location = %q, want ?err= flash", loc)
+		}
+		if f.transferCount != 0 || f.transferredID != "" || f.transferredToOrg != "" {
+			t.Errorf("TransferProject recorded (%d, %q, %q) after error, want none", f.transferCount, f.transferredID, f.transferredToOrg)
+		}
+	})
+}
+
+// TestTransferState covers the org-landing transfer affordance derivation from
+// the access tree: candidates are the user's orgs minus the source, and the
+// action shows only for an org_admin of the source with ≥1 candidate.
+func TestTransferState(t *testing.T) {
+	t.Run("org_admin with a candidate can transfer", func(t *testing.T) {
+		dest, can := transferState(transferTree(), "o1")
+		if !can {
+			t.Errorf("canTransfer = false, want true")
+		}
+		if want := []Org{{ID: "o2", Name: "Globex"}}; !reflect.DeepEqual(dest, want) {
+			t.Errorf("destinations = %+v, want %+v", dest, want)
+		}
+	})
+
+	t.Run("org_admin with no other org cannot transfer", func(t *testing.T) {
+		tree := []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}}
+		if dest, can := transferState(tree, "o1"); can || len(dest) != 0 {
+			t.Errorf("single-org admin = (%+v, %v), want (nil, false)", dest, can)
+		}
+	})
+
+	t.Run("non-admin cannot transfer even with candidates", func(t *testing.T) {
+		tree := []OrgWithProjectsDto{
+			{ID: "o1", Name: "Acme", Role: "org_member"},
+			{ID: "o2", Name: "Globex", Role: "org_member"},
+		}
+		dest, can := transferState(tree, "o1")
+		if can {
+			t.Errorf("canTransfer = true for org_member, want false")
+		}
+		if want := []Org{{ID: "o2", Name: "Globex"}}; !reflect.DeepEqual(dest, want) {
+			t.Errorf("destinations = %+v, want %+v", dest, want)
+		}
+	})
+
+	t.Run("empty tree cannot transfer", func(t *testing.T) {
+		if dest, can := transferState(nil, "o1"); can || len(dest) != 0 {
+			t.Errorf("empty tree = (%+v, %v), want (nil, false)", dest, can)
+		}
+	})
+}
+
+// TestUIOrgLandingTransferAffordance asserts the Transfer row action and its
+// destination dialog render only when the acting user can transfer (org_admin
+// of the current org with ≥1 other org), and that the success flash names the
+// moved project and its new org.
+func TestUIOrgLandingTransferAffordance(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}, {ID: "o2", Name: "Globex"}},
+		projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		orgsAndProjects: transferTree(),
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	rec := orgGet(t, e, "/orgs/o1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	// Transfer row action carries the row's project id/name for the dialog.
+	for _, want := range []string{`data-project-id="p1"`, `data-project-name="Home"`, `id="transfer-project-modal"`, `name="destinationOrgId"`, `name="projectId"`, `<option value="o2">Globex</option>`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org landing with transfer missing %q", want)
+		}
+	}
+	// The source org is excluded from the destination options.
+	if strings.Contains(body, `<option value="o1">`) {
+		t.Errorf("org landing destination options must exclude the source org")
+	}
+
+	// Success flash after a transfer names project + destination org. The
+	// moved project now belongs to o2, so it left o1's list but stays in the
+	// user's overall project list (which uiOrg loads to name the flash).
+	f.projects = []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o2"}}
+	rec = orgGet(t, e, "/orgs/o1?moved=o2&project=p1")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Home moved to Globex.") {
+		t.Errorf("moved flash = %d, want 200 with %q", rec.Code, "Home moved to Globex.")
+	}
+
+	// Non-admin: no Transfer row action and no dialog. (The id string also
+	// appears in the page's JS, so assert on the dialog's rendered markup.)
+	fNonAdmin := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}, {ID: "o2", Name: "Globex"}},
+		projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}, {ID: "o2", Name: "Globex", Role: "org_member"}},
+	}
+	rec = orgGet(t, orgContextUIServer(&Server{cfg: sessionCfg(), memory: fNonAdmin}), "/orgs/o1")
+	for _, absent := range []string{`id="transfer-project-modal"`, `action="/projects/transfer"`, `data-project-id="p1"`, `name="destinationOrgId"`} {
+		if strings.Contains(rec.Body.String(), absent) {
+			t.Errorf("non-admin org landing must not render the transfer dialog, found %q", absent)
+		}
+	}
+
+	// Admin with no other org: no Transfer row action and no dialog.
+	fSolo := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		projects:        []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+	}
+	rec = orgGet(t, orgContextUIServer(&Server{cfg: sessionCfg(), memory: fSolo}), "/orgs/o1")
+	for _, absent := range []string{`id="transfer-project-modal"`, `action="/projects/transfer"`, `data-project-id="p1"`, `name="destinationOrgId"`} {
+		if strings.Contains(rec.Body.String(), absent) {
+			t.Errorf("solo-org admin org landing must not render the transfer dialog, found %q", absent)
+		}
+	}
+}
+
+// orgGet issues an authenticated (session) GET as org o1.
+func orgGet(t *testing.T, e *echo.Echo, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.AddCookie(sessionCookie(t, "test-secret", sessionClaims{
+		AccessToken: "at",
+		OrgID:       "o1",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// --- Role-gated org surfaces (org_admin vs plain member) ---
+
+// TestUIOrgLandingNonAdmin asserts a plain org member sees a read-only landing:
+// projects stay openable, but create/delete/restore/transfer affordances and
+// the Members nav entry are all absent.
+func TestUIOrgLandingNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:     []Org{{ID: "o1", Name: "Acme"}},
+		projects: []ProjectRef{{ID: "p1", Name: "Home", OrgID: "o1"}},
+		orgsAndProjects: []OrgWithProjectsDto{
+			{ID: "o1", Name: "Acme", Role: "org_member"},
+		},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1 = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`hx-post="/projects/activate?projectId=p1"`, `title="Open Home"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("non-admin landing missing openable project %q", want)
+		}
+	}
+	for _, absent := range []string{
+		`action="/projects/delete"`,
+		`aria-label="Select all projects"`,
+		`aria-label="Actions for Home"`,
+		`id="project-delete-modal"`, `id="project-restore-form"`,
+	} {
+		if strings.Contains(body, absent) {
+			t.Errorf("non-admin landing must not render %q", absent)
+		}
+	}
+	if strings.Contains(body, `href="/orgs/o1/members"`) {
+		t.Error("non-admin org sidebar must hide Members")
+	}
+}
+
+// TestUIOrgSettingsNonAdmin asserts the Tools list stays readable to a member
+// (tool-settings read is membership) while the write controls and the
+// admin-only General/Danger-zone sub-nav entries are hidden.
+func TestUIOrgSettingsNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgToolSettings: []OrgToolSettingDto{{ID: "ts1", OrgID: "o1", ToolName: "web_search", Enabled: true}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "web_search") {
+		t.Error("non-admin must still read the tool-settings list")
+	}
+	for _, absent := range []string{
+		`action="/orgs/o1/tool-settings/web_search"`,
+		`action="/orgs/o1/tool-settings/web_search/delete"`,
+		`href="/orgs/o1/settings/danger-zone"`,
+		`href="/orgs/o1/settings/general"`,
+	} {
+		if strings.Contains(body, absent) {
+			t.Errorf("non-admin settings must not render %q", absent)
+		}
+	}
+}
+
+// TestUIOrgSettingsGeneralNonAdmin asserts the rename form is hidden for a
+// member, replaced by a grounded note.
+func TestUIOrgSettingsGeneralNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings/general")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/general = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `action="/orgs/o1/rename"`) {
+		t.Error("non-admin must not see the rename form")
+	}
+	if !strings.Contains(body, "Only organization admins can rename this organization.") {
+		t.Error("non-admin general section missing the grounded note")
+	}
+}
+
+// TestUIOrgSettingsDangerZoneNonAdmin asserts the delete-org form is hidden for
+// a member, replaced by a grounded note.
+func TestUIOrgSettingsDangerZoneNonAdmin(t *testing.T) {
+	f := &fakeMemory{
+		orgs:            []Org{{ID: "o1", Name: "Acme"}},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_member"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	rec := orgGet(t, orgContextUIServer(s), "/orgs/o1/settings/danger-zone")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/settings/danger-zone = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `action="/orgs/o1/delete"`) {
+		t.Error("non-admin must not see the delete-org form")
+	}
+	if !strings.Contains(body, "Only organization admins can delete this organization.") {
+		t.Error("non-admin danger zone missing the grounded note")
+	}
+}
+
+// TestOrgPageRenderSingleAccessTreeFetch asserts each org-scoped render — the
+// landing, members, and the three Settings hub sections — performs exactly ONE
+// GetOrgsAndProjects call: the access tree is threaded once per request (see
+// orgAccessTree) and shared by the page data and page()'s sidebar gating,
+// instead of being fetched by both call sites.
+func TestOrgPageRenderSingleAccessTreeFetch(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"landing", "/orgs/o1"},
+		{"members", "/orgs/o1/members"},
+		{"settings", "/orgs/o1/settings"},
+		{"settings-general", "/orgs/o1/settings/general"},
+		{"settings-danger-zone", "/orgs/o1/settings/danger-zone"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{
+				orgs:            []Org{{ID: "o1", Name: "Acme"}},
+				orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+			}
+			s := &Server{cfg: sessionCfg(), memory: f}
+			rec := orgGet(t, orgContextUIServer(s), tc.path)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET %s = %d, want 200", tc.path, rec.Code)
+			}
+			if f.orgsAndProjectsCalls != 1 {
+				t.Errorf("GET %s performed %d GetOrgsAndProjects calls, want 1", tc.path, f.orgsAndProjectsCalls)
+			}
+		})
+	}
+}
+
+// TestUIOrgMemberManagement covers the organization member-management surface:
+// the members page renders invite/add actions and pending org invitations, and
+// the add/role/remove/resend/revoke forms redirect back to the members page.
+func TestUIOrgMemberManagement(t *testing.T) {
+	f := &fakeMemory{
+		orgs: []Org{{ID: "o1", Name: "Acme"}},
+		orgMembers: []OrgMemberDto{
+			{ID: "u1", Email: "ada@x.io", Role: "org_admin", JoinedAt: time.Now().Format(time.RFC3339)},
+			{ID: "u2", Email: "bob@x.io", Role: "member", JoinedAt: time.Now().Format(time.RFC3339)},
+		},
+		orgInvites: []SentInviteDto{
+			{ID: "inv1", Email: "pend@x.io", Role: "org_member", Status: "pending", CreatedAt: time.Now().Format(time.RFC3339)},
+		},
+		orgsAndProjects: []OrgWithProjectsDto{{ID: "o1", Name: "Acme", Role: "org_admin"}},
+	}
+	s := &Server{cfg: sessionCfg(), memory: f}
+	e := orgContextUIServer(s)
+
+	rec := orgGet(t, e, "/orgs/o1/members")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /orgs/o1/members = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Invite member", "Add member", "pend@x.io", "Not responded", `name="role"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("org members page missing %q", want)
+		}
+	}
+
+	// Direct add.
+	rec = orgPost(t, e, "/orgs/o1/members", "email=new@x.io&role=member")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?added=1" {
+		t.Fatalf("POST add = %d %q, want 303 /orgs/o1/members?added=1", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.addedOrgMemberEmail != "new@x.io" || f.addedOrgMemberRole != "member" {
+		t.Errorf("AddOrgMember forwarded %q/%q", f.addedOrgMemberEmail, f.addedOrgMemberRole)
+	}
+
+	// Invalid direct-add role is rejected before memory.
+	rec = orgPost(t, e, "/orgs/o1/members", "email=new@x.io&role=owner")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "invalid+role") {
+		t.Errorf("invalid add role = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// Inline role change.
+	rec = orgPost(t, e, "/orgs/o1/members/u2/role", "role=org_admin")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?role-changed=1" {
+		t.Fatalf("POST role = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.updatedOrgMemberID != "u2" || f.updatedOrgMemberRole != "org_admin" {
+		t.Errorf("UpdateOrgMemberRole forwarded %q/%q", f.updatedOrgMemberID, f.updatedOrgMemberRole)
+	}
+
+	// Remove.
+	rec = orgPost(t, e, "/orgs/o1/members/u2/remove", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?removed=1" {
+		t.Fatalf("POST remove = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.removedOrgMemberID != "u2" {
+		t.Errorf("RemoveOrgMember forwarded %q", f.removedOrgMemberID)
+	}
+
+	// Resend + revoke pending org invite.
+	rec = orgPost(t, e, "/orgs/o1/invites/inv1/resend", "")
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "resent=sent") {
+		t.Errorf("POST resend = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.resentInvite != "inv1" {
+		t.Errorf("ResendInvite forwarded %q", f.resentInvite)
+	}
+	rec = orgPost(t, e, "/orgs/o1/invites/inv1/revoke", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/orgs/o1/members?revoked=1" {
+		t.Errorf("POST revoke = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if f.canceledInvite != "inv1" {
+		t.Errorf("CancelInvite forwarded %q", f.canceledInvite)
+	}
+
+	// Direct-add page renders.
+	rec = orgGet(t, e, "/orgs/o1/members/add")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "org-member-add-email") {
+		t.Errorf("GET add page = %d, missing form", rec.Code)
+	}
+}

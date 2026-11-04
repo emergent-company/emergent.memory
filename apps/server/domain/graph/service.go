@@ -1,0 +1,6139 @@
+package graph
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/emergent-company/emergent.memory/domain/events"
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/embeddingtext"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/mathutil"
+)
+
+// ExtractionSchemas contains object and relationship schemas.
+type ExtractionSchemas struct {
+	ObjectSchemas       map[string]agents.ObjectSchema
+	RelationshipSchemas map[string]agents.RelationshipSchema
+}
+
+// SchemaProvider provides access to template pack schemas for validation.
+type SchemaProvider interface {
+	GetProjectSchemas(ctx context.Context, projectID string) (*ExtractionSchemas, error)
+	// InvalidateProjectCache evicts the cached schemas for a project so the next
+	// call to GetProjectSchemas fetches fresh data from the database. Call this
+	// after any schema install, update, or removal.
+	InvalidateProjectCache(projectID string)
+}
+
+// InverseTypeProvider resolves inverse relationship types from template pack schemas.
+// For a given project and relationship type (e.g. "PARENT_OF"), it returns the inverse
+// type key (e.g. "CHILD_OF") if the template pack declares an inverseType field.
+type InverseTypeProvider interface {
+	GetInverseType(ctx context.Context, projectID string, relType string) (string, bool)
+}
+
+// EmbeddingService provides embedding generation for triplet text.
+type EmbeddingService interface {
+	EmbedQuery(ctx context.Context, query string) ([]float32, error)
+}
+
+// EmbeddingEnqueuer enqueues graph objects for asynchronous embedding generation.
+// This is satisfied by extraction.GraphEmbeddingJobsService via an adapter in module.go
+// to avoid a circular dependency (graph -> extraction -> graph).
+type EmbeddingEnqueuer interface {
+	EnqueueEmbedding(ctx context.Context, objectID string) error
+	// EnqueueBatchEmbeddings enqueues multiple objects for embedding. Returns the count of
+	// newly-inserted jobs and any error.
+	EnqueueBatchEmbeddings(ctx context.Context, objectIDs []string) (int, error)
+}
+
+// RelationshipEmbeddingEnqueuer enqueues graph relationships for asynchronous embedding generation.
+// This is satisfied by extraction.GraphRelationshipEmbeddingJobsService via an adapter in module.go.
+type RelationshipEmbeddingEnqueuer interface {
+	EnqueueRelationshipEmbedding(ctx context.Context, relationshipID string) error
+	EnqueueBatchRelationshipEmbeddings(ctx context.Context, relationshipIDs []string) (int, error)
+}
+
+// branchStoreIface is a minimal interface for branch store operations needed by the graph service.
+type branchStoreIface interface {
+	SetMergedAt(ctx context.Context, branchID string, mergedAt time.Time) error
+}
+
+// Service handles business logic for graph operations.
+type Service struct {
+	repo                 *Repository
+	log                  *slog.Logger
+	schemaProvider       SchemaProvider
+	inverseTypeProvider  InverseTypeProvider
+	embeddings           EmbeddingService
+	embeddingEnqueuer    EmbeddingEnqueuer
+	relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer
+	eventSink            EventSink
+	branchStore          branchStoreIface
+	events               *events.Service
+
+	// branchNotificationResolver marks review-ready notifications as resolved
+	// when a staging branch is merged. Nil when not wired (no-op).
+	branchNotificationResolver BranchNotificationResolver
+
+	// bulkUpdateMaxItems caps the number of items accepted by a bulk-update
+	// request (default 100, overridden from config).
+	bulkUpdateMaxItems int
+	// bulkUpdateMaxDuration bounds the detached context used by BulkUpdateObjects
+	// so a client disconnect cannot leave a batch holding DB connections
+	// indefinitely (default 60s, overridden from config).
+	bulkUpdateMaxDuration time.Duration
+
+	// accessStamp debounces last_accessed_at writes (issue #1070).
+	accessStamp *accessStampDebouncer
+
+	// Metrics
+	metricsMu          sync.RWMutex
+	validationSuccess  int64
+	validationErrors   int64
+	validationDuration time.Duration
+}
+
+// NewService creates a new graph service.
+func NewService(repo *Repository, log *slog.Logger, schemaProvider SchemaProvider, inverseTypeProvider InverseTypeProvider, embeddings EmbeddingService, embeddingEnqueuer EmbeddingEnqueuer, relEmbeddingEnqueuer RelationshipEmbeddingEnqueuer, sink EventSink, branchStore branchStoreIface, eventsSvc *events.Service) *Service {
+	if sink == nil {
+		sink = NoopEventSink{}
+	}
+	return &Service{
+		repo:                  repo,
+		log:                   log.With(logger.Scope("graph.svc")),
+		schemaProvider:        schemaProvider,
+		inverseTypeProvider:   inverseTypeProvider,
+		embeddings:            embeddings,
+		embeddingEnqueuer:     embeddingEnqueuer,
+		relEmbeddingEnqueuer:  relEmbeddingEnqueuer,
+		eventSink:             sink,
+		branchStore:           branchStore,
+		events:                eventsSvc,
+		bulkUpdateMaxItems:    100,
+		bulkUpdateMaxDuration: 60 * time.Second,
+		accessStamp:           newAccessStampDebouncer(),
+	}
+}
+
+// WithBulkUpdateLimits configures the bulk-update item cap and the bound on the
+// detached context used by BulkUpdateObjects. Values <= 0 leave the current
+// limit unchanged. Called by the fx provider from application config; returns
+// the service for chaining.
+func (s *Service) WithBulkUpdateLimits(maxItems int, maxDuration time.Duration) *Service {
+	if maxItems > 0 {
+		s.bulkUpdateMaxItems = maxItems
+	}
+	if maxDuration > 0 {
+		s.bulkUpdateMaxDuration = maxDuration
+	}
+	return s
+}
+
+// WithBranchNotificationResolver wires the resolver that marks review-ready
+// notifications resolved after a staging-branch merge. Nil is a valid no-op.
+func (s *Service) WithBranchNotificationResolver(resolver BranchNotificationResolver) *Service {
+	s.branchNotificationResolver = resolver
+	return s
+}
+
+// emitObjectCreated emits a graph_object entity.created event (no-op if events not wired).
+func (s *Service) emitObjectCreated(ctx context.Context, obj *GraphObjectResponse) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitCreated(ctx, events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+		Version:    &obj.Version,
+		ObjectType: obj.Type,
+		Data:       workStatusData(obj),
+	})
+}
+
+// emitObjectUpdated emits a graph_object entity.updated event (no-op if events not wired).
+func (s *Service) emitObjectUpdated(ctx context.Context, obj *GraphObjectResponse) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitUpdated(ctx, events.EntityGraphObject, obj.CanonicalID.String(), obj.ProjectID.String(), &events.EmitOptions{
+		Version:    &obj.Version,
+		ObjectType: obj.Type,
+		Data:       workUpdateData(obj),
+	})
+}
+
+// emitObjectDeleted emits a graph_object entity.deleted event (no-op if events not wired).
+func (s *Service) emitObjectDeleted(ctx context.Context, projectID, canonicalID, objType string) {
+	if s.events == nil {
+		return
+	}
+	s.events.EmitDeleted(ctx, events.EntityGraphObject, canonicalID, projectID, &events.EmitOptions{
+		ObjectType: objType,
+	})
+}
+
+// workStatusData builds the event payload's data map carrying the object's
+// built-in status and assignee so reaction dispatch can route by assignee and
+// record the work status without a second graph read.
+func workStatusData(obj *GraphObjectResponse) map[string]any {
+	data := make(map[string]any, 2)
+	if obj.Status != nil {
+		data["status"] = *obj.Status
+	}
+	if obj.Assignee != nil {
+		data["assignee"] = *obj.Assignee
+	}
+	return data
+}
+
+// workUpdateData builds the `updated` event payload: the status/assignee fields
+// plus the changed property paths (RFC 6901 JSON Pointers) drawn from the
+// version's ChangeSummary, so a `properties`-filtered listener can match without
+// a second graph read.
+func workUpdateData(obj *GraphObjectResponse) map[string]any {
+	data := workStatusData(obj)
+	if obj.ChangeSummary != nil {
+		if paths, ok := changeSummaryPaths(obj.ChangeSummary["paths"]); ok && len(paths) > 0 {
+			data["properties"] = paths
+		}
+	}
+	return data
+}
+
+// changeSummaryPaths extracts the changed property paths (RFC 6901 JSON
+// Pointers) from a ChangeSummary["paths"] value. In-process that value is a
+// []string (built by computeChangeSummary); a JSONB round-trip yields []any.
+// Both shapes are accepted so a reloaded object does not silently drop the
+// property filter for the emit path.
+func changeSummaryPaths(v any) ([]string, bool) {
+	switch paths := v.(type) {
+	case []string:
+		return paths, true
+	case []any:
+		out := make([]string, 0, len(paths))
+		for _, p := range paths {
+			if s, ok := p.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+// labelsEqual returns true if two label slices contain the same set of strings (order-independent).
+func labelsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]bool, len(a))
+	for _, l := range a {
+		set[l] = true
+	}
+	for _, l := range b {
+		if !set[l] {
+			return false
+		}
+	}
+	return true
+}
+
+// sameOptionalString reports whether two optional strings are both nil or equal.
+func sameOptionalString(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// validateObjectProperties validates and coerces object properties against the schema
+// for the given project and type. If the schema provider is nil or has no schema for
+// the type, the original properties are returned unchanged (unknown types are allowed).
+// Returns the validated/coerced properties, or an error if validation fails.
+func (s *Service) validateObjectProperties(ctx context.Context, projectID uuid.UUID, objType string, props map[string]any) (map[string]any, error) {
+	if s.schemaProvider == nil {
+		return props, nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil {
+		s.log.Warn("failed to load schemas, skipping validation",
+			slog.String("project_id", projectID.String()),
+			slog.String("error", err.Error()))
+		return props, nil
+	}
+	if schemas.ObjectSchemas == nil {
+		return props, nil
+	}
+	schema, ok := schemas.ObjectSchemas[objType]
+	if !ok {
+		// Unknown object types are allowed — the schema defines constraints for known
+		// types but does not act as an allowlist.
+		return props, nil
+	}
+	start := time.Now()
+	validated, err := validateProperties(props, schema)
+	duration := time.Since(start)
+	if err != nil {
+		s.incrementValidationError(duration)
+		return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+	}
+	s.incrementValidationSuccess(duration)
+	applySchemaDefaults(validated, schema)
+	return validated, nil
+}
+
+// resolveSchemaVersion returns the current schema pack version string for an
+// object type (e.g. "1.0.0"), or empty string when unknown or unavailable.
+// Used to stamp graph_objects.schema_version on create so the drift scan can
+// compare against the compiled schema version instead of seeing NULL.
+func (s *Service) resolveSchemaVersion(ctx context.Context, projectID uuid.UUID, objType string) string {
+	if s.schemaProvider == nil {
+		return ""
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return ""
+	}
+	if schema, ok := schemas.ObjectSchemas[objType]; ok {
+		return schema.Version
+	}
+	return ""
+}
+
+// objectTypeWorkConfig resolves the per-type object-driven work config for a
+// project+type (P4), or (nil, nil) when the schema provider is absent or the
+// type is unknown. Unknown types are unconfigured (never board-enabled). A
+// schema-provider error is returned to the caller so mutation paths can fail
+// closed rather than silently treating a board-enabled type as unconfigured
+// during an outage.
+func (s *Service) objectTypeWorkConfig(ctx context.Context, projectID uuid.UUID, objType string) (*agents.ObjectTypeWorkConfig, error) {
+	if s.schemaProvider == nil {
+		return nil, nil
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil {
+		return nil, err
+	}
+	if schemas == nil {
+		return nil, nil
+	}
+	schema, ok := schemas.ObjectSchemas[objType]
+	if !ok {
+		return nil, nil
+	}
+	return &schema.ObjectTypeWorkConfig, nil
+}
+
+// GetObjectTypeWorkConfig exposes the per-type object-driven work config for a
+// project+type (P4). It is the graph surface the agents domain uses to apply
+// per-type failureLimit/retryPolicy overrides (P4.3). Returns (nil, nil) when
+// the type is unknown or unconfigured.
+func (s *Service) GetObjectTypeWorkConfig(ctx context.Context, projectID, typeName string) (*agents.ObjectTypeWorkConfig, error) {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.objectTypeWorkConfig(ctx, pid, typeName)
+}
+
+// excludedSearchTypes returns the set of object type names flagged
+// excludeFromSearch for the project (P4.2). Operational objects are excluded
+// from default search. Empty when the schema provider is unavailable.
+func (s *Service) excludedSearchTypes(ctx context.Context, projectID uuid.UUID) map[string]bool {
+	out := make(map[string]bool)
+	if s.schemaProvider == nil {
+		return out
+	}
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil || schemas == nil {
+		return out
+	}
+	for name, os := range schemas.ObjectSchemas {
+		if os.ExcludeFromSearch {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// nameFromProps extracts the "name" property from a properties map, or returns an empty string.
+func nameFromProps(props map[string]any) string {
+	if props == nil {
+		return ""
+	}
+	if v, ok := props["name"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// entityTypeObject is the entity type constant for graph objects.
+const entityTypeObject = EntityObject
+
+// entityTypeRelationship is the entity type constant for graph relationships.
+const entityTypeRelationship = EntityRelationship
+
+// runBulkItems runs fn once for every index in [0,n) using at most
+// `concurrency` goroutines. It is the bounded worker pool behind the bulk
+// create/upsert/update endpoints (issue #1573): the per-item write path is
+// I/O-bound (one HEAD read, a version INSERT and a supersedes UPDATE each), so
+// overlapping independent items cuts wall time without changing semantics.
+//
+// Correctness/ordering contract:
+//   - Each index is visited exactly once, so fn may write its own results[i]
+//     slot with no mutex; the function returns only after every worker exits,
+//     so the caller may read the whole slice.
+//   - `concurrency` is clamped to [1,n]; the caller is responsible for the
+//     pool-aware upper bound (Repository.BulkConcurrency).
+//   - A cancelled ctx does not abort the pool: in-flight items observe ctx
+//     themselves and new items are still attempted so each index gets a result
+//     (per-item error isolation) rather than being silently left unset.
+func runBulkItems(n, concurrency int, fn func(i int)) {
+	if n <= 0 {
+		return
+	}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > n {
+		concurrency = n
+	}
+
+	var next int64
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for w := 0; w < concurrency; w++ {
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1)) - 1
+				if i >= n {
+					return
+				}
+				fn(i)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// enqueueEmbedding enqueues a graph object for async embedding generation.
+// Logs and swallows errors — embedding is best-effort and must never block CRUD.
+func (s *Service) enqueueEmbedding(ctx context.Context, objectID string) {
+	if s.embeddingEnqueuer == nil {
+		return
+	}
+	if err := s.embeddingEnqueuer.EnqueueEmbedding(ctx, objectID); err != nil {
+		s.log.Warn("failed to enqueue embedding job",
+			slog.String("object_id", objectID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// enqueueEmbeddingForType enqueues an embedding job for a graph object unless
+// the object's type carries the per-type skipEmbeddings flag (P4.2). Board-
+// enabled / operational objects churn versions on every status transition and
+// must not enqueue embeddings.
+func (s *Service) enqueueEmbeddingForType(ctx context.Context, projectID uuid.UUID, objType, objectID string) {
+	cfg, err := s.objectTypeWorkConfig(ctx, projectID, objType)
+	if err != nil {
+		// Embedding enqueue is best-effort and must never block CRUD; a transient
+		// schema-provider error fails open (enqueue) rather than silently
+		// suppressing the job.
+		s.log.Warn("failed to resolve work config for embedding enqueue",
+			slog.String("project_id", projectID.String()),
+			slog.String("type", objType),
+			slog.String("error", err.Error()))
+	} else if cfg != nil && cfg.SkipEmbeddings {
+		return
+	}
+	s.enqueueEmbedding(ctx, objectID)
+}
+
+// embeddingTextUnchanged reports whether two object states produce byte-
+// identical embedding text (type + stripped key + semantic properties). It uses
+// the same builder as the extraction worker (pkg/embeddingtext), so a change
+// the worker would notice can never be missed by the enqueue guard (#1478).
+func embeddingTextUnchanged(prev, next *GraphObject) bool {
+	// Normalize both states to their JSON representation first: `next` may hold
+	// caller-supplied Go values (int, []string, …) that the worker — reading the
+	// persisted JSONB back — would see as float64/[]any. Hashing the two views
+	// without normalizing could miss a real change (Copilot #1488 review).
+	return embeddingtext.Hash(prev.Type, prev.Key, embeddingtext.Normalize(prev.Properties)) ==
+		embeddingtext.Hash(next.Type, next.Key, embeddingtext.Normalize(next.Properties))
+}
+
+// carryEmbeddingIfUnchanged keeps a newly-created version's embedding in sync
+// when the embedding-relevant text did not change: the previous vector is copied
+// onto the new row (inside the caller's transaction) so the new HEAD stays
+// searchable without a redundant re-embed. It returns wantEnqueue=true when the
+// text DID change. The caller passes propsUnchanged so a write that did not touch
+// properties can skip the Normalize+Text walk entirely (only `key` also affects
+// embedding text). An unchanged row that was never embedded is left to the
+// self-healing embedding sweep.
+func (s *Service) carryEmbeddingIfUnchanged(ctx context.Context, tx bun.Tx, prev, next *GraphObject, propsUnchanged bool) (bool, error) {
+	// Fast path only when properties AND key are unchanged: embedding text is
+	// built from type + stripped key + properties, so with both provably
+	// identical the Normalize+Text walk can be skipped. A raw key change may
+	// still be semantically identical (the builder strips namespace prefixes and
+	// omits UUID keys), so fall back to the exact #1488 comparison rather than
+	// assuming any key change alters the text.
+	if !propsUnchanged || !sameOptionalString(prev.Key, next.Key) {
+		if !embeddingTextUnchanged(prev, next) {
+			return true, nil
+		}
+	}
+	if _, err := s.repo.CopyEmbedding(ctx, tx, prev.ID, next.ID); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// enqueueRelationshipEmbedding enqueues a graph relationship for async embedding generation.
+// Logs and swallows errors — embedding is best-effort and must never block CRUD.
+func (s *Service) enqueueRelationshipEmbedding(ctx context.Context, relationshipID string) {
+	if s.relEmbeddingEnqueuer == nil {
+		return
+	}
+	if err := s.relEmbeddingEnqueuer.EnqueueRelationshipEmbedding(ctx, relationshipID); err != nil {
+		s.log.Warn("failed to enqueue relationship embedding job",
+			slog.String("relationship_id", relationshipID),
+			slog.String("error", err.Error()))
+	}
+}
+
+// ReindexEmbeddingsResponse is the response for the ReindexEmbeddings operation.
+type ReindexEmbeddingsResponse struct {
+	// ObjectsEnqueued is the number of object embedding jobs newly inserted.
+	ObjectsEnqueued int `json:"objects_enqueued"`
+	// RelationshipsEnqueued is the number of relationship embedding jobs newly inserted.
+	RelationshipsEnqueued int `json:"relationships_enqueued"`
+}
+
+// ReindexEmbeddingsRequest holds options for the ReindexEmbeddings operation.
+type ReindexEmbeddingsRequest struct {
+	// Namespace filters to objects/relationships with keys prefixed by this namespace.
+	// If empty, all objects/relationships in the project are considered.
+	Namespace string
+	// Force re-enqueues even objects/relationships that already have an embedding.
+	// Default (false) only targets those with a NULL embedding.
+	Force bool
+}
+
+// ReindexEmbeddings enqueues objects and relationships in the project for embedding (re)generation.
+// Supports namespace filtering and force-regeneration of existing embeddings.
+func (s *Service) ReindexEmbeddings(ctx context.Context, projectID uuid.UUID, req ReindexEmbeddingsRequest) (*ReindexEmbeddingsResponse, error) {
+	resp := &ReindexEmbeddingsResponse{}
+
+	// --- Objects ---
+	if s.embeddingEnqueuer != nil {
+		var objectIDs []string
+		var objQuery string
+		if req.Force {
+			objQuery = `
+				SELECT o.id::text
+				FROM kb.graph_objects o
+				WHERE o.project_id = ?
+				  AND o.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_embedding_jobs j
+				    WHERE j.object_id = o.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY o.created_at ASC`
+		} else {
+			objQuery = `
+				SELECT o.id::text
+				FROM kb.graph_objects o
+				WHERE o.project_id = ?
+				  AND o.embedding_v2 IS NULL
+				  AND o.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_embedding_jobs j
+				    WHERE j.object_id = o.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY o.created_at ASC`
+		}
+		if req.Namespace != "" {
+			objQuery = strings.ReplaceAll(objQuery, "##NS##", "AND o.key LIKE ?")
+			err := s.repo.DB().NewRaw(objQuery, projectID, req.Namespace+"%").Scan(ctx, &objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query objects: %w", err)
+			}
+		} else {
+			objQuery = strings.ReplaceAll(objQuery, "##NS##", "")
+			err := s.repo.DB().NewRaw(objQuery, projectID).Scan(ctx, &objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query objects: %w", err)
+			}
+		}
+		if len(objectIDs) > 0 {
+			enqueued, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objectIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: enqueue objects: %w", err)
+			}
+			resp.ObjectsEnqueued = enqueued
+		}
+	}
+
+	// --- Relationships ---
+	if s.relEmbeddingEnqueuer != nil {
+		var relIDs []string
+		var relQuery string
+		if req.Force {
+			relQuery = `
+				SELECT r.id::text
+				FROM kb.graph_relationships r
+				WHERE r.project_id = ?
+				  AND r.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
+				    WHERE j.relationship_id = r.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY r.created_at ASC`
+		} else {
+			relQuery = `
+				SELECT r.id::text
+				FROM kb.graph_relationships r
+				WHERE r.project_id = ?
+				  AND r.embedding IS NULL
+				  AND r.deleted_at IS NULL
+				  ##NS##
+				  AND NOT EXISTS (
+				    SELECT 1 FROM kb.graph_relationship_embedding_jobs j
+				    WHERE j.relationship_id = r.id
+				      AND j.status IN ('pending', 'processing')
+				  )
+				ORDER BY r.created_at ASC`
+		}
+		// Filter by namespace via src object key prefix
+		if req.Namespace != "" {
+			relQuery = strings.ReplaceAll(relQuery, "##NS##", `
+				AND EXISTS (
+				  SELECT 1 FROM kb.graph_objects o
+				  WHERE o.id = r.src_id AND o.key LIKE ?
+				)`)
+			err := s.repo.DB().NewRaw(relQuery, projectID, req.Namespace+"%").Scan(ctx, &relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query relationships: %w", err)
+			}
+		} else {
+			relQuery = strings.ReplaceAll(relQuery, "##NS##", "")
+			err := s.repo.DB().NewRaw(relQuery, projectID).Scan(ctx, &relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: query relationships: %w", err)
+			}
+		}
+		if len(relIDs) > 0 {
+			enqueued, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, relIDs)
+			if err != nil {
+				return nil, fmt.Errorf("reindex: enqueue relationships: %w", err)
+			}
+			resp.RelationshipsEnqueued = enqueued
+		}
+	}
+
+	s.log.Info("reindex embeddings completed",
+		slog.String("project_id", projectID.String()),
+		slog.String("namespace", req.Namespace),
+		slog.Bool("force", req.Force),
+		slog.Int("objects_enqueued", resp.ObjectsEnqueued),
+		slog.Int("relationships_enqueued", resp.RelationshipsEnqueued))
+
+	return resp, nil
+}
+
+// UpdateAccessTimestamps updates last_accessed_at for the given object IDs,
+// coalescing writes so any single object is written at most once per
+// accessStampWindow (issue #1070). This is the single debounced write point:
+// every access-stamp write funnels through it — the graph search fallback
+// (FTSSearch/VectorSearch) via recordAccessTimestamps, and the unified search
+// path (search.Service.executeGraphSearch) which calls this directly. Callers
+// that want the write off their critical path invoke it from their own goroutine.
+func (s *Service) UpdateAccessTimestamps(ctx context.Context, objectIDs []uuid.UUID) error {
+	ids := s.accessStamp.filter(objectIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.repo.UpdateAccessTimestamps(ctx, ids)
+}
+
+// recordAccessTimestamps asynchronously records last_accessed_at for the given
+// object IDs without blocking the read path. The debounce itself lives in
+// UpdateAccessTimestamps; this helper only adds the fire-and-forget goroutine
+// with a short timeout (issue #1070).
+func (s *Service) recordAccessTimestamps(objectIDs []uuid.UUID) {
+	if len(objectIDs) == 0 {
+		return
+	}
+	go func() {
+		bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.UpdateAccessTimestamps(bgCtx, objectIDs); err != nil {
+			s.log.Warn("failed to update access timestamps", logger.Error(err))
+		}
+	}()
+}
+
+// GetMostAccessed returns the most frequently accessed graph objects for analytics.
+func (s *Service) GetMostAccessed(ctx context.Context, projectID uuid.UUID, limit int, minAccessCount int) (*MostAccessedResponse, error) {
+	objects, err := s.repo.GetMostAccessed(ctx, projectID, limit, minAccessCount)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AnalyticsObjectItem, len(objects))
+	for i, obj := range objects {
+		items[i] = AnalyticsObjectItem{
+			ID:             obj.ID,
+			CanonicalID:    obj.CanonicalID,
+			Type:           obj.Type,
+			Key:            obj.Key,
+			Properties:     obj.Properties,
+			Labels:         obj.Labels,
+			LastAccessedAt: obj.LastAccessedAt,
+			CreatedAt:      obj.CreatedAt,
+		}
+	}
+
+	return &MostAccessedResponse{
+		Items: items,
+		Total: len(items),
+		Meta: map[string]interface{}{
+			"limit":          limit,
+			"minAccessCount": minAccessCount,
+		},
+	}, nil
+}
+
+// GetUnused returns graph objects that haven't been accessed recently.
+func (s *Service) GetUnused(ctx context.Context, projectID uuid.UUID, limit int, daysThreshold int) (*UnusedObjectsResponse, error) {
+	objects, err := s.repo.GetUnused(ctx, projectID, limit, daysThreshold)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]AnalyticsObjectItem, len(objects))
+	for i, obj := range objects {
+		var daysSinceAccess *int
+		if obj.LastAccessedAt != nil {
+			days := int(time.Since(*obj.LastAccessedAt).Hours() / 24)
+			daysSinceAccess = &days
+		}
+
+		items[i] = AnalyticsObjectItem{
+			ID:              obj.ID,
+			CanonicalID:     obj.CanonicalID,
+			Type:            obj.Type,
+			Key:             obj.Key,
+			Properties:      obj.Properties,
+			Labels:          obj.Labels,
+			LastAccessedAt:  obj.LastAccessedAt,
+			DaysSinceAccess: daysSinceAccess,
+			CreatedAt:       obj.CreatedAt,
+		}
+	}
+
+	return &UnusedObjectsResponse{
+		Items: items,
+		Total: len(items),
+		Meta: map[string]interface{}{
+			"limit":         limit,
+			"daysThreshold": daysThreshold,
+		},
+	}, nil
+}
+
+// CountObjects returns the count of graph objects matching the given filters.
+func (s *Service) CountObjects(ctx context.Context, params ListParams) (int, error) {
+	return s.repo.Count(ctx, params)
+}
+
+// List returns graph objects matching the given parameters.
+func (s *Service) List(ctx context.Context, params ListParams) (*SearchGraphObjectsResponse, error) {
+	// Cap the limit so the service and repository agree on the effective page size.
+	// Without this cap, the repository silently clamps params.Limit in its own stack
+	// frame, causing hasMore to evaluate against the unclamped value and drop next_cursor.
+	maxLimit := s.repo.MaxListLimit()
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > maxLimit {
+		params.Limit = maxLimit
+	}
+
+	// Run count and list queries in parallel — unless the caller opted out of
+	// the exact total (params.SkipTotal), in which case the count is never
+	// issued: it is the endpoint's latency floor on projects that dominate a
+	// large kb.graph_objects table (see #733).
+	var (
+		total   *int
+		objects []*GraphObject
+	)
+	{
+		eg, egCtx := errgroup.WithContext(ctx)
+		if !params.SkipTotal {
+			eg.Go(func() error {
+				t, err := s.repo.Count(egCtx, params)
+				if err != nil {
+					return err
+				}
+				total = &t
+				return nil
+			})
+		}
+		eg.Go(func() error {
+			var err error
+			objects, err = s.repo.List(egCtx, params)
+			return err
+		})
+		if err := eg.Wait(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Check if there are more results
+	hasMore := len(objects) > params.Limit
+	if hasMore {
+		objects = objects[:params.Limit]
+	}
+
+	// Build paginated response
+	items := make([]*GraphObjectResponse, len(objects))
+	for i, obj := range objects {
+		items[i] = obj.ToResponse()
+	}
+
+	// Apply property projection if requested: `fields` includes only the named
+	// keys, `exclude_fields` drops the named keys (applied after include).
+	// TODO: Push field projection down to the repository/DB layer to avoid fetching
+	// full property maps when only a subset of keys is needed. This is an optimization
+	// for large property sets — the current in-memory approach is correct but wasteful.
+	if len(params.Fields) > 0 || len(params.ExcludeFields) > 0 {
+		projection := &GraphExpandProjection{
+			IncludeObjectProperties: params.Fields,
+			ExcludeObjectProperties: params.ExcludeFields,
+		}
+		for _, item := range items {
+			item.Properties = projectProperties(item.Properties, projection)
+		}
+	}
+
+	var nextCursor *string
+	if hasMore && len(objects) > 0 {
+		last := objects[len(objects)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		nextCursor = &cursor
+	}
+
+	return &SearchGraphObjectsResponse{
+		Items:      items,
+		NextCursor: nextCursor,
+		Total:      total,
+	}, nil
+}
+
+// GetByID returns a graph object by its physical ID or canonical ID.
+// The ID is resolved transparently — canonical IDs automatically return the HEAD version.
+// If resolveHead is true and the ID refers to an older physical version, returns the HEAD version instead.
+func (s *Service) GetByID(ctx context.Context, projectID, id uuid.UUID, resolveHead bool) (*GraphObjectResponse, error) {
+	obj, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// If resolveHead is requested and this isn't the HEAD version, fetch the HEAD.
+	// Note: When a canonical_id is passed, the repo already returns HEAD. This only
+	// matters when a physical ID of an old version is passed directly.
+	if resolveHead && obj.SupersedesID != nil {
+		headObj, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, obj.CanonicalID, obj.BranchID)
+		if err != nil {
+			s.log.Warn("could not find HEAD version for resolveHead",
+				slog.String("canonical_id", obj.CanonicalID.String()),
+				slog.String("requested_id", id.String()))
+			return obj.ToResponse(), nil
+		}
+		return headObj.ToResponse(), nil
+	}
+
+	return obj.ToResponse(), nil
+}
+
+// GetByIDIncludingDeleted returns an object by physical id or canonical id,
+// including a soft-deleted row. It mirrors GetByID but does not filter
+// `deleted_at`, so a caller can read a soft-deleted object's type before
+// restoring it (used by the MCP write-path type-scope gate).
+func (s *Service) GetByIDIncludingDeleted(ctx context.Context, projectID, id uuid.UUID) (*GraphObjectResponse, error) {
+	obj, err := s.repo.GetByIDIncludeDeleted(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+	return obj.ToResponse(), nil
+}
+
+// Create creates a new graph object.
+// ValidateObjectRequest is the request body for the validate endpoint.
+type ValidateObjectRequest struct {
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties"`
+}
+
+// ValidateObjectResponse is the response from the validate endpoint.
+type ValidateObjectResponse struct {
+	Valid             bool           `json:"valid"`
+	CoercedProperties map[string]any `json:"coercedProperties,omitempty"`
+	Errors            []string       `json:"errors,omitempty"`
+}
+
+// ValidateObject checks whether the given type and properties would pass schema
+// validation without creating any object. Returns coerced properties on success.
+func (s *Service) ValidateObject(ctx context.Context, projectID uuid.UUID, req *ValidateObjectRequest) (*ValidateObjectResponse, error) {
+	if s.schemaProvider == nil {
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
+	}
+
+	schemas, err := s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+
+	// No schemas installed — everything is valid
+	if schemas == nil || schemas.ObjectSchemas == nil {
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
+	}
+
+	schema, ok := schemas.ObjectSchemas[req.Type]
+	if !ok {
+		// Unknown object types are allowed — the schema defines constraints
+		// for known types but does not act as an allowlist.
+		return &ValidateObjectResponse{Valid: true, CoercedProperties: req.Properties}, nil
+	}
+
+	coerced, err := validateProperties(req.Properties, schema)
+	if err != nil {
+		return &ValidateObjectResponse{
+			Valid:  false,
+			Errors: []string{err.Error()},
+		}, nil
+	}
+
+	return &ValidateObjectResponse{Valid: true, CoercedProperties: coerced}, nil
+}
+
+// propertyStatus returns properties["status"] when it is a non-empty string.
+// properties is the authoritative store for the status mirror (see #2241).
+func propertyStatus(props map[string]any) *string {
+	if st, ok := props["status"].(string); ok && st != "" {
+		return &st
+	}
+	return nil
+}
+
+// statusForWrite resolves the status column a write should persist:
+// properties["status"] wins over an explicit top-level status field, matching
+// Create/Patch. Every write path must use it so the column and JSONB agree.
+func statusForWrite(props map[string]any, explicit *string) *string {
+	if st := propertyStatus(props); st != nil {
+		return st
+	}
+	return explicit
+}
+
+func statusesEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+func (s *Service) Create(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	stamp := writeStampFromContext(ctx, actorID)
+	actorType, actorID := stamp.ActorType, stamp.ActorID
+
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+	if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, err
+	}
+	if err := requireBoardEnabledKey(workCfg, req.Key); err != nil {
+		return nil, err
+	}
+
+	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
+	if err != nil {
+		return nil, err
+	}
+
+	obj := &GraphObject{
+		ProjectID:       projectID,
+		BranchID:        req.BranchID,
+		Type:            req.Type,
+		Key:             req.Key,
+		Status:          req.Status,
+		Assignee:        req.Assignee,
+		Namespace:       req.Namespace,
+		Properties:      validatedProps,
+		Labels:          req.Labels,
+		ExtractionJobID: req.ExtractionJobID,
+	}
+	stamp.applyObject(obj)
+
+	// Sync status column from properties["status"] — properties is the
+	// authoritative store, so it always wins over the req.Status field.
+	obj.Status = statusForWrite(validatedProps, obj.Status)
+
+	if v := s.resolveSchemaVersion(ctx, projectID, req.Type); v != "" {
+		obj.SchemaVersion = &v
+	}
+
+	if err := s.repo.Create(ctx, obj); err != nil {
+		return nil, err
+	}
+
+	s.enqueueEmbeddingForType(ctx, projectID, obj.Type, obj.ID.String())
+
+	if obj.Key != nil {
+		objType := obj.Type
+		entityType := entityTypeObject
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			BranchID:   obj.BranchID,
+			EventType:  EventTypeCreated,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *obj.Key,
+				"name":        nameFromProps(obj.Properties),
+				"object_type": obj.Type,
+			},
+		})
+	}
+
+	resp := obj.ToResponse()
+	s.emitObjectCreated(ctx, resp)
+	return resp, nil
+}
+
+// CreateOrUpdate implements upsert semantics for graph objects identified by (type, key).
+// If no existing HEAD object with the same (project_id, branch_id, type, key) is found, a new object is created.
+// If an existing HEAD is found but was deleted, a new version is created to restore it with the new properties.
+// If an existing HEAD is found and properties are identical, the existing object is returned (no-op).
+// If an existing HEAD is found and properties differ, a new version is created with the updated properties.
+// This follows the same pattern as CreateRelationship for relationships.
+func (s *Service) CreateOrUpdate(ctx context.Context, projectID uuid.UUID, req *CreateGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, bool, error) {
+	if req.Key == nil || *req.Key == "" {
+		return nil, false, apperror.ErrBadRequest.WithMessage("key is required for upsert")
+	}
+
+	// Validate properties against schema
+	validatedProps, err := s.validateObjectProperties(ctx, projectID, req.Type, req.Properties)
+	if err != nil {
+		return nil, false, err
+	}
+
+	schemaVersion := s.resolveSchemaVersion(ctx, projectID, req.Type)
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire advisory lock for this (project_id, type, key) identity
+	if err := s.repo.AcquireObjectUpsertLock(ctx, tx.Tx, projectID, req.Type, *req.Key); err != nil {
+		return nil, false, err
+	}
+
+	// Check if object already exists
+	existing, err := s.repo.FindHeadByTypeAndKeyNS(ctx, tx.Tx, projectID, req.BranchID, req.Namespace, req.Type, *req.Key)
+	if err != nil {
+		return nil, false, err
+	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, req.Type)
+	if err != nil {
+		return nil, false, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+	if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, false, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, false, err
+	}
+
+	if existing == nil {
+		// Create new object
+		obj := &GraphObject{
+			ProjectID:       projectID,
+			BranchID:        req.BranchID,
+			Type:            req.Type,
+			Key:             req.Key,
+			Status:          statusForWrite(validatedProps, req.Status),
+			Assignee:        req.Assignee,
+			Namespace:       req.Namespace,
+			Properties:      validatedProps,
+			Labels:          req.Labels,
+			ActorType:       &actorType,
+			ActorID:         actorID,
+			ExtractionJobID: req.ExtractionJobID,
+		}
+		if schemaVersion != "" {
+			obj.SchemaVersion = &schemaVersion
+		}
+
+		if err := s.repo.CreateInTx(ctx, tx.Tx, obj); err != nil {
+			return nil, false, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		s.enqueueEmbeddingForType(ctx, projectID, obj.Type, obj.ID.String())
+
+		resp := obj.ToResponse()
+		s.emitObjectCreated(ctx, resp)
+		return resp, true, nil
+	}
+
+	// Object exists - check if it was deleted
+	if existing.DeletedAt != nil {
+		// Was deleted, create new version to "restore" with new properties
+		newVersion := &GraphObject{
+			Type:            req.Type,
+			Key:             req.Key,
+			Status:          statusForWrite(validatedProps, req.Status),
+			Assignee:        req.Assignee,
+			Namespace:       existing.Namespace,
+			Properties:      validatedProps,
+			Labels:          req.Labels,
+			DeletedAt:       nil,
+			ActorType:       &actorType,
+			ActorID:         actorID,
+			ExtractionJobID: req.ExtractionJobID,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, validatedProps)
+		if schemaVersion != "" {
+			newVersion.SchemaVersion = &schemaVersion
+		}
+
+		if err := s.repo.CreateVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+			return nil, false, err
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+
+		resp := newVersion.ToResponse()
+		s.emitObjectUpdated(ctx, resp)
+		return resp, false, nil
+	}
+
+	// Build the merged state to compare - check if properties, status, and labels changed
+	newProps := validatedProps
+	if newProps == nil {
+		newProps = make(map[string]any)
+	}
+	// Provenance is exempt from property policy: union `_sources` with the
+	// existing object before diffing/versioning so a later source document does
+	// not clobber the ones already recorded.
+	newProps = mergeProvenanceProps(existing.Properties, newProps)
+
+	// Check if status changed. properties["status"] is authoritative, so an
+	// upsert that sets it must update the column even when the top-level field
+	// is absent (#2241).
+	newStatus := existing.Status
+	if req.Status != nil {
+		newStatus = req.Status
+	}
+	newStatus = statusForWrite(newProps, newStatus)
+	statusChanged := !statusesEqual(newStatus, existing.Status)
+
+	// Check if labels changed
+	newLabels := existing.Labels
+	labelsChanged := req.Labels != nil && !labelsEqual(existing.Labels, req.Labels)
+	if labelsChanged {
+		newLabels = req.Labels
+	}
+
+	// Check if assignee changed: req.Assignee applies, otherwise the current lane
+	// is preserved (mirrors Patch). An unrelated upsert must not clear the lane,
+	// and an assignee-only upsert must be detected and applied.
+	newAssignee := existing.Assignee
+	assigneeChanged := false
+	if req.Assignee != nil {
+		if existing.Assignee == nil || *existing.Assignee != *req.Assignee {
+			assigneeChanged = true
+			newAssignee = req.Assignee
+		}
+	}
+
+	// Cheap property-change probe. When status and labels are unchanged the
+	// stored ContentHash isolates the properties (it hashes props+status+key+
+	// labels, and upsert's key is fixed): a matching hash proves the properties
+	// are unchanged, so the full key-by-key diff can be skipped entirely.
+	var diff map[string]any
+	if !statusChanged && !labelsChanged && len(existing.ContentHash) > 0 {
+		if bytesEqual(computeContentHash(newProps, existing.Status, existing.Key, existing.Labels), existing.ContentHash) {
+			diff = nil
+		} else {
+			diff = computeChangeSummary(existing.Properties, newProps)
+		}
+	} else {
+		diff = computeChangeSummary(existing.Properties, newProps)
+	}
+
+	if diff == nil && !statusChanged && !labelsChanged && !assigneeChanged {
+		// No change - return existing (no-op)
+		if existing.ExtractionJobID == nil && req.ExtractionJobID != nil {
+			if _, err := tx.NewUpdate().Model((*GraphObject)(nil)).
+				Set("extraction_job_id = ?", *req.ExtractionJobID).
+				Where("id = ?", existing.ID).Exec(ctx); err != nil {
+				return nil, false, fmt.Errorf("backfill extraction job id: %w", err)
+			}
+			existing.ExtractionJobID = req.ExtractionJobID
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+		// Re-enqueue for embedding if not yet embedded (e.g. after an API key recovery).
+		if existing.EmbeddingUpdatedAt == nil {
+			s.enqueueEmbeddingForType(ctx, projectID, existing.Type, existing.ID.String())
+		}
+		return existing.ToResponse(), false, nil
+	}
+
+	// Properties, status, labels, or assignee differ - create new version
+	newVersion := &GraphObject{
+		Type:            existing.Type,
+		Key:             existing.Key,
+		Status:          newStatus,
+		Assignee:        newAssignee,
+		Namespace:       existing.Namespace,
+		Properties:      newProps,
+		Labels:          newLabels,
+		ActorType:       &actorType,
+		ActorID:         actorID,
+		ExtractionJobID: req.ExtractionJobID,
+	}
+	newVersion.ChangeSummary = diff
+	if schemaVersion != "" {
+		newVersion.SchemaVersion = &schemaVersion
+	}
+
+	// If properties/status/labels are unchanged (only the assignee changed), the
+	// stored content hash is still valid — reuse it instead of re-marshalling.
+	if diff == nil && !statusChanged && !labelsChanged {
+		newVersion.ContentHash = existing.ContentHash
+	}
+
+	if err := s.repo.CreateVersion(ctx, tx.Tx, existing, newVersion); err != nil {
+		return nil, false, err
+	}
+
+	// Only re-embed when the embedding-relevant text actually changed; otherwise
+	// carry the previous vector onto the new version row (#1478).
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, existing, newVersion, diff == nil)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if wantEnqueue {
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	}
+
+	s.emitObjectUpdated(ctx, newVersion.ToResponse())
+
+	return newVersion.ToResponse(), false, nil
+}
+
+// Patch updates a graph object by creating a new version.
+func (s *Service) Patch(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphObjectRequest, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	// Resolve the canonical identity WITHOUT loading the properties JSONB. The
+	// in-tx GetHeadByCanonicalID below is the single authoritative full-row read.
+	ident, err := s.repo.GetObjectIdentity(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch schemas BEFORE transaction to avoid deadlock (unchanged).
+	var schemas *ExtractionSchemas
+	if s.schemaProvider != nil {
+		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		}
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire advisory lock on the canonical ID (same lock identity as before).
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, ident.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Pick the target branch exactly as the old pre-tx resolution did: an
+	// explicit req.BranchID wins, otherwise honor the branch of the resolved
+	// object (a physical-id lookup may resolve a branch-local HEAD).
+	targetBranch := ident.BranchID
+	if req.BranchID != nil {
+		targetBranch = req.BranchID
+	}
+
+	// Authoritative HEAD read after acquiring the lock.
+	current, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, ident.CanonicalID, targetBranch)
+	if err != nil {
+		return nil, err
+	}
+
+	// Reject a tombstoned HEAD (GetHeadByCanonicalID does not filter deleted_at;
+	// this preserves the previous branch-scoped "cannot patch deleted object").
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted object")
+	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
+	workCfg, err := s.objectTypeWorkConfig(ctx, projectID, current.Type)
+	if err != nil {
+		return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+	}
+	if err := rejectAgentWorkStatusWriteCtx(ctx, actorType, isBoardEnabledConfig(workCfg), writesStatus(req.Status, req.Properties)); err != nil {
+		return nil, err
+	}
+	if err := validateTypeStatus(workCfg, req.Status, req.Properties); err != nil {
+		return nil, err
+	}
+
+	// Fast no-op: a patch that touches no property/status/label/key/assignee field
+	// cannot produce a new version. Skip building the merged map and the diff.
+	if len(req.Properties) == 0 && req.Status == nil && req.Key == nil && req.Assignee == nil && !req.ReplaceLabels && len(req.Labels) == 0 {
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		return current.ToResponse(), nil
+	}
+
+	// Merge properties
+	newProps := make(map[string]any)
+	for k, v := range current.Properties {
+		newProps[k] = v
+	}
+	for k, v := range req.Properties {
+		if v == nil {
+			delete(newProps, k) // null removes property
+		} else {
+			newProps[k] = v
+		}
+	}
+
+	// Validate patch delta properties against current schema.
+	// We only check the keys being added/changed by this patch — not the full merged set —
+	// so that objects created under an older schema version (with now-removed properties) can
+	// still be patched on unrelated fields. Required-field enforcement is intentionally skipped
+	// here; it applies at Create time, not on subsequent patches.
+	if schemas != nil {
+		if schema, ok := schemas.ObjectSchemas[current.Type]; ok {
+			start := time.Now()
+			// Build a delta of only the keys actually being set (non-nil patch entries).
+			// Nil-valued entries mean "delete this property" and need no validation.
+			patchDelta := make(map[string]any)
+			for k, v := range req.Properties {
+				if v != nil {
+					patchDelta[k] = v
+				}
+			}
+			validatedDelta, err := validatePatchProperties(patchDelta, schema)
+			duration := time.Since(start)
+
+			if err != nil {
+				s.incrementValidationError(duration)
+				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			}
+			s.incrementValidationSuccess(duration)
+			// Merge coerced delta values back into newProps.
+			for k, v := range validatedDelta {
+				newProps[k] = v
+			}
+		}
+	}
+
+	// Handle labels
+	var newLabels []string
+	if req.ReplaceLabels {
+		newLabels = req.Labels
+	} else if len(req.Labels) > 0 {
+		// Merge labels (add new, remove duplicates)
+		labelSet := make(map[string]bool)
+		for _, l := range current.Labels {
+			labelSet[l] = true
+		}
+		for _, l := range req.Labels {
+			labelSet[l] = true
+		}
+		newLabels = make([]string, 0, len(labelSet))
+		for l := range labelSet {
+			newLabels = append(newLabels, l)
+		}
+	} else {
+		newLabels = current.Labels
+	}
+
+	// Handle status: prefer properties["status"] (authoritative JSONB), then
+	// req.Status (explicit field), then keep current.
+	newStatus := current.Status
+	if req.Status != nil {
+		newStatus = req.Status
+	}
+	// Sync from merged properties["status"] — this is the authoritative source
+	// so that update_entity(properties={"status":"complete"}) always wins.
+	newStatus = statusForWrite(newProps, newStatus)
+
+	// Handle key: use req.Key if provided, otherwise preserve current
+	newKey := current.Key
+	if req.Key != nil {
+		newKey = req.Key
+	}
+
+	// Handle assignee: use req.Assignee if provided, otherwise preserve current.
+	newAssignee := current.Assignee
+	if req.Assignee != nil {
+		newAssignee = req.Assignee
+	}
+
+	newVersion := &GraphObject{
+		Type:       current.Type,
+		Key:        newKey,
+		Status:     newStatus,
+		Assignee:   newAssignee,
+		Properties: newProps,
+		Labels:     newLabels,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+
+	// Build the summary from the small request delta instead of diffing the full
+	// property maps (the merge already applied the delta to newProps).
+	newVersion.ChangeSummary = computeChangeSummaryFromDelta(current.Properties, req.Properties, newProps)
+
+	// Check if status changed
+	statusChanged := false
+	if req.Status != nil {
+		if current.Status == nil || *current.Status != *req.Status {
+			statusChanged = true
+		}
+	}
+
+	// Check if labels changed
+	labelsChanged := !labelsEqual(current.Labels, newLabels)
+
+	// Check if key changed
+	keyChanged := false
+	if req.Key != nil {
+		if current.Key == nil || *current.Key != *req.Key {
+			keyChanged = true
+		}
+	}
+
+	// Check if assignee changed
+	assigneeChanged := false
+	if req.Assignee != nil {
+		if current.Assignee == nil || *current.Assignee != *req.Assignee {
+			assigneeChanged = true
+		}
+	}
+
+	// No effective change — return existing version without creating a new one
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged && !assigneeChanged {
+		if err := tx.Commit(); err != nil {
+			return nil, apperror.ErrDatabase.WithInternal(err)
+		}
+		return current.ToResponse(), nil
+	}
+
+	// Only the assignee changed (no props/status/labels/key) → the stored content
+	// hash still describes this version; reuse it instead of re-marshalling.
+	if newVersion.ChangeSummary == nil && !statusChanged && !labelsChanged && !keyChanged {
+		newVersion.ContentHash = current.ContentHash
+	}
+
+	if err := s.repo.CreateVersion(ctx, tx.Tx, current, newVersion); err != nil {
+		return nil, err
+	}
+
+	// Only re-embed when the embedding-relevant text actually changed; otherwise
+	// carry the previous vector onto the new version row (#1478).
+	wantEnqueue, err := s.carryEmbeddingIfUnchanged(ctx, tx.Tx, current, newVersion, newVersion.ChangeSummary == nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	if wantEnqueue {
+		s.enqueueEmbeddingForType(ctx, projectID, newVersion.Type, newVersion.ID.String())
+	}
+
+	if newVersion.Key != nil {
+		objType := newVersion.Type
+		entityType := entityTypeObject
+		var fieldsChanged []string
+		if newVersion.ChangeSummary != nil {
+			for k := range newVersion.ChangeSummary {
+				fieldsChanged = append(fieldsChanged, k)
+			}
+		}
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			BranchID:   newVersion.BranchID,
+			EventType:  EventTypeUpdated,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":            *newVersion.Key,
+				"name":           nameFromProps(newVersion.Properties),
+				"object_type":    newVersion.Type,
+				"fields_changed": fieldsChanged,
+			},
+		})
+	}
+
+	s.emitObjectUpdated(ctx, newVersion.ToResponse())
+
+	return newVersion.ToResponse(), nil
+}
+
+// Delete soft-deletes a graph object by creating a tombstone version.
+func (s *Service) Delete(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID, branchID *uuid.UUID, reason *string) error {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	current, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return err
+	}
+
+	if current.DeletedAt != nil {
+		return apperror.ErrBadRequest.WithMessage("object already deleted")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return err
+	}
+
+	if branchID != nil {
+		// Branch-scoped delete: try to get branch-local HEAD first.
+		// If none exists, fall back to main HEAD and create a branch-local tombstone.
+		branchHead, err := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, branchID)
+		if err != nil {
+			var appErr *apperror.Error
+			if !errors.As(err, &appErr) || appErr.HTTPStatus != 404 {
+				return err
+			}
+			// No branch-local HEAD — fetch main HEAD and create tombstone directly on branch.
+			mainHead, merr := s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, nil)
+			if merr != nil {
+				return merr
+			}
+			if err := s.repo.SoftDeleteOnBranch(ctx, tx.Tx, mainHead, branchID, actorType, actorID, reason); err != nil {
+				return err
+			}
+			current = mainHead
+		} else {
+			if err := s.repo.SoftDelete(ctx, tx.Tx, branchHead, actorType, actorID, reason); err != nil {
+				return err
+			}
+			current = branchHead
+		}
+	} else {
+		// Main branch delete: re-fetch HEAD after lock.
+		current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, nil)
+		if err != nil {
+			return err
+		}
+		if err := s.repo.SoftDelete(ctx, tx.Tx, current, actorType, actorID, reason); err != nil {
+			return err
+		}
+	}
+
+	// Cascade: soft-delete all live relationships touching this canonical object.
+	// This mirrors the expected behaviour: deleting a node orphans its edges.
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, current.CanonicalID, GetEdgesParams{})
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete edges: %w", err))
+	}
+	for _, rel := range append(incoming, outgoing...) {
+		if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, rel, actorType, actorID, reason); err != nil {
+			return apperror.ErrDatabase.WithInternal(fmt.Errorf("cascade delete relationship %s: %w", rel.CanonicalID, err))
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if current.Key != nil {
+		objType := current.Type
+		entityType := entityTypeObject
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			BranchID:   current.BranchID,
+			EventType:  EventTypeDeleted,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *current.Key,
+				"name":        nameFromProps(current.Properties),
+				"object_type": current.Type,
+			},
+		})
+	}
+
+	s.emitObjectDeleted(ctx, current.ProjectID.String(), current.CanonicalID.String(), current.Type)
+
+	return nil
+}
+
+// Restore restores a soft-deleted graph object.
+func (s *Service) Restore(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphObjectResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	current, err := s.repo.GetByIDIncludeDeleted(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("object is not deleted")
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.repo.Restore(ctx, tx.Tx, current, actorType, actorID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Re-fetch the new HEAD to return
+	restored, err := s.repo.GetHeadByCanonicalID(ctx, s.repo.DB(), projectID, current.CanonicalID, current.BranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	if restored.Key != nil {
+		objType := restored.Type
+		entityType := entityTypeObject
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			BranchID:   restored.BranchID,
+			EventType:  EventTypeRestored,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":         *restored.Key,
+				"name":        nameFromProps(restored.Properties),
+				"object_type": restored.Type,
+			},
+		})
+	}
+
+	s.emitObjectUpdated(ctx, restored.ToResponse())
+
+	// Enqueue embedding — the restored version has a new physical row with NULL embedding_v2.
+	s.enqueueEmbeddingForType(ctx, projectID, restored.Type, restored.ID.String())
+
+	return restored.ToResponse(), nil
+}
+
+// GetHistory returns version history for a graph object.
+func (s *Service) GetHistory(ctx context.Context, projectID, id uuid.UUID) (*ObjectHistoryResponse, error) {
+	// First get the object to find its canonical ID
+	obj, err := s.repo.GetByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	versions, err := s.repo.GetHistory(ctx, projectID, obj.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]*GraphObjectResponse, len(versions))
+	for i, v := range versions {
+		data[i] = v.ToResponse()
+	}
+
+	return &ObjectHistoryResponse{Versions: data}, nil
+}
+
+// GetEdges returns incoming and outgoing relationships for an object.
+// The objectID can be either a physical id or a canonical_id.
+func (s *Service) GetEdges(ctx context.Context, projectID, objectID uuid.UUID, params GetEdgesParams) (*GetObjectEdgesResponse, error) {
+	// Resolve the object to get its canonical_id, since relationships store canonical IDs.
+	obj, err := s.repo.GetByID(ctx, projectID, objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	incoming, outgoing, err := s.repo.GetEdges(ctx, projectID, obj.CanonicalID, params)
+	if err != nil {
+		return nil, err
+	}
+
+	incomingResp := make([]*GraphRelationshipResponse, len(incoming))
+	for i, r := range incoming {
+		incomingResp[i] = r.ToResponse()
+	}
+
+	outgoingResp := make([]*GraphRelationshipResponse, len(outgoing))
+	for i, r := range outgoing {
+		outgoingResp[i] = r.ToResponse()
+	}
+
+	return &GetObjectEdgesResponse{
+		Incoming: incomingResp,
+		Outgoing: outgoingResp,
+	}, nil
+}
+
+// GetEdgesBatch returns incoming and outgoing relationships for multiple
+// canonical IDs in a single batched query. It takes canonical IDs directly —
+// the caller is expected to already hold canonical IDs (no resolution).
+func (s *Service) GetEdgesBatch(ctx context.Context, projectID uuid.UUID, canonicalIDs []uuid.UUID, params GetEdgesParams) (map[uuid.UUID]*GetObjectEdgesResponse, error) {
+	edgesByObject, err := s.repo.GetEdgesForObjects(ctx, projectID, canonicalIDs, params)
+	if err != nil {
+		return nil, err
+	}
+
+	resp := make(map[uuid.UUID]*GetObjectEdgesResponse, len(edgesByObject))
+	for canonicalID, edges := range edgesByObject {
+		incoming := make([]*GraphRelationshipResponse, len(edges.Incoming))
+		for i, r := range edges.Incoming {
+			incoming[i] = r.ToResponse()
+		}
+		outgoing := make([]*GraphRelationshipResponse, len(edges.Outgoing))
+		for i, r := range edges.Outgoing {
+			outgoing[i] = r.ToResponse()
+		}
+		resp[canonicalID] = &GetObjectEdgesResponse{
+			Incoming: incoming,
+			Outgoing: outgoing,
+		}
+	}
+
+	return resp, nil
+}
+
+// computeChangeSummary creates an RFC 6901 JSON Pointer diff.
+func computeChangeSummary(oldProps, newProps map[string]any) map[string]any {
+	added := make(map[string]any)
+	removed := make([]string, 0)
+	updated := make(map[string]any)
+	paths := make([]string, 0)
+
+	// Find added and updated
+	for k, newVal := range newProps {
+		path := "/" + k
+		if oldVal, exists := oldProps[k]; !exists {
+			added[path] = newVal
+			paths = append(paths, path)
+		} else if !jsonEqual(oldVal, newVal) {
+			updated[path] = map[string]any{
+				"from": oldVal,
+				"to":   newVal,
+			}
+			paths = append(paths, path)
+		}
+	}
+
+	// Find removed
+	for k := range oldProps {
+		if _, exists := newProps[k]; !exists {
+			path := "/" + k
+			removed = append(removed, path)
+			paths = append(paths, path)
+		}
+	}
+
+	if len(added) == 0 && len(removed) == 0 && len(updated) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"added":   added,
+		"removed": removed,
+		"updated": updated,
+		"paths":   paths,
+		"meta": map[string]any{
+			"added":   len(added),
+			"removed": len(removed),
+			"updated": len(updated),
+		},
+	}
+}
+
+// computeChangeSummaryFromDelta builds the same RFC 6901 diff as
+// computeChangeSummary(oldProps, merged), but visits only the keys present in
+// delta. It is equivalent whenever merged differs from oldProps only at keys in
+// delta (true for Patch: merged = oldProps overwritten at req.Properties keys),
+// while costing O(len(delta)) instead of O(len(properties)) — so a small patch
+// on a large object no longer diffs/marshals the whole JSONB (#1478).
+func computeChangeSummaryFromDelta(oldProps map[string]any, delta map[string]any, merged map[string]any) map[string]any {
+	added := make(map[string]any)
+	removed := make([]string, 0)
+	updated := make(map[string]any)
+	paths := make([]string, 0)
+
+	for k := range delta {
+		path := "/" + k
+		newVal, present := merged[k]
+		if !present {
+			// A nil delta value deletes the property; deleting an absent key is a no-op.
+			if _, existed := oldProps[k]; existed {
+				removed = append(removed, path)
+				paths = append(paths, path)
+			}
+			continue
+		}
+		oldVal, existed := oldProps[k]
+		if !existed {
+			added[path] = newVal
+			paths = append(paths, path)
+		} else if !jsonEqual(oldVal, newVal) {
+			updated[path] = map[string]any{"from": oldVal, "to": newVal}
+			paths = append(paths, path)
+		}
+	}
+
+	if len(added) == 0 && len(removed) == 0 && len(updated) == 0 {
+		return nil
+	}
+
+	return map[string]any{
+		"added":   added,
+		"removed": removed,
+		"updated": updated,
+		"paths":   paths,
+		"meta": map[string]any{
+			"added":   len(added),
+			"removed": len(removed),
+			"updated": len(updated),
+		},
+	}
+}
+
+// jsonEqual compares two values for JSON equality.
+func jsonEqual(a, b any) bool {
+	aJSON, _ := json.Marshal(a)
+	bJSON, _ := json.Marshal(b)
+	return string(aJSON) == string(bJSON)
+}
+
+// =============================================================================
+// Relationship Operations
+// =============================================================================
+
+// humanizeRelationType converts a relation type to a human-readable format.
+// Example: WORKS_FOR -> "works for", FOUNDED_BY -> "founded by"
+func humanizeRelationType(relType string) string {
+	return strings.ToLower(strings.ReplaceAll(relType, "_", " "))
+}
+
+// normalizeRelationType converts any casing variant to lower_snake_case.
+// Handles: PascalCase, camelCase, UPPER_SNAKE, spaces, mixed.
+// Examples: "ParticipatedIn" -> "participated_in", "WORKS FOR" -> "works_for"
+func normalizeRelationType(relType string) string {
+	// First handle spaces -> underscore
+	s := strings.ReplaceAll(relType, " ", "_")
+	// Insert underscore before uppercase letters that follow lowercase (PascalCase/camelCase)
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) && unicode.IsLower(runes[i-1]) {
+			b.WriteRune('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToLower(b.String())
+}
+
+// getDisplayName extracts a display name from a graph object.
+// Tries properties["name"] first, falls back to Key if name is missing or empty.
+func getDisplayName(obj *GraphObject) string {
+	if obj.Properties != nil {
+		if name, ok := obj.Properties["name"].(string); ok && name != "" {
+			return name
+		}
+	}
+	if obj.Key != nil && *obj.Key != "" {
+		return *obj.Key
+	}
+	return obj.ID.String()
+}
+
+// generateTripletText creates natural language triplet from a relationship.
+// Format: "{source.name} {label_or_humanized_type} {target.name}"
+// Example: "Elon Musk founded Tesla"
+// If the relationship has an explicit label, it is used directly.
+// Otherwise the type is humanized (e.g. WORKS_FOR -> "works for").
+func generateTripletText(source, target *GraphObject, rel *GraphRelationship) string {
+	sourceName := getDisplayName(source)
+	targetName := getDisplayName(target)
+	var predicate string
+	if rel.Label != nil && *rel.Label != "" {
+		predicate = *rel.Label
+	} else {
+		predicate = humanizeRelationType(rel.Type)
+	}
+	return fmt.Sprintf("%s %s %s", sourceName, predicate, targetName)
+}
+
+// embedTripletText generates an embedding vector for a relationship triplet.
+// Returns the embedding vector and timestamp, or nil if embeddings are disabled.
+func (s *Service) embedTripletText(ctx context.Context, tripletText string) ([]float32, *time.Time, error) {
+	if s.embeddings == nil {
+		return nil, nil, nil
+	}
+
+	embedding, err := s.embeddings.EmbedQuery(ctx, tripletText)
+	if err != nil {
+		return nil, nil, fmt.Errorf("embed triplet: %w", err)
+	}
+
+	if embedding == nil || len(embedding) == 0 {
+		return nil, nil, nil
+	}
+
+	now := time.Now()
+	return embedding, &now, nil
+}
+
+// vectorToString converts a float32 slice to a string representation for pgvector.
+func vectorToString(v []float32) string {
+	if len(v) == 0 {
+		return "[]"
+	}
+	result := "["
+	for i, val := range v {
+		if i > 0 {
+			result += ","
+		}
+		result += fmt.Sprintf("%f", val)
+	}
+	result += "]"
+	return result
+}
+
+// SearchRelationshipsResponse is the paginated response for relationship searches.
+// Standard field names: items, next_cursor, total (consistent with SearchGraphObjectsResponse)
+type SearchRelationshipsResponse struct {
+	Items      []*GraphRelationshipResponse `json:"items"`
+	NextCursor *string                      `json:"next_cursor,omitempty"`
+	Total      int                          `json:"total"`
+}
+
+// ListRelationships returns relationships matching the given parameters.
+// CountRelationships returns the total count of relationships matching the given parameters.
+func (s *Service) CountRelationships(ctx context.Context, params RelationshipListParams) (int, error) {
+	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
+	if params.SrcID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.SrcID)
+		if err != nil {
+			return 0, err
+		}
+		params.SrcID = &obj.CanonicalID
+	}
+	if params.DstID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.DstID)
+		if err != nil {
+			return 0, err
+		}
+		params.DstID = &obj.CanonicalID
+	}
+
+	return s.repo.CountRelationships(ctx, params)
+}
+
+func (s *Service) ListRelationships(ctx context.Context, params RelationshipListParams) (*SearchRelationshipsResponse, error) {
+	// Cap the limit for the same reason as List — see Repository.MaxListLimit.
+	if params.Limit <= 0 {
+		params.Limit = 50
+	}
+	if params.Limit > s.repo.MaxListLimit() {
+		params.Limit = s.repo.MaxListLimit()
+	}
+
+	// Resolve SrcID/DstID to canonical_id values, since relationships store canonical IDs.
+	// The caller may pass either a physical id or a canonical_id.
+	if params.SrcID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.SrcID)
+		if err != nil {
+			return nil, err
+		}
+		params.SrcID = &obj.CanonicalID
+	}
+	if params.DstID != nil {
+		obj, err := s.repo.GetByID(ctx, params.ProjectID, *params.DstID)
+		if err != nil {
+			return nil, err
+		}
+		params.DstID = &obj.CanonicalID
+	}
+
+	// Run count and list queries
+	total, err := s.repo.CountRelationships(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	rels, err := s.repo.ListRelationships(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	hasMore := len(rels) > params.Limit
+	if hasMore {
+		rels = rels[:params.Limit]
+	}
+
+	items := make([]*GraphRelationshipResponse, len(rels))
+	for i, rel := range rels {
+		items[i] = rel.ToResponse()
+	}
+
+	var nextCursor *string
+	if hasMore && len(rels) > 0 {
+		last := rels[len(rels)-1]
+		cursor := encodeCursor(last.CreatedAt, last.ID)
+		nextCursor = &cursor
+	}
+
+	return &SearchRelationshipsResponse{
+		Items:      items,
+		NextCursor: nextCursor,
+		Total:      total,
+	}, nil
+}
+
+// GetRelationship returns a relationship by its ID.
+func (s *Service) GetRelationship(ctx context.Context, projectID, id uuid.UUID) (*GraphRelationshipResponse, error) {
+	rel, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Only return non-deleted relationships
+	if rel.DeletedAt != nil {
+		return nil, apperror.ErrNotFound
+	}
+
+	return rel.ToResponse(), nil
+}
+
+// createRelationship creates a new relationship or returns existing if properties match.
+// The boolean return indicates whether a NEW head relationship was inserted.
+func (s *Service) createRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, bool, error) {
+	// Validate: no self-loops
+	if req.SrcID == req.DstID {
+		return nil, false, apperror.ErrBadRequest.WithMessage("self_loop_not_allowed")
+	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	// Pre-load inverse map to avoid mutex deadlock with DB connection pool
+	// If the cache is empty, this fetches from DB before we hold a transaction.
+	if s.inverseTypeProvider != nil {
+		_, _ = s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), req.Type)
+	}
+
+	// Fetch schemas BEFORE transaction to avoid deadlock
+	var schemas *ExtractionSchemas
+	var schemaErr error
+	if s.schemaProvider != nil {
+		schemas, schemaErr = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if schemaErr != nil {
+			s.log.Warn("failed to load schemas for relationship validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", schemaErr.Error()))
+		}
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Validate endpoints exist and are not deleted
+	srcObj, dstObj, err := s.repo.ValidateEndpoints(ctx, tx.Tx, projectID, req.SrcID, req.DstID)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Check branch consistency
+	effectiveBranchID := req.BranchID
+	if effectiveBranchID != nil {
+		// Both endpoints must be on the same branch
+		if (srcObj.BranchID == nil || *srcObj.BranchID != *effectiveBranchID) ||
+			(dstObj.BranchID == nil || *dstObj.BranchID != *effectiveBranchID) {
+			return nil, false, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+		}
+	} else {
+		// If no branch specified, endpoints must be on main branch (null) or same branch
+		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
+			return nil, false, apperror.ErrBadRequest.WithMessage("relationship_branch_mismatch")
+		}
+		effectiveBranchID = srcObj.BranchID
+	}
+
+	// Attempt lock-free insert using ON CONFLICT DO NOTHING (protected by partial unique index).
+	// No advisory lock needed for the common "create new" path.
+
+	// Validate relationship type, endpoint types, and properties against schema.
+	if schemas != nil {
+		validated, err := validateRelationshipProperties(req.Type, srcObj.Type, dstObj.Type, req.Properties, schemas)
+		if err != nil {
+			return nil, false, apperror.ErrBadRequest.WithMessage(err.Error())
+		}
+		// Store the coerced values, not the caller's raw map (nil stays nil: the
+		// store and API treat "no properties" as absent).
+		if req.Properties != nil {
+			req.Properties = validated
+		}
+	}
+
+	rel := &GraphRelationship{
+		ProjectID:  projectID,
+		BranchID:   effectiveBranchID,
+		Type:       normalizeRelationType(req.Type),
+		Label:      req.Label,
+		SrcID:      srcObj.CanonicalID,
+		DstID:      dstObj.CanonicalID,
+		Properties: req.Properties,
+		Weight:     req.Weight,
+		Namespace:  srcObj.Namespace,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+	rel.ChangeSummary = computeChangeSummary(nil, req.Properties)
+
+	created, err := s.repo.CreateRelationship(ctx, tx.Tx, rel)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if created {
+		// New relationship was inserted — auto-create inverse if configured.
+		var inverseResponse *GraphRelationshipResponse
+		var inverseRelID string
+		if s.inverseTypeProvider != nil {
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, effectiveBranchID, req.Type, srcObj, dstObj, req.Properties, req.Weight, actorType, actorID)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		// Enqueue async embeddings after commit — never block the response.
+		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
+		if inverseRelID != "" {
+			s.enqueueRelationshipEmbedding(ctx, inverseRelID)
+		}
+
+		{
+			var srcKey, dstKey string
+			if srcObj.Key != nil {
+				srcKey = *srcObj.Key
+			}
+			if dstObj.Key != nil {
+				dstKey = *dstObj.Key
+			}
+			entityType := entityTypeRelationship
+			relType := req.Type
+			s.eventSink.Log(ctx, LogParams{
+				ProjectID:  projectID,
+				BranchID:   effectiveBranchID,
+				EventType:  EventTypeRelated,
+				EntityType: &entityType,
+				ObjectType: &relType,
+				ActorType:  actorType,
+				ActorID:    actorID,
+				Metadata: map[string]any{
+					"src_key":  srcKey,
+					"rel_type": req.Type,
+					"dst_key":  dstKey,
+				},
+			})
+		}
+
+		resp := rel.ToResponse()
+		resp.InverseRelationship = inverseResponse
+		return resp, true, nil
+	}
+
+	// Conflict: relationship HEAD already exists (another concurrent goroutine inserted it).
+	// Roll back the current tx — we don't need it for a read-only check.
+	tx.Rollback()
+
+	// Read HEAD outside any transaction (no lock needed — the row is stable).
+	existing, err := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing == nil {
+		// Extremely rare race: HEAD was deleted between our failed insert and the read.
+		// Treat as "not found" — the caller can retry.
+		return nil, false, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_conflict")
+	}
+
+	// Fast path: no change needed (common during bulk seeding).
+	if existing.DeletedAt == nil {
+		diff := computeChangeSummary(existing.Properties, req.Properties)
+		if diff == nil {
+			return existing.ToResponse(), false, nil
+		}
+	}
+
+	// Slow path: we need to create a new version (deleted restore or property change).
+	// Open a fresh transaction, acquire advisory lock to prevent concurrent version racing.
+	tx2, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx2.Rollback()
+
+	if err := s.repo.AcquireRelationshipLock(ctx, tx2.Tx, projectID, req.Type, srcObj.CanonicalID, dstObj.CanonicalID); err != nil {
+		return nil, false, err
+	}
+
+	// Re-fetch inside the locked tx to get the definitive current HEAD.
+	existing, err = s.repo.GetRelationshipHead(ctx, tx2.Tx, projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	if err != nil {
+		return nil, false, err
+	}
+	if existing == nil {
+		return nil, false, apperror.ErrNotFound.WithMessage("relationship_head_not_found_after_lock")
+	}
+
+	if existing.DeletedAt != nil {
+		// Was deleted, restore with new properties.
+		newVersion := &GraphRelationship{
+			Label:      req.Label,
+			Properties: req.Properties,
+			Weight:     req.Weight,
+			DeletedAt:  nil,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existing.Properties, req.Properties)
+
+		if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
+			return nil, false, err
+		}
+
+		if err := tx2.Commit(); err != nil {
+			return nil, false, apperror.ErrDatabase.WithInternal(err)
+		}
+
+		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
+
+		newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+		if newHead == nil {
+			return newVersion.ToResponse(), false, nil
+		}
+		return newHead.ToResponse(), false, nil
+	}
+
+	// Check if properties changed (re-read under lock).
+	diff := computeChangeSummary(existing.Properties, req.Properties)
+	if diff == nil {
+		// No change - return existing (no commit needed).
+		return existing.ToResponse(), false, nil
+	}
+
+	// Properties differ - create new version.
+	newVersion := &GraphRelationship{
+		Label:         req.Label,
+		Properties:    req.Properties,
+		Weight:        req.Weight,
+		ChangeSummary: diff,
+		ActorType:     &actorType,
+		ActorID:       actorID,
+	}
+
+	if err := s.repo.CreateRelationshipVersion(ctx, tx2.Tx, existing, newVersion); err != nil {
+		return nil, false, err
+	}
+
+	if err := tx2.Commit(); err != nil {
+		return nil, false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
+
+	newHead, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, effectiveBranchID, normalizeRelationType(req.Type), srcObj.CanonicalID, dstObj.CanonicalID)
+	if newHead == nil {
+		return newVersion.ToResponse(), false, nil
+	}
+	return newHead.ToResponse(), false, nil
+}
+
+// CreateRelationship creates a new relationship or returns existing if properties match.
+func (s *Service) CreateRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	resp, _, err := s.createRelationship(ctx, projectID, req, actorID)
+	return resp, err
+}
+
+// UpsertRelationship provides idempotent create-or-skip semantics for relationships.
+// Dedup key: (project_id, branch_id, type, src_id, dst_id).
+// Returns (response, created=true) when a new relationship is inserted.
+// Returns (response, created=false) when an existing relationship is returned or updated.
+func (s *Service) UpsertRelationship(ctx context.Context, projectID uuid.UUID, req *CreateGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, bool, error) {
+	return s.createRelationship(ctx, projectID, req, actorID)
+}
+
+// maybeCreateInverse checks if the template pack declares an inverseType for the given
+// relationship type, and if so, creates the inverse relationship (swapped src/dst) within
+// the same transaction. Returns the inverse response (or nil) and the inverse relationship ID
+// (empty string if none created). Errors are logged but do not fail the primary relationship creation.
+func (s *Service) maybeCreateInverse(
+	ctx context.Context,
+	tx bun.Tx,
+	projectID uuid.UUID,
+	branchID *uuid.UUID,
+	relType string,
+	srcObj, dstObj *GraphObject,
+	properties map[string]any,
+	weight *float32,
+	actorType string,
+	actorID *uuid.UUID,
+) (*GraphRelationshipResponse, string) {
+	inverseType, ok := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), relType)
+	if !ok || inverseType == "" {
+		return nil, ""
+	}
+
+	s.log.Debug("creating inverse relationship",
+		slog.String("primary_type", relType),
+		slog.String("inverse_type", inverseType),
+		slog.String("src_id", dstObj.ID.String()),
+		slog.String("dst_id", srcObj.ID.String()))
+
+	// Guard: if the inverse type maps back to the original type, only create the inverse
+	// from the lexicographically smaller type to prevent infinite loops.
+	// e.g., PARENT_OF -> CHILD_OF -> PARENT_OF would be a loop.
+	reverseInverse, revOk := s.inverseTypeProvider.GetInverseType(ctx, projectID.String(), inverseType)
+	if revOk && reverseInverse == relType {
+		// Both types point to each other. Only create inverse from the "first" type alphabetically.
+		if relType > inverseType {
+			s.log.Debug("skipping inverse creation: inverse type is primary side",
+				slog.String("rel_type", relType),
+				slog.String("inverse_type", inverseType))
+			return nil, ""
+		}
+	}
+
+	// Acquire advisory lock for the inverse relationship identity (swapped endpoints, using canonical IDs)
+	if err := s.repo.AcquireRelationshipLock(ctx, tx, projectID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID); err != nil {
+		s.log.Warn("failed to acquire lock for inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil, ""
+	}
+
+	// Check if inverse already exists (using canonical IDs)
+	existingInverse, err := s.repo.GetRelationshipHead(ctx, tx, projectID, branchID, inverseType, dstObj.CanonicalID, srcObj.CanonicalID)
+	if err != nil {
+		s.log.Warn("failed to check existing inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil, ""
+	}
+
+	if existingInverse != nil && existingInverse.DeletedAt == nil {
+		// Inverse already exists and is not deleted — return it as-is (no new embedding needed)
+		s.log.Debug("inverse relationship already exists",
+			slog.String("inverse_id", existingInverse.ID.String()))
+		return existingInverse.ToResponse(), ""
+	}
+
+	if existingInverse != nil && existingInverse.DeletedAt != nil {
+		// Was deleted — restore it by creating a new version
+		newVersion := &GraphRelationship{
+			Properties: properties,
+			Weight:     weight,
+			DeletedAt:  nil,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+		newVersion.ChangeSummary = computeChangeSummary(existingInverse.Properties, properties)
+
+		if err := s.repo.CreateRelationshipVersion(ctx, tx, existingInverse, newVersion); err != nil {
+			s.log.Warn("failed to restore inverse relationship, skipping",
+				slog.String("inverse_type", inverseType),
+				slog.String("error", err.Error()))
+			return nil, ""
+		}
+
+		// Embedding will be enqueued async by caller after commit.
+		return newVersion.ToResponse(), newVersion.ID.String()
+	}
+
+	// Create brand new inverse relationship (store canonical IDs).
+	// Normalize inverseType to lower_snake_case — same contract as CreateRelationship.
+	inverseRel := &GraphRelationship{
+		ProjectID:  projectID,
+		BranchID:   branchID,
+		Type:       normalizeRelationType(inverseType),
+		SrcID:      dstObj.CanonicalID, // swapped
+		DstID:      srcObj.CanonicalID, // swapped
+		Properties: properties,
+		Weight:     weight,
+		Namespace:  dstObj.Namespace,
+		ActorType:  &actorType,
+		ActorID:    actorID,
+	}
+	inverseRel.ChangeSummary = computeChangeSummary(nil, properties)
+
+	if _, err := s.repo.CreateRelationship(ctx, tx, inverseRel); err != nil {
+		s.log.Warn("failed to create inverse relationship, skipping",
+			slog.String("inverse_type", inverseType),
+			slog.String("error", err.Error()))
+		return nil, ""
+	}
+
+	s.log.Info("auto-created inverse relationship",
+		slog.String("primary_type", relType),
+		slog.String("inverse_type", inverseType),
+		slog.String("inverse_id", inverseRel.ID.String()))
+
+	// Embedding will be enqueued async by caller after commit.
+	return inverseRel.ToResponse(), inverseRel.ID.String()
+}
+
+// PatchRelationship updates a relationship by creating a new version.
+func (s *Service) PatchRelationship(ctx context.Context, projectID, id uuid.UUID, req *PatchGraphRelationshipRequest, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot patch deleted relationship")
+	}
+
+	// Merge properties
+	newProps := make(map[string]any)
+	for k, v := range current.Properties {
+		newProps[k] = v
+	}
+	for k, v := range req.Properties {
+		if v == nil {
+			delete(newProps, k)
+		} else {
+			newProps[k] = v
+		}
+	}
+
+	// Check for actual changes
+	diff := computeChangeSummary(current.Properties, newProps)
+	if diff == nil && (req.Weight == nil || (current.Weight != nil && *req.Weight == *current.Weight)) {
+		return nil, apperror.ErrBadRequest.WithMessage("no_effective_change")
+	}
+
+	// Fetch schemas BEFORE transaction to avoid deadlock
+	var schemas *ExtractionSchemas
+	var schemaErr error
+	if s.schemaProvider != nil {
+		schemas, schemaErr = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if schemaErr != nil {
+			s.log.Warn("failed to load schemas for relationship patch validation, skipping",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", schemaErr.Error()))
+		}
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure we're patching the HEAD version
+	if head.ID != current.ID {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot_patch_non_head_version")
+	}
+
+	// Validate patch delta properties against schema (soft-fail on schema load error).
+	// Required fields are enforced against the merged result (existing properties +
+	// patch delta), so a patch can neither clear nor omit a required property.
+	if schemas != nil {
+		if relSchema, ok := schemas.RelationshipSchemas[current.Type]; ok && (len(relSchema.Properties) > 0 || len(relSchema.Required) > 0) {
+			objSchema := agents.ObjectSchema{
+				Properties: relSchema.Properties,
+				Required:   relSchema.Required,
+			}
+			patchDelta := make(map[string]any)
+			for k, v := range req.Properties {
+				if v != nil {
+					patchDelta[k] = v
+				}
+			}
+			if validatedDelta, err := validateRelationshipPatchProperties(patchDelta, newProps, objSchema); err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage("property validation failed: " + err.Error())
+			} else {
+				for k, v := range validatedDelta {
+					newProps[k] = v
+				}
+			}
+		}
+	}
+
+	newVersion := &GraphRelationship{
+		Label:         req.Label,
+		Properties:    newProps,
+		Weight:        req.Weight,
+		ChangeSummary: diff,
+		ActorType:     &actorType,
+		ActorID:       actorID,
+	}
+	if newVersion.Weight == nil {
+		newVersion.Weight = current.Weight
+	}
+
+	if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, current, newVersion); err != nil {
+		return nil, err
+	}
+
+	// Determine whether the triplet text will change.
+	// buildTripletText uses label as the predicate, so a label change produces a
+	// different embedding. In that case we enqueue a fresh embedding job.
+	// If label is unchanged, copy the previous embedding to avoid an unnecessary API call.
+	labelChanged := (req.Label == nil) != (current.Label == nil) ||
+		(req.Label != nil && current.Label != nil && *req.Label != *current.Label)
+
+	if !labelChanged {
+		// Copy embedding from previous version — triplet text is identical.
+		// If the previous version had no embedding, the sweep worker will generate one.
+		_, _ = tx.Tx.NewRaw(`UPDATE kb.graph_relationships
+			SET embedding = prev.embedding, embedding_updated_at = prev.embedding_updated_at
+			FROM kb.graph_relationships prev
+			WHERE kb.graph_relationships.id = ? AND prev.id = ?
+			  AND prev.embedding IS NOT NULL`,
+			newVersion.ID, current.ID).Exec(ctx)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// If the label changed the triplet text changed — enqueue a fresh embedding.
+	if labelChanged {
+		s.enqueueRelationshipEmbedding(ctx, newVersion.ID.String())
+	}
+
+	// Return the new version
+	newHead, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	return newHead.ToResponse(), nil
+}
+
+// DeleteRelationship soft-deletes a relationship.
+func (s *Service) DeleteRelationship(ctx context.Context, projectID, id uuid.UUID, branchID *uuid.UUID, reason *string, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Get HEAD version — scoped to the requested branch when provided.
+	head, err := s.repo.GetRelationshipHead(ctx, tx.Tx, projectID, branchID, current.Type, current.SrcID, current.DstID)
+	if err != nil {
+		return nil, err
+	}
+	if head == nil {
+		return nil, apperror.ErrNotFound
+	}
+
+	if head.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("already_deleted")
+	}
+
+	if err := s.repo.SoftDeleteRelationship(ctx, tx.Tx, head, actorType, actorID, reason); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the tombstone
+	tombstone, _ := s.repo.GetRelationshipHead(ctx, s.repo.DB(), projectID, branchID, head.Type, head.SrcID, head.DstID)
+	if tombstone == nil {
+		return head.ToResponse(), nil
+	}
+	return tombstone.ToResponse(), nil
+}
+
+// RestoreRelationship restores a soft-deleted relationship.
+func (s *Service) RestoreRelationship(ctx context.Context, projectID, id uuid.UUID, actorID *uuid.UUID) (*GraphRelationshipResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	current, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	// Acquire lock
+	if err := s.repo.AcquireRelationshipLock(ctx, tx.Tx, current.ProjectID, current.Type, current.SrcID, current.DstID); err != nil {
+		return nil, err
+	}
+
+	// Get HEAD version
+	head, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if head.DeletedAt == nil {
+		return nil, apperror.ErrBadRequest.WithMessage("relationship_not_deleted")
+	}
+
+	if err := s.repo.RestoreRelationship(ctx, tx.Tx, head, actorType, actorID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Return the restored version
+	restored, _ := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, current.CanonicalID, nil)
+
+	// Enqueue embedding — the restored version has a new physical row with NULL embedding.
+	if restored != nil {
+		s.enqueueRelationshipEmbedding(ctx, restored.ID.String())
+	}
+
+	return restored.ToResponse(), nil
+}
+
+// GetRelationshipHistory returns version history for a relationship.
+func (s *Service) GetRelationshipHistory(ctx context.Context, projectID, id uuid.UUID) ([]*GraphRelationshipResponse, error) {
+	// First get the relationship to find its canonical ID
+	rel, err := s.repo.GetRelationshipByID(ctx, projectID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	versions, err := s.repo.GetRelationshipHistory(ctx, projectID, rel.CanonicalID)
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]*GraphRelationshipResponse, len(versions))
+	for i, v := range versions {
+		data[i] = v.ToResponse()
+	}
+
+	return data, nil
+}
+
+// branchIDsEqual compares two optional branch IDs.
+func branchIDsEqual(a, b *uuid.UUID) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
+}
+
+// =============================================================================
+// Search Operations
+// =============================================================================
+
+// FTSSearch performs full-text search on graph objects.
+func (s *Service) FTSSearch(ctx context.Context, projectID uuid.UUID, req *FTSSearchRequest) (*SearchResponse, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	params := FTSSearchParams{
+		ProjectID:      projectID,
+		Query:          req.Query,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		Status:         req.Status,
+		IncludeDeleted: req.IncludeDeleted,
+		Limit:          limit + 1, // Fetch one extra to determine hasMore
+		Offset:         req.Offset,
+	}
+
+	results, fellBack, err := s.repo.FTSSearchWithFallback(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := results[:0]
+		for _, r := range results {
+			if excluded[r.Object.Type] {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
+	}
+
+	// Truncate the "limit+1" extra row exactly as before, so page 1's documents
+	// are unchanged. The Relax/Disjoin fallback is deliberately first-page-only
+	// (see Repository.FTSSearchWithFallback), so when it produced the result set
+	// the extra row is a disjoined-match overhang, not a real second page:
+	// HasMore must be false in that case or the caller is shown a dead next page.
+	exceeded := len(results) > limit
+	if exceeded {
+		results = results[:limit]
+	}
+	hasMore := exceeded && !fellBack
+
+	data := make([]*SearchResultItem, len(results))
+	objectIDs := make([]uuid.UUID, 0, len(results))
+
+	for i, r := range results {
+		data[i] = &SearchResultItem{
+			Object:       r.Object.ToResponse(),
+			Score:        r.Rank,
+			LexicalScore: &r.Rank,
+		}
+		objectIDs = append(objectIDs, r.Object.ID)
+	}
+
+	if len(objectIDs) > 0 {
+		s.recordAccessTimestamps(objectIDs)
+	}
+
+	return &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+		Offset:  req.Offset,
+	}, nil
+}
+
+// VectorSearch performs vector similarity search on graph objects.
+func (s *Service) VectorSearch(ctx context.Context, projectID uuid.UUID, req *VectorSearchRequest) (*SearchResponse, error) {
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	params := VectorSearchParams{
+		ProjectID:      projectID,
+		Vector:         req.Vector,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		Status:         req.Status,
+		IncludeDeleted: req.IncludeDeleted,
+		MaxDistance:    req.MaxDistance,
+		Limit:          limit + 1, // Fetch one extra to determine hasMore
+		Offset:         req.Offset,
+	}
+
+	results, err := s.repo.VectorSearch(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := results[:0]
+		for _, r := range results {
+			if excluded[r.Object.Type] {
+				continue
+			}
+			filtered = append(filtered, r)
+		}
+		results = filtered
+	}
+
+	hasMore := len(results) > limit
+	if hasMore {
+		results = results[:limit]
+	}
+
+	data := make([]*SearchResultItem, len(results))
+	objectIDs := make([]uuid.UUID, 0, len(results))
+
+	for i, r := range results {
+		similarity := 1.0 - r.Distance
+		data[i] = &SearchResultItem{
+			Object:      r.Object.ToResponse(),
+			Score:       similarity,
+			VectorScore: &similarity,
+			VectorDist:  &r.Distance,
+		}
+		objectIDs = append(objectIDs, r.Object.ID)
+	}
+
+	if len(objectIDs) > 0 {
+		s.recordAccessTimestamps(objectIDs)
+	}
+
+	return &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+		Offset:  req.Offset,
+	}, nil
+}
+
+// VectorSearchByText embeds a text query and runs vector similarity search over
+// graph objects. Reuses VectorSearch so it inherits the same type/status/label/
+// branch filters and returns Score = 1.0 - Distance per result.
+func (s *Service) VectorSearchByText(ctx context.Context, projectID uuid.UUID, text string, req *VectorSearchRequest) (*SearchResponse, error) {
+	if s.embeddings == nil {
+		return &SearchResponse{Data: []*SearchResultItem{}, Total: 0, Offset: req.Offset}, nil
+	}
+	vec, err := s.embeddings.EmbedQuery(ctx, text)
+	if err != nil {
+		return nil, fmt.Errorf("embed query text: %w", err)
+	}
+	if len(vec) == 0 {
+		return &SearchResponse{Data: []*SearchResultItem{}, Total: 0, Offset: req.Offset}, nil
+	}
+	req.Vector = vec
+	return s.VectorSearch(ctx, projectID, req)
+}
+
+// HybridSearchOptions contains options for hybrid search.
+type HybridSearchOptions struct {
+	Debug bool // Include timing and statistics in response
+}
+
+// shouldAutoEmbedQuery reports whether HybridSearch must generate its own query
+// embedding. It is false when the caller explicitly disabled auto-embedding
+// (DisableAutoEmbed — unified search has already run its own bounded embedding
+// attempts), when there is no query text, when a vector was supplied, or when
+// the vector channel is disabled (vectorWeight == 0). The embedding-service
+// availability check stays at the call site.
+func shouldAutoEmbedQuery(req *HybridSearchRequest, hasVector bool, vectorWeight float32) bool {
+	return !req.DisableAutoEmbed && req.Query != "" && !hasVector && vectorWeight > 0
+}
+
+// HybridSearch performs combined lexical and vector search with score fusion.
+func (s *Service) HybridSearch(ctx context.Context, projectID uuid.UUID, req *HybridSearchRequest, opts *HybridSearchOptions) (*SearchResponse, error) {
+	// Start total timing
+	totalStart := time.Now()
+
+	// Initialize debug tracking
+	var lexicalMs, vectorMs, fusionMs float64
+	debug := opts != nil && opts.Debug
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Default weights
+	lexicalWeight := float32(0.5)
+	vectorWeight := float32(0.5)
+	if req.LexicalWeight != nil {
+		lexicalWeight = *req.LexicalWeight
+	}
+	if req.VectorWeight != nil {
+		vectorWeight = *req.VectorWeight
+	}
+
+	// Boost parameters — default RecencyHalfLife to 168h (7 days) when RecencyBoost > 0
+	var recencyBoost, accessBoost, recencyHalfLife float32
+	if req.RecencyBoost != nil {
+		recencyBoost = *req.RecencyBoost
+	}
+	if req.AccessBoost != nil {
+		accessBoost = *req.AccessBoost
+	}
+	if recencyBoost > 0 {
+		if req.RecencyHalfLife != nil {
+			recencyHalfLife = *req.RecencyHalfLife
+		} else {
+			recencyHalfLife = 168.0
+		}
+	}
+
+	// Normalize weights
+	totalWeight := lexicalWeight + vectorWeight
+	if totalWeight > 0 {
+		lexicalWeight /= totalWeight
+		vectorWeight /= totalWeight
+	}
+
+	// Determine search strategies based on available inputs
+	hasQuery := req.Query != ""
+	hasVector := len(req.Vector) > 0
+
+	// Auto-embed query when no vector is provided — mirrors unified search behavior
+	// Skip when vectorWeight is 0 (lexical-only mode) to avoid unnecessary embedding calls,
+	// and when the caller explicitly opted out (DisableAutoEmbed) because it already ran its
+	// own bounded embedding attempts.
+	if shouldAutoEmbedQuery(req, hasVector, vectorWeight) && s.embeddings != nil {
+		vec, err := s.embeddings.EmbedQuery(ctx, req.Query)
+		if err != nil {
+			s.log.Warn("HybridSearch: failed to auto-embed query, continuing with lexical-only", logger.Error(err))
+		} else if len(vec) > 0 {
+			req.Vector = vec
+			hasVector = true
+		} else {
+			s.log.Warn("HybridSearch: auto-embed returned empty vector, continuing with lexical-only")
+		}
+	}
+
+	if !hasQuery && !hasVector {
+		return &SearchResponse{
+			Data:    []*SearchResultItem{},
+			Total:   0,
+			HasMore: false,
+		}, nil
+	}
+
+	// Maps to collect results from both searches
+	lexicalResults := make(map[uuid.UUID]*FTSSearchResult)
+	vectorResults := make(map[uuid.UUID]*VectorSearchResult)
+
+	// Run searches based on available inputs
+	fetchLimit := limit * 3 // Fetch more for fusion
+
+	if hasQuery {
+		lexicalStart := time.Now()
+		ftsParams := FTSSearchParams{
+			ProjectID:      projectID,
+			Query:          req.Query,
+			BranchID:       req.BranchID,
+			Types:          req.Types,
+			Labels:         req.Labels,
+			Namespace:      req.Namespace,
+			Status:         req.Status,
+			IncludeDeleted: req.IncludeDeleted,
+			Limit:          fetchLimit,
+		}
+		ftsResults, err := s.repo.FTSSearch(ctx, ftsParams)
+		lexicalMs = float64(time.Since(lexicalStart).Microseconds()) / 1000.0
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range ftsResults {
+			lexicalResults[r.Object.ID] = r
+		}
+	}
+
+	if hasVector && vectorWeight > 0 {
+		vectorStart := time.Now()
+		vecParams := VectorSearchParams{
+			ProjectID:      projectID,
+			Vector:         req.Vector,
+			BranchID:       req.BranchID,
+			Types:          req.Types,
+			Labels:         req.Labels,
+			Namespace:      req.Namespace,
+			Status:         req.Status,
+			IncludeDeleted: req.IncludeDeleted,
+			Limit:          fetchLimit,
+		}
+		vecResults, err := s.repo.VectorSearch(ctx, vecParams)
+		vectorMs = float64(time.Since(vectorStart).Microseconds()) / 1000.0
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range vecResults {
+			vectorResults[r.Object.ID] = r
+		}
+	}
+
+	// Collect all unique IDs
+	allIDs := make(map[uuid.UUID]bool)
+	for id := range lexicalResults {
+		allIDs[id] = true
+	}
+	for id := range vectorResults {
+		allIDs[id] = true
+	}
+
+	if len(allIDs) == 0 {
+		totalMs := float64(time.Since(totalStart).Microseconds()) / 1000.0
+		resp := &SearchResponse{
+			Data:    []*SearchResultItem{},
+			Total:   0,
+			HasMore: false,
+			Meta:    &SearchResponseMeta{ElapsedMs: totalMs},
+		}
+		if debug {
+			resp.Meta.Timing = &SearchTimingDebug{
+				LexicalMs: lexicalMs,
+				VectorMs:  vectorMs,
+				FusionMs:  0,
+				TotalMs:   totalMs,
+			}
+			resp.Meta.ChannelStats = &SearchChannelStats{
+				Lexical: &ChannelStat{Count: 0},
+				Vector:  &ChannelStat{Count: 0},
+			}
+		}
+		return resp, nil
+	}
+
+	// Start fusion timing
+	fusionStart := time.Now()
+
+	// Calculate score statistics for normalization
+	var lexicalScores, vectorScores []float32
+	for id := range allIDs {
+		if lr, ok := lexicalResults[id]; ok {
+			lexicalScores = append(lexicalScores, lr.Rank)
+		}
+		if vr, ok := vectorResults[id]; ok {
+			// Convert distance to similarity for scoring
+			similarity := 1.0 - vr.Distance
+			vectorScores = append(vectorScores, similarity)
+		}
+	}
+
+	lexicalMean, lexicalStd := mathutil.CalcMeanStd(lexicalScores)
+	vectorMean, vectorStd := mathutil.CalcMeanStd(vectorScores)
+
+	// Don't penalise the surviving channel when the other returned no scores.
+	lexicalWeight, vectorWeight = mathutil.EffectiveFusionWeights(lexicalWeight, vectorWeight, len(lexicalScores) > 0, len(vectorScores) > 0)
+
+	// Fuse scores
+	type fusedResult struct {
+		id           uuid.UUID
+		object       *GraphObject
+		fusedScore   float32
+		lexicalScore *float32
+		vectorScore  *float32
+		vectorDist   *float32
+	}
+
+	var fusedResults []fusedResult
+	for id := range allIDs {
+		var normLexical, normVector float32
+		var lexScore, vecScore *float32
+		var vecDist *float32
+		var obj *GraphObject
+
+		if lr, ok := lexicalResults[id]; ok {
+			normalized := zScoreNormalize(lr.Rank, lexicalMean, lexicalStd)
+			normLexical = mathutil.Sigmoid(normalized)
+			score := lr.Rank
+			lexScore = &score
+			obj = lr.Object
+		}
+
+		if vr, ok := vectorResults[id]; ok {
+			similarity := float32(1.0) - vr.Distance
+			normalized := zScoreNormalize(similarity, vectorMean, vectorStd)
+			normVector = mathutil.Sigmoid(normalized)
+			vecScore = &similarity
+			dist := vr.Distance
+			vecDist = &dist
+			if obj == nil {
+				obj = vr.Object
+			}
+		}
+
+		// Weighted combination
+		fusedScore := lexicalWeight*normLexical + vectorWeight*normVector
+
+		// Apply recency boost if requested
+		if recencyBoost > 0 && obj != nil {
+			hoursOld := float32(time.Since(obj.CreatedAt).Hours())
+			recencyScore := float32(1.0 / (1.0 + math.Exp(float64((hoursOld-recencyHalfLife)/(recencyHalfLife/4.0)))))
+			fusedScore += recencyBoost * recencyScore
+		}
+
+		// Apply access boost if requested
+		if accessBoost > 0 && obj != nil && obj.LastAccessedAt != nil {
+			daysSinceAccess := float32(time.Since(*obj.LastAccessedAt).Hours() / 24)
+			accessScore := float32(math.Max(0, float64(1.0-daysSinceAccess/365.0)))
+			fusedScore += accessBoost * accessScore
+		}
+
+		fusedResults = append(fusedResults, fusedResult{
+			id:           id,
+			object:       obj,
+			fusedScore:   fusedScore,
+			lexicalScore: lexScore,
+			vectorScore:  vecScore,
+			vectorDist:   vecDist,
+		})
+	}
+
+	// Sort by fused score descending; equal scores break by ascending id so the
+	// order is total and reproducible regardless of upstream map iteration order.
+	sort.Slice(fusedResults, func(i, j int) bool {
+		if fusedResults[i].fusedScore != fusedResults[j].fusedScore {
+			return fusedResults[i].fusedScore > fusedResults[j].fusedScore
+		}
+		return slices.Compare(fusedResults[i].id[:], fusedResults[j].id[:]) < 0
+	})
+
+	// Exclude operational object types from default search (P4.2).
+	if excluded := s.excludedSearchTypes(ctx, projectID); len(excluded) > 0 {
+		filtered := fusedResults[:0]
+		for _, fr := range fusedResults {
+			if fr.object != nil && excluded[fr.object.Type] {
+				continue
+			}
+			filtered = append(filtered, fr)
+		}
+		fusedResults = filtered
+	}
+
+	// Apply offset and limit
+	offset := req.Offset
+	if offset > len(fusedResults) {
+		offset = len(fusedResults)
+	}
+	fusedResults = fusedResults[offset:]
+
+	hasMore := len(fusedResults) > limit
+	if hasMore {
+		fusedResults = fusedResults[:limit]
+	}
+
+	fusionMs = float64(time.Since(fusionStart).Microseconds()) / 1000.0
+
+	// Build response
+	data := make([]*SearchResultItem, len(fusedResults))
+	for i, fr := range fusedResults {
+		data[i] = &SearchResultItem{
+			Object:       fr.object.ToResponse(),
+			Score:        fr.fusedScore,
+			LexicalScore: fr.lexicalScore,
+			VectorScore:  fr.vectorScore,
+			VectorDist:   fr.vectorDist,
+		}
+	}
+
+	totalMs := float64(time.Since(totalStart).Microseconds()) / 1000.0
+	resp := &SearchResponse{
+		Data:    data,
+		Total:   len(data),
+		HasMore: hasMore,
+		Offset:  req.Offset,
+		Meta:    &SearchResponseMeta{ElapsedMs: totalMs},
+	}
+
+	// Add debug info if requested
+	if debug {
+		resp.Meta.Timing = &SearchTimingDebug{
+			EmbeddingMs: 0, // No embedding generation in this endpoint (vector is passed in)
+			LexicalMs:   lexicalMs,
+			VectorMs:    vectorMs,
+			FusionMs:    fusionMs,
+			TotalMs:     totalMs,
+		}
+		resp.Meta.ChannelStats = &SearchChannelStats{
+			Lexical: &ChannelStat{
+				Mean:  float64(lexicalMean),
+				Std:   float64(lexicalStd),
+				Count: len(lexicalScores),
+			},
+			Vector: &ChannelStat{
+				Mean:  float64(vectorMean),
+				Std:   float64(vectorStd),
+				Count: len(vectorScores),
+			},
+		}
+	}
+
+	return resp, nil
+}
+
+// zScoreNormalize applies z-score normalization.
+func zScoreNormalize(score, mean, std float32) float32 {
+	return (score - mean) / std
+}
+
+// GetTags returns all distinct tags (labels) used by objects in a project.
+func (s *Service) GetTags(ctx context.Context, projectID uuid.UUID, params *GetDistinctTagsParams) ([]string, error) {
+	return s.repo.GetDistinctTags(ctx, projectID, params)
+}
+
+// BulkUpdateStatus updates the status of multiple objects.
+func (s *Service) BulkUpdateStatus(ctx context.Context, projectID uuid.UUID, req *BulkUpdateStatusRequest, actorID *uuid.UUID) (*BulkUpdateStatusResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	results := make([]BulkUpdateStatusResult, len(req.IDs))
+
+	// Parse UUIDs and track the request index of each valid id so per-object
+	// results (especially board-enabled versioned transitions) map back correctly.
+	validIDs := make([]uuid.UUID, 0, len(req.IDs))
+	indexByID := make(map[uuid.UUID]int, len(req.IDs))
+	for i, idStr := range req.IDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			errMsg := "invalid UUID"
+			results[i] = BulkUpdateStatusResult{
+				ID:      idStr,
+				Success: false,
+				Error:   &errMsg,
+			}
+		} else {
+			validIDs = append(validIDs, id)
+			indexByID[id] = i
+			results[i] = BulkUpdateStatusResult{
+				ID:      idStr,
+				Success: true,
+			}
+		}
+	}
+
+	if len(validIDs) == 0 {
+		return &BulkUpdateStatusResponse{
+			Success: 0,
+			Failed:  len(req.IDs),
+			Results: results,
+		}, nil
+	}
+
+	// Reject agent-originated bulk status writes on board-enabled objects: work
+	// status is owned by the single-status writer only. Also validate the target
+	// status against each board-enabled type's declared allowed set (P4.1), and
+	// route board-enabled objects through the versioned transition path so the
+	// status column and properties["status"] never diverge.
+	refs, err := s.repo.listHeadObjectRefsByIDs(ctx, projectID, validIDs)
+	if err != nil {
+		return nil, err
+	}
+	refIndex := func(r objectHeadRef) int {
+		if i, ok := indexByID[r.ID]; ok {
+			return i
+		}
+		if i, ok := indexByID[r.CanonicalID]; ok {
+			return i
+		}
+		return -1
+	}
+	boardObjects := make([]objectHeadRef, 0, len(refs))
+	nonBoardIDs := make([]uuid.UUID, 0, len(refs))
+	anyBoardEnabled := false
+	for _, r := range refs {
+		cfg, err := s.objectTypeWorkConfig(ctx, projectID, r.Type)
+		if err != nil {
+			return nil, apperror.ErrInternal.WithMessage("failed to load schemas")
+		}
+		if !isBoardEnabledConfig(cfg) {
+			// An unresolved type (nil config, e.g. no schema provider) keeps
+			// the previous fail-open behaviour.
+			if cfg == nil {
+				nonBoardIDs = append(nonBoardIDs, r.CanonicalID)
+				continue
+			}
+			// A resolved type with no declared workflow has no work-status
+			// vocabulary to write; reject that object instead of stamping an
+			// arbitrary column value (#2242). A non-board type that declares
+			// allowed statuses is validated against that set.
+			if len(cfg.AllowedStatuses) == 0 {
+				if idx := refIndex(r); idx >= 0 {
+					errMsg := "type " + r.Type + " declares no workflow statuses; status cannot be set"
+					results[idx].Success = false
+					results[idx].Error = &errMsg
+				}
+				continue
+			}
+			if !slices.Contains(cfg.AllowedStatuses, req.Status) {
+				if idx := refIndex(r); idx >= 0 {
+					errMsg := workStatusNotAllowed(req.Status).Error()
+					results[idx].Success = false
+					results[idx].Error = &errMsg
+				}
+				continue
+			}
+			nonBoardIDs = append(nonBoardIDs, r.CanonicalID)
+			continue
+		}
+		anyBoardEnabled = true
+		if err := validateTypeStatus(cfg, &req.Status, nil); err != nil {
+			return nil, err
+		}
+		boardObjects = append(boardObjects, r)
+	}
+	if actorType == ActorAgent && anyBoardEnabled {
+		return nil, workStatusWriteForbidden()
+	}
+
+	// Non-board objects use the in-place bulk update (they have no single-status
+	// writer invariant). Board-enabled objects transition through the versioned
+	// single-status path so status and properties["status"] stay consistent.
+	successCount := 0
+	if len(nonBoardIDs) > 0 {
+		updated, err := s.repo.BulkUpdateStatus(ctx, projectID, nonBoardIDs, req.Status, actorType, actorID)
+		if err != nil {
+			return nil, err
+		}
+		successCount += updated
+	}
+	for _, r := range boardObjects {
+		idx := refIndex(r)
+		transitioned, err := s.TransitionWorkObject(ctx, projectID.String(), r.CanonicalID.String(), WorkObjectTransition{
+			ToStatus: req.Status,
+		})
+		if err != nil {
+			if idx >= 0 {
+				errMsg := err.Error()
+				results[idx].Success = false
+				results[idx].Error = &errMsg
+			}
+			continue
+		}
+		if !transitioned {
+			if idx >= 0 {
+				errMsg := "object not found or missing key"
+				results[idx].Success = false
+				results[idx].Error = &errMsg
+			}
+			continue
+		}
+		successCount++
+	}
+
+	failedCount := len(req.IDs) - successCount
+
+	return &BulkUpdateStatusResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkCreateObjects creates multiple objects in a single batch.
+// Each object is created independently and concurrently — failures do not roll back other successes.
+func (s *Service) BulkCreateObjects(ctx context.Context, projectID uuid.UUID, req *BulkCreateObjectsRequest, actorID *uuid.UUID) (*BulkCreateObjectsResponse, error) {
+	_, actorID = actorFromContext(ctx, actorID)
+
+	results := make([]BulkCreateObjectResult, len(req.Items))
+
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
+		resp, err := s.Create(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkCreateObjectResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkCreateObjectResult{Index: i, Success: true, Object: resp}
+		}
+	})
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	return &BulkCreateObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkUpsertObjects creates or replaces multiple objects keyed by (type, key) in
+// a single batch. Each object is upserted independently — one bad item does not
+// fail the batch.
+func (s *Service) BulkUpsertObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpsertObjectsRequest, actorID *uuid.UUID) (*BulkUpsertObjectsResponse, error) {
+	_, actorID = actorFromContext(ctx, actorID)
+
+	results := make([]BulkUpsertObjectResult, len(req.Items))
+
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
+		if item.Type == "" || item.Key == nil || *item.Key == "" {
+			errMsg := "type and key are required for upsert"
+			results[i] = BulkUpsertObjectResult{Index: i, Success: false, Error: &errMsg}
+			return
+		}
+
+		resp, created, err := s.CreateOrUpdate(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpsertObjectResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpsertObjectResult{Index: i, Success: true, Created: created, Object: resp}
+		}
+	})
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	return &BulkUpsertObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkUpdateObjects updates multiple objects in a single batch.
+// Each object is updated independently and concurrently — failures do not roll back other successes.
+func (s *Service) BulkUpdateObjects(ctx context.Context, projectID uuid.UUID, req *BulkUpdateObjectsRequest, actorID *uuid.UUID) (*BulkUpdateObjectsResponse, error) {
+	_, actorID = actorFromContext(ctx, actorID)
+
+	if len(req.Items) > s.bulkUpdateMaxItems {
+		return nil, apperror.NewBadRequest(fmt.Sprintf("items must not exceed %d", s.bulkUpdateMaxItems))
+	}
+
+	results := make([]BulkUpdateObjectResult, len(req.Items))
+
+	// Detach from client cancellation so a disconnect cannot abort the batch, but
+	// bound the detached context so a large/slow batch cannot hold DB connections
+	// forever. Short batches finish well within the bound.
+	workerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.bulkUpdateMaxDuration)
+	defer cancel()
+	// Bound each individual statement (default 10m, matching the request budget)
+	// so one runaway statement fails the item instead of holding a pooled
+	// connection for the whole request.
+	workerCtx = s.repo.BulkContext(workerCtx)
+
+	// Pre-warm schema cache for this project to avoid lock contention
+	if s.schemaProvider != nil {
+		_, _ = s.schemaProvider.GetProjectSchemas(workerCtx, projectID.String())
+	}
+
+	runBulkItems(len(req.Items), s.repo.BulkConcurrency(), func(i int) {
+		item := req.Items[i]
+		id, parseErr := uuid.Parse(item.ID)
+		if parseErr != nil {
+			errMsg := "invalid id: " + parseErr.Error()
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: false, Error: &errMsg}
+			return
+		}
+
+		patchReq := &PatchGraphObjectRequest{
+			Key:           item.Key,
+			Properties:    item.Properties,
+			Labels:        item.Labels,
+			ReplaceLabels: item.ReplaceLabels,
+			Status:        item.Status,
+			BranchID:      item.BranchID,
+		}
+
+		resp, err := s.Patch(workerCtx, projectID, id, patchReq, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpdateObjectResult{Index: i, ID: item.ID, Success: true, Object: resp}
+		}
+	})
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	return &BulkUpdateObjectsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkCreateRelationships creates multiple relationships in a single batch.
+// Each relationship is created independently and concurrently — failures do not roll back other successes.
+// Inverse relationships are auto-created per template pack inverseType declarations.
+func (s *Service) BulkCreateRelationships(ctx context.Context, projectID uuid.UUID, req *BulkCreateRelationshipsRequest, actorID *uuid.UUID) (*BulkCreateRelationshipsResponse, error) {
+	_, actorID = actorFromContext(ctx, actorID)
+
+	results := make([]BulkCreateRelationshipResult, len(req.Items))
+
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
+
+	// Pre-warm inverse type cache for this project to avoid lock contention
+	if s.inverseTypeProvider != nil {
+		// Just querying an empty type is enough to populate the whole map for the project
+		_, _ = s.inverseTypeProvider.GetInverseType(workerCtx, projectID.String(), "")
+	}
+
+	for i, item := range req.Items {
+		resp, err := s.CreateRelationship(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			s.log.Debug("bulk relationship creation failed",
+				slog.String("type", item.Type),
+				slog.String("src_id", item.SrcID.String()),
+				slog.String("dst_id", item.DstID.String()),
+				slog.String("error", errMsg))
+			results[i] = BulkCreateRelationshipResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkCreateRelationshipResult{Index: i, Success: true, Relationship: resp}
+		}
+	}
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	return &BulkCreateRelationshipsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// BulkUpsertRelationships creates or updates multiple relationships in a single
+// batch. Each relationship is upserted independently — one bad item does not
+// fail the batch.
+func (s *Service) BulkUpsertRelationships(ctx context.Context, projectID uuid.UUID, req *BulkUpsertRelationshipsRequest, actorID *uuid.UUID) (*BulkUpsertRelationshipsResponse, error) {
+	_, actorID = actorFromContext(ctx, actorID)
+
+	results := make([]BulkUpsertRelationshipResult, len(req.Items))
+
+	workerCtx := s.repo.BulkContext(context.WithoutCancel(ctx))
+
+	// Pre-warm inverse type cache for this project to avoid lock contention
+	if s.inverseTypeProvider != nil {
+		// Just querying an empty type is enough to populate the whole map for the project
+		_, _ = s.inverseTypeProvider.GetInverseType(workerCtx, projectID.String(), "")
+	}
+
+	for i, item := range req.Items {
+		if item.Type == "" || item.SrcID == uuid.Nil || item.DstID == uuid.Nil {
+			errMsg := "type, src_id and dst_id are required"
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: false, Error: &errMsg}
+			continue
+		}
+
+		resp, created, err := s.UpsertRelationship(workerCtx, projectID, &item, actorID)
+		if err != nil {
+			errMsg := err.Error()
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: false, Error: &errMsg}
+		} else {
+			results[i] = BulkUpsertRelationshipResult{Index: i, Success: true, Created: created, Relationship: resp}
+		}
+	}
+
+	successCount, failedCount := 0, 0
+	for _, r := range results {
+		if r.Success {
+			successCount++
+		} else {
+			failedCount++
+		}
+	}
+
+	return &BulkUpsertRelationshipsResponse{
+		Success: successCount,
+		Failed:  failedCount,
+		Results: results,
+	}, nil
+}
+
+// =============================================================================
+// Search with Neighbors
+// =============================================================================
+
+// SearchWithNeighbors performs FTS search and optionally retrieves neighbors.
+func (s *Service) SearchWithNeighbors(ctx context.Context, projectID uuid.UUID, req *SearchWithNeighborsRequest) (*SearchWithNeighborsResponse, error) {
+	// Set defaults
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	maxNeighbors := req.MaxNeighbors
+	if maxNeighbors <= 0 {
+		maxNeighbors = 5
+	}
+	if maxNeighbors > 20 {
+		maxNeighbors = 20
+	}
+
+	maxDistance := float32(0.5)
+	if req.MaxDistance != nil {
+		maxDistance = *req.MaxDistance
+	}
+
+	// Perform FTS search for primary results
+	ftsParams := FTSSearchParams{
+		ProjectID:      projectID,
+		Query:          req.Query,
+		BranchID:       req.BranchID,
+		Types:          req.Types,
+		Labels:         req.Labels,
+		IncludeDeleted: false,
+		Limit:          limit,
+	}
+
+	ftsResults, err := s.repo.FTSSearch(ctx, ftsParams)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build primary results
+	primaryResults := make([]*SearchWithNeighborsResultItem, len(ftsResults))
+	for i, r := range ftsResults {
+		primaryResults[i] = &SearchWithNeighborsResultItem{
+			Object: r.Object.ToResponse(),
+			Score:  r.Rank,
+		}
+	}
+
+	response := &SearchWithNeighborsResponse{
+		PrimaryResults: primaryResults,
+	}
+
+	// If neighbors requested, fetch them for each primary result
+	if req.IncludeNeighbors && len(ftsResults) > 0 {
+		neighbors := make(map[string][]*GraphObjectResponse)
+
+		for _, r := range ftsResults {
+			objectID := r.Object.ID
+			objectNeighbors := make([]*GraphObjectResponse, 0)
+
+			// Get semantically similar objects via vector search
+			embedding, err := s.repo.GetObjectEmbedding(ctx, projectID, objectID)
+			if err == nil && len(embedding) > 0 {
+				vecParams := VectorSearchParams{
+					ProjectID:      projectID,
+					Vector:         embedding,
+					BranchID:       req.BranchID,
+					Types:          req.Types,
+					Labels:         req.Labels,
+					MaxDistance:    &maxDistance,
+					IncludeDeleted: false,
+					Limit:          maxNeighbors + 1, // +1 to exclude self
+				}
+
+				vecResults, err := s.repo.VectorSearch(ctx, vecParams)
+				if err == nil {
+					for _, vr := range vecResults {
+						// Skip self
+						if vr.Object.ID == objectID {
+							continue
+						}
+						if len(objectNeighbors) >= maxNeighbors {
+							break
+						}
+						objectNeighbors = append(objectNeighbors, vr.Object.ToResponse())
+					}
+				} else {
+					s.log.Warn("vector search failed for neighbor expansion",
+						slog.String("object_id", objectID.String()),
+						logger.Error(err))
+				}
+			} else if err != nil {
+				s.log.Warn("failed to get object embedding for neighbor expansion",
+					slog.String("object_id", objectID.String()),
+					logger.Error(err))
+			}
+
+			// Get relationship-connected neighbors
+			relNeighbors, err := s.repo.GetNeighborObjects(ctx, projectID, objectID, req.BranchID, maxNeighbors)
+			if err == nil {
+				for _, n := range relNeighbors {
+					if len(objectNeighbors) >= maxNeighbors {
+						break
+					}
+					// Avoid duplicates
+					duplicate := false
+					for _, existing := range objectNeighbors {
+						if existing.ID == n.ID {
+							duplicate = true
+							break
+						}
+					}
+					if !duplicate {
+						objectNeighbors = append(objectNeighbors, n.ToResponse())
+					}
+				}
+			} else {
+				s.log.Warn("failed to get relationship neighbors",
+					slog.String("object_id", objectID.String()),
+					logger.Error(err))
+			}
+
+			if len(objectNeighbors) > 0 {
+				neighbors[objectID.String()] = objectNeighbors
+			}
+		}
+
+		response.Neighbors = neighbors
+	} else if req.IncludeNeighbors {
+		s.log.Warn("FTS returned zero results, skipping neighbor expansion",
+			slog.String("query", req.Query),
+			slog.String("project_id", projectID.String()))
+	}
+
+	return response, nil
+}
+
+// =============================================================================
+// Similar Objects
+// =============================================================================
+
+// FindSimilarObjects finds objects similar to a given object.
+func (s *Service) FindSimilarObjects(ctx context.Context, projectID, objectID uuid.UUID, req *SimilarObjectsRequest) ([]*SimilarObjectResult, error) {
+	// Set defaults
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Use maxDistance or legacy minScore
+	var maxDistance *float32
+	if req.MaxDistance != nil {
+		maxDistance = req.MaxDistance
+	} else if req.MinScore != nil {
+		maxDistance = req.MinScore
+	}
+
+	params := SimilarSearchParams{
+		ProjectID:   projectID,
+		ObjectID:    objectID,
+		BranchID:    req.BranchID,
+		Type:        req.Type,
+		KeyPrefix:   req.KeyPrefix,
+		LabelsAll:   req.LabelsAll,
+		LabelsAny:   req.LabelsAny,
+		MaxDistance: maxDistance,
+		Limit:       limit,
+	}
+
+	results, err := s.repo.FindSimilarObjects(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to response type
+	response := make([]*SimilarObjectResult, len(results))
+	for i, r := range results {
+		createdAt := r.CreatedAt
+		response[i] = &SimilarObjectResult{
+			ID:          r.ID,
+			CanonicalID: &r.CanonicalID,
+			Version:     &r.Version,
+			Distance:    r.Distance,
+			ProjectID:   &r.ProjectID,
+			BranchID:    r.BranchID,
+			Type:        r.Type,
+			Key:         r.Key,
+			Status:      r.Status,
+			Properties:  r.Properties,
+			Labels:      r.Labels,
+			CreatedAt:   &createdAt,
+		}
+	}
+
+	return response, nil
+}
+
+// =============================================================================
+// Graph Expand
+// =============================================================================
+
+// ExpandGraph performs bounded BFS graph expansion.
+func (s *Service) ExpandGraph(ctx context.Context, projectID uuid.UUID, req *GraphExpandRequest) (*GraphExpandResponse, error) {
+	startTime := time.Now()
+
+	// Set defaults
+	direction := req.Direction
+	if direction == "" {
+		direction = "both"
+	}
+
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 2
+	}
+	if maxDepth > 8 {
+		maxDepth = 8
+	}
+
+	maxNodes := req.MaxNodes
+	if maxNodes <= 0 {
+		maxNodes = 400
+	}
+	if maxNodes > 5000 {
+		maxNodes = 5000
+	}
+
+	maxEdges := req.MaxEdges
+	if maxEdges <= 0 {
+		maxEdges = 800
+	}
+	if maxEdges > 15000 {
+		maxEdges = 15000
+	}
+
+	// Perform expansion
+	params := ExpandParams{
+		ProjectID:         projectID,
+		RootIDs:           req.RootIDs,
+		Direction:         direction,
+		MaxDepth:          maxDepth,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		RelationshipTypes: req.RelationshipTypes,
+		ObjectTypes:       req.ObjectTypes,
+		Labels:            req.Labels,
+	}
+
+	// If QueryContext is provided, generate embedding for query-aware edge ordering
+	if req.QueryContext != "" {
+		embedding, err := s.embeddings.EmbedQuery(ctx, req.QueryContext)
+		if err != nil {
+			// Log warning but continue with standard BFS order (graceful degradation)
+			s.log.WarnContext(ctx, "failed to embed query context for graph expansion, falling back to standard BFS order",
+				"error", err,
+				"query_context", req.QueryContext,
+			)
+		} else if len(embedding) > 0 {
+			params.QueryContext = req.QueryContext
+			params.QueryVector = embedding
+		}
+	}
+
+	result, err := s.repo.ExpandGraph(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build response
+	nodes := make([]*ExpandNode, 0, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		node := &ExpandNode{
+			ID:          id, // Use canonical_id so edges (which store canonical_id in src_id/dst_id) can reference nodes
+			CanonicalID: id,
+			Depth:       result.NodeDepths[id],
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Labels:      obj.Labels,
+		}
+
+		// Apply property projection
+		if req.Projection != nil {
+			node.Properties = projectProperties(obj.Properties, req.Projection)
+		} else {
+			node.Properties = obj.Properties
+		}
+
+		nodes = append(nodes, node)
+	}
+
+	edges := make([]*ExpandEdge, 0, len(result.Edges))
+	for _, rel := range result.Edges {
+		edge := &ExpandEdge{
+			ID:    rel.ID,
+			Type:  rel.Type,
+			SrcID: rel.SrcID,
+			DstID: rel.DstID,
+		}
+		if req.IncludeRelationshipProperties {
+			edge.Properties = rel.Properties
+		}
+		edges = append(edges, edge)
+	}
+
+	elapsedMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+
+	// Build filters for meta
+	var filters *GraphExpandFilters
+	if len(req.RelationshipTypes) > 0 || len(req.ObjectTypes) > 0 || len(req.Labels) > 0 || req.Projection != nil || req.IncludeRelationshipProperties {
+		filters = &GraphExpandFilters{
+			RelationshipTypes:             req.RelationshipTypes,
+			ObjectTypes:                   req.ObjectTypes,
+			Labels:                        req.Labels,
+			Projection:                    req.Projection,
+			IncludeRelationshipProperties: req.IncludeRelationshipProperties,
+		}
+	}
+
+	return &GraphExpandResponse{
+		Roots:           req.RootIDs,
+		Nodes:           nodes,
+		Edges:           edges,
+		Truncated:       result.Truncated,
+		MaxDepthReached: result.MaxDepthReached,
+		TotalNodes:      len(nodes),
+		Meta: &GraphExpandMeta{
+			Requested: GraphExpandRequested{
+				MaxDepth:  maxDepth,
+				MaxNodes:  maxNodes,
+				MaxEdges:  maxEdges,
+				Direction: direction,
+			},
+			NodeCount:       len(nodes),
+			EdgeCount:       len(edges),
+			Truncated:       result.Truncated,
+			MaxDepthReached: result.MaxDepthReached,
+			ElapsedMs:       elapsedMs,
+			Filters:         filters,
+		},
+	}, nil
+}
+
+// projectProperties applies include/exclude projection to properties. Include is
+// applied first (whitelist), then excluded keys are removed, so
+// `fields=title,content&exclude_fields=content` yields title only. With neither
+// set the input map is returned unchanged.
+func projectProperties(props map[string]any, projection *GraphExpandProjection) map[string]any {
+	if props == nil {
+		return nil
+	}
+	if projection == nil ||
+		(len(projection.IncludeObjectProperties) == 0 && len(projection.ExcludeObjectProperties) == 0) {
+		return props
+	}
+
+	result := make(map[string]any, len(props))
+
+	if len(projection.IncludeObjectProperties) > 0 {
+		// Whitelist mode
+		includeSet := make(map[string]bool, len(projection.IncludeObjectProperties))
+		for _, k := range projection.IncludeObjectProperties {
+			includeSet[k] = true
+		}
+		for k, v := range props {
+			if includeSet[k] {
+				result[k] = v
+			}
+		}
+	} else {
+		for k, v := range props {
+			result[k] = v
+		}
+	}
+
+	// Blacklist applied after include.
+	for _, k := range projection.ExcludeObjectProperties {
+		delete(result, k)
+	}
+
+	return result
+}
+
+// =============================================================================
+// Graph Traverse
+// =============================================================================
+
+// TraverseGraph performs bounded BFS graph traversal with pagination.
+func (s *Service) TraverseGraph(ctx context.Context, projectID uuid.UUID, req *TraverseGraphRequest) (*TraverseGraphResponse, error) {
+	startTime := time.Now()
+
+	// Set defaults
+	direction := req.Direction
+	if direction == "" {
+		direction = "both"
+	}
+
+	maxDepth := req.MaxDepth
+	if maxDepth <= 0 {
+		maxDepth = 2
+	}
+	if maxDepth > 8 {
+		maxDepth = 8
+	}
+
+	maxNodes := req.MaxNodes
+	if maxNodes <= 0 {
+		maxNodes = 200
+	}
+	if maxNodes > 5000 {
+		maxNodes = 5000
+	}
+
+	maxEdges := req.MaxEdges
+	if maxEdges <= 0 {
+		maxEdges = 400
+	}
+	if maxEdges > 10000 {
+		maxEdges = 10000
+	}
+
+	pageSize := req.Limit
+	if pageSize <= 0 {
+		pageSize = 50
+	}
+	if pageSize > 1000 {
+		pageSize = 1000
+	}
+
+	pageDirection := req.PageDirection
+	if pageDirection == "" {
+		pageDirection = "forward"
+	}
+
+	// Use the same expansion logic as ExpandGraph for now
+	// A more sophisticated implementation would handle phased traversal, filters, and pagination
+	params := ExpandParams{
+		ProjectID:         projectID,
+		RootIDs:           req.RootIDs,
+		Direction:         direction,
+		MaxDepth:          maxDepth,
+		MaxNodes:          maxNodes,
+		MaxEdges:          maxEdges,
+		RelationshipTypes: req.RelationshipTypes,
+		ObjectTypes:       req.ObjectTypes,
+		Labels:            req.Labels,
+	}
+
+	// If QueryContext is provided, generate embedding for query-aware edge ordering
+	if req.QueryContext != "" {
+		embedding, err := s.embeddings.EmbedQuery(ctx, req.QueryContext)
+		if err != nil {
+			// Log warning but continue with standard BFS order (graceful degradation)
+			s.log.WarnContext(ctx, "failed to embed query context for graph traversal, falling back to standard BFS order",
+				"error", err,
+				"query_context", req.QueryContext,
+			)
+		} else if len(embedding) > 0 {
+			params.QueryContext = req.QueryContext
+			params.QueryVector = embedding
+		}
+	}
+
+	result, err := s.repo.ExpandGraph(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build response nodes
+	nodes := make([]*TraverseNode, 0, len(result.Nodes))
+	for id, obj := range result.Nodes {
+		node := &TraverseNode{
+			ID:          id, // Use canonical_id so edges (which store canonical_id in src_id/dst_id) can reference nodes
+			CanonicalID: id,
+			Depth:       result.NodeDepths[id],
+			Type:        obj.Type,
+			Key:         obj.Key,
+			Labels:      obj.Labels,
+			Properties:  obj.Properties,
+		}
+		nodes = append(nodes, node)
+	}
+
+	// Build response edges
+	edges := make([]*TraverseEdge, 0, len(result.Edges))
+	for _, rel := range result.Edges {
+		edges = append(edges, &TraverseEdge{
+			ID:    rel.ID,
+			Type:  rel.Type,
+			SrcID: rel.SrcID,
+			DstID: rel.DstID,
+		})
+	}
+
+	elapsedMs := float64(time.Since(startTime).Microseconds()) / 1000.0
+
+	// Apply offset+pageSize pagination over the BFS result ordering.
+	offset := req.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	hasNext := offset+pageSize < len(nodes)
+
+	// Slice nodes to the current page (guard offset beyond the result set).
+	start := offset
+	if start > len(nodes) {
+		start = len(nodes)
+	}
+	end := start + pageSize
+	if end > len(nodes) {
+		end = len(nodes)
+	}
+	pagedNodes := nodes[start:end]
+
+	// Keep only edges whose endpoints are in the current node page.
+	pagedIDs := make(map[uuid.UUID]bool, len(pagedNodes))
+	for _, n := range pagedNodes {
+		pagedIDs[n.ID] = true
+	}
+	filteredEdges := make([]*TraverseEdge, 0, len(edges))
+	for _, e := range edges {
+		if pagedIDs[e.SrcID] || pagedIDs[e.DstID] {
+			filteredEdges = append(filteredEdges, e)
+		}
+	}
+
+	pagedCount := len(pagedNodes)
+	var nextCursor *string
+	if hasNext {
+		cursor := strconv.Itoa(offset + pageSize)
+		nextCursor = &cursor
+	}
+
+	return &TraverseGraphResponse{
+		Roots:               req.RootIDs,
+		Nodes:               pagedNodes,
+		Edges:               filteredEdges,
+		Truncated:           result.Truncated,
+		MaxDepthReached:     result.MaxDepthReached,
+		TotalNodes:          len(nodes),
+		HasNextPage:         hasNext,
+		HasPreviousPage:     offset > 0,
+		NextCursor:          nextCursor,
+		PreviousCursor:      nil,
+		ApproxPositionStart: offset,
+		ApproxPositionEnd:   offset + pagedCount,
+		PageDirection:       pageDirection,
+		QueryTimeMs:         &elapsedMs,
+		ResultCount:         &pagedCount,
+	}, nil
+}
+
+// =============================================================================
+// Branch Merge
+// =============================================================================
+
+// BranchMergeReadiness returns how many objects in the branch are missing embeddings.
+// A count of 0 means the branch is fully embedded and ready for similarity-aware merge.
+func (s *Service) BranchMergeReadiness(ctx context.Context, projectID, branchID uuid.UUID) (total int, pending int, err error) {
+	pending, err = s.repo.CountUnembeddedObjectsInBranch(ctx, projectID, branchID)
+	if err != nil {
+		return 0, 0, err
+	}
+	_ = s.repo.DB().NewRaw(`
+		SELECT COUNT(*) FROM kb.graph_objects
+		WHERE project_id = ? AND branch_id = ?
+		  AND supersedes_id IS NULL AND deleted_at IS NULL`,
+		projectID, branchID,
+	).Scan(ctx, &total)
+	return total, pending, nil
+}
+
+// MergeBranch performs dry-run or actual merge of a source branch into target branch.
+func (s *Service) MergeBranch(ctx context.Context, projectID uuid.UUID, targetBranchID *uuid.UUID, req *BranchMergeRequest) (*BranchMergeResponse, error) {
+	// Reject a policy the caller could not have meant. Both Policy and the legacy
+	// ConflictStrategy used to fall through to defaults, so a typo'd preset merged
+	// the branch with "enrich" semantics — a destructive operation performed under
+	// a policy nobody asked for (#2231).
+	if err := validateMergePolicy(req.Policy, req.ConflictStrategy); err != nil {
+		return nil, err
+	}
+
+	// Validate target branch exists (skip for main — it has no branch row)
+	if targetBranchID != nil {
+		_, err := s.repo.GetBranchByID(ctx, projectID, *targetBranchID)
+		if err != nil {
+			return nil, apperror.ErrNotFound.WithMessage("target branch not found")
+		}
+	}
+
+	// Validate source branch exists
+	_, err := s.repo.GetBranchByID(ctx, projectID, req.SourceBranchID)
+	if err != nil {
+		return nil, apperror.ErrNotFound.WithMessage("source branch not found")
+	}
+
+	// Get HEAD versions for both branches (nil targetBranchID = main graph)
+	targetObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceObjects, err := s.repo.GetBranchObjectHeads(ctx, projectID, &req.SourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	targetRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceRels, err := s.repo.GetBranchRelationshipHeads(ctx, projectID, &req.SourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Enumerate objects: classify each canonical_id
+	objectSummaries := make([]*BranchMergeObjectSummary, 0)
+	unchangedCount, addedCount, ffCount, conflictCount, deletedCount, mergedCount, similarCount := 0, 0, 0, 0, 0, 0, 0
+
+	// Hard limit for enumeration
+	hardLimit := 2000
+	if req.Limit != nil && *req.Limit > 0 {
+		hardLimit = *req.Limit
+	}
+	truncated := false
+
+	// Collect all canonical IDs
+	allCanonicalIDs := make(map[uuid.UUID]bool)
+	for cid := range sourceObjects {
+		allCanonicalIDs[cid] = true
+	}
+	for cid := range targetObjects {
+		allCanonicalIDs[cid] = true
+	}
+
+	// Normalized type|key → head index built once per merge for the exact-key
+	// same-entity path, so keys are not re-normalized per source pair.
+	sameEntityIndex := buildSameEntityTargetIndex(targetObjects)
+
+	for cid := range allCanonicalIDs {
+		sourceHead := sourceObjects[cid]
+		targetHead := targetObjects[cid]
+
+		summary := &BranchMergeObjectSummary{
+			CanonicalID: cid,
+		}
+
+		if sourceHead != nil {
+			summary.SourceHeadID = &sourceHead.ID
+		}
+		if targetHead != nil {
+			summary.TargetHeadID = &targetHead.ID
+		}
+
+		summary.Status, summary.Conflicts = classifyMergeObject(sourceHead, targetHead)
+
+		// Deterministic same-entity detection (exact key). A source object that
+		// would be "added" (new canonical ID) but shares a normalized type+key
+		// with an existing target head is the same entity extracted from a
+		// different document. Reclassify it as "similar" with a deterministic
+		// score so the existing similarity policy (and the provenance union)
+		// applies. This is independent of embeddings: it runs before and
+		// regardless of the embedding-driven similarity probe below.
+		if summary.Status == "added" {
+			if same := findSameEntityTargetInIndex(sourceHead, sameEntityIndex); same != nil {
+				summary.Status = "similar"
+				summary.SimilarityScore = 1.0
+				cid := same.CanonicalID
+				summary.SimilarTargetID = &cid
+				if name, ok := same.Properties["name"].(string); ok {
+					summary.SimilarTargetName = name
+				}
+			}
+		}
+
+		switch summary.Status {
+		case "merged":
+			mergedCount++
+		case "unchanged":
+			unchangedCount++
+		case "added":
+			addedCount++
+		case "fast_forward":
+			ffCount++
+		case "conflict":
+			conflictCount++
+		case "similar":
+			similarCount++
+		case "deleted":
+			// For now count as fast_forward (it's a change that needs to be applied)
+			ffCount++
+			deletedCount++
+		}
+
+		objectSummaries = append(objectSummaries, summary)
+	}
+
+	// Enumerate relationships
+	relSummaries := make([]*BranchMergeRelationshipSummary, 0)
+	relUnchanged, relAdded, relFF, relConflict := 0, 0, 0, 0
+
+	allRelCanonicalIDs := make(map[uuid.UUID]bool)
+	for cid := range sourceRels {
+		allRelCanonicalIDs[cid] = true
+	}
+	for cid := range targetRels {
+		allRelCanonicalIDs[cid] = true
+	}
+
+	for cid := range allRelCanonicalIDs {
+		sourceHead := sourceRels[cid]
+		targetHead := targetRels[cid]
+
+		summary := &BranchMergeRelationshipSummary{
+			CanonicalID: cid,
+		}
+
+		if sourceHead != nil {
+			summary.SourceHeadID = &sourceHead.ID
+			summary.SourceSrcID = &sourceHead.SrcID
+			summary.SourceDstID = &sourceHead.DstID
+		}
+		if targetHead != nil {
+			summary.TargetHeadID = &targetHead.ID
+			summary.TargetSrcID = &targetHead.SrcID
+			summary.TargetDstID = &targetHead.DstID
+		}
+
+		if sourceHead == nil && targetHead != nil {
+			summary.Status = "unchanged"
+			relUnchanged++
+		} else if sourceHead != nil && targetHead == nil {
+			summary.Status = "added"
+			relAdded++
+		} else if sourceHead != nil && targetHead != nil {
+			if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+				summary.Status = "unchanged"
+				relUnchanged++
+			} else {
+				conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+
+				if len(conflicts) > 0 {
+					summary.Status = "conflict"
+					summary.Conflicts = conflicts
+					relConflict++
+				} else {
+					summary.Status = "fast_forward"
+					relFF++
+				}
+			}
+		}
+
+		relSummaries = append(relSummaries, summary)
+	}
+
+	// Sort summaries: conflict -> deleted -> fast_forward -> added -> unchanged
+	// Sort BEFORE truncating so high-priority items always appear in the payload.
+	sortMergeObjectSummaries(objectSummaries)
+	sortMergeRelationshipSummaries(relSummaries)
+
+	// Truncate payload to hardLimit (after sort, so non-unchanged items are first).
+	responseObjectSummaries := objectSummaries
+	responseRelSummaries := relSummaries
+	if len(objectSummaries) > hardLimit {
+		responseObjectSummaries = objectSummaries[:hardLimit]
+		truncated = true
+	}
+	if len(relSummaries) > hardLimit {
+		responseRelSummaries = relSummaries[:hardLimit]
+		truncated = true
+	}
+
+	// Resolve the effective merge policy and settings.
+	settings := resolveMergePolicy(req.Policy, req.ConflictStrategy, req.SimilarityThreshold)
+	strategy := settings.CanonicalConflictAction
+
+	// ── Embedding readiness gate ───────────────────────────────────────────
+	embeddingsPending := 0
+	if settings.SimilarityEnabled || req.WaitForEmbeddings {
+		pending, err := s.repo.CountUnembeddedObjectsInBranch(ctx, projectID, req.SourceBranchID)
+		if err != nil {
+			s.log.Warn("failed to count unembedded objects, skipping gate", logger.Error(err))
+		} else {
+			embeddingsPending = pending
+			if pending > 0 && req.WaitForEmbeddings {
+				return nil, apperror.ErrBadRequest.WithMessage(
+					fmt.Sprintf("source branch has %d objects without embeddings; retry after embeddings settle", pending))
+			}
+		}
+	}
+
+	// ── Similarity probe for "added" objects ───────────────────────────────
+	if settings.SimilarityEnabled && settings.SimilarityThreshold > 0 {
+		maxDist := float32(1.0) - settings.SimilarityThreshold
+		for _, sum := range objectSummaries {
+			if sum.Status != "added" {
+				continue
+			}
+			src := sourceObjects[sum.CanonicalID]
+			if src == nil {
+				continue
+			}
+			vec, err := s.repo.GetBranchObjectEmbedding(ctx, src.ID)
+			if err != nil || len(vec) == 0 {
+				continue // no embedding yet — stays "added"
+			}
+			similar, dist, err := s.repo.FindSimilarObjectInBranch(
+				ctx, projectID, targetBranchID, src.Type, vec,
+				[]uuid.UUID{sum.CanonicalID}, maxDist)
+			if err != nil {
+				s.log.Warn("similarity probe error, skipping", slog.String("canonical_id", sum.CanonicalID.String()), logger.Error(err))
+				continue
+			}
+			if similar == nil {
+				continue
+			}
+			sum.Status = "similar"
+			sum.SimilarityScore = 1.0 - dist
+			cid := similar.CanonicalID
+			sum.SimilarTargetID = &cid
+			if name, ok := similar.Properties["name"].(string); ok {
+				sum.SimilarTargetName = name
+			}
+			addedCount--
+			similarCount++
+		}
+
+		// Relationship similarity probe — after entity remapping is known at apply time.
+		// For the classification pass we just mark "added" rels for potential probing;
+		// actual similarity detection happens in applyMerge where canonicalIDMap is live.
+		// (Rels with remapped endpoints are checked there.)
+	}
+
+	// Pre-compute resolution labels for dry-run display.
+	resolvedCount := 0
+	skippedCount := 0
+	leftForReview := 0
+	leftForReviewObjs := make([]map[string]any, 0)
+	for _, s := range responseObjectSummaries {
+		switch s.Status {
+		case "conflict":
+			switch strategy {
+			case "enrich":
+				s.Resolution = "enriched"
+				resolvedCount++
+			case "overwrite":
+				s.Resolution = "overwritten"
+				resolvedCount++
+			case "preserve_target":
+				s.Resolution = "skipped"
+				skippedCount++
+				leftForReview++
+			}
+		case "similar":
+			switch settings.SimilarityAction {
+			case "enrich", "theirs":
+				s.Resolution = "absorbed-enrich"
+				resolvedCount++
+			case "mine":
+				s.Resolution = "absorbed-mine"
+				resolvedCount++
+			case "suggest", "":
+				// Empty action (presets "manual", "enrich_no_sim",
+				// "mine_no_sim") means "no auto-action" — exactly like
+				// "suggest": flag for review, nothing written. applyMerge
+				// treats "" identically, so the dry-run/left-for-review
+				// precompute must too, or an exact-key reclassified object
+				// is silently skipped while leftForReview stays 0.
+				s.Resolution = "suggested"
+				leftForReview++
+			}
+		}
+
+		// Collect a compact breakdown of objects left for human review, written
+		// into the merge journal event so reviewers can see what merged vs what
+		// did not without re-running a dry-run diff.
+		if s.Resolution == "skipped" || s.Resolution == "suggested" {
+			entry := map[string]any{
+				"canonical_id": s.CanonicalID.String(),
+				"status":       s.Status,
+				"resolution":   s.Resolution,
+			}
+			if src := sourceObjects[s.CanonicalID]; src != nil {
+				entry["type"] = src.Type
+				if name, ok := src.Properties["name"].(string); ok {
+					entry["name"] = name
+				}
+			}
+			if len(s.Conflicts) > 0 {
+				entry["conflicts"] = s.Conflicts
+			}
+			if s.SimilarTargetID != nil {
+				entry["similarity_score"] = s.SimilarityScore
+				entry["similar_target_id"] = s.SimilarTargetID.String()
+				if s.SimilarTargetName != "" {
+					entry["similar_target_name"] = s.SimilarTargetName
+				}
+			}
+			leftForReviewObjs = append(leftForReviewObjs, entry)
+		}
+	}
+
+	relSimilarCount := 0
+
+	response := &BranchMergeResponse{
+		TargetBranchID:                targetBranchID,
+		SourceBranchID:                req.SourceBranchID,
+		DryRun:                        !req.Execute,
+		Policy:                        req.Policy,
+		ConflictStrategy:              strategy,
+		SimilarityEnabled:             settings.SimilarityEnabled,
+		SimilarityThreshold:           settings.SimilarityThreshold,
+		EmbeddingsPending:             embeddingsPending,
+		TotalObjects:                  len(allCanonicalIDs),
+		UnchangedCount:                unchangedCount,
+		AddedCount:                    addedCount,
+		FastForwardCount:              ffCount,
+		DeletedCount:                  &deletedCount,
+		ConflictCount:                 conflictCount,
+		MergedCount:                   mergedCount,
+		ResolvedCount:                 resolvedCount,
+		SkippedCount:                  skippedCount,
+		SimilarCount:                  similarCount,
+		LeftForReviewCount:            leftForReview,
+		Objects:                       responseObjectSummaries,
+		Truncated:                     truncated,
+		HardLimit:                     &hardLimit,
+		RelationshipsTotal:            intPtr(len(allRelCanonicalIDs)),
+		RelationshipsUnchangedCount:   &relUnchanged,
+		RelationshipsAddedCount:       &relAdded,
+		RelationshipsFastForwardCount: &relFF,
+		RelationshipsConflictCount:    &relConflict,
+		RelationshipsSimilarCount:     &relSimilarCount,
+		Relationships:                 responseRelSummaries,
+	}
+
+	// If execute is requested, apply merge transactionally.
+	if req.Execute && (conflictCount == 0 && relConflict == 0 || strategy != "block") {
+		appliedCount, err := s.applyMerge(ctx, projectID, targetBranchID, settings, objectSummaries, relSummaries, sourceObjects, targetObjects, sourceRels, targetRels) //nolint:staticcheck
+		if err != nil {
+			return nil, fmt.Errorf("apply merge: %w", err)
+		}
+		response.Applied = true
+		response.AppliedObjects = &appliedCount
+
+		{
+			relsMerged := 0
+			if response.RelationshipsTotal != nil {
+				relsMerged = *response.RelationshipsTotal - relUnchanged
+			}
+			targetID := "main"
+			if targetBranchID != nil {
+				targetID = targetBranchID.String()
+			}
+			// Attribute the merge to the source branch so the event appears in that
+			// branch's own journal history, alongside the objects it contained.
+			mergeActorType, mergeActorID := actorFromContext(ctx, nil)
+			s.eventSink.Log(ctx, LogParams{
+				ProjectID: projectID,
+				BranchID:  &req.SourceBranchID,
+				EventType: EventTypeMerge,
+				ActorType: mergeActorType,
+				ActorID:   mergeActorID,
+				Metadata: map[string]any{
+					"source_branch_id":        req.SourceBranchID.String(),
+					"target_branch_id":        targetID,
+					"policy":                  req.Policy,
+					"objects_merged":          appliedCount,
+					"relationships_merged":    relsMerged,
+					"objects_added":           addedCount,
+					"objects_fast_forward":    ffCount,
+					"objects_conflict":        conflictCount,
+					"objects_similar":         similarCount,
+					"left_for_review_count":   leftForReview,
+					"left_for_review_objects": leftForReviewObjs,
+				},
+			})
+		}
+
+		// Stamp the source branch as merged only when nothing was left for review.
+		// A partial merge (leftForReview > 0, or relationship conflicts that are
+		// never auto-applied) keeps the branch open for a follow-up manual merge.
+		if s.branchStore != nil && leftForReview == 0 && relConflict == 0 {
+			if err := s.branchStore.SetMergedAt(ctx, req.SourceBranchID.String(), time.Now().UTC()); err != nil {
+				s.log.Warn("failed to stamp branch merged_at",
+					slog.String("branch_id", req.SourceBranchID.String()),
+					slog.String("error", err.Error()))
+			}
+		}
+
+		// Resolve review-ready notifications tied to this staging branch only when
+		// the merge actually closed it (nothing left for review, no relationship
+		// conflicts). A partial merge keeps the branch open, so its review-ready
+		// notification must remain visible until a follow-up merge completes.
+		// Nil resolver is a no-op; failures are logged and must not fail the merge.
+		if leftForReview == 0 && relConflict == 0 && s.branchNotificationResolver != nil {
+			if err := s.branchNotificationResolver.ResolveByBranch(ctx, projectID.String(), req.SourceBranchID.String()); err != nil {
+				s.log.Warn("failed to resolve branch notifications on merge",
+					slog.String("branch_id", req.SourceBranchID.String()),
+					slog.String("error", err.Error()))
+			}
+		}
+	}
+
+	return response, nil
+}
+
+// applyMerge executes the merge inside a single database transaction.
+// It clones "added" objects/relationships onto the target branch, creates
+// new versions for "fast_forward" objects, and absorbs "similar" objects
+// into existing target entities per the similarity action in settings.
+// Returns the total number of objects+relationships written.
+func (s *Service) applyMerge(
+	ctx context.Context,
+	projectID uuid.UUID,
+	targetBranchID *uuid.UUID,
+	settings mergeSettings,
+	objectSummaries []*BranchMergeObjectSummary,
+	relSummaries []*BranchMergeRelationshipSummary,
+	sourceObjects map[uuid.UUID]*BranchObjectHead,
+	targetObjects map[uuid.UUID]*BranchObjectHead,
+	sourceRels map[uuid.UUID]*BranchRelationshipHead,
+	targetRels map[uuid.UUID]*BranchRelationshipHead,
+) (int, error) {
+	strategy := settings.CanonicalConflictAction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// canonicalIDMap maps source canonical IDs → target canonical IDs for
+	// objects that are "added" (new on source, don't exist on target yet).
+	// Used to remap relationship endpoints when both endpoints are new.
+	canonicalIDMap := make(map[uuid.UUID]uuid.UUID)
+
+	// Collect object IDs that need embedding after the transaction commits.
+	// Using a slice instead of defer-in-loop avoids accumulating N deferred
+	// calls and ensures embedding is only triggered on successful commit.
+	var embeddingIDs []string
+	// Collect relationship IDs for embedding enqueue after commit.
+	var relEmbeddingIDs []string
+
+	appliedCount := 0
+
+	// ── Objects ──────────────────────────────────────────────────────────────
+
+	for _, summary := range objectSummaries {
+		cid := summary.CanonicalID
+
+		switch summary.Status {
+		case "added":
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			labels := src.Labels
+			if labels == nil {
+				labels = []string{}
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			newCanonicalID := uuid.New()
+			clone := &GraphObject{
+				ID:              uuid.New(),
+				CanonicalID:     newCanonicalID,
+				ProjectID:       projectID,
+				BranchID:        targetBranchID,
+				Version:         1,
+				Type:            src.Type,
+				Key:             src.Key,
+				Status:          src.Status,
+				Namespace:       src.Namespace,
+				Labels:          labels,
+				Properties:      props,
+				ExtractionJobID: src.ExtractionJobID,
+				ActorType:       src.ActorType,
+				ActorID:         src.ActorID,
+				// A clone is a copy: keep the source's class and owner so a
+				// merged object is not silently re-classed as synthesized.
+				DataClass:     src.DataClass,
+				OwnerSourceID: src.OwnerSourceID,
+			}
+			clone.ContentHash = computeContentHash(clone.Properties, clone.Status, clone.Key, clone.Labels)
+			now := time.Now()
+			clone.CreatedAt = now
+			clone.UpdatedAt = now
+			// This path inserts directly rather than through insertGraphObject, so
+			// it has to stamp the row itself: the credential and run describe the
+			// merge that produced it (#2376).
+			applyWriteStampFromContext(ctx, clone)
+
+			res, err := tx.NewInsert().Model(clone).On("CONFLICT DO NOTHING").Returning("id").Exec(ctx)
+			if err != nil {
+				return 0, fmt.Errorf("clone object %s: %w", cid, err)
+			}
+			// If the object already exists on the target (e.g. previously merged
+			// under a different canonical ID), the insert is silently skipped.
+			if n, _ := res.RowsAffected(); n > 0 {
+				canonicalIDMap[cid] = newCanonicalID
+				appliedCount++
+				// Collect for batch embedding enqueue after commit (use physical version ID,
+				// not canonical ID — graph_embedding_jobs.object_id FK references graph_objects.id).
+				embeddingIDs = append(embeddingIDs, clone.ID.String())
+
+				// Stamp the merge ledger on the source object so future merges/diffs
+				// recognize it as already merged instead of "added".
+				if _, err := tx.NewUpdate().
+					Model((*GraphObject)(nil)).
+					Set("merged_to_canonical_id = ?", newCanonicalID).
+					Where("id = ?", src.ID).
+					Exec(ctx); err != nil {
+					return 0, fmt.Errorf("stamp merged_to on object %s: %w", cid, err)
+				}
+			}
+
+		case "fast_forward":
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			// Fetch the current HEAD on the target branch to use as prevHead
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for fast-forward %s: %w", cid, err)
+			}
+			labels := src.Labels
+			if labels == nil {
+				labels = []string{}
+			}
+			// Provenance is exempt from property policy: union the source's
+			// provenance with the target head's so a fast-forward never drops
+			// prior sources from other documents.
+			props := mergeProvenanceProps(prevHead.Properties, src.Properties)
+			// Preserve target status unless overwrite strategy — fast_forward may
+			// differ only in status (target has a user-set status we must not stomp).
+			targetStatus := src.Status
+			if strategy != "overwrite" && prevHead.Status != nil {
+				targetStatus = prevHead.Status
+			}
+			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(
+				src.DataClass, src.OwnerSourceID, prevHead.DataClass, prevHead.OwnerSourceID)
+			if ownerErr != nil {
+				return 0, fmt.Errorf("fast-forward object %s: %w", cid, ownerErr)
+			}
+			newVersion := &GraphObject{
+				Type:       prevHead.Type,
+				Key:        src.Key,
+				Status:     targetStatus,
+				Namespace:  src.Namespace,
+				Labels:     labels,
+				Properties: props,
+				ProjectID:  projectID,
+				BranchID:   targetBranchID,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
+				// Carry the source row's actor so a fast-forward clone is not actor-less.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
+				// Ownership resolves the same way it does for a conflict: a
+				// fast-forward must not silently hand a target object owned by one
+				// source to a different source (#2376).
+				DataClass:     mergedClass,
+				OwnerSourceID: mergedOwner,
+			}
+			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward object %s: %w", cid, err)
+			}
+			appliedCount++
+			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
+			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+
+		case "conflict":
+			if strategy == "preserve_target" {
+				// Skip — target object is kept as-is, nothing to write.
+				continue
+			}
+			src := sourceObjects[cid]
+			tgt := targetObjects[cid]
+			if src == nil || tgt == nil {
+				continue
+			}
+			prevHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, cid, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for conflict %s: %w", cid, err)
+			}
+			var mergedProps map[string]any
+			var mergeResolution string
+			var enrichedKeys []string
+			switch strategy {
+			case "overwrite":
+				// Source wins all conflicting keys.
+				mergedProps = mergeProps(tgt.Properties, src.Properties)
+				mergeResolution = "overwritten"
+			default: // "enrich"
+				// Target wins same keys; source adds new keys only.
+				mergedProps = mergeProps(src.Properties, tgt.Properties)
+				mergeResolution = "enriched"
+				// Collect keys that came from source (keys in src not in tgt).
+				for k := range src.Properties {
+					if _, exists := tgt.Properties[k]; !exists {
+						enrichedKeys = append(enrichedKeys, k)
+					}
+				}
+			}
+			// Provenance is exempt from policy: union the target and source
+			// provenance onto the merged result so conflict resolution never
+			// drops sources from either side.
+			mergedProps = applyProvenanceUnion(mergedProps, tgt.Properties, src.Properties)
+			// Status: preserve target unless overwrite.
+			resolvedStatus := tgt.Status
+			if strategy == "overwrite" {
+				resolvedStatus = src.Status
+			}
+			labels := tgt.Labels
+			if strategy == "overwrite" {
+				labels = src.Labels
+			}
+			if labels == nil {
+				labels = []string{}
+			}
+			// Build change_summary provenance.
+			changeSummary := map[string]any{
+				"source":     "merge",
+				"strategy":   strategy,
+				"resolution": mergeResolution,
+			}
+			if len(enrichedKeys) > 0 {
+				changeSummary["enriched_keys"] = enrichedKeys
+			}
+			mergedClass, mergedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, tgt.DataClass, tgt.OwnerSourceID)
+			if ownerErr != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, ownerErr)
+			}
+			newVersion := &GraphObject{
+				Type:          prevHead.Type,
+				Key:           tgt.Key,
+				Status:        resolvedStatus,
+				Namespace:     src.Namespace,
+				Labels:        labels,
+				Properties:    mergedProps,
+				ProjectID:     projectID,
+				BranchID:      targetBranchID,
+				ChangeSummary: changeSummary,
+				// Carry the staging source's provenance so the merged version stays
+				// attributable to the source document (not the target head's job).
+				ExtractionJobID: src.ExtractionJobID,
+				// Carry the source row's actor so a conflict-resolved version is
+				// not silently downgraded to user+NULL.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
+				// Owner survives the merge; two source-owned objects from
+				// different sources are refused above.
+				DataClass:     mergedClass,
+				OwnerSourceID: mergedOwner,
+			}
+			if err := s.repo.CreateVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("conflict-resolve object %s: %w", cid, err)
+			}
+			appliedCount++
+			// Use physical version ID — graph_embedding_jobs.object_id FK references graph_objects.id.
+			embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+
+		case "deleted":
+			// Soft delete on target branch
+			targetHead, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, summary.CanonicalID, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target head for delete %s: %w", summary.CanonicalID, err)
+			}
+			delActorType, delActorID := actorFromContext(ctx, nil)
+			if err := s.repo.SoftDelete(ctx, tx.Tx, targetHead, delActorType, delActorID, nil); err != nil {
+				return 0, fmt.Errorf("delete object %s: %w", summary.CanonicalID, err)
+			}
+			appliedCount++
+
+		case "similar":
+			// A semantically similar target object was found. "suggest" policy leaves
+			// the object on the staging branch (no write to target); all other policies
+			// absorb the source object into the existing target entity.
+			if settings.SimilarityAction == "suggest" || settings.SimilarityAction == "" {
+				// Flag for human review — no structural change.
+				continue
+			}
+			if summary.SimilarTargetID == nil {
+				continue // safety: no target ID recorded
+			}
+			src := sourceObjects[cid]
+			if src == nil {
+				continue
+			}
+			// Load the live target HEAD by canonical_id.
+			existingTarget, err := s.repo.GetHeadByCanonicalID(ctx, tx, projectID, *summary.SimilarTargetID, targetBranchID)
+			if err != nil {
+				s.log.Warn("similar: cannot load target head, falling back to add",
+					slog.String("target_canonical_id", summary.SimilarTargetID.String()),
+					logger.Error(err))
+				// Fall through to treat as added.
+				continue
+			}
+
+			// Merge properties per policy.
+			mergedProps, changedKeys := applyPropsPolicy(src.Properties, existingTarget.Properties, settings.SimilarityAction)
+			summary.EnrichedKeys = changedKeys
+			summary.Resolution = "absorbed-" + settings.SimilarityAction
+
+			// Provenance is exempt from policy: union the target and source
+			// provenance so absorbing a similar entity retains both documents'
+			// sources, and force a version write when only provenance changed.
+			provChanged := provenanceKeysChanged(existingTarget.Properties, existingTarget.Properties, src.Properties)
+			mergedProps = applyProvenanceUnion(mergedProps, existingTarget.Properties, src.Properties)
+
+			// Only write a new version if something actually changed.
+			if len(changedKeys) > 0 || provChanged {
+				absorbedClass, absorbedOwner, ownerErr := resolveMergedOwner(src.DataClass, src.OwnerSourceID, existingTarget.DataClass, existingTarget.OwnerSourceID)
+				if ownerErr != nil {
+					return 0, fmt.Errorf("absorb similar object %s: %w", cid, ownerErr)
+				}
+				changeSummary := map[string]any{
+					"source":           "similarity-merge",
+					"similarity_score": summary.SimilarityScore,
+					"action":           settings.SimilarityAction,
+					"enriched_keys":    changedKeys,
+				}
+				newVersion := &GraphObject{
+					Type:          existingTarget.Type,
+					Key:           existingTarget.Key,
+					Status:        existingTarget.Status,
+					Namespace:     existingTarget.Namespace,
+					Labels:        existingTarget.Labels,
+					Properties:    mergedProps,
+					ProjectID:     projectID,
+					BranchID:      targetBranchID,
+					ChangeSummary: changeSummary,
+					// Carry the staging source's provenance so the absorbed version
+					// stays attributable to the source document.
+					ExtractionJobID: src.ExtractionJobID,
+					// Carry the source row's actor so a similarity-absorbed version
+					// is not silently downgraded to user+NULL.
+					ActorType: src.ActorType,
+					ActorID:   src.ActorID,
+					// Absorbing keeps the owner decision consistent with the
+					// conflict path: two source-owned objects from different
+					// sources are refused rather than silently adopted.
+					DataClass:     absorbedClass,
+					OwnerSourceID: absorbedOwner,
+				}
+				if err := s.repo.CreateVersion(ctx, tx.Tx, existingTarget, newVersion); err != nil {
+					return 0, fmt.Errorf("absorb similar object %s into %s: %w", cid, *summary.SimilarTargetID, err)
+				}
+				appliedCount++
+				embeddingIDs = append(embeddingIDs, newVersion.ID.String())
+			}
+
+			// Map source canonical_id → existing target canonical_id so relationships
+			// referencing the source entity are remapped to the merged target.
+			canonicalIDMap[cid] = *summary.SimilarTargetID
+		}
+	}
+
+	// ── Relationships ─────────────────────────────────────────────────────────
+
+	for _, summary := range relSummaries {
+		cid := summary.CanonicalID
+
+		switch summary.Status {
+		case "added":
+			src := sourceRels[cid]
+			if src == nil {
+				continue
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			// Remap src/dst canonical IDs if they were added or absorbed in this merge.
+			srcID := src.SrcID
+			if mapped, ok := canonicalIDMap[srcID]; ok {
+				srcID = mapped
+			}
+			dstID := src.DstID
+			if mapped, ok := canonicalIDMap[dstID]; ok {
+				dstID = mapped
+			}
+
+			// Similarity probe for relationships (when similarity is enabled).
+			// After endpoint remapping, check if an equivalent relationship already
+			// exists in the target with the same src/dst (possibly absorbed from source entities).
+			if settings.SimilarityEnabled && settings.SimilarityAction != "suggest" {
+				vec, vecErr := s.repo.GetBranchRelationshipEmbedding(ctx, src.ID)
+				if vecErr == nil && len(vec) > 0 {
+					maxDist := float32(1.0) - settings.SimilarityThreshold
+					similarRel, dist, simErr := s.repo.FindSimilarRelationshipInBranch(
+						ctx, projectID, targetBranchID, srcID, dstID, src.Type, vec, nil, maxDist)
+					if simErr == nil && similarRel != nil {
+						// Similar rel exists — merge properties into it instead of creating new.
+						mergedRelProps, relChangedKeys := applyPropsPolicy(props, similarRel.Properties, settings.SimilarityAction)
+						if len(relChangedKeys) > 0 {
+							newRelVersion := &GraphRelationship{
+								Properties: mergedRelProps,
+								BranchID:   targetBranchID,
+								ProjectID:  projectID,
+								Label:      similarRel.Label,
+								Weight:     similarRel.Weight,
+								ChangeSummary: map[string]any{
+									"source":           "similarity-merge",
+									"similarity_score": 1.0 - dist,
+								},
+								// Carry the source row's actor so a similarity-merged
+								// relationship is not actor-less.
+								ActorType: src.ActorType,
+								ActorID:   src.ActorID,
+							}
+							if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, similarRel, newRelVersion); err != nil {
+								s.log.Warn("similar rel: failed to merge, will create new", logger.Error(err))
+							} else {
+								appliedCount++
+								relEmbeddingIDs = append(relEmbeddingIDs, newRelVersion.ID.String())
+								continue // absorbed — skip create below
+							}
+						} else {
+							continue // identical — no-op
+						}
+					}
+				}
+			}
+
+			rel := &GraphRelationship{
+				ID:          uuid.New(),
+				CanonicalID: uuid.New(),
+				ProjectID:   projectID,
+				BranchID:    targetBranchID,
+				Version:     1,
+				Type:        src.Type,
+				SrcID:       srcID,
+				DstID:       dstID,
+				Properties:  props,
+				Namespace:   src.Namespace,
+				ActorType:   src.ActorType,
+				ActorID:     src.ActorID,
+			}
+			rel.ContentHash = computeContentHash(rel.Properties, nil, nil, nil)
+			rel.CreatedAt = time.Now()
+			// Direct insert, so the merge's credential and run have to be stamped
+			// here; every other merge path writes through the repository helpers.
+			applyRelationshipWriteStampFromContext(ctx, rel)
+
+			if _, err := tx.NewInsert().Model(rel).On("CONFLICT DO NOTHING").Returning("").Exec(ctx); err != nil {
+				return 0, fmt.Errorf("clone relationship %s: %w", cid, err)
+			}
+			appliedCount++
+			relEmbeddingIDs = append(relEmbeddingIDs, rel.ID.String())
+
+		case "fast_forward":
+			src := sourceRels[cid]
+			if src == nil {
+				continue
+			}
+			// Resolve the target branch's own HEAD. A branch-less lookup is
+			// main-preferring (#1247), so using it here would fast-forward the
+			// main relationship even when the merge target is a named branch.
+			prevHead, err := s.repo.GetRelationshipHeadByCanonicalID(ctx, projectID, cid, targetBranchID)
+			if err != nil {
+				return 0, fmt.Errorf("get target rel head for fast-forward %s: %w", cid, err)
+			}
+			props := src.Properties
+			if props == nil {
+				props = map[string]any{}
+			}
+			newVersion := &GraphRelationship{
+				Properties: props,
+				BranchID:   targetBranchID,
+				ProjectID:  projectID,
+				// Carry the source row's actor so a fast-forward relationship clone is not actor-less.
+				ActorType: src.ActorType,
+				ActorID:   src.ActorID,
+			}
+			if err := s.repo.CreateRelationshipVersion(ctx, tx.Tx, prevHead, newVersion); err != nil {
+				return 0, fmt.Errorf("fast-forward relationship %s: %w", cid, err)
+			}
+			appliedCount++
+			relEmbeddingIDs = append(relEmbeddingIDs, newVersion.ID.String())
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit merge: %w", err)
+	}
+
+	// Enqueue object embeddings in batch now that the transaction has committed.
+	if len(embeddingIDs) > 0 && s.embeddingEnqueuer != nil {
+		if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, embeddingIDs); err != nil {
+			s.log.Warn("failed to enqueue batch embeddings after merge", logger.Error(err))
+		}
+	}
+
+	// Enqueue relationship embeddings in batch now that the transaction has committed.
+	if len(relEmbeddingIDs) > 0 && s.relEmbeddingEnqueuer != nil {
+		if _, err := s.relEmbeddingEnqueuer.EnqueueBatchRelationshipEmbeddings(ctx, relEmbeddingIDs); err != nil {
+			s.log.Warn("failed to enqueue batch relationship embeddings after merge", logger.Error(err))
+		}
+	}
+
+	return appliedCount, nil
+}
+
+// Helper functions for branch merge
+
+// mergeProps merges two property maps: base is the starting set, overlay wins on
+// same keys. Returns a new map (does not mutate inputs).
+// Use mergeProps(source, target) for enrich (target wins same keys, source adds new).
+// Use mergeProps(target, source) for overwrite (source wins same keys).
+func mergeProps(base, overlay map[string]any) map[string]any {
+	merged := make(map[string]any, len(base)+len(overlay))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overlay {
+		merged[k] = v
+	}
+	return merged
+}
+
+// mergeSettings is the resolved configuration for a merge operation.
+type mergeSettings struct {
+	// SimilarityEnabled controls whether the similarity probe runs for "added" objects.
+	SimilarityEnabled bool
+	// SimilarityThreshold is the minimum cosine similarity (0–1) to classify two
+	// objects as "the same entity". Objects below this are treated as new additions.
+	SimilarityThreshold float32
+	// SimilarityAction controls what happens when a similar object is found:
+	// "enrich"  – fill empty target fields from source, target wins conflicts
+	// "theirs"  – target wins all conflicts
+	// "mine"    – source wins all conflicts
+	// "suggest" – flag only, no auto-action (dry-run output for human review)
+	SimilarityAction string
+	// CanonicalConflictAction is the strategy for canonical-id-matched conflicting objects.
+	// Mirrors the legacy ConflictStrategy: "enrich", "overwrite", "preserve_target", "block".
+	CanonicalConflictAction string
+}
+
+// defaultMergeSimilarityThreshold is the cosine cutoff used by the presets that
+// enable the similarity probe.
+const defaultMergeSimilarityThreshold float32 = 0.92
+
+// mergePolicyPresets are the named policies BranchMergeRequest.Policy accepts.
+// resolveMergePolicy reads this table and validateMergePolicy rejects anything
+// that is not in it, so the two can never disagree about what is valid.
+var mergePolicyPresets = map[string]mergeSettings{
+	"manual":        {false, 0, "", ""},
+	"enrich":        {true, defaultMergeSimilarityThreshold, "enrich", "enrich"},
+	"enrich_no_sim": {false, 0, "", "enrich"},
+	"theirs":        {true, defaultMergeSimilarityThreshold, "theirs", "preserve_target"},
+	"mine":          {true, defaultMergeSimilarityThreshold, "mine", "overwrite"},
+	"mine_no_sim":   {false, 0, "", "overwrite"},
+	"suggest":       {true, defaultMergeSimilarityThreshold, "suggest", "block"},
+	// "partial" merges clean changes (added/fast_forward/deleted) into the
+	// target but leaves ambiguous items — canonical conflicts and
+	// semantically-similar duplicates — on the source branch for review.
+	"partial": {true, defaultMergeSimilarityThreshold, "suggest", "preserve_target"},
+}
+
+// mergeConflictStrategies are the legacy ConflictStrategy values, consulted only
+// when Policy is empty.
+var mergeConflictStrategies = map[string]struct{}{
+	"enrich":          {},
+	"overwrite":       {},
+	"preserve_target": {},
+	"block":           {},
+}
+
+// MergeConflictStrategyNames lists the accepted legacy conflict strategies in a
+// stable order. Error messages use it, and the MCP catalogue derives
+// graph-branch-merge's conflict_strategy enum from it, so the advertised values
+// and the enforced ones cannot drift apart.
+func MergeConflictStrategyNames() []string {
+	names := make([]string, 0, len(mergeConflictStrategies))
+	for name := range mergeConflictStrategies {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// MergePolicyNames lists the accepted merge policies in a stable order. Error
+// messages use it, and the MCP catalogue derives graph-branch-merge's enum from
+// it, so the advertised values and the enforced ones cannot drift apart.
+func MergePolicyNames() []string {
+	names := make([]string, 0, len(mergePolicyPresets))
+	for name := range mergePolicyPresets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// validateMergePolicy rejects a Policy or legacy ConflictStrategy that is not one
+// of the documented values. Callers reach this through both the REST handler and
+// the MCP graph-branch-merge tool, so neither surface can quietly substitute a
+// default for a value the caller mistyped.
+func validateMergePolicy(policy, legacyConflictStrategy string) error {
+	if policy != "" {
+		if _, ok := mergePolicyPresets[policy]; !ok {
+			return apperror.NewBadRequest(fmt.Sprintf(
+				"unknown merge policy %q: valid policies are %s",
+				policy, strings.Join(MergePolicyNames(), ", ")))
+		}
+		// Policy takes precedence; a legacy value alongside it is ignored.
+		return nil
+	}
+	if _, ok := mergeConflictStrategies[legacyConflictStrategy]; !ok && legacyConflictStrategy != "" {
+		return apperror.NewBadRequest(fmt.Sprintf(
+			"unknown conflict_strategy %q: valid strategies are %s",
+			legacyConflictStrategy, strings.Join(MergeConflictStrategyNames(), ", ")))
+	}
+	return nil
+}
+
+// resolveMergePolicy translates a named Policy (or legacy ConflictStrategy) into
+// the internal mergeSettings struct. Policy takes precedence over ConflictStrategy.
+// If both are empty, defaults to Policy="enrich". Callers must have validated the
+// inputs first — see validateMergePolicy.
+func resolveMergePolicy(policy, legacyConflictStrategy string, thresholdOverride float32) mergeSettings {
+	if policy == "" && legacyConflictStrategy == "" {
+		policy = "enrich"
+	}
+
+	s, ok := mergePolicyPresets[policy]
+	if !ok {
+		// Empty policy with a legacy strategy: honour it as the conflict action.
+		s = mergeSettings{
+			SimilarityEnabled:       false,
+			CanonicalConflictAction: legacyConflictStrategy,
+		}
+		if s.CanonicalConflictAction == "" {
+			s.CanonicalConflictAction = "enrich"
+		}
+	}
+
+	// Caller can override the threshold regardless of policy.
+	if thresholdOverride > 0 && thresholdOverride <= 1 {
+		s.SimilarityThreshold = thresholdOverride
+	}
+
+	return s
+}
+
+// applyPropsPolicy merges srcProps into tgtProps according to the similarity action.
+// Returns the merged property map and the list of keys that changed.
+//
+//   - "enrich": fill empty target fields from source; target wins on conflicts
+//   - "theirs": same as enrich (target wins)
+//   - "mine":   source wins all keys
+func applyPropsPolicy(srcProps, tgtProps map[string]any, action string) (merged map[string]any, changedKeys []string) {
+	merged = make(map[string]any, len(tgtProps)+len(srcProps))
+	// Start from target.
+	for k, v := range tgtProps {
+		merged[k] = v
+	}
+
+	for k, sv := range srcProps {
+		if k == "" {
+			continue
+		}
+		tv, tgtHas := tgtProps[k]
+		switch action {
+		case "mine":
+			// Source always wins.
+			if !tgtHas || fmt.Sprint(tv) != fmt.Sprint(sv) {
+				merged[k] = sv
+				changedKeys = append(changedKeys, k)
+			}
+		default: // "enrich", "theirs"
+			// Only fill when target has no value (nil, empty string, or missing).
+			tgtEmpty := !tgtHas || tv == nil || tv == ""
+			if tgtEmpty && sv != nil && sv != "" {
+				merged[k] = sv
+				changedKeys = append(changedKeys, k)
+			}
+		}
+	}
+	return merged, changedKeys
+}
+
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// findConflictingPaths returns the property keys that differ between source and
+// target. A key is a conflict only when both branches have it AND the values
+// differ (JSON-serialised comparison). Keys present on only one side are not
+// conflicts — they are additive changes that merge cleanly.
+func findConflictingPaths(sourceProps, targetProps map[string]any) []string {
+	conflicts := []string{}
+	for k, sv := range sourceProps {
+		tv, exists := targetProps[k]
+		if !exists {
+			continue // only on source — not a conflict
+		}
+		// Compare by JSON representation for deep equality
+		sb, _ := json.Marshal(sv)
+		tb, _ := json.Marshal(tv)
+		if string(sb) != string(tb) {
+			conflicts = append(conflicts, "/"+k)
+		}
+	}
+	sort.Strings(conflicts)
+	return conflicts
+}
+
+// classifyMergeObject classifies a single object for a branch merge.
+// Returns the merge status ("merged", "unchanged", "added", "fast_forward",
+// "conflict", "deleted") and, for conflicts, the conflicting property paths.
+func classifyMergeObject(sourceHead, targetHead *BranchObjectHead) (status string, conflicts []string) {
+	if sourceHead != nil && sourceHead.MergedToCanonicalID != nil {
+		// Already cloned to a target branch by a prior merge (merge ledger).
+		return "merged", nil
+	}
+
+	switch {
+	case sourceHead == nil && targetHead != nil:
+		// Exists only on target — unchanged (nothing to merge from source).
+		return "unchanged", nil
+	case sourceHead != nil && sourceHead.DeletedAt != nil && targetHead != nil:
+		// Deleted on source branch, exists on target.
+		return "deleted", nil
+	case sourceHead != nil && sourceHead.DeletedAt != nil && targetHead == nil:
+		// Deleted on source, doesn't exist on target — nothing to do.
+		return "unchanged", nil
+	case sourceHead != nil && targetHead == nil:
+		// Exists only on source — added.
+		return "added", nil
+	case sourceHead != nil && targetHead != nil:
+		// Exists on both — compare content hash (covers properties, status, key, labels).
+		if bytesEqual(sourceHead.ContentHash, targetHead.ContentHash) {
+			return "unchanged", nil
+		}
+		// Content differs — find which property keys have conflicting values.
+		conflicts := findConflictingPaths(sourceHead.Properties, targetHead.Properties)
+		if len(conflicts) > 0 {
+			return "conflict", conflicts
+		}
+		return "fast_forward", nil
+	}
+
+	return "unchanged", nil
+}
+
+func sortMergeObjectSummaries(summaries []*BranchMergeObjectSummary) {
+	statusOrder := map[string]int{
+		"conflict":     0,
+		"deleted":      1,
+		"fast_forward": 2,
+		"added":        3,
+		"unchanged":    4,
+		"merged":       5,
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if statusOrder[summaries[i].Status] != statusOrder[summaries[j].Status] {
+			return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		}
+		return slices.Compare(summaries[i].CanonicalID[:], summaries[j].CanonicalID[:]) < 0
+	})
+}
+
+func sortMergeRelationshipSummaries(summaries []*BranchMergeRelationshipSummary) {
+	statusOrder := map[string]int{
+		"conflict":     0,
+		"deleted":      1,
+		"fast_forward": 2,
+		"added":        3,
+		"unchanged":    4,
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		if statusOrder[summaries[i].Status] != statusOrder[summaries[j].Status] {
+			return statusOrder[summaries[i].Status] < statusOrder[summaries[j].Status]
+		}
+		return slices.Compare(summaries[i].CanonicalID[:], summaries[j].CanonicalID[:]) < 0
+	})
+}
+
+func intPtr(i int) *int {
+	return &i
+}
+
+func (s *Service) incrementValidationSuccess(duration time.Duration) {
+	s.metricsMu.Lock()
+	s.validationSuccess++
+	s.validationDuration += duration
+	s.metricsMu.Unlock()
+}
+
+func (s *Service) incrementValidationError(duration time.Duration) {
+	s.metricsMu.Lock()
+	s.validationErrors++
+	s.validationDuration += duration
+	s.metricsMu.Unlock()
+}
+
+func (s *Service) Metrics() ValidationMetrics {
+	s.metricsMu.RLock()
+	defer s.metricsMu.RUnlock()
+	return ValidationMetrics{
+		Success:       s.validationSuccess,
+		Errors:        s.validationErrors,
+		TotalDuration: s.validationDuration,
+	}
+}
+
+type ValidationMetrics struct {
+	Success       int64
+	Errors        int64
+	TotalDuration time.Duration
+}
+
+// InvalidateSchemaCache evicts the cached schemas for a project so the next
+// graph operation fetches fresh schema data from the database. Call this after
+// any schema install, update, or removal to avoid stale validation.
+func (s *Service) InvalidateSchemaCache(projectID string) {
+	s.schemaProvider.InvalidateProjectCache(projectID)
+}
+
+// =============================================================================
+// Atomic Subgraph Creation
+// =============================================================================
+
+// CreateSubgraph atomically creates a set of objects and relationships in a single transaction.
+// Objects are referenced by client-side placeholder refs (_ref), which are resolved to server-assigned
+// IDs before relationship creation. If any step fails, the entire operation is rolled back.
+func (s *Service) CreateSubgraph(ctx context.Context, projectID uuid.UUID, req *CreateSubgraphRequest, actorID *uuid.UUID) (*CreateSubgraphResponse, error) {
+	// Validate: check for duplicate refs (only for objects that have a _ref)
+	refSet := make(map[string]bool, len(req.Objects))
+	for i, obj := range req.Objects {
+		if obj.Ref == "" {
+			continue // _ref is optional; object will be created but not referenceable by relationships
+		}
+		if refSet[obj.Ref] {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d]: duplicate _ref %q", i, obj.Ref))
+		}
+		refSet[obj.Ref] = true
+	}
+
+	// Validate: check that all relationship endpoints are resolvable
+	for i, rel := range req.Relationships {
+		// src: must have either src_ref (pointing to an object in this call) or src_id (existing UUID)
+		if rel.SrcRef != "" {
+			if !refSet[rel.SrcRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_ref %q not found in objects", i, rel.SrcRef))
+			}
+		} else if rel.SrcID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either src_ref or src_id", i))
+		}
+		// dst: must have either dst_ref (pointing to an object in this call) or dst_id (existing UUID)
+		if rel.DstRef != "" {
+			if !refSet[rel.DstRef] {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_ref %q not found in objects", i, rel.DstRef))
+			}
+		} else if rel.DstID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: must specify either dst_ref or dst_id", i))
+		}
+		// self-loop check (only possible when both endpoints are refs)
+		if rel.SrcRef != "" && rel.DstRef != "" && rel.SrcRef == rel.DstRef {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed (src_ref == dst_ref == %q)", i, rel.SrcRef))
+		}
+		if rel.SrcID != nil && rel.DstID != nil && *rel.SrcID == *rel.DstID {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: self-loop not allowed (src_id == dst_id == %q)", i, rel.SrcID))
+		}
+	}
+
+	// Load schemas once for property validation
+	var schemas *ExtractionSchemas
+	if s.schemaProvider != nil {
+		var err error
+		schemas, err = s.schemaProvider.GetProjectSchemas(ctx, projectID.String())
+		if err != nil {
+			s.log.Warn("failed to load schemas for subgraph creation, skipping validation",
+				slog.String("project_id", projectID.String()),
+				slog.String("error", err.Error()))
+		}
+	}
+
+	// Guard: board-enabled object types require a stable key, matching the
+	// single-create path (issue #1655). Validate every object up front, before
+	// the transaction, so a keyless board-enabled object rejects the whole batch
+	// atomically with no partial writes.
+	if err := validateSubgraphObjectKeys(schemas, req.Objects); err != nil {
+		return nil, err
+	}
+
+	// Guard: the per-type work-status vocabulary and the agent-write rule apply
+	// to the subgraph create path exactly as they do to the single-object create
+	// path (issue #1851) — otherwise this endpoint is a second door that can
+	// create a board-enabled object in a status the board does not offer. Validate
+	// the whole batch up front, before the transaction, so a rejected status
+	// fails atomically with no partial writes.
+	actorType, actorID := actorFromContext(ctx, actorID)
+	if err := validateSubgraphWorkStatus(actorType, schemas, req.Objects); err != nil {
+		return nil, err
+	}
+
+	// Start transaction
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	refMap := make(map[string]uuid.UUID, len(req.Objects))
+	objResponses := make([]*GraphObjectResponse, 0, len(req.Objects))
+	objByRef := make(map[string]*GraphObject, len(req.Objects))
+	objEmbedIDs := make([]string, 0, len(req.Objects)) // IDs to enqueue for embedding after commit
+
+	// Phase 1: Create all objects
+	for i, objReq := range req.Objects {
+		// Validate type is non-empty
+		if objReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d] (%s): type is required and must not be empty", i, objReq.Ref))
+		}
+
+		// Validate properties against schema
+		validatedProps := objReq.Properties
+		schemaVersion := ""
+		if schemas != nil {
+			if schema, ok := schemas.ObjectSchemas[objReq.Type]; ok {
+				schemaVersion = schema.Version
+				start := time.Now()
+				validated, err := validateProperties(objReq.Properties, schema)
+				duration := time.Since(start)
+
+				if err != nil {
+					s.incrementValidationError(duration)
+					return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("objects[%d] (%s): property validation failed: %s", i, objReq.Ref, err.Error()))
+				}
+				s.incrementValidationSuccess(duration)
+				validatedProps = validated
+			}
+		}
+
+		obj := &GraphObject{
+			ProjectID:  projectID,
+			BranchID:   objReq.BranchID,
+			Type:       objReq.Type,
+			Key:        objReq.Key,
+			Status:     statusForWrite(validatedProps, objReq.Status),
+			Properties: validatedProps,
+			Labels:     objReq.Labels,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+		if schemaVersion != "" {
+			obj.SchemaVersion = &schemaVersion
+		}
+
+		if err := s.repo.CreateInTx(ctx, tx.Tx, obj); err != nil {
+			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("objects[%d] (%s): %s", i, objReq.Ref, err.Error()))
+		}
+
+		refMap[objReq.Ref] = obj.ID
+		objByRef[objReq.Ref] = obj
+		objResponses = append(objResponses, obj.ToResponse())
+		objEmbedIDs = append(objEmbedIDs, obj.ID.String())
+	}
+
+	// Phase 2: Create all relationships
+	relResponses := make([]*GraphRelationshipResponse, 0, len(req.Relationships))
+	relEmbedIDs := make([]string, 0, len(req.Relationships)*2) // IDs to enqueue for embedding after commit
+	for i, relReq := range req.Relationships {
+		// Validate type is non-empty
+		if relReq.Type == "" {
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: type is required and must not be empty", i))
+		}
+
+		// Resolve src: prefer src_ref (new object in this call), fall back to src_id (existing object)
+		var srcObj *GraphObject
+		if relReq.SrcRef != "" {
+			srcObj = objByRef[relReq.SrcRef]
+		} else {
+			existing, err := s.repo.GetByID(ctx, projectID, *relReq.SrcID)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: src_id %q not found: %s", i, relReq.SrcID, err.Error()))
+			}
+			srcObj = existing
+		}
+
+		// Resolve dst: prefer dst_ref (new object in this call), fall back to dst_id (existing object)
+		var dstObj *GraphObject
+		if relReq.DstRef != "" {
+			dstObj = objByRef[relReq.DstRef]
+		} else {
+			existing, err := s.repo.GetByID(ctx, projectID, *relReq.DstID)
+			if err != nil {
+				return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: dst_id %q not found: %s", i, relReq.DstID, err.Error()))
+			}
+			dstObj = existing
+		}
+
+		// Validate branch consistency: src and dst must be on the same branch
+		if !branchIDsEqual(srcObj.BranchID, dstObj.BranchID) {
+			srcLabel := relReq.SrcRef
+			if srcLabel == "" {
+				srcLabel = relReq.SrcID.String()
+			}
+			dstLabel := relReq.DstRef
+			if dstLabel == "" {
+				dstLabel = relReq.DstID.String()
+			}
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("relationships[%d]: branch mismatch between src %q and dst %q", i, srcLabel, dstLabel))
+		}
+
+		rel := &GraphRelationship{
+			ProjectID:  projectID,
+			BranchID:   srcObj.BranchID,
+			Type:       relReq.Type,
+			SrcID:      srcObj.CanonicalID,
+			DstID:      dstObj.CanonicalID,
+			Properties: relReq.Properties,
+			Weight:     relReq.Weight,
+			Namespace:  srcObj.Namespace,
+			ActorType:  &actorType,
+			ActorID:    actorID,
+		}
+
+		// Compute change summary
+		rel.ChangeSummary = computeChangeSummary(nil, relReq.Properties)
+
+		if _, err := s.repo.CreateRelationship(ctx, tx.Tx, rel); err != nil {
+			return nil, apperror.ErrDatabase.WithMessage(fmt.Sprintf("relationships[%d] (%s->%s): %s", i, relReq.SrcRef, relReq.DstRef, err.Error()))
+		}
+
+		// Auto-create inverse relationship if template pack declares inverseType
+		var inverseResponse *GraphRelationshipResponse
+		var inverseRelID string
+		if s.inverseTypeProvider != nil {
+			inverseResponse, inverseRelID = s.maybeCreateInverse(ctx, tx.Tx, projectID, srcObj.BranchID, relReq.Type, srcObj, dstObj, relReq.Properties, relReq.Weight, actorType, actorID)
+		}
+
+		resp := rel.ToResponse()
+		resp.InverseRelationship = inverseResponse
+		relResponses = append(relResponses, resp)
+
+		// Collect IDs for async embedding enqueue after commit.
+		relEmbedIDs = append(relEmbedIDs, rel.ID.String())
+		if inverseRelID != "" {
+			relEmbedIDs = append(relEmbedIDs, inverseRelID)
+		}
+	}
+
+	// Commit the transaction
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// Enqueue async embeddings for all created/updated objects.
+	if len(objEmbedIDs) > 0 && s.embeddingEnqueuer != nil {
+		if _, err := s.embeddingEnqueuer.EnqueueBatchEmbeddings(ctx, objEmbedIDs); err != nil {
+			s.log.Warn("failed to enqueue batch object embeddings after subgraph creation", logger.Error(err))
+		}
+	}
+
+	// Enqueue async embeddings for all created/updated relationships.
+	for _, relID := range relEmbedIDs {
+		s.enqueueRelationshipEmbedding(ctx, relID)
+	}
+
+	return &CreateSubgraphResponse{
+		Objects:       objResponses,
+		Relationships: relResponses,
+		RefMap:        refMap,
+	}, nil
+}
+
+// branchLabel returns a human-readable label for a branch ID pointer.
+func branchLabel(id *uuid.UUID) string {
+	if id == nil {
+		return "main"
+	}
+	return id.String()
+}
+
+// MoveObject moves a graph object (and its same-branch relationships) from its
+// current branch to a target branch. The operation:
+//  1. Validates the object exists and is not deleted
+//  2. Checks source != target
+//  3. Checks for type+key conflicts on the target branch
+//  4. Finds all relationships on the source branch touching this object
+//  5. Fails if any relationship connects to an object NOT being moved
+//  6. Moves the object version chain + relationship version chains in one transaction
+//  7. Re-queues embeddings and logs journal entry
+func (s *Service) MoveObject(ctx context.Context, projectID, objectID uuid.UUID, req *MoveObjectRequest, actorID *uuid.UUID) (*MoveObjectResponse, error) {
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	// 1. Fetch the object (resolve HEAD by any ID — version_id or entity_id)
+	current, err := s.repo.GetByID(ctx, projectID, objectID)
+	if err != nil {
+		return nil, err
+	}
+
+	if current.DeletedAt != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("cannot move a deleted object; restore it first")
+	}
+
+	sourceBranchID := current.BranchID
+	targetBranchID := req.TargetBranchID
+
+	// 2. Check source != target
+	if branchIDsEqual(sourceBranchID, targetBranchID) {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("object is already on branch %s", branchLabel(sourceBranchID)))
+	}
+
+	// 3. Begin transaction with advisory lock
+	tx, err := s.repo.BeginTx(ctx)
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	defer tx.Rollback()
+
+	if err := s.repo.AcquireObjectLock(ctx, tx.Tx, current.CanonicalID); err != nil {
+		return nil, err
+	}
+
+	// Re-fetch HEAD after lock to prevent races
+	current, err = s.repo.GetHeadByCanonicalID(ctx, tx.Tx, projectID, current.CanonicalID, sourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Check for type+key conflict on target branch
+	if current.Key != nil && *current.Key != "" {
+		conflict, err := s.repo.CheckObjectExistsOnBranch(ctx, tx.Tx, projectID, targetBranchID, current.Type, *current.Key)
+		if err != nil {
+			return nil, err
+		}
+		if conflict != nil {
+			return nil, apperror.ErrConflict.WithMessage(fmt.Sprintf(
+				"object with type=%q key=%q already exists on branch %s (entity_id: %s)",
+				current.Type, *current.Key, branchLabel(targetBranchID), conflict.CanonicalID.String(),
+			))
+		}
+	}
+
+	// 5. Find all same-branch relationships touching this object
+	rels, err := s.repo.GetRelationshipsByEndpoint(ctx, tx.Tx, projectID, current.CanonicalID, sourceBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check that all relationship endpoints are this object (both sides same canonical).
+	// If a relationship connects to a different object, fail — user must move that object
+	// first, or delete the relationship.
+	for _, rel := range rels {
+		otherID := rel.DstID
+		if rel.DstID == current.CanonicalID {
+			otherID = rel.SrcID
+		}
+		if otherID != current.CanonicalID {
+			// The other endpoint is a different object still on the source branch.
+			return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf(
+				"cannot move: relationship %s (type=%q) connects to object %s which is on branch %s; "+
+					"move or delete that object/relationship first",
+				rel.CanonicalID.String(), rel.Type, otherID.String(), branchLabel(sourceBranchID),
+			))
+		}
+	}
+
+	// 6. Move the object version chain
+	_, err = s.repo.MoveObjectVersionChain(ctx, tx.Tx, projectID, current.CanonicalID, targetBranchID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Move associated relationship version chains (self-referencing relationships)
+	movedRels := 0
+	for _, rel := range rels {
+		n, err := s.repo.MoveRelationshipVersionChain(ctx, tx.Tx, projectID, rel.CanonicalID, targetBranchID)
+		if err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			movedRels++
+		}
+	}
+
+	// 7. Commit
+	if err := tx.Commit(); err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	// A branch move does not change the object's embedding-relevant text, so the
+	// existing vector stays valid. Only enqueue when the moved row has no
+	// embedding yet (#1478).
+	if current.EmbeddingUpdatedAt == nil {
+		s.enqueueEmbeddingForType(ctx, projectID, current.Type, current.ID.String())
+	}
+	for _, rel := range rels {
+		s.enqueueRelationshipEmbedding(ctx, rel.ID.String())
+	}
+
+	// Journal entry
+	if current.Key != nil {
+		objType := current.Type
+		entityType := entityTypeObject
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			BranchID:   targetBranchID,
+			EventType:  EventTypeMoved,
+			EntityType: &entityType,
+			ObjectType: &objType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"key":                 *current.Key,
+				"name":                nameFromProps(current.Properties),
+				"object_type":         current.Type,
+				"source_branch":       branchLabel(sourceBranchID),
+				"target_branch":       branchLabel(targetBranchID),
+				"moved_relationships": movedRels,
+			},
+		})
+	}
+
+	// Build response with updated branch_id
+	current.BranchID = targetBranchID
+	return &MoveObjectResponse{
+		Object:             current.ToResponse(),
+		MovedRelationships: movedRels,
+		SourceBranchID:     sourceBranchID,
+		TargetBranchID:     targetBranchID,
+	}, nil
+}
+
+// ForkBranch creates a new branch from a source branch and copies all HEAD objects
+// and their relationships. This is the "copy-on-fork" semantics requested by
+// `branches create --parent --copy-objects`.
+func (s *Service) ForkBranch(ctx context.Context, projectID uuid.UUID, sourceBranchID *uuid.UUID, req *ForkBranchRequest) (*ForkBranchResponse, error) {
+	// Validate source branch exists (nil = main, no row to check)
+	if sourceBranchID != nil {
+		if _, err := s.repo.GetBranchByID(ctx, projectID, *sourceBranchID); err != nil {
+			return nil, apperror.ErrNotFound.WithMessage("source branch not found")
+		}
+	}
+
+	// Check target name uniqueness
+	existing, err := s.repo.GetBranchByNameAndProject(ctx, req.Name, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, apperror.ErrConflict.WithMessage("a branch with that name already exists")
+	}
+
+	// Create the new branch
+	newBranch := &Branch{
+		ID:          uuid.New(),
+		ProjectID:   projectID,
+		Name:        req.Name,
+		Description: req.Description,
+	}
+	if sourceBranchID != nil {
+		newBranch.ParentBranchID = sourceBranchID
+	}
+
+	if err := s.repo.CreateBranch(ctx, newBranch); err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+
+	// Populate lineage closure table
+	s.repo.EnsureBranchLineage(ctx, newBranch.ID, sourceBranchID)
+
+	// Copy HEAD objects
+	targetBranchID := newBranch.ID
+	copiedCanonicals, copiedObjects, err := s.repo.BulkCopyObjectsToBranch(ctx, projectID, sourceBranchID, &targetBranchID, req.FilterTypes)
+	if err != nil {
+		return nil, fmt.Errorf("copy objects: %w", err)
+	}
+
+	// Copy relationships where both endpoints were copied
+	copiedRels, skippedRels, err := s.repo.BulkCopyRelationshipsToBranch(ctx, projectID, sourceBranchID, &targetBranchID, copiedCanonicals)
+	if err != nil {
+		return nil, fmt.Errorf("copy relationships: %w", err)
+	}
+
+	// Journal log
+	{
+		forkActorType, forkActorID := actorFromContext(ctx, nil)
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID: projectID,
+			BranchID:  &targetBranchID,
+			EventType: EventTypeBatch,
+			ActorType: forkActorType,
+			ActorID:   forkActorID,
+			Metadata: map[string]any{
+				"action":                "fork",
+				"source_branch_id":      sourceBranchID,
+				"copied_objects":        copiedObjects,
+				"copied_relationships":  copiedRels,
+				"skipped_relationships": skippedRels,
+			},
+		})
+	}
+
+	sourceID := "main"
+	if sourceBranchID != nil {
+		sourceID = sourceBranchID.String()
+	}
+
+	return &ForkBranchResponse{
+		BranchID:             newBranch.ID.String(),
+		BranchName:           newBranch.Name,
+		SourceBranchID:       sourceID,
+		CopiedObjects:        copiedObjects,
+		CopiedRelationships:  copiedRels,
+		SkippedRelationships: skippedRels,
+	}, nil
+}
+
+// GetRepository exposes the underlying Repository for use by cross-domain orchestrators.
+func (s *Service) GetRepository() *Repository {
+	return s.repo
+}
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+const (
+	bulkActionDefaultLimit = 1000
+	bulkActionMaxLimit     = 100_000
+)
+
+// BulkAction executes a filter-then-action bulk operation on graph objects.
+// Validates limits, applies defaults, calls the repository, and logs a journal entry.
+func (s *Service) BulkAction(ctx context.Context, projectID uuid.UUID, req *BulkActionRequest, actorID *uuid.UUID) (*BulkActionResponse, error) {
+	// Validate action
+	switch req.Action {
+	case BulkActionUpdateStatus, BulkActionSoftDelete, BulkActionHardDelete,
+		BulkActionMergeProperties, BulkActionReplaceProperties,
+		BulkActionSetLabels, BulkActionAddLabels, BulkActionRemoveLabels:
+		// valid
+	default:
+		return nil, apperror.ErrBadRequest.WithMessage("unknown action: " + req.Action)
+	}
+
+	// Apply default and max limit
+	limit := req.Limit
+	if limit <= 0 {
+		limit = bulkActionDefaultLimit
+	}
+	if limit > bulkActionMaxLimit {
+		return nil, apperror.ErrBadRequest.WithMessage(fmt.Sprintf("limit exceeds maximum of %d", bulkActionMaxLimit))
+	}
+
+	actorType, actorID := actorFromContext(ctx, actorID)
+
+	// Reject agent-originated status-setting bulk actions. work status is owned
+	// by the single-status writer; a bulk update_status or a merge/replace that
+	// smuggles properties["status"] would diverge the two status copies.
+	if actorType == ActorAgent {
+		if req.Action == BulkActionUpdateStatus {
+			return nil, workStatusWriteForbidden()
+		}
+		if (req.Action == BulkActionMergeProperties || req.Action == BulkActionReplaceProperties) && req.Properties != nil {
+			if _, ok := req.Properties["status"]; ok {
+				return nil, workStatusWriteForbidden()
+			}
+		}
+	}
+
+	matched, affected, err := s.repo.BulkActionByFilter(ctx, BulkActionParams{
+		ProjectID:  projectID,
+		Filter:     req.Filter,
+		Action:     req.Action,
+		Value:      req.Value,
+		Properties: req.Properties,
+		Labels:     req.Labels,
+		Limit:      limit,
+		DryRun:     req.DryRun,
+		ActorType:  actorType,
+		ActorID:    actorID,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	resp := &BulkActionResponse{
+		Matched:  matched,
+		Affected: affected,
+		DryRun:   req.DryRun,
+	}
+
+	// Write journal entry for non-dry-run operations
+	if !req.DryRun {
+		entityType := entityTypeObject
+		s.eventSink.Log(ctx, LogParams{
+			ProjectID:  projectID,
+			EventType:  EventTypeBatch,
+			EntityType: &entityType,
+			ActorType:  actorType,
+			ActorID:    actorID,
+			Metadata: map[string]any{
+				"action":   req.Action,
+				"filter":   req.Filter,
+				"matched":  matched,
+				"affected": affected,
+				"limit":    limit,
+			},
+		})
+	}
+
+	return resp, nil
+}
+
+// PatchGraphObjectTitle merges {"title": title} into the graph object's Properties.
+// Implements mcp.GraphObjectPatcher. Best-effort: returns an error only if the object
+// exists and the patch fails; a missing object is silently ignored.
+func (s *Service) PatchGraphObjectTitle(ctx context.Context, projectID, objectID, title string) error {
+	pid, err := uuid.Parse(projectID)
+	if err != nil {
+		return fmt.Errorf("PatchGraphObjectTitle: invalid project_id %q: %w", projectID, err)
+	}
+	oid, err := uuid.Parse(objectID)
+	if err != nil {
+		return fmt.Errorf("PatchGraphObjectTitle: invalid object_id %q: %w", objectID, err)
+	}
+
+	_, err = s.Patch(ctx, pid, oid, &PatchGraphObjectRequest{
+		Properties: map[string]any{"title": title},
+	}, nil)
+	if err != nil {
+		// Object not found is non-fatal — session may not yet exist as a graph object.
+		var appErr *apperror.Error
+		if errors.As(err, &appErr) && appErr.HTTPStatus == 404 {
+			return nil
+		}
+		return fmt.Errorf("PatchGraphObjectTitle: %w", err)
+	}
+	return nil
+}

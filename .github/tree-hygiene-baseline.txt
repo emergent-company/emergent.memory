@@ -1,0 +1,9 @@
+# Tree-hygiene baseline — TEMPORARY debt, ratchet only.
+#
+# This file is intentionally empty: the internal-host sweep (#1937) scrubbed
+# every grandfathered file. Keep it empty.
+#
+# Rules:
+#   - NEVER add an entry. New internal hosts must be scrubbed, or go through
+#     the permanent allowlist only when they are genuinely required.
+#   - The gate never fails on this file itself.

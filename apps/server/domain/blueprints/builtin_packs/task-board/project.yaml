@@ -1,0 +1,6 @@
+project:
+  description: >
+    Sample Kanban board blueprint. Installs the board-enabled Task object
+    type, a reaction-triggered task-worker agent, and a single example Task
+    seed object. Apply the built-in `task-board` blueprint from the web UI's
+    blueprint gallery.

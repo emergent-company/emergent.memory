@@ -1,0 +1,48 @@
+name: Tree hygiene
+
+# Cheap, always-applicable gate: grep every tracked file for internal hostnames
+# and private-repo references and fail with the offending file:line list. Runs
+# on every PR and every push to main with no `paths:` filter — a leak can be
+# introduced in any file, and the scan costs almost nothing.
+#
+# Legitimate references that must stay (the preview dispatch workflow and the
+# README owned by a parallel lane) are allowlisted in
+# .github/tree-hygiene-allowlist.txt. Existing internal dev-host references that
+# predate this gate are grandfathered in .github/tree-hygiene-baseline.txt as a
+# ratchet — that file may shrink, never grow. The gate never fails on the gate's
+# own five paths: this workflow, the script, its test, the allowlist and the
+# baseline. The script and the test quote the forbidden forms on purpose — a probe
+# literal is the material they are made of — and a list entry's inline comment may
+# name a host.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tree-hygiene:
+    name: Scan for internal hostnames
+    # Hosted (#552): pure bash/grep over tracked files — no toolchain and no
+    # secrets — so it must not occupy a scarce self-hosted `memory` slot that
+    # build/test jobs need. Sub-minute runs are free once the repo is public;
+    # revert to the self-hosted label only if hosted minutes become a problem.
+    # Fork guard is kept so a fork PR still reports a clean skip (not required).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan tracked files
+        # The scan, its pattern and its exemption rules live in
+        # .github/scripts/tree-hygiene.sh so they can be tested
+        # (.github/scripts/tree-hygiene.test.sh, run from ci.yml's meta job);
+        # the script is the single copy, and the test fails if this step stops
+        # calling it. Dependency-free: bash + git + grep, no setup needed.
+        shell: bash
+        run: .github/scripts/tree-hygiene.sh

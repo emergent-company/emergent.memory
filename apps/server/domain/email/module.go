@@ -1,0 +1,137 @@
+package email
+
+import (
+	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/uptrace/bun"
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+)
+
+// Module provides email functionality including job queue and worker
+var Module = fx.Module("email",
+	fx.Provide(
+		NewConfig,
+		NewJobsService,
+		NewTemplateServiceFromConfig,
+		NewSender, // Uses Mailgun when configured, otherwise no-op
+		NewWorker,
+		NewMailgunWebhookHandler,
+	),
+	fx.Invoke(RegisterWorkerLifecycle),
+	fx.Invoke(RegisterWebhookRoutes),
+)
+
+// NewTemplateServiceFromConfig creates a template service with the default template directory
+func NewTemplateServiceFromConfig(log *slog.Logger) *TemplateService {
+	// Default template directory relative to the server binary
+	// In production, templates are typically at ./templates/email
+	// In development, they might be at apps/server/templates/email
+	templateDir := os.Getenv("EMAIL_TEMPLATE_DIR")
+	if templateDir == "" {
+		// Try common paths
+		candidates := []string{
+			"templates/email",
+			"apps/server/templates/email",
+			"../../apps/server/templates/email",
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				templateDir = candidate
+				break
+			}
+		}
+	}
+
+	if templateDir == "" {
+		templateDir = "templates/email"
+	}
+
+	if absPath, err := filepath.Abs(templateDir); err == nil {
+		templateDir = absPath
+	}
+	log.Info("initializing email template service", slog.String("template_dir", templateDir))
+
+	return NewTemplateService(templateDir, log)
+}
+
+// NewSender creates the appropriate email sender based on configuration.
+// Uses SMTP when EMAIL_TRANSPORT=smtp, Mailgun when configured, otherwise
+// falls back to a no-op sender.
+func NewSender(log *slog.Logger, cfg *Config) Sender {
+	if !cfg.Enabled {
+		log.Info("using no-op email sender (email disabled)")
+		return &noOpSender{log: log}
+	}
+
+	if cfg.Transport == "smtp" {
+		log.Info("using SMTP sender",
+			slog.String("host", cfg.SMTPHost),
+			slog.Int("port", cfg.SMTPPort),
+			slog.String("tls", cfg.SMTPTLS),
+			slog.String("from", cfg.FromEmail))
+		return NewSMTPSender(cfg, log)
+	}
+
+	if cfg.IsConfigured() {
+		mailgunSender := NewMailgunSender(cfg, log)
+		if mailgunSender != nil {
+			log.Info("using Mailgun sender",
+				slog.String("domain", cfg.MailgunDomain),
+				slog.String("from", cfg.FromEmail))
+			if cfg.MailgunSigningKey == "" {
+				log.Warn("Mailgun webhook signing key is not set (MAILGUN_SIGNING_KEY) — the delivery-status webhook will reject every event; email delivery status will not update")
+			}
+			return mailgunSender
+		}
+	}
+
+	log.Info("using no-op email sender (Mailgun not configured or email disabled)")
+	return &noOpSender{log: log}
+}
+
+// noOpSender is a no-op email sender for development/testing
+type noOpSender struct {
+	log *slog.Logger
+}
+
+func (s *noOpSender) Send(ctx context.Context, opts SendOptions) (*SendResult, error) {
+	s.log.Info("email send (no-op)",
+		slog.String("to", opts.To),
+		slog.String("subject", opts.Subject))
+
+	return &SendResult{
+		Success:   true,
+		MessageID: "noop-" + opts.To,
+	}, nil
+}
+
+// RegisterWorkerLifecycle registers the email worker with fx lifecycle
+func RegisterWorkerLifecycle(lc fx.Lifecycle, worker *Worker, cfg *Config) {
+	if !cfg.Enabled {
+		return
+	}
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			// Use context.Background() - fx lifecycle context has a 15s timeout
+			// and would cancel the worker goroutine after startup completes
+			return worker.Start(context.Background())
+		},
+		OnStop: func(ctx context.Context) error {
+			return worker.Stop(ctx)
+		},
+	})
+}
+
+// Params for NewJobsService constructor
+type JobsServiceParams struct {
+	fx.In
+	DB  *bun.DB
+	Log *slog.Logger
+	Cfg *config.Config
+}

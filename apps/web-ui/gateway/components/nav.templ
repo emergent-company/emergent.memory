@@ -1,0 +1,82 @@
+package components
+
+import (
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SubNav renders a sub-navigation rail: it stacks horizontally on small screens
+// and becomes a vertical rail on desktop. Callers supply SubNavItems; the rail
+// lives here rather than in a feature page file.
+templ SubNav(label string) {
+	<nav class="flex flex-row gap-1 overflow-x-auto lg:flex-col" aria-label={ label }>
+		{ children... }
+	</nav>
+}
+
+// RailItem is one entry in a SettingsRail. A plain item renders as a SubNavItem,
+// active when the rail's active key matches Key. Badge, when set, renders as a
+// trailing element inside the item (e.g. a relationship count or a deferred
+// similar-count slot). Custom, when set, renders in the item's place for
+// irregular entries a SubNavItem cannot express (a nested group); it is then
+// responsible for its own active-state markup.
+type RailItem struct {
+	Key    string
+	Href   string
+	Icon   string
+	Label  string
+	Badge  templ.Component
+	Custom templ.Component
+}
+
+// SettingsRail renders a data-driven sub-navigation rail: the SubNav wrapper plus
+// one SubNavItem per plain item, marking the entry whose Key matches active. The
+// five page-local rail builders (agent, settings, profile, schema, org settings)
+// all re-express their item lists through this component so the wrapper and
+// active-matching logic live in one place.
+templ SettingsRail(label, active string, items []RailItem) {
+	@SubNav(label) {
+		for _, it := range items {
+			if it.Custom != nil {
+				@it.Custom
+			} else if it.Badge != nil {
+				@subNavItemWithBadge(it.Href, active == it.Key, it.Icon, it.Label, it.Badge)
+			} else {
+				@SubNavItem(it.Href, active == it.Key, it.Icon, it.Label)
+			}
+		}
+	}
+}
+
+// SubNavItem renders one sub-navigation entry, marking the active destination.
+templ SubNavItem(href string, isActive bool, icon, label string) {
+	@subNavItem(href, isActive, icon, label, nil)
+}
+
+// subNavItemWithBadge renders one sub-navigation entry with a trailing badge
+// component (a count pill, or a deferred span that swaps one in).
+templ subNavItemWithBadge(href string, isActive bool, icon, label string, badge templ.Component) {
+	@subNavItem(href, isActive, icon, label, badge)
+}
+
+// subNavItem is the shared entry markup behind both exported variants.
+templ subNavItem(href string, isActive bool, icon, label string, badge templ.Component) {
+	<a
+		class={ "flex items-center gap-2.5 rounded-box px-3 py-2 text-sm whitespace-nowrap transition-colors", templ.KV("bg-base-200 font-medium text-base-content", isActive), templ.KV("text-muted-strong hover:bg-base-200/50 hover:text-base-content", !isActive) }
+		href={ templ.URL(href) }
+		if isActive {
+			aria-current="page"
+		}
+	>
+		if isActive {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-primary")
+		} else {
+			@ui.IconSpan(icon, "size-4 shrink-0 text-muted-faint")
+		}
+		<span>{ label }</span>
+		if badge != nil {
+			<span class="ml-auto shrink-0">
+				@badge
+			</span>
+		}
+	</a>
+}

@@ -1,0 +1,392 @@
+import Foundation
+import Observation
+
+/// The app's single instance graph, shared by SwiftUI (via `.environment`)
+/// and AppKit (`StatusItemController`), so there is exactly ONE of each store.
+///
+/// `AccountStore` owns the signed-in accounts; the active account drives the
+/// `ProjectStore` scope, identity, and the engine. All sign-in/token work is
+/// delegated to the bundled `memory-connector` CLI.
+@MainActor
+final class AppEnvironment {
+    static let shared = AppEnvironment()
+
+    let engine = EngineManager.shared
+    let statusMonitor = StatusMonitor.shared
+    let settings: ConnectorSettings
+    let accountStore: AccountStore
+    let projectStore: ProjectStore
+    let appState = AppState()
+    let identity = IdentityStore()
+    let avatarStore = AvatarStore()
+    /// Sparkle-backed app updater. Created once here so the About page and any
+    /// future menu-bar surface share a single controller (starting a second one
+    /// would start a second update cycle). Assigned in `init` so it can read the
+    /// persisted update channel from `settings`.
+    let updater: UpdaterModel
+
+    /// The one-time legacy-session migrator, if one should run. Built by
+    /// default against the shared legacy storage; `nil` when a migrator is
+    /// injected as disabled or when hosted unit tests must not touch the real
+    /// Keychain/session/config.
+    let legacyMigrator: LegacyMigrator?
+
+    /// Owned here so the app delegate can start/stop it around launch/quit.
+    private(set) lazy var statusItemController = StatusItemController(environment: self)
+
+    /// Suppresses the connected-project-id sink while a scope swap is in flight
+    /// (see `ScopeSwapGate`). Bumped synchronously on this `@MainActor` thread
+    /// before `applyScope` mutates the id; decremented after the config rewrite
+    /// and the single reconcile.
+    private var scopeSwapGate = ScopeSwapGate()
+
+    /// Serializes the scope-swap settle pipeline. Each swap's settle awaits the
+    /// previous swap's settle before running `reassertConnection()` → reconcile
+    /// → gate-end, so the last swap's `projects use` write and reconcile are
+    /// strictly final. Without this, two overlapping swaps can race the shared
+    /// config path and the later swap can reconcile against a stale config.
+    private var settleChain: Task<Void, Never>?
+
+    /// - Parameter legacyMigrator: injectable override for tests. `nil` builds
+    ///   the real migrator (unless the process is a hosted test run).
+    init(legacyMigrator: LegacyMigrator? = nil) {
+        // UI-test isolation: a UI test launches the app as a SEPARATE process,
+        // so `HostedTest.isRunning` is FALSE there. Redirect every storage seam
+        // to an isolated profile BEFORE any store is constructed — a temp
+        // Application Support directory + an isolated UserDefaults suite — so
+        // the app never reads or writes the real config, Keychain, or signed-in
+        // account state. The seam selection is the only branch; nothing else
+        // checks `UITestMode`.
+        let isolated = UITestMode.isActive
+        let defaults: UserDefaults = isolated ? UITestMode.defaults : .standard
+        let rootDirectory: URL = isolated ? UITestMode.rootDirectory : AccountStore.defaultRootDirectory
+
+        let settings = ConnectorSettings(defaults: defaults)
+        self.settings = settings
+        // The updater reads the selected channel lazily on each check, so a
+        // channel change in the About page redirects the feed without a rebuild.
+        updater = UpdaterModel(
+            channelProvider: { [weak settings] in settings?.updateChannel ?? .stable }
+        )
+        let accountStore = AccountStore(rootDirectory: rootDirectory, defaults: defaults)
+        self.accountStore = accountStore
+        // The one-time legacy migrator must never touch the real
+        // Keychain/session/config — under hosted unit tests (shared process) and
+        // under UI-test isolation (launched process). An injected migrator
+        // always wins.
+        let migrator = legacyMigrator ?? (isolated ? nil : Self.defaultLegacyMigrator())
+        self.legacyMigrator = migrator
+        // Capture the composition root's engine directly rather than via
+        // `self`: these closures are built before `projectStore` is assigned,
+        // so capturing `self` would be a use-before-initialization error.
+        let engine = EngineManager.shared
+        projectStore = ProjectStore(
+            settings: settings,
+            defaults: defaults,
+            restart: { projectID, configPath, port in
+                engine.restart(projectID: projectID, configPath: configPath, port: port)
+            },
+            stopProject: { projectID in
+                engine.stop(projectID: projectID)
+            },
+            stop: { engine.stopAll() }
+        )
+
+        wireStoreHooks()
+        observeProjectStore()
+
+        // Restore the launch account's scope before any UI/engine work.
+        if let account = accountStore.activeAccount {
+            applyScope(for: account)
+        }
+
+        // One-time, best-effort legacy-session import into the connector CLI.
+        // Kicked off once, non-blocking, and independent of sign-in state;
+        // `migrateIfNeeded()` never throws.
+        Task {
+            await migrator?.migrateIfNeeded()
+        }
+    }
+
+    /// Wires the account/project stores' engine, CLI-session, and
+    /// organisation-name hooks. Split out of `init` (called after the stored
+    /// properties are assigned) so the initializer stays within the
+    /// function-body-length limit. Behaviour is identical to the former inline
+    /// wiring.
+    private func wireStoreHooks() {
+        // The engine stop the account store runs before switching accounts is
+        // the composition root's own engine (wired here, not reached via a
+        // `.shared` default inside the store).
+        accountStore.engineWillStop = { [weak self] in self?.engine.stopAll() }
+
+        // When a project load hits an auth failure, `ProjectStore` asks the
+        // account store to re-establish the connector CLI session (a best-effort
+        // `auth import`) before deciding whether to show the signed-out state.
+        projectStore.repairConnectorSession = { [weak self] in
+            guard let self else { return false }
+            return await accountStore.ensureConnectorSession()
+        }
+
+        // Resolve organisation display names for the loaded projects so the
+        // switcher groups by real organisation. Best-effort: any failure
+        // (no token, `/api/orgs` error/empty) yields no names and grouping
+        // falls back to "Other" without failing the project load.
+        projectStore.organizationNameLoader = { [weak self] in
+            guard let self,
+                  let environment = accountStore.activeEnvironment,
+                  let token = try? await accountStore.currentAccessToken()
+            else {
+                return [:]
+            }
+            let client = MemoryAPIClient(serverURL: environment.serverURLString, token: token)
+            guard let orgs = try? await client.orgs() else { return [:] }
+            return Dictionary(
+                orgs.compactMap { org -> (String, String)? in
+                    guard let name = org.name, !name.isEmpty else { return nil }
+                    return (org.id, name)
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+        }
+
+        // The active account drives the ProjectStore scope: switching accounts
+        // swaps profiles/tokens/selection, stops the engine, and reloads data.
+        accountStore.activeAccountDidChange = { [weak self] account in
+            self?.handleActiveAccountChange(account)
+        }
+    }
+
+    // MARK: - Project-store observation
+
+    /// Replaces the old Combine `$state` / `$connectedProjectID` sinks with
+    /// `@Observable` tracking of the connected-project set. Both side effects run
+    /// on the main actor, exactly as the `.receive(on: RunLoop.main)` sinks did.
+    private func observeProjectStore() {
+        observeProjectState()
+        observeConnectedProject()
+    }
+
+    /// Keep the account control's effective signed-in state aligned with the
+    /// project surface: a project auth failure (`.signedOut`) also means the
+    /// active session is not usable, so the switcher must show Sign in.
+    private func observeProjectState() {
+        withObservationTracking {
+            _ = projectStore.state
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if case .signedOut = self.projectStore.state {
+                    self.accountStore.markActiveSessionInvalid()
+                }
+                self.observeProjectState()
+            }
+        }
+    }
+
+    /// Keep the engine + status polling aligned with the connected projects.
+    /// `withObservationTracking` fires only on change (the Combine equivalent
+    /// used `dropFirst()` to skip the current value), and a scope swap in flight
+    /// suppresses these so the swap's own single reconcile is the only one.
+    private func observeConnectedProject() {
+        withObservationTracking {
+            _ = projectStore.connectedProjectIDs
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.scopeSwapGate.mayReconcile {
+                    self.syncEngineWithConnections()
+                }
+                self.observeConnectedProject()
+            }
+        }
+    }
+
+    /// Builds the real migrator against the shared legacy storage, or `nil`
+    /// under hosted unit tests. Tests share the app process, so the default
+    /// migrator must never touch the real Keychain/session/config from a test.
+    ///
+    /// Uses the shared `HostedTest` check — the same one that decides whether
+    /// lifecycle logging is suppressed — so the guards cannot drift apart.
+    private static func defaultLegacyMigrator() -> LegacyMigrator? {
+        let env = ProcessInfo.processInfo.environment
+        guard !HostedTest.isRunning(environment: env) else {
+            return nil
+        }
+        return LegacyMigrator(
+            cli: ConnectorCLI(),
+            serverURLProvider: { ConnectorSettings.persistedServerURL() },
+            reader: DefaultLegacySessionReader(),
+            clearer: DefaultLegacySessionClearer(),
+            defaults: .standard,
+            configPath: EngineManager.defaultConfigPath
+        )
+    }
+
+    /// Overall status from engine + hub state (same derivation as before).
+    var appStatus: AppStatus {
+        AppStatus.derive(engine: engine.state, snapshot: statusMonitor.snapshot)
+    }
+
+    // MARK: - Account scope
+
+    /// Reacts to the active account changing (sign-in, switch, sign-out).
+    private func handleActiveAccountChange(_ account: Account?) {
+        guard let account else {
+            // Last account signed out → stop the engine, clear the project
+            // connection, and drop any identity.
+            projectStore.stopAndClear()
+            identity.reset()
+            return
+        }
+        applyScope(for: account)
+        // The scope swap already reconciles once after the config rewrite, so
+        // the reload must not reconcile again (it would race the rewrite).
+        Task { await reloadActiveAccountData(reconcileEngine: false) }
+    }
+
+    /// Points `ProjectStore` at `account`'s storage/environment and reconciles
+    /// the engine so only this account's connected projects can run.
+    private func applyScope(for account: Account) {
+        guard let scope = accountStore.projectScope(for: account.id) else { return }
+        let previousConnected = projectStore.connectedProjectIDs.sorted().joined(separator: ",")
+        ConnectorLog.lifecycle(
+            "applyScope account=\(account.id) environment=\(account.environmentID) previousConnected=\(previousConnected.isEmpty ? "nil" : previousConnected)"
+        )
+        // Suppress the connected-project-ids sink for the whole swap: the set
+        // transitions (∅ → restored set) must not reconcile against the stale
+        // config. The single reconcile below runs after the rewrite.
+        scopeSwapGate.begin()
+        projectStore.applyScope(scope)
+        // Rewrite every engine config from this account's own CLI session so a
+        // previous account's config can never linger into this scope, then
+        // reconcile the engine set exactly once. The CLI calls are async, so
+        // defer them. `reassertConnection` never throws (it catches internally),
+        // so the trailing reconcile and decrement always run.
+        //
+        // Chained so overlapping swaps settle in spawn order: each settle awaits
+        // the previous one, so the last swap's config rewrites + reconcile win.
+        let previous = settleChain
+        settleChain = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
+            _ = await projectStore.reassertConnection()
+            syncEngineWithConnections()
+            scopeSwapGate.end()
+        }
+    }
+
+    /// Loads the active account's projects (which also resolves organisations)
+    /// and identity, then (by default) reconciles the engine.
+    ///
+    /// - Parameter reconcileEngine: when `false`, the trailing reconcile is
+    ///   skipped — used from `handleActiveAccountChange`, where the scope swap's
+    ///   own settle already reconciles once after the config rewrite.
+    private func reloadActiveAccountData(reconcileEngine: Bool = true) async {
+        guard accountStore.activeAccount != nil else { return }
+        // Reconcile the effective signed-in state from the connector CLI
+        // session (self-healing a wedged index via a best-effort session
+        // import) so the account control and the project/identity surfaces
+        // agree. Then load via the CLI, which `ProjectStore.loadProjects`
+        // attempts even when the app-side access token cannot be fetched. On an
+        // auth failure it re-imports the session and, if the CLI is still
+        // unsigned, surfaces `.signedOut` instead of a raw error; other
+        // failures stay `.error`.
+        await accountStore.reconcileEffectiveSignedInState()
+        let token = try? await accountStore.currentAccessToken()
+        await projectStore.loadProjects(accessToken: token ?? "")
+        if let token {
+            await identity.load(serverURL: accountStore.activeEnvironment?.serverURLString ?? settings.serverURL,
+                                token: token)
+        }
+        if reconcileEngine {
+            syncEngineWithConnections()
+        }
+    }
+
+    // MARK: - Engine lifecycle gating
+
+    /// Reconciles the engine children with the connected-project set:
+    ///
+    /// - connected + config exists and binds that project (and the expected
+    ///   server, when known) → ensure that project's child is running;
+    /// - no connected projects → stop every child (a stale config must never
+    ///   reconnect);
+    /// - connected but config missing → stop that child and surface an error
+    ///   (never start a stale/other project's config);
+    /// - config binds a different project/server → stop that child and surface a
+    ///   configuration error naming both project ids (never start it).
+    ///
+    /// A mismatch in ONE project's config stops only that project's child; every
+    /// other project keeps running. Safe to call repeatedly (`start()` no-ops
+    /// while running, `stop()` is idempotent).
+    func syncEngineWithConnections() {
+        let expectedServer = accountStore.activeEnvironment?.serverURLString ?? settings.serverURL
+        let expectedServerTrimmed = expectedServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        let desired = projectStore.connectedProjectIDs
+
+        // Stop children for projects no longer connected.
+        for projectID in engine.children.keys where !desired.contains(projectID) {
+            engine.stop(projectID: projectID)
+        }
+
+        for projectID in desired.sorted() {
+            let target = projectStore.engineTarget(for: projectID)
+            let decision = EngineLifecyclePolicy.decision(
+                connectedProjectID: projectID,
+                configURL: URL(fileURLWithPath: target.configPath),
+                expectedServerURL: expectedServerTrimmed.isEmpty ? nil : expectedServerTrimmed
+            )
+            switch decision {
+            case .run:
+                engine.start(projectID: projectID, configPath: target.configPath, port: target.port)
+            case .noConnectedProject:
+                engine.stop(projectID: projectID)
+            case let .missingConfig(projectID):
+                engine.stop(projectID: projectID)
+                engine.reportConfigurationError(
+                    "Engine config for connected project \(projectID) is missing; not starting.",
+                    for: projectID, configPath: target.configPath, port: target.port
+                )
+            case let .wrongProject(projectID, configured):
+                engine.stop(projectID: projectID)
+                // The decision carries no mismatch kind, so distinguish by shape:
+                // a nil configured id means the config binds no project, and a
+                // configured id equal to the connected one can only be a server
+                // mismatch (the project itself matched).
+                let reason = switch configured {
+                case .none:
+                    "the engine config binds no project"
+                case let .some(configuredID) where configuredID == projectID:
+                    "the engine config binds a different server for project \(projectID)"
+                case let .some(configuredID):
+                    "the engine config binds project \(configuredID)"
+                }
+                engine.reportConfigurationError(
+                    "Engine config does not match the connected project \(projectID): \(reason); not starting.",
+                    for: projectID, configPath: target.configPath, port: target.port
+                )
+            }
+        }
+
+        // Status polling follows the connected set: poll while any project is
+        // connected, publish "not running" when none is.
+        if desired.isEmpty {
+            statusMonitor.stop()
+            statusMonitor.markStopped()
+        } else {
+            statusMonitor.start()
+        }
+    }
+
+    /// Launch/session bootstrap: when an account is signed in, load its project
+    /// list and refresh identity so the toolbar picker is populated without the
+    /// user visiting a page. Safe to call repeatedly.
+    func bootstrap() async {
+        guard accountStore.isSignedIn else { return }
+        await reloadActiveAccountData()
+        // Restored account index entries may predate identity capture (or a
+        // provider may not surface it) — fill in name/email in the
+        // background, best-effort.
+        await accountStore.backfillIdentityIfNeeded()
+    }
+}

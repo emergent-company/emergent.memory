@@ -1,0 +1,1115 @@
+package blueprints
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"github.com/google/uuid"
+
+	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/sandbox"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// ApplyOptions controls blueprint apply behavior.
+type ApplyOptions struct {
+	// Force is accepted for API compatibility; currently unused.
+	Force bool `json:"force,omitempty"`
+	// ModelOverrides maps an agent name to a `provider/model` reference (or an
+	// empty string to select the project default). Applied at apply time, in
+	// memory, over the stored manifest; when non-empty it is also persisted
+	// per-project (keyed by blueprint name) after a successful apply.
+	ModelOverrides map[string]string `json:"modelOverrides,omitempty"`
+}
+
+// ApplyCounts reports per-entity-type materialization counts.
+type ApplyCounts struct {
+	Created int `json:"created"`
+	Updated int `json:"updated"`
+	Skipped int `json:"skipped"`
+}
+
+// ApplyResult is the response from Apply.
+//
+// NOTE: apply is NOT atomic — there is no cross-domain rollback. A failure in
+// any step aborts the apply at that point, leaving earlier steps already
+// materialized. Each step is idempotent (create-or-update by name / key), so a
+// re-apply converges to the same end state; a failed apply should simply be
+// retried after fixing the manifest.
+type ApplyResult struct {
+	BlueprintID   string      `json:"blueprintId"`
+	BlueprintName string      `json:"blueprintName"`
+	Version       string      `json:"version"`
+	Checksum      string      `json:"checksum"`
+	Packs         ApplyCounts `json:"packs"`
+	Agents        ApplyCounts `json:"agents"`
+	Skills        ApplyCounts `json:"skills"`
+	Seed          ApplyCounts `json:"seed"`
+}
+
+// Apply materializes a blueprint's manifest into concrete memory entities:
+// schema packs (create-or-skip globally, ALWAYS assigned to the project),
+// agent definitions (create-or-update by name), global skills (create-or-update
+// by name), and seed graph objects (key-based upsert) and relationships.
+//
+// NOT atomic: packs/agents/skills fail fast on the first material error, and
+// seed errors are best-effort (recorded in the result counts). Each step is
+// idempotent, so re-applying converges; retry after fixing the manifest.
+func (s *Service) Apply(ctx context.Context, blueprintID, projectID, userID string, opts ApplyOptions) (*ApplyResult, error) {
+	bp, err := s.repo.GetByID(ctx, projectID, blueprintID)
+	if err != nil {
+		return nil, err
+	}
+	if bp.Status != StatusDraft && bp.Status != StatusPublished {
+		return nil, apperror.ErrConflict.WithMessage("deprecated blueprints cannot be applied")
+	}
+
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	var manifest BlueprintManifest
+	if err := json.Unmarshal(bp.Manifest, &manifest); err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("blueprint manifest is not valid JSON: " + err.Error())
+	}
+
+	// Resolve effective model overrides BEFORE validation/materialization:
+	// stored per-project overrides for (projectID, bp.Name) merged with the
+	// request's explicit overrides (explicit wins), then applied to the
+	// in-memory manifest. Precedence: explicit request > stored per-project >
+	// manifest pinned. An empty override value clears the model name (project
+	// default).
+	storedOverrides, err := s.repo.ListModelOverrides(ctx, projectID, bp.Name)
+	if err != nil {
+		return nil, err
+	}
+	effectiveOverrides := make(map[string]string, len(storedOverrides)+len(opts.ModelOverrides))
+	for name, model := range storedOverrides {
+		effectiveOverrides[name] = model
+	}
+	for name, model := range opts.ModelOverrides {
+		effectiveOverrides[name] = model
+	}
+	applyModelOverrides(&manifest, effectiveOverrides)
+
+	// Static validation BEFORE any materialization: a malformed agent model
+	// reference (e.g. a bare name missing the provider prefix) must fail with
+	// 400 and ZERO rows created, rather than materializing packs first and
+	// leaving a half-applied blueprint behind. Every other apply step is
+	// untouched.
+	if err := s.validateManifest(&manifest); err != nil {
+		return nil, err
+	}
+
+	var actorID *uuid.UUID
+	if uid, err := uuid.Parse(userID); err == nil {
+		actorID = &uid
+	}
+
+	result := &ApplyResult{
+		BlueprintID:   bp.ID,
+		BlueprintName: bp.Name,
+		Version:       bp.Version,
+		Checksum:      bp.Checksum,
+	}
+
+	// Packs: create-or-skip by (name, version); assign runs on EVERY apply so
+	// any project applying the blueprint gets the pack's types registered.
+	result.Packs, err = s.applyPacks(ctx, projectID, blueprintID, userID, bp.Origin, manifest.Packs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Agents: create-or-update by name (skipped entirely if repo not wired).
+	result.Agents, err = s.applyAgents(ctx, projectID, blueprintID, bp.Name, manifest.Agents)
+	if err != nil {
+		return nil, err
+	}
+
+	// Skills: create-or-update by name (global scope: project_id NULL, org_id NULL).
+	result.Skills, err = s.applySkills(ctx, manifest.Skills)
+	if err != nil {
+		return nil, err
+	}
+
+	// Seed: idempotent object upserts then relationships (best-effort, non-fatal).
+	result.Seed = s.applySeed(ctx, projectUUID, actorID, manifest.Seed)
+
+	// Record the application (provenance) only after all materialization steps
+	// succeeded. A partial apply that errors out returns before this, so it is
+	// never recorded; a retry converges and then records.
+	if err := s.recordApplication(ctx, bp, projectID, userID); err != nil {
+		return nil, err
+	}
+
+	// Persist explicit request overrides after a fully successful apply (the
+	// same provenance point as recordApplication). Stored overrides are already
+	// in the store; only the explicit request map is upserted.
+	if len(opts.ModelOverrides) > 0 {
+		if err := s.repo.UpsertModelOverrides(ctx, projectID, bp.Name, opts.ModelOverrides); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+// applyModelOverrides rewrites each manifest agent whose Name is a key in
+// overrides, setting/replacing Model.Name (creating Model if nil) and
+// preserving any existing temperature/maxTokens/enableThinking tuning. An empty
+// override value clears the model name (project default).
+func applyModelOverrides(m *BlueprintManifest, overrides map[string]string) {
+	if len(overrides) == 0 {
+		return
+	}
+	for i := range m.Agents {
+		override, ok := overrides[m.Agents[i].Name]
+		if !ok {
+			continue
+		}
+		if m.Agents[i].Model == nil {
+			m.Agents[i].Model = &AgentModelManifest{}
+		}
+		m.Agents[i].Model.Name = override
+	}
+}
+
+// validateManifest statically validates a manifest's agents, packs, and skills
+// WITHOUT any database writes, so a malformed manifest returns 400 before any
+// pack/agent/skill is materialized. Each check mirrors the exact validation the
+// corresponding write path performs, so an error here is indistinguishable from
+// an error mid-apply — except that nothing has been created yet.
+func (s *Service) validateManifest(m *BlueprintManifest) error {
+	for _, am := range m.Agents {
+		if am.Name == "" {
+			return apperror.NewBadRequest("agent name is required")
+		}
+		if am.Visibility != "" {
+			if _, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility)); !ok {
+				return apperror.NewBadRequest("agent visibility must be one of project, external, internal")
+			}
+		}
+		if am.Model != nil {
+			// Route the model reference through the same shared funnel the write
+			// path uses (#1465). An empty model name is allowed (provider default).
+			if err := agents.NormalizeAgentModelConfig(&agents.ModelConfig{Name: am.Model.Name, Provider: ""}); err != nil {
+				return apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", am.Name, err))
+			}
+		}
+	}
+	for _, p := range m.Packs {
+		if p.Name == "" || p.Version == "" {
+			return apperror.NewBadRequest("pack name and version are required")
+		}
+	}
+	for _, sm := range m.Skills {
+		if err := skills.ValidateCreateSkill(skills.CreateSkillDTO{
+			Name:        sm.Name,
+			Description: sm.Description,
+			Content:     sm.Content,
+		}, s.skillsRepo.MaxContentSize()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyPacks materializes schema packs, scoped by the blueprint's origin.
+//
+//   - origin='builtin': reuse (or defensively recreate) the GLOBAL
+//     source='builtin' pack by (name, version) — project_id NULL — then assign.
+//   - origin='user'/'import': reuse (or create) a PROJECT-SCOPED pack only
+//     (project_id = projectID). The cross-project GetPackByNameVersion lookup is
+//     deliberately NOT used here: it let project B silently reuse project A's
+//     pack — the bug behind "appears/succeeds in one project, fails in others".
+//
+// AssignPack runs on every apply so a second project applying a builtin
+// blueprint still gets the pack's types registered. Merge=true is additive and
+// idempotent; AutoUninstall lets the migration worker soft-delete a previous
+// version's assignment after a successful migration.
+func (s *Service) applyPacks(ctx context.Context, projectID, blueprintID, userID, origin string, packs []PackManifest) (ApplyCounts, error) {
+	var counts ApplyCounts
+	for _, p := range packs {
+		if p.Name == "" || p.Version == "" {
+			return counts, apperror.ErrBadRequest.WithMessage("pack name and version are required")
+		}
+
+		pack, created, err := s.resolvePack(ctx, projectID, origin, p)
+		if err != nil {
+			return counts, err
+		}
+		if created {
+			counts.Created++
+		} else {
+			counts.Skipped++
+		}
+
+		// ALWAYS assign (idempotent; Merge=true additive). AutoUninstall makes
+		// the migration worker soft-delete the previous version's assignment
+		// after a successful migration, so the compiled schema view does not
+		// keep duplicated types from every installed version.
+		if _, err := s.schemasSvc.AssignPack(ctx, projectID, userID, &schemas.AssignPackRequest{
+			SchemaID:          pack.ID,
+			Merge:             true,
+			SourceBlueprintID: &blueprintID,
+			AutoUninstall:     true,
+		}); err != nil {
+			return counts, err
+		}
+		// Record this blueprint's dependency claim on the pack (idempotent).
+		if err := s.repo.AddPackClaim(ctx, blueprintID, projectID, pack.ID); err != nil {
+			return counts, err
+		}
+	}
+	return counts, nil
+}
+
+// resolvePack returns the schema pack a blueprint apply should assign for one
+// manifest pack, scoped by the blueprint's origin. The bool reports whether the
+// pack was newly created (vs reused).
+func (s *Service) resolvePack(ctx context.Context, projectID, origin string, p PackManifest) (*schemas.GraphMemorySchema, bool, error) {
+	if origin == OriginBuiltin {
+		_, err := s.schemasRepo.GetBuiltinPackByNameVersion(ctx, p.Name, p.Version)
+		switch {
+		case err == nil:
+			// Built-in schema packs are created on first apply and are never
+			// reseeded on boot (see BuiltinSeeder), so refresh the global row
+			// from the manifest here. Without this, a pack whose content changed
+			// under the same version — a property label, a description, a type —
+			// would keep serving its first-published definitions forever, and the
+			// re-apply that was supposed to pick the change up would report
+			// success while changing nothing.
+			refreshed, uerr := upsertBuiltinSchemaPack(ctx, s.schemasRepo.DB(), p)
+			if uerr != nil {
+				return nil, false, uerr
+			}
+			return refreshed, false, nil
+		case isNotFound(err):
+			// Defensive: the seeder normally creates this on boot. Recreate it
+			// so a missing seeded pack cannot block apply.
+			pack, err := upsertBuiltinSchemaPack(ctx, s.schemasRepo.DB(), p)
+			if err != nil {
+				return nil, false, err
+			}
+			return pack, true, nil
+		default:
+			return nil, false, err
+		}
+	}
+
+	// origin='user'/'import': project-scoped only.
+	pack, err := s.schemasRepo.GetProjectPackByNameVersion(ctx, projectID, p.Name, p.Version)
+	switch {
+	case err == nil:
+		if uerr := s.updateExistingPack(ctx, projectID, pack, p); uerr != nil {
+			return nil, false, uerr
+		}
+		return pack, false, nil
+	case isNotFound(err):
+		pack, err = s.createProjectPack(ctx, projectID, p)
+		if err != nil {
+			return nil, false, err
+		}
+		return pack, true, nil
+	default:
+		return nil, false, err
+	}
+}
+
+// packSchemaJSON marshals a pack's object types and (expanded) relationship
+// types into the exact JSON shape the schema registry stores, so the built-in
+// seeder and the apply path produce identical payloads.
+func packSchemaJSON(p PackManifest) (objectTypes, relationshipTypes json.RawMessage, err error) {
+	objectTypes, err = json.Marshal(p.ObjectTypes)
+	if err != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid objectTypes in pack " + p.Name)
+	}
+	expandedRels, err := expandRelationshipTypes(p.RelationshipTypes)
+	if err != nil {
+		return nil, nil, err
+	}
+	relationshipTypes, err = json.Marshal(expandedRels)
+	if err != nil {
+		return nil, nil, apperror.ErrBadRequest.WithMessage("invalid relationshipTypes in pack " + p.Name)
+	}
+	return objectTypes, relationshipTypes, nil
+}
+
+// createProjectPack creates a project-scoped schema pack via the schemas
+// service (same path the pre-scoping apply used), returning the created row.
+func (s *Service) createProjectPack(ctx context.Context, projectID string, p PackManifest) (*schemas.GraphMemorySchema, error) {
+	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	if err != nil {
+		return nil, err
+	}
+	return s.schemasSvc.CreatePack(ctx, projectID, &schemas.CreatePackRequest{
+		Name:                         p.Name,
+		Version:                      p.Version,
+		Description:                  &p.Description,
+		Author:                       &p.Author,
+		Migrations:                   p.Migrations,
+		ObjectTypeSchemasSnake:       objectTypes,
+		RelationshipTypeSchemasSnake: relationshipTypes,
+	})
+}
+
+// updateExistingPack syncs an already-existing project pack's definition
+// (description + object/relationship type schemas) with the current manifest.
+// This propagates source cleanups (e.g. removed template hints from type
+// descriptions) to the registry without requiring a version bump. Only the
+// owning project can update; a non-owner returns ErrNotFound (benign).
+func (s *Service) updateExistingPack(ctx context.Context, projectID string, pack *schemas.GraphMemorySchema, p PackManifest) error {
+	objectTypes, relationshipTypes, err := packSchemaJSON(p)
+	if err != nil {
+		return err
+	}
+	_, err = s.schemasSvc.UpdatePack(ctx, pack.ID, projectID, &schemas.UpdatePackRequest{
+		Description:             &p.Description,
+		ObjectTypeSchemas:       objectTypes,
+		RelationshipTypeSchemas: relationshipTypes,
+		Migrations:              p.Migrations,
+	})
+	return err
+}
+
+// maxExpandedRelationshipTypesPerPack bounds the number of singular
+// relationship-type definitions a single pack may expand into via plural
+// sourceTypes/targetTypes cross-products. The expansion allocates one
+// RelationshipTypeDef per (source, target) pair before the schemas service
+// validates anything, so an unbounded cross-product is a memory-exhaustion
+// vector: a manifest declaring 5 000 source types × 5 000 target types would
+// materialize ~25 million definitions (multiple GB) and the GitHub-import path
+// accepts archives up to 200 MiB, so an imported pack could trigger it.
+//
+// 10 000 is generous for hand-authored packs (an all-to-all relationship over
+// 100 object types is already an extreme case; typical packs expand to tens of
+// entries) while keeping the worst-case allocation in the low single-digit MB.
+// Exceeding the budget is reported as a 400 before anything is allocated.
+const maxExpandedRelationshipTypesPerPack = 10_000
+
+// expandRelationshipTypes flattens plural sourceTypes/targetTypes declarations
+// into singular SourceType/TargetType entries for the schemas service, whose
+// relationship contract is singular-only (see
+// schemas.Service.validateSchemaDefinitions). The stored blueprint manifest may
+// keep the plural fields (round-trip), but the payload sent to the schemas
+// service must be singular-only.
+//
+//   - A def with plural source and/or target types yields the cross-product of
+//     GetSourceTypes() × GetTargetTypes() as singular entries, preserving
+//     Name/Label/Description/Properties.
+//   - A def with only singular fields passes through unchanged (one entry).
+//   - A def with neither source nor target yields one empty entry (matching the
+//     pre-expansion behaviour) so the schemas validator still reports a precise
+//     missing-field error rather than silently dropping the relationship.
+//
+// The total expansion for the pack is pre-computed and rejected with a 400
+// bad_request when it exceeds maxExpandedRelationshipTypesPerPack, so the
+// cross-product is never materialized. The returned error identifies the
+// offending definition.
+func expandRelationshipTypes(defs []RelationshipTypeDef) ([]RelationshipTypeDef, error) {
+	// First pass: compute the total expanded size without allocating any
+	// output, and reject budget overruns before the blowup can happen.
+	total := int64(0)
+	for i, d := range defs {
+		count := expandedRelationshipTypeCount(d)
+		total += count
+		if total > maxExpandedRelationshipTypesPerPack {
+			ident := d.Name
+			if ident == "" {
+				ident = fmt.Sprintf("#%d", i)
+			}
+			return nil, apperror.NewBadRequest(fmt.Sprintf(
+				"relationship types expand to %d definitions, exceeding the limit of %d per pack (definition %q expands to %d); reduce the sourceTypes/targetTypes cross-product",
+				total, maxExpandedRelationshipTypesPerPack, ident, count))
+		}
+	}
+
+	// Second pass: the budget is known to hold, so this allocation is bounded.
+	out := make([]RelationshipTypeDef, 0, int(total))
+	for _, d := range defs {
+		srcs := d.GetSourceTypes()
+		tgts := d.GetTargetTypes()
+
+		// Only expand when both sides resolve to at least one type; otherwise
+		// pass the singular fields through unchanged so malformed defs keep the
+		// existing validation surface.
+		if len(srcs) == 0 || len(tgts) == 0 {
+			out = append(out, RelationshipTypeDef{
+				Name:        d.Name,
+				Label:       d.Label,
+				Description: d.Description,
+				SourceType:  d.SourceType,
+				TargetType:  d.TargetType,
+				Properties:  d.Properties,
+			})
+			continue
+		}
+
+		for _, src := range srcs {
+			for _, tgt := range tgts {
+				out = append(out, RelationshipTypeDef{
+					Name:        d.Name,
+					Label:       d.Label,
+					Description: d.Description,
+					SourceType:  src,
+					TargetType:  tgt,
+					Properties:  d.Properties,
+				})
+			}
+		}
+	}
+	return out, nil
+}
+
+// expandedRelationshipTypeCount reports how many singular entries a single
+// relationship definition expands into: the source×target cross-product, or 1
+// for a pass-through (singular or empty) definition. The product is computed in
+// int64 so a pathological input cannot overflow.
+func expandedRelationshipTypeCount(d RelationshipTypeDef) int64 {
+	srcs := d.GetSourceTypes()
+	tgts := d.GetTargetTypes()
+	if len(srcs) == 0 || len(tgts) == 0 {
+		return 1
+	}
+	return int64(len(srcs)) * int64(len(tgts))
+}
+
+// applyAgents creates or updates agent definitions by name within the project.
+// The update path mutates the EXISTING definition in place, overwriting only
+// manifest-driven fields and preserving unmanaged fields (AutoLoadSkills,
+// MaxSessionEvents, ACPConfig, ProductID, Enabled, ID, and timestamps).
+// BannedTools is manifest-driven on create and preserve-when-omitted on
+// update. Requires the agents repository to be wired via SetAgentRepo;
+// otherwise the step is skipped with a warning and all entries counted as
+// skipped.
+func (s *Service) applyAgents(ctx context.Context, projectID, blueprintID, bpName string, agentManifests []AgentManifest) (ApplyCounts, error) {
+	var counts ApplyCounts
+	if s.agentRepo == nil {
+		if len(agentManifests) > 0 {
+			s.log.Warn("agents repository not wired; skipping agent materialization",
+				slog.Int("count", len(agentManifests)))
+		}
+		counts.Skipped = len(agentManifests)
+		return counts, nil
+	}
+
+	for _, am := range agentManifests {
+		if am.Name == "" {
+			return counts, apperror.ErrBadRequest.WithMessage("agent name is required")
+		}
+		if am.Visibility != "" {
+			v, ok := agents.NormalizeVisibility(agents.AgentVisibility(am.Visibility))
+			if !ok {
+				return counts, apperror.NewBadRequest("agent visibility must be one of project, external, internal")
+			}
+			am.Visibility = string(v)
+		}
+
+		existing, err := s.agentRepo.FindDefinitionByName(ctx, projectID, am.Name)
+		if err != nil {
+			return counts, apperror.ErrDatabase.WithInternal(err)
+		}
+		if existing != nil {
+			switch {
+			case existing.SourceBlueprintID == nil:
+				// Manual/pre-existing — update in place and leave ownership
+				// untouched (do not claim pre-existing definitions).
+			case *existing.SourceBlueprintID == blueprintID:
+				// Re-apply of the same blueprint version — update in place.
+			default:
+				// Claimed by another blueprint row. A newer version of the SAME
+				// blueprint is a new row with a new id, so compare by name: same
+				// name family = upgrade (adopt it), otherwise skip and do not
+				// overwrite another blueprint's agent.
+				owner, err := s.repo.GetByID(ctx, projectID, *existing.SourceBlueprintID)
+				switch {
+				case err != nil && isNotFound(err):
+					// The owning blueprint row no longer exists. Treat it as
+					// unowned and do not overwrite.
+					counts.Skipped++
+					continue
+				case err != nil:
+					// Lookup failed for a transient reason: surface it instead
+					// of silently skipping the agent and still recording the
+					// blueprint as applied.
+					return counts, apperror.ErrDatabase.WithInternal(err)
+				case owner.Name != bpName:
+					counts.Skipped++
+					continue
+				}
+				// Re-point ownership so unapplying this version still deletes the
+				// agent (Unapply matches on SourceBlueprintID).
+				existing.SourceBlueprintID = &blueprintID
+			}
+			if err := applyAgentManifestToExisting(existing, &am); err != nil {
+				return counts, err
+			}
+			if err := s.agentRepo.UpdateDefinition(ctx, existing); err != nil {
+				return counts, apperror.ErrDatabase.WithInternal(err)
+			}
+			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, existing, &am); err != nil {
+				return counts, err
+			}
+			counts.Updated++
+		} else {
+			def, err := buildAgentDefinition(&am, projectID)
+			if err != nil {
+				return counts, err
+			}
+			def.SourceBlueprintID = &blueprintID
+			if err := s.agentRepo.CreateDefinition(ctx, def); err != nil {
+				return counts, apperror.ErrDatabase.WithInternal(err)
+			}
+			if err := s.ensureRuntimeAgent(ctx, projectID, blueprintID, def, &am); err != nil {
+				return counts, err
+			}
+			counts.Created++
+		}
+	}
+	return counts, nil
+}
+
+// applySkills creates or updates global skills by name (project_id NULL,
+// org_id NULL). Both paths run the exported skills validation (name pattern,
+// non-empty description/content, content size cap). Updates preserve
+// provenance metadata unless the manifest explicitly provides new metadata.
+func (s *Service) applySkills(ctx context.Context, skillManifests []SkillManifest) (ApplyCounts, error) {
+	var counts ApplyCounts
+	existing, err := s.skillsRepo.FindAll(ctx, nil, nil)
+	if err != nil {
+		return counts, apperror.ErrDatabase.WithInternal(err)
+	}
+	byName := make(map[string]*skills.Skill, len(existing))
+	for _, sk := range existing {
+		byName[sk.Name] = sk
+	}
+
+	maxContentSize := s.skillsRepo.MaxContentSize()
+	for _, sm := range skillManifests {
+		md := toSkillMetadata(sm.Metadata)
+
+		if cur := byName[sm.Name]; cur != nil {
+			dto := &skills.UpdateSkillDTO{
+				Description: &sm.Description,
+				Content:     &sm.Content,
+			}
+			if md != nil {
+				dto.Metadata = md
+			}
+			if err := skills.ValidateUpdateSkill(*dto, maxContentSize); err != nil {
+				return counts, err
+			}
+			if _, err := s.skillsRepo.Update(ctx, cur.ID, dto); err != nil {
+				return counts, err
+			}
+			counts.Updated++
+			continue
+		}
+
+		if err := skills.ValidateCreateSkill(skills.CreateSkillDTO{
+			Name:        sm.Name,
+			Description: sm.Description,
+			Content:     sm.Content,
+		}, maxContentSize); err != nil {
+			return counts, err
+		}
+
+		skill := &skills.Skill{
+			Name:        sm.Name,
+			Description: sm.Description,
+			Content:     sm.Content,
+			Metadata:    md,
+			// nil ProjectID/OrgID = global scope
+		}
+		if err := s.skillsRepo.Create(ctx, skill); err != nil {
+			return counts, err
+		}
+		counts.Created++
+	}
+	return counts, nil
+}
+
+// buildSeedObjectRequest constructs the CreateGraphObjectRequest for a seed
+// object record. Status and Assignee are forwarded when non-empty.
+func buildSeedObjectRequest(o SeedObjectRecord) graph.CreateGraphObjectRequest {
+	item := graph.CreateGraphObjectRequest{
+		Type:       o.Type,
+		Key:        &o.Key,
+		Properties: o.Properties,
+		Labels:     o.Labels,
+	}
+	if o.Status != "" {
+		item.Status = &o.Status
+	}
+	if o.Assignee != "" {
+		item.Assignee = &o.Assignee
+	}
+	return item
+}
+
+// applySeed materializes seed graph objects and relationships. Both are
+// best-effort: per-item failures and unresolvable relationship endpoints are
+// counted as skipped rather than failing the apply. Objects use key-based
+// upsert (CreateOrUpdate): identical objects are no-ops, differing objects get
+// a new version.
+func (s *Service) applySeed(ctx context.Context, projectID uuid.UUID, actorID *uuid.UUID, seed *SeedManifest) ApplyCounts {
+	var counts ApplyCounts
+	if seed == nil {
+		return counts
+	}
+
+	// Objects — idempotent key-based upsert. Objects without a Key are skipped
+	// (a key is required for upsert semantics; creating keyless duplicates on
+	// re-apply is worse than skipping).
+	for _, o := range seed.Objects {
+		if o.Key == "" {
+			s.log.Warn("seed object without key skipped", slog.String("type", o.Type))
+			counts.Skipped++
+			continue
+		}
+		item := buildSeedObjectRequest(o)
+
+		_, created, err := s.graphSvc.CreateOrUpdate(ctx, projectID, &item, actorID)
+		if err != nil {
+			s.log.Warn("seed object upsert failed", slog.String("key", o.Key), logger.Error(err))
+			counts.Skipped++
+			continue
+		}
+		if created {
+			counts.Created++
+		} else {
+			// CreateOrUpdate's bool distinguishes created vs not-created only:
+			// an unchanged no-op and a genuine new-version update both report
+			// false, so both count as "updated" here.
+			counts.Updated++
+		}
+	}
+
+	// Relationships (endpoints referenced by seed object keys)
+	if len(seed.Relationships) > 0 {
+		created, skipped := s.applySeedRelationships(ctx, projectID, actorID, seed.Relationships)
+		counts.Created += created
+		counts.Skipped += skipped
+	}
+
+	return counts
+}
+
+// applySeedRelationships resolves relationship endpoints by object key
+// (optionally disambiguated by srcType/dstType) and bulk-creates them with
+// Upsert semantics. Relationships whose src or dst key cannot be resolved are
+// skipped (counted), never fatal.
+func (s *Service) applySeedRelationships(ctx context.Context, projectID uuid.UUID, actorID *uuid.UUID, rels []SeedRelationshipRecord) (int, int) {
+	created, skipped := 0, 0
+	keyCache := map[string]*uuid.UUID{} // "type\x00key" → canonical object id
+	keyOnlyWarned := false
+
+	resolve := func(key, typ string) *uuid.UUID {
+		if key == "" {
+			return nil
+		}
+		cacheKey := typ + "\x00" + key
+		if id, ok := keyCache[cacheKey]; ok {
+			return id
+		}
+		params := graph.ListParams{
+			ProjectID: projectID,
+			Key:       &key,
+			Limit:     1,
+		}
+		if typ != "" {
+			// Type + key is unambiguous.
+			params.Type = &typ
+		} else if !keyOnlyWarned {
+			// Fall back to key-only resolution, but warn once per apply.
+			s.log.Warn("seed relationship endpoint without srcType/dstType; resolving by key only")
+			keyOnlyWarned = true
+		}
+		objs, err := s.graphSvc.GetRepository().List(ctx, params)
+		if err != nil || len(objs) == 0 {
+			return nil
+		}
+		id := objs[0].CanonicalID
+		keyCache[cacheKey] = &id
+		return &id
+	}
+
+	var items []graph.CreateGraphRelationshipRequest
+	for _, r := range rels {
+		srcID := resolve(r.SrcKey, r.SrcType)
+		dstID := resolve(r.DstKey, r.DstType)
+		if srcID == nil || dstID == nil {
+			skipped++
+			continue
+		}
+		items = append(items, graph.CreateGraphRelationshipRequest{
+			Type:       r.Type,
+			SrcID:      *srcID,
+			DstID:      *dstID,
+			Properties: r.Properties,
+			Upsert:     true, // idempotent create-or-skip on (type, src, dst)
+		})
+	}
+
+	if len(items) > 0 {
+		resp, err := s.graphSvc.BulkCreateRelationships(ctx, projectID, &graph.BulkCreateRelationshipsRequest{Items: items}, actorID)
+		if err != nil {
+			s.log.Warn("seed relationship bulk create failed", logger.Error(err))
+			skipped += len(items)
+		} else {
+			created += resp.Success
+			skipped += resp.Failed
+		}
+	}
+	return created, skipped
+}
+
+// buildAgentDefinition converts an AgentManifest into a fresh
+// agents.AgentDefinition for the CREATE path. Empty model Name means provider
+// default. Visibility and dispatch mode fall back to the domain defaults when
+// omitted in the manifest. Enabled defaults to true.
+func buildAgentDefinition(m *AgentManifest, projectID string) (*agents.AgentDefinition, error) {
+	visibility := agents.AgentVisibility(m.Visibility)
+	if visibility == "" {
+		visibility = agents.VisibilityProject
+	}
+	dispatchMode := agents.AgentDispatchMode(m.DispatchMode)
+	if dispatchMode == "" {
+		dispatchMode = agents.DispatchModeSync
+	}
+
+	// Write-path secret handling: a blueprint workspace config must never persist
+	// a plaintext git token — it must use git_token_secret_ref. No existing config
+	// on the create path, so a literal is rejected outright (#1844).
+	if m.WorkspaceConfig != nil {
+		if errs := sandbox.NormalizeSandboxConfigForWrite(m.WorkspaceConfig, nil); len(errs) > 0 {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("agent %q: workspace config rejected: %s", m.Name, strings.Join(errs, "; ")))
+		}
+	}
+
+	def := &agents.AgentDefinition{
+		ProjectID:      projectID,
+		Name:           m.Name,
+		Tools:          m.Tools,
+		BannedTools:    m.BannedTools,
+		Skills:         m.Skills,
+		Enabled:        true,
+		Visibility:     visibility,
+		Config:         m.Config,
+		SandboxConfig:  m.WorkspaceConfig,
+		DispatchMode:   dispatchMode,
+		MaxSteps:       m.MaxSteps,
+		DefaultTimeout: m.DefaultTimeout,
+	}
+	def.DefaultQueue = m.DefaultQueue
+	if def.DefaultQueue == "" {
+		def.DefaultQueue = agents.DefaultQueueName
+	}
+	if m.IsDefault != nil {
+		def.IsDefault = *m.IsDefault
+	}
+	if def.Tools == nil {
+		def.Tools = []string{}
+	}
+	if def.BannedTools == nil {
+		def.BannedTools = []string{}
+	}
+	if def.Skills == nil {
+		def.Skills = []string{}
+	}
+	if m.Description != "" {
+		def.Description = &m.Description
+	}
+	if m.SystemPrompt != "" {
+		def.SystemPrompt = &m.SystemPrompt
+	}
+	if m.Model != nil {
+		mc := &agents.ModelConfig{
+			Name:           m.Model.Name,
+			Temperature:    m.Model.Temperature,
+			MaxTokens:      m.Model.MaxTokens,
+			EnableThinking: m.Model.EnableThinking,
+		}
+		// Route the manifest reference through the same shared funnel the REST
+		// and MCP write paths use (#1465), so a malformed model.name cannot be
+		// persisted via a blueprint and only fail later at execution time. An
+		// empty name means "use the provider default" and is allowed.
+		if err := agents.NormalizeAgentModelConfig(mc); err != nil {
+			return nil, apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", m.Name, err))
+		}
+		def.Model = mc
+	} else {
+		// Empty ModelConfig.Name selects the provider default model.
+		def.Model = &agents.ModelConfig{}
+	}
+	if len(m.ToolPolicies) > 0 {
+		def.ToolPolicies = make(map[string]agents.ToolPolicy, len(m.ToolPolicies))
+		for name, p := range m.ToolPolicies {
+			def.ToolPolicies[name] = agents.ToolPolicy{
+				Confirm: p.Confirm,
+				Message: p.Message,
+			}
+		}
+	}
+	if ui := agentUIConfig(m.UI); ui != nil {
+		def.UIConfig = ui
+	}
+	if err := applyWorkConfig(def, m); err != nil {
+		return nil, err
+	}
+	return def, nil
+}
+
+// applyAgentManifestToExisting overwrites ONLY the manifest-driven fields on an
+// existing agent definition for the UPDATE path. Everything not driven by the
+// manifest — AutoLoadSkills, MaxSessionEvents, ACPConfig, ProductID, Enabled,
+// ID, timestamps, and Name — is preserved untouched.
+// Description/SystemPrompt/Visibility/DispatchMode are only set when
+// the manifest provides a non-empty value (omitted = keep current); Tools,
+// Skills, Config, SandboxConfig, IsDefault, MaxSteps, DefaultTimeout, and
+// ToolPolicies are overwritten from the manifest. BannedTools is applied only
+// when the manifest provides a non-empty list (preserve-when-omitted), so a
+// user's manual banned-tool edits survive a re-apply that omits the field.
+// Enabled is never set here.
+func applyAgentManifestToExisting(def *agents.AgentDefinition, m *AgentManifest) error {
+	if m.Description != "" {
+		def.Description = &m.Description
+	}
+	if m.SystemPrompt != "" {
+		def.SystemPrompt = &m.SystemPrompt
+	}
+	if m.Model != nil {
+		mc := &agents.ModelConfig{
+			Name:           m.Model.Name,
+			Temperature:    m.Model.Temperature,
+			MaxTokens:      m.Model.MaxTokens,
+			EnableThinking: m.Model.EnableThinking,
+		}
+		// Reject a malformed manifest model.name before it reaches the
+		// repository, mirroring the REST/MCP write paths (#1465).
+		if err := agents.NormalizeAgentModelConfig(mc); err != nil {
+			return apperror.NewBadRequest(fmt.Sprintf("agent %q: %v", m.Name, err))
+		}
+		def.Model = mc
+	}
+	def.Tools = m.Tools
+	if def.Tools == nil {
+		def.Tools = []string{}
+	}
+	if len(m.BannedTools) > 0 {
+		def.BannedTools = m.BannedTools
+	}
+	def.Skills = m.Skills
+	if def.Skills == nil {
+		def.Skills = []string{}
+	}
+	if m.Visibility != "" {
+		def.Visibility = agents.AgentVisibility(m.Visibility)
+	}
+	if m.DispatchMode != "" {
+		def.DispatchMode = agents.AgentDispatchMode(m.DispatchMode)
+	}
+	if m.DefaultQueue != "" {
+		def.DefaultQueue = m.DefaultQueue
+	}
+	// Optional pointer/map fields are applied only when the manifest provides
+	// them; omitted means "keep current value" (preserve-when-omitted).
+	if m.IsDefault != nil {
+		def.IsDefault = *m.IsDefault
+	}
+	if m.MaxSteps != nil {
+		def.MaxSteps = m.MaxSteps
+	}
+	if m.DefaultTimeout != nil {
+		def.DefaultTimeout = m.DefaultTimeout
+	}
+	if m.Config != nil {
+		def.Config = m.Config
+	}
+	if m.WorkspaceConfig != nil {
+		// Write-path secret handling against the stored config: carry forward a
+		// stored git token, restore placeholder echoes, and reject a newly-supplied
+		// plaintext git token (#1844). def.SandboxConfig still holds the stored
+		// value here (it has not been overwritten yet).
+		if errs := sandbox.NormalizeSandboxConfigForWrite(m.WorkspaceConfig, def.SandboxConfig); len(errs) > 0 {
+			return apperror.NewBadRequest(fmt.Sprintf("agent %q: workspace config rejected: %s", m.Name, strings.Join(errs, "; ")))
+		}
+		def.SandboxConfig = m.WorkspaceConfig
+	}
+	if len(m.ToolPolicies) > 0 {
+		def.ToolPolicies = make(map[string]agents.ToolPolicy, len(m.ToolPolicies))
+		for name, p := range m.ToolPolicies {
+			def.ToolPolicies[name] = agents.ToolPolicy{
+				Confirm: p.Confirm,
+				Message: p.Message,
+			}
+		}
+	}
+	// UI is optional: applied only when the manifest carries a non-empty
+	// icon/color; omitted = preserve the current ui_config.
+	if ui := agentUIConfig(m.UI); ui != nil {
+		def.UIConfig = ui
+	}
+	if err := applyWorkConfig(def, m); err != nil {
+		return err
+	}
+	return nil
+}
+
+// applyWorkConfig unmarshals the manifest's raw workConfig map into the
+// definition's typed agents.AgentWorkConfig. A nil/absent map is a no-op
+// (preserve current value on update); a malformed map returns a BadRequest
+// error naming the agent.
+func applyWorkConfig(def *agents.AgentDefinition, m *AgentManifest) error {
+	if m.WorkConfig == nil {
+		return nil
+	}
+	raw, err := json.Marshal(m.WorkConfig)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name)
+	}
+	if err := json.Unmarshal(raw, &def.WorkConfig); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid workConfig for agent " + m.Name + ": " + err.Error())
+	}
+	return nil
+}
+
+// ensureRuntimeAgent creates-or-updates the runtime kb.agents row bound to the
+// just-materialized definition when the manifest configures trigger behaviour
+// (TriggerType, ReactionConfig, or CronSchedule). The runtime agent is what
+// actually picks object-driven work up; the definition only describes it.
+//
+// The runtime agent uses the "agent-def:<defID>" strategy type (the pattern
+// used elsewhere for runtime agents bound to a definition), stamps blueprint
+// ownership into its config map, and defaults an empty trigger type to
+// "reaction" (when a reaction config is present) or "schedule", and an empty
+// cron schedule to the daily "0 0 * * *" default (the column is NOT NULL).
+func (s *Service) ensureRuntimeAgent(ctx context.Context, projectID, blueprintID string, def *agents.AgentDefinition, m *AgentManifest) error {
+	if m.TriggerType == "" && m.ReactionConfig == nil && m.CronSchedule == "" {
+		return nil
+	}
+
+	// Work-pickup validation: a blueprint work agent (definition carries a work
+	// config) must declare a single object type and a single pickup signal.
+	if err := agents.ValidateWorkPickup(!def.WorkConfig.IsZero(), m.ReactionConfig); err != nil {
+		return apperror.NewBadRequest("invalid reactionConfig for agent " + m.Name + ": " + err.Error())
+	}
+
+	triggerType := agents.AgentTriggerType(m.TriggerType)
+	if triggerType == "" {
+		if m.ReactionConfig != nil {
+			triggerType = agents.TriggerTypeReaction
+		} else {
+			triggerType = agents.TriggerTypeSchedule
+		}
+	}
+	cron := m.CronSchedule
+	if cron == "" {
+		cron = "0 0 * * *"
+	}
+	defID := def.ID
+
+	existing, err := s.agentRepo.FindAgentByName(ctx, projectID, def.Name)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	if existing != nil {
+		// Ownership gate: adopt a pre-existing runtime agent only when it is
+		// already stamped with this blueprint's ownership. A manual or
+		// foreign-blueprint agent that merely shares the name (or even points
+		// at the same definition) is never repurposed — hijacking it would
+		// rebind its trigger config and later delete it on Unapply (mirroring
+		// applyAgents' definition-ownership discipline).
+		if bid, _ := existing.Config["sourceBlueprintId"].(string); bid != blueprintID {
+			return nil
+		}
+
+		existing.TriggerType = triggerType
+		existing.ReactionConfig = m.ReactionConfig
+		existing.CronSchedule = cron
+		existing.Enabled = true
+		existing.StrategyType = "agent-def:" + def.ID
+		existing.AgentDefinitionID = &defID
+		if existing.Config == nil {
+			existing.Config = map[string]any{}
+		}
+		existing.Config["sourceBlueprintId"] = blueprintID
+		return s.agentRepo.UpdateAgent(ctx, existing)
+	}
+
+	agent := &agents.Agent{
+		ProjectID:         projectID,
+		Name:              def.Name,
+		StrategyType:      "agent-def:" + def.ID,
+		CronSchedule:      cron,
+		Enabled:           true,
+		TriggerType:       triggerType,
+		ReactionConfig:    m.ReactionConfig,
+		AgentDefinitionID: &defID,
+		Config:            map[string]any{"sourceBlueprintId": blueprintID},
+	}
+	return s.agentRepo.CreateAgent(ctx, agent)
+}
+
+// agentUIConfig marshals an AgentUIManifest into the opaque ui_config JSONB
+// blob stored on agents.AgentDefinition.UIConfig. Returns nil when the block is
+// absent or has no non-empty icon/color, so callers leave ui_config at the DB
+// default '{}' (create) or preserve the existing value (update).
+func agentUIConfig(ui *AgentUIManifest) json.RawMessage {
+	if ui == nil {
+		return nil
+	}
+	// Trim to match the web-UI editor semantics: whitespace-only values are
+	// "not declared" rather than junk that would overwrite an existing
+	// appearance on update.
+	icon := strings.TrimSpace(ui.Icon)
+	color := strings.TrimSpace(ui.Color)
+	if icon == "" && color == "" {
+		return nil
+	}
+	m := map[string]string{}
+	if icon != "" {
+		m["icon"] = icon
+	}
+	if color != "" {
+		m["color"] = color
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// toSkillMetadata converts manifest metadata (opaque map) into a typed
+// skills.SkillMetadata. Returns nil when the manifest provides no metadata so
+// updates preserve existing provenance fields.
+func toSkillMetadata(m map[string]any) *skills.SkillMetadata {
+	if len(m) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	var md skills.SkillMetadata
+	if err := json.Unmarshal(raw, &md); err != nil {
+		return nil
+	}
+	return &md
+}
+
+// isNotFound reports whether err is an apperror with the not_found code.
+func isNotFound(err error) bool {
+	var appErr *apperror.Error
+	return errors.As(err, &appErr) && appErr.Code == apperror.ErrNotFound.Code
+}

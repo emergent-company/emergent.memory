@@ -1,0 +1,6 @@
+projectInfo: |
+  # Dreaming Agent Blueprint
+
+  The dreaming agent periodically consolidates stored notes and memories into
+  higher-level insights ("Dreams"). It reuses the Note and NoteCluster types
+  from the agent-notes blueprint and links Dreams back to their sources.

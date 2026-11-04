@@ -1,0 +1,460 @@
+// Package vertex provides a Google Vertex AI embeddings client.
+package vertex
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"math"
+	"net/http"
+	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+)
+
+const (
+	// DefaultModel is the default embedding model
+	DefaultModel = "gemini-embedding-2-preview"
+
+	// DefaultDimension is the embedding dimension (gemini-embedding-2-preview supports MRL with recommended 768 dims)
+	DefaultDimension = 768
+
+	// DefaultMaxRetries is the default number of retries
+	DefaultMaxRetries = 3
+
+	// DefaultBaseDelay is the base delay for exponential backoff
+	DefaultBaseDelay = 100 * time.Millisecond
+
+	// DefaultMaxDelay is the maximum delay for exponential backoff
+	DefaultMaxDelay = 10 * time.Second
+
+	// DefaultTimeout is the default HTTP timeout
+	DefaultTimeout = 30 * time.Second
+
+	// DefaultBatchSize is the maximum batch size per request
+	DefaultBatchSize = 100
+)
+
+// Config holds the configuration for the Vertex AI client
+type Config struct {
+	ProjectID string
+	Location  string
+	Model     string
+	Timeout   time.Duration
+}
+
+// Client is a Vertex AI embeddings client
+type Client struct {
+	projectID       string
+	location        string
+	model           string
+	httpClient      *http.Client
+	tokenSrc        *google.Credentials
+	credentialsJSON []byte // explicit SA JSON; if set, overrides ADC
+	log             *slog.Logger
+
+	// Retry configuration
+	maxRetries int
+	baseDelay  time.Duration
+	maxDelay   time.Duration
+}
+
+// ClientOption configures the Client
+type ClientOption func(*Client)
+
+// WithMaxRetries sets the maximum number of retries
+func WithMaxRetries(n int) ClientOption {
+	return func(c *Client) {
+		c.maxRetries = n
+	}
+}
+
+// WithBaseDelay sets the base delay for exponential backoff
+func WithBaseDelay(d time.Duration) ClientOption {
+	return func(c *Client) {
+		c.baseDelay = d
+	}
+}
+
+// WithMaxDelay sets the maximum delay for exponential backoff
+func WithMaxDelay(d time.Duration) ClientOption {
+	return func(c *Client) {
+		c.maxDelay = d
+	}
+}
+
+// WithLogger sets the logger
+func WithLogger(log *slog.Logger) ClientOption {
+	return func(c *Client) {
+		c.log = log
+	}
+}
+
+// WithCredentialsJSON provides explicit service account JSON credentials,
+// overriding Application Default Credentials. The JSON should be the content
+// of a GCP service account key file.
+func WithCredentialsJSON(saJSON []byte) ClientOption {
+	return func(c *Client) {
+		c.credentialsJSON = saJSON
+	}
+}
+
+// NewClient creates a new Vertex AI embeddings client
+func NewClient(ctx context.Context, cfg Config, opts ...ClientOption) (*Client, error) {
+	if cfg.ProjectID == "" {
+		return nil, fmt.Errorf("project ID is required")
+	}
+	if cfg.Location == "" {
+		return nil, fmt.Errorf("location is required")
+	}
+	if cfg.Model == "" {
+		cfg.Model = DefaultModel
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = DefaultTimeout
+	}
+
+	c := &Client{
+		projectID: cfg.ProjectID,
+		location:  cfg.Location,
+		model:     cfg.Model,
+		httpClient: &http.Client{
+			Timeout: cfg.Timeout,
+		},
+		log:        slog.Default(),
+		maxRetries: DefaultMaxRetries,
+		baseDelay:  DefaultBaseDelay,
+		maxDelay:   DefaultMaxDelay,
+	}
+
+	// Apply options first so WithCredentialsJSON takes effect before ADC fallback
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	// Resolve credentials: explicit SA JSON takes priority over ADC
+	if len(c.credentialsJSON) > 0 {
+		creds, err := google.CredentialsFromJSON(ctx, c.credentialsJSON, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse service account credentials: %w", err)
+		}
+		c.tokenSrc = creds
+	} else {
+		// Fall back to Application Default Credentials
+		creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, fmt.Errorf("failed to find default credentials: %w", err)
+		}
+		c.tokenSrc = creds
+	}
+
+	return c, nil
+}
+
+// predictRequest is the request body for the predict API
+type predictRequest struct {
+	Instances  []instance         `json:"instances"`
+	Parameters *predictParameters `json:"parameters,omitempty"`
+}
+
+type predictParameters struct {
+	OutputDimensionality int `json:"outputDimensionality"`
+}
+
+type instance struct {
+	Content  string `json:"content"`
+	TaskType string `json:"task_type"`
+}
+
+// predictResponse is the response from the predict API
+type predictResponse struct {
+	Predictions []prediction `json:"predictions"`
+}
+
+type prediction struct {
+	Embeddings embeddingResult `json:"embeddings"`
+}
+
+type embeddingResult struct {
+	Values     []float32      `json:"values"`
+	Statistics embeddingStats `json:"statistics"`
+}
+
+type embeddingStats struct {
+	TokenCount int `json:"token_count"`
+}
+
+// EmbedResult contains the embedding result with usage data
+type EmbedResult struct {
+	Embedding []float32
+	Usage     *Usage
+	Model     string // the model name that produced this embedding
+	Provider  string // "vertex", "googleai", or "openai"
+}
+
+// BatchEmbedResult contains batch embedding results with usage data
+type BatchEmbedResult struct {
+	Embeddings [][]float32
+	Usage      *Usage
+	Model      string // the model name that produced these embeddings
+	Provider   string // "vertex", "googleai", or "openai"
+}
+
+// Usage contains token usage information
+type Usage struct {
+	PromptTokens int
+	TotalTokens  int
+}
+
+// EmbedQuery generates an embedding for a single query
+func (c *Client) EmbedQuery(ctx context.Context, query string) ([]float32, error) {
+	result, err := c.EmbedQueryWithUsage(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return result.Embedding, nil
+}
+
+// EmbedQueryWithUsage generates an embedding for a single query with usage data
+func (c *Client) EmbedQueryWithUsage(ctx context.Context, query string) (*EmbedResult, error) {
+	result, err := c.EmbedDocumentsWithUsage(ctx, []string{query})
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Embeddings) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+	return &EmbedResult{
+		Embedding: result.Embeddings[0],
+		Usage:     result.Usage,
+		Model:     c.model,
+		Provider:  "vertex",
+	}, nil
+}
+
+// EmbedDocuments generates embeddings for multiple documents
+func (c *Client) EmbedDocuments(ctx context.Context, documents []string) ([][]float32, error) {
+	result, err := c.EmbedDocumentsWithUsage(ctx, documents)
+	if err != nil {
+		return nil, err
+	}
+	return result.Embeddings, nil
+}
+
+// EmbedDocumentsWithUsage generates embeddings for multiple documents with usage data
+func (c *Client) EmbedDocumentsWithUsage(ctx context.Context, documents []string) (*BatchEmbedResult, error) {
+	if len(documents) == 0 {
+		return &BatchEmbedResult{
+			Embeddings: [][]float32{},
+			Usage:      &Usage{},
+			Model:      c.model,
+			Provider:   "vertex",
+		}, nil
+	}
+
+	// Process in batches
+	var allEmbeddings [][]float32
+	var totalTokens int
+
+	for i := 0; i < len(documents); i += DefaultBatchSize {
+		end := i + DefaultBatchSize
+		if end > len(documents) {
+			end = len(documents)
+		}
+		batch := documents[i:end]
+
+		embs, tokens, err := c.embedBatch(ctx, batch)
+		if err != nil {
+			return nil, fmt.Errorf("failed to embed batch %d-%d: %w", i, end, err)
+		}
+
+		allEmbeddings = append(allEmbeddings, embs...)
+		totalTokens += tokens
+	}
+
+	return &BatchEmbedResult{
+		Embeddings: allEmbeddings,
+		Usage: &Usage{
+			PromptTokens: totalTokens,
+			TotalTokens:  totalTokens,
+		},
+		Model:    c.model,
+		Provider: "vertex",
+	}, nil
+}
+
+// embedBatch embeds a single batch of documents
+func (c *Client) embedBatch(ctx context.Context, documents []string) ([][]float32, int, error) {
+	url := fmt.Sprintf(
+		"https://%s-aiplatform.googleapis.com/v1/projects/%s/locations/%s/publishers/google/models/%s:predict",
+		c.location, c.projectID, c.location, c.model,
+	)
+
+	// Build request
+	instances := make([]instance, len(documents))
+	for i, doc := range documents {
+		instances[i] = instance{
+			Content:  doc,
+			TaskType: "RETRIEVAL_DOCUMENT",
+		}
+	}
+
+	reqBody := predictRequest{
+		Instances: instances,
+		Parameters: &predictParameters{
+			OutputDimensionality: DefaultDimension,
+		},
+	}
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	// Execute with retries
+	var resp *predictResponse
+	var lastErr error
+
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := c.calculateBackoff(attempt)
+			c.log.Debug("retrying embedding request",
+				slog.Int("attempt", attempt),
+				slog.Duration("delay", delay),
+			)
+			select {
+			case <-ctx.Done():
+				return nil, 0, ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		resp, lastErr = c.doRequest(ctx, url, reqBytes)
+		if lastErr == nil {
+			break
+		}
+
+		// Don't retry on context cancellation
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+
+		c.log.Warn("embedding request failed",
+			slog.Int("attempt", attempt),
+			slog.String("error", lastErr.Error()),
+		)
+	}
+
+	if lastErr != nil {
+		return nil, 0, fmt.Errorf("all retries exhausted: %w", lastErr)
+	}
+
+	// Extract embeddings and token counts
+	embeddings := make([][]float32, len(resp.Predictions))
+	totalTokens := 0
+
+	for i, pred := range resp.Predictions {
+		embeddings[i] = pred.Embeddings.Values
+		totalTokens += pred.Embeddings.Statistics.TokenCount
+	}
+
+	return embeddings, totalTokens, nil
+}
+
+// doRequest executes a single HTTP request
+func (c *Client) doRequest(ctx context.Context, url string, body []byte) (*predictResponse, error) {
+	// Get access token with a deadline so a hung oauth2 endpoint doesn't
+	// block the job worker indefinitely. We use a separate child context with
+	// a generous-but-finite timeout rather than the job context directly, so
+	// that a short per-request deadline doesn't interfere with the overall job.
+	tokenCtx, tokenCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer tokenCancel()
+	token, err := fetchTokenWithContext(tokenCtx, c.tokenSrc.TokenSource)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access token: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		// Check if retryable
+		if resp.StatusCode == http.StatusTooManyRequests ||
+			resp.StatusCode == http.StatusServiceUnavailable ||
+			resp.StatusCode >= 500 {
+			return nil, &retryableError{
+				statusCode: resp.StatusCode,
+				body:       string(respBody),
+			}
+		}
+		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result predictResponse
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// calculateBackoff calculates the backoff delay for a given attempt
+func (c *Client) calculateBackoff(attempt int) time.Duration {
+	delay := float64(c.baseDelay) * math.Pow(2, float64(attempt-1))
+	if delay > float64(c.maxDelay) {
+		delay = float64(c.maxDelay)
+	}
+	return time.Duration(delay)
+}
+
+// retryableError is an error that can be retried
+type retryableError struct {
+	statusCode int
+	body       string
+}
+
+func (e *retryableError) Error() string {
+	return fmt.Sprintf("retryable API error %d: %s", e.statusCode, e.body)
+}
+
+// fetchTokenWithContext fetches an oauth2 token while respecting the provided
+// context deadline. The standard golang.org/x/oauth2 TokenSource.Token() does
+// not accept a context, so a hanging oauth2 endpoint can block indefinitely.
+// This wrapper runs the blocking call in a goroutine and returns when either
+// the token arrives or the context is cancelled.
+func fetchTokenWithContext(ctx context.Context, ts interface{ Token() (*oauth2.Token, error) }) (*oauth2.Token, error) {
+	type result struct {
+		tok *oauth2.Token
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		tok, err := ts.Token()
+		ch <- result{tok, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.tok, r.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("token fetch cancelled: %w", ctx.Err())
+	}
+}

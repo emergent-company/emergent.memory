@@ -1,0 +1,1340 @@
+package schemas
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/domain/extraction/agents"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// Service handles business logic for memory schemas
+type Service struct {
+	repo     *Repository
+	graphSvc *graph.Service
+	log      *slog.Logger
+
+	// maxMigrationScanObjects is the hard safety cap on the number of objects a
+	// synchronous migrate/rollback request may scan (config.Graph.
+	// MigrationScanMaxObjects). Non-positive disables the cap.
+	maxMigrationScanObjects int
+}
+
+// errMaxObjectsReached is an internal sentinel used to stop a streaming scan
+// once a per-type/per-request MaxObjects cap is reached, without treating the
+// stop as an error.
+var errMaxObjectsReached = errors.New("schemas: max objects reached")
+
+// NewService creates a new schemas service
+func NewService(repo *Repository, graphSvc *graph.Service, log *slog.Logger, cfg *config.Config) *Service {
+	return &Service{
+		repo:                    repo,
+		graphSvc:                graphSvc,
+		log:                     log.With(logger.Scope("schemas.svc")),
+		maxMigrationScanObjects: cfg.Graph.MigrationScanMaxObjects,
+	}
+}
+
+// GetCompiledTypes returns compiled object and relationship types for a project
+func (s *Service) GetCompiledTypes(ctx context.Context, projectID string) (*CompiledTypesResponse, error) {
+	return s.repo.GetCompiledTypesByProject(ctx, projectID)
+}
+
+// GetAvailablePacks returns schemas available for a project to install.
+// Returns schemas owned by the project that are not yet installed.
+func (s *Service) GetAvailablePacks(ctx context.Context, projectID string) ([]MemorySchemaListItem, error) {
+	return s.repo.GetAvailablePacks(ctx, projectID)
+}
+
+// ListSchemaPacks returns the project's schema catalog (project-owned packs
+// only; NULL-project builtin rows are excluded) with search + pagination,
+// mirroring the MCP schema-list tool.
+func (s *Service) ListSchemaPacks(ctx context.Context, projectID, search string, limit, offset int, includeDeprecated bool) ([]SchemaListInfo, int, error) {
+	return s.repo.ListSchemaPacks(ctx, projectID, search, limit, offset, includeDeprecated)
+}
+
+// GetInstalledPacks returns schemas installed for a project
+func (s *Service) GetInstalledPacks(ctx context.Context, projectID string) ([]InstalledSchemaItem, error) {
+	return s.repo.GetInstalledPacks(ctx, projectID)
+}
+
+// AssignVisiblePack is the user-facing assign seam (MCP schema-assign tool):
+// it refuses a schema the project cannot see — another project's, or a
+// NULL-project non-builtin — with a 404 before delegating to AssignPack
+// (issue #1114/#1041). Blueprint materialization shares blueprint-declared
+// packs across projects and therefore calls AssignPack directly, bypassing this
+// visibility gate.
+func (s *Service) AssignVisiblePack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
+	if _, err := s.repo.GetAssignablePack(ctx, req.SchemaID, projectID); err != nil {
+		return nil, err
+	}
+	return s.AssignPack(ctx, projectID, userID, req)
+}
+
+// AssignPack assigns a schema to a project and registers its types.
+// When req.DryRun is true, returns a preview without making any changes.
+// When req.Merge is true, additively merges incoming schemas into existing types.
+// When the schema has migration hints, auto-migration is triggered asynchronously.
+func (s *Service) AssignPack(ctx context.Context, projectID, userID string, req *AssignPackRequest) (*AssignPackResult, error) {
+	result, err := s.repo.AssignPackWithTypes(ctx, projectID, userID, req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Invalidate the schema cache so the next graph operation uses the fresh schema
+	// immediately rather than waiting for the 5-minute TTL to expire.
+	if !req.DryRun {
+		s.graphSvc.InvalidateSchemaCache(projectID)
+	}
+
+	// Get the full schema to check for migration hints
+	pack, packErr := s.repo.GetPackByID(ctx, req.SchemaID)
+	if packErr != nil || pack == nil {
+		return result, nil
+	}
+	if pack.Migrations == nil {
+		// No migration hints — no data transform needed, so a newer version can
+		// safely supersede older active versions of the same pack immediately.
+		// Without this, a version bump with no migrations leaves every older
+		// version active and their types duplicated in the compiled view.
+		if supErr := s.repo.SupersedeAssignments(ctx, projectID, pack.Name, pack.ID); supErr != nil {
+			s.log.Warn("failed to supersede older schema versions",
+				slog.String("schemaName", pack.Name), logger.Error(supErr))
+		}
+		return result, nil
+	}
+
+	// Task 8.6: dry_run — run preview and attach but don't enqueue
+	if req.DryRun {
+		preview, prevErr := s.PreviewSchemaMigration(ctx, projectID, &SchemaMigrationPreviewRequest{
+			ToSchemaID: req.SchemaID,
+			Hints:      pack.Migrations,
+		})
+		if prevErr == nil {
+			result.MigrationPreview = preview
+		}
+		return result, nil
+	}
+
+	// Task 8.1: Resolve migration chain
+	chain, chainErr := s.ResolveMigrationChain(ctx, projectID, req.SchemaID)
+	if chainErr != nil {
+		// Task 8.4: chain unresolvable
+		result.MigrationStatus = "chain_unresolvable"
+		result.MigrationBlockReason = chainErr.Error()
+		return result, nil
+	}
+	if len(chain) == 0 {
+		return result, nil
+	}
+
+	// Task 8.2: Preview first hop synchronously for risk gate
+	firstHop := chain[0]
+	preview, prevErr := s.PreviewSchemaMigration(ctx, projectID, &SchemaMigrationPreviewRequest{
+		FromSchemaID: firstHop.FromSchemaID,
+		ToSchemaID:   firstHop.ToSchemaID,
+		Hints:        firstHop.Hints,
+	})
+	if prevErr != nil {
+		result.MigrationStatus = "chain_unresolvable"
+		result.MigrationBlockReason = fmt.Sprintf("preview failed: %s", prevErr.Error())
+		return result, nil
+	}
+
+	// Task 8.3: Block if dangerous and not force
+	if preview.OverallRisk == string(graph.RiskLevelDangerous) && !req.Force {
+		result.MigrationStatus = "blocked"
+		result.MigrationBlockReason = preview.BlockReason
+		result.MigrationPreview = preview
+		return result, nil
+	}
+
+	// Task 8.5: Enqueue async migration job
+	job, jobErr := s.runAutoMigrationAsync(ctx, projectID, chain, req.Force, req.AutoUninstall)
+	if jobErr != nil {
+		s.log.Error("failed to enqueue migration job", logger.Error(jobErr))
+		result.MigrationStatus = "chain_unresolvable"
+		result.MigrationBlockReason = fmt.Sprintf("failed to enqueue: %s", jobErr.Error())
+		return result, nil
+	}
+
+	result.MigrationJobID = &job.ID
+	result.MigrationStatus = "pending"
+	return result, nil
+}
+
+// UpdateAssignment updates a pack assignment
+func (s *Service) UpdateAssignment(ctx context.Context, projectID, assignmentID string, req *UpdateAssignmentRequest) error {
+	if err := s.repo.UpdateAssignment(ctx, projectID, assignmentID, req); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
+// DeleteAssignment removes a pack assignment from a project
+func (s *Service) DeleteAssignment(ctx context.Context, projectID, assignmentID string) error {
+	if err := s.repo.DeleteAssignment(ctx, projectID, assignmentID); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
+// UpdateAssignmentBySchemaID updates the active assignment for a project+schema,
+// resolving the assignment id server-side from the (project_id, schema_id) pair.
+// It is the shared seam the MCP schema-assignment-update tool uses so the MCP
+// surface and the REST UpdateAssignment handler both mutate through this service
+// (issue #1041).
+func (s *Service) UpdateAssignmentBySchemaID(ctx context.Context, projectID, schemaID string, active bool) error {
+	a, err := s.repo.GetActiveAssignment(ctx, projectID, schemaID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return apperror.NewNotFound("schema assignment", schemaID)
+	}
+	if err := s.repo.UpdateAssignment(ctx, projectID, a.ID, &UpdateAssignmentRequest{Active: &active}); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
+// DeleteAssignmentBySchemaID soft-deletes the active assignment for a
+// project+schema, resolving the assignment id server-side from the
+// (project_id, schema_id) pair. It is the shared seam the MCP schema-uninstall
+// tool uses so the MCP surface and the REST DeleteAssignment handler both mutate
+// through this service (issue #1041).
+func (s *Service) DeleteAssignmentBySchemaID(ctx context.Context, projectID, schemaID string) error {
+	a, err := s.repo.GetActiveAssignment(ctx, projectID, schemaID)
+	if err != nil {
+		return err
+	}
+	if a == nil {
+		return apperror.NewNotFound("schema assignment", schemaID)
+	}
+	if err := s.repo.DeleteAssignment(ctx, projectID, a.ID); err != nil {
+		return err
+	}
+	s.graphSvc.InvalidateSchemaCache(projectID)
+	return nil
+}
+
+// CreatePack creates a new schema scoped to the given project.
+// If migration hints are present, they are validated before persisting.
+func (s *Service) CreatePack(ctx context.Context, projectID string, req *CreatePackRequest) (*GraphMemorySchema, error) {
+	// Validate objectTypeSchemas structure — each entry must have a non-empty "name" field.
+	// This catches the common mistake of using the wrong top-level key (e.g. "objectTypes"
+	// instead of "objectTypeSchemas"), which causes silent data loss during JSON binding.
+	if errs := validateSchemaDefinitions(req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas()); len(errs) > 0 {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid schema definitions: " + strings.Join(errs, "; "))
+	}
+
+	// Validate migration hints if present
+	if req.Migrations != nil {
+		errs := validateMigrationHints(req.Migrations, req.GetObjectTypeSchemas(), req.GetRelationshipTypeSchemas())
+		if len(errs) > 0 {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid migrations block: " + strings.Join(errs, "; "))
+		}
+	}
+	return s.repo.CreatePack(ctx, projectID, req)
+}
+
+// validateSchemaDefinitions checks that objectTypeSchemas and relationshipTypeSchemas
+// contain valid entries. Each object type must have a non-empty "name". Each relationship
+// type must have non-empty "name", "sourceType", and "targetType".
+// Returns a list of validation error strings (empty = valid).
+func validateSchemaDefinitions(objectTypeSchemas, relationshipTypeSchemas json.RawMessage) []string {
+	var errs []string
+
+	// Validate object types
+	if len(objectTypeSchemas) > 0 {
+		var entries []struct {
+			Name          string          `json:"name"`
+			Properties    json.RawMessage `json:"properties"`
+			ScopeKey      json.RawMessage `json:"scopeKey"`
+			ScopeKeySnake json.RawMessage `json:"scope_key"`
+		}
+		if err := json.Unmarshal(objectTypeSchemas, &entries); err != nil {
+			errs = append(errs, fmt.Sprintf("objectTypeSchemas is not a valid JSON array: %v", err))
+		} else if len(entries) == 0 {
+			errs = append(errs, "objectTypeSchemas array is empty — did you use 'objectTypes' instead of 'objectTypeSchemas'?")
+		} else {
+			// Build the known-type/property map first so scope-key reference
+			// targets can be resolved against the same definition set.
+			knownTypes := make(map[string]map[string]struct{}, len(entries))
+			for _, e := range entries {
+				if e.Name != "" {
+					knownTypes[e.Name] = propertyNamesFromProperties(e.Properties)
+				}
+			}
+			for i, e := range entries {
+				if e.Name == "" {
+					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] is missing required field 'name'", i))
+					continue
+				}
+				// Validate the optional scope-key declaration (issue #1148,
+				// option 2). Fail closed on an unknown property or target. A
+				// JSON null means absent — treat it exactly like an omitted
+				// field so a CLI payload that serialises `"scopeKey":null` for
+				// every type without a declaration is not rejected.
+				raw := e.ScopeKey
+				if len(raw) == 0 || isNullJSON(raw) {
+					raw = e.ScopeKeySnake
+				}
+				if len(raw) == 0 || isNullJSON(raw) {
+					continue
+				}
+				decl, perr := parseScopeKeyValue(raw)
+				if perr != nil {
+					errs = append(errs, fmt.Sprintf("objectTypeSchemas[%d] (%q): %v", i, e.Name, perr))
+					continue
+				}
+				errs = append(errs, ValidateScopeKey(e.Name, decl, knownTypes[e.Name], knownTypes)...)
+			}
+		}
+	}
+
+	// Validate relationship types (optional but if present must be well-formed)
+	if len(relationshipTypeSchemas) > 0 {
+		var entries []struct {
+			Name       string `json:"name"`
+			SourceType string `json:"sourceType"`
+			TargetType string `json:"targetType"`
+		}
+		if err := json.Unmarshal(relationshipTypeSchemas, &entries); err != nil {
+			errs = append(errs, fmt.Sprintf("relationshipTypeSchemas is not a valid JSON array: %v", err))
+		} else {
+			for i, e := range entries {
+				if e.Name == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] is missing required field 'name'", i))
+				}
+				if e.SourceType == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'sourceType'", i, e.Name))
+				}
+				if e.TargetType == "" {
+					errs = append(errs, fmt.Sprintf("relationshipTypeSchemas[%d] (%q) is missing required field 'targetType'", i, e.Name))
+				}
+			}
+		}
+	}
+
+	return errs
+}
+
+// GetPack returns a schema by ID if the caller owns it (same project)
+func (s *Service) GetPack(ctx context.Context, packID, projectID string) (*GraphMemorySchema, error) {
+	return s.repo.GetPack(ctx, packID, projectID)
+}
+
+// UpdatePack partially updates an existing schema the caller owns.
+// When object/relationship type schemas are supplied they are validated the
+// same way CreatePack validates them (including scope-key declarations), and
+// migration hints (if present) are validated before persisting.
+func (s *Service) UpdatePack(ctx context.Context, packID, projectID string, req *UpdatePackRequest) (*GraphMemorySchema, error) {
+	// Resolve the effective schemas: request-provided values win, otherwise the
+	// pack's existing definitions fill the gap (needed for migration validation
+	// and for a partial schema update's cross-type scope-key resolution).
+	objSchemas := req.ObjectTypeSchemas
+	relSchemas := req.RelationshipTypeSchemas
+	hasObj := len(objSchemas) > 0
+	hasRel := len(relSchemas) > 0
+	if req.Migrations != nil || hasObj != hasRel {
+		pack, err := s.repo.GetPack(ctx, packID, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if !hasObj {
+			objSchemas = pack.ObjectTypeSchemas
+		}
+		if !hasRel {
+			relSchemas = pack.RelationshipTypeSchemas
+		}
+	}
+
+	// Validate supplied schema definitions (mirrors CreatePack). Uses the
+	// resolved set so a partial update still resolves scope-key references.
+	if hasObj || hasRel {
+		if errs := validateSchemaDefinitions(objSchemas, relSchemas); len(errs) > 0 {
+			return nil, apperror.NewBadRequest("invalid schema definitions: " + strings.Join(errs, "; "))
+		}
+	}
+
+	if req.Migrations != nil {
+		errs := validateMigrationHints(req.Migrations, objSchemas, relSchemas)
+		if len(errs) > 0 {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid migrations block: " + strings.Join(errs, "; "))
+		}
+	}
+	return s.repo.UpdatePack(ctx, packID, projectID, req)
+}
+
+// DeletePack deletes a schema the caller owns from the registry
+func (s *Service) DeletePack(ctx context.Context, packID, projectID string) error {
+	return s.repo.DeletePack(ctx, packID, projectID)
+}
+
+// GetSchemaHistory returns all schema assignments for a project including removed ones.
+func (s *Service) GetSchemaHistory(ctx context.Context, projectID string) ([]SchemaHistoryItem, error) {
+	return s.repo.GetAssignmentHistory(ctx, projectID)
+}
+
+// ListPackClaims returns, for a project, the mapping between compiled schema
+// packs and the applied blueprints that claim them.
+func (s *Service) ListPackClaims(ctx context.Context, projectID string) ([]PackBlueprintClaim, error) {
+	return s.repo.ListPackClaims(ctx, projectID)
+}
+
+// ValidateObjects scans all graph objects in a project against the current compiled schema
+// and reports which objects have drifted (stale schema_version).
+func (s *Service) ValidateObjects(ctx context.Context, projectID string) (*ValidateObjectsResponse, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	// Get current compiled types to know the current schema version per type
+	compiled, err := s.repo.GetCompiledTypesByProject(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get compiled types: %w", err)
+	}
+
+	// Build map: typeName → current schema version
+	currentVersion := make(map[string]string)
+	for _, t := range compiled.ObjectTypes {
+		if t.SchemaVersion != "" {
+			currentVersion[t.Name] = t.SchemaVersion
+		}
+	}
+
+	// List all objects in the project
+	objs, err := s.graphSvc.GetRepository().List(ctx, graph.ListParams{
+		ProjectID: projectUUID,
+		Limit:     10000, // reasonable cap
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects: %w", err)
+	}
+
+	resp := &ValidateObjectsResponse{
+		ProjectID:    projectID,
+		TotalObjects: len(objs),
+	}
+
+	for _, obj := range objs {
+		var issues []string
+		if cv, ok := currentVersion[obj.Type]; ok {
+			objVersion := ""
+			if obj.SchemaVersion != nil {
+				objVersion = *obj.SchemaVersion
+			}
+			if objVersion == "" {
+				issues = append(issues, fmt.Sprintf("schema_version not set (current: %s)", cv))
+			} else if objVersion != cv {
+				issues = append(issues, fmt.Sprintf("schema_version mismatch: object has %q, current is %q", objVersion, cv))
+			}
+		}
+
+		if len(issues) > 0 {
+			resp.StaleObjects++
+			resp.Results = append(resp.Results, ObjectValidationResult{
+				EntityID:      obj.CanonicalID.String(),
+				Type:          obj.Type,
+				Key:           obj.Key,
+				SchemaVersion: obj.SchemaVersion,
+				Issues:        issues,
+			})
+		}
+	}
+
+	return resp, nil
+}
+
+// MigrateTypes renames object/edge types and/or property keys across live graph data.
+func (s *Service) MigrateTypes(ctx context.Context, projectID string, req *MigrateRequest) (*MigrateResponse, error) {
+	return s.repo.MigrateTypes(ctx, projectID, req)
+}
+
+// ---------------------------------------------------------------------------
+// Migration Chain Resolution (Tasks 5.1–5.5)
+// ---------------------------------------------------------------------------
+
+const maxMigrationHops = 10
+
+// ResolveMigrationChain walks the from_version chain from the installed schema
+// version up to toSchemaID, returning the ordered list of hops to execute.
+// Returns an empty slice if no migration is needed (already at toSchemaID).
+func (s *Service) ResolveMigrationChain(ctx context.Context, projectID, toSchemaID string) ([]MigrationHop, error) {
+	// Get the target schema
+	toSchema, err := s.repo.GetPackByID(ctx, toSchemaID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot find target schema %s: %w", toSchemaID, err)
+	}
+	if toSchema.Migrations == nil {
+		return nil, nil
+	}
+
+	// Walk backwards building hops from newest → oldest
+	var hopsReverse []MigrationHop
+	current := toSchema
+
+	for i := 0; i < maxMigrationHops; i++ {
+		if current.Migrations == nil {
+			break
+		}
+		fromVersion := current.Migrations.FromVersion
+		if fromVersion == "" {
+			break
+		}
+
+		// Find schema in registry by (name, version) for the from_version
+		fromSchemas, lookupErr := s.repo.GetInstalledSchemasByName(ctx, projectID, current.Name)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("failed to look up installed schemas for %q: %w", current.Name, lookupErr)
+		}
+
+		// Check if the currently installed version is fromVersion
+		var fromSchema *GraphMemorySchema
+		for j := range fromSchemas {
+			if fromSchemas[j].Version == fromVersion {
+				fromSchema = &fromSchemas[j]
+				break
+			}
+		}
+
+		// Also look up in global registry for the hop's fromSchemaID
+		if fromSchema == nil {
+			// Look globally in registry by name+version
+			globalSchema, globalErr := s.repo.GetPackByNameVersion(ctx, current.Name, fromVersion)
+			if globalErr != nil || globalSchema == nil {
+				return nil, fmt.Errorf("cannot resolve migration hop: schema %q version %q not found in registry", current.Name, fromVersion)
+			}
+			fromSchema = globalSchema
+		}
+
+		hopsReverse = append(hopsReverse, MigrationHop{
+			FromSchemaID: fromSchema.ID,
+			ToSchemaID:   current.ID,
+			Hints:        current.Migrations,
+		})
+
+		// Check if fromVersion is installed for this project — if so, stop
+		for j := range fromSchemas {
+			if fromSchemas[j].Version == fromVersion {
+				// Found it installed — done walking backwards
+				goto done
+			}
+		}
+
+		// Continue walking backwards
+		current = fromSchema
+	}
+
+	if len(hopsReverse) >= maxMigrationHops {
+		return nil, fmt.Errorf("migration chain exceeds maximum depth of %d hops", maxMigrationHops)
+	}
+
+done:
+	// Reverse hops so they run oldest → newest
+	chain := make([]MigrationHop, len(hopsReverse))
+	for i, hop := range hopsReverse {
+		chain[len(hopsReverse)-1-i] = hop
+	}
+	return chain, nil
+}
+
+// ---------------------------------------------------------------------------
+// SchemaMigrationOrchestrator Methods (Tasks 6.2–6.6)
+// ---------------------------------------------------------------------------
+
+// PreviewSchemaMigration runs a dry migration against all affected objects and
+// returns a risk assessment without persisting any changes.
+func (s *Service) PreviewSchemaMigration(ctx context.Context, projectID string, req *SchemaMigrationPreviewRequest) (*SchemaMigrationPreviewResponse, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	hints := req.Hints
+	if hints == nil && req.ToSchemaID != "" {
+		toSchema, schErr := s.repo.GetPackByID(ctx, req.ToSchemaID)
+		if schErr == nil && toSchema != nil {
+			hints = toSchema.Migrations
+		}
+	}
+
+	// Build from/to agents.ObjectSchema maps
+	fromObjSchemas, toObjSchemas, schErr := s.buildFromToObjectSchemas(ctx, req.FromSchemaID, req.ToSchemaID, hints)
+	if schErr != nil {
+		return nil, schErr
+	}
+
+	migrator := graph.NewSchemaMigrator(graph.NewPropertyValidator(), s.log)
+
+	resp := &SchemaMigrationPreviewResponse{
+		ProjectID:    projectID,
+		FromSchemaID: req.FromSchemaID,
+		ToSchemaID:   req.ToSchemaID,
+		Plan:         buildMigrationPlan(fromObjSchemas, toObjSchemas, hints),
+	}
+
+	overallRisk := graph.RiskLevelSafe
+	perType := map[string]*MigrationTypeResult{}
+
+	for typeName, toSchema := range toObjSchemas {
+		fromSchema := fromObjSchemas[typeName]
+		if fromSchema == nil {
+			fromSchema = &agents.ObjectSchema{Name: typeName, Properties: map[string]agents.PropertyDef{}}
+		}
+
+		// List all objects of this type in the project
+		typeStr := typeName
+		objs, listErr := s.graphSvc.GetRepository().List(ctx, graph.ListParams{
+			ProjectID: projectUUID,
+			Type:      &typeStr,
+		})
+		if listErr != nil {
+			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
+		}
+
+		typeResult := &MigrationTypeResult{
+			TypeName:    typeName,
+			ObjectCount: len(objs),
+		}
+
+		typeRisk := graph.RiskLevelSafe
+		var results []*graph.MigrationResult
+		for _, obj := range objs {
+			result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, req.FromSchemaID, req.ToSchemaID)
+			results = append(results, result)
+			if riskWeight(result.RiskLevel) > riskWeight(typeRisk) {
+				typeRisk = result.RiskLevel
+			}
+			if !result.CanProceed {
+				typeResult.CanProceed = false
+				typeResult.BlockReason = result.BlockReason
+			}
+		}
+		aggregateMigrationProps(typeResult, results)
+		if len(objs) > 0 && typeResult.BlockReason == "" {
+			typeResult.CanProceed = true
+		}
+		typeResult.RiskLevel = string(typeRisk)
+
+		if riskWeight(typeRisk) > riskWeight(overallRisk) {
+			overallRisk = typeRisk
+		}
+
+		resp.TotalObjects += len(objs)
+		perType[typeName] = typeResult
+	}
+
+	for _, tr := range perType {
+		resp.PerTypeResults = append(resp.PerTypeResults, *tr)
+	}
+
+	resp.OverallRisk = string(overallRisk)
+	resp.CanProceed = overallRisk != graph.RiskLevelDangerous
+	if !resp.CanProceed {
+		resp.BlockReason = fmt.Sprintf("migration risk level is %s", overallRisk)
+	}
+
+	return resp, nil
+}
+
+// buildMigrationPlan derives a structured dry-run plan from the from/to object
+// schemas and any migration hints. Hints are authoritative for type/property
+// renames and declared removals; added types and added properties are computed
+// from the schema diff. Types that arrive via a hint type_rename are reported
+// as renames (not added types), and properties of brand-new types are reported
+// via AddedTypes only (not duplicated into AddedProperties).
+func buildMigrationPlan(fromObjSchemas, toObjSchemas map[string]*agents.ObjectSchema, hints *SchemaMigrationHints) *SchemaMigrationPlan {
+	plan := &SchemaMigrationPlan{}
+
+	if hints != nil {
+		plan.TypeRenames = hints.TypeRenames
+		plan.PropertyRenames = hints.PropertyRenames
+		plan.RemovedProperties = hints.RemovedProperties
+	}
+
+	renameTargets := map[string]bool{}
+	for _, tr := range plan.TypeRenames {
+		renameTargets[tr.To] = true
+	}
+
+	for typeName := range toObjSchemas {
+		if renameTargets[typeName] {
+			continue // type arrives via a rename — reported under type_renames
+		}
+		if _, ok := fromObjSchemas[typeName]; !ok {
+			plan.AddedTypes = append(plan.AddedTypes, typeName)
+		}
+	}
+
+	for typeName, toSchema := range toObjSchemas {
+		fromSchema := fromObjSchemas[typeName]
+		if fromSchema == nil {
+			continue // brand-new type — its props are covered by AddedTypes
+		}
+		for propName := range toSchema.Properties {
+			if _, ok := fromSchema.Properties[propName]; !ok {
+				plan.AddedProperties = append(plan.AddedProperties, AddedProperty{TypeName: typeName, Name: propName})
+			}
+		}
+	}
+
+	return plan
+}
+
+// aggregateMigrationProps unions and dedupes per-object migration results into
+// the per-type prop summaries (migrated/dropped/added/coerced).
+func aggregateMigrationProps(typeResult *MigrationTypeResult, results []*graph.MigrationResult) {
+	for _, r := range results {
+		typeResult.MigratedProps = unionStrings(typeResult.MigratedProps, r.MigratedProps)
+		typeResult.DroppedProps = unionStrings(typeResult.DroppedProps, r.DroppedProps)
+		typeResult.AddedProps = unionStrings(typeResult.AddedProps, r.AddedProps)
+		typeResult.CoercedProps = unionStrings(typeResult.CoercedProps, r.CoercedProps)
+	}
+}
+
+// unionStrings appends items to dst, skipping values already present.
+func unionStrings(dst, items []string) []string {
+	seen := make(map[string]bool, len(dst)+len(items))
+	for _, s := range dst {
+		seen[s] = true
+	}
+	for _, s := range items {
+		if !seen[s] {
+			dst = append(dst, s)
+			seen[s] = true
+		}
+	}
+	return dst
+}
+
+// ExecuteSchemaMigration runs rename SQL and then migrates all affected objects,
+// writing back their updated properties and schema_version.
+func (s *Service) ExecuteSchemaMigration(ctx context.Context, projectID string, req *SchemaMigrationExecuteRequest) (*SchemaMigrationExecuteResponse, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	hints := req.Hints
+	if hints == nil && req.ToSchemaID != "" {
+		toSchema, schErr := s.repo.GetPackByID(ctx, req.ToSchemaID)
+		if schErr == nil && toSchema != nil {
+			hints = toSchema.Migrations
+		}
+	}
+
+	// Step 1: Run System B SQL renames if hints specify type/property renames
+	if hints != nil && (len(hints.TypeRenames) > 0 || len(hints.PropertyRenames) > 0) {
+		migrateReq := &MigrateRequest{DryRun: false}
+		for _, tr := range hints.TypeRenames {
+			migrateReq.TypeRenames = append(migrateReq.TypeRenames, TypeRename{From: tr.From, To: tr.To})
+		}
+		for _, pr := range hints.PropertyRenames {
+			migrateReq.PropertyRenames = append(migrateReq.PropertyRenames, PropertyRename{
+				TypeName: pr.TypeName, From: pr.From, To: pr.To,
+			})
+		}
+		if _, migrErr := s.repo.MigrateTypes(ctx, projectID, migrateReq); migrErr != nil {
+			return nil, fmt.Errorf("rename SQL failed: %w", migrErr)
+		}
+	}
+
+	// Step 2: Build from/to schemas and run SchemaMigrator per object
+	fromObjSchemas, toObjSchemas, schErr := s.buildFromToObjectSchemas(ctx, req.FromSchemaID, req.ToSchemaID, hints)
+	if schErr != nil {
+		return nil, schErr
+	}
+
+	migrator := graph.NewSchemaMigrator(graph.NewPropertyValidator(), s.log)
+
+	// Build set of declared-removed properties (suppresses block for risky drops)
+	removedSet := map[string]map[string]bool{} // typeName → propName set
+	if hints != nil {
+		for _, rp := range hints.RemovedProperties {
+			if removedSet[rp.TypeName] == nil {
+				removedSet[rp.TypeName] = map[string]bool{}
+			}
+			removedSet[rp.TypeName][rp.Name] = true
+		}
+	}
+
+	resp := &SchemaMigrationExecuteResponse{
+		ProjectID:    projectID,
+		FromSchemaID: req.FromSchemaID,
+		ToSchemaID:   req.ToSchemaID,
+	}
+
+	db := s.repo.DB()
+	// Migration archive keys (from_version / to_version) MUST be the packs'
+	// HUMAN version strings (e.g. "1.0.0"/"2.0.0"), because the rollback path
+	// queries archives by human version (req.ToVersion). Schema IDs are still
+	// used for pack lookups and the kb.schema_migration_runs record. The
+	// object's schema_version stamp is the to-pack human version so the drift
+	// scan can compare it — stamping the UUID would leave objects flagged
+	// stale forever and would make rollback unfindable.
+	lookupVersion := func(schemaID string) string {
+		if schemaID == "" {
+			return ""
+		}
+		pack, schErr := s.repo.GetPackByID(ctx, schemaID)
+		if schErr != nil || pack == nil {
+			return ""
+		}
+		return pack.Version
+	}
+	fromVersion := resolveArchiveVersion(req.FromSchemaID, lookupVersion)
+	toVersion := resolveArchiveVersion(req.ToSchemaID, lookupVersion)
+	schemaVersion := toVersion
+	maxObjs := req.MaxObjects
+	// scanned counts every object visited across all types and enforces the
+	// MigrationScanMaxObjects safety cap on the synchronous request path.
+	scanned := 0
+
+	for typeName, toSchema := range toObjSchemas {
+		fromSchema := fromObjSchemas[typeName]
+		if fromSchema == nil {
+			fromSchema = &agents.ObjectSchema{Name: typeName, Properties: map[string]agents.PropertyDef{}}
+		}
+
+		typeStr := typeName
+		listParams := graph.ListParams{
+			ProjectID: projectUUID,
+			Type:      &typeStr,
+			// MigrateObject appends dropped fields to obj.MigrationArchive, and
+			// the patch below persists that slice. Without the column selected the
+			// slice scans empty and the UPDATE clobbers the previous hop's entries.
+			IncludeMigrationArchive: true,
+			// NOTE: OnlyWithMigrationArchive is deliberately NOT set here. A
+			// forward migration must also visit objects with an EMPTY archive
+			// (a first-ever migration has zero archived objects, as do objects
+			// created after a prior migration); filtering by archive would skip
+			// them and regress data migration.
+		}
+		// ListEach streams the type's objects one page at a time so the result
+		// set is never fully materialised, while still covering every page
+		// (List alone caps at MaxListLimit).
+		processed := 0
+		listErr := s.graphSvc.GetRepository().ListEach(ctx, listParams, func(page []*graph.GraphObject) error {
+			for _, obj := range page {
+				if maxObjs > 0 && processed >= maxObjs {
+					// Per-type cap reached — stop fetching further pages for this
+					// type and move on to the next.
+					return errMaxObjectsReached
+				}
+				scanned++
+				if s.maxMigrationScanObjects > 0 && scanned > s.maxMigrationScanObjects {
+					// A mid-scan abort here can leave the current type partially
+					// migrated, which matches today's failure mode (execute is not
+					// transactional and aborts partway through).
+					return apperror.NewBadRequest(fmt.Sprintf(
+						"schema migration would scan more than %d objects; narrow the migration (e.g. max_objects or a type filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
+						s.maxMigrationScanObjects))
+				}
+				processed++
+
+				result := migrator.MigrateObject(ctx, obj, fromSchema, toSchema, fromVersion, toVersion)
+				if !result.CanProceed && !req.Force {
+					// Check if the block is solely due to declared-removed properties
+					if !canProceedWithRemovedHints(result, removedSet[typeName]) {
+						resp.ObjectsFailed++
+						continue
+					}
+				}
+
+				// Patch the object with new properties, schema_version, and migration_archive
+				archiveJSON, _ := json.Marshal(obj.MigrationArchive)
+				_, patchErr := db.NewRaw(`
+					UPDATE kb.graph_objects
+					SET properties = ?,
+					    schema_version = ?,
+					    migration_archive = ?,
+					    updated_at = NOW()
+					WHERE id = ? AND project_id = ?
+				`, result.NewProperties, schemaVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
+				if patchErr != nil {
+					s.log.Warn("failed to patch object after migration",
+						slog.String("objectId", obj.ID.String()),
+						logger.Error(patchErr))
+					resp.ObjectsFailed++
+					continue
+				}
+				resp.ObjectsMigrated++
+			}
+			return nil
+		})
+		if listErr != nil {
+			if errors.Is(listErr, errMaxObjectsReached) {
+				continue
+			}
+			var apErr *apperror.Error
+			if errors.As(listErr, &apErr) {
+				return nil, apErr
+			}
+			return nil, fmt.Errorf("failed to list objects of type %s: %w", typeName, listErr)
+		}
+	}
+
+	// Record the run. kb.schema_migration_runs stores HUMAN versions (it has no
+	// from_schema_id/to_schema_id columns); the IDs remain on the job row. The
+	// run record is the fallback source for rollback pack resolution when a
+	// migration was executed synchronously (no job). Previously this INSERT
+	// referenced non-existent columns and its error was discarded, so no run was
+	// ever recorded.
+	now := time.Now()
+	if _, runErr := db.NewRaw(`
+		INSERT INTO kb.schema_migration_runs
+		(project_id, from_version, to_version, status, total_objects, successful, failed, started_at, completed_at)
+		VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?)
+	`, projectID, fromVersion, toVersion, resp.ObjectsMigrated+resp.ObjectsFailed, resp.ObjectsMigrated, resp.ObjectsFailed, now, now).Exec(ctx); runErr != nil {
+		s.log.Warn("failed to record schema migration run", logger.Error(runErr))
+	}
+
+	return resp, nil
+}
+
+// SupersedeFromVersion soft-deletes the from_schema assignment after a
+// successful manual migration, but only when it is a same-pack version upgrade
+// (from.Name == to.Name). A different-pack migration must not remove the other
+// pack. No-op on any error — supersede is best-effort cleanup.
+func (s *Service) SupersedeFromVersion(ctx context.Context, projectID, fromSchemaID, toSchemaID string) {
+	from, err := s.repo.GetPackByID(ctx, fromSchemaID)
+	if err != nil || from == nil {
+		return
+	}
+	to, err := s.repo.GetPackByID(ctx, toSchemaID)
+	if err != nil || to == nil || to.Name != from.Name {
+		return
+	}
+	// Keep `to` (the new version) active; supersede every other same-name
+	// version, including `from`.
+	if supErr := s.repo.SupersedeAssignments(ctx, projectID, to.Name, to.ID); supErr != nil {
+		s.log.Warn("failed to supersede older version after migration",
+			slog.String("schemaName", to.Name), logger.Error(supErr))
+	}
+}
+
+// RollbackSchemaMigration restores property data from migration_archive for
+// all project objects that have an archive entry targeting toVersion.
+// If restoreTypeRegistry is true, the old schema types are re-installed and
+// the new schema's additions are removed, all in a single transaction.
+func (s *Service) RollbackSchemaMigration(ctx context.Context, projectID string, req *SchemaMigrationRollbackRequest) (*SchemaMigrationRollbackResponse, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid projectId")
+	}
+
+	// max_objects cannot be combined with restore_type_registry: when the cap is
+	// reached the restore loop stops early (errMaxObjectsReached) and would skip
+	// the registry restore entirely, committing a partial data restore while
+	// silently dropping the all-or-nothing registry restore. Reject the
+	// combination up front so it fails loudly instead.
+	if req.RestoreTypeRegistry && req.MaxObjects > 0 {
+		return nil, apperror.NewBadRequest("max_objects cannot be combined with restore_type_registry: the type registry restore is all-or-nothing and must run in full")
+	}
+
+	// Resolve the pre-migration (from) and migration-target (to) packs up front,
+	// before any writes, so an explicit restore_type_registry request fails
+	// loudly instead of silently no-oping. The resolved packs are then used
+	// inside the single transaction below.
+	var fromPack, toPack *GraphMemorySchema
+	if req.RestoreTypeRegistry {
+		fromPack, toPack, err = s.resolveRollbackPacks(ctx, projectID, req.ToVersion)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	migrator := graph.NewSchemaMigrator(graph.NewPropertyValidator(), s.log)
+	resp := &SchemaMigrationRollbackResponse{
+		ProjectID: projectID,
+		ToVersion: req.ToVersion,
+	}
+
+	db := s.repo.DB()
+
+	// The scan now runs INSIDE the transaction via ListEachTx so only one page
+	// is in memory at a time and the data restore + optional registry restore
+	// stay atomic in ONE transaction. OnlyWithMigrationArchive bounds the scan
+	// to archive-carrying objects (via the partial index), and the
+	// (created_at, id) keyset cursor is stable here: the per-object UPDATE
+	// touches only properties/schema_version/migration_archive/updated_at,
+	// never created_at/id/supersedes_id/deleted_at, so pages cannot be skipped
+	// or revisited.
+	err = db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		scanned := 0
+		listParams := graph.ListParams{
+			ProjectID:                projectUUID,
+			IncludeMigrationArchive:  true,
+			OnlyWithMigrationArchive: true,
+		}
+		listErr := s.graphSvc.GetRepository().ListEachTx(ctx, tx, listParams, func(page []*graph.GraphObject) error {
+			for _, obj := range page {
+				scanned++
+				if s.maxMigrationScanObjects > 0 && scanned > s.maxMigrationScanObjects {
+					// Returning an error from the tx aborts it, so nothing is
+					// written (data or registry).
+					return apperror.NewBadRequest(fmt.Sprintf(
+						"rollback would scan more than %d objects; narrow the rollback (e.g. max_objects or a version filter) or raise GRAPH_MIGRATION_SCAN_MAX_OBJECTS",
+						s.maxMigrationScanObjects))
+				}
+				if len(obj.MigrationArchive) == 0 {
+					continue
+				}
+				result := migrator.RollbackObject(obj, req.ToVersion)
+				if !result.Success {
+					continue
+				}
+				if req.MaxObjects > 0 && resp.ObjectsRestored >= req.MaxObjects {
+					// max_objects cap reached — stop restoring (commit what's done).
+					return errMaxObjectsReached
+				}
+				// result.ToVersion is the archive's from_version — the human pack
+				// version the object is being restored to. Stamp that, not
+				// req.ToVersion (the migration being undone), otherwise the object
+				// is left labelled with the schema we just rolled back from.
+				restoredVersion := result.ToVersion
+				archiveJSON, _ := json.Marshal(obj.MigrationArchive)
+				_, patchErr := tx.NewRaw(`
+					UPDATE kb.graph_objects
+					SET properties = ?,
+					    schema_version = ?,
+					    migration_archive = ?,
+					    updated_at = NOW()
+					WHERE id = ? AND project_id = ?
+				`, obj.Properties, restoredVersion, string(archiveJSON), obj.ID, projectID).Exec(ctx)
+				if patchErr != nil {
+					resp.ObjectsFailed++
+				} else {
+					resp.ToVersion = restoredVersion
+					resp.ObjectsRestored++
+				}
+			}
+			return nil
+		})
+		if listErr != nil {
+			if errors.Is(listErr, errMaxObjectsReached) {
+				return nil
+			}
+			return listErr
+		}
+
+		if req.RestoreTypeRegistry {
+			// Same transaction as the data restore: if the registry restore
+			// fails, the whole rollback rolls back atomically.
+			if regErr := s.repo.RestoreTypeRegistryTx(ctx, tx, projectID, "", fromPack, toPack); regErr != nil {
+				return fmt.Errorf("restore type registry: %w", regErr)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		var apErr *apperror.Error
+		if errors.As(err, &apErr) {
+			return nil, apErr
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return resp, nil
+}
+
+// priorFromSchemaID returns the schema ID of the pack that was active before the
+// migration being undone. For a multi-hop job the archive that rollback matches
+// belongs to the final hop, so the pre-migration pack is that hop's
+// from_schema_id; otherwise it is the job's overall from_schema_id.
+func priorFromSchemaID(job *SchemaMigrationJob) string {
+	if job == nil {
+		return ""
+	}
+	if n := len(job.Chain); n > 0 && job.Chain[n-1].FromSchemaID != "" {
+		return job.Chain[n-1].FromSchemaID
+	}
+	return job.FromSchemaID
+}
+
+// resolveRollbackPacks resolves the from (pre-migration) and to (migration
+// target) packs for a registry-restoring rollback of the migration that
+// produced toVersion.
+//
+// Primary source: kb.schema_migration_jobs, the table that persists
+// from_schema_id/to_schema_id. The migration being undone is the most recent
+// completed job whose target pack human version equals toVersion.
+//
+// Fallback: when no job exists (e.g. a synchronous POST /migrate/execute), the
+// version-only kb.schema_migration_runs record supplies the from_version and
+// the from-pack is resolved by (name, version) from the to-pack's name.
+func (s *Service) resolveRollbackPacks(ctx context.Context, projectID, toVersion string) (*GraphMemorySchema, *GraphMemorySchema, error) {
+	if toVersion == "" {
+		return nil, nil, apperror.NewBadRequest("to_version is required to restore the type registry")
+	}
+
+	job, err := s.repo.FindMigrationJobByToPackVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if job != nil {
+		toPack, err := s.repo.GetPackByID(ctx, job.ToSchemaID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("restore type registry: cannot resolve to-pack %s: %w", job.ToSchemaID, err)
+		}
+		if toPack.Version != toVersion {
+			return nil, nil, fmt.Errorf("restore type registry: to-pack %s is version %q, expected %q", toPack.ID, toPack.Version, toVersion)
+		}
+		fromID := priorFromSchemaID(job)
+		fromPack, err := s.repo.GetPackByID(ctx, fromID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("restore type registry: cannot resolve from-pack %s: %w", fromID, err)
+		}
+		return fromPack, toPack, nil
+	}
+
+	fromVersion, err := s.repo.FindMigrationRunFromVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if fromVersion == "" {
+		return nil, nil, apperror.NewNotFound("migration to version", toVersion)
+	}
+	toPack, err := s.repo.GetProjectPackByVersion(ctx, projectID, toVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("restore type registry: cannot resolve to-pack for version %q: %w", toVersion, err)
+	}
+	fromPack, err := s.repo.GetPackByNameVersion(ctx, toPack.Name, fromVersion)
+	if err != nil {
+		return nil, nil, fmt.Errorf("restore type registry: cannot resolve from-pack %s@%s: %w", toPack.Name, fromVersion, err)
+	}
+	return fromPack, toPack, nil
+}
+
+// CommitMigrationArchive prunes migration_archive entries whose to_version is
+// less than or equal to throughVersion from all objects in the project.
+func (s *Service) CommitMigrationArchive(ctx context.Context, projectID string, req *CommitMigrationArchiveRequest) (*CommitMigrationArchiveResponse, error) {
+	db := s.repo.DB()
+
+	// Use JSONB filtering to remove archive entries where to_version <= throughVersion
+	// We do this via a CTE that reconstructs the filtered array.
+	result, execErr := db.NewRaw(`
+		WITH updated AS (
+			UPDATE kb.graph_objects
+			SET migration_archive = (
+				SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+				FROM jsonb_array_elements(migration_archive) AS elem
+				WHERE elem->>'to_version' > ?
+			),
+			updated_at = NOW()
+			WHERE project_id = ?
+			  AND migration_archive IS NOT NULL
+			  AND migration_archive != '[]'::jsonb
+			  AND EXISTS (
+				SELECT 1 FROM jsonb_array_elements(migration_archive) AS elem
+				WHERE elem->>'to_version' <= ?
+			  )
+			RETURNING 1
+		) SELECT COUNT(*) FROM updated
+	`, req.ThroughVersion, projectID, req.ThroughVersion).Exec(ctx)
+	if execErr != nil {
+		return nil, apperror.ErrDatabase.WithInternal(execErr)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	return &CommitMigrationArchiveResponse{
+		ProjectID:      projectID,
+		ThroughVersion: req.ThroughVersion,
+		ObjectsUpdated: int(rowsAffected),
+	}, nil
+}
+
+// GetMigrationJobStatus returns the current status of a migration job.
+func (s *Service) GetMigrationJobStatus(ctx context.Context, projectID, jobID string) (*SchemaMigrationJob, error) {
+	job, err := s.repo.GetMigrationJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.ProjectID != projectID {
+		return nil, apperror.ErrNotFound.WithMessage("migration job not found")
+	}
+	return job, nil
+}
+
+// runAutoMigrationAsync deduplicates, then creates a pending SchemaMigrationJob
+// that the background worker will pick up and execute.
+func (s *Service) runAutoMigrationAsync(ctx context.Context, projectID string, chain []MigrationHop, force, autoUninstall bool) (*SchemaMigrationJob, error) {
+	if len(chain) == 0 {
+		return nil, fmt.Errorf("empty migration chain")
+	}
+	firstHop := chain[0]
+	lastHop := chain[len(chain)-1]
+
+	// Dedup: check for an existing pending/running job
+	existing, _ := s.repo.FindActiveMigrationJob(ctx, projectID, firstHop.FromSchemaID, lastHop.ToSchemaID)
+	if existing != nil {
+		return existing, nil
+	}
+
+	job := &SchemaMigrationJob{
+		ProjectID:     projectID,
+		FromSchemaID:  firstHop.FromSchemaID,
+		ToSchemaID:    lastHop.ToSchemaID,
+		Chain:         chain,
+		Status:        "pending",
+		AutoUninstall: autoUninstall,
+		CreatedAt:     time.Now(),
+	}
+
+	if err := s.repo.CreateMigrationJob(ctx, job); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// riskWeight converts a risk level to a numeric weight for comparison.
+func riskWeight(r graph.MigrationRiskLevel) int {
+	switch r {
+	case graph.RiskLevelSafe:
+		return 0
+	case graph.RiskLevelCautious:
+		return 1
+	case graph.RiskLevelRisky:
+		return 2
+	case graph.RiskLevelDangerous:
+		return 3
+	}
+	return 0
+}
+
+// canProceedWithRemovedHints returns true if the only reason a migration can't
+// proceed is due to explicitly declared removed properties.
+func canProceedWithRemovedHints(result *graph.MigrationResult, removedProps map[string]bool) bool {
+	if result.CanProceed {
+		return true
+	}
+	// Check if all dropped props are in the declared removedProps set
+	for _, dp := range result.DroppedProps {
+		if !removedProps[dp] {
+			return false
+		}
+	}
+	// Check no error-level issues beyond removed props
+	for _, issue := range result.Issues {
+		if issue.Severity == "error" {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveArchiveVersion returns the human pack version to use as a
+// migration_archive from_version/to_version key. lookup resolves a schema ID to
+// its pack's human version, returning "" when unavailable. When no human
+// version can be resolved we fall back to the schema ID so the archive key
+// stays non-empty and self-consistent (a later rollback would then have to
+// query the ID, which is the pre-fix behaviour, rather than losing the entry).
+func resolveArchiveVersion(schemaID string, lookup func(string) string) string {
+	if schemaID == "" {
+		return ""
+	}
+	if v := lookup(schemaID); v != "" {
+		return v
+	}
+	return schemaID
+}
+
+// buildFromToObjectSchemas builds agents.ObjectSchema maps for from and to schemas
+// used by SchemaMigrator.MigrateObject.
+func (s *Service) buildFromToObjectSchemas(ctx context.Context, fromSchemaID, toSchemaID string, hints *SchemaMigrationHints) (map[string]*agents.ObjectSchema, map[string]*agents.ObjectSchema, error) {
+	fromMap := map[string]*agents.ObjectSchema{}
+	toMap := map[string]*agents.ObjectSchema{}
+
+	if toSchemaID != "" {
+		toSchema, err := s.repo.GetPackByID(ctx, toSchemaID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot find to_schema %s: %w", toSchemaID, err)
+		}
+		toMap = parseObjectSchemasToAgentMap(toSchema.ObjectTypeSchemas)
+	}
+
+	if fromSchemaID != "" {
+		fromSchema, err := s.repo.GetPackByID(ctx, fromSchemaID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("cannot find from_schema %s: %w", fromSchemaID, err)
+		}
+		fromMap = parseObjectSchemasToAgentMap(fromSchema.ObjectTypeSchemas)
+	}
+
+	return fromMap, toMap, nil
+}
+
+// parseObjectSchemasToAgentMap converts raw JSONB object type schemas to
+// a map of typeName → *agents.ObjectSchema for use by SchemaMigrator.
+func parseObjectSchemasToAgentMap(raw json.RawMessage) map[string]*agents.ObjectSchema {
+	result := map[string]*agents.ObjectSchema{}
+	if len(raw) == 0 {
+		return result
+	}
+
+	// Try array format: [{name, properties: {propName: {type, ...}}}]
+	var arr []struct {
+		Name       string                        `json:"name"`
+		Properties map[string]agents.PropertyDef `json:"properties"`
+		Required   []string                      `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		for _, item := range arr {
+			if item.Name == "" {
+				continue
+			}
+			schema := &agents.ObjectSchema{
+				Name:       item.Name,
+				Properties: item.Properties,
+				Required:   item.Required,
+			}
+			if schema.Properties == nil {
+				schema.Properties = map[string]agents.PropertyDef{}
+			}
+			result[item.Name] = schema
+		}
+		return result
+	}
+
+	// Try map format: {typeName: {properties: {...}}}
+	var objMap map[string]struct {
+		Properties map[string]agents.PropertyDef `json:"properties"`
+		Required   []string                      `json:"required"`
+	}
+	if err := json.Unmarshal(raw, &objMap); err == nil {
+		for typeName, def := range objMap {
+			schema := &agents.ObjectSchema{
+				Name:       typeName,
+				Properties: def.Properties,
+				Required:   def.Required,
+			}
+			if schema.Properties == nil {
+				schema.Properties = map[string]agents.PropertyDef{}
+			}
+			result[typeName] = schema
+		}
+	}
+
+	return result
+}

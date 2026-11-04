@@ -1,0 +1,543 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// GraphObject is one extracted knowledge-graph object (entity) from
+// GET /api/graph/objects/search or /objects/:id.
+type GraphObject struct {
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	BranchID    string         `json:"branch_id"`
+	Type        string         `json:"type"`
+	Key         string         `json:"key"`
+	Status      string         `json:"status"`
+	Assignee    string         `json:"assignee"`
+	Version     int            `json:"version"`
+	Properties  map[string]any `json:"properties"`
+	Labels      []string       `json:"labels"`
+	CreatedAt   string         `json:"created_at"`
+	// ChangeSummary is the server's per-version change_summary (added/removed/
+	// updated property paths, plus merge provenance). Nil on versions the
+	// server did not record a summary for (most work-path transitions).
+	ChangeSummary map[string]any `json:"change_summary"`
+	// EmbeddingStatus is the per-object embedding-job state derived by the
+	// server: embedded | pending | processing | failed | dead_letter | missing.
+	EmbeddingStatus string `json:"embedding_status"`
+	// EmbeddingUpdatedAt is the RFC3339 time the object's embedding was last
+	// written (empty when not embedded).
+	EmbeddingUpdatedAt string `json:"embedding_updated_at"`
+}
+
+// ObjectSearchResult is one scored search hit (FTS or hybrid). Score semantics
+// are mode-specific: FTS returns a relevance score, hybrid returns the fused
+// lexical/vector score.
+type ObjectSearchResult struct {
+	Object GraphObject
+	Score  float32
+}
+
+// SimilarObject is one object returned by the vector-similarity endpoint
+// (GET /api/graph/objects/:id/similar). Distance is the pgvector cosine
+// distance (0..2 — LOWER is more similar).
+type SimilarObject struct {
+	ID          string         `json:"id"`
+	CanonicalID string         `json:"canonical_id"`
+	Version     int            `json:"version"`
+	Distance    float32        `json:"distance"`
+	Type        string         `json:"type"`
+	Key         string         `json:"key"`
+	Status      string         `json:"status"`
+	Properties  map[string]any `json:"properties"`
+	Labels      []string       `json:"labels"`
+	CreatedAt   string         `json:"created_at"`
+}
+
+// GraphRelationship is one extracted knowledge-graph relationship (edge) from
+// GET /api/graph/relationships/search.
+type GraphRelationship struct {
+	ID         string         `json:"id"`
+	Type       string         `json:"type"`
+	SrcID      string         `json:"src_id"`
+	DstID      string         `json:"dst_id"`
+	Properties map[string]any `json:"properties"`
+}
+
+// UpdateObjectRequest patches a graph object (delta-merge semantics).
+type UpdateObjectRequest struct {
+	Key           *string        `json:"key,omitempty"`
+	Status        *string        `json:"status,omitempty"`
+	Assignee      *string        `json:"assignee,omitempty"`
+	Labels        []string       `json:"labels,omitempty"`
+	ReplaceLabels bool           `json:"replaceLabels,omitempty"`
+	Properties    map[string]any `json:"properties,omitempty"`
+	BranchID      *string        `json:"branch_id,omitempty"`
+}
+
+// BulkUpdateStatusRequest sets one status across many objects
+// (POST /api/graph/objects/bulk-update-status). The server caps IDs at 100 per
+// call, so callers chunk.
+type BulkUpdateStatusRequest struct {
+	IDs    []string `json:"ids"`
+	Status string   `json:"status"`
+}
+
+// BulkUpdateStatusResponse reports the per-object outcome of a bulk status
+// update: Success + Failed is the number of ids sent, and Results carries the
+// reason for each failure.
+type BulkUpdateStatusResponse struct {
+	Success int                      `json:"success"`
+	Failed  int                      `json:"failed"`
+	Results []BulkUpdateStatusResult `json:"results"`
+}
+
+// BulkUpdateStatusResult is one object's outcome in a bulk status update.
+type BulkUpdateStatusResult struct {
+	ID      string  `json:"id"`
+	Success bool    `json:"success"`
+	Error   *string `json:"error,omitempty"`
+}
+
+// CreateRelationshipRequest creates a graph relationship (edge).
+type CreateRelationshipRequest struct {
+	Type       string         `json:"type"`
+	SrcID      string         `json:"src_id"`
+	DstID      string         `json:"dst_id"`
+	Properties map[string]any `json:"properties,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+}
+
+// CreateObjectRequest creates a graph object (POST /api/graph/objects).
+type CreateObjectRequest struct {
+	Type       string         `json:"type"`
+	Key        *string        `json:"key,omitempty"`
+	Status     *string        `json:"status,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Labels     []string       `json:"labels,omitempty"`
+	BranchID   *string        `json:"branch_id,omitempty"`
+}
+
+// GetGraphObject fetches a single graph object by id. Unlike the list/search
+// endpoints, this returns objects regardless of which branch they live on
+// (extracted objects land on a staging branch).
+func (m *MemoryClient) GetGraphObject(ctx context.Context, objectID string) (*GraphObject, error) {
+	var out GraphObject
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/"+objectID, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetObjectHistory returns the version history for a graph object
+// (GET /api/graph/objects/:id/history), newest version first (the server orders
+// by version DESC). The response is a `{versions: [...]}` object — not the
+// successEnvelope and not a bare array.
+func (m *MemoryClient) GetObjectHistory(ctx context.Context, objectID string) ([]GraphObject, error) {
+	var out struct {
+		Versions []GraphObject `json:"versions"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/"+objectID+"/history", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Versions, nil
+}
+
+// LookupGraphObjectByKey resolves one graph object by (type, key) via
+// GET /api/graph/objects/search. Empty typeFilter omits the type filter. A
+// miss is not an error: it returns (nil, nil).
+func (m *MemoryClient) LookupGraphObjectByKey(ctx context.Context, typeFilter, key string) (*GraphObject, error) {
+	q := url.Values{}
+	q.Set("key", key)
+	q.Set("limit", "1")
+	q.Set("include_total", "false")
+	q.Set("exclude_fields", "content")
+	if typeFilter != "" {
+		q.Set("type", typeFilter)
+	}
+	var out struct {
+		Items []GraphObject `json:"items"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	if len(out.Items) == 0 {
+		return nil, nil
+	}
+	return &out.Items[0], nil
+}
+
+// ListGraphObjects lists graph objects, optionally scoped to a branch and/or
+// filtered by type or ids. Empty branchID omits the branch filter (main
+// branch); empty typeFilter omits the type filter; ids may be empty.
+func (m *MemoryClient) ListGraphObjects(ctx context.Context, branchID, typeFilter string, ids []string) ([]GraphObject, error) {
+	q := url.Values{}
+	q.Set("limit", "100")
+	// The total is never read here (only Items is), and the exact COUNT(*) is
+	// the endpoint's latency floor on large projects — skip it (#733).
+	q.Set("include_total", "false")
+	// The objects browser list renders only key/type/labels, never properties,
+	// so drop the document body to avoid shipping multi-MB list responses
+	// (#1106).
+	q.Set("exclude_fields", "content")
+	if typeFilter != "" {
+		q.Set("type", typeFilter)
+	}
+	if len(ids) > 0 {
+		q.Set("ids", strings.Join(ids, ","))
+	}
+	if branchID != "" {
+		q.Set("branch_id", branchID)
+	}
+	var out struct {
+		Items []GraphObject `json:"items"`
+		Total int           `json:"total"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// ObjectListParams narrows one page of graph objects. The zero value is the
+// newest page of every object on the main branch. ActorType, ActorID, and
+// Provenance mirror the server's actor_type / actor_id / provenance query
+// params on GET /api/graph/objects/search: the provenance filter always keys on
+// the (actor_type, actor_id) pair, and the server rejects actor_id without
+// actor_type, so ActorID is only sent alongside a non-empty ActorType. For the
+// same reason Provenance (created|updated) is only sent with a non-empty
+// ActorType; the no-op default "any" is never forwarded.
+type ObjectListParams struct {
+	BranchID   string
+	TypeFilter string
+	Cursor     string
+	Limit      int
+	ActorType  string
+	ActorID    string
+	Provenance string
+	// Order is the created_at direction the browse list sorts by: "asc", or ""
+	// for the endpoint's default (newest first). It is the only sort the list
+	// endpoint supports together with its (created_at, id) cursor; property
+	// ordering is rejected alongside a cursor.
+	Order string
+}
+
+// ListGraphObjectsPage lists a single page of graph objects (most-recent-first),
+// cursor-paginated. Empty fields in p omit their filter. nextCursor is empty
+// when there are no more pages.
+func (m *MemoryClient) ListGraphObjectsPage(ctx context.Context, p ObjectListParams) ([]GraphObject, string, error) {
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(p.Limit))
+	// The total is never read here, and the exact COUNT(*) is the endpoint's
+	// latency floor on large projects — skip it (#733).
+	q.Set("include_total", "false")
+	if p.Order != "" {
+		q.Set("order", p.Order)
+	}
+	if p.TypeFilter != "" {
+		q.Set("type", p.TypeFilter)
+	}
+	if p.Cursor != "" {
+		q.Set("cursor", p.Cursor)
+	}
+	if p.BranchID != "" {
+		q.Set("branch_id", p.BranchID)
+	}
+	if p.ActorType != "" {
+		q.Set("actor_type", p.ActorType)
+		// actor_id requires actor_type; the server 400s on actor_id alone.
+		if p.ActorID != "" {
+			q.Set("actor_id", p.ActorID)
+		}
+	}
+	// Provenance only narrows alongside an actor pair, so it mirrors
+	// objectsPartialURL: forward it only with a non-empty actor_type and never
+	// as the no-op default "any". The server rejects a bare narrowing mode, and
+	// "any" narrows nothing, so sending either is meaningless (and a 400 for the
+	// former).
+	if p.ActorType != "" && p.Provenance != "" && p.Provenance != defaultObjectProvenance {
+		q.Set("provenance", p.Provenance)
+	}
+	var out struct {
+		Items      []GraphObject `json:"items"`
+		NextCursor string        `json:"next_cursor"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, "", err
+	}
+	return out.Items, out.NextCursor, nil
+}
+
+// CountObjects returns the total number of graph objects, optionally scoped to
+// a branch (GET /api/graph/objects/count).
+func (m *MemoryClient) CountObjects(ctx context.Context, branchID string) (int, error) {
+	path := "/api/graph/objects/count"
+	if branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(branchID)
+	}
+	var out struct {
+		Count int `json:"count"`
+	}
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return 0, err
+	}
+	return out.Count, nil
+}
+
+// GetObjectEdges returns the relationships (edges) touching one object,
+// combining incoming and outgoing edges.
+func (m *MemoryClient) GetObjectEdges(ctx context.Context, objectID string) ([]GraphRelationship, error) {
+	var out struct {
+		Incoming []GraphRelationship `json:"incoming"`
+		Outgoing []GraphRelationship `json:"outgoing"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/"+objectID+"/edges", nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return append(out.Incoming, out.Outgoing...), nil
+}
+
+// GetSimilarObjects finds objects similar to the given object via vector
+// similarity (GET /api/graph/objects/:id/similar). Response is a bare array.
+func (m *MemoryClient) GetSimilarObjects(ctx context.Context, objectID string, limit int) ([]SimilarObject, error) {
+	path := "/api/graph/objects/" + objectID + "/similar"
+	if limit > 0 {
+		path += "?limit=" + strconv.Itoa(limit)
+	}
+	var out []SimilarObject
+	if err := m.doH(ctx, http.MethodGet, path, nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListGraphRelationships lists graph relationships, optionally scoped to a
+// branch. Empty branchID omits the branch filter (main branch).
+func (m *MemoryClient) ListGraphRelationships(ctx context.Context, branchID string) ([]GraphRelationship, error) {
+	q := url.Values{}
+	q.Set("limit", "100")
+	if branchID != "" {
+		q.Set("branch_id", branchID)
+	}
+	var out struct {
+		Items []GraphRelationship `json:"items"`
+		Total int                 `json:"total"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/relationships/search?"+q.Encode(), nil, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// UpdateObject patches a graph object, returning the new versioned object.
+// NOTE: the returned object has a NEW ID; callers must use it, not the old one.
+func (m *MemoryClient) UpdateObject(ctx context.Context, id string, req *UpdateObjectRequest) (*GraphObject, error) {
+	var out GraphObject
+	if err := m.doH(ctx, http.MethodPatch, "/api/graph/objects/"+url.PathEscape(id), req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateObject creates a graph object (POST /api/graph/objects).
+func (m *MemoryClient) CreateObject(ctx context.Context, req *CreateObjectRequest) (*GraphObject, error) {
+	var out GraphObject
+	if err := m.doH(ctx, http.MethodPost, "/api/graph/objects", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// DeleteGraphObject soft-deletes a graph object (DELETE /api/graph/objects/:id).
+// The object's versions stay in branch history, so the delete is restorable from
+// its branch.
+//
+// branchID scopes the delete to that branch: the endpoint resolves the canonical
+// object's HEAD on the named branch and tombstones it there, leaving main
+// untouched. Omitting it deletes the MAIN head, which is why callers acting on a
+// branch-filtered view must pass the branch — otherwise the list still shows the
+// object (it is alive on that branch) while main has lost it.
+func (m *MemoryClient) DeleteGraphObject(ctx context.Context, id, branchID string) error {
+	path := "/api/graph/objects/" + url.PathEscape(id)
+	if branchID != "" {
+		path += "?branch_id=" + url.QueryEscape(branchID)
+	}
+	var out map[string]string
+	return m.doH(ctx, http.MethodDelete, path, nil, m.documentHeaders(ctx), &out)
+}
+
+// BulkUpdateStatus sets one status across many objects in one call
+// (POST /api/graph/objects/bulk-update-status). The server accepts at most 100
+// ids per request.
+func (m *MemoryClient) BulkUpdateStatus(ctx context.Context, ids []string, status string) (*BulkUpdateStatusResponse, error) {
+	var out BulkUpdateStatusResponse
+	req := BulkUpdateStatusRequest{IDs: ids, Status: status}
+	if err := m.doH(ctx, http.MethodPost, "/api/graph/objects/bulk-update-status", req, m.documentHeaders(ctx), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateRelationship creates a graph relationship.
+func (m *MemoryClient) CreateRelationship(ctx context.Context, req *CreateRelationshipRequest) error {
+	var out any
+	return m.doH(ctx, http.MethodPost, "/api/graph/relationships", req, m.documentHeaders(ctx), &out)
+}
+
+// SearchObjectsFTS full-text-searches graph objects. typeFilter may be empty.
+func (m *MemoryClient) SearchObjectsFTS(ctx context.Context, query, typeFilter string) ([]GraphObject, error) {
+	q := url.Values{}
+	q.Set("q", query)
+	q.Set("limit", "50")
+	if typeFilter != "" {
+		q.Set("types", typeFilter)
+	}
+	var wire struct {
+		Data []struct {
+			Object GraphObject `json:"object"`
+		} `json:"data"`
+	}
+	if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/fts?"+q.Encode(), nil, m.documentHeaders(ctx), &wire); err != nil {
+		return nil, err
+	}
+	out := make([]GraphObject, 0, len(wire.Data))
+	for _, d := range wire.Data {
+		out = append(out, d.Object)
+	}
+	return out, nil
+}
+
+// searchObjectsWire is the shared response shape of both search endpoints
+// (FTS and hybrid).
+type searchObjectsWire struct {
+	Data []struct {
+		Object GraphObject `json:"object"`
+		Score  float32     `json:"score"`
+	} `json:"data"`
+	Total   int  `json:"total"`
+	HasMore bool `json:"hasMore"`
+}
+
+// searchObjectsRequestBody is the POST body for the hybrid search endpoint.
+type searchObjectsRequestBody struct {
+	Query    string   `json:"query"`
+	Limit    int      `json:"limit"`
+	Offset   int      `json:"offset"`
+	Types    []string `json:"types,omitempty"`
+	BranchID string   `json:"branchId,omitempty"`
+}
+
+// SearchObjects text-searches graph objects in one of two modes: "fulltext"
+// (GET /api/graph/objects/fts) or "hybrid" (POST /api/graph/search, which
+// auto-embeds the query and fuses lexical/vector results). types is a
+// comma-joined list of type names (empty = no type filter). hasMore reports
+// whether more results exist beyond this page.
+func (m *MemoryClient) SearchObjects(ctx context.Context, mode, query, types, branchID string, limit, offset int) ([]ObjectSearchResult, bool, error) {
+	var wire searchObjectsWire
+	switch mode {
+	case "hybrid":
+		body := searchObjectsRequestBody{Query: query, Limit: limit, Offset: offset}
+		if types != "" {
+			body.Types = strings.Split(types, ",")
+		}
+		if branchID != "" {
+			body.BranchID = branchID
+		}
+		if err := m.doH(ctx, http.MethodPost, "/api/graph/search", body, m.documentHeaders(ctx), &wire); err != nil {
+			return nil, false, err
+		}
+	default: // "fulltext"
+		q := url.Values{}
+		q.Set("q", query)
+		q.Set("limit", strconv.Itoa(limit))
+		q.Set("offset", strconv.Itoa(offset))
+		if types != "" {
+			q.Set("types", types)
+		}
+		if branchID != "" {
+			q.Set("branch_id", branchID)
+		}
+		if err := m.doH(ctx, http.MethodGet, "/api/graph/objects/fts?"+q.Encode(), nil, m.documentHeaders(ctx), &wire); err != nil {
+			return nil, false, err
+		}
+	}
+
+	results := make([]ObjectSearchResult, 0, len(wire.Data))
+	for _, d := range wire.Data {
+		results = append(results, ObjectSearchResult{Object: d.Object, Score: d.Score})
+	}
+	return results, wire.HasMore, nil
+}
+
+// unifiedSearchResult is one union item of POST /api/search/unified. The union
+// spans graph/text/relationship items; only graph items are relevant to the
+// objects browser, so the other fields (snippet, lexical/vector score) are
+// omitted here.
+type unifiedSearchResult struct {
+	Type        string         `json:"type"`
+	ID          string         `json:"id"`
+	ObjectID    string         `json:"object_id"`
+	CanonicalID string         `json:"canonical_id"`
+	ObjectType  string         `json:"object_type"`
+	Key         string         `json:"key"`
+	Fields      map[string]any `json:"fields"`
+	Labels      []string       `json:"labels"`
+	Score       float64        `json:"score"`
+}
+
+// SearchObjectsUnified runs a unified search (POST /api/search/unified) across
+// the graph, returning only the type=="graph" hits normalized to
+// ObjectSearchResult. types is a comma-joined list of type names (empty = no
+// type filter). Results below minSearchScore are dropped and the top `limit`
+// graph hits are kept. Unified results carry fields (object properties) but
+// not created_at/status/embedding_status, so callers must not render those.
+func (m *MemoryClient) SearchObjectsUnified(ctx context.Context, query, types, branchID string, limit int) ([]ObjectSearchResult, error) {
+	body := map[string]any{
+		"query":       query,
+		"limit":       limit,
+		"resultTypes": "graph",
+	}
+	if types != "" {
+		body["types"] = strings.Split(types, ",")
+	}
+	if branchID != "" {
+		body["branch_id"] = branchID
+	}
+	var wire struct {
+		Results []unifiedSearchResult `json:"results"`
+	}
+	if err := m.doH(ctx, http.MethodPost, "/api/search/unified", body, m.documentHeaders(ctx), &wire); err != nil {
+		return nil, err
+	}
+	out := make([]ObjectSearchResult, 0, limit)
+	for _, r := range wire.Results {
+		if r.Type != "graph" {
+			continue
+		}
+		if r.Score < minSearchScore {
+			continue
+		}
+		id := firstNonEmpty(r.CanonicalID, r.ObjectID, r.ID)
+		if id == "" {
+			continue
+		}
+		out = append(out, ObjectSearchResult{
+			Object: GraphObject{
+				ID:         id,
+				Type:       r.ObjectType,
+				Key:        r.Key,
+				Properties: r.Fields,
+				Labels:     r.Labels,
+			},
+			Score: float32(r.Score),
+		})
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}

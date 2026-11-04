@@ -1,0 +1,205 @@
+version: '3'
+
+vars:
+  GO_TEST_FLAGS: -v -count=1
+
+tasks:
+  test:
+    desc: Run all unit tests
+    cmds:
+      - go test ./... {{.GO_TEST_FLAGS}} {{.CLI_ARGS}}
+
+  build:
+    desc: Build the server binary
+    cmds:
+      - go build -o dist/server ./cmd/server
+
+  build:swiftbridge:
+    desc: Build the CGO static archive for the Swift/native SDK (libEmergentGoCore.a + .h)
+    cmds:
+      - mkdir -p dist/swiftbridge
+      - CGO_ENABLED=1 go build -buildmode=c-archive -o dist/swiftbridge/libEmergentGoCore.a ./cmd/swiftbridge
+    env:
+      CGO_ENABLED: "1"
+
+  local:start:
+    desc: Start server for e2e tests (port 3002, stops Docker container first)
+    cmds:
+      - docker stop test-emergent-server 2>/dev/null; true
+      - task: build
+      - sh scripts/start-server-local.sh
+
+  local:stop:
+    desc: Stop local test server
+    cmds:
+      - task: stop
+
+  lint:
+    desc: Run linter
+    cmds:
+      - golangci-lint run ./...
+
+  migrate:up:
+    desc: Run database migrations up
+    cmds:
+      - go run ./cmd/migrate -c up
+    env:
+      DB_HOST: "{{.POSTGRES_HOST}}"
+      DB_PORT: "{{.POSTGRES_PORT}}"
+      POSTGRES_DATABASE: "{{.POSTGRES_DB}}"
+
+  migrate:down:
+    desc: Run database migrations down
+    cmds:
+      - go run ./cmd/migrate -c down
+    env:
+      DB_HOST: "{{.POSTGRES_HOST}}"
+      DB_PORT: "{{.POSTGRES_PORT}}"
+      POSTGRES_DATABASE: "{{.POSTGRES_DB}}"
+
+  migrate:status:
+    desc: Show migration status
+    cmds:
+      - go run ./cmd/migrate -c status
+    env:
+      DB_HOST: "{{.POSTGRES_HOST}}"
+      DB_PORT: "{{.POSTGRES_PORT}}"
+      POSTGRES_DATABASE: "{{.POSTGRES_DB}}"
+
+  swagger:
+    desc: Generate swagger docs
+    vars:
+      # Derived from go.mod, so the generator always matches the compiled
+      # github.com/swaggo/swag library (the same rule as the Makefile and both
+      # Dockerfiles). awk keeps Task's own {{...}} templating out of the -f flag.
+      SWAG_VERSION:
+        sh: go list -m github.com/swaggo/swag | awk '{print $2}'
+    cmds:
+      - go run github.com/swaggo/swag/cmd/swag@{{.SWAG_VERSION}} init -g cmd/server/main.go -o docs/swagger --parseDependency --parseInternal
+
+  swagger:check:
+    desc: Check swagger annotations
+    cmds:
+      - ./scripts/check-swagger-annotations.sh
+
+  dev:
+    desc: Start server with hot reload (air)
+    cmds:
+      - air
+    env:
+      PATH: /usr/local/go/bin:/usr/local/bin:{{.PATH}}
+
+  start:
+    desc: Build and start server in background (writes PID to pids/server.pid)
+    cmds:
+      - task: build
+      - sh scripts/start-server.sh
+
+  stop:
+    desc: Stop background server (reads PID from pids/server.pid)
+    cmds:
+      - |
+        PID_FILE="../../pids/server.pid"
+        if [ ! -f "$PID_FILE" ]; then
+          echo "No PID file found at $PID_FILE"
+          exit 1
+        fi
+        PID=$(cat "$PID_FILE")
+        if kill "$PID" 2>/dev/null; then
+          rm "$PID_FILE"
+          echo "Server stopped (PID $PID)"
+        else
+          echo "Process $PID not found, removing stale PID file"
+          rm "$PID_FILE"
+        fi
+
+  status:
+    desc: Check if server is running
+    cmds:
+      - |
+        PID_FILE="../../pids/server.pid"
+        if [ ! -f "$PID_FILE" ]; then
+          echo "Server: NOT RUNNING (no PID file)"
+          exit 1
+        fi
+        PID=$(cat "$PID_FILE")
+        if ps -p "$PID" >/dev/null 2>&1; then
+          echo "Server: RUNNING (PID $PID)"
+          curl -sf "http://localhost:${SERVER_PORT:-3002}/health" && echo " health: OK" || echo " health: UNREACHABLE"
+        else
+          echo "Server: NOT RUNNING (stale PID $PID)"
+          exit 1
+        fi
+
+  test:integration:
+    desc: Run integration tests
+    cmds:
+      - go test ./tests/integration/... -v -count=1 {{.CLI_ARGS}}
+
+  test:remember:
+    desc: Run remember agent integration tests and save full output to logs/tests/remember/
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/remember"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== remember agent test run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 15m \
+          -run TestRememberAgentSuite \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:experiments:
+    desc: Run remember-agent experiment tests and save output to logs/tests/experiments/
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/run-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== remember experiments run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 30m \
+          -run TestRememberExperiments \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:extraction:fixed:
+    desc: Run fixed-schema extraction tests (pre-installed Friends schema)
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/fixed-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== fixed-schema extraction run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 30m \
+          -run TestExtractionFixedSchema \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:extraction:compare:
+    desc: Run discovery vs fixed-schema side-by-side comparison tests
+    cmds:
+      - |
+        LOG_DIR="../../logs/tests/experiments"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/compare-$(date +%Y%m%d-%H%M%S).log"
+        echo "=== discovery vs fixed-schema comparison run $(date) ===" | tee "$LOG_FILE"
+        go test ./tests/integration/... -v -count=1 -timeout 45m \
+          -run "TestExtractionFixedSchema/TestCompare_" \
+          {{.CLI_ARGS}} 2>&1 | tee -a "$LOG_FILE"
+        echo ""
+        echo "=== full log: $LOG_FILE ==="
+
+  test:coverage:
+    desc: Run tests with coverage report
+    cmds:
+      - go test ./... -coverprofile=coverage.out -covermode=atomic {{.CLI_ARGS}}
+      - go tool cover -html=coverage.out -o coverage.html
+      - go tool cover -func=coverage.out | tail -1
+
+  docker:build:
+    desc: Build Docker image for server
+    cmds:
+      - docker build -f Dockerfile -t memory-server-go:latest ../.. {{.CLI_ARGS}}

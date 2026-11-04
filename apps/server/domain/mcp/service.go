@@ -1,0 +1,6982 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/domain/apitoken"
+	"github.com/emergent-company/emergent.memory/domain/branches"
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/email"
+	"github.com/emergent-company/emergent.memory/domain/graph"
+	"github.com/emergent-company/emergent.memory/domain/journal"
+	"github.com/emergent-company/emergent.memory/domain/provider"
+	"github.com/emergent-company/emergent.memory/domain/schemas"
+	"github.com/emergent-company/emergent.memory/domain/search"
+	"github.com/emergent-company/emergent.memory/domain/sessiontodos"
+	"github.com/emergent-company/emergent.memory/domain/skills"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/database"
+	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/authz"
+	"github.com/emergent-company/emergent.memory/pkg/ftsquery"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+// Entity-query guardrail defaults (issue #1148). Overridable via config.
+const (
+	defaultEntityQueryTimeout      = 30 * time.Second
+	defaultEntityQueryFullMaxLimit = 25
+)
+
+// entityQueryTimeout returns the configured per-call deadline, or the default.
+func (s *Service) effectiveEntityQueryTimeout() time.Duration {
+	if s.entityQueryTimeout > 0 {
+		return s.entityQueryTimeout
+	}
+	return defaultEntityQueryTimeout
+}
+
+// entityQueryFullMaxLimit returns the configured full-strategy limit cap, or the
+// default.
+func (s *Service) effectiveEntityQueryFullMaxLimit() int {
+	if s.entityQueryFullMaxLimit > 0 {
+		return s.entityQueryFullMaxLimit
+	}
+	return defaultEntityQueryFullMaxLimit
+}
+
+// Service handles MCP business logic and tool execution
+type Service struct {
+	db           bun.IDB
+	graphService *graph.Service
+	searchSvc    *search.Service
+	log          *slog.Logger
+
+	// Branch service (for graph-branch-* tools)
+	branchSvc *branches.Service
+
+	// Agent tool handler (injected to break import cycle)
+	agentToolHandler AgentToolHandler
+
+	// MCP registry tool handler (injected to break import cycle)
+	mcpRegistryToolHandler MCPRegistryToolHandler
+
+	// Blueprint tool handler (injected to break import cycle)
+	blueprintToolHandler BlueprintToolHandler
+
+	// Brave Search API configuration
+	braveSearchAPIKey  string
+	braveSearchTimeout time.Duration
+
+	// entity-query guardrails (issue #1148). Zero values fall back to the
+	// package defaults so tests constructing a bare Service still get bounds.
+	entityQueryTimeout      time.Duration
+	entityQueryFullMaxLimit int
+
+	// Documents service (for document list/get/upload/delete tools)
+	documentsSvc *documents.Service
+
+	// Storage service (for document upload to object store)
+	storageSvc *storage.Service
+
+	// Skills repository (for skill CRUD tools)
+	skillsRepo *skills.Repository
+
+	// Provider services (for provider config and model catalog tools)
+	providerCredSvc    *provider.CredentialService
+	providerCatalogSvc *provider.ModelCatalogService
+
+	// API token service (for token management tools)
+	apitokenSvc *apitoken.Service
+
+	// Email jobs service (for MCP invite emails)
+	emailSvc *email.JobsService
+
+	// Journal service (for journal-list and journal-add-note tools)
+	journalSvc *journal.Service
+
+	// Schemas service (for schema migration tools)
+	schemasSvc *schemas.Service
+
+	// projectOrgAdminAuthorizer is the shared org_admin authority seam for
+	// project creation (projects.Service.AuthorizeOrgAdmin). Wired via fx to
+	// avoid a circular import. Nil when not configured; callers fail closed.
+	projectOrgAdminAuthorizer ProjectOrgAdminAuthorizer
+
+	// sessionHistoryProvider retrieves unified session timelines for session-get-messages tool.
+	// Replaces graphSessionSvc — backed by kb.agent_run_messages, not graph objects.
+	sessionHistoryProvider SessionHistoryProvider
+
+	// Session todos service (for session-todo-list and session-todo-update tools)
+	sessionTodoSvc *sessiontodos.Service
+
+	// Embedding worker controller (for pause/resume/config tools)
+	// Typed as interface to avoid import cycle with extraction package.
+	embeddingCtl EmbeddingControlHandler
+
+	// Session title handler (injected to break import cycle with agents domain)
+	sessionTitleHandler SessionTitleHandler
+
+	// relaySvc provides tools from connected MCP relay sessions (e.g. Diane, AirMCP).
+	// Injected via SetRelayProvider after construction to avoid circular import.
+	relaySvc RelayToolProvider
+
+	// superadminToolHandler is the cross-domain seam for the operator MCP tools
+	// served on /api/mcp/admin. Nil when MCP or SuperAdmin is disabled; every
+	// operator tool fails closed (see superadminHandler).
+	superadminToolHandler SuperadminToolHandler
+
+	// superadminAuditWriter records operator actions to kb.audit_log. Nil-safe:
+	// auditSuperadmin degrades to structured logs only when unset.
+	superadminAuditWriter SuperadminAuditWriter
+
+	// graphObjectTitlePatcher patches graph object Properties.title when set_session_title runs.
+	// Stored as a func to avoid a circular import (mcp already imports graph).
+	graphObjectTitlePatcher func(ctx context.Context, projectID, objectID, title string) error
+
+	// Domain classification and schema tools (injected via setters to avoid import cycle)
+	domainClassifier   DomainClassifierHandler
+	schemaIndex        SchemaIndexHandler
+	reextractionQueuer ReextractionQueuer
+	discoverySvc       DiscoveryFinalizer
+	docSignalsReader   DocumentSignalsReader
+
+	// Tempo base URL for trace proxy (empty when tracing disabled)
+	tempoBaseURL string
+
+	// Server port for internal query calls (query_knowledge tool)
+	serverPort int
+
+	// Optional override for the base URL of internal same-server HTTP calls
+	// (query/remember/forget). Empty means fall back to the loopback listen
+	// address built from serverPort. Set INTERNAL_BASE_URL when localhost is not
+	// the server's own address (e.g. containerised deployments).
+	internalBaseURL string
+
+	// Built-in OAuth authorization server advertisement (RFC 9728). When
+	// enabled, the protected-resource metadata lists this issuer so MCP clients
+	// can run the OAuth flow instead of being told to use a static token.
+	oauthASEnabled bool
+	oauthASIssuer  string
+
+	// MCP share-instance persistence, credential lifecycle, and agent
+	// directory. Defaults are derived from DB/ApitokenSvc in NewService but are
+	// overridable in tests.
+	shareInstances shareInstanceStore
+	shareTokens    shareTokenService
+	agentDir       agentDirectory
+
+	// Agent MCP endpoint (agent-scoped-mcp-endpoint): the agent-owned endpoint
+	// and its many labeled keys. Defaults are derived from DB in NewService but
+	// are overridable in tests.
+	agentEndpoints agentMCPEndpointStore
+	agentKeys      agentMCPKeyStore
+
+	// Persistent agent MCP conversation sessions (agent-mcp-sessions). Session
+	// ownership/metadata only; history lives in the ADK session store. Default
+	// is derived from DB in NewService but is overridable in tests.
+	agentSessions agentMCPSessionStore
+}
+
+// ServiceParams bundles optional dependencies for NewService.
+type ServiceParams struct {
+	fx.In
+
+	DB           bun.IDB
+	GraphService *graph.Service
+	SearchSvc    *search.Service
+	Cfg          *config.Config
+	Log          *slog.Logger
+
+	DocumentsSvc       *documents.Service
+	StorageSvc         *storage.Service
+	SkillsRepo         *skills.Repository
+	BranchSvc          *branches.Service
+	ProviderCredSvc    *provider.CredentialService
+	ProviderCatalogSvc *provider.ModelCatalogService
+	ApitokenSvc        *apitoken.Service
+	EmailSvc           *email.JobsService
+	JournalSvc         *journal.Service
+	SchemasSvc         *schemas.Service
+	SessionTodoSvc     *sessiontodos.Service
+
+	// ProjectOrgAdminAuthorizer is the shared org_admin authority for
+	// project-create (projects.Service.AuthorizeOrgAdmin). Wired via fx to avoid
+	// a circular import (projects → agents → mcp). Nil-safe: a nil authorizer is
+	// fail-closed at the call site.
+	ProjectOrgAdminAuthorizer ProjectOrgAdminAuthorizer `optional:"true"`
+
+	// Cross-domain tool handlers (optional — wired via fx.Provide adapters to
+	// avoid circular imports; nil-safe when the providing feature is disabled).
+	BlueprintToolHandler   BlueprintToolHandler    `optional:"true"`
+	SessionTitleHandler    SessionTitleHandler     `optional:"true"`
+	SessionHistoryProvider SessionHistoryProvider  `optional:"true"`
+	GraphObjectPatcher     GraphObjectPatcher      `optional:"true"`
+	EmbeddingCtl           EmbeddingControlHandler `optional:"true"`
+	DomainClassifier       DomainClassifierHandler `optional:"true"`
+	SchemaIndex            SchemaIndexHandler      `optional:"true"`
+	ReextractionQueuer     ReextractionQueuer      `optional:"true"`
+	DiscoverySvc           DiscoveryFinalizer      `optional:"true"`
+	DocSignalsReader       DocumentSignalsReader   `optional:"true"`
+	RelaySvc               RelayToolProvider       `optional:"true"`
+	SuperadminToolHandler  SuperadminToolHandler   `optional:"true"`
+	SuperadminAuditWriter  SuperadminAuditWriter   `optional:"true"`
+}
+
+// NewService creates a new MCP service
+func NewService(p ServiceParams) *Service {
+	cfg := p.Cfg
+	timeout := cfg.BraveSearch.Timeout
+	if timeout == 0 {
+		timeout = braveSearchDefaultTimeout
+	}
+	tempoURL := ""
+	if cfg.Otel.Enabled() {
+		tempoURL = cfg.Otel.InternalTempoQueryURL()
+	}
+	return &Service{
+		db:                        p.DB,
+		graphService:              p.GraphService,
+		searchSvc:                 p.SearchSvc,
+		braveSearchAPIKey:         cfg.BraveSearch.APIKey,
+		braveSearchTimeout:        timeout,
+		entityQueryTimeout:        cfg.MCP.EntityQueryTimeout,
+		entityQueryFullMaxLimit:   cfg.MCP.EntityQueryFullMaxLimit,
+		log:                       p.Log.With(logger.Scope("mcp.svc")),
+		documentsSvc:              p.DocumentsSvc,
+		storageSvc:                p.StorageSvc,
+		skillsRepo:                p.SkillsRepo,
+		branchSvc:                 p.BranchSvc,
+		providerCredSvc:           p.ProviderCredSvc,
+		providerCatalogSvc:        p.ProviderCatalogSvc,
+		apitokenSvc:               p.ApitokenSvc,
+		emailSvc:                  p.EmailSvc,
+		tempoBaseURL:              tempoURL,
+		serverPort:                cfg.ServerPort,
+		internalBaseURL:           cfg.InternalBaseURL,
+		oauthASEnabled:            cfg.OAuthAS.Enabled,
+		oauthASIssuer:             strings.TrimRight(cfg.OAuthAS.IssuerURL, "/"),
+		journalSvc:                p.JournalSvc,
+		schemasSvc:                p.SchemasSvc,
+		sessionTodoSvc:            p.SessionTodoSvc,
+		projectOrgAdminAuthorizer: p.ProjectOrgAdminAuthorizer,
+		blueprintToolHandler:      p.BlueprintToolHandler,
+		sessionTitleHandler:       p.SessionTitleHandler,
+		sessionHistoryProvider:    p.SessionHistoryProvider,
+		graphObjectTitlePatcher:   p.GraphObjectPatcher,
+		embeddingCtl:              p.EmbeddingCtl,
+		domainClassifier:          p.DomainClassifier,
+		schemaIndex:               p.SchemaIndex,
+		reextractionQueuer:        p.ReextractionQueuer,
+		discoverySvc:              p.DiscoverySvc,
+		docSignalsReader:          p.DocSignalsReader,
+		relaySvc:                  p.RelaySvc,
+		superadminToolHandler:     p.SuperadminToolHandler,
+		superadminAuditWriter:     p.SuperadminAuditWriter,
+		shareInstances:            shareInstanceOrNil(p.DB),
+		shareTokens:               p.ApitokenSvc,
+		agentDir:                  agentDirectoryOrNil(p.DB),
+		agentEndpoints:            agentMCPEndpointOrNil(p.DB),
+		agentKeys:                 agentMCPKeyOrNil(p.DB),
+		agentSessions:             agentMCPSessionOrNil(p.DB),
+	}
+}
+
+// baseURL returns the base URL for internal same-server HTTP calls. It prefers
+// the configured INTERNAL_BASE_URL and otherwise falls back to the loopback
+// listen address built from the server port.
+func (s *Service) baseURL() string {
+	if s.internalBaseURL != "" {
+		return strings.TrimRight(s.internalBaseURL, "/")
+	}
+	return fmt.Sprintf("http://localhost:%d", s.serverPort)
+}
+
+// RegisterAgentToolHandler wires the agent tool handler after construction.
+// Deferred to fx.Invoke to break the agents ↔ mcp constructor cycle.
+func (s *Service) RegisterAgentToolHandler(h AgentToolHandler) {
+	s.agentToolHandler = h
+}
+
+// RegisterMCPRegistryToolHandler wires the MCP registry tool handler after construction.
+// Deferred to fx.Invoke to break the mcpregistry ↔ mcp constructor cycle.
+func (s *Service) RegisterMCPRegistryToolHandler(h MCPRegistryToolHandler) {
+	s.mcpRegistryToolHandler = h
+}
+
+// dynamicToolBuilders is the ordered list of package-level tool builders that
+// GetToolDefinitions appends to the static catalog. GetToolDefinitions and
+// mcpToolScopeVocabulary both consume this list, so the tool-scope vocabulary is
+// derived from the same source as the tools it guards and cannot silently fall
+// out of step with them. Handler-provided tools (agent/registry) are appended
+// separately by GetToolDefinitions and are not part of this list.
+var dynamicToolBuilders = []func() []ToolDefinition{
+	agentExtToolDefinitions,
+	skillsToolDefinitions,
+	documentsToolDefinitions,
+	embeddingsToolDefinitions,
+	providerToolDefinitions,
+	tokenToolDefinitions,
+	traceToolDefinitions,
+	queryToolDefinitions,
+	domainToolDefinitions,
+	blueprintsToolDefinitions,
+}
+
+// GetToolDefinitions returns all available MCP tools
+func (s *Service) GetToolDefinitions() []ToolDefinition {
+	tools := []ToolDefinition{
+		{
+			Name:        "project-get",
+			Description: "Returns the project info document — a markdown document describing this knowledge base's purpose, goals, audience, and context. Call this to understand what this project is about before working with its data.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:          "project-update",
+			OutputSchema:  objectOutputSchema(),
+			RequiredScope: "projects:write",
+			Description:   "Set the project info document — the markdown describing this knowledge base's purpose, goals, audience, and context, which agents read via project-get and can inject as a knowledge-base context block. Replaces the current text. Propose the new text to the user before calling this.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"content": {
+						Type:        "string",
+						Description: "Full markdown content to store as the project info. Replaces the existing text (use an empty string to clear it).",
+					},
+				},
+				Required: []string{"content"},
+			},
+		},
+		{
+			Name:         "project-create",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Create a new project under the authenticated user's organization. Returns the new project's id, name, and orgId. If org_id is omitted it is resolved from the caller's authentication context.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name of the new project",
+					},
+					"org_id": {
+						Type:        "string",
+						Description: "UUID of the organization to create the project under. Optional — defaults to the caller's organization from auth context.",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:         "schema-version",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the current schema version and metadata. Returns version hash, timestamp, total types, and relationships.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "entity-type-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List all available entity types in the knowledge graph with instance counts. Pass branch to see counts for a specific branch (e.g. \"plan/main\"); omit for main branch. By default only returns types with no namespace set. Pass namespace to filter by a specific namespace, or namespace=\"all\" to see all types regardless of namespace. Relationship types (type, from_type, to_type, count) are only returned when include_relationships=true; omit it for faster, cheaper calls.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to count entities on (e.g. \"plan/main\"). Omit for main branch.",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit to see only types with no namespace. Pass a specific namespace (e.g. \"system\") to see only that namespace. Pass \"all\" to see all types regardless of namespace.",
+					},
+					"include_relationships": {
+						Type:        "boolean",
+						Description: "When true, also compute relationship type counts (type, from_type, to_type, count) for the project. Default false. This aggregation is expensive on large graphs and is only needed for questions about relationship types.",
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:         "entity-query",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Query entity instances by type with pagination and filtering. Returns actual entity data from the knowledge graph. Pass ids[] to fetch specific entities by canonical ID (bypasses type/pagination). Use branch parameter to query a specific branch (e.g. \"plan/main\"); omit for main branch.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"type_name": {
+						Type:        "string",
+						Description: "Filter by entity type (e.g. 'APIEndpoint'). Omit to return all entity types.",
+					},
+					"ids": {
+						Type:        "array",
+						Description: "Optional list of canonical entity IDs to fetch directly. When provided, type_name and pagination params are ignored. ids[] already selects entities explicitly, so combining it with key_prefix is rejected (not silently ignored).",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query the main branch.",
+					},
+					"limit": {
+						Type:        "number",
+						Description: fmt.Sprintf("Maximum number of results (default: 10, max: 200). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload; paginate with offset for more rows.", s.effectiveEntityQueryFullMaxLimit()),
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(200),
+						Default:     10,
+					},
+					"offset": {
+						Type:        "number",
+						Description: "Pagination offset for results (default: 0)",
+						Minimum:     intPtr(0),
+						Default:     0,
+					},
+					"sort_by": {
+						Type:        "string",
+						Description: "Field to sort by (default: \"created_at\")",
+						Enum:        []string{"created_at", "updated_at", "name"},
+						Default:     "created_at",
+					},
+					"sort_order": {
+						Type:        "string",
+						Description: "Sort direction (default: \"desc\")",
+						Enum:        []string{"asc", "desc"},
+						Default:     "desc",
+					},
+					"include_relationships": {
+						Type:        "boolean",
+						Description: "When true, each entity result includes its outgoing relationships (type, target_id, target_type, target_key). Eliminates the need for a separate traverse_graph call in simple cases.",
+						Default:     false,
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, key, name, type, created_at, updated_at are always returned for free — do not include them here. Only applies when field_strategy=\"full\".",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. compact=name only, no properties (default), full=all properties (or the requested fields subset).",
+						Enum:        []string{"compact", "full"},
+					},
+					"filters": {
+						Type:        "object",
+						Description: "Optional property equality filters as key-value pairs (e.g. {\"status\": \"delivered\", \"priority\": \"high\"}). Only objects whose properties match ALL filters are returned. Filters are applied within the type only; a property that is not unique to one entity identity (e.g. chapter_id, which repeats in every law) will match across documents. If the type's schema declares a scope key (e.g. LegalParagraph.law_ref_id), a filter on any non-identity property is rejected unless the declared scope key is included here (or an explicit key_prefix is supplied). Combine with key_prefix to scope such filters to a single parent document.",
+					},
+					"key_prefix": {
+						Type:        "string",
+						Description: "Optional key-prefix scope restricting results to entities whose canonical key starts with this prefix (e.g. \"lov/1997-06-13-44#\" to scope a LegalParagraph chapter_id filter to one law). Use with filters/type_name when a property value is not unique to one identity. Entity keys are the type's identity and are unique per type. Not allowed together with ids (rejected).",
+					},
+				},
+				Required: []string{"type_name"},
+			},
+		},
+		{
+			Name:         "entity-history",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the version history of an entity by canonical ID or key. Returns a list of versions with their physical IDs, version numbers, and timestamps. Use entity-query with ids=[physical_id] to fetch the full properties of a specific historical version. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "The canonical UUID or key of the entity to get history for",
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "entity-search",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Search entities by text query over the full-text index (key, type, title, name, description). Matching is lexeme-based, not substring: query terms match whole indexed words (a composite key such as \"lov/1997-06-13-44\" is also searchable by its components), Norwegian stop words are ignored, and a stop-word-only query returns no results. By default only searches types with no namespace. Pass namespace to search a specific namespace, or namespace=\"all\" to search all.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Search query text",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name (e.g. \"plan/main\") or branch UUID to query. Omit to query across all branches.",
+					},
+					"type_name": {
+						Type:        "string",
+						Description: "Optional entity type filter",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 10, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     10,
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:         "entity-edges-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all relationships (edges) for an entity. Returns incoming and outgoing relationships with connected entity information. Use this to traverse the graph and discover how entities are connected.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "The UUID or key of the entity to get edges for",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "schema-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List memory schemas owned by the current project. Schemas define object types, relationships, and extraction prompts for knowledge graph entities.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"search": {
+						Type:        "string",
+						Description: "Optional search term to filter schemas by name or description",
+					},
+					"include_deprecated": {
+						Type:        "boolean",
+						Description: "Include schemas that have been deprecated (default: false)",
+						Default:     false,
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 20, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+					"offset": {
+						Type: "number",
+						Description: "Number of results to skip (default: 0). The response echoes limit " +
+							"and offset alongside total, so page through by advancing offset.",
+						Minimum: intPtr(0),
+						Default: 0,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:         "schema-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get detailed information about a specific memory schema including all type definitions, UI configs, and extraction prompts.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"schema_id": {
+						Type:        "string",
+						Description: "The UUID of the schema to retrieve",
+					},
+				},
+				Required: []string{"schema_id"},
+			},
+		},
+		{
+			Name:         "schema-list-available",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all schemas available for a project with their installation status. Shows which schemas are installed, active, and their object type counts.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:         "schema-list-installed",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all schemas currently installed in the project with their configuration and active status.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:        "schema-assign",
+			Description: "Install a memory schema to the project. This registers the schema's object types in the project's type registry, making them available for entity creation and extraction.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"schema_id": {
+						Type:        "string",
+						Description: "The UUID of the schema to install",
+					},
+					"force": {
+						Type: "boolean",
+						Description: "Proceed with a migration whose preview risk is rated dangerous. " +
+							"Without it the assignment still succeeds and the schema's types are registered, " +
+							"but the migration is skipped and the result reports status \"blocked\".",
+					},
+				},
+				Required: []string{"schema_id"},
+			},
+		},
+		{
+			Name:        "schema-assignment-update",
+			Description: "Update a schema assignment. Toggle active status.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"schema_id": {
+						Type:        "string",
+						Description: "The UUID of the schema whose assignment to update",
+					},
+					"active": {
+						Type:        "boolean",
+						Description: "Set the active status of the schema",
+					},
+				},
+				Required: []string{"schema_id"},
+			},
+		},
+		{
+			Name:        "schema-uninstall",
+			Description: "Remove a memory schema from the project. This will fail if any objects still exist using types from this schema.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"schema_id": {
+						Type:        "string",
+						Description: "The UUID of the schema to remove",
+					},
+				},
+				Required: []string{"schema_id"},
+			},
+		},
+		{
+			Name:        "schema-create",
+			Description: "Create a new memory schema in the global registry. Requires object type schemas at minimum.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name of the schema",
+					},
+					"version": {
+						Type:        "string",
+						Description: "Version string (e.g., \"1.0.0\")",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Description of the schema",
+					},
+					"author": {
+						Type:        "string",
+						Description: "Author name or organization",
+					},
+					"object_type_schemas": {
+						Type:        "object",
+						Description: "Object type schemas as a JSON object mapping type names to JSON Schema definitions",
+					},
+					"relationship_type_schemas": {
+						Type:        "object",
+						Description: "Optional relationship type schemas",
+					},
+					"ui_configs": {
+						Type:        "object",
+						Description: "Optional UI configuration per type — map of type name to UI config. Each entry may set: \"icon\" (a Lucide icon name from the closed catalog; kebab-case like \"file-text\", \"user\", \"git-branch\" — PascalCase \"FileText\" and \"lucide--file-text\" also accepted), \"color\" (a hex color like \"#3B82F6\"), plus free-form keys like \"category\". Icons outside the catalog render as a generic box. Call schema-icon-list to see every valid icon name.",
+					},
+					"extraction_prompts": {
+						Type:        "object",
+						Description: "Optional extraction prompts per type",
+					},
+				},
+				Required: []string{"name", "version", "object_type_schemas"},
+			},
+		},
+		{
+			Name:         "schema-delete",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Delete a memory schema owned by the current project. Cannot delete built-in schemas or schemas that are currently installed in any project.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"schema_id": {
+						Type:        "string",
+						Description: "The UUID of the memory schema to delete",
+					},
+				},
+				Required: []string{"schema_id"},
+			},
+		},
+		{
+			Name:         "schema-history",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List the full installation history for schemas in this project, including schemas that have been uninstalled. Useful for auditing which schemas were used over time.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+			},
+		},
+		{
+			Name:         "schema-compiled-types",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Return the compiled (merged) set of object and relationship types currently active in this project, across all installed schemas. Optionally includes shadow detection metadata.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, includes schemaId, schemaName, schemaVersion, and shadowed flag for each type",
+					},
+				},
+			},
+		},
+		{
+			Name:         "schema-icon-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List the valid Lucide icon names for schema object types (the value of ui_configs.<type>.icon). Icons are a CLOSED catalog — a name outside it silently renders as a generic box. Returns the canonical kebab-case names plus the accepted alternate spellings. Colors (ui_configs.<type>.color) accept any hex value, e.g. \"#3B82F6\".",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+			},
+		},
+		{
+			Name:         "entity-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more entities (graph objects) in the project. Always pass an 'entities' array — use a single-element array for one entity. Each entity type should match a type defined in an installed schema. Returns slim {id, type, key} per entity. Each entity spec may include an optional 'relationships' array to create outgoing relationships atomically in the same call, avoiding a separate create_relationship call.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entities": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "object"},
+						Description: "Array of entity specifications to create. Each item: {type (required), properties, key, status, labels, relationships?: [{type, source_id|target_id, properties}]}. Use source_id when the pre-existing entity should be the relationship source (source_id→new_entity). Use target_id when the new entity should be the source (new_entity→target_id).",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, entities are created in this branch instead of the main graph.",
+					},
+					"check_similar": {
+						Type:        "boolean",
+						Description: "When true, before creating each entity run a vector similarity check scoped to the same entity type. If a near-duplicate (score >= similarity_threshold) already exists, that entity is NOT created and is returned in the 'similar' array instead.",
+					},
+					"similarity_threshold": {
+						Type:        "number",
+						Description: "Cosine similarity cutoff (0.0-1.0) for near-duplicate detection. Defaults to the project setting (category 'entity_create', key 'similarity_threshold'), then 0.85. Only used when check_similar is true.",
+					},
+				},
+				Required: []string{"entities"},
+			},
+		},
+		{
+			Name:         "relationship-create",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Create one or more relationships between entities. Always pass a 'relationships' array — use a single-element array for one relationship. Each relationship type should match a type defined in an installed schema. Returns slim {id, type, source_id, target_id} per relationship. TIP: for creating an entity and linking it in one call, use the 'relationships' field on the entity spec in create_entity instead. IMPORTANT: source_id and target_id must be different entities — self-referential relationships (same entity as source and target) are not allowed.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationships": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "object"},
+						Description: "Array of relationship specifications to create. Each item: {type (required), source_id (required), target_id (required), properties, weight}. source_id and target_id accept an entity key string (e.g. 'caroline-person') or UUID — entity keys are preferred and more reliable. source_id and target_id must refer to different entities.",
+					},
+				},
+				Required: []string{"relationships"},
+			},
+		},
+		{
+			Name:         "entity-update",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Update an existing entity by creating a new version. Properties are merged with existing values (null removes a property). Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID or key of the entity to update",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties to update (merged with existing, null removes)",
+					},
+					"status": {
+						Type:        "string",
+						Description: "Optional new status",
+					},
+					"labels": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional labels to add",
+					},
+					"replace_labels": {
+						Type:        "boolean",
+						Description: "If true, replace all labels instead of merging (default: false)",
+					},
+					"branch": {
+						Type:        "string",
+						Description: "Optional branch name or UUID. If set, the update is applied in this branch.",
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "entity-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete an entity. The entity can be restored later.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID or key of the entity to delete",
+					},
+					"reason": {
+						Type:        "string",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "entity-restore",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Restore a soft-deleted entity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID or key of the entity to restore",
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "session-get-messages",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get messages from a graph session. Returns paginated messages with role, content, speaker, and sequence_number. Use this to read conversation history stored as graph Session/Message objects.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"session_id": {
+						Type:        "string",
+						Description: "UUID of the graph session to fetch messages from",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum number of messages to return (default 50)",
+					},
+					"cursor": {
+						Type:        "string",
+						Description: "Pagination cursor from a previous response",
+					},
+				},
+				Required: []string{"session_id"},
+			},
+		},
+		{
+			Name:         "graph-branch-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "List all branches in the project.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+			},
+		},
+		{
+			Name:         "graph-branch-get",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get a single branch by name or UUID.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name (e.g. \"plan/my-feature\") or UUID",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-create",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Create a new branch in the project.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Branch name (e.g. \"plan/my-feature\")",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Optional human-readable description",
+					},
+					"parent_branch_id": {
+						Type:        "string",
+						Description: "Optional parent branch UUID. If omitted, branch has no parent.",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:         "graph-branch-update",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Rename a branch and/or change its description. At least one of name or description is required.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to update",
+					},
+					"name": {
+						Type:        "string",
+						Description: "New branch name. Must be unique within the project.",
+					},
+					"description": {
+						Type:        "string",
+						Description: "New human-readable description",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-merge",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Merge a source branch into the main graph (or a target branch). By default performs a dry-run; set execute=true to apply.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"source_branch": {
+						Type:        "string",
+						Description: "Source branch name or UUID to merge from",
+					},
+					"target_branch": {
+						Type:        "string",
+						Description: "Optional target branch name or UUID. If omitted, merges into main graph.",
+					},
+					"execute": {
+						Type:        "boolean",
+						Description: "If true, apply the merge. Default false (dry-run).",
+					},
+					"conflict_strategy": {
+						Type:        "string",
+						Description: "How to handle conflicting objects (same key, different value). Options: \"enrich\" (default — target wins same keys, source adds new keys), \"overwrite\" (source wins all conflicting keys), \"preserve_target\" (skip conflict objects, keep target), \"block\" (abort if any conflicts exist, legacy behavior). Ignored when policy is set.",
+						// Derived from graph's table, like the policy enum above.
+						Enum: graph.MergeConflictStrategyNames(),
+					},
+					"policy": {
+						Type:        "string",
+						Description: "Named merge preset: \"manual\" (pure diff, no automatic conflict or similarity resolution — use with execute=false to compare a branch against its target), \"enrich\" (default), \"enrich_no_sim\", \"theirs\", \"mine\", \"mine_no_sim\", \"suggest\", \"partial\". Takes precedence over conflict_strategy. An unrecognised value is rejected rather than silently defaulted.",
+						// Derived from graph's preset table: the enum a client sees is
+						// the set the service actually accepts (#2231).
+						Enum: graph.MergePolicyNames(),
+					},
+				},
+				Required: []string{"source_branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-merge-readiness",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Check whether a branch is ready to merge: counts its objects and how many still await embeddings. Merging while embeddings are pending can miss near-duplicate detection.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to check",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
+			Name:         "graph-branch-fork",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Fork a branch: create a new branch and bulk-copy the source branch's current objects and relationships into it. Use to snapshot the main graph or a branch before making changes.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"name": {
+						Type:        "string",
+						Description: "Name for the new branch (e.g. \"plan/my-feature\")",
+					},
+					"source_branch": {
+						Type:        "string",
+						Description: "Optional source branch name or UUID to fork from. Omit (or pass \"main\") to fork the main graph.",
+					},
+					"description": {
+						Type:        "string",
+						Description: "Optional human-readable description for the new branch",
+					},
+					"filter_types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional list of entity type names to copy. If omitted, every object is copied.",
+					},
+				},
+				Required: []string{"name"},
+			},
+		},
+		{
+			Name:         "graph-branch-delete",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Delete a branch by name or UUID.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"branch": {
+						Type:        "string",
+						Description: "Branch name or UUID to delete",
+					},
+				},
+				Required: []string{"branch"},
+			},
+		},
+		{
+			Name:         "search-hybrid",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Advanced search combining full-text, semantic similarity, and graph context. Most powerful search option for AI agents. Supports optional recency and access-frequency ranking boosts. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns graph objects only by default; pass include_chunks=true to also return document text chunks. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Search query text",
+					},
+					"types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional entity type filters (e.g., [\"Decision\", \"Project\"])",
+					},
+					"labels": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional label filters",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
+					},
+					"limit": {
+						Type:        "number",
+						Description: fmt.Sprintf("Maximum number of results (default: 20, max: 100). When field_strategy=\"full\" the effective limit is capped to %d to bound the returned properties payload.", s.effectiveEntityQueryFullMaxLimit()),
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+					"recency_boost": {
+						Type:        "number",
+						Description: "Boost score by recency of creation. 0 = disabled (default). Typical range: 0.5–2.0. Higher values favour newer objects.",
+					},
+					"recency_half_life": {
+						Type:        "number",
+						Description: "Half-life in hours for the recency decay sigmoid (default: 168 = 7 days). Only used when recency_boost > 0.",
+					},
+					"access_boost": {
+						Type:        "number",
+						Description: "Boost score by how recently the object was accessed. 0 = disabled (default). Typical range: 0.5–2.0.",
+					},
+					"min_score": {
+						Type:        "number",
+						Description: "Optional minimum score for returned results (0.0–1.0). Items whose reported score falls below this threshold are dropped. Default: 0 (no cutoff) — weak matches are still returned, ranked by score, so callers can judge relevance themselves. Note: reported scores are fused and weight-scaled (graph-object scores are multiplied by the graph fusion weight, default 0.25), so pick a value relative to the scores you observe in results.",
+					},
+					"include_chunks": {
+						Type:        "boolean",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only. Document chunks are not returned to callers restricted by an agent object-type scope.",
+						Default:     false,
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
+						Enum:        []string{"minimal", "compact", "full"},
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:         "search-semantic",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Search entities by semantic meaning using vector embeddings. Finds conceptually similar entities even with different wording. By default only searches types with no namespace; pass namespace to target a specific namespace or \"all\" for everything. Returns graph objects only by default; pass include_chunks=true to also return document text chunks. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"query": {
+						Type:        "string",
+						Description: "Natural language query describing what you're looking for",
+					},
+					"types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional entity type filters",
+					},
+					"namespace": {
+						Type:        "string",
+						Description: "Namespace filter. Omit for types with no namespace. Pass specific namespace (e.g. \"system\") or \"all\" to include all namespaces.",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 20, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     20,
+					},
+					"min_score": {
+						Type:        "number",
+						Description: "Optional minimum score for returned results (0.0–1.0). Items whose reported score falls below this threshold are dropped. Default: 0 (no cutoff). Note: reported scores are fused and weight-scaled (graph-object scores are multiplied by the graph fusion weight, default 0.25), so pick a value relative to the scores you observe in results.",
+					},
+					"include_chunks": {
+						Type:        "boolean",
+						Description: "When true, also return document text chunks (snippet matches carrying source and document_id) alongside graph objects. Default false — return graph objects only. Document chunks are not returned to callers restricted by an agent object-type scope.",
+						Default:     false,
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
+						Enum:        []string{"minimal", "compact", "full"},
+					},
+				},
+				Required: []string{"query"},
+			},
+		},
+		{
+			Name:         "search-similar",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Find entities similar to a given entity based on semantic similarity. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"entity_id": {
+						Type:        "string",
+						Description: "UUID of the entity to find similar entities for",
+					},
+					"types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional entity type filters for results",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 10, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     10,
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
+						Enum:        []string{"minimal", "compact", "full"},
+					},
+				},
+				Required: []string{"entity_id"},
+			},
+		},
+		{
+			Name:         "graph-traverse",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Multi-hop graph traversal starting from an entity. Discover non-obvious connections and relationships. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"start_entity_id": {
+						Type:        "string",
+						Description: "UUID or key of the starting entity (e.g. 'sc-taskify-create-task' or a full UUID)",
+					},
+					"max_depth": {
+						Type:        "number",
+						Description: "Maximum traversal depth (default: 2, max: 5)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(5),
+						Default:     2,
+					},
+					"relationship_types": {
+						Type:        "array",
+						Items:       &PropertySchema{Type: "string"},
+						Description: "Optional filter by specific relationship types",
+					},
+					"direction": {
+						Type:        "string",
+						Description: "Traversal direction: outgoing, incoming, or both (default: both)",
+						Enum:        []string{"outgoing", "incoming", "both"},
+						Default:     "both",
+					},
+					"query_context": {
+						Type:        "string",
+						Description: "Optional search query to prioritize edges by relevance during traversal. When provided, edges at each BFS level are sorted by semantic similarity to this query.",
+					},
+					"field_strategy": {
+						Type:        "string",
+						Description: "Controls property depth. minimal=no properties/name, compact=name only (default), full=all properties.",
+						Enum:        []string{"minimal", "compact", "full"},
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{"start_entity_id"},
+			},
+		},
+		{
+			Name:         "relationship-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Query relationships with optional filters. Returns paginated list of relationships in the knowledge graph. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"type": {
+						Type:        "string",
+						Description: "Optional filter by relationship type",
+					},
+					"source_id": {
+						Type:        "string",
+						Description: "Optional filter by source entity UUID",
+					},
+					"target_id": {
+						Type:        "string",
+						Description: "Optional filter by target entity UUID",
+					},
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of results (default: 50, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     50,
+					},
+					"fields": {
+						Type:        "array",
+						Description: "Optional list of property field names to return from the properties blob (e.g. [\"method\",\"path\"]). id, type, key, name are always returned. Omit to return all properties (only when field_strategy=\"full\").",
+						Items:       &PropertySchema{Type: "string"},
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:         "relationship-update",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Update an existing relationship's properties or weight. Returns a slim object (id/type/key/name/labels); pass verbose=true for full metadata and field_strategy/full for properties.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationship_id": {
+						Type:        "string",
+						Description: "UUID of the relationship to update",
+					},
+					"properties": {
+						Type:        "object",
+						Description: "Properties to update (merged with existing)",
+					},
+					"weight": {
+						Type:        "number",
+						Description: "Optional new weight for the relationship",
+					},
+					"verbose": {
+						Type:        "boolean",
+						Description: "When true, include non-typical metadata: score breakdown, timestamps, versioning, branch, external-sync fields. Default false.",
+					},
+				},
+				Required: []string{"relationship_id"},
+			},
+		},
+		{
+			Name:         "relationship-delete",
+			OutputSchema: envelopeOutputSchema(),
+			Description:  "Soft-delete a relationship between two entities.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"relationship_id": {
+						Type:        "string",
+						Description: "UUID of the relationship to delete",
+					},
+					"reason": {
+						Type:        "string",
+						Description: "Optional human-readable reason for deletion. Stored on the tombstone version.",
+					},
+				},
+				Required: []string{"relationship_id"},
+			},
+		},
+		{
+			Name:         "tag-list",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get all unique tags/labels used in the project with counts.",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		},
+		{
+			Name:        "schema-migration-preview",
+			Description: "SAFE READ-ONLY: Preview what would happen if objects are migrated from one schema version to another. Shows risk assessment (safe/cautious/risky/dangerous), fields that would be dropped, type coercions, and validation errors. NO CHANGES ARE MADE. Use this before actual migration to understand impact. If dangerous, recommend user to use CLI: ./bin/migrate-schema -project <uuid> -from <old> -to <new>",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_version": {
+						Type:        "string",
+						Description: "Current schema version (e.g., '1.0.0')",
+					},
+					"to_version": {
+						Type:        "string",
+						Description: "Target schema version (e.g., '2.0.0')",
+					},
+					"sample_size": {
+						Type:        "number",
+						Description: "Number of objects to analyze (default: 10, max: 50)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(50),
+						Default:     10,
+					},
+				},
+				Required: []string{"from_version", "to_version"},
+			},
+		},
+		{
+			Name:        "migration-archive-list",
+			Description: "SAFE READ-ONLY: List objects that have migration archives (dropped fields from previous migrations). Shows which objects have recoverable data and what fields were dropped. Use this to understand what data can be restored via rollback.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"limit": {
+						Type:        "number",
+						Description: "Maximum number of objects to return (default: 20, max: 100)",
+						Minimum:     intPtr(1),
+						Maximum:     intPtr(100),
+						Default:     20,
+					},
+					"offset": {
+						Type:        "number",
+						Description: "Pagination offset (default: 0)",
+						Minimum:     intPtr(0),
+						Default:     0,
+					},
+				},
+				Required: []string{},
+			},
+		},
+		{
+			Name:        "migration-archive-get",
+			Description: "SAFE READ-ONLY: Get detailed migration archive for a specific object. Shows complete history of dropped fields across all migrations, with timestamps and versions. Use this to see exactly what data would be restored if you rollback. For actual rollback, recommend user to use CLI: ./bin/migrate-schema -project <uuid> --rollback --rollback-version <version> -dry-run=false",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"object_id": {
+						Type:        "string",
+						Description: "UUID of the object to get archive for",
+					},
+				},
+				Required: []string{"object_id"},
+			},
+		},
+		// New System A migration tools — delegate to schemas.Service
+		{
+			Name:         "schema-migrate-preview",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Preview a schema migration from one installed schema version to another. Runs a dry-run against all project objects, returning per-type risk breakdown (safe/cautious/risky/dangerous) and an overall risk level. NO CHANGES ARE MADE. Use before execute to understand impact.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_schema_id": {
+						Type:        "string",
+						Description: "UUID of the currently installed schema to migrate from",
+					},
+					"to_schema_id": {
+						Type:        "string",
+						Description: "UUID of the target schema to migrate to",
+					},
+				},
+				Required: []string{"from_schema_id", "to_schema_id"},
+			},
+		},
+		{
+			Name:         "schema-migrate-execute",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Execute a schema migration for all project objects, applying type/property renames and archiving removed properties. Returns counts of migrated and failed objects.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"from_schema_id": {
+						Type:        "string",
+						Description: "UUID of the schema to migrate from",
+					},
+					"to_schema_id": {
+						Type:        "string",
+						Description: "UUID of the schema to migrate to",
+					},
+					"force": {
+						Type:        "boolean",
+						Description: "Force migration even if risk level is dangerous (default: false)",
+					},
+					"max_objects": {
+						Type:        "number",
+						Description: "Maximum number of objects to migrate in this batch (0 = no limit)",
+						Minimum:     intPtr(0),
+					},
+				},
+				Required: []string{"from_schema_id", "to_schema_id"},
+			},
+		},
+		{
+			Name:         "schema-migrate-rollback",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Rollback a schema migration by restoring archived property data for objects migrated to a given schema version. Optionally re-installs old schema types in a single transaction.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"to_version": {
+						Type:        "string",
+						Description: "Schema version to roll back to (e.g., '1.2.0')",
+					},
+					"restore_type_registry": {
+						Type:        "boolean",
+						Description: "If true, re-installs old schema types and removes new type additions (default: false)",
+					},
+				},
+				Required: []string{"to_version"},
+			},
+		},
+		{
+			Name:         "schema-migrate-commit",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Permanently discard migration archive data up to a given schema version. This prunes migration_archive entries from all project objects for versions <= through_version. Irreversible — only do this after confirming rollback is no longer needed.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"through_version": {
+						Type:        "string",
+						Description: "Archive entries for versions <= this value will be deleted (e.g., '1.2.0')",
+					},
+				},
+				Required: []string{"through_version"},
+			},
+		},
+		{
+			Name:         "schema-migration-job-status",
+			OutputSchema: objectOutputSchema(),
+			Description:  "Get the current status and progress of an async schema migration job. Returns status (pending/running/completed/failed), objects migrated/failed counts, and any error message.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]PropertySchema{
+					"job_id": {
+						Type:        "string",
+						Description: "UUID of the migration job to check",
+					},
+				},
+				Required: []string{"job_id"},
+			},
+		},
+	}
+
+	// Always expose Brave Search — execution falls back to env key, then project/org
+	// config. If no key is available at any tier the tool returns a clear error message.
+	tools = append(tools, getBraveSearchToolDefinition())
+
+	// Always expose webfetch — no API key required, fetches any public URL.
+	tools = append(tools, getWebFetchToolDefinition())
+
+	// Expose Reddit search — returns error if credentials not configured.
+	tools = append(tools, getRedditSearchToolDefinition())
+
+	// Append agent tool definitions if handler is available
+	if s.agentToolHandler != nil {
+		tools = append(tools, s.agentToolHandler.GetAgentToolDefinitions()...)
+	}
+
+	// Append the package-level tool builders from the single ordered list shared
+	// with mcpToolScopeVocabulary. agentExtToolDefinitions is first; the
+	// handler-provided registry tools remain interleaved immediately after it to
+	// preserve catalog order; the remaining builders follow.
+	tools = append(tools, dynamicToolBuilders[0]()...)
+
+	// Append MCP registry tool definitions if handler is available
+	if s.mcpRegistryToolHandler != nil {
+		tools = append(tools, s.mcpRegistryToolHandler.GetMCPRegistryToolDefinitions()...)
+	}
+
+	for _, build := range dynamicToolBuilders[1:] {
+		tools = append(tools, build()...)
+	}
+
+	// Journal tools
+	tools = append(tools, ToolDefinition{
+		Name:         "journal-list",
+		OutputSchema: objectOutputSchema(),
+		Description:  "List recent project journal entries — graph mutations (create, update, delete, batch, merge) and notes. Use since to filter by age (e.g. '7d', '24h'). Returns entries with event type, actor, metadata, and attached notes.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"since": {
+					Type:        "string",
+					Description: "Show entries from the last N days/hours/minutes (e.g. '7d', '24h', '30m') or ISO-8601 timestamp. Defaults to last 7 days.",
+				},
+				"limit": {
+					Type:        "integer",
+					Description: "Maximum number of entries to return. Default 100.",
+				},
+				"branch_id": {
+					Type:        "string",
+					Description: "Optional branch UUID to filter entries by branch. Omit to view main branch entries only.",
+				},
+				"include_branches": {
+					Type:        "boolean",
+					Description: "When true, includes entries from the main branch and all merged branches in a unified time-sorted feed.",
+				},
+				"cursor": {
+					Type:        "string",
+					Description: "Opaque keyset cursor from a previous response's next_cursor. Omit for the first page.",
+				},
+			},
+			Required: []string{},
+		},
+	})
+	tools = append(tools, ToolDefinition{
+		Name:          "remember",
+		Description:   "Ingest a document, conversation, or knowledge snippet into the project knowledge graph. Runs the AI extraction pipeline: text → document → classify → extract → structured entities and relationships. Use for substantive content ingestion (meeting notes, documents, decisions). For lightweight observations, use entity-create instead.",
+		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"message": {
+					Type:        "string",
+					Description: "Natural language text to ingest and extract into the knowledge graph",
+				},
+				"schema_policy": {
+					Type:        "string",
+					Description: "Schema policy: 'reuse_only' (default, reuses existing types), 'auto' (may create new types), 'ask' (asks before creating types), 'enrich' (extends existing schemas)",
+				},
+				"mode": {
+					Type:        "string",
+					Description: "Execution mode: 'sync' (default, waits for completion), 'stream' (SSE stream), 'async' (202 fire-and-forget)",
+				},
+				"dry_run": {
+					Type:        "boolean",
+					Description: "If true, preview extraction without persisting",
+				},
+			},
+			Required: []string{"message"},
+		},
+	})
+	tools = append(tools, ToolDefinition{
+		Name:          "forget",
+		Description:   "Remove entities and relationships from the knowledge graph using a natural language query. Performs soft-delete (reversible via entity-restore). Use to clean up outdated or incorrect information from the graph.",
+		RequiredScope: "graph:write",
+		OutputSchema:  envelopeOutputSchema(),
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"message": {
+					Type:        "string",
+					Description: "Natural language query describing what to forget. E.g. 'the old Project Alpha details' or 'outdated email addresses from 2025'",
+				},
+				"strategy": {
+					Type:        "string",
+					Description: "Deletion strategy: 'confirm' (default, confirms before batch), 'auto' (no confirmations), 'ask' (per-call confirmation)",
+				},
+				"cascade_depth": {
+					Type:        "number",
+					Description: "How many relationship hops to cascade deletion (1=direct only, 2=default, 3=two hops)",
+				},
+				"mode": {
+					Type:        "string",
+					Description: "Execution mode: 'sync' (default), 'stream' (SSE stream), 'async' (202 fire-and-forget)",
+				},
+				"dry_run": {
+					Type:        "boolean",
+					Description: "If true, preview deletion without applying",
+				},
+			},
+			Required: []string{"message"},
+		},
+	})
+	tools = append(tools, ToolDefinition{
+		Name:          "project-briefing",
+		Description:   "Get a formatted project briefing for a given task. Returns core memories, relevant memories from semantic search, and discovered patterns and conventions — all in one call. Use at the start of a session to load all relevant context at once. No LLM calls — fast data retrieval only.",
+		RequiredScope: "graph:read",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"query": {
+					Type:        "string",
+					Description: "What you are working on. Used to find relevant context. E.g. 'adding dark mode to auth module'",
+				},
+				"limit": {
+					Type:        "number",
+					Description: "Max results per section. Default: 5",
+				},
+			},
+			Required: []string{"query"},
+		},
+	})
+	tools = append(tools, ToolDefinition{
+		Name:         "journal-add-note",
+		OutputSchema: objectOutputSchema(),
+		Description:  "Add a markdown note to the project journal. Notes can be standalone or attached to a specific journal entry. Use to record observations, decisions, or context about graph changes.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]PropertySchema{
+				"body": {
+					Type:        "string",
+					Description: "Markdown body of the note.",
+				},
+				"journal_id": {
+					Type:        "string",
+					Description: "Optional UUID of a journal entry to attach this note to.",
+				},
+			},
+			Required: []string{"body"},
+		},
+	})
+
+	// Session todo tools — session-scoped, ownership enforced at the data-access
+	// layer via the shared sessiontodos.SessionAccessible predicate (see
+	// session_todo_tools.go). Registered here so they dispatch through the same
+	// ExecuteTool switch as every other tool.
+	tools = append(tools, sessionTodoToolDefinitions()...)
+
+	// Apply RequiredScope from the central static map and the agent-tool map to
+	// any tool that doesn't already declare one. Tools in dynamic *_tools.go
+	// files set RequiredScope directly; this covers the static core tools and
+	// the handler-provided agent tools (whose HTTP equivalents enforce the same
+	// scope — see agentToolRequiredScope).
+	applyRequiredScopes(tools)
+
+	buildToolIndex(tools)
+	return tools
+}
+
+// GetToolDefinitionsForProject returns tool definitions with dynamic content (e.g. agent
+// catalog injected into trigger_agent description) for a specific project.
+// Falls back to GetToolDefinitions when projectID is empty.
+func (s *Service) GetToolDefinitionsForProject(ctx context.Context, projectID string) []ToolDefinition {
+	if projectID == "" || s.agentToolHandler == nil {
+		return s.GetToolDefinitions()
+	}
+
+	// Start with the full static tool list (includes static agent tools)
+	tools := s.GetToolDefinitions()
+
+	// Find the range of agent tools and replace them with project-enriched versions
+	enriched := s.agentToolHandler.GetAgentToolDefinitionsForProject(ctx, projectID)
+	enrichedByName := make(map[string]ToolDefinition, len(enriched))
+	for _, t := range enriched {
+		enrichedByName[t.Name] = t
+	}
+
+	for i, tool := range tools {
+		if et, ok := enrichedByName[tool.Name]; ok {
+			tools[i] = et
+		}
+	}
+
+	// Re-apply scopes: the enrichment above replaces every handler-provided
+	// agent tool with its project-enriched definition, which carries no
+	// RequiredScope. Re-apply so the tools/call scope gate sees the same
+	// authority as the tools/list (GetToolDefinitions) path.
+	applyRequiredScopes(tools)
+
+	// Append tools from connected relay sessions for this project.
+	if s.relaySvc != nil && projectID != "" {
+		for _, sess := range s.relaySvc.ListByProject(projectID) {
+			tools = append(tools, relaySessionTools(sess)...)
+		}
+	}
+
+	buildToolIndex(tools)
+	return tools
+}
+
+// toolRequiredScope maps each static tool name to the MCP scope required to list and call it.
+// Dynamic tools (skills CRUD, agents ext, documents, etc.) set RequiredScope at definition time
+// in their respective *_tools.go files. This map covers only the core static tools built inline
+// in GetToolDefinitions.
+var toolRequiredScope = map[string]string{
+	// Project
+	"project-get":    "graph:read",
+	"project-create": "projects:write",
+	"project-update": "projects:write",
+	// Schema read
+	"schema-version":        "graph:read",
+	"entity-type-list":      "graph:read",
+	"schema-list":           "schema:read",
+	"schema-get":            "schema:read",
+	"schema-list-available": "schema:read",
+	"schema-list-installed": "schema:read",
+	"schema-history":        "schema:read",
+	"schema-compiled-types": "graph:read",
+	"schema-icon-list":      "schema:read",
+	// Schema write
+	"schema-assign":            "schema:write",
+	"schema-assignment-update": "schema:write",
+	"schema-uninstall":         "schema:write",
+	"schema-create":            "schema:write",
+	"schema-delete":            "schema:write",
+	// Schema migrate
+	"schema-migration-preview":    "schema:migrate",
+	"migration-archive-list":      "schema:migrate",
+	"migration-archive-get":       "schema:migrate",
+	"schema-migrate-preview":      "schema:migrate",
+	"schema-migrate-execute":      "schema:migrate",
+	"schema-migrate-rollback":     "schema:migrate",
+	"schema-migrate-commit":       "schema:migrate",
+	"schema-migration-job-status": "schema:migrate",
+	// Graph read
+	"entity-query":      "graph:read",
+	"entity-history":    "graph:read",
+	"entity-search":     "graph:read",
+	"entity-edges-get":  "graph:read",
+	"relationship-list": "graph:read",
+	"graph-traverse":    "graph:read",
+	"tag-list":          "graph:read",
+	// Graph write
+	"entity-create":       "graph:write",
+	"entity-update":       "graph:write",
+	"entity-delete":       "graph:write",
+	"entity-restore":      "graph:write",
+	"relationship-create": "graph:write",
+	"relationship-update": "graph:write",
+	"relationship-delete": "graph:write",
+	// Branches. These use the graph scopes, matching /api/graph/branches
+	// (branches/routes.go) and the documented permission table: the branch MCP
+	// tools were the only branch surface gated on branches:*, so a default
+	// data:write token could use branch REST but not see or call the tools (#2227).
+	"graph-branch-list":            "graph:read",
+	"graph-branch-get":             "graph:read",
+	"graph-branch-create":          "graph:write",
+	"graph-branch-update":          "graph:write",
+	"graph-branch-merge":           "graph:write",
+	"graph-branch-merge-readiness": "graph:read",
+	"graph-branch-fork":            "graph:write",
+	"graph-branch-delete":          "graph:write",
+	// Search
+	"search-hybrid":   "search",
+	"search-semantic": "search",
+	"search-similar":  "search",
+	// Session
+	"session-get-messages": "graph:read",
+	"remember":             "graph:write",
+	"forget":               "graph:write",
+	"remember-status":      "graph:read",
+	"project-briefing":     "graph:read",
+	// Journal (static tools; journal-list and journal-add-note are also appended below)
+	"journal-list":     "journal:read",
+	"journal-add-note": "journal:write",
+}
+
+// agentToolRequiredScope maps each agent-domain MCP tool name to the MCP scope
+// its HTTP equivalent enforces (see domain/agents/routes.go). The agent tool
+// definitions are handler-provided — domain/agents injects them at runtime via
+// GetAgentToolDefinitions — and declare no RequiredScope of their own, so the
+// MCP layer assigns the scope here to keep the two surfaces in parity
+// (issue #1019). This is a separate map from toolRequiredScope so that
+// LookupToolScope / tool-group resolution, which read the static core catalog
+// only, are unaffected by handler-provided tools.
+var agentToolRequiredScope = map[string]string{
+	// Agent definitions — mirror /api/projects/:projectId/agent-definitions
+	"agent-def-list":          "agents:read",
+	"agent-def-get":           "agents:read",
+	"agent-def-create":        "agents:write",
+	"update_agent_definition": "agents:write",
+	"agent-def-delete":        "agents:write",
+
+	// Runtime agents — mirror /api/projects/:projectId/agents
+	"agent-list":    "agents:read",
+	"agent-get":     "agents:read",
+	"agent-create":  "agents:write",
+	"update_agent":  "agents:write",
+	"agent-delete":  "agents:write",
+	"trigger_agent": "agents:write",
+
+	// Agent runs — mirror /api/projects/:projectId/agent-runs and /api/v1/runs
+	"agent-run-list":       "agents:read",
+	"agent-run-get":        "agents:read",
+	"agent-run-messages":   "agents:read",
+	"agent-run-tool-calls": "agents:read",
+	"agent-run-status":     "agents:read",
+
+	// Agent catalog — derived from the agent-definitions read surface
+	"agent-list-available": "agents:read",
+}
+
+// applyRequiredScopes assigns RequiredScope to any tool that does not already
+// declare one, first from the static core map (toolRequiredScope) and then from
+// the handler-provided agent-tool map (agentToolRequiredScope). It runs in both
+// GetToolDefinitions and GetToolDefinitionsForProject: the latter re-applies it
+// after project enrichment replaces the handler-provided agent tools (which
+// otherwise carry no RequiredScope).
+func applyRequiredScopes(tools []ToolDefinition) {
+	for i := range tools {
+		if tools[i].RequiredScope != "" {
+			continue
+		}
+		if scope, ok := toolRequiredScope[tools[i].Name]; ok {
+			tools[i].RequiredScope = scope
+			continue
+		}
+		if scope, ok := agentToolRequiredScope[tools[i].Name]; ok {
+			tools[i].RequiredScope = scope
+		}
+	}
+}
+
+// LookupToolScope returns the required MCP scope for a static core tool name.
+// It reports false for tool names that are not in the static scope table.
+// Dynamic tools (skills, agents, documents, blueprints, etc.) declare their
+// RequiredScope at definition time in their *_tools.go files, and external /
+// relay tools carry prefixed names, so they are not covered here.
+func LookupToolScope(toolName string) (string, bool) {
+	scope, ok := toolRequiredScope[toolName]
+	return scope, ok
+}
+
+// ToolScopes returns the sorted scope values present in toolRequiredScope. It
+// lets the agent toolgroups package assert every static scope maps to a known
+// group without maintaining a hand-synced duplicate list.
+func ToolScopes() []string {
+	out := make([]string, 0, len(toolRequiredScope))
+	seen := make(map[string]struct{}, len(toolRequiredScope))
+	for _, scope := range toolRequiredScope {
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsToolScope reports whether s can gate an MCP tool — i.e. it is present in the
+// derived tool-scope vocabulary (see mcpToolScopeVocabulary). Handler packages
+// whose tool definitions are injected at runtime (domain/agents,
+// domain/mcpregistry) use it in tests so a handler-provided tool declaring a
+// scope outside the vocabulary fails the build instead of silently losing
+// umbrella-scope visibility.
+func IsToolScope(s string) bool {
+	return mcpToolScopeVocabulary[s]
+}
+
+// FilterToolsForScopes filters tools based on token scopes.
+// Tools tagged AgentOnly are hidden from all external MCP clients regardless of scopes.
+// Tools with a RequiredScope are only shown when the token's expanded scope set includes that scope.
+// Tools with no RequiredScope are always shown (provided they are not AgentOnly).
+func FilterToolsForScopes(tools []ToolDefinition, scopes []string) []ToolDefinition {
+	expanded := expandScopesSet(scopes)
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.AgentOnly {
+			continue
+		}
+		if t.RequiredScope != "" && !expanded[t.RequiredScope] {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// FilterToolsForSuperadmin removes SuperadminOnly tools from the catalog when
+// the caller is not a superadmin_full principal. isSuperadmin must be the
+// resolved platform-admin authority (core.superadmins), not a scope-derived
+// value; callers that cannot resolve it must pass false so the operator tools
+// fail closed. When isSuperadmin is true the catalog is returned unchanged.
+func FilterToolsForSuperadmin(tools []ToolDefinition, isSuperadmin bool) []ToolDefinition {
+	if isSuperadmin {
+		return tools
+	}
+	out := make([]ToolDefinition, 0, len(tools))
+	for _, t := range tools {
+		if t.SuperadminOnly {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// IsSuperadminCaller reports whether the authenticated caller in ctx holds an
+// active superadmin_full grant. It delegates to the single canonical
+// platform-admin boundary (auth.IsSuperadminFull, backed by the core.superadmins
+// query), so a bare admin / admin:all token cannot satisfy it — the grant is
+// resolved from the caller's identity, never from token scopes (issue #948).
+// A resolution failure is returned to the caller so it can fail closed.
+func (s *Service) IsSuperadminCaller(ctx context.Context) (bool, error) {
+	return auth.IsSuperadminFull(ctx, s.db)
+}
+
+// superadminOnlyToolNames is the set of tool names gated on the superadmin_full
+// authority rather than a token scope. It is derived from the same package-level
+// builders (dynamicToolBuilders) that GetToolDefinitions consumes, so it cannot
+// drift from the tools it guards. Enforcement keys off this set — never off a
+// re-mapped ToolDefinition — so the ADK ToolPool's definition re-map (which drops
+// SuperadminOnly/RequiredScope) cannot bypass it (issue #948).
+var superadminOnlyToolNames = func() map[string]bool {
+	names := make(map[string]bool)
+	for _, build := range dynamicToolBuilders {
+		for _, def := range build() {
+			if def.SuperadminOnly {
+				names[def.Name] = true
+			}
+		}
+	}
+	// The NEW operator tools live outside dynamicToolBuilders (they must not
+	// pollute the project catalog/tool index). They are still derived from the
+	// same definition list the admin catalog consumes, so the gate set cannot
+	// drift from the tools it guards.
+	for _, def := range superadminToolDefinitions() {
+		if def.SuperadminOnly {
+			names[def.Name] = true
+		}
+	}
+	return names
+}()
+
+// IsSuperadminOnlyTool reports whether the named tool is a deployment-wide /
+// org-level operator tool gated on the superadmin_full authority.
+func (s *Service) IsSuperadminOnlyTool(name string) bool {
+	return superadminOnlyToolNames[name]
+}
+
+// sensitiveInProcessAdminTools is the set of privilege-sensitive tools whose
+// in-process bar is raised to superadmin_full rather than trusted-internal.
+// These tools mint credentials (token-create), accept provider API keys
+// (provider-configure-project), create projects (project-create), or install /
+// outbound-connect an external MCP server (mcp-registry-install,
+// mcp-server-inspect); an agent run reaching ExecuteTool in-process must not
+// exercise that authority on the strength of the trusted-internal marker alone
+// (issue #1018). Over HTTP the transport has already enforced the tool's
+// declared scope and marked the call TransportEnforced, so the overlay applies
+// only to the non-transport in-process path.
+//
+// The registry install/inspect tools declare platform-tier `admin` (their HTTP
+// equivalents do an outbound connect) but are neither AgentOnly nor
+// superadmin-only; without this overlay an untrusted-or-trusted in-process run
+// would pass the plain RequiredScope gate on trust alone. They are listed here
+// so a trusted non-superadmin run is denied in-process, matching the HTTP bar.
+//
+// The subset is the sensitive eight: token minting (privilege escalation),
+// provider config (accepts API keys), project creation, and registry
+// install/inspect. The read-only provider-models-list is left at the
+// trusted-internal bar.
+var sensitiveInProcessAdminTools = map[string]bool{
+	"token-list":                 true,
+	"token-create":               true,
+	"token-get":                  true,
+	"token-revoke":               true,
+	"provider-configure-project": true,
+	"project-create":             true,
+	"mcp-registry-install":       true,
+	"mcp-server-inspect":         true,
+}
+
+// handlerProvidedToolScopes are the RequiredScope values declared only by
+// handler-provided tool definitions (domain/agents, domain/mcpregistry), which
+// are injected at runtime and therefore invisible to the package-level
+// derivation above. domain/agents declares agents:read/agents:write (already in
+// the derived set via the static/dynamic maps); domain/mcpregistry declares
+// "admin" for the registry install/inspect tools. The seven agent-only
+// registry-management tools no longer declare a scope (#1143) — AgentOnly is
+// their authority — so "admin" survives here only because of install/inspect.
+// Listing it keeps IsToolScope — and the umbrella projection — honest for
+// handler-provided tools instead of dropping a scope the moment the last
+// static/dynamic tool stops requiring it.
+var handlerProvidedToolScopes = []string{"admin"}
+
+// mcpToolScopeVocabulary is the set of scope values that can gate an MCP tool.
+// It is derived from the tool catalog — the central static scope map plus the
+// package-level builders in dynamicToolBuilders (the same list GetToolDefinitions
+// consumes) — so it cannot drift from the package-level tools it guards.
+//
+// Handler-provided tools (domain/agents, domain/mcpregistry) are injected at
+// runtime and are therefore not part of this derivation. Tests in those packages
+// assert via IsToolScope that every RequiredScope they declare is covered here,
+// so a handler-only scope fails the build rather than silently losing
+// umbrella-scope visibility: it must reuse a scope already in the vocabulary or
+// extend the derivation deliberately (see handlerProvidedToolScopes).
+//
+// It is the projection target for umbrella-scope implications: MCP honors an
+// implied scope only when some tool can require it.
+var mcpToolScopeVocabulary = func() map[string]bool {
+	vocab := make(map[string]bool, len(toolRequiredScope))
+	for _, s := range toolRequiredScope {
+		vocab[s] = true
+	}
+	for _, build := range dynamicToolBuilders {
+		for _, def := range build() {
+			if def.RequiredScope != "" {
+				vocab[def.RequiredScope] = true
+			}
+		}
+	}
+	for _, s := range handlerProvidedToolScopes {
+		vocab[s] = true
+	}
+	return vocab
+}()
+
+// expandScopesSet returns the effective scope set the MCP tool surface may
+// exercise for a token. Explicitly held scopes are always retained. Implied
+// scopes come from the canonical auth.ExpandScopes relation, projected onto
+// mcpToolScopeVocabulary: an implication is honored only when some MCP tool can
+// require the implied scope. Account/organisation/global-admin scopes
+// (admin:read, admin:write, mcp:admin, org:*, project:invite:create, account:*)
+// are never tool RequiredScopes, so they are excluded by construction rather
+// than by a hand-maintained deny list.
+func expandScopesSet(scopes []string) map[string]bool {
+	canonical := auth.ExpandScopes(scopes)
+	result := make(map[string]bool, len(canonical))
+	for _, s := range scopes {
+		result[s] = true
+	}
+	for s := range canonical {
+		if mcpToolScopeVocabulary[s] {
+			result[s] = true
+		}
+	}
+	return result
+}
+
+// toolIndex is built once from the full tool list for O(1) lookups in handleToolsCall.
+// Populated by buildToolIndex called from GetToolDefinitions and GetToolDefinitionsForProject.
+var toolIndexMu sync.RWMutex
+var toolIndex = map[string]*ToolDefinition{}
+
+// buildToolIndex rebuilds the tool index from the provided tool list.
+func buildToolIndex(tools []ToolDefinition) {
+	idx := make(map[string]*ToolDefinition, len(tools))
+	for i := range tools {
+		t := tools[i]
+		idx[t.Name] = &t
+	}
+	toolIndexMu.Lock()
+	toolIndex = idx
+	toolIndexMu.Unlock()
+}
+
+// GetToolByName returns the ToolDefinition for a given tool name, or nil if not found.
+func (s *Service) GetToolByName(name string) *ToolDefinition {
+	toolIndexMu.RLock()
+	defer toolIndexMu.RUnlock()
+	return toolIndex[name]
+}
+
+// ErrToolForbidden is returned by AuthorizeToolCall when a caller is not
+// authorized to invoke a tool (agent-only, superadmin-only, or a RequiredScope
+// the caller lacks). Callers map it to an HTTP 403 without revealing which
+// authority was missing.
+var ErrToolForbidden = errors.New("tool not authorized")
+
+// AuthorizeToolCall applies the transport's per-tool authority check to an
+// authenticated caller. It mirrors handler.go / sse_handler.go /
+// streamable_http_handler.go: AgentOnly tools are refused; SuperadminOnly tools
+// require the platform grant (resolved from the authenticated context); and a
+// RequiredScope must be present in the caller's effective (expanded) scopes.
+//
+// It returns nil when the caller may invoke the tool — including when the tool
+// is unknown to the catalog (dispatch still gates unknown names). ErrToolForbidden
+// is returned for every authorization denial; a superadmin-grant resolution
+// failure returns a non-forbidden error (fail-closed) so the caller can map it
+// to a server error rather than a denial.
+func (s *Service) AuthorizeToolCall(ctx context.Context, toolName string, scopes []string) error {
+	toolDef := s.GetToolByName(toolName)
+	if toolDef == nil {
+		return nil
+	}
+	if toolDef.AgentOnly {
+		return ErrToolForbidden
+	}
+	if toolDef.SuperadminOnly {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return fmt.Errorf("authorize tool %q: %w", toolName, err)
+		}
+		if !ok {
+			return ErrToolForbidden
+		}
+	}
+	if toolDef.RequiredScope != "" {
+		if !expandScopesSet(scopes)[toolDef.RequiredScope] {
+			return ErrToolForbidden
+		}
+	}
+	return nil
+}
+
+func (s *Service) GetResourceDefinitions() []ResourceDefinition {
+	return []ResourceDefinition{
+		{
+			URI:         "memory://schema/entity-types",
+			Name:        "Entity Type Schema",
+			Description: "Complete catalog of all available entity types in the knowledge graph with their counts and relationship types",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "memory://schema/relationships",
+			Name:        "Relationship Types Registry",
+			Description: "All valid relationship types, their constraints, and usage statistics",
+			MimeType:    "application/json",
+		},
+		{
+			URI:  "memory://templates/catalog",
+			Name: "Schema Catalog",
+			Description: "Available memory schemas with descriptions, object types, and metadata. " +
+				"Deprecated schemas are hidden; append ?include_deprecated=true to the URI to include them.",
+			MimeType: "application/json",
+		},
+		{
+			URI:         "memory://project/{project_id}/metadata",
+			Name:        "Project Metadata",
+			Description: "Current project information including entity counts, active templates, and statistics",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "memory://project/{project_id}/recent-entities",
+			Name:        "Recent Entities",
+			Description: "Recently created or modified entities for context (last 50)",
+			MimeType:    "application/json",
+		},
+		{
+			URI:         "memory://project/{project_id}/templates",
+			Name:        "Installed Templates",
+			Description: "Templates currently installed and active in this project",
+			MimeType:    "application/json",
+		},
+	}
+}
+
+func (s *Service) GetPromptDefinitions() []PromptDefinition {
+	return []PromptDefinition{
+		{
+			Name:        "memory-guide",
+			Description: "Get guidance on how to use this knowledge base — what it contains, how to query it, and which tools to use for different tasks",
+			Arguments:   []PromptArgument{},
+		},
+	}
+}
+
+// ExecuteTool executes an MCP tool and returns the result
+func (s *Service) ExecuteTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
+	// Defense in depth: enforce the share-instance tool allowlist here as well as
+	// in the transports, BEFORE any tool-specific dispatch. This covers callers
+	// that do not pass through a transport pre-check — notably the ADK ToolPool
+	// during an agent run, which executes tools with the agent's context — and
+	// includes hidden built-ins such as set_session_title, which must not be
+	// reachable outside a restricted instance's allowlist.
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// Handle hidden built-in tools — these are always available, never listed,
+	// and cannot be blocked by scope filters or tool whitelists (subject to the
+	// instance allowlist check above).
+	if toolName == "set_session_title" {
+		// This hidden built-in can patch a graph object's title, so drop any
+		// cached reads before it runs (issue #1192).
+		toolResultCacheFromContext(ctx).invalidate()
+		return s.executeSetSessionTitle(ctx, projectID, args)
+	}
+	// Defense in depth: enforce the share-instance tool allowlist here as well as
+	// in the transports. This covers callers that do not pass through a transport
+	// pre-check — notably the ADK ToolPool during an agent run, which executes
+	// tools with the agent's context.
+	if scope := InstanceScopeFromContext(ctx); scope != nil && InstanceDeniesTool(scope, toolName) {
+		return nil, fmt.Errorf("tool not allowed by MCP share instance: %s", toolName)
+	}
+	// One authority decision for every transport. The three HTTP transports
+	// enforce per-tool AgentOnly / RequiredScope / SuperadminOnly before dispatch
+	// and mark the call transport-enforced; the in-process ADK ToolPool (agent
+	// runs) reaches this path without that marker and is gated here. A tool's
+	// declared authority is enforced by the single fail-closed seam
+	// authz.AuthorizeTool, so the in-process and transport decisions cannot drift
+	// (issue #1041, mechanism 7).
+	//
+	// The in-process principal is an agent run, not a token, so token scopes do
+	// not apply directly. TrustedInternal (kb.agent_runs.trusted_internal) is the
+	// in-process trust primitive: true for trusted/internal surfaces (session UI,
+	// scheduler, MCP-triggered agent) and false for external surfaces (webhook,
+	// A2A, agentcompat, public share). Fail-closed: an absent marker resolves to
+	// untrusted. An HTTP transport marks its dispatch TransportEnforced after its
+	// own per-tool check, so that is an equally-authorized origin.
+	toolDef := s.GetToolByName(toolName)
+	principal := authz.Principal{
+		Trusted:           TrustedInternalFromContext(ctx),
+		TransportEnforced: TransportEnforcedFromContext(ctx),
+	}
+
+	// The caller's platform grant (superadmin_full) is resolved lazily: only the
+	// SuperadminOnly tools and the sensitive in-process admin tools need it. The
+	// zero value (false) is fail-closed — a tool that needs the grant and cannot
+	// resolve it is refused. The check resolves the caller from ctx (the run's
+	// originating principal, not the agent definition) and fails closed on an
+	// unknown principal or a resolution error (issue #948).
+	if s.IsSuperadminOnlyTool(toolName) ||
+		(sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced) {
+		ok, err := s.IsSuperadminCaller(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to authorize tool %q: %w", toolName, err)
+		}
+		principal.Platform = ok
+	}
+
+	// Sensitive admin-scoped tools (token minting, provider config, project
+	// creation) declare a token-only `admin` scope: no project role maps to it,
+	// so a trusted session run can never legitimately hold it. The in-process bar
+	// is therefore the identity-based superadmin_full grant, not trusted-internal
+	// (issue #1018). This is a stricter overlay on the seam's RequiredScope gate
+	// below; an HTTP transport already enforced the `admin` scope before dispatch,
+	// so it is exempt here.
+	if sensitiveInProcessAdminTools[toolName] && !principal.TransportEnforced {
+		if !principal.Platform {
+			return nil, fmt.Errorf("tool %q requires superadmin privileges", toolName)
+		}
+	}
+
+	if toolDef != nil {
+		if err := authz.AuthorizeTool(authz.ToolAuthority{
+			Name:           toolDef.Name,
+			RequiredScope:  toolDef.RequiredScope,
+			AgentOnly:      toolDef.AgentOnly,
+			SuperadminOnly: s.IsSuperadminOnlyTool(toolName),
+		}, principal); err != nil {
+			return nil, err
+		}
+	}
+
+	// Intra-run tool-result cache (issue #1192). Authority is enforced above on
+	// every call, including cache hits; the cache wraps only the tool-specific
+	// dispatch below. Returns uncached when the run context carries no cache
+	// (HTTP transports, tests).
+	return executeWithToolResultCache(ctx, projectID, toolName, args, func() (*ToolResult, error) {
+		return s.dispatchTool(ctx, projectID, toolName, args)
+	})
+}
+
+// dispatchTool routes a tool name to its handler. It deliberately contains no
+// authority checks — ExecuteTool applies those before dispatch — and is split
+// out so the intra-run result cache can wrap it (issue #1192).
+func (s *Service) dispatchTool(ctx context.Context, projectID string, toolName string, args map[string]any) (*ToolResult, error) {
+	switch toolName {
+	case "project-get":
+		return s.executeGetProjectInfo(ctx, projectID)
+	case "project-create":
+		return s.executeCreateProject(ctx, args)
+	case "project-update":
+		return s.executeUpdateProjectInfo(ctx, projectID, args)
+	case "schema-version":
+		return s.executeSchemaVersion(ctx, projectID)
+	case "entity-type-list":
+		return s.executeListEntityTypes(ctx, projectID, args)
+	case "entity-query":
+		return s.executeQueryEntities(ctx, projectID, args)
+	case "entity-history":
+		return s.executeEntityHistory(ctx, projectID, args)
+	case "entity-search":
+		return s.executeSearchEntities(ctx, projectID, args)
+	case "entity-edges-get":
+		return s.executeGetEntityEdges(ctx, projectID, args)
+	case "schema-list":
+		return s.executeListSchemas(ctx, projectID, args)
+	case "schema-get":
+		return s.executeGetSchema(ctx, projectID, args)
+	case "schema-list-available":
+		return s.executeGetAvailableTemplates(ctx, projectID, args)
+	case "schema-list-installed":
+		return s.executeGetInstalledTemplates(ctx, projectID, args)
+	case "schema-assign":
+		return s.executeAssignSchema(ctx, projectID, args)
+	case "schema-assignment-update":
+		return s.executeUpdateTemplateAssignment(ctx, projectID, args)
+	case "schema-uninstall":
+		return s.executeUninstallSchema(ctx, projectID, args)
+	case "schema-create":
+		return s.executeCreateSchema(ctx, projectID, args)
+	case "schema-delete":
+		return s.executeDeleteSchema(ctx, projectID, args)
+	case "schema-history":
+		return s.executeSchemaHistory(ctx, projectID)
+	case "schema-compiled-types":
+		return s.executeSchemaCompiledTypes(ctx, projectID, args)
+	case "schema-icon-list":
+		return s.executeSchemaIconList(ctx, projectID)
+	case "entity-create":
+		return s.executeBatchCreateEntities(ctx, projectID, args)
+	case "relationship-create":
+		return s.executeBatchCreateRelationships(ctx, projectID, args)
+	case "entity-update":
+		return s.executeUpdateEntity(ctx, projectID, args)
+	case "entity-delete":
+		return s.executeDeleteEntity(ctx, projectID, args)
+	case "entity-restore":
+		return s.executeRestoreEntity(ctx, projectID, args)
+	case "session-get-messages":
+		return s.executeGetSessionMessages(ctx, projectID, args)
+	case "session-todo-list":
+		return s.executeSessionTodoList(ctx, projectID, args)
+	case "session-todo-update":
+		return s.executeSessionTodoUpdate(ctx, projectID, args)
+	case "graph-branch-list":
+		return s.executeGraphBranchList(ctx, projectID)
+	case "graph-branch-get":
+		return s.executeGraphBranchGet(ctx, projectID, args)
+	case "graph-branch-create":
+		return s.executeGraphBranchCreate(ctx, projectID, args)
+	case "graph-branch-update":
+		return s.executeGraphBranchUpdate(ctx, projectID, args)
+	case "graph-branch-merge":
+		return s.executeGraphBranchMerge(ctx, projectID, args)
+	case "graph-branch-merge-readiness":
+		return s.executeGraphBranchMergeReadiness(ctx, projectID, args)
+	case "graph-branch-fork":
+		return s.executeGraphBranchFork(ctx, projectID, args)
+	case "graph-branch-delete":
+		return s.executeGraphBranchDelete(ctx, projectID, args)
+	case "search-hybrid":
+		return s.executeHybridSearch(ctx, projectID, args)
+	case "search-semantic":
+		return s.executeSemanticSearch(ctx, projectID, args)
+	case "search-similar":
+		return s.executeFindSimilar(ctx, projectID, args)
+	case "graph-traverse":
+		return s.executeTraverseGraph(ctx, projectID, args)
+	case "relationship-list":
+		return s.executeListRelationships(ctx, projectID, args)
+	case "relationship-update":
+		return s.executeUpdateRelationship(ctx, projectID, args)
+	case "relationship-delete":
+		return s.executeDeleteRelationship(ctx, projectID, args)
+	case "tag-list":
+		return s.executeListTags(ctx, projectID)
+	case "schema-migration-preview":
+		return s.executePreviewSchemaMigration(ctx, projectID, args)
+	case "migration-archive-list":
+		return s.executeListMigrationArchives(ctx, projectID, args)
+	case "migration-archive-get":
+		return s.executeGetMigrationArchive(ctx, projectID, args)
+	case "schema-migrate-preview":
+		return s.executeSchemaMigratePreview(ctx, projectID, args)
+	case "schema-migrate-execute":
+		return s.executeSchemaMigrateExecute(ctx, projectID, args)
+	case "schema-migrate-rollback":
+		return s.executeSchemaMigrateRollback(ctx, projectID, args)
+	case "schema-migrate-commit":
+		return s.executeSchemaMigrateCommit(ctx, projectID, args)
+	case "schema-migration-job-status":
+		return s.executeSchemaMigrationJobStatus(ctx, projectID, args)
+
+	// Web tools
+	case "web-search-brave":
+		return s.executeBraveWebSearch(ctx, projectID, args)
+	case "web-fetch":
+		return s.executeWebFetch(ctx, args)
+	case "web-search-reddit":
+		return s.executeRedditSearch(ctx, projectID, args)
+
+	// Agent Definition tools
+	case "agent-def-list":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-def-get":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-def-create":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "update_agent_definition":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-def-delete":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// Agent (runtime) tools
+	case "agent-list":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-get":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-create":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "update_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-delete":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "trigger_agent":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// Agent Run tools
+	case "agent-run-list":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-run-get":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-run-messages":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-run-tool-calls":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "agent-run-status":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+	case "remember-status":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// Agent Catalog tools
+	case "agent-list-available":
+		return s.delegateAgentTool(ctx, projectID, toolName, args)
+
+	// MCP Registry tools
+	case "mcp-server-list":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-device-server-list":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-server-get":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-server-create":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "update_mcp_server":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-server-delete":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "toggle_mcp_server_tool":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "sync_mcp_server_tools":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+
+	// Official MCP Registry browse/install tools
+	case "search_mcp_registry":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-registry-get":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-registry-install":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+	case "mcp-server-inspect":
+		return s.delegateRegistryTool(ctx, projectID, toolName, args)
+
+	// Agent Questions, Hooks, and ADK Sessions
+	case "agent-question-list":
+		return s.executeListAgentQuestions(ctx, projectID, args)
+	case "agent-question-list-project":
+		return s.executeListProjectAgentQuestions(ctx, projectID, args)
+	case "agent-question-respond":
+		return s.executeRespondToAgentQuestion(ctx, projectID, args)
+	case "agent-hook-list":
+		return s.executeListAgentHooks(ctx, projectID, args)
+	case "agent-hook-create":
+		return s.executeCreateAgentHook(ctx, projectID, args)
+	case "agent-hook-delete":
+		return s.executeDeleteAgentHook(ctx, projectID, args)
+	case "adk-session-list":
+		return s.executeListADKSessions(ctx, projectID, args)
+	case "adk-session-get":
+		return s.executeGetADKSession(ctx, projectID, args)
+
+	// Skills tools
+	case "skill-list":
+		return s.executeListSkills(ctx, projectID)
+	case "skill-get":
+		return s.executeGetSkill(ctx, projectID, args)
+	case "skill-create":
+		return s.executeCreateSkill(ctx, projectID, args)
+	case "skill-update":
+		return s.executeUpdateSkill(ctx, args)
+	case "skill-delete":
+		return s.executeDeleteSkill(ctx, args)
+
+	// Documents tools
+	case "document-list":
+		return s.executeListDocuments(ctx, projectID, args)
+	case "document-get":
+		return s.executeGetDocument(ctx, projectID, args)
+	case "document-upload":
+		return s.executeUploadDocument(ctx, projectID, args)
+	case "document-delete":
+		return s.executeDeleteDocument(ctx, projectID, args)
+
+	// Embeddings tools
+	case "embedding-status":
+		return s.executeGetEmbeddingStatus(ctx)
+	case "embedding-pause":
+		return s.executePauseEmbeddings(ctx)
+	case "embedding-resume":
+		return s.executeResumeEmbeddings(ctx)
+	case "embedding-config-update":
+		return s.executeUpdateEmbeddingConfig(ctx, args)
+	case "embedding-progress":
+		return s.executeGetEmbeddingProgress(ctx, projectID, args)
+	case "embedding-retrigger":
+		return s.executeRetriggerEmbeddings(ctx, projectID, args)
+
+	// Provider tools
+	case "provider-list-org":
+		return s.executeListOrgProviders(ctx, args)
+	case "provider-configure-org":
+		return s.executeConfigureOrgProvider(ctx, args)
+	case "provider-configure-project":
+		return s.executeConfigureProjectProvider(ctx, projectID, args)
+	case "provider-models-list":
+		return s.executeListProviderModels(ctx, args)
+	case "provider-usage-get":
+		return s.executeGetProviderUsage(ctx, args)
+	case "provider-test":
+		return s.executeTestProvider(ctx, args)
+
+	// API Token tools
+	case "token-list":
+		return s.executeListProjectAPITokens(ctx, projectID)
+	case "token-create":
+		return s.executeCreateProjectAPIToken(ctx, projectID, args)
+	case "token-get":
+		return s.executeGetProjectAPIToken(ctx, projectID, args)
+	case "token-revoke":
+		return s.executeRevokeProjectAPIToken(ctx, projectID, args)
+
+	// Domain classification tools
+	case "classify-document":
+		return s.executeClassifyDocument(ctx, projectID, args)
+	case "list-installed-schemas":
+		return s.executeListInstalledSchemas(ctx, projectID)
+	case "finalize-discovery":
+		return s.executeFinalizeDiscovery(ctx, projectID, args)
+	case "queue-reextraction":
+		return s.executeQueueReextraction(ctx, projectID, args)
+
+	// Trace tools
+	case "trace-list":
+		return s.executeListTraces(ctx, args)
+	case "trace-get":
+		return s.executeGetTrace(ctx, args)
+
+	// Query Knowledge tool
+	case "search-knowledge":
+		return s.executeQueryKnowledge(ctx, projectID, args)
+
+	// Journal tools
+	case "remember":
+		return s.executeRemember(ctx, projectID, args)
+	case "forget":
+		return s.executeForget(ctx, projectID, args)
+	case "project-briefing":
+		return s.executeProjectBriefing(ctx, projectID, args)
+	case "journal-list":
+		return s.executeJournalList(ctx, projectID, args)
+	case "journal-add-note":
+		return s.executeJournalAddNote(ctx, projectID, args)
+
+	// Blueprint tools (delegated to the blueprints domain via BlueprintToolHandler)
+	case "blueprint-create", "blueprint-list", "blueprint-get", "blueprint-publish",
+		"blueprint-apply", "blueprint-unapply", "blueprint-versions", "blueprint-list-applied",
+		"blueprint-new-version", "blueprint-update":
+		return s.delegateBlueprintTool(ctx, projectID, toolName, args)
+
+	default:
+		// Attempt to route to a connected relay. Relay tools are named
+		// "{instanceID}_{toolName}" where instanceID may itself contain underscores.
+		// We try each connected session to find one whose prefix matches.
+		if s.relaySvc != nil && projectID != "" {
+			for _, sess := range s.relaySvc.ListByProject(projectID) {
+				prefix := sess.InstanceID + "_"
+				if strings.HasPrefix(toolName, prefix) {
+					// Relay tools forward to a connected client device and are the
+					// agent-only class: refuse them from an untrusted (external) run
+					// AND from any HTTP transport. The HTTP transports mark their
+					// dispatch TransportEnforced (not TrustedInternal) after their own
+					// per-tool check, so they never satisfy this trusted-internal gate
+					// — the relay fallback is genuinely-internal only (issues #994, #1017).
+					if !TrustedInternalFromContext(ctx) {
+						return nil, fmt.Errorf("relay tool %q is not reachable from an untrusted surface", toolName)
+					}
+					relayToolName := strings.TrimPrefix(toolName, prefix)
+					result, err := s.relaySvc.CallTool(ctx, projectID, sess.InstanceID, relayToolName, args)
+					if err != nil {
+						return nil, fmt.Errorf("relay tool %q: %w", toolName, err)
+					}
+					// Convert the relay result map to a ToolResult. The text block is
+					// the fallback payload; structuredContent/isError are forwarded
+					// when the relay result carries them (MCP 2025-06-18).
+					resultBytes, _ := json.Marshal(result)
+					tr := &ToolResult{
+						Content: []ContentBlock{{Type: "text", Text: string(resultBytes)}},
+					}
+					if sc, ok := result["structuredContent"]; ok {
+						tr.StructuredContent = normalizeStructuredContent(sc)
+					}
+					if isErr, ok := result["isError"].(bool); ok {
+						tr.IsError = isErr
+					}
+					return tr, nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("tool not found: %s", toolName)
+	}
+}
+
+// relaySessionTools converts a relay session's tools/list payload into MCP ToolDefinitions
+// with names prefixed by the instance ID (e.g. "my-mac_github_search_repositories").
+func relaySessionTools(sess *RelaySession) []ToolDefinition {
+	if sess == nil || sess.Tools == nil {
+		return nil
+	}
+	// MCP tools/list result is { "tools": [ { "name": "...", "description": "...", "inputSchema": {...} }, ... ] }
+	raw, ok := sess.Tools["tools"]
+	if !ok {
+		return nil
+	}
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	prefix := sess.InstanceID + "_"
+	out := make([]ToolDefinition, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		desc, _ := m["description"].(string)
+		if name == "" {
+			continue
+		}
+		td := ToolDefinition{
+			Name:        prefix + name,
+			AgentOnly:   true,
+			Description: desc,
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]PropertySchema{},
+				Required:   []string{},
+			},
+		}
+		// Carry through inputSchema if present.
+		if schemaRaw, ok := m["inputSchema"]; ok {
+			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
+				_ = json.Unmarshal(schemaBytes, &td.InputSchema)
+			}
+		}
+		// Carry through outputSchema if present (MCP 2025-06-18).
+		if schemaRaw, ok := m["outputSchema"]; ok {
+			if schemaBytes, err := json.Marshal(schemaRaw); err == nil {
+				_ = json.Unmarshal(schemaBytes, &td.OutputSchema)
+			}
+		}
+		out = append(out, td)
+	}
+	return out
+}
+
+// executeSchemaVersion returns schema version metadata
+func (s *Service) executeGetProjectInfo(ctx context.Context, projectID string) (*ToolResult, error) {
+	var info *string
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &info)
+	if err != nil {
+		return nil, fmt.Errorf("get project info: %w", err)
+	}
+
+	if info == nil || *info == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: "No project info has been configured for this project."}},
+		}, nil
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: *info}},
+	}, nil
+}
+
+// maxProjectInfoBytes bounds the project info document. It is injected into
+// agent context on every run, so an unbounded blob would tax every subsequent
+// call in the project.
+const maxProjectInfoBytes = 100 * 1024
+
+// executeUpdateProjectInfo replaces kb.projects.project_info. There was no tool
+// for this: project-get existed but the operator could only read the project
+// info, never write or fix it, so "please make this project's purpose clearer"
+// had no path.
+func (s *Service) executeUpdateProjectInfo(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	content, ok := args["content"].(string)
+	if !ok {
+		return nil, fmt.Errorf("project-update: missing required parameter: content")
+	}
+	if len(content) > maxProjectInfoBytes {
+		return nil, fmt.Errorf("project-update: content is %d bytes, over the %d-byte limit", len(content), maxProjectInfoBytes)
+	}
+
+	var stored *string
+	if content != "" {
+		stored = &content
+	}
+
+	res, err := s.db.NewUpdate().
+		TableExpr("kb.projects").
+		Set("project_info = ?", stored).
+		Set("updated_at = NOW()").
+		Where("id = ?", projectID).
+		Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("update project info: %w", err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return nil, fmt.Errorf("update project info: project %s not found", projectID)
+	}
+
+	return s.wrapResult(map[string]any{
+		"updated": true,
+		"bytes":   len(content),
+		"cleared": content == "",
+	})
+}
+
+// executeListEntityTypes returns all entity types with counts
+func (s *Service) executeListEntityTypes(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, err
+	}
+
+	namespaceFilter, _ := args["namespace"].(string)
+	includeRelationships, _ := args["include_relationships"].(bool)
+
+	// Query type registry with counts
+	type typeRow struct {
+		Name          string `bun:"name"`
+		Description   string `bun:"description"`
+		InstanceCount int    `bun:"instance_count"`
+	}
+
+	type relTypeRow struct {
+		Type     string `bun:"type"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+		Count    int    `bun:"count"`
+	}
+
+	var types []typeRow
+	var relTypes []relTypeRow
+
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// Set RLS context
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+
+		branchClause := "AND go.branch_id IS NULL"
+		branchArgs := []any{}
+		if branchID != nil {
+			branchClause = "AND go.branch_id = ?"
+			branchArgs = []any{*branchID}
+		}
+
+		// Build namespace clause
+		namespaceClause := "AND tr.namespace IS NULL"
+		var namespaceArgs []any
+		if namespaceFilter == "all" {
+			namespaceClause = ""
+		} else if namespaceFilter != "" {
+			namespaceClause = "AND tr.namespace = ?"
+			namespaceArgs = []any{namespaceFilter}
+		}
+
+		// Query entity types
+		queryArgs := []any{projectUUID}
+		queryArgs = append(queryArgs, branchArgs...)
+		queryArgs = append(queryArgs, projectUUID)
+		queryArgs = append(queryArgs, namespaceArgs...)
+		err := tx.NewRaw(`
+			SELECT 
+				tr.type_name as name,
+				COALESCE(tr.description, '') as description,
+				COUNT(go.id)::int as instance_count
+			FROM kb.project_object_schema_registry tr
+			LEFT JOIN kb.graph_objects go 
+				ON go.type = tr.type_name 
+				AND go.deleted_at IS NULL 
+				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				`+branchClause+`
+			WHERE tr.enabled = true 
+				AND tr.project_id = ?
+				`+namespaceClause+`
+			GROUP BY tr.type_name, tr.description
+			ORDER BY tr.type_name
+		`, queryArgs...).Scan(ctx, &types)
+		if err != nil {
+			return err
+		}
+
+		// Fallback: discover types directly from graph_objects if registry empty on branch
+		if len(types) == 0 && branchID != nil {
+			err = tx.NewRaw(`
+				SELECT DISTINCT go.type as name, '' as description, COUNT(*)::int as instance_count
+				FROM kb.graph_objects go
+				WHERE go.project_id = ?
+				  AND go.deleted_at IS NULL
+				  AND go.supersedes_id IS NULL
+				  AND go.branch_id = ?
+				GROUP BY go.type
+				ORDER BY go.type
+			`, projectUUID, *branchID).Scan(ctx, &types)
+			if err != nil {
+				return err
+			}
+		}
+
+		// Relationship type counts are opt-in (include_relationships=true): the
+		// aggregation is expensive on large graphs and only needed for questions
+		// about relationship types. When disabled, relTypes stays nil so the
+		// result carries an empty relationships list.
+		if includeRelationships {
+			relBranchClause := "AND gr.branch_id IS NULL"
+			srcBranchClause := "AND src.branch_id IS NULL"
+			dstBranchClause := "AND dst.branch_id IS NULL"
+			relBranchArgs := []any{projectUUID, projectUUID, projectUUID}
+			if branchID != nil {
+				relBranchClause = "AND gr.branch_id = ?"
+				srcBranchClause = "AND src.branch_id = ?"
+				dstBranchClause = "AND dst.branch_id = ?"
+				relBranchArgs = []any{projectUUID, *branchID, projectUUID, *branchID, projectUUID, *branchID}
+			}
+
+			// Query relationship types with from/to type info
+			err = tx.NewRaw(`
+			SELECT 
+				gr.type,
+				src.type as from_type,
+				dst.type as to_type,
+				COUNT(*)::int as count
+			FROM kb.graph_relationships gr
+			JOIN kb.graph_objects src ON gr.src_id = src.id
+			JOIN kb.graph_objects dst ON gr.dst_id = dst.id
+			WHERE gr.deleted_at IS NULL 
+				AND gr.supersedes_id IS NULL
+				AND gr.project_id = ?
+				`+relBranchClause+`
+				AND src.deleted_at IS NULL
+				AND src.project_id = ?
+				`+srcBranchClause+`
+				AND dst.deleted_at IS NULL
+				AND dst.project_id = ?
+				`+dstBranchClause+`
+			GROUP BY gr.type, src.type, dst.type
+			ORDER BY gr.type, count DESC
+		`, relBranchArgs...).Scan(ctx, &relTypes)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("query entity types: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+
+	entityTypes := make([]EntityType, 0, len(types))
+	for _, t := range types {
+		if !scope.AllowsObject(t.Name) {
+			continue
+		}
+		desc := t.Description
+		if desc == "" {
+			desc = "No description"
+		}
+		entityTypes = append(entityTypes, EntityType{
+			Name:        t.Name,
+			Description: desc,
+			Count:       t.InstanceCount,
+		})
+	}
+
+	relationshipTypes := make([]RelationshipType, 0, len(relTypes))
+	for _, r := range relTypes {
+		if !scope.AllowsRelationshipRow(r.Type, r.FromType, r.ToType) {
+			continue
+		}
+		relationshipTypes = append(relationshipTypes, RelationshipType(r))
+	}
+
+	result := EntityTypesResult{
+		ProjectID:     projectID,
+		Types:         entityTypes,
+		Relationships: relationshipTypes,
+		Total:         len(entityTypes),
+	}
+
+	return s.wrapResult(result)
+}
+
+// entityPropertiesProjection builds the SQL expression for the properties
+// column of the entity-query paths. Under a non-"full" field strategy it returns
+// an empty JSONB object so the wide properties column is never selected into the
+// result (issue #1069); under "full" it returns the requested fields subset, or
+// the full map when none are requested.
+func entityPropertiesProjection(strategy string, rawFields any) string {
+	if strategy != "full" {
+		return "'{}'::jsonb"
+	}
+	var fieldList []string
+	switch v := rawFields.(type) {
+	case []any:
+		for _, f := range v {
+			if s, ok := f.(string); ok && s != "" {
+				fieldList = append(fieldList, s)
+			}
+		}
+	case []string:
+		fieldList = v
+	}
+	if len(fieldList) == 0 {
+		return "go.properties"
+	}
+	// Ensure "name" is always present for display.
+	hasName := false
+	for _, f := range fieldList {
+		if f == "name" {
+			hasName = true
+			break
+		}
+	}
+	if !hasName {
+		fieldList = append([]string{"name"}, fieldList...)
+	}
+	// Build: jsonb_build_object('key1', go.properties->'key1', ...). Field names
+	// are safe — they come from the agent, not user input, but we still sanitize
+	// by allowing only alphanumeric + underscore + hyphen.
+	parts := make([]string, 0, len(fieldList)*2)
+	for _, f := range fieldList {
+		if isValidPropertyKey(f) {
+			parts = append(parts, fmt.Sprintf("'%s', go.properties->'%s'", f, f))
+		}
+	}
+	if len(parts) > 0 {
+		return "jsonb_build_object(" + strings.Join(parts, ", ") + ")"
+	}
+	return "go.properties"
+}
+
+// entityQueryScopeError is returned when an entity-query filter violates a
+// type's schema-declared scope-key contract (issue #1148, option 2). Its
+// message is caller-visible and already prefixed.
+type entityQueryScopeError struct{ msg string }
+
+func (e *entityQueryScopeError) Error() string { return e.msg }
+
+// enforceEntityQueryScope applies the schema-driven scope-key contract: when the
+// queried type declares a scope key, every filter on a property that is neither
+// the declared scope property nor the declared identity property MUST be
+// accompanied by the scope property (in `filters`) or an explicit `key_prefix`.
+// Otherwise the call is rejected with an actionable error instead of silently
+// scanning across documents. Types with no declaration (or no type_name, or no
+// filters) are unaffected.
+func (s *Service) enforceEntityQueryScope(ctx context.Context, tx bun.Tx, projectID, typeName string, filters map[string]any, keyPrefix string) error {
+	if typeName == "" || len(filters) == 0 {
+		return nil
+	}
+
+	var raw string
+	err := tx.NewRaw(`
+		SELECT json_schema
+		FROM kb.project_object_schema_registry
+		WHERE project_id = ? AND type_name = ?
+		ORDER BY schema_version DESC, updated_at DESC
+		LIMIT 1
+	`, projectID, typeName).Scan(ctx, &raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // type not registered: no declaration, no change
+		}
+		return err
+	}
+
+	decl, perr := schemas.ParseScopeKey(json.RawMessage(raw))
+	if perr != nil {
+		// Fail closed (issue #1177): a declaration that cannot be parsed is
+		// corruption (legacy/tampered), so the filtered query is rejected
+		// caller-visibly rather than silently run unscoped. Write paths now
+		// validate declarations, so this only fires for rows that predate that
+		// enforcement or were written out-of-band.
+		return &entityQueryScopeError{msg: fmt.Sprintf(
+			"query entities: type %s declares an invalid scopeKey (%v); fix the type's scopeKey declaration before filtering on it",
+			typeName, perr)}
+	}
+	if decl == nil {
+		return nil // no declaration: no enforcement
+	}
+	if decl.Property == "" {
+		// scopeKey present but missing the required property: same corruption
+		// class, same fail-closed rejection.
+		return &entityQueryScopeError{msg: fmt.Sprintf(
+			"query entities: type %s declares a scopeKey without a property; fix the type's scopeKey declaration before filtering on it",
+			typeName)}
+	}
+
+	// The scope is satisfied by an explicit key prefix or by the declared scope
+	// property itself appearing in the filters.
+	scopeSupplied := keyPrefix != ""
+	if _, ok := filters[decl.Property]; ok {
+		scopeSupplied = true
+	}
+	if scopeSupplied {
+		return nil
+	}
+
+	offenders := make([]string, 0, len(filters))
+	for k := range filters {
+		if k == decl.Property {
+			continue
+		}
+		if decl.IdentityProperty != "" && k == decl.IdentityProperty {
+			continue
+		}
+		offenders = append(offenders, k)
+	}
+	if len(offenders) == 0 {
+		return nil
+	}
+	sort.Strings(offenders)
+	return &entityQueryScopeError{msg: fmt.Sprintf(
+		"query entities: filter %q requires scope key %q (declared scope for type %s)",
+		offenders[0], decl.Property, typeName)}
+}
+
+// keyPrefixRangeClause builds an indexable [lo, hi) byte range for "canonical
+// key starts with prefix", replacing starts_with(go.key, ?).
+//
+// starts_with() is a function call, so the planner cannot turn it into an index
+// range and the key_prefix filter forced a parallel sequential scan of the
+// entire kb.graph_objects heap on every entity-query call (issue #1191: ~20.5s
+// per call on dev, constant regardless of the rows actually returned). The
+// existing unique index IDX_graph_objects_upsert_main (project_id, type, key)
+// uses the database default collation (en_US.utf8 on dev), whose ordering is
+// not bytewise, so a plain key >= / < range cannot bound a prefix correctly
+// (glibc ignores punctuation, so incrementing a trailing '#' over-excludes).
+// Comparing with COLLATE "C" is bytewise, matching the partial index
+// idx_graph_objects_project_type_key_c added in migration 00198.
+//
+// The upper bound is produced by prefixUpperBound: valid UTF-8, and strictly
+// greater than every extension of the prefix.
+func keyPrefixRangeClause(prefix string) (string, []any) {
+	if upper, ok := prefixUpperBound(prefix); ok {
+		return ` AND go.key COLLATE "C" >= ? AND go.key COLLATE "C" < ?`, []any{prefix, upper}
+	}
+	return " AND starts_with(go.key, ?)", []any{prefix}
+}
+
+// prefixUpperBound returns the smallest valid-UTF-8 string strictly greater than
+// every string that has prefix as a prefix, or ok=false when no such string
+// exists (a prefix made entirely of utf8.MaxRune runes).
+//
+// It is the exclusive upper bound for the key-prefix [lo, hi) range. Deriving
+// the bound by incrementing the prefix's last byte — the previous approach —
+// can emit invalid UTF-8: a prefix ending in 0x7F yields 0x80, and one ending in
+// U+00BF's continuation byte 0xBF yields the invalid lead byte 0xC0. A
+// text-protocol client then gets SQLSTATE 22021 (invalid byte sequence for
+// encoding "UTF8"), while a binary-format client such as pgx compares the raw
+// invalid bytes and silently returns the wrong rows. Incrementing the last rune
+// through the code-point space keeps the bound valid UTF-8; because UTF-8 byte
+// order matches code-point order, the result is still strictly greater than any
+// extension of the prefix (the comparison first differs at the incremented
+// rune, so no suffix can rescue the extension).
+func prefixUpperBound(prefix string) (string, bool) {
+	if prefix == "" {
+		return "", false
+	}
+	runes := []rune(prefix)
+	for i := len(runes) - 1; i >= 0; i-- {
+		next := runes[i] + 1
+		if next > utf8.MaxRune {
+			continue // no successor at this position; carry left, dropping it
+		}
+		if next >= 0xD800 && next <= 0xDFFF {
+			next = 0xE000 // skip the UTF-16 surrogate block (not valid UTF-8)
+		}
+		return string(runes[:i]) + string(next), true
+	}
+	return "", false
+}
+
+// entityQueryNameSortKeyChars bounds the sort_by=name ordering expression that
+// migration 00199 indexes. `properties` is user-supplied with no size cap (see
+// domain/graph/validation.go: unknown property types pass through), so indexing
+// the raw properties->>'name' can exceed the btree entry limit (~2704 B, 1/3
+// page): a single 5120-char name reproduces SQLSTATE 54000
+// ("index row size ... exceeds btree version 4 maximum") on insert. The index
+// expression is therefore left(properties->>'name', N), and the query ORDER BY
+// must use the exact same expression for the index to serve it.
+//
+// N=256 is safe under UTF-8: 256 chars x 4 bytes/char = 1024 B for the
+// expression, plus the bounded key (<=128 runes -> <=512 B) and type
+// (<=64 runes -> <=256 B) columns gives a worst case well under the ~2704 B
+// limit; N=512 (2048 B for the expression alone) risks exceeding it once the
+// key/type sit near their own limits. Names that share the first N characters
+// tie on the ordered expression and are then ordered by the canonical key, so
+// the ordering is total and deterministic (previously ties fell back to the
+// full name, which the SQL standard does not order deterministically).
+const entityQueryNameSortKeyChars = 256
+
+// executeQueryEntities queries entities by type with pagination
+func (s *Service) executeQueryEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	// Parse arguments
+	typeName, _ := args["type_name"].(string)
+
+	scope := TypeScopeFromContext(ctx)
+	if typeName != "" && !scope.AllowsObject(typeName) {
+		return nil, fmt.Errorf("query entities: object type %q is not allowed for this agent", typeName)
+	}
+
+	// Hard per-call deadline created at the tool entry so it covers EVERY path
+	// in this call: branch resolution, the ids[] fast-path, the type/pagination
+	// queries, and relationship enrichment (issue #1148 follow-up). Every
+	// downstream call derives from this context.
+	queryCtx, cancel := context.WithTimeout(ctx, s.effectiveEntityQueryTimeout())
+	defer cancel()
+
+	// Resolve optional branch parameter.
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(queryCtx, projectID, branchRef)
+	if err != nil {
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
+		return nil, err
+	}
+
+	// ids[] fast-path: fetch specific entities by canonical ID, bypassing type/pagination.
+	if rawIDs, ok := args["ids"]; ok {
+		var idStrs []string
+		switch v := rawIDs.(type) {
+		case []any:
+			for _, item := range v {
+				if s, ok := item.(string); ok {
+					idStrs = append(idStrs, s)
+				}
+			}
+		case []string:
+			idStrs = v
+		}
+		if len(idStrs) > 0 {
+			// An explicit ids[] list already identifies entities exactly, so a
+			// key-prefix scope is meaningless there. Reject the combination
+			// fail-closed instead of silently ignoring key_prefix (issue #1148
+			// follow-up), which would otherwise contradict the scope contract.
+			if kp, _ := args["key_prefix"].(string); kp != "" {
+				return nil, fmt.Errorf("query entities: key_prefix cannot be combined with ids; ids already selects entities explicitly")
+			}
+			res, err := s.executeQueryEntitiesByIDs(queryCtx, projectID, idStrs, branchID, args)
+			if err != nil && errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return res, err
+		}
+	}
+
+	limit := 10
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	offset := 0
+	if o, ok := args["offset"].(float64); ok {
+		offset = int(o)
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	sortBy := "created_at"
+	if sb, ok := args["sort_by"].(string); ok && sb != "" {
+		// Validate sort field
+		switch sb {
+		case "created_at", "updated_at", "name":
+			sortBy = sb
+		}
+	}
+
+	sortOrder := "DESC"
+	if so, ok := args["sort_order"].(string); ok {
+		if so == "asc" {
+			sortOrder = "ASC"
+		}
+	}
+
+	// Build sort expression based on field
+	orderExpr := fmt.Sprintf("go.%s %s", sortBy, sortOrder)
+	if sortBy == "name" {
+		// Bound the ordered expression to the same left(..., N) used by the
+		// partial index idx_graph_objects_project_type_name (migration 00199),
+		// and add the canonical key as a total-order tiebreak so the index
+		// serves the ordering with no Sort node. `properties` is unbounded, so
+		// indexing the raw properties->>'name' could exceed the ~2704-byte
+		// btree tuple limit (see entityQueryNameSortKeyChars).
+		orderExpr = fmt.Sprintf("left(go.properties->>'name', %d) %s NULLS LAST, go.key", entityQueryNameSortKeyChars, sortOrder)
+	}
+
+	// Resolve the field strategy the same way search-hybrid does. Defaulting to
+	// "compact" (name only, no properties) keeps a high-limit entity-query from
+	// returning the full properties JSONB — in statute projects that is ~14 KB of
+	// text per row, i.e. multiple MB at limit=200 (issue #1069). Callers that
+	// want properties must pass field_strategy="full".
+	opts := responseOptsFromArgs(args)
+	strategy := opts.FieldStrategy
+	if strategy == "" {
+		strategy = "compact"
+	}
+	fieldProjection := entityPropertiesProjection(strategy, args["fields"])
+
+	// A full payload is large (a statute paragraph ~14 KB), so bound the
+	// effective limit under field_strategy="full" (issue #1148). Callers asking
+	// for full text rarely need >25 rows at once and can paginate.
+	fullLimitClamped := false
+	if strategy == "full" {
+		if max := s.effectiveEntityQueryFullMaxLimit(); limit > max {
+			limit = max
+			fullLimitClamped = true
+		}
+	}
+
+	type entityRow struct {
+		ID              uuid.UUID      `bun:"id"`
+		CanonicalID     uuid.UUID      `bun:"canonical_id"`
+		Key             string         `bun:"key"`
+		Name            string         `bun:"name"`
+		TypeName        string         `bun:"type_name"`
+		Version         int            `bun:"version"`
+		Properties      map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt       time.Time      `bun:"created_at"`
+		UpdatedAt       time.Time      `bun:"updated_at"`
+		TypeDescription string         `bun:"type_description"`
+	}
+
+	// Parse optional property equality filters: {"status": "delivered", "priority": "high"}.
+	// The whole map becomes a single JSONB containment predicate
+	// (go.properties @> '{"k":"v",...}') so the composite GIN index
+	// idx_graph_objects_project_type_props_gin (issue #1148) can serve it.
+	// Keys are sanitized to alphanumeric+underscore+hyphen; values are passed as
+	// a bound parameter (no string interpolation).
+	var filterClause string
+	var filterArg any
+	var safeFilters map[string]any
+	if rawFilters, ok := args["filters"].(map[string]any); ok {
+		safeFilters = make(map[string]any, len(rawFilters))
+		for k, v := range rawFilters {
+			if !isValidPropertyKey(k) {
+				continue
+			}
+			safeFilters[k] = v
+		}
+		if len(safeFilters) > 0 {
+			encoded, err := json.Marshal(safeFilters)
+			if err != nil {
+				return nil, fmt.Errorf("query entities: encode filters: %w", err)
+			}
+			filterClause = " AND go.properties @> ?::jsonb"
+			filterArg = string(encoded)
+		}
+	}
+
+	// Optional key-prefix scope. A property filter such as `chapter_id` is not
+	// unique to one document (e.g. every law/forskrift has a chapter 2), so
+	// callers can pin results to the intended entity identity by prefixing its
+	// canonical key (LegalParagraph keys are `<law_ref_id>#<section_id>`).
+	// Generic across types: the key is the identity.
+	var keyPrefix string
+	var keyPrefixClause string
+	var keyPrefixArgs []any
+	if kp, ok := args["key_prefix"].(string); ok && kp != "" {
+		keyPrefix = kp
+		keyPrefixClause, keyPrefixArgs = keyPrefixRangeClause(kp)
+	}
+
+	type_clause := ""
+	type_args := []any{}
+	if typeName != "" {
+		type_clause = "AND go.type = ?"
+		type_args = []any{typeName}
+	} else if scope.HasObjectRestriction() {
+		type_clause = "AND go.type IN (?)"
+		type_args = []any{bun.In(scope.ObjectTypes())}
+	}
+
+	var entities []entityRow
+	var total int
+
+	// Build branch filter clause: NULL = main branch, non-NULL = specific branch.
+	branchClause := "AND go.branch_id IS NULL"
+	branchArgs := []any{}
+	if branchID != nil {
+		branchClause = "AND go.branch_id = ?"
+		branchArgs = []any{*branchID}
+	}
+
+	// Shared predicate args, in SQL clause order: project, type, branch, filter,
+	// key_prefix. The SELECT then appends limit/offset.
+	baseArgs := []any{projectUUID}
+	baseArgs = append(baseArgs, type_args...)
+	baseArgs = append(baseArgs, branchArgs...)
+	if filterArg != nil {
+		baseArgs = append(baseArgs, filterArg)
+	}
+	baseArgs = append(baseArgs, keyPrefixArgs...)
+
+	selectArgs := append(append([]any{}, baseArgs...), limit, offset)
+
+	err = s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+
+		// Schema-declared scope-key enforcement (issue #1148, option 2): when the
+		// type declares a scope key, reject a non-identity property filter that
+		// is not accompanied by the scope key BEFORE any scan runs, so a rejected
+		// call can never cross-match documents.
+		if err := s.enforceEntityQueryScope(ctx, tx, projectID, typeName, safeFilters, keyPrefix); err != nil {
+			return err
+		}
+
+		// Query entities (latest version only: supersedes_id IS NULL means no newer version exists)
+		err := tx.NewRaw(`
+			SELECT 
+				go.id,
+				go.canonical_id,
+				go.key,
+				COALESCE(go.properties->>'name', '') as name,
+				go.version,
+				`+fieldProjection+` as properties,
+				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at,
+				go.type as type_name,
+				COALESCE(tr.description, '') as type_description
+			FROM kb.graph_objects go
+			LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id
+			WHERE go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				`+type_clause+`
+				`+branchClause+`
+				`+filterClause+`
+				`+keyPrefixClause+`
+			ORDER BY `+orderExpr+`
+			LIMIT ? OFFSET ?
+		`, selectArgs...).Scan(ctx, &entities)
+		if err != nil {
+			return err
+		}
+
+		// Get total count (latest version only)
+		err = tx.NewRaw(`
+			SELECT COUNT(*)
+			FROM kb.graph_objects go
+			WHERE go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				`+type_clause+`
+				`+branchClause+`
+				`+filterClause+`
+				`+keyPrefixClause+`
+		`, baseArgs...).Scan(ctx, &total)
+		return err
+	})
+
+	if err != nil {
+		var scopeErr *entityQueryScopeError
+		if errors.As(err, &scopeErr) {
+			return nil, scopeErr
+		}
+		if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+		}
+		return nil, fmt.Errorf("query entities: %w", err)
+	}
+
+	// Transform to response format
+	resultEntities := make([]Entity, len(entities))
+	for i, e := range entities {
+		resultEntities[i] = Entity{
+			ID:         e.CanonicalID.String(),
+			Key:        e.Key,
+			Name:       e.Name,
+			Type:       e.TypeName,
+			Version:    e.Version,
+			Properties: truncateProperties(e.Properties),
+			CreatedAt:  e.CreatedAt,
+			UpdatedAt:  e.UpdatedAt,
+		}
+	}
+
+	// Detect unrecognized parameters and surface them as a warning so callers
+	// know their extra keys (e.g. filter, status, entity_type) had no effect.
+	knownQueryEntitiesParams := map[string]struct{}{
+		"type_name": {}, "ids": {}, "limit": {}, "offset": {}, "sort_by": {}, "sort_order": {}, "include_relationships": {}, "fields": {}, "field_strategy": {}, "branch": {}, "filters": {}, "key_prefix": {},
+	}
+	var unknownParams []string
+	for k := range args {
+		if _, known := knownQueryEntitiesParams[k]; !known {
+			unknownParams = append(unknownParams, k)
+		}
+	}
+	var warnings []string
+	if len(unknownParams) > 0 {
+		sort.Strings(unknownParams)
+		warnings = append(warnings, fmt.Sprintf(
+			"unrecognized parameters ignored (query_entities does not support server-side filtering): %s. "+
+				"Filter results client-side by inspecting entity properties.",
+			strings.Join(unknownParams, ", "),
+		))
+	}
+	if fullLimitClamped {
+		warnings = append(warnings, fmt.Sprintf(
+			"limit capped to %d for field_strategy=full to bound the payload; paginate with offset for more rows.",
+			limit,
+		))
+	}
+	queryEntitiesWarning := strings.Join(warnings, " ")
+
+	// Optionally enrich each entity with its outgoing relationships.
+	includeRels, _ := args["include_relationships"].(bool)
+	if includeRels && len(resultEntities) > 0 {
+		// Build a list of canonical IDs to query relationships for.
+		canonicalIDs := make([]uuid.UUID, len(resultEntities))
+		for i, e := range resultEntities {
+			id, _ := uuid.Parse(e.ID)
+			canonicalIDs[i] = id
+		}
+
+		type relRow struct {
+			SrcID   uuid.UUID `bun:"src_id"`
+			RelType string    `bun:"rel_type"`
+			DstID   uuid.UUID `bun:"dst_id"`
+			DstType string    `bun:"dst_type"`
+			DstKey  string    `bun:"dst_key"`
+		}
+		var relRows []relRow
+
+		relBranchClause := "AND gr.branch_id IS NULL"
+		dstBranchClause := "AND dst.branch_id IS NULL"
+		relQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
+		if branchID != nil {
+			relBranchClause = "AND gr.branch_id = ?"
+			dstBranchClause = "AND dst.branch_id = ?"
+			relQueryArgs = append(relQueryArgs, *branchID, *branchID)
+		}
+		err := s.db.RunInTx(queryCtx, nil, func(ctx context.Context, tx bun.Tx) error {
+			if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+				return err
+			}
+			return tx.NewRaw(`
+				SELECT
+					gr.src_id,
+					gr.type AS rel_type,
+					gr.dst_id,
+					dst.type AS dst_type,
+					COALESCE(dst.key, '') AS dst_key
+				FROM kb.graph_relationships gr
+				JOIN kb.graph_objects dst ON dst.canonical_id = gr.dst_id
+					AND dst.supersedes_id IS NULL `+dstBranchClause+` AND dst.deleted_at IS NULL
+			WHERE gr.src_id IN (?)
+				AND gr.deleted_at IS NULL
+				AND gr.project_id = ?
+				AND gr.supersedes_id IS NULL
+				`+relBranchClause+`
+		`, relQueryArgs...).Scan(ctx, &relRows)
+		})
+		// Enrichment is opt-in (include_relationships=true). Failing loudly keeps
+		// the deadline honest: swallowing the error here would return ok:true with
+		// every entity's relationships silently dropped, which masks a timeout the
+		// same way #1187 describes.
+		if err != nil {
+			if errors.Is(queryCtx.Err(), context.DeadlineExceeded) {
+				return nil, fmt.Errorf("query entities: timed out after %s", s.effectiveEntityQueryTimeout())
+			}
+			return nil, fmt.Errorf("query entities: enrich relationships: %w", err)
+		}
+
+		// Build an index from entity ID → edges
+		type edgeRef struct {
+			Type       string `json:"type"`
+			TargetID   string `json:"target_id"`
+			TargetType string `json:"target_type"`
+			TargetKey  string `json:"target_key,omitempty"`
+		}
+		edgesByEntityID := make(map[string][]edgeRef, len(resultEntities))
+		for _, row := range relRows {
+			if !scope.AllowsRelationshipEndpoint(row.RelType, row.DstType) {
+				continue
+			}
+			srcStr := row.SrcID.String()
+			edgesByEntityID[srcStr] = append(edgesByEntityID[srcStr], edgeRef{
+				Type:       row.RelType,
+				TargetID:   row.DstID.String(),
+				TargetType: row.DstType,
+				TargetKey:  row.DstKey,
+			})
+		}
+
+		// Attach to result entities via a wrapper type that includes edges.
+		type entityWithRels struct {
+			Entity
+			Relationships []edgeRef `json:"relationships,omitempty"`
+		}
+		enriched := make([]entityWithRels, len(resultEntities))
+		for i, e := range resultEntities {
+			enriched[i] = entityWithRels{
+				Entity:        e,
+				Relationships: edgesByEntityID[e.ID],
+			}
+		}
+
+		result := struct {
+			ProjectID  string           `json:"projectId"`
+			Entities   []entityWithRels `json:"entities"`
+			Pagination *PaginationInfo  `json:"pagination"`
+			Warning    string           `json:"warning,omitempty"`
+		}{
+			ProjectID:  projectID,
+			Entities:   enriched,
+			Pagination: &PaginationInfo{Total: total, Limit: limit, Offset: offset, HasMore: offset+limit < total},
+			Warning:    queryEntitiesWarning,
+		}
+		return envelopeResult(true, result, nil, "")
+	}
+
+	result := QueryEntitiesResult{
+		ProjectID: projectID,
+		Entities:  resultEntities,
+		Pagination: &PaginationInfo{
+			Total:   total,
+			Limit:   limit,
+			Offset:  offset,
+			HasMore: offset+limit < total,
+		},
+		Warning: queryEntitiesWarning,
+	}
+
+	return envelopeResult(true, result, nil, "")
+}
+
+// executeQueryEntitiesByIDs fetches specific entities by canonical ID list.
+func (s *Service) executeQueryEntitiesByIDs(ctx context.Context, projectID string, idStrs []string, branchID *uuid.UUID, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+
+	canonicalIDs := make([]uuid.UUID, 0, len(idStrs))
+	for _, s := range idStrs {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			continue // skip malformed IDs
+		}
+		canonicalIDs = append(canonicalIDs, id)
+	}
+	if len(canonicalIDs) == 0 {
+		return nil, fmt.Errorf("ids: no valid UUIDs provided")
+	}
+
+	type entityRow struct {
+		ID          uuid.UUID      `bun:"id"`
+		CanonicalID uuid.UUID      `bun:"canonical_id"`
+		Key         string         `bun:"key"`
+		Name        string         `bun:"name"`
+		TypeName    string         `bun:"type_name"`
+		Version     int            `bun:"version"`
+		Properties  map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt   time.Time      `bun:"created_at"`
+		UpdatedAt   time.Time      `bun:"updated_at"`
+	}
+
+	// ids[] is the documented "fetch full properties of a specific version"
+	// path, so it defaults to "full" (unlike the type/pagination path above,
+	// which defaults to "compact" to avoid the multi-MB wide-row payload). An
+	// explicit field_strategy overrides it, and `fields` is honoured under
+	// "full" exactly like the type/pagination path.
+	opts := responseOptsFromArgs(args)
+	strategy := opts.FieldStrategy
+	if strategy == "" {
+		strategy = "full"
+	}
+	propsProjection := entityPropertiesProjection(strategy, args["fields"])
+
+	branchClause := "AND go.branch_id IS NULL"
+	branchQueryArgs := []any{bun.In(canonicalIDs), projectUUID}
+	if branchID != nil {
+		branchClause = "AND go.branch_id = ?"
+		branchQueryArgs = append(branchQueryArgs, *branchID)
+	}
+
+	var entities []entityRow
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+		return tx.NewRaw(`
+			SELECT
+				go.id,
+				go.canonical_id,
+				go.key,
+				COALESCE(go.properties->>'name', '') as name,
+				go.version,
+				`+propsProjection+` as properties,
+				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at,
+				go.type as type_name
+			FROM kb.graph_objects go
+			WHERE go.canonical_id IN (?)
+				AND go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.supersedes_id IS NULL
+				`+branchClause+`
+		`, branchQueryArgs...).Scan(ctx, &entities)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query entities by ids: %w", err)
+	}
+
+	resultEntities := make([]Entity, 0, len(entities))
+	for _, e := range entities {
+		if !scope.AllowsObject(e.TypeName) {
+			continue
+		}
+		resultEntities = append(resultEntities, Entity{
+			ID:         e.CanonicalID.String(),
+			Key:        e.Key,
+			Name:       e.Name,
+			Type:       e.TypeName,
+			Version:    e.Version,
+			Properties: truncateProperties(e.Properties),
+			CreatedAt:  e.CreatedAt,
+			UpdatedAt:  e.UpdatedAt,
+		})
+	}
+
+	result := QueryEntitiesResult{
+		ProjectID: projectID,
+		Entities:  resultEntities,
+		Pagination: &PaginationInfo{
+			Total:   len(resultEntities),
+			Limit:   len(resultEntities),
+			Offset:  0,
+			HasMore: false,
+		},
+	}
+	return envelopeResult(true, result, nil, "")
+}
+
+// executeEntityHistory returns the version history of an entity by canonical ID.
+func (s *Service) executeEntityHistory(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, _ := args["entity_id"].(string)
+	if entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+	canonicalID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		canonicalID = resolved
+	}
+
+	type versionRow struct {
+		PhysicalID  uuid.UUID `bun:"id"`
+		CanonicalID uuid.UUID `bun:"canonical_id"`
+		Type        string    `bun:"type"`
+		Version     int       `bun:"version"`
+		CreatedAt   time.Time `bun:"created_at"`
+		UpdatedAt   time.Time `bun:"updated_at"`
+	}
+
+	var rows []versionRow
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+		return tx.NewRaw(`
+			SELECT
+				go.id,
+				go.canonical_id,
+				go.type,
+				go.version,
+				go.created_at,
+				COALESCE(go.updated_at, go.created_at) as updated_at
+			FROM kb.graph_objects go
+			WHERE go.canonical_id = ?
+				AND go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND go.branch_id IS NULL
+			ORDER BY go.version ASC
+		`, canonicalID, projectUUID).Scan(ctx, &rows)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query entity history: %w", err)
+	}
+
+	if len(rows) > 0 && !TypeScopeFromContext(ctx).AllowsObject(rows[0].Type) {
+		return nil, fmt.Errorf("entity history: object type is not allowed for this agent's scope")
+	}
+
+	type versionEntry struct {
+		Version    int       `json:"version"`
+		PhysicalID string    `json:"physical_id"`
+		UpdatedAt  time.Time `json:"updated_at"`
+	}
+	versions := make([]versionEntry, len(rows))
+	for i, r := range rows {
+		versions[i] = versionEntry{
+			Version:    r.Version,
+			PhysicalID: r.PhysicalID.String(),
+			UpdatedAt:  r.UpdatedAt,
+		}
+	}
+
+	opts := responseOptsFromArgs(args)
+	result := map[string]any{
+		"entity_id": entityIDStr,
+		"versions":  versions,
+		"count":     len(versions),
+	}
+	if opts.Verbose {
+		result["canonical_id"] = canonicalID.String()
+	}
+	return s.wrapResult(result)
+}
+
+// resolveBranchID resolves a branch name or UUID string to a branch UUID for the
+// given project. Returns nil when the input is empty (meaning: use main branch).
+// Returns an error when the branch cannot be found.
+func (s *Service) resolveBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	if branchRef == "" {
+		return nil, nil
+	}
+	// Try parsing as UUID first.
+	if id, err := uuid.Parse(branchRef); err == nil {
+		return &id, nil
+	}
+	// Look up by name within the project.
+	type branchRow struct {
+		ID uuid.UUID `bun:"id"`
+	}
+	var row branchRow
+	err := s.db.NewSelect().
+		TableExpr("kb.branches").
+		ColumnExpr("id").
+		Where("name = ?", branchRef).
+		Where("project_id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("branch %q not found (pass a UUID or branch name; omit the field entirely to target the main graph): %w", branchRef, err)
+	}
+	return &row.ID, nil
+}
+
+// resolveOrCreateBranchID resolves a branch name or UUID to a branch UUID.
+// If the branch does not exist and branchRef is a non-UUID name, it is auto-created.
+// Returns nil when branchRef is empty (meaning: use main branch).
+func (s *Service) resolveOrCreateBranchID(ctx context.Context, projectID, branchRef string) (*uuid.UUID, error) {
+	if branchRef == "" {
+		return nil, nil
+	}
+	// Try parsing as UUID first — if it's a UUID and not found, don't auto-create.
+	if id, err := uuid.Parse(branchRef); err == nil {
+		return &id, nil
+	}
+	// Look up by name.
+	type branchRow struct {
+		ID uuid.UUID `bun:"id"`
+	}
+	var row branchRow
+	err := s.db.NewSelect().
+		TableExpr("kb.branches").
+		ColumnExpr("id").
+		Where("name = ?", branchRef).
+		Where("project_id = ?", projectID).
+		Limit(1).
+		Scan(ctx, &row)
+	if err == nil {
+		return &row.ID, nil
+	}
+	// Branch not found — auto-create it.
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch %q not found and branch service not available to auto-create", branchRef)
+	}
+	req := &branches.CreateBranchRequest{
+		ProjectID: &projectID,
+		Name:      branchRef,
+	}
+	created, createErr := s.branchSvc.Create(ctx, req)
+	if createErr != nil {
+		return nil, fmt.Errorf("branch %q not found and auto-create failed: %w", branchRef, createErr)
+	}
+	createdID, parseErr := uuid.Parse(created.ID)
+	if parseErr != nil {
+		return nil, fmt.Errorf("auto-created branch has invalid UUID %q: %w", created.ID, parseErr)
+	}
+	return &createdID, nil
+}
+
+// executeSearchEntities searches entities by text
+func (s *Service) executeSearchEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	// Parse arguments
+	query, _ := args["query"].(string)
+	if query == "" {
+		return nil, fmt.Errorf("missing required parameter: query")
+	}
+
+	typeName, _ := args["type_name"].(string)
+
+	scope := TypeScopeFromContext(ctx)
+	if typeName != "" && !scope.AllowsObject(typeName) {
+		return nil, fmt.Errorf("search entities: object type %q is not allowed for this agent", typeName)
+	}
+
+	// Resolve optional branch parameter.
+	branchRef, _ := args["branch"].(string)
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := 10
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 50 {
+		limit = 50
+	}
+
+	type entityRow struct {
+		ID         uuid.UUID      `bun:"id"`
+		Key        string         `bun:"key"`
+		Name       string         `bun:"name"`
+		TypeName   string         `bun:"type_name"`
+		Properties map[string]any `bun:"properties,type:jsonb"`
+		CreatedAt  time.Time      `bun:"created_at"`
+		BranchID   *uuid.UUID     `bun:"branch_id"`
+		BranchName *string        `bun:"branch_name"`
+	}
+
+	var entities []entityRow
+
+	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := database.SetRLSContext(ctx, tx, projectID); err != nil {
+			return err
+		}
+
+		branchFilter := ""
+		branchArgs := []any{}
+		if branchID != nil {
+			branchFilter = " AND go.branch_id = ?"
+			branchArgs = []any{*branchID}
+		}
+
+		namespaceFilter, _ := args["namespace"].(string)
+		namespaceJoin := `LEFT JOIN kb.project_object_schema_registry tr ON tr.type_name = go.type AND tr.project_id = go.project_id`
+		namespaceClause := "AND (tr.namespace IS NULL OR tr.id IS NULL)"
+		// Also exclude types that are registered with ANY non-null namespace (defense-in-depth:
+		// catches objects whose type IS in the registry with namespace='system' but the LEFT JOIN
+		// matched a registry row from a different project, or any future namespace value).
+		systemExclusionClause := `AND go.type NOT IN (
+				SELECT type_name FROM kb.project_object_schema_registry
+				WHERE project_id = ? AND namespace IS NOT NULL AND enabled = true
+			)`
+		if namespaceFilter == "all" {
+			namespaceClause = ""
+			systemExclusionClause = ""
+		} else if namespaceFilter != "" {
+			namespaceClause = "AND tr.namespace = ?"
+			systemExclusionClause = ""
+		}
+
+		// The tsvector is a concatenation of a `simple` identifier space (raw +
+		// separator-normalised key, type) and a `norwegian` prose space (bounded
+		// title/name/description). Lexemes carry no configuration, so a single
+		// `@@` against one query configuration only sees half the index — match
+		// both, mirroring graph.FTSSearch. Composite-key lookups
+		// ("lov/1997-06-13-44", "lov 1997 06 13 44") are resolved by the
+		// normalised key in the `fts` vector (migration 00174), so no separate
+		// exact-key predicate is needed — and keeping one would defeat the GIN
+		// index: `go.key = ?` has no supporting index, and an OR arm that cannot
+		// be served by an index forces the planner to seq-scan the whole
+		// disjunction instead of using idx_graph_objects_fts.
+		// tsqueryFn selects the query constructor: websearch_to_tsquery (AND
+		// semantics over the parsed terms) for the strict and relaxed passes,
+		// to_tsquery (OR semantics over an explicit `|` disjunction) for the
+		// disjoined fallback. Both take (config, text) and apply the
+		// configuration's stemmer.
+		runSearch := func(queryText, tsqueryFn string) error {
+			baseQuery := `
+			SELECT 
+				go.id,
+				go.key,
+				COALESCE(go.properties->>'name', '') as name,
+				go.properties,
+				go.type as type_name,
+				go.created_at,
+				go.branch_id,
+				b.name as branch_name
+			FROM kb.graph_objects go
+			LEFT JOIN kb.branches b ON b.id = go.branch_id
+			` + namespaceJoin + `
+			WHERE go.deleted_at IS NULL
+				AND go.project_id = ?
+				AND (
+					go.fts @@ ` + tsqueryFn + `('simple', ?)
+					OR go.fts @@ ` + tsqueryFn + `('norwegian', ?)
+				)
+				` + branchFilter + `
+				` + namespaceClause + `
+				` + systemExclusionClause + `
+		`
+			queryArgs := append([]any{projectUUID, queryText, queryText}, branchArgs...)
+			if namespaceFilter != "all" && namespaceFilter != "" {
+				queryArgs = append(queryArgs, namespaceFilter)
+			} else if namespaceFilter == "" {
+				// systemExclusionClause subquery needs project_id
+				queryArgs = append(queryArgs, projectUUID)
+			}
+
+			if typeName != "" {
+				baseQuery += " AND go.type = ?"
+				queryArgs = append(queryArgs, typeName)
+			}
+
+			baseQuery += " ORDER BY go.created_at DESC LIMIT ?"
+			queryArgs = append(queryArgs, limit)
+
+			return tx.NewRaw(baseQuery, queryArgs...).Scan(ctx, &entities)
+		}
+
+		if err := runSearch(query, "websearch_to_tsquery"); err != nil {
+			return err
+		}
+		if len(entities) > 0 {
+			return nil
+		}
+
+		// Strict query matched nothing. A single unsatisfiable term (typically a
+		// hyphenated identifier that websearch_to_tsquery rewrites into a phrase)
+		// zeroes the whole clause, so retry once with the relaxed form before
+		// reporting no results — mirroring graph.FTSSearch.
+		if relaxed, ok := ftsquery.Relax(query); ok {
+			entities = nil
+			if err := runSearch(relaxed, "websearch_to_tsquery"); err != nil {
+				return err
+			}
+			if len(entities) > 0 {
+				return nil
+			}
+		}
+
+		// A natural multi-term query whose terms are spread across many objects
+		// matches nothing under AND semantics even though each term is
+		// individually well represented (issue #996). Retry once with the terms
+		// OR-joined and matched via to_tsquery, so recall is restored without
+		// collapsing single-term precision (a single-term query is already an OR
+		// of one term and Disjoin requires >=2 terms).
+		disjoined, ok := ftsquery.Disjoin(query)
+		if !ok {
+			return nil
+		}
+		entities = nil
+		return runSearch(disjoined, "to_tsquery")
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("search entities: %w", err)
+	}
+
+	// Transform to response format
+	resultEntities := make([]Entity, 0, len(entities))
+	for _, e := range entities {
+		if !scope.AllowsObject(e.TypeName) {
+			continue
+		}
+		var branchIDStr *string
+		if e.BranchID != nil {
+			s := e.BranchID.String()
+			branchIDStr = &s
+		}
+		resultEntities = append(resultEntities, Entity{
+			ID:         e.ID.String(),
+			Key:        e.Key,
+			Name:       e.Name,
+			Type:       e.TypeName,
+			Properties: truncateProperties(e.Properties),
+			CreatedAt:  e.CreatedAt,
+			BranchID:   branchIDStr,
+			BranchName: e.BranchName,
+		})
+	}
+
+	result := SearchEntitiesResult{
+		ProjectID: projectID,
+		Query:     query,
+		Entities:  resultEntities,
+		Count:     len(resultEntities),
+	}
+
+	return s.wrapResult(result)
+}
+
+func (s *Service) executeGetEntityEdges(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, _ := args["entity_id"].(string)
+	if entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
+	}
+
+	// Resolve the canonical ID for relationship traversal
+	canonicalID, err := s.resolveCanonicalID(ctx, projectUUID, entityID)
+	if err == nil && canonicalID != uuid.Nil {
+		entityID = canonicalID
+	}
+
+	edges, err := s.graphService.GetEdges(ctx, projectUUID, entityID, graph.GetEdgesParams{})
+	if err != nil {
+		return nil, fmt.Errorf("get entity edges: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+
+	incoming := make([]EdgeInfo, 0, len(edges.Incoming))
+	for _, rel := range edges.Incoming {
+		// Relationship-level check first so an excluded relationship type never
+		// triggers a per-edge endpoint lookup.
+		if !scope.AllowsRelationship(rel.Type) {
+			continue
+		}
+		srcEntity, err := s.getEntityBasicInfo(ctx, projectUUID, rel.SrcID)
+		if err != nil {
+			continue
+		}
+		if !scope.AllowsRelationshipEndpoint(rel.Type, srcEntity.Type) {
+			continue
+		}
+		incoming = append(incoming, EdgeInfo{
+			RelationshipID:   rel.ID.String(),
+			RelationshipType: rel.Type,
+			ConnectedEntity:  *srcEntity,
+			Properties:       truncateProperties(rel.Properties),
+		})
+	}
+
+	outgoing := make([]EdgeInfo, 0, len(edges.Outgoing))
+	for _, rel := range edges.Outgoing {
+		// Relationship-level check first so an excluded relationship type never
+		// triggers a per-edge endpoint lookup.
+		if !scope.AllowsRelationship(rel.Type) {
+			continue
+		}
+		dstEntity, err := s.getEntityBasicInfo(ctx, projectUUID, rel.DstID)
+		if err != nil {
+			continue
+		}
+		if !scope.AllowsRelationshipEndpoint(rel.Type, dstEntity.Type) {
+			continue
+		}
+		outgoing = append(outgoing, EdgeInfo{
+			RelationshipID:   rel.ID.String(),
+			RelationshipType: rel.Type,
+			ConnectedEntity:  *dstEntity,
+			Properties:       truncateProperties(rel.Properties),
+		})
+	}
+
+	result := GetEntityEdgesResult{
+		EntityID: entityIDStr,
+		Incoming: incoming,
+		Outgoing: outgoing,
+	}
+
+	return s.wrapResult(result)
+}
+
+func (s *Service) getEntityBasicInfo(ctx context.Context, projectID, entityID uuid.UUID) (*ConnectedEntity, error) {
+	type entityRow struct {
+		ID         uuid.UUID      `bun:"id"`
+		Type       string         `bun:"type"`
+		Key        string         `bun:"key"`
+		Properties map[string]any `bun:"properties,type:jsonb"`
+	}
+
+	var entity entityRow
+	err := s.db.NewRaw(`
+		SELECT id, type, COALESCE(key, '') as key, properties
+		FROM kb.graph_objects
+		WHERE id = ? AND project_id = ? AND deleted_at IS NULL
+	`, entityID, projectID).Scan(ctx, &entity)
+
+	if err != nil {
+		return nil, err
+	}
+
+	name := ""
+	if n, ok := entity.Properties["name"].(string); ok {
+		name = n
+	}
+
+	return &ConnectedEntity{
+		ID:         entity.ID.String(),
+		Type:       entity.Type,
+		Key:        entity.Key,
+		Name:       name,
+		Properties: truncateProperties(entity.Properties),
+	}, nil
+}
+
+// =============================================================================
+// NEW MCP Tool Execution Methods
+// =============================================================================
+
+// resolveCanonicalID looks up the canonical ID for a given entity version ID.
+func (s *Service) resolveCanonicalID(ctx context.Context, projectID, entityID uuid.UUID) (uuid.UUID, error) {
+	var canonicalID uuid.UUID
+	err := s.db.NewRaw(`
+		SELECT canonical_id FROM kb.graph_objects 
+		WHERE (id = ? OR canonical_id = ?) AND project_id = ? 
+		LIMIT 1
+	`, entityID, entityID, projectID).Scan(ctx, &canonicalID)
+
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return canonicalID, nil
+}
+
+// resolveEntityIDByKey looks up the canonical_id of a graph object by its key field.
+// Returns an error if no object with that key exists in the project.
+// On failure, includes fuzzy suggestions (same type prefix or trigram similarity) to help
+// the caller self-correct — particularly useful for LLM agents that may hallucinate keys.
+func (s *Service) resolveEntityIDByKey(ctx context.Context, projectID uuid.UUID, key string) (uuid.UUID, error) {
+	var canonicalID uuid.UUID
+	err := s.db.NewRaw(`
+		SELECT canonical_id FROM kb.graph_objects
+		WHERE key = ? AND project_id = ? AND deleted_at IS NULL
+		ORDER BY version DESC
+		LIMIT 1
+	`, key, projectID).Scan(ctx, &canonicalID)
+	if err != nil {
+		// Fetch fuzzy suggestions to help agents self-correct.
+		suggestions := s.suggestEntityKeysByFuzzy(ctx, projectID, key, 3)
+		if len(suggestions) > 0 {
+			return uuid.Nil, fmt.Errorf(
+				"entity with key %q not found — did you mean one of these? %s. Use the exact key shown with entity-update or relationship-create.",
+				key, strings.Join(suggestions, ", "),
+			)
+		}
+		return uuid.Nil, fmt.Errorf("entity with key %q not found", key)
+	}
+	return canonicalID, nil
+}
+
+// suggestEntityKeysByFuzzy returns up to limit entity keys from the project that
+// are similar to the given key using simple heuristics:
+//  1. Keys sharing the same first token (split on "-") — catches minor slug drift.
+//  2. Keys where one is a substring of the other.
+//  3. Fallback: the most recently created keys of the same first-token type prefix.
+//
+// This is intentionally lightweight (no pg_trgm dependency required) and runs a
+// single query, so it is safe to call on every key-not-found path.
+func (s *Service) suggestEntityKeysByFuzzy(ctx context.Context, projectID uuid.UUID, key string, limit int) []string {
+	type row struct {
+		Key  string `bun:"key"`
+		Type string `bun:"type"`
+	}
+	var rows []row
+
+	// Grab a sample of recent distinct keys for this project (capped at 200 for speed).
+	// When the object axis is restricted, narrow the sample to allowed types so the
+	// suggestions never leak an excluded type name.
+	scope := TypeScopeFromContext(ctx)
+	sampleQuery := `
+		SELECT DISTINCT ON (key) key, type
+		FROM kb.graph_objects
+		WHERE project_id = ? AND deleted_at IS NULL AND key IS NOT NULL`
+	sampleArgs := []any{projectID}
+	if scope.HasObjectRestriction() {
+		sampleQuery += ` AND type IN (?)`
+		sampleArgs = append(sampleArgs, bun.In(scope.ObjectTypes()))
+	}
+	sampleQuery += `
+		ORDER BY key, version DESC
+		LIMIT 200`
+
+	queryErr := s.db.NewRaw(sampleQuery, sampleArgs...).Scan(ctx, &rows)
+	if queryErr != nil || len(rows) == 0 {
+		return nil
+	}
+
+	// First token of the searched key (e.g. "alice" from "alice-smith").
+	firstToken := key
+	if idx := strings.Index(key, "-"); idx > 0 {
+		firstToken = key[:idx]
+	}
+
+	var suggestions []string
+	seen := make(map[string]bool)
+	// Pass 1: prefix match on first token.
+	for _, r := range rows {
+		if seen[r.Key] || r.Key == key {
+			continue
+		}
+		candidateFirst := r.Key
+		if idx := strings.Index(r.Key, "-"); idx > 0 {
+			candidateFirst = r.Key[:idx]
+		}
+		if candidateFirst == firstToken {
+			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
+			seen[r.Key] = true
+			if len(suggestions) >= limit {
+				return suggestions
+			}
+		}
+	}
+	// Pass 2: substring containment.
+	for _, r := range rows {
+		if seen[r.Key] || r.Key == key {
+			continue
+		}
+		if strings.Contains(r.Key, key) || strings.Contains(key, r.Key) {
+			suggestions = append(suggestions, fmt.Sprintf("%q (%s)", r.Key, r.Type))
+			seen[r.Key] = true
+			if len(suggestions) >= limit {
+				return suggestions
+			}
+		}
+	}
+	return suggestions
+}
+
+// lookupObjectType returns the current type of a graph object by physical or
+// canonical id. It is routed through the graph service so the mcp package issues
+// no raw SQL (the mcp-authz guard forbids unclassified raw access).
+func (s *Service) lookupObjectType(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", err
+	}
+	obj, err := s.graphService.GetByID(ctx, projectUUID, entityID, false)
+	if err != nil {
+		return "", err
+	}
+	if obj == nil {
+		return "", fmt.Errorf("object not found")
+	}
+	return obj.Type, nil
+}
+
+// lookupObjectTypeIncludingDeleted is lookupObjectType for a possibly
+// soft-deleted object, needed by the entity-restore gate (which must see the
+// type of the deleted row being restored).
+func (s *Service) lookupObjectTypeIncludingDeleted(ctx context.Context, projectID string, entityID uuid.UUID) (string, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return "", err
+	}
+	obj, err := s.graphService.GetByIDIncludingDeleted(ctx, projectUUID, entityID)
+	if err != nil {
+		return "", err
+	}
+	if obj == nil {
+		return "", fmt.Errorf("object not found")
+	}
+	return obj.Type, nil
+}
+
+// reactionSubjectMatches reports whether canonicalID is the object that
+// triggered the reaction run. It scopes the plain-reaction-agent work-status
+// exemption to that object; a run without a subject never matches.
+func reactionSubjectMatches(ctx context.Context, canonicalID uuid.UUID) bool {
+	subjectID := auth.AgentWorkStatusSubjectFromContext(ctx)
+	return subjectID != "" && canonicalID.String() == subjectID
+}
+
+// executeUpdateEntity updates an existing entity's properties, labels, or status.
+func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, ok := args["entity_id"].(string)
+	if !ok || entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
+	}
+
+	// A reaction agent may set the board status of the object that triggered its
+	// run. Scope the exemption to that canonical object; every other board write
+	// remains blocked by the platform guard. The executor stamps the subject id
+	// only for reaction runs, so ordinary agents and other objects are unaffected.
+	if subjectID := auth.AgentWorkStatusSubjectFromContext(ctx); subjectID != "" {
+		canonical := entityID
+		if obj, gerr := s.graphService.GetByID(ctx, projectUUID, entityID, false); gerr == nil && obj != nil {
+			canonical = obj.CanonicalID
+		}
+		if reactionSubjectMatches(ctx, canonical) {
+			ctx = auth.WithAgentWorkStatusAllowed(ctx)
+		}
+	}
+
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
+	req := &graph.PatchGraphObjectRequest{
+		BranchID: branchID,
+	}
+
+	if props, ok := args["properties"].(map[string]any); ok {
+		req.Properties = props
+	}
+
+	if labels, ok := args["labels"].([]any); ok {
+		labelStrs := make([]string, 0, len(labels))
+		for _, l := range labels {
+			if ls, ok := l.(string); ok {
+				labelStrs = append(labelStrs, ls)
+			}
+		}
+		req.Labels = labelStrs
+	}
+
+	if replaceLabels, ok := args["replace_labels"].(bool); ok {
+		req.ReplaceLabels = replaceLabels
+	}
+
+	if status, ok := args["status"].(string); ok && status != "" {
+		req.Status = &status
+	}
+
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
+		if !scope.AllowsObject(typ) {
+			return nil, fmt.Errorf("update entity: object type is not allowed for this agent's scope")
+		}
+	}
+
+	result, err := s.graphService.Patch(ctx, projectUUID, entityID, req, nil)
+	if err != nil {
+		return nil, fmt.Errorf("update entity: %w", err)
+	}
+
+	opts := responseOptsFromArgs(args)
+	return envelopeResult(true, map[string]any{
+		"entity": slimEntity(result, opts),
+	}, nil, "")
+}
+
+// executeDeleteEntity deletes an existing entity.
+func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, ok := args["entity_id"].(string)
+	if !ok || entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
+	}
+
+	// Optional reason
+	var reason *string
+	if r, ok := args["reason"].(string); ok && r != "" {
+		reason = &r
+	}
+
+	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil, reason); err != nil {
+		return nil, fmt.Errorf("delete entity: %w", err)
+	}
+
+	return envelopeResult(true, map[string]any{
+		"entity_id": entityID.String(),
+	}, nil, "")
+}
+
+// executeRestoreEntity restores a soft-deleted entity
+func (s *Service) executeRestoreEntity(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	entityIDStr, ok := args["entity_id"].(string)
+	if !ok || entityIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: entity_id")
+	}
+
+	entityID, err := uuid.Parse(entityIDStr)
+	if err != nil {
+		resolved, keyErr := s.resolveEntityIDByKey(ctx, projectUUID, entityIDStr)
+		if keyErr != nil {
+			return nil, fmt.Errorf("invalid entity_id: %q is not a UUID and key lookup failed: %w", entityIDStr, keyErr)
+		}
+		entityID = resolved
+	}
+
+	// Scope gate: restoring echoes the object (incl. its type), so a scoped agent
+	// must not restore an object whose type is outside its allowlist. The row is
+	// soft-deleted, so the include-deleted lookup is required; a lookup error
+	// falls through to Restore, which reports not-found/not-deleted as before.
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupObjectTypeIncludingDeleted(ctx, projectID, entityID); lerr == nil {
+		if !scope.AllowsObject(typ) {
+			return nil, fmt.Errorf("restore entity: object type is not allowed for this agent's scope")
+		}
+	}
+
+	result, err := s.graphService.Restore(ctx, projectUUID, entityID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("restore entity: %w", err)
+	}
+
+	opts := responseOptsFromArgs(args)
+	return s.wrapResultCompact(map[string]any{
+		"success": true,
+		"entity":  slimEntity(result, opts),
+	})
+}
+
+// executeGetSessionMessages fetches messages from a session.
+// Uses sessionHistoryProvider (backed by kb.agent_run_messages).
+func (s *Service) executeGetSessionMessages(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	// Accept both snake_case and camelCase — LLMs sometimes send sessionId.
+	sessionIDStr, ok := args["session_id"].(string)
+	if !ok || sessionIDStr == "" {
+		sessionIDStr, ok = args["sessionId"].(string)
+	}
+	if !ok || sessionIDStr == "" {
+		return nil, fmt.Errorf("missing required parameter: session_id")
+	}
+	if _, err := uuid.Parse(sessionIDStr); err != nil {
+		return nil, fmt.Errorf("invalid session_id: %w", err)
+	}
+
+	if s.sessionHistoryProvider == nil {
+		return nil, fmt.Errorf("session service not available")
+	}
+	// Resolve the caller's owner identity from the run/auth context so the
+	// data-access layer can enforce the conversation ownership model (#1010).
+	// A missing identity fails closed in the repository (no owner match).
+	ownerUserID := ""
+	if u := auth.UserFromContext(ctx); u != nil {
+		ownerUserID = u.ID
+	}
+	items, err := s.sessionHistoryProvider.GetConversationFullHistoryRaw(ctx, projectID, ownerUserID, sessionIDStr)
+	if err != nil {
+		return nil, fmt.Errorf("get session messages: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"session_id": sessionIDStr,
+		"items":      items,
+		"total":      len(items),
+	})
+}
+
+// executeGraphBranchList lists all branches in the project.
+func (s *Service) executeGraphBranchList(ctx context.Context, projectID string) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	list, err := s.branchSvc.List(ctx, &projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list branches: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"branches": list,
+	})
+}
+
+// executeGraphBranchGet returns a single branch by name or UUID.
+func (s *Service) executeGraphBranchGet(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	branch, err := s.branchSvc.GetByID(ctx, branchID.String(), projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"branch": branch,
+	})
+}
+
+// executeGraphBranchCreate creates a new branch in the project.
+func (s *Service) executeGraphBranchCreate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	name, _ := args["name"].(string)
+	if name == "" {
+		return nil, fmt.Errorf("missing required parameter: name")
+	}
+	req := &branches.CreateBranchRequest{
+		ProjectID: &projectID,
+		Name:      name,
+	}
+	if desc, ok := args["description"].(string); ok && desc != "" {
+		req.Description = &desc
+	}
+	if parentID, ok := args["parent_branch_id"].(string); ok && parentID != "" {
+		req.ParentBranchID = &parentID
+	}
+	created, err := s.branchSvc.Create(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"branch":  created,
+		"message": fmt.Sprintf("Branch %q created", name),
+	})
+}
+
+// branchUpdateRequest builds the PATCH payload from MCP arguments. Only string
+// values select a field: a missing or JSON null description leaves it untouched
+// (a null would otherwise decode as "" and wipe the stored description), while
+// an explicit "" clears it — the same distinction the REST *string DTO makes.
+func branchUpdateRequest(args map[string]any) (*branches.UpdateBranchRequest, error) {
+	req := &branches.UpdateBranchRequest{}
+	if name, ok := args["name"].(string); ok && name != "" {
+		req.Name = &name
+	}
+	if desc, ok := args["description"].(string); ok {
+		req.Description = &desc
+	}
+	if req.Name == nil && req.Description == nil {
+		return nil, fmt.Errorf("at least one of name or description is required")
+	}
+	return req, nil
+}
+
+// executeGraphBranchUpdate renames a branch and/or changes its description.
+func (s *Service) executeGraphBranchUpdate(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	req, err := branchUpdateRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	updated, err := s.branchSvc.Update(ctx, branchID.String(), projectID, req)
+	if err != nil {
+		return nil, fmt.Errorf("update branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"branch":  updated,
+		"message": fmt.Sprintf("Branch %q updated", branchRef),
+	})
+}
+
+// branchMergeOptions extracts the merge option arguments. policy takes
+// precedence over the legacy conflict_strategy inside the graph service.
+//
+// A parameter that is present but has the wrong type is an error rather than a
+// silent default: `policy: 42` used to become "" and merge with the default
+// preset, which is the same silent substitution #2231 removed for typo'd
+// presets. Absent parameters still take their documented defaults.
+func branchMergeOptions(args map[string]any) (execute bool, policy, conflictStrategy string, err error) {
+	if v, ok := args["execute"]; ok {
+		b, isBool := v.(bool)
+		if !isBool {
+			return false, "", "", fmt.Errorf("execute must be a boolean, got %T", v)
+		}
+		execute = b
+	}
+	if v, ok := args["policy"]; ok {
+		s, isString := v.(string)
+		if !isString {
+			return false, "", "", fmt.Errorf("policy must be a string, got %T", v)
+		}
+		policy = s
+	}
+	if v, ok := args["conflict_strategy"]; ok {
+		s, isString := v.(string)
+		if !isString {
+			return false, "", "", fmt.Errorf("conflict_strategy must be a string, got %T", v)
+		}
+		conflictStrategy = s
+	}
+	return execute, policy, conflictStrategy, nil
+}
+
+// executeGraphBranchMerge merges a source branch into the main graph (or a
+// target branch). execute=false doubles as the compare/diff view.
+func (s *Service) executeGraphBranchMerge(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	srcRef, _ := args["source_branch"].(string)
+	if srcRef == "" {
+		return nil, fmt.Errorf("missing required parameter: source_branch")
+	}
+	srcID, err := s.resolveBranchID(ctx, projectID, srcRef)
+	if err != nil || srcID == nil {
+		return nil, fmt.Errorf("resolve source_branch: %w", err)
+	}
+	execute, policy, conflictStrategy, err := branchMergeOptions(args)
+	if err != nil {
+		return nil, err
+	}
+
+	var targetBranchID *uuid.UUID
+	if tgtRef, ok := args["target_branch"].(string); ok && tgtRef != "" {
+		targetBranchID, err = s.resolveBranchID(ctx, projectID, tgtRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve target_branch: %w", err)
+		}
+	}
+
+	req := &graph.BranchMergeRequest{
+		SourceBranchID:   *srcID,
+		Execute:          execute,
+		Policy:           policy,
+		ConflictStrategy: conflictStrategy,
+	}
+	result, err := s.graphService.MergeBranch(ctx, projectUUID, targetBranchID, req)
+	if err != nil {
+		return nil, fmt.Errorf("merge branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"result": result,
+	})
+}
+
+// executeGraphBranchMergeReadiness reports how many of a branch's objects are
+// still waiting on embeddings, which is the gate the REST merge-readiness
+// endpoint exposes.
+func (s *Service) executeGraphBranchMergeReadiness(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	total, pending, err := s.graphService.BranchMergeReadiness(ctx, projectUUID, *branchID)
+	if err != nil {
+		return nil, fmt.Errorf("merge readiness: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"ready":              pending == 0,
+		"total_objects":      total,
+		"pending_embeddings": pending,
+	})
+}
+
+// forkBranchRequest builds a fork request from MCP arguments. filter_types
+// accepts both the JSON-decoded []any and, for in-process callers that build
+// arguments in Go, a []string — otherwise a typed slice would silently fall
+// through to a full-graph copy.
+func forkBranchRequest(args map[string]any) (*graph.ForkBranchRequest, error) {
+	name, _ := args["name"].(string)
+	if name == "" {
+		return nil, fmt.Errorf("missing required parameter: name")
+	}
+	req := &graph.ForkBranchRequest{Name: name}
+	if desc, ok := args["description"].(string); ok && desc != "" {
+		req.Description = &desc
+	}
+	switch types := args["filter_types"].(type) {
+	case []any:
+		for _, t := range types {
+			if str, ok := t.(string); ok && str != "" {
+				req.FilterTypes = append(req.FilterTypes, str)
+			}
+		}
+	case []string:
+		for _, str := range types {
+			if str != "" {
+				req.FilterTypes = append(req.FilterTypes, str)
+			}
+		}
+	}
+	return req, nil
+}
+
+// executeGraphBranchFork creates a branch and bulk-copies the source branch's
+// current objects and relationships into it.
+func (s *Service) executeGraphBranchFork(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.graphService == nil {
+		return nil, fmt.Errorf("graph service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+	req, err := forkBranchRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	var sourceBranchID *uuid.UUID
+	if srcRef, ok := args["source_branch"].(string); ok && srcRef != "" && srcRef != "main" && srcRef != "null" {
+		sourceBranchID, err = s.resolveBranchID(ctx, projectID, srcRef)
+		if err != nil || sourceBranchID == nil {
+			return nil, fmt.Errorf("resolve source_branch: %w", err)
+		}
+	}
+	result, err := s.graphService.ForkBranch(ctx, projectUUID, sourceBranchID, req)
+	if err != nil {
+		return nil, fmt.Errorf("fork branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"result":  result,
+	})
+}
+
+// executeGraphBranchDelete deletes a branch by name or UUID.
+func (s *Service) executeGraphBranchDelete(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.branchSvc == nil {
+		return nil, fmt.Errorf("branch service not available")
+	}
+	branchRef, _ := args["branch"].(string)
+	if branchRef == "" {
+		return nil, fmt.Errorf("missing required parameter: branch")
+	}
+	branchID, err := s.resolveBranchID(ctx, projectID, branchRef)
+	if err != nil || branchID == nil {
+		return nil, fmt.Errorf("resolve branch: %w", err)
+	}
+	if err := s.branchSvc.Delete(ctx, branchID.String(), projectID); err != nil {
+		return nil, fmt.Errorf("delete branch: %w", err)
+	}
+	return s.wrapResult(map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("Branch %q deleted", branchRef),
+	})
+}
+
+// generateEntityKey derives a deterministic, human-readable key for an entity when the
+// caller does not supply one. The key is a slugified type name followed by a short content
+// hash, so re-creating the same entity content (e.g. re-remembering the same fact) upserts
+// the same object instead of duplicating it.
+func generateEntityKey(typeName string, props map[string]any) string {
+	typeSlug := strings.ToLower(typeName)
+	typeSlug = slugRegexp.ReplaceAllString(typeSlug, "-")
+	typeSlug = strings.Trim(typeSlug, "-")
+	if typeSlug == "" {
+		typeSlug = "entity"
+	}
+
+	// Canonicalize properties with sorted keys for deterministic hashing.
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	h := sha256.New()
+	h.Write([]byte(typeName))
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte{'='})
+		b, _ := json.Marshal(props[k])
+		h.Write(b)
+	}
+
+	return typeSlug + "-" + hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+const (
+	entityCreateSettingsCategory = "entity_create"
+	entityCreateSimilarityKey    = "similarity_threshold"
+	defaultSimilarityThreshold   = 0.85
+)
+
+// readSimilarityThreshold reads the project-level near-duplicate threshold from
+// kb.project_settings (category entity_create, key similarity_threshold, value {"value": <float>}).
+// Falls back to defaultSimilarityThreshold when unset or invalid.
+func (s *Service) readSimilarityThreshold(ctx context.Context, projectID string) float64 {
+	if s.db == nil {
+		return defaultSimilarityThreshold
+	}
+	var raw string
+	err := s.db.NewSelect().
+		ColumnExpr("value::text").
+		TableExpr("kb.project_settings").
+		Where("project_id = ?", projectID).
+		Where("category = ?", entityCreateSettingsCategory).
+		Where("key = ?", entityCreateSimilarityKey).
+		Scan(ctx, &raw)
+	if err != nil || raw == "" {
+		return defaultSimilarityThreshold
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return defaultSimilarityThreshold
+	}
+	if v, ok := m["value"].(float64); ok && v > 0 && v <= 1 {
+		return v
+	}
+	return defaultSimilarityThreshold
+}
+
+// buildEntityEmbedText flattens type + key + properties into a deterministic
+// string for embedding. Sorted property keys mirror generateEntityKey.
+func buildEntityEmbedText(typeName string, key *string, properties map[string]any) string {
+	var b strings.Builder
+	b.WriteString(typeName)
+	if key != nil && *key != "" {
+		b.WriteString(" ")
+		b.WriteString(*key)
+	}
+	keys := make([]string, 0, len(properties))
+	for k := range properties {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v, err := json.Marshal(properties[k])
+		if err != nil {
+			continue
+		}
+		b.WriteString(" ")
+		b.WriteString(k)
+		b.WriteString(": ")
+		b.WriteString(string(v))
+	}
+	return b.String()
+}
+
+// executeBatchCreateEntities creates one or more entities. Always expects an "entities" array.
+// Backward-compat: if flat fields (type, properties, etc.) are passed instead, wraps them as a single-element array.
+//
+// Each entity spec may include an optional "relationships" array to atomically create relationships
+// from the new entity to existing entities in the same call:
+//
+//	{
+//	  "type": "TaskResult",
+//	  "properties": {...},
+//	  "relationships": [
+//	    {"type": "has_result", "target_id": "<existing-entity-id>", "properties": {}}
+//	  ]
+//	}
+func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+
+	// Resolve optional branch param — auto-creates the branch if it does not exist.
+	var branchID *uuid.UUID
+	if branchRef, _ := args["branch"].(string); branchRef != "" {
+		branchID, err = s.resolveOrCreateBranchID(ctx, projectID, branchRef)
+		if err != nil {
+			return nil, fmt.Errorf("resolve branch: %w", err)
+		}
+	}
+
+	// Support flat single-entity form for backward compat
+	var entitiesRaw []any
+	if arr, ok := args["entities"].([]any); ok {
+		entitiesRaw = arr
+	} else if _, hasType := args["type"]; hasType {
+		entitiesRaw = []any{args}
+	}
+
+	if len(entitiesRaw) == 0 {
+		return nil, fmt.Errorf("missing or empty entities array")
+	}
+
+	if len(entitiesRaw) > 100 {
+		return nil, fmt.Errorf("batch size exceeded: maximum 100 entities per request")
+	}
+
+	checkSimilar, _ := args["check_similar"].(bool)
+	threshold := defaultSimilarityThreshold
+	if t, ok := args["similarity_threshold"].(float64); ok && t > 0 && t <= 1 {
+		threshold = t
+	} else if checkSimilar {
+		threshold = s.readSimilarityThreshold(ctx, projectID)
+	}
+
+	// slimEntity is the minimal response for a created entity.
+	type slimRelationship struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		TargetID string `json:"target_id"`
+	}
+	type slimEntity struct {
+		ID            string             `json:"id"`
+		Type          string             `json:"type"`
+		Key           string             `json:"key,omitempty"`
+		Relationships []slimRelationship `json:"relationships,omitempty"`
+	}
+	type batchResult struct {
+		Ok     bool        `json:"ok"`
+		Entity *slimEntity `json:"entity,omitempty"`
+		Error  string      `json:"error,omitempty"`
+		Index  int         `json:"index"`
+	}
+	type similarEntity struct {
+		EntityID   string  `json:"entity_id"`
+		Key        string  `json:"key"`
+		Type       string  `json:"type"`
+		Content    string  `json:"content,omitempty"`
+		Similarity float64 `json:"similarity"`
+		Suggested  string  `json:"suggested"`
+	}
+
+	results := make([]batchResult, 0, len(entitiesRaw))
+	successCount := 0
+	failedCount := 0
+	similarResults := make([]similarEntity, 0)
+	similarCount := 0
+	// keyToID maps entity key → canonical UUID for entities created in this batch.
+	// Used to resolve inline relationship source/target by key within the same call.
+	keyToID := make(map[string]uuid.UUID)
+
+	// resolveIDOrKey resolves a string that is either a UUID or an entity key.
+	// Checks the in-batch keyToID map first, then falls back to a DB lookup.
+	resolveIDOrKey := func(idOrKey string) (uuid.UUID, error) {
+		if id, err := uuid.Parse(idOrKey); err == nil {
+			return id, nil
+		}
+		if id, ok := keyToID[idOrKey]; ok {
+			return id, nil
+		}
+		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+		}
+		return id, nil
+	}
+
+	for i, entityRaw := range entitiesRaw {
+		entityMap, ok := entityRaw.(map[string]any)
+		if !ok {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "invalid entity specification",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		typeName, _ := entityMap["type"].(string)
+		if typeName == "" {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "missing entity type",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		if !scope.AllowsObject(typeName) {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "object type is not allowed for this agent's scope",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		var key *string
+		if k, ok := entityMap["key"].(string); ok && k != "" {
+			key = &k
+		}
+
+		properties, _ := entityMap["properties"].(map[string]any)
+		if properties == nil {
+			properties = make(map[string]any)
+		}
+
+		// Autogenerate a deterministic key when the caller omits one. This keeps
+		// upsert semantics idempotent: re-creating the same entity content (e.g.
+		// re-remembering the same fact) updates the same object instead of
+		// failing with "key is required for upsert" or duplicating the entity.
+		if key == nil {
+			k := generateEntityKey(typeName, properties)
+			key = &k
+		}
+
+		if checkSimilar {
+			embedText := buildEntityEmbedText(typeName, key, properties)
+			sr, err := s.graphService.VectorSearchByText(ctx, projectUUID, embedText, &graph.VectorSearchRequest{
+				Types:    []string{typeName},
+				BranchID: branchID,
+				Limit:    1,
+			})
+			if err != nil {
+				s.log.Warn("similarity check failed; proceeding with create", "type", typeName, logger.Error(err))
+			} else if len(sr.Data) > 0 && sr.Data[0].Object != nil && float64(sr.Data[0].Score) >= threshold {
+				best := sr.Data[0].Object
+				var bestKey string
+				if best.Key != nil {
+					bestKey = *best.Key
+				}
+				content, _ := best.Properties["content"].(string)
+				similarResults = append(similarResults, similarEntity{
+					EntityID:   best.CanonicalID.String(),
+					Key:        bestKey,
+					Type:       best.Type,
+					Content:    content,
+					Similarity: float64(sr.Data[0].Score),
+					Suggested:  "edit_existing",
+				})
+				similarCount++
+				continue
+			}
+		}
+
+		// status flows through properties JSONB; the graph layer syncs the
+		// status column from properties["status"] at creation time.
+		// Also support top-level "status" field on the entity map — mirror it
+		// into properties so it is stored in JSONB.
+		var status *string
+		if st, ok := entityMap["status"].(string); ok && st != "" {
+			status = &st
+			properties["status"] = st
+		} else if st, ok := properties["status"].(string); ok && st != "" {
+			status = &st
+		}
+
+		var labels []string
+		if l, ok := entityMap["labels"].([]any); ok {
+			for _, v := range l {
+				if str, ok := v.(string); ok {
+					labels = append(labels, str)
+				}
+			}
+		}
+
+		req := &graph.CreateGraphObjectRequest{
+			Type:       typeName,
+			Key:        key,
+			Status:     status,
+			Properties: properties,
+			Labels:     labels,
+			BranchID:   branchID,
+		}
+
+		// Propagate namespace from context (set by RememberStream or API caller).
+		if ns := auth.NamespaceFromContext(ctx); ns != "" {
+			req.Namespace = &ns
+		}
+
+		result, _, err := s.graphService.CreateOrUpdate(ctx, projectUUID, req, nil)
+		if err != nil {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: err.Error(),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		slim := &slimEntity{
+			ID:   result.CanonicalID.String(),
+			Type: result.Type,
+		}
+		if result.Key != nil {
+			slim.Key = *result.Key
+			// Register in keyToID so later entities in this batch can reference by key.
+			keyToID[*result.Key] = result.CanonicalID
+		}
+
+		// Create any inline relationships declared on this entity spec.
+		if relsRaw, ok := entityMap["relationships"].([]any); ok && len(relsRaw) > 0 {
+			for _, relRaw := range relsRaw {
+				relMap, ok := relRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				relType, _ := relMap["type"].(string)
+				if relType == "" {
+					continue
+				}
+				if !scope.AllowsRelationship(relType) {
+					s.log.Warn("skipping inline relationship: type not allowed for this agent's scope", "rel_type", relType)
+					continue
+				}
+				relProps, _ := relMap["properties"].(map[string]any)
+
+				// Support both source_id and target_id in inline relationship specs.
+				// source_id: the pre-existing entity is the src (source_id → new_entity as dst).
+				// target_id: the new entity is the src (new_entity → target_id as dst).
+				// Both accept a UUID string OR an entity key (resolved via keyToID or DB lookup).
+				var relSrcID, relDstID uuid.UUID
+				if sourceIDStr, ok := relMap["source_id"].(string); ok && sourceIDStr != "" {
+					sourceID, err := resolveIDOrKey(sourceIDStr)
+					if err != nil {
+						s.log.Warn("skipping inline relationship: cannot resolve source_id",
+							"rel_type", relType, "source_id", sourceIDStr, logger.Error(err))
+						continue
+					}
+					relSrcID = sourceID
+					relDstID = result.CanonicalID
+				} else {
+					targetIDStr, _ := relMap["target_id"].(string)
+					targetID, err := resolveIDOrKey(targetIDStr)
+					if err != nil {
+						s.log.Warn("skipping inline relationship: cannot resolve target_id",
+							"rel_type", relType, "target_id", targetIDStr, logger.Error(err))
+						continue
+					}
+					relSrcID = result.CanonicalID
+					relDstID = targetID
+				}
+
+				relReq := &graph.CreateGraphRelationshipRequest{
+					Type:       relType,
+					SrcID:      relSrcID,
+					DstID:      relDstID,
+					Properties: relProps,
+					BranchID:   branchID,
+				}
+				relResult, err := s.graphService.CreateRelationship(ctx, projectUUID, relReq, nil)
+				if err != nil {
+					s.log.Warn("failed to create inline relationship",
+						"rel_type", relType, "src", relSrcID, "dst", relDstID, logger.Error(err))
+					continue
+				}
+				slim.Relationships = append(slim.Relationships, slimRelationship{
+					ID:       relResult.CanonicalID.String(),
+					Type:     relResult.Type,
+					TargetID: relResult.DstID.String(),
+				})
+			}
+		}
+
+		results = append(results, batchResult{
+			Ok:     true,
+			Entity: slim,
+			Index:  i,
+		})
+		successCount++
+	}
+
+	plural := "ies"
+	if similarCount == 1 {
+		plural = "y"
+	}
+	message := fmt.Sprintf("Batch create completed: %d created, %d failed, %d near-duplicate", successCount, failedCount, similarCount)
+	if similarCount > 0 {
+		message = fmt.Sprintf("%d near-duplicate entit%s found. Prefer entity-update(entity_id=…) to enrich the existing object instead of creating a duplicate. Re-call with check_similar=false to force-create.", similarCount, plural)
+	}
+	ok := failedCount == 0
+	errMsg := ""
+	if !ok {
+		errMsg = fmt.Sprintf("%d of %d entities failed to create", failedCount, len(entitiesRaw))
+	}
+	return envelopeResult(ok, map[string]any{
+		"results": results,
+		"message": message,
+	}, map[string]any{
+		"created":       successCount,
+		"failed":        failedCount,
+		"total":         len(entitiesRaw),
+		"similar":       similarResults,
+		"similar_count": similarCount,
+	}, errMsg)
+}
+
+// executeBatchCreateRelationships creates one or more relationships. Always expects a "relationships" array.
+// Backward-compat: if flat fields (type, source_id, target_id, etc.) are passed instead, wraps them as a single-element array.
+func (s *Service) executeBatchCreateRelationships(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	scope := TypeScopeFromContext(ctx)
+
+	// Support flat single-relationship form for backward compat
+	var relationshipsRaw []any
+	if arr, ok := args["relationships"].([]any); ok {
+		relationshipsRaw = arr
+	} else if _, hasType := args["type"]; hasType {
+		relationshipsRaw = []any{args}
+	}
+
+	if len(relationshipsRaw) == 0 {
+		return nil, fmt.Errorf("missing or empty relationships array")
+	}
+
+	if len(relationshipsRaw) > 100 {
+		return nil, fmt.Errorf("batch size exceeded: maximum 100 relationships per request")
+	}
+
+	// slimRelationship is the minimal response for a created relationship.
+	type slimRelationship struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		SourceID string `json:"source_id"`
+		TargetID string `json:"target_id"`
+	}
+	type batchResult struct {
+		Ok           bool              `json:"ok"`
+		Relationship *slimRelationship `json:"relationship,omitempty"`
+		Error        string            `json:"error,omitempty"`
+		Index        int               `json:"index"`
+	}
+
+	// resolveRelIDOrKey resolves a string that is either a UUID or an entity key (DB lookup).
+	resolveRelIDOrKey := func(idOrKey string) (uuid.UUID, error) {
+		if id, err := uuid.Parse(idOrKey); err == nil {
+			return id, nil
+		}
+		id, err := s.resolveEntityIDByKey(ctx, projectUUID, idOrKey)
+		if err != nil {
+			return uuid.Nil, fmt.Errorf("key %q not found: %w", idOrKey, err)
+		}
+		return id, nil
+	}
+
+	results := make([]batchResult, 0, len(relationshipsRaw))
+	successCount := 0
+	failedCount := 0
+
+	for i, relRaw := range relationshipsRaw {
+		relMap, ok := relRaw.(map[string]any)
+		if !ok {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "invalid relationship specification",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		relType, _ := relMap["type"].(string)
+		if relType == "" {
+			relType, _ = relMap["relationship_type"].(string)
+		}
+		if relType == "" {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "missing relationship type",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		if !scope.AllowsRelationship(relType) {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "relationship type is not allowed for this agent's scope",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		srcIDStr, _ := relMap["source_id"].(string)
+		if srcIDStr == "" {
+			srcIDStr, _ = relMap["from_id"].(string)
+		}
+		srcID, err := resolveRelIDOrKey(srcIDStr)
+		if err != nil {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: fmt.Sprintf("cannot resolve source_id %q: %v", srcIDStr, err),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		dstIDStr, _ := relMap["target_id"].(string)
+		if dstIDStr == "" {
+			dstIDStr, _ = relMap["to_id"].(string)
+		}
+		dstID, err := resolveRelIDOrKey(dstIDStr)
+		if err != nil {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: fmt.Sprintf("cannot resolve target_id %q: %v", dstIDStr, err),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		properties, _ := relMap["properties"].(map[string]any)
+		if properties == nil {
+			properties = make(map[string]any)
+		}
+
+		// Guard: self-referential relationships are not meaningful.
+		if srcID == dstID {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: fmt.Sprintf("source_id and target_id resolve to the same entity (%s) — a relationship must connect two different entities. Use entity key strings (e.g. 'caroline-person') in source_id/target_id, not raw UUIDs.", srcID),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		var weight *float32
+		if w, ok := relMap["weight"].(float64); ok {
+			wf := float32(w)
+			weight = &wf
+		}
+
+		req := &graph.CreateGraphRelationshipRequest{
+			Type:       relType,
+			SrcID:      srcID,
+			DstID:      dstID,
+			Properties: properties,
+			Weight:     weight,
+		}
+
+		result, err := s.graphService.CreateRelationship(ctx, projectUUID, req, nil)
+		if err != nil {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: err.Error(),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
+
+		results = append(results, batchResult{
+			Ok: true,
+			Relationship: &slimRelationship{
+				ID:       result.CanonicalID.String(),
+				Type:     result.Type,
+				SourceID: result.SrcID.String(),
+				TargetID: result.DstID.String(),
+			},
+			Index: i,
+		})
+		successCount++
+	}
+
+	ok := failedCount == 0
+	errMsg := ""
+	if !ok {
+		errMsg = fmt.Sprintf("%d of %d relationships failed to create", failedCount, len(relationshipsRaw))
+	}
+	return envelopeResult(ok, map[string]any{
+		"results": results,
+		"message": fmt.Sprintf("Batch create completed: %d succeeded, %d failed", successCount, failedCount),
+	}, map[string]any{
+		"created": successCount,
+		"failed":  failedCount,
+		"total":   len(relationshipsRaw),
+	}, errMsg)
+}
+
+// getSchemaVersion computes a schema version hash
+func (s *Service) wrapResult(data any) (*ToolResult, error) {
+	jsonBytes, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal result: %w", err)
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{
+			{
+				Type: "text",
+				Text: string(jsonBytes),
+			},
+		},
+		StructuredContent: StructuredContentFromJSON(jsonBytes),
+	}, nil
+}
+
+// Helper function for pointer to int
+func intPtr(i int) *int {
+	return &i
+}
+
+// isValidPropertyKey allows only safe characters in property field names used in SQL projection.
+func isValidPropertyKey(s string) bool {
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+func (s *Service) ReadResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
+	switch {
+	case uri == "memory://schema/entity-types":
+		return s.readEntityTypesResource(ctx, projectID)
+	case uri == "memory://schema/relationships":
+		return s.readRelationshipsResource(ctx, projectID)
+	case uri == "memory://templates/catalog" || strings.HasPrefix(uri, "memory://templates/catalog?"):
+		return s.readTemplatesCatalogResource(ctx, projectID, uri)
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/metadata"):
+		return s.readProjectMetadataResource(ctx, projectID)
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/recent-entities"):
+		return s.readRecentEntitiesResource(ctx, projectID)
+	case strings.HasPrefix(uri, "memory://project/") && strings.Contains(uri, "/templates"):
+		return s.readProjectTemplatesResource(ctx, projectID)
+	default:
+		return nil, fmt.Errorf("unknown resource URI: %s", uri)
+	}
+}
+
+func (s *Service) readEntityTypesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeListEntityTypes(ctx, projectID, map[string]any{"include_relationships": true})
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      "memory://schema/entity-types",
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readRelationshipsResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	var relationships []struct {
+		Type     string `bun:"type"`
+		FromType string `bun:"from_type"`
+		ToType   string `bun:"to_type"`
+		Count    int    `bun:"count"`
+	}
+
+	// kb.graph_relationships has no relationship_type/from_type/to_type columns:
+	// the relationship kind is `type` and the endpoint object types must be
+	// derived by joining kb.graph_objects on src_id/dst_id (mirroring the
+	// relationship-types aggregation in executeListEntityTypes). Project scoping
+	// and the soft-delete filters are preserved from the previous query.
+	err = s.db.NewRaw(`
+		SELECT
+			r.type,
+			src.type AS from_type,
+			dst.type AS to_type,
+			COUNT(*)::int AS count
+		FROM kb.graph_relationships r
+		JOIN kb.graph_objects src ON r.src_id = src.id
+		JOIN kb.graph_objects dst ON r.dst_id = dst.id
+		WHERE r.project_id = ?
+			AND r.deleted_at IS NULL
+			AND src.deleted_at IS NULL
+			AND dst.deleted_at IS NULL
+		GROUP BY r.type, src.type, dst.type
+		ORDER BY r.type, count DESC
+	`, projectUUID).Scan(ctx, &relationships)
+
+	if err != nil {
+		return nil, fmt.Errorf("query relationships: %w", err)
+	}
+
+	jsonData, err := json.Marshal(map[string]any{
+		"project_id":    projectID,
+		"relationships": relationships,
+		"total":         len(relationships),
+		"timestamp":     time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      "memory://schema/relationships",
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+// resourceBoolParam reads a boolean query parameter from a resource URI. A
+// resource has no argument schema, so an unparseable value is refused rather
+// than silently treated as false: a caller asking for deprecated schemas and
+// getting the hidden set would have no way to tell.
+func resourceBoolParam(uri, name string) (bool, error) {
+	parsed, err := url.Parse(uri)
+	if err != nil {
+		return false, fmt.Errorf("invalid resource URI %q: %w", uri, err)
+	}
+	raw := parsed.Query().Get(name)
+	if raw == "" {
+		return false, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s must be a boolean, got %q", name, raw)
+	}
+	return v, nil
+}
+
+func (s *Service) readTemplatesCatalogResource(ctx context.Context, projectID, uri string) (*ResourceReadResult, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("templates catalog requires a project context")
+	}
+
+	// Deprecated schemas are hidden by default, same as the schema-list tool.
+	// The resource has no argument surface, so the URI query string is the only
+	// way a caller can ask for them — without this the flag's default silently
+	// removed the resource's ability to enumerate retirement (#2383).
+	includeDeprecated, err := resourceBoolParam(uri, "include_deprecated")
+	if err != nil {
+		return nil, fmt.Errorf("templates catalog: %w", err)
+	}
+
+	result, err := s.executeListSchemas(ctx, projectID, map[string]any{
+		"include_deprecated": includeDeprecated,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("templates catalog: %w", err)
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      uri,
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readProjectMetadataResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	var entityCount, relationshipCount int
+
+	entityCount, err = s.db.NewSelect().
+		Table("kb.graph_objects").
+		Where("project_id = ?", projectUUID).
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		entityCount = 0
+	}
+
+	relationshipCount, err = s.db.NewSelect().
+		Table("kb.graph_relationships").
+		Where("project_id = ?", projectUUID).
+		Where("deleted_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		relationshipCount = 0
+	}
+
+	jsonData, err := json.Marshal(map[string]any{
+		"project_id":         projectID,
+		"entity_count":       entityCount,
+		"relationship_count": relationshipCount,
+		"timestamp":          time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("memory://project/%s/metadata", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readRecentEntitiesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeQueryEntities(ctx, projectID, map[string]any{
+		"type_name":  "",
+		"limit":      50,
+		"offset":     0,
+		"sort_by":    "updated_at",
+		"sort_order": "desc",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("memory://project/%s/recent-entities", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) readProjectTemplatesResource(ctx context.Context, projectID string) (*ResourceReadResult, error) {
+	result, err := s.executeGetInstalledTemplates(ctx, projectID, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	jsonData, err := json.Marshal(result.Content[0].Text)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ResourceReadResult{
+		Contents: []ResourceContents{
+			{
+				URI:      fmt.Sprintf("memory://project/%s/templates", projectID),
+				MimeType: "application/json",
+				Text:     string(jsonData),
+			},
+		},
+	}, nil
+}
+
+func (s *Service) GetPrompt(ctx context.Context, projectID, name string, arguments map[string]any) (*PromptGetResult, error) {
+	switch name {
+	case "memory-guide":
+		return s.getMemoryGuidePrompt(ctx, projectID)
+	case "explore_entity_type":
+		return s.getExploreEntityTypePrompt(arguments)
+	case "create_from_template":
+		return s.getCreateFromTemplatePrompt(arguments)
+	case "analyze_relationships":
+		return s.getAnalyzeRelationshipsPrompt(arguments)
+	case "setup_research_project":
+		return s.getSetupResearchProjectPrompt(arguments)
+	case "find_related_entities":
+		return s.getFindRelatedEntitiesPrompt(arguments)
+	default:
+		return nil, fmt.Errorf("unknown prompt: %s", name)
+	}
+}
+
+func (s *Service) getMemoryGuidePrompt(ctx context.Context, projectID string) (*PromptGetResult, error) {
+	// Fetch project name and info
+	var row struct {
+		Name string  `bun:"name"`
+		Info *string `bun:"project_info"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("name, project_info").
+		Where("id = ?", projectID).
+		Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("get project info: %w", err)
+	}
+
+	// Fetch entity types with counts
+	projectUUID, _ := uuid.Parse(projectID)
+	type typeRow struct {
+		Name          string `bun:"name"`
+		Description   string `bun:"description"`
+		InstanceCount int    `bun:"instance_count"`
+	}
+	var types []typeRow
+	_ = s.db.NewRaw(`
+		SELECT
+			tr.type_name as name,
+			COALESCE(tr.description, '') as description,
+			COUNT(go.id)::int as instance_count
+		FROM kb.project_object_schema_registry tr
+		LEFT JOIN kb.graph_objects go
+			ON go.type = tr.type_name
+			AND go.deleted_at IS NULL
+			AND go.project_id = ?
+		WHERE tr.enabled = true
+			AND tr.project_id = ?
+		GROUP BY tr.type_name, tr.description
+		ORDER BY tr.type_name
+	`, projectUUID, projectUUID).Scan(ctx, &types)
+
+	// Build project info section
+	projectName := row.Name
+	if projectName == "" {
+		projectName = "this knowledge base"
+	}
+
+	var sb strings.Builder
+
+	// Project info block
+	if row.Info != nil && *row.Info != "" {
+		sb.WriteString("## About this knowledge base\n\n")
+		sb.WriteString(*row.Info)
+		sb.WriteString("\n\n")
+	} else {
+		sb.WriteString(fmt.Sprintf("## %s\n\n", projectName))
+		sb.WriteString("You have access to a structured knowledge base. Use the tools below to explore and query it.\n\n")
+	}
+
+	// Entity types section
+	if len(types) > 0 {
+		sb.WriteString("## What's in here\n\n")
+		for _, t := range types {
+			if t.Description != "" {
+				sb.WriteString(fmt.Sprintf("- **%s** (%d entries) — %s\n", t.Name, t.InstanceCount, t.Description))
+			} else {
+				sb.WriteString(fmt.Sprintf("- **%s** (%d entries)\n", t.Name, t.InstanceCount))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	// How to query section
+	sb.WriteString("## How to query\n\n")
+	sb.WriteString("For natural language questions (\"What do we know about X?\", \"Summarize decisions on Y\"):\n")
+	sb.WriteString("→ Use **search-knowledge** — retrieves and synthesizes an answer in one step.\n\n")
+	sb.WriteString("To find specific entities by type or attribute:\n")
+	sb.WriteString("→ Use **entity-query** or **entity-search**\n\n")
+	sb.WriteString("To explore how entities connect:\n")
+	sb.WriteString("→ Use **graph-traverse** or **entity-edges-get**\n\n")
+	sb.WriteString("For semantic / similarity search:\n")
+	sb.WriteString("→ Use **search-hybrid** or **search-semantic**\n")
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Guide to querying the %s knowledge base", projectName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: sb.String(),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getExploreEntityTypePrompt(args map[string]any) (*PromptGetResult, error) {
+	entityType, _ := args["entity_type"].(string)
+	if entityType == "" {
+		return nil, fmt.Errorf("missing required argument: entity_type")
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Explore %s entities in the knowledge graph", entityType),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to explore %s entities in the knowledge graph.
+
+Please help me:
+1. Search for %s entities using advanced search tools
+2. Show their key properties and metadata
+3. Identify common relationship patterns
+4. Suggest interesting entities to investigate further
+
+Use the following tools (RECOMMENDED):
+- hybrid_search with types=["%s"] - BEST option (combines full-text + semantic + graph context)
+- semantic_search - Find conceptually similar entities
+- find_similar entity_id="{id}" - Discover entities similar to a reference entity
+- traverse_graph - Explore deep relationships (up to 5 hops)
+
+Legacy alternatives (use only if hybrid_search is unavailable):
+- query_entities with type_name="%s"
+- search_entities for basic text search
+
+Let's start by using hybrid_search to find the most relevant %s entities.`, entityType, entityType, entityType, entityType, entityType),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getCreateFromTemplatePrompt(args map[string]any) (*PromptGetResult, error) {
+	entityType, _ := args["entity_type"].(string)
+	if entityType == "" {
+		return nil, fmt.Errorf("missing required argument: entity_type")
+	}
+
+	schema, _ := args["schema"].(string)
+	templateHint := ""
+	if schema != "" {
+		templateHint = fmt.Sprintf(" using the '%s' schema", schema)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Create a new %s entity%s", entityType, templateHint),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to create a new %s entity%s.
+
+Please guide me through:
+1. First, check available templates using get_available_templates
+2. Show me the schema using get_schema%s
+3. Ask me for each required field one by one
+4. Once we have all the data:
+   - For SINGLE entity: use create_entity
+   - For MULTIPLE entities (2+): use batch_create_entities (100x faster!)
+5. Confirm creation and suggest next steps (e.g., adding relationships)
+
+PERFORMANCE TIP: If creating multiple entities, use batch_create_entities instead of repeated create_entity calls.
+It can handle up to 100 entities in one request, which is dramatically faster.
+
+Let's start by checking what templates are available for %s entities.`, entityType, templateHint,
+						func() string {
+							if schema != "" {
+								return fmt.Sprintf(" with name='%s'", schema)
+							}
+							return ""
+						}(), entityType),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getAnalyzeRelationshipsPrompt(args map[string]any) (*PromptGetResult, error) {
+	entityName, _ := args["entity_name"].(string)
+	if entityName == "" {
+		return nil, fmt.Errorf("missing required argument: entity_name")
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Analyze relationships for entity: %s", entityName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to analyze the relationships for "%s".
+
+Please help me:
+1. First, find the entity using hybrid_search or search_entities with query="%s"
+2. Analyze relationships using OPTIMAL tools:
+   - traverse_graph - RECOMMENDED for deep multi-hop exploration (handles recursion automatically)
+   - get_entity_edges - For simple 1-hop neighborhood only
+3. Categorize relationships by type (incoming vs outgoing)
+4. Summarize the entity's position in the knowledge graph
+5. Suggest related entities to explore using find_similar
+
+RECOMMENDED APPROACH:
+Use traverse_graph with max_depth=2 or 3 to get a complete picture of the entity's connections.
+This is far more efficient than manually calling get_entity_edges multiple times.
+
+Let's start by finding the entity.`, entityName, entityName),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getSetupResearchProjectPrompt(args map[string]any) (*PromptGetResult, error) {
+	projectName, _ := args["project_name"].(string)
+	if projectName == "" {
+		return nil, fmt.Errorf("missing required argument: project_name")
+	}
+
+	methodology, _ := args["methodology"].(string)
+	methodologyNote := ""
+	if methodology != "" {
+		methodologyNote = fmt.Sprintf("\nResearch methodology: %s", methodology)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Set up research project: %s", projectName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to set up a complete research project called "%s".%s
+
+Please help me create a structured research project with:
+1. Main Project entity with research metadata
+2. Phase-based Task entities (Setup, Data Collection, Analysis, Report)
+3. Document placeholders for each phase
+4. Relationships connecting everything (PART_OF, REFERENCES)
+
+Workflow (OPTIMIZED):
+1. Gather all entity data first (Project + all Tasks + Documents)
+2. Use batch_create_entities to create ALL entities in ONE request (up to 100 entities)
+   - This is 100x faster than individual create_entity calls
+3. Gather all relationship data (PART_OF, REFERENCES)
+4. Use batch_create_relationships to create ALL relationships in ONE request
+5. Confirm creation and provide entity IDs for reference
+
+CRITICAL PERFORMANCE TIP:
+NEVER use individual create_entity or create_relationship calls in a loop!
+Always collect data first, then use batch_create_* tools.
+
+Example: For a project with 1 project entity + 4 tasks + 4 documents = 9 entities:
+- OLD WAY: 9 separate create_entity calls (~9 seconds)
+- NEW WAY: 1 batch_create_entities call (~0.09 seconds)
+
+Ask me about:
+- Research goal and objectives
+- Timeline and milestones
+- Required resources
+- Success criteria
+
+Let's start by defining the project's research goal.`, projectName, methodologyNote),
+				},
+			},
+		},
+	}, nil
+}
+
+func (s *Service) getFindRelatedEntitiesPrompt(args map[string]any) (*PromptGetResult, error) {
+	entityName, _ := args["entity_name"].(string)
+	if entityName == "" {
+		return nil, fmt.Errorf("missing required argument: entity_name")
+	}
+
+	relationshipType, _ := args["relationship_type"].(string)
+	depth := 1
+	if depthFloat, ok := args["depth"].(float64); ok {
+		depth = int(depthFloat)
+	}
+
+	filterNote := ""
+	if relationshipType != "" {
+		filterNote = fmt.Sprintf(" (filtering by relationship type: %s)", relationshipType)
+	}
+
+	return &PromptGetResult{
+		Description: fmt.Sprintf("Find entities related to: %s", entityName),
+		Messages: []PromptMessage{
+			{
+				Role: "user",
+				Content: PromptContent{
+					Type: "text",
+					Text: fmt.Sprintf(`I want to discover all entities related to "%s"%s.
+
+Search parameters:
+- Depth: %d hop(s)
+- Relationship filter: %s
+
+Please:
+1. Find the starting entity using hybrid_search or search_entities
+2. Use traverse_graph for COMPLETE multi-hop exploration:
+   - ONE call handles all depth levels automatically
+   - Supports filtering by relationship type
+   - Returns full graph structure
+   - Much more efficient than manual recursion
+3. Alternative (legacy): get_entity_edges%s (only for depth=1)
+4. Group results by relationship type
+5. Visualize the relationship graph structure
+6. Suggest interesting patterns or insights using find_similar
+
+RECOMMENDED APPROACH:
+Use traverse_graph with these arguments:
+{
+  "start_entity_id": "uuid-from-search",
+  "max_depth": %d,
+  "direction": "both",  // or "outgoing"/"incoming"
+  "relationship_types": %s  // optional filter
+}
+
+This single call replaces manual recursive exploration and is dramatically more efficient.
+
+Let's begin by locating the entity.`, entityName, filterNote, depth,
+						func() string {
+							if relationshipType != "" {
+								return relationshipType
+							}
+							return "all types"
+						}(),
+						func() string {
+							if relationshipType != "" {
+								return fmt.Sprintf(" (filter by type=%s)", relationshipType)
+							}
+							return ""
+						}(),
+						depth,
+						func() string {
+							if relationshipType != "" {
+								return fmt.Sprintf(`["%s"]`, relationshipType)
+							}
+							return "null"
+						}()),
+				},
+			},
+		},
+	}, nil
+}
+
+// delegateAgentTool dispatches agent-related tool calls to the AgentToolHandler.
+// Share instances scope tools only, so there is no agent allowlist to apply
+// here; availability is governed by the instance tool allowlist and token
+// scopes.
+func (s *Service) delegateAgentTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	return s.delegateAgentToolInner(ctx, projectID, toolName, args)
+}
+
+// delegateAgentToolInner is the unguarded dispatch to the AgentToolHandler.
+func (s *Service) delegateAgentToolInner(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	if s.agentToolHandler == nil {
+		return nil, fmt.Errorf("agent tools not available: handler not configured")
+	}
+
+	switch toolName {
+	// Agent Definitions
+	case "agent-def-list":
+		return s.agentToolHandler.ExecuteListAgentDefinitions(ctx, projectID, args)
+	case "agent-def-get":
+		return s.agentToolHandler.ExecuteGetAgentDefinition(ctx, projectID, args)
+	case "agent-def-create":
+		return s.agentToolHandler.ExecuteCreateAgentDefinition(ctx, projectID, args)
+	case "update_agent_definition":
+		return s.agentToolHandler.ExecuteUpdateAgentDefinition(ctx, projectID, args)
+	case "agent-def-delete":
+		return s.agentToolHandler.ExecuteDeleteAgentDefinition(ctx, projectID, args)
+
+	// Agents (runtime)
+	case "agent-list":
+		return s.agentToolHandler.ExecuteListAgents(ctx, projectID, args)
+	case "agent-get":
+		return s.agentToolHandler.ExecuteGetAgent(ctx, projectID, args)
+	case "agent-create":
+		return s.agentToolHandler.ExecuteCreateAgent(ctx, projectID, args)
+	case "update_agent":
+		return s.agentToolHandler.ExecuteUpdateAgent(ctx, projectID, args)
+	case "agent-delete":
+		return s.agentToolHandler.ExecuteDeleteAgent(ctx, projectID, args)
+	case "trigger_agent":
+		return s.agentToolHandler.ExecuteTriggerAgent(ctx, projectID, args)
+
+	// Agent Runs
+	case "agent-run-list":
+		return s.agentToolHandler.ExecuteListAgentRuns(ctx, projectID, args)
+	case "agent-run-get":
+		return s.agentToolHandler.ExecuteGetAgentRun(ctx, projectID, args)
+	case "agent-run-messages":
+		return s.agentToolHandler.ExecuteGetAgentRunMessages(ctx, projectID, args)
+	case "agent-run-tool-calls":
+		return s.agentToolHandler.ExecuteGetAgentRunToolCalls(ctx, projectID, args)
+	case "agent-run-status":
+		return s.agentToolHandler.ExecuteGetRunStatus(ctx, projectID, args)
+	case "remember-status":
+		return s.agentToolHandler.ExecuteRememberStatus(ctx, projectID, args)
+
+	// Agent Catalog
+	case "agent-list-available":
+		return s.agentToolHandler.ExecuteListAvailableAgents(ctx, projectID, args)
+
+	default:
+		return nil, fmt.Errorf("unknown agent tool: %s", toolName)
+	}
+}
+
+// delegateBlueprintTool dispatches blueprint tool calls to the BlueprintToolHandler.
+func (s *Service) delegateBlueprintTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	if s.blueprintToolHandler == nil {
+		return nil, fmt.Errorf("blueprint tools not available: handler not configured")
+	}
+
+	switch toolName {
+	case "blueprint-create":
+		return s.blueprintToolHandler.ExecuteBlueprintCreate(ctx, projectID, args)
+	case "blueprint-list":
+		return s.blueprintToolHandler.ExecuteBlueprintList(ctx, projectID, args)
+	case "blueprint-get":
+		return s.blueprintToolHandler.ExecuteBlueprintGet(ctx, projectID, args)
+	case "blueprint-publish":
+		return s.blueprintToolHandler.ExecuteBlueprintPublish(ctx, projectID, args)
+	case "blueprint-apply":
+		return s.blueprintToolHandler.ExecuteBlueprintApply(ctx, projectID, args)
+	case "blueprint-unapply":
+		return s.blueprintToolHandler.ExecuteBlueprintUnapply(ctx, projectID, args)
+	case "blueprint-versions":
+		return s.blueprintToolHandler.ExecuteBlueprintVersions(ctx, projectID, args)
+	case "blueprint-list-applied":
+		return s.blueprintToolHandler.ExecuteBlueprintListApplied(ctx, projectID, args)
+	case "blueprint-new-version":
+		return s.blueprintToolHandler.ExecuteBlueprintNewVersion(ctx, projectID, args)
+	case "blueprint-update":
+		return s.blueprintToolHandler.ExecuteBlueprintUpdate(ctx, projectID, args)
+	default:
+		return nil, fmt.Errorf("unknown blueprint tool: %s", toolName)
+	}
+}
+
+// delegateRegistryTool dispatches MCP registry tool calls to the MCPRegistryToolHandler.
+func (s *Service) delegateRegistryTool(ctx context.Context, projectID, toolName string, args map[string]any) (*ToolResult, error) {
+	if s.mcpRegistryToolHandler == nil {
+		return nil, fmt.Errorf("MCP registry tools not available: handler not configured")
+	}
+
+	switch toolName {
+	case "mcp-server-list":
+		return s.mcpRegistryToolHandler.ExecuteListMCPServers(ctx, projectID, args)
+	case "mcp-device-server-list":
+		return s.mcpRegistryToolHandler.ExecuteListDeviceMCPServers(ctx, projectID, args)
+	case "mcp-server-get":
+		return s.mcpRegistryToolHandler.ExecuteGetMCPServer(ctx, projectID, args)
+	case "mcp-server-create":
+		return s.mcpRegistryToolHandler.ExecuteCreateMCPServer(ctx, projectID, args)
+	case "update_mcp_server":
+		return s.mcpRegistryToolHandler.ExecuteUpdateMCPServer(ctx, projectID, args)
+	case "mcp-server-delete":
+		return s.mcpRegistryToolHandler.ExecuteDeleteMCPServer(ctx, projectID, args)
+	case "toggle_mcp_server_tool":
+		return s.mcpRegistryToolHandler.ExecuteToggleMCPServerTool(ctx, projectID, args)
+	case "sync_mcp_server_tools":
+		return s.mcpRegistryToolHandler.ExecuteSyncMCPServerTools(ctx, projectID, args)
+	case "search_mcp_registry":
+		return s.mcpRegistryToolHandler.ExecuteSearchMCPRegistry(ctx, projectID, args)
+	case "mcp-registry-get":
+		return s.mcpRegistryToolHandler.ExecuteGetMCPRegistryServer(ctx, projectID, args)
+	case "mcp-registry-install":
+		return s.mcpRegistryToolHandler.ExecuteInstallMCPFromRegistry(ctx, projectID, args)
+	case "mcp-server-inspect":
+		return s.mcpRegistryToolHandler.ExecuteInspectMCPServer(ctx, projectID, args)
+	default:
+		return nil, fmt.Errorf("unknown MCP registry tool: %s", toolName)
+	}
+}
+
+// executeCreateProject creates a new project under the caller's organization.
+// The org_id argument is optional; when absent it is resolved from the auth
+// context. The caller's org_admin authority over the resolved org is enforced
+// server-side via the shared projects.Service.AuthorizeOrgAdmin helper before
+// the insert, so a client-supplied org_id at most selects the resource and can
+// never authorize creation in an org the caller does not administer (issue
+// #1041 — the REST Create path enforces the same helper).
+func (s *Service) executeCreateProject(ctx context.Context, args map[string]any) (*ToolResult, error) {
+	name, _ := args["name"].(string)
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("create_project: 'name' is required")
+	}
+
+	// Resolve org_id: explicit arg → auth context → project lookup → error.
+	orgID, _ := args["org_id"].(string)
+	if orgID == "" {
+		orgID = auth.OrgIDFromContext(ctx)
+	}
+	if orgID == "" {
+		// For standalone/account-mode auth, OrgID is not injected into the context.
+		// Fall back to looking up the org from the project ID in context.
+		if projectID := auth.ProjectIDFromContext(ctx); projectID != "" {
+			var resolvedOrgID string
+			_ = s.db.NewRaw(
+				"SELECT organization_id FROM kb.projects WHERE id = ? LIMIT 1",
+				projectID,
+			).Scan(ctx, &resolvedOrgID)
+			orgID = resolvedOrgID
+		}
+	}
+	if orgID == "" {
+		return nil, fmt.Errorf("create_project: 'org_id' is required (could not resolve from auth context)")
+	}
+
+	// Validate that org_id is a UUID.
+	if _, err := uuid.Parse(orgID); err != nil {
+		return nil, fmt.Errorf("create_project: 'org_id' must be a valid UUID: %w", err)
+	}
+
+	// Enforce org_admin authority server-side before the insert (issue #1041):
+	// the REST handler enforces projects.Service.Create → AuthorizeOrgAdmin; the
+	// MCP tool must enforce the same authority so a client-supplied org_id cannot
+	// create a project in an org the caller does not administer.
+	user, err := auth.RequireUser(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create_project: %w", err)
+	}
+	if s.projectOrgAdminAuthorizer == nil {
+		return nil, fmt.Errorf("create_project: project authorizer not configured")
+	}
+	if err := s.projectOrgAdminAuthorizer(ctx, orgID, user.ID); err != nil {
+		return nil, fmt.Errorf("create_project: %w", err)
+	}
+
+	// Insert the project directly via the shared DB handle.
+	type projectRow struct {
+		ID    string `bun:"id"`
+		Name  string `bun:"name"`
+		OrgID string `bun:"organization_id"`
+	}
+	var row projectRow
+	err = s.db.NewRaw(
+		"INSERT INTO kb.projects (name, organization_id, budget_usd) VALUES (?, ?, 10.0) RETURNING id, name, organization_id",
+		name, orgID,
+	).Scan(ctx, &row)
+	if err != nil {
+		return nil, fmt.Errorf("create_project: insert failed: %w", err)
+	}
+
+	result := map[string]any{
+		"id":    row.ID,
+		"name":  row.Name,
+		"orgId": row.OrgID,
+	}
+	return s.wrapResultCompact(result)
+}
+
+// executeJournalList lists recent journal entries for the project.
+func (s *Service) executeJournalList(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.journalSvc == nil {
+		return nil, fmt.Errorf("journal service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	params := journal.ListParams{
+		ProjectID: projectUUID,
+		Limit:     100,
+	}
+
+	if sinceStr, _ := args["since"].(string); sinceStr != "" {
+		t, err := parseJournalSince(sinceStr)
+		if err == nil {
+			params.Since = &t
+		}
+	} else {
+		// Default: last 7 days
+		t := time.Now().UTC().Add(-7 * 24 * time.Hour)
+		params.Since = &t
+	}
+
+	if limitVal, ok := args["limit"]; ok {
+		switch v := limitVal.(type) {
+		case float64:
+			params.Limit = int(v)
+		case int:
+			params.Limit = v
+		}
+	}
+
+	if cursorStr, _ := args["cursor"].(string); cursorStr != "" {
+		params.Cursor = &cursorStr
+	}
+
+	if branchIDStr, _ := args["branch_id"].(string); branchIDStr != "" {
+		if id, err := uuid.Parse(branchIDStr); err == nil {
+			params.BranchID = &id
+		}
+	}
+
+	if includeBranches, _ := args["include_branches"].(bool); includeBranches {
+		params.IncludeBranches = true
+	}
+
+	resp, err := s.journalSvc.List(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("journal list: %w", err)
+	}
+
+	// Filter out entries whose affected graph type is outside the per-run scope.
+	// Pagination cursors (NextCursor/HasMore) are computed by the journal service
+	// against the unfiltered page, so a page may come back shorter than requested
+	// under a scope; that is acceptable — excluded types are never surfaced.
+	resp.Entries = filterJournalEntriesByScope(TypeScopeFromContext(ctx), resp.Entries)
+
+	return s.wrapResult(resp)
+}
+
+// executeJournalAddNote adds a note to the project journal.
+func (s *Service) executeJournalAddNote(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	if s.journalSvc == nil {
+		return nil, fmt.Errorf("journal service not available")
+	}
+	projectUUID, err := uuid.Parse(projectID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid project_id: %w", err)
+	}
+
+	body, _ := args["body"].(string)
+	if body == "" {
+		return nil, fmt.Errorf("body is required")
+	}
+
+	req := &journal.AddNoteRequest{
+		Body:      body,
+		ActorType: journal.ActorAgent,
+	}
+
+	if journalIDStr, _ := args["journal_id"].(string); journalIDStr != "" {
+		id, err := uuid.Parse(journalIDStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid journal_id: %w", err)
+		}
+		req.JournalID = &id
+	}
+
+	note, err := s.journalSvc.AddNote(ctx, projectUUID, req)
+	if err != nil {
+		return nil, fmt.Errorf("add note: %w", err)
+	}
+
+	return s.wrapResult(note)
+}
+
+// parseJournalSince parses a since string: relative (e.g. "7d", "24h", "30m") or RFC3339.
+func parseJournalSince(s string) (time.Time, error) {
+	if len(s) >= 2 {
+		unit := s[len(s)-1]
+		if unit == 'd' || unit == 'h' || unit == 'm' || unit == 's' {
+			n, err := strconv.Atoi(s[:len(s)-1])
+			if err == nil {
+				switch unit {
+				case 'd':
+					return time.Now().UTC().Add(-time.Duration(n) * 24 * time.Hour), nil
+				case 'h':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Hour), nil
+				case 'm':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Minute), nil
+				case 's':
+					return time.Now().UTC().Add(-time.Duration(n) * time.Second), nil
+				}
+			}
+		}
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
+// executeSetSessionTitle is the hidden built-in tool that updates the title of the
+// current session. It reads the session ID from context (injected by the agent
+// executor) and updates the title in the database. If no session ID is found in
+// context, it falls back to the optional "session_id" argument so agents that
+// receive the session ID via a [Session: <id>] prompt tag can pass it explicitly.
+//
+// In addition to updating the session record (kb.sessions.title), it also
+// patches the session's graph object Properties.title so external integrations that
+// read sessions via the graph API (GET /api/graph/objects/:id) see the updated title.
+func (s *Service) executeSetSessionTitle(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	title, _ := args["title"].(string)
+	if title == "" {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"title is required"}`}},
+			IsError: true,
+		}, nil
+	}
+	if len(title) > 512 {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"title exceeds maximum length of 512 characters"}`}},
+			IsError: true,
+		}, nil
+	}
+
+	// Prefer context-injected session ID; fall back to explicit arg.
+	sessionID := SessionIDFromContext(ctx)
+	if sessionID == "" {
+		sessionID, _ = args["session_id"].(string)
+	}
+	if sessionID == "" {
+		// No session in context or args — silently succeed so agents don't fail when called
+		// outside of a session (e.g. direct MCP tool invocation).
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"ok":true,"note":"no active session"}`}},
+		}, nil
+	}
+
+	if s.sessionTitleHandler == nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: `{"error":"session title handler not configured"}`}},
+			IsError: true,
+		}, nil
+	}
+
+	if err := s.sessionTitleHandler.UpdateSessionTitle(ctx, projectID, sessionID, title); err != nil {
+		return &ToolResult{
+			Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf(`{"error":"failed to update session title: %s"}`, err.Error())}},
+			IsError: true,
+		}, nil
+	}
+
+	// Also patch the graph object so callers using the graph API can read the title.
+	// Best-effort: log but don't fail if the graph object doesn't exist or patcher not wired.
+	if s.graphObjectTitlePatcher != nil {
+		if err := s.graphObjectTitlePatcher(ctx, projectID, sessionID, title); err != nil {
+			s.log.Warn("set_session_title: failed to patch graph object title (non-fatal)",
+				slog.String("session_id", sessionID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+
+	return &ToolResult{
+		Content: []ContentBlock{{Type: "text", Text: `{"ok":true}`}},
+	}, nil
+}
+
+// executeProjectBriefing returns a formatted project briefing with core memories,
+// relevant memories, patterns, and conventions — all in one call.
+func (s *Service) executeProjectBriefing(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	query, _ := args["query"].(string)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	limit := 5
+	if l, ok := args["limit"].(float64); ok && l > 0 {
+		limit = int(l)
+		if limit > 20 {
+			limit = 20
+		}
+	}
+
+	var sections []string
+	sections = append(sections, fmt.Sprintf("## Project Briefing: %s\n", query))
+
+	// Fetch project info for static context
+	if projResult, err := s.executeGetProjectInfo(ctx, projectID); err == nil && len(projResult.Content) > 0 {
+		projText := projResult.Content[0].Text
+		if projText != "" && projText != "No project info has been configured for this project." {
+			// Truncate long project info to first 3 lines
+			lines := strings.Split(projText, "\n")
+			if len(lines) > 3 {
+				projText = strings.Join(lines[:3], "\n") + "\n..."
+			}
+			sections = append(sections, "### Project Info", projText)
+		}
+	}
+
+	// Helper to parse and format any entity type from search results.
+	// Search tools return the uniform envelope {ok, data: {data: [...], ...}}.
+	formatEntities := func(result *ToolResult, header string) ([]string, bool) {
+		if result == nil || len(result.Content) == 0 {
+			return nil, false
+		}
+		var sr map[string]any
+		if json.Unmarshal([]byte(result.Content[0].Text), &sr) != nil {
+			return nil, false
+		}
+		payload, _ := sr["data"].(map[string]any)
+		if payload == nil {
+			return nil, false
+		}
+		data, _ := payload["data"].([]any)
+		if len(data) == 0 {
+			return nil, false
+		}
+		var lines []string
+		for _, r := range data {
+			item, ok := r.(map[string]any)
+			if !ok {
+				continue
+			}
+			obj, _ := item["object"].(map[string]any)
+			if obj == nil {
+				continue
+			}
+			objType, _ := obj["type"].(string)
+			if objType == "" {
+				objType = "entity"
+			}
+			props, _ := obj["properties"].(map[string]any)
+
+			// Key identifying text: prefer name > description > content.
+			text, _ := props["name"].(string)
+			if text == "" {
+				if d, ok := props["description"].(string); ok {
+					text = d
+				}
+			}
+			if text == "" {
+				if c, ok := props["content"].(string); ok {
+					text = c
+				}
+			}
+			// Generic fallback: object id, else a compact property dump.
+			if text == "" {
+				if id, ok := obj["id"].(string); ok && id != "" {
+					text = id
+				} else {
+					keys := make([]string, 0, len(props))
+					for k := range props {
+						keys = append(keys, k)
+					}
+					sort.Strings(keys)
+					var parts []string
+					for _, k := range keys {
+						if len(parts) >= 3 {
+							break
+						}
+						parts = append(parts, fmt.Sprintf("%s=%v", k, props[k]))
+					}
+					if len(parts) > 0 {
+						text = strings.Join(parts, ", ")
+					} else {
+						text = "(no properties)"
+					}
+				}
+			}
+
+			// Note-style fields, when present.
+			cat, _ := props["category"].(string)
+			conf, _ := props["confidence"].(float64)
+
+			label := objType
+			if cat != "" {
+				label = objType + ":" + cat
+			}
+			if conf > 0 {
+				lines = append(lines, fmt.Sprintf("- [%s] %s (%.1f)", label, text, conf))
+			} else {
+				lines = append(lines, fmt.Sprintf("- [%s] %s", label, text))
+			}
+		}
+		if len(lines) == 0 {
+			return nil, false
+		}
+		return append([]string{header}, lines...), true
+	}
+
+	flimit := float64(limit)
+
+	// 1. Core memories (label-based, no embeddings needed)
+	if coreResult, err := s.executeHybridSearch(ctx, projectID, map[string]any{
+		"query":  "core",
+		"labels": []any{"core"},
+		"limit":  flimit,
+	}); err == nil {
+		if coreLines, ok := formatEntities(coreResult, "\n### Core Memories"); ok {
+			sections = append(sections, coreLines...)
+		}
+	}
+
+	// 2. Relevant memories (semantic search on query)
+	if recallResult, err := s.executeHybridSearch(ctx, projectID, map[string]any{
+		"query": query,
+		"limit": flimit,
+	}); err == nil {
+		if recallLines, ok := formatEntities(recallResult, "\n### Relevant Memories"); ok {
+			sections = append(sections, recallLines...)
+		}
+	}
+
+	// 3. Patterns
+	if patResult, err := s.executeHybridSearch(ctx, projectID, map[string]any{
+		"query":  query,
+		"labels": []any{"pattern"},
+		"limit":  3.0,
+	}); err == nil {
+		if patLines, ok := formatEntities(patResult, "\n### Patterns"); ok {
+			sections = append(sections, patLines...)
+		}
+	}
+
+	// 4. Conventions
+	if convResult, err := s.executeHybridSearch(ctx, projectID, map[string]any{
+		"query":  query,
+		"labels": []any{"convention"},
+		"limit":  3.0,
+	}); err == nil {
+		if convLines, ok := formatEntities(convResult, "\n### Conventions"); ok {
+			sections = append(sections, convLines...)
+		}
+	}
+
+	return &ToolResult{Content: []ContentBlock{{
+		Type: "text", Text: strings.Join(sections, "\n"),
+	}}}, nil
+}
+
+// executeRemember wraps the /remember REST endpoint as an MCP tool.
+// Calls the heavyweight document ingestion pipeline via HTTP, collects SSE,
+// and returns the summary.
+func (s *Service) executeRemember(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	message, _ := args["message"].(string)
+	if message == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "sync"
+	}
+
+	body := map[string]any{
+		"message": message,
+		"mode":    mode,
+	}
+	if schemaPolicy, _ := args["schema_policy"].(string); schemaPolicy != "" {
+		body["schema_policy"] = schemaPolicy
+	}
+	if dryRun, _ := args["dry_run"].(bool); dryRun {
+		body["dry_run"] = true
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("%s/api/projects/%s/remember", s.baseURL(), projectID)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("remember: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if token := tokenFromContext(ctx); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("X-Project-ID", projectID)
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("remember: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, mcpHTTPError("remember", resp)
+	}
+
+	// Async mode returns a 202 JSON body {run_id, status, document_id} instead of SSE.
+	if mode == "async" {
+		var asyncResp struct {
+			RunID      string `json:"run_id"`
+			Status     string `json:"status"`
+			DocumentID string `json:"document_id"`
+		}
+		data := map[string]any{
+			"message": "Remember started",
+		}
+		if json.NewDecoder(resp.Body).Decode(&asyncResp) == nil {
+			if asyncResp.RunID != "" {
+				data["run_id"] = asyncResp.RunID
+				data["message"] = "Remember started — call remember-status(run_id) to check completion and see what was created"
+			}
+			if asyncResp.Status != "" {
+				data["status"] = asyncResp.Status
+			}
+			if asyncResp.DocumentID != "" {
+				data["document_id"] = asyncResp.DocumentID
+			}
+		}
+		return envelopeResult(true, data, nil, "")
+	}
+
+	// Sync mode returns a 200 JSON body {run_id, status, summary, document_id}
+	// (NOT SSE — only "stream" mode streams). Decode it directly so the run_id
+	// and summary are preserved for remember-status(run_id).
+	var syncResp struct {
+		RunID      string         `json:"run_id"`
+		Status     string         `json:"status"`
+		Summary    map[string]any `json:"summary"`
+		DocumentID string         `json:"document_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return nil, fmt.Errorf("remember: failed to decode sync response: %w", err)
+	}
+
+	data := map[string]any{
+		"message": "Remember completed",
+	}
+	if syncResp.RunID != "" {
+		data["run_id"] = syncResp.RunID
+		data["message"] = "Remember completed — call remember-status(run_id) to see what was created"
+	}
+	if syncResp.Status != "" {
+		data["status"] = syncResp.Status
+	}
+	if len(syncResp.Summary) > 0 {
+		data["summary"] = syncResp.Summary
+	}
+	if syncResp.DocumentID != "" {
+		data["document_id"] = syncResp.DocumentID
+	}
+	return envelopeResult(true, data, nil, "")
+}
+
+// executeForget wraps the /forget REST endpoint as an MCP tool.
+func (s *Service) executeForget(ctx context.Context, projectID string, args map[string]any) (*ToolResult, error) {
+	message, _ := args["message"].(string)
+	if message == "" {
+		return nil, fmt.Errorf("message is required")
+	}
+	mode, _ := args["mode"].(string)
+	if mode == "" {
+		mode = "sync"
+	}
+
+	body := map[string]any{
+		"message": message,
+		"mode":    mode,
+	}
+	if strategy, _ := args["strategy"].(string); strategy != "" {
+		body["strategy"] = strategy
+	}
+	if cascadeDepth, ok := args["cascade_depth"].(float64); ok && cascadeDepth > 0 {
+		body["cascade_depth"] = int(cascadeDepth)
+	}
+	if dryRun, _ := args["dry_run"].(bool); dryRun {
+		body["dry_run"] = true
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	url := fmt.Sprintf("%s/api/projects/%s/forget", s.baseURL(), projectID)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("forget: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	if token := tokenFromContext(ctx); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("X-Project-ID", projectID)
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("forget: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, mcpHTTPError("forget", resp)
+	}
+
+	// Async mode returns a 202 JSON body {run_id, status} instead of SSE.
+	if mode == "async" {
+		var asyncResp struct {
+			RunID  string `json:"run_id"`
+			Status string `json:"status"`
+		}
+		data := map[string]any{
+			"message": "Forget started",
+		}
+		if json.NewDecoder(resp.Body).Decode(&asyncResp) == nil {
+			if asyncResp.RunID != "" {
+				data["run_id"] = asyncResp.RunID
+				data["message"] = "Forget started — call remember-status(run_id) to check completion and see what was removed"
+			}
+			if asyncResp.Status != "" {
+				data["status"] = asyncResp.Status
+			}
+		}
+		return envelopeResult(true, data, nil, "")
+	}
+
+	// Sync mode returns a 200 JSON body {run_id, status, summary} (NOT SSE —
+	// only "stream" mode streams). Decode it directly so the run_id and
+	// summary are preserved for remember-status(run_id).
+	var syncResp struct {
+		RunID   string         `json:"run_id"`
+		Status  string         `json:"status"`
+		Summary map[string]any `json:"summary"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&syncResp); err != nil {
+		return nil, fmt.Errorf("forget: failed to decode sync response: %w", err)
+	}
+
+	data := map[string]any{
+		"message": "Forget completed",
+	}
+	if syncResp.RunID != "" {
+		data["run_id"] = syncResp.RunID
+		data["message"] = "Forget completed — call remember-status(run_id) to see what was removed"
+	}
+	if syncResp.Status != "" {
+		data["status"] = syncResp.Status
+	}
+	if len(syncResp.Summary) > 0 {
+		data["summary"] = syncResp.Summary
+	}
+	return envelopeResult(true, data, nil, "")
+}

@@ -1,0 +1,15 @@
+	github.com/emergent/emergent-core/pkg/sdk		coverage: 0.0% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/apitokens	0.004s	coverage: 66.2% of statements
+	github.com/emergent/emergent-core/pkg/sdk/auth		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/chat		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/chunks		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/documents		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/errors		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/graph		coverage: 0.0% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/health	0.004s	coverage: 72.2% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/mcp	0.004s	coverage: 61.5% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/orgs	0.004s	coverage: 66.2% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/projects	0.007s	coverage: 68.9% of statements
+	github.com/emergent/emergent-core/pkg/sdk/search		coverage: 0.0% of statements
+	github.com/emergent/emergent-core/pkg/sdk/testutil		coverage: 0.0% of statements
+ok  	github.com/emergent/emergent-core/pkg/sdk/users	0.004s	coverage: 64.9% of statements

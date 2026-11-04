@@ -1,0 +1,219 @@
+package agents
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+)
+
+// CanonicalRememberAgentName is the fixed name of the built-in remember agent.
+// Experiments use a different name and register it via the remember_config project setting.
+const CanonicalRememberAgentName = "domain-remember-agent"
+
+// domainRememberAgentSystemPrompt is the default system prompt for the domain-remember-agent.
+// The agent receives a document_id (UUID) and schema_policy. It classifies the document,
+// optionally creates a new schema pack (subject to schema_policy), and extraction is
+// auto-queued by finalize-discovery.
+const domainRememberAgentSystemPrompt = `You receive a classified document. Report and optionally create a schema pack, then queue extraction.
+
+IMPORTANT: The classification result is provided in your input. Do NOT call classify-document.
+
+NEVER call any tool not listed below. ONLY use: finalize-discovery, queue-reextraction.
+
+Extract the document_id, classified_stage, classified_schema_id, and schema_policy from your input.
+
+If classified_stage is "no_match":
+  schema_policy=reuse_only prevented schema creation because no existing schema matched this document.
+  Do NOT call finalize-discovery or queue-reextraction.
+  Report: "No matching schema found. Document skipped (schema_policy=reuse_only)." Done.
+
+If classified_stage is "new_domain":
+  You MUST call finalize-discovery. The schema_policy controls human approval — you always call the tool.
+  schema_policy=ask: Call it. System pauses for approval before executing.
+  schema_policy=auto: Call it. No approval needed.
+  schema_policy=reuse_only: Do NOT call it. Report: schema_policy prevents creation. Done.
+  NOTE: If you call finalize-discovery under reuse_only, it will be blocked by policy and return an error.
+
+  1. Choose a pack_name from classified_pack_name (use as-is) or derive from document type.
+     FORBIDDEN: "new_domain", "unknown", "document", "schema", "domain", "other", "general", "misc", "miscellaneous".
+
+  2. List 3–5 entity types for this document type as included_types.
+
+  3. Call finalize-discovery: mode="create", document_id, pack_name, included_types.
+     Retry with a different pack_name on "forbidden" or "invalid" errors.
+     finalize-discovery automatically queues extraction — do NOT call queue-reextraction after.
+
+If classified_stage is "heuristic" or "llm" (confidence >= 0.7):
+  A schema already exists. You MUST queue extraction so the document's entities are indexed.
+  Call queue-reextraction: document_id=<document_id>, schema_id=<classified_schema_id>.
+  Report: matched schema name and that extraction was queued.
+
+Report: classification result and schema action.`
+
+// EnsureDomainRememberAgent returns the domain-remember-agent for the project, creating it
+// if it does not exist yet. schemaPolicy controls new-schema behaviour:
+//   - "auto"       (default) — create new schema packs automatically when no confident match
+//   - "reuse_only" — never create new schema packs
+//   - "ask"        — pause and ask the user before creating a new schema pack
+//
+// The agent definition is user-editable: after first creation the user can customise the
+// system prompt, model, tools, and other fields via the normal agent management API.
+// Canonical tool list and prompt are applied only on first creation; on subsequent calls
+// the definition is returned as-is (except the finalize-discovery tool policy, which
+// follows the per-request schema_policy gate).
+//
+// Safe to call concurrently — a race between two callers results in one insert and one
+// subsequent read (FindDefinitionByName will find the winner's row).
+func (r *Repository) EnsureDomainRememberAgent(ctx context.Context, projectID string, schemaPolicy string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, CanonicalRememberAgentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up domain-remember-agent: %w", err)
+	}
+
+	// If it already exists, return it as-is: the definition is user-editable, so
+	// we do NOT overwrite user customisations to the system prompt or tools list.
+	// The one exception is the finalize-discovery tool policy, which encodes the
+	// per-request schema_policy gate (Confirm for "ask", Disabled for
+	// "reuse_only"). That gate is request-driven safety enforcement, not user
+	// customisation, so it stays in sync on every call.
+	if existing != nil {
+		changed := false
+		// Sync tool_policies for finalize-discovery based on schema_policy.
+		desired := buildDomainRememberToolPolicies(schemaPolicy)
+		if existing.ToolPolicies == nil {
+			existing.ToolPolicies = map[string]ToolPolicy{}
+		}
+		curr := existing.ToolPolicies["finalize-discovery"]
+		want := desired["finalize-discovery"]
+		if curr.Confirm != want.Confirm || curr.Disabled != want.Disabled {
+			existing.ToolPolicies = desired
+			changed = true
+		}
+		if changed {
+			if updateErr := r.UpdateDefinition(ctx, existing); updateErr != nil {
+				slog.Warn("domain-remember-agent: failed to sync tool policy",
+					"projectID", projectID,
+					"error", updateErr,
+				)
+			}
+		}
+		return existing, nil
+	}
+
+	temperature := float32(0.1)
+	maxSteps := 30
+	systemPrompt := domainRememberAgentSystemPrompt
+
+	tools := []string{
+		"finalize-discovery",
+		"queue-reextraction",
+	}
+	// ask_user no longer needed for schema_policy="ask" — the tool policy confirm on
+	// finalize-discovery handles user confirmation automatically.
+
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         CanonicalRememberAgentName,
+		Description:  strPtr("Domain-aware memory agent — classifies documents, discovers/reuses schemas, and queues structured extraction"),
+		SystemPrompt: &systemPrompt,
+		Model: &ModelConfig{
+			Temperature: &temperature,
+		},
+		Tools:        tools,
+		Skills:       []string{},
+		IsDefault:    false,
+		MaxSteps:     &maxSteps,
+		Visibility:   VisibilityProject,
+		Config:       map[string]any{},
+		ToolPolicies: buildDomainRememberToolPolicies(schemaPolicy),
+	}
+
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		// Race: another caller inserted first — return that row.
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, CanonicalRememberAgentName); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create domain-remember-agent: %w", err)
+	}
+
+	return def, nil
+}
+
+// buildDomainRememberToolPolicies returns the tool_policies map for the given schema_policy.
+// schema_policy="ask"       → finalize-discovery requires human confirmation before execution.
+// schema_policy="reuse_only"→ finalize-discovery is hard-blocked (Disabled=true).
+// other policies            → no gate.
+func buildDomainRememberToolPolicies(schemaPolicy string) map[string]ToolPolicy {
+	switch schemaPolicy {
+	case "ask":
+		return map[string]ToolPolicy{
+			"finalize-discovery": {
+				Confirm: true,
+				Message: "Agent wants to call **finalize-discovery** to create a new schema pack. Do you approve?",
+			},
+		}
+	case "reuse_only":
+		return map[string]ToolPolicy{
+			"finalize-discovery": {
+				Disabled: true,
+			},
+		}
+	default:
+		return map[string]ToolPolicy{}
+	}
+}
+
+// EnrichRememberAgentName is the fixed name of the enrich-policy remember agent.
+const EnrichRememberAgentName = "domain-remember-agent-v8-enrich"
+
+// EnsureEnrichRememberAgent returns the V8 enrich remember agent for the project,
+// creating it if it does not exist. This agent uses RememberPromptV8Enrich which
+// delegates property generation to the server via mode="enrich" / mode="create_rich".
+func (r *Repository) EnsureEnrichRememberAgent(ctx context.Context, projectID string) (*AgentDefinition, error) {
+	existing, err := r.FindDefinitionByName(ctx, projectID, EnrichRememberAgentName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up enrich-remember-agent: %w", err)
+	}
+	if existing != nil {
+		// Return the user-editable definition as-is. The system prompt is not
+		// overwritten, so user customisations stick.
+		return existing, nil
+	}
+
+	temperature := float32(0.1)
+	maxSteps := 10
+	systemPrompt := RememberPromptV8Enrich
+	def := &AgentDefinition{
+		ProjectID:    projectID,
+		Name:         EnrichRememberAgentName,
+		Description:  strPtr("Enrich-policy remember agent — enriches schema properties from document, then queues extraction"),
+		SystemPrompt: &systemPrompt,
+		Model:        &ModelConfig{Temperature: &temperature},
+		Tools:        []string{"finalize-discovery"},
+		Skills:       []string{},
+		MaxSteps:     &maxSteps,
+		Visibility:   VisibilityProject,
+		Config:       map[string]any{},
+		ToolPolicies: map[string]ToolPolicy{}, // no gate
+	}
+	if err := r.CreateDefinition(ctx, def); err != nil {
+		if existing, err2 := r.FindDefinitionByName(ctx, projectID, EnrichRememberAgentName); err2 == nil && existing != nil {
+			return existing, nil
+		}
+		return nil, fmt.Errorf("failed to create enrich-remember-agent: %w", err)
+	}
+	return def, nil
+}
+
+// sliceEq returns true if two string slices have the same length and elements in the same order.
+func sliceEq(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

@@ -1,0 +1,18 @@
+package authinfo
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers auth info routes
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	// Public endpoint — no auth required
+	e.GET("/api/auth/issuer", h.Issuer)
+
+	g := e.Group("/api/auth")
+	g.Use(authMiddleware.RequireAuth())
+
+	g.GET("/me", h.Me)
+}

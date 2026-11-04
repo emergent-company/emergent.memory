@@ -1,0 +1,135 @@
+---
+name: memory-schemas
+description: Install, list, or remove schemas (object and relationship type definitions) in an existing project. Use after onboarding when managing or updating the type registry.
+metadata:
+  author: emergent
+  version: "2.0"
+---
+
+Manage schemas using `memory schemas`. Schemas define reusable sets of object types and relationship types that can be installed into a project's knowledge graph schema.
+
+> **New to Memory?** Load the `memory-onboard` skill first — it walks through designing and installing a schema from scratch.
+
+## Rules
+
+- **Project context is auto-discovered** — the CLI walks up the directory tree to find `.env.local` containing `MEMORY_PROJECT` or `MEMORY_PROJECT_ID`. If `.env.local` is present anywhere above the current directory, `--project` is not needed. Only pass `--project <id>` explicitly when overriding or when no `.env.local` exists.
+
+## Concepts
+
+- **Schema** — a versioned bundle of `objectTypeSchemas` and `relationshipTypeSchemas`. Immutable once created; new versions get new IDs.
+- **Installed schema** — a schema assigned to a specific project. Multiple schemas can be installed; their types are merged into the project's compiled type registry.
+- **Compiled types** — the merged view of all object + relationship types from all installed schemas in a project.
+
+---
+
+## Commands
+
+### List schemas on this project
+```bash
+memory schemas list
+memory schemas list --output json
+```
+Shows schemas currently installed on the project — this is the default and what you almost always want. Schemas installed via `memory blueprints install` appear here.
+
+To see schemas available in the global registry (not yet installed):
+```bash
+memory schemas list --available
+```
+> **Note:** On most self-hosted installs the registry is empty. Schemas come from blueprints, not the registry.
+
+### List installed schemas (alias)
+```bash
+memory schemas installed
+```
+Same as `memory schemas list`. Use either.
+
+### Get schema details
+```bash
+memory schemas get <schema-id>
+```
+Shows object types, relationship types, version, description.
+
+### Create a new schema
+```bash
+memory schemas create --file pack.json
+```
+
+Schema JSON structure:
+```json
+{
+  "name": "my-pack",
+  "version": "1.0",
+  "description": "Object types for my domain",
+  "objectTypeSchemas": [
+    {
+      "name": "Requirement",
+      "label": "Requirement",
+      "description": "A product requirement",
+      "properties": {}
+    }
+  ],
+  "relationshipTypeSchemas": [
+    {
+      "name": "implements",
+      "label": "Implements",
+      "fromTypes": ["Task"],
+      "toTypes": ["Requirement"]
+    }
+  ]
+}
+```
+
+### List installed schemas in the current project
+```bash
+memory schemas installed
+memory schemas installed --output json
+```
+
+### Install a schema into the current project
+```bash
+# Install an existing schema by ID:
+memory schemas install <schema-id>
+
+# Create from JSON file and install in one step:
+memory schemas install --file pack.json
+
+# Preview without making changes:
+memory schemas install --file pack.json --dry-run
+
+# Merge into existing registered types:
+memory schemas install --file pack.json --merge
+```
+
+### Uninstall a schema from the current project
+```bash
+memory schemas uninstall <assignment-id>
+```
+Use `memory schemas installed` to find the assignment ID.
+
+### Delete a schema from the registry
+```bash
+memory schemas delete <schema-id>
+```
+
+### View compiled types (merged schema)
+```bash
+memory schemas compiled-types
+memory schemas compiled-types --output json
+```
+Shows all object and relationship types available in the current project, with which schema each comes from.
+
+---
+
+## Workflow
+
+1. **Set up a project schema**: `list` to find existing schemas → `install <schema-id>` to add to project → `compiled-types` to verify
+2. **Create a custom schema**: write a JSON file → `install --file pack.json --dry-run` to preview → `install --file pack.json` to create and install in one step
+3. **Inspect project schema**: `compiled-types` to see all available types before creating objects
+4. **Remove a schema**: `uninstall <assignment-id>` — use `installed` to find the assignment ID first
+
+## Notes
+
+- Schema IDs are UUIDs; use `list --output json` to find by name
+- Schemas are immutable — creating a schema with the same name but different content creates a new version with a new ID
+- `--project` global flag selects the project for `installed`, `install`, `uninstall`, and `compiled-types`
+- `list` and `create` are org-scoped (no project needed)

@@ -1,0 +1,397 @@
+package main
+
+import (
+	"strconv"
+
+	tpl "github.com/a-h/templ"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/behaviors"
+)
+
+// ComponentGalleryDocument is the standalone, chromeless document for the dev
+// component gallery. It emits its own <head> and <body> instead of the app
+// shell, so the gallery has no sidebar, no topbar, and no project chrome. Its
+// body is passed in as a component: taking the content as a parameter keeps the
+// generated dependency graph stable (a render of a parameter is not a graph
+// edge), so the handler can compose it without changing the committed graph.
+//
+// It embeds the feedback overlay (when configured), so the gallery itself is a
+// reportable surface — users can file feedback without leaving /dev/components.
+// The overlay is injected into the gallery document only; previews stay
+// sandboxed and script-free.
+templ ComponentGalleryDocument(content templ.Component, feedbackOverlayURL string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="robots" content="noindex,nofollow"/>
+			<title>{ pageTitle("Component gallery") }</title>
+			@behaviors.Tag()
+			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+		</head>
+		<body class="bg-base-200 text-base-content min-h-screen">
+			@content
+			if feedbackOverlayURL != "" {
+				<script src={ tpl.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+			}
+		</body>
+	</html>
+}
+
+// ComponentGalleryPage renders the gallery body (no app shell): a small header,
+// a full-bleed gutter, and the catalog grouped by layer and category in one
+// column. It is composed into ComponentGalleryDocument by uiComponentGallery.
+// The outer element is a full-width <main> landmark — the page is chromeless,
+// so it does not use the shared app page container, but the document still
+// needs a main landmark of its own.
+//
+// Previews are lazy-loaded isolated iframes. Render-only entries use
+// sandbox="" (no scripts, no forms); an interactive entry uses
+// sandbox="allow-scripts" so its client scripts can run — but never
+// allow-same-origin or allow-forms, so a preview still cannot read the session
+// cookie or mutate the backend.
+templ ComponentGalleryPage(entries []GalleryEntry, gaps []AdoptionViewSummary) {
+	{{ total, needsFixture := galleryStats(entries) }}
+	<main class="w-full px-6 sm:px-8" { tpl.Attributes{"data-testid": "component-gallery"}... }>
+		@pageHeader("Dev", "Component gallery", "Reusable gateway templ components, grouped by layer and category. Each renders in its own sandboxed fixture frame.") {
+			<span class="badge badge-ghost badge-sm" data-testid="gallery-total">{ countLabel(total, "component", "components") }</span>
+			if needsFixture > 0 {
+				<span class="badge badge-warning badge-outline badge-sm" data-testid="gallery-needs-fixture">{ countLabel(needsFixture, "needs fixture", "need fixtures") }</span>
+			}
+		}
+
+		<!-- Whole-page previews come first: they are the review surface for
+		     layout work, ahead of the component catalog. -->
+		@pagePreviewSection()
+
+		<!-- Adoption gaps surface first: authored templates that re-declare
+		     component-owned markup inline instead of rendering the component. -->
+		@adoptionGapSection(gaps)
+
+		<!-- Compact horizontal jump row; the catalog itself is one column. -->
+		<nav aria-label="Component index" data-testid="gallery-index" class="border-base-content/10 mb-8 flex flex-wrap items-center gap-2 border-y py-2">
+			<a href="#page-previews" class="badge badge-ghost badge-sm whitespace-nowrap">
+				Pages · page previews
+				<span class="text-muted-faint ml-1 tabular-nums">{ strconv.Itoa(len(galleryPagePreviews())) }</span>
+			</a>
+			for _, layer := range galleryLayerOrder() {
+				<a href={ "#layer-" + string(layer) } class="badge badge-ghost badge-sm whitespace-nowrap">
+					{ string(layer) } · { galleryLayerBlurb(layer) }
+					<span class="text-muted-faint ml-1 tabular-nums">{ strconv.Itoa(len(entriesInLayer(entries, layer))) }</span>
+				</a>
+			}
+		</nav>
+
+		<div class="space-y-12">
+			for _, layer := range galleryLayerOrder() {
+				@galleryLayerSection(entries, layer)
+			}
+		</div>
+	</main>
+}
+
+// adoptionGapSection surfaces adoption gaps: authored templates that re-declare
+// component-owned markup inline instead of rendering the shared component. It
+// renders one <details> block per offending file, each listing its findings as
+// file:line -> marker -> owners. When there are no findings it renders a short
+// empty state.
+//
+// It is deliberately unexported: like galleryLayerSection / galleryEntryCard /
+// externalDepsList, it is a page-local section rendered with @ inside
+// ComponentGalleryPage, so the component-graph generator skips it (unexported
+// same-package callees are not catalog entries) and the committed graph does not
+// churn.
+templ adoptionGapSection(gaps []AdoptionViewSummary) {
+	{{ total := adoptionFindingCount(gaps) }}
+	<section id="adoption-gaps" data-testid="adoption-gaps" class="scroll-mt-6">
+		<!-- Tinted, bordered panel so this reads as the one attention surface,
+		     distinct from the neutral catalog of cards below. -->
+		<div class="border-warning/25 bg-warning/5 rounded-box border p-4 sm:p-5">
+			<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+				<div class="flex min-w-0 items-start gap-2.5">
+					<span class="iconify lucide--triangle-alert text-warning mt-0.5 size-4 shrink-0" aria-hidden="true"></span>
+					<div class="min-w-0">
+						<div class="flex flex-wrap items-center gap-2">
+							<h2 class="text-lg font-semibold tracking-tight">Adoption gaps</h2>
+							<span class="badge badge-warning badge-sm tabular-nums" data-testid="adoption-gap-total">{ strconv.Itoa(total) }</span>
+						</div>
+						<p class="text-muted mt-1 text-xs leading-relaxed">
+							Authored templates that re-declare component-owned markup inline instead of rendering the shared component. Prefer the component so styling stays consistent.
+						</p>
+					</div>
+				</div>
+				<!-- Summary stats: keep them on one quiet line, right-aligned when there is room. -->
+				<p class="text-muted-faint shrink-0 text-xs tabular-nums">
+					{ countLabel(total, "ad-hoc finding", "ad-hoc findings") } · { countLabel(len(gaps), "file", "files") } · tracking { strconv.Itoa(adoptionTrackedComponents()) } shared components
+				</p>
+			</div>
+
+			if total == 0 {
+				<!-- Empty is the good outcome, so it reads success rather than warning. -->
+				<div class="border-success/25 bg-success/5 rounded-box mt-4 flex items-start gap-2 border px-3.5 py-3" data-testid="adoption-gaps-empty">
+					<span class="iconify lucide--circle-check-big text-success mt-0.5 size-4 shrink-0" aria-hidden="true"></span>
+					<p class="text-muted text-sm">No adoption gaps — every component-owned marker renders through its shared component.</p>
+				</div>
+			} else {
+				<div class="mt-4 space-y-2">
+					for _, g := range gaps {
+						<details class="border-base-content/10 bg-base-100 group/gap rounded-box overflow-hidden border" data-testid={ "adoption-gap-" + g.File }>
+							<summary class="text-muted-strong hover:text-base-content hover:bg-base-content/5 flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors sm:px-4 [&::-webkit-details-marker]:hidden">
+								<span class="iconify lucide--file-code size-4 shrink-0" aria-hidden="true"></span>
+								<span class="min-w-0 truncate font-mono">{ g.File }</span>
+								<span class="badge badge-warning badge-outline badge-xs tabular-nums" title={ countLabel(g.Count, "ad-hoc finding", "ad-hoc findings") }>{ strconv.Itoa(g.Count) }</span>
+								<span class="iconify lucide--chevron-down ml-auto size-4 shrink-0 transition-transform group-open/gap:rotate-180" aria-hidden="true"></span>
+							</summary>
+							<div class="border-base-content/10 divide-base-content/10 divide-y border-t">
+								for _, f := range g.Findings {
+									<!-- Location + marker on the left; owner chips on the right (stacks on mobile). -->
+									<div class="grid grid-cols-1 gap-x-3 gap-y-1.5 px-3.5 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-4">
+										<div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+											<span class="text-muted-bright min-w-0 truncate font-mono text-xs">{ f.File }<span class="text-muted-faint">:{ strconv.Itoa(f.Line) }</span></span>
+											<span class="text-muted-faint shrink-0 text-xs" aria-hidden="true">→</span>
+											<span class="badge badge-warning badge-outline badge-xs font-mono">{ f.Marker }</span>
+										</div>
+										<div class="flex min-w-0 flex-wrap items-center gap-1 sm:justify-end" title={ "Owned by " + adoptionOwnerLabel(f.Owners) }>
+											<span class="iconify lucide--component text-muted-faint size-3 shrink-0" aria-hidden="true"></span>
+											for _, owner := range f.Owners {
+												<span class="badge badge-ghost badge-xs font-mono">{ owner }</span>
+											}
+										</div>
+									</div>
+								}
+							</div>
+						</details>
+					}
+				</div>
+			}
+		</div>
+	</section>
+}
+
+templ galleryLayerSection(entries []GalleryEntry, layer GalleryLayer) {
+	<section id={ "layer-" + string(layer) } data-testid={ "layer-" + string(layer) } class="scroll-mt-6">
+		<div class="border-base-content/10 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-2">
+			<div class="flex items-center gap-2">
+				<h2 class="text-lg font-semibold tracking-tight">{ layerLabel(layer) }</h2>
+				<span class="badge badge-ghost badge-sm tabular-nums">{ strconv.Itoa(len(entriesInLayer(entries, layer))) }</span>
+			</div>
+			<p class="text-muted-faint text-xs">{ galleryLayerHint(layer) }</p>
+		</div>
+		<div class="mt-6 space-y-8">
+			for _, group := range entriesByCategory(entries, layer) {
+				<div>
+					<h3 class="text-muted-faint text-[11px] font-semibold tracking-[0.14em] uppercase">{ group.Category }</h3>
+					<div class="mt-3 space-y-4">
+						for _, entry := range group.Entries {
+							@galleryEntryCard(entry)
+						}
+					</div>
+				</div>
+			}
+		</div>
+	</section>
+}
+
+templ galleryEntryCard(entry GalleryEntry) {
+	{{ needsFixture := entry.NeedsFixture() }}
+	<article id={ "component-" + entry.Slug } data-testid={ "gallery-entry-" + entry.Slug } class="border-base-content/10 bg-base-100 scroll-mt-6 overflow-hidden rounded-box border">
+		<div class="grid grid-cols-1 lg:grid-cols-2">
+			<!-- Info column: identity, metadata, and the dependency disclosure. -->
+			<div class="flex min-w-0 flex-col">
+				<div class="p-5">
+					<div class="flex flex-wrap items-center gap-2">
+						<h4 class="truncate text-base font-semibold">{ entry.Name }</h4>
+						<span class="badge badge-ghost badge-sm font-mono">{ string(entry.Layer) }</span>
+						if entry.Interactive {
+							<span class="badge badge-info badge-outline badge-sm gap-1" data-testid="gallery-interactive" title="Client scripts run inside the preview's sandbox.">
+								<span class="iconify lucide--mouse-pointer-click size-3" aria-hidden="true"></span>
+								interactive
+							</span>
+						}
+						if needsFixture {
+							<span class="badge badge-warning badge-sm" data-testid="needs-fixture">needs fixture</span>
+						}
+					</div>
+					<p class="text-muted mt-2 text-sm leading-relaxed">{ entry.Description }</p>
+					<div class="text-muted-faint mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+						<span class="inline-flex min-w-0 items-center gap-1">
+							<span class="iconify lucide--file-code size-3.5 shrink-0" aria-hidden="true"></span>
+							<span class="truncate font-mono">{ entry.SourceFile }</span>
+						</span>
+						if entry.PropsType != "" {
+							<span class="inline-flex min-w-0 items-center gap-1">
+								<span class="iconify lucide--braces size-3.5 shrink-0" aria-hidden="true"></span>
+								<span class="truncate font-mono">{ entry.PropsType }</span>
+							</span>
+						}
+					</div>
+				</div>
+
+				<details class="group/deps border-base-content/10 mt-auto border-t">
+					<summary class="text-muted-strong hover:text-base-content flex cursor-pointer list-none items-center gap-2 px-5 py-2.5 text-xs transition-colors [&::-webkit-details-marker]:hidden">
+						<span class="iconify lucide--git-branch size-3.5 shrink-0" aria-hidden="true"></span>
+						<span class="font-medium">Dependencies</span>
+						<span class="badge badge-ghost badge-xs tabular-nums">{ strconv.Itoa(galleryDependencyCount(entry)) }</span>
+						if len(entry.Uses) > 0 {
+							<span class="badge badge-ghost badge-xs tabular-nums" title="Distinct components reachable through uses edges">reach { strconv.Itoa(galleryTransitiveUses(entry)) }</span>
+						}
+						<span class="iconify lucide--chevron-down ml-auto size-4 shrink-0 transition-transform group-open/deps:rotate-180" aria-hidden="true"></span>
+					</summary>
+					<div class="space-y-2.5 px-5 pb-4 text-xs">
+						if len(entry.Uses) > 0 {
+							<div class="flex gap-2">
+								<span class="text-muted-faint w-16 shrink-0 pt-0.5">Uses</span>
+								<div class="flex flex-wrap gap-1" title={ joinText(entry.Uses) }>
+									for _, use := range entry.Uses {
+										<span class="badge badge-ghost badge-xs font-mono">{ use }</span>
+									}
+								</div>
+							</div>
+						}
+						if len(entry.UsedBy) > 0 {
+							<div class="flex gap-2">
+								<span class="text-muted-faint w-16 shrink-0 pt-0.5">Used by</span>
+								<div class="flex flex-wrap gap-1" title={ joinText(entry.UsedBy) }>
+									for _, caller := range entry.UsedBy {
+										<span class="badge badge-ghost badge-xs">{ caller }</span>
+									}
+								</div>
+							</div>
+						}
+						@externalDepsList(entry)
+					</div>
+				</details>
+			</div>
+
+			<!-- Preview column: the isolated fixture frame on a neutral canvas. -->
+			<div class="border-base-content/10 bg-base-200/50 border-t p-5 lg:border-t-0 lg:border-l">
+				<iframe
+					src={ entry.previewSrc() }
+					if entry.Interactive {
+						sandbox="allow-scripts"
+						data-interactive="true"
+					} else {
+						sandbox=""
+					}
+					loading="lazy"
+					title={ entry.Name + " preview" }
+					data-testid={ "component-preview-" + entry.Slug }
+					height="220"
+					class="bg-base-100 rounded-box block h-[220px] w-full border-0"
+				></iframe>
+				<!-- Open the same component top-level (report mode) so a reviewer can
+				     point at an individual element; the sandboxed iframe cannot host
+				     the feedback overlay. -->
+				<a
+					href={ tpl.URL(entry.previewStandaloneSrc()) }
+					target="_blank"
+					rel="noopener"
+					class="btn btn-ghost btn-xs mt-2 justify-start gap-1.5"
+					data-testid={ "gallery-open-" + entry.Slug }
+					title="Open this component in its own tab."
+				>
+					<span class="iconify lucide--external-link size-3.5 shrink-0" aria-hidden="true"></span>
+					Open in new tab
+				</a>
+				if entry.Interactive {
+					<p class="text-muted-faint mt-2 text-xs">Interactive preview — client scripts run inside the sandboxed frame, with no cookie or backend access.</p>
+				}
+				if needsFixture {
+					<p class="text-warning mt-2 text-xs">Zero-value render — add a fixture to populate this preview.</p>
+				}
+			</div>
+		</div>
+	</article>
+}
+
+templ externalDepsList(entry GalleryEntry) {
+	{{ deps := entry.ExternalDeps() }}
+	if len(deps) > 0 {
+		<div class="flex gap-2">
+			<span class="text-muted-faint w-16 shrink-0 pt-0.5">External</span>
+			<div class="flex flex-wrap gap-1" title={ joinText(deps) }>
+				for _, dep := range deps {
+					<span class="badge badge-ghost badge-xs font-mono">{ dep }</span>
+				}
+			</div>
+		</div>
+	}
+}
+
+// componentPreviewDoc renders one component's preview as a standalone document.
+// The same route serves two shapes:
+//
+//   - Embedded (standalone == false, the default): the isolated iframe fixture.
+//     Render-only entries get the stylesheet alone (no scripts); an interactive
+//     entry additionally loads the shell client assets in the canonical order so
+//     overlays (dialogs, dropdowns, toasts) can open. It carries no feedback
+//     overlay and no extra chrome — the hosting iframe applies sandbox=""
+//     (render-only) or sandbox="allow-scripts" (interactive), never allow-forms
+//     or allow-same-origin.
+//   - Report (standalone == true): the top-level, chromeless document opened by
+//     the card's "Open in new tab" control. It renders the same fixture in a
+//     roomy full-width canvas, plus a slim header (name, layer, source, back link)
+//     and the feedback overlay when a URL is configured, so a reviewer can point
+//     at an individual element.
+templ componentPreviewDoc(entry GalleryEntry, variant string, standalone bool, feedbackOverlayURL string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark" class="group/html">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="robots" content="noindex,nofollow"/>
+			if standalone {
+				<title>{ entry.Name } — component report</title>
+			} else {
+				<title>{ entry.Name } — component preview</title>
+			}
+			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+		</head>
+		if standalone {
+			<body class="bg-base-200 text-base-content min-h-screen">
+				<header class="border-base-content/10 bg-base-100/60 sticky top-0 z-30 border-b px-6 py-2.5 backdrop-blur sm:px-8">
+					<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+						<a href={ tpl.URL("/dev/components#component-" + entry.Slug) } class="badge badge-ghost badge-sm gap-1 hover:opacity-70 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+							<span class="iconify lucide--arrow-left size-3.5 shrink-0" aria-hidden="true"></span>
+							Back to gallery
+						</a>
+						<div class="flex min-w-0 items-center gap-2">
+							<h1 class="truncate text-sm font-semibold">{ entry.Name }</h1>
+							<span class="badge badge-ghost badge-xs font-mono">{ string(entry.Layer) }</span>
+						</div>
+						<span class="text-muted-faint ml-auto hidden min-w-0 items-center gap-1 text-xs sm:inline-flex">
+							<span class="iconify lucide--file-code size-3.5 shrink-0" aria-hidden="true"></span>
+							<span class="truncate font-mono">{ entry.SourceFile }</span>
+						</span>
+					</div>
+					if feedbackOverlayURL != "" {
+						<p class="text-muted mt-1.5 text-xs">Point at a specific element with the feedback button to report it.</p>
+					}
+				</header>
+				<main class="w-full px-6 py-8 sm:px-8">
+					<div class="border-base-content/10 bg-base-100 rounded-box border p-8 sm:p-10" data-testid="preview-canvas">
+						@entry.renderFor(variant)
+					</div>
+				</main>
+				if entry.Interactive {
+					@entry.previewClientScripts()
+				}
+				if feedbackOverlayURL != "" {
+					<script src={ tpl.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+				}
+			</body>
+		} else {
+			<body class="bg-base-200 text-base-content p-4 sm:p-6">
+				<div class="border-base-content/10 bg-base-100 rounded-box min-h-[8rem] border p-6" data-testid="preview-canvas">
+					@entry.renderFor(variant)
+				</div>
+				if entry.Interactive {
+					@entry.previewClientScripts()
+				}
+			</body>
+		}
+	</html>
+}

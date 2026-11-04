@@ -1,0 +1,46 @@
+package blueprints
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers blueprint routes
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	// All blueprint endpoints require authentication
+	g := e.Group("/api/blueprints")
+	g.Use(authMiddleware.RequireAuth())
+	// Blueprint CRUD/apply scope is the caller's project (X-Project-ID header,
+	// normalised onto user.ProjectID by RequireAuth). Enforce token binding and
+	// session org-membership against that project (issue #868, the #864 class).
+	g.Use(authMiddleware.RequireProjectTokenScope())
+	g.Use(authMiddleware.RequireProjectMember())
+
+	// Static sub-paths must be registered before /:id so they are not swallowed.
+	g.GET("/name/:name/versions", h.ListVersionsByName)
+	g.GET("/applied", h.ListAppliedBlueprints, authMiddleware.RequireProjectID())
+	g.PUT("/github-credentials", h.SaveGithubCredentials, authMiddleware.RequireProjectID())
+	g.GET("/model-overrides", h.GetModelOverrides, authMiddleware.RequireProjectID())
+	g.PUT("/model-overrides", h.UpsertModelOverrides, authMiddleware.RequireProjectID())
+	g.POST("/:name/updates/check", h.CheckBlueprintUpdates, authMiddleware.RequireProjectID())
+	g.POST("/:name/updates/apply", h.ApplyBlueprintUpdates, authMiddleware.RequireProjectID())
+	g.GET("/:name/updates", h.GetBlueprintUpdates, authMiddleware.RequireProjectID())
+
+	g.POST("", h.CreateBlueprint)
+	// Import from a GitHub repo URL; same guards/scope as create.
+	g.POST("/import", h.ImportBlueprint)
+	// Preview (create-nothing) import; same guards/scope as import.
+	g.POST("/import/preview", h.PreviewImport)
+	g.GET("", h.ListBlueprints)
+	g.GET("/:id", h.GetBlueprint)
+	g.PUT("/:id", h.UpdateBlueprint)
+	g.POST("/:id/publish", h.PublishBlueprint)
+	g.POST("/:id/deprecate", h.DeprecateBlueprint)
+	g.POST("/:id/versions", h.NewVersion)
+	// Apply is project-scoped: RequireProjectID enforces the X-Project-ID
+	// header which populates user.ProjectID (the target project).
+	g.POST("/:id/apply", h.ApplyBlueprint, authMiddleware.RequireProjectID())
+	g.POST("/:id/unapply", h.UnapplyBlueprint, authMiddleware.RequireProjectID())
+	g.DELETE("/:id", h.DeleteBlueprint)
+}

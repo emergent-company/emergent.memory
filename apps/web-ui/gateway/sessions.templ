@@ -1,0 +1,618 @@
+package main
+
+import (
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/toolresult"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Sessions (trace viewer) ---
+
+// SessionsPage renders the session list, most recent first. A failed fetch
+// renders the whole-page error state.
+templ SessionsPage(agents []AgentDefinitionSummary, convs []Conversation, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@sessionsHeader(len(convs), loadErr == nil)
+		if loadErr != nil {
+			@pageError("Failed to load sessions", loadErr)
+		} else if len(convs) == 0 {
+			@sessionsEmpty()
+		} else {
+			@sessionsList(agents, convs)
+		}
+	}
+}
+
+templ sessionsHeader(count int, ok bool) {
+	@pageHeader("Control plane", "Sessions", "Recorded agent conversations — open one to inspect its timeline of turns and tool calls.") {
+		if ok {
+			@countBadgeLabel(countLabel(count, "session", "sessions"), "lucide--messages-square")
+		}
+	}
+}
+
+templ sessionsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--messages-square",
+		Title:       "No sessions",
+		Description: "Chat with an agent and the conversation will appear here.",
+		Bordered:    true,
+		Class:       "py-12",
+	})
+}
+
+templ sessionsList(agents []AgentDefinitionSummary, convs []Conversation) {
+	@cardList("", cardListProps{}) {
+		for _, c := range convs {
+			@sessionRow(agents, c)
+		}
+	}
+}
+
+templ sessionRow(agents []AgentDefinitionSummary, c Conversation) {
+	@components.LinkRow(templ.URL("/sessions/"+url.PathEscape(c.ID)), ui.IconSpan("lucide--messages-square", "size-4 shrink-0 text-muted-faint"), chatTitle(c), "Created "+relTime(c.CreatedAt)) {
+		if c.AgentDefinitionID != "" {
+			{{ aui := agentUIForList(agents, c.AgentDefinitionID) }}
+			@agentNameChip(shortID(c.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
+		}
+	}
+}
+
+// SessionPage renders one session's timeline: user/assistant turns as chat
+// bubbles and tool calls as cards (name, collapsible highlighted JSON input/
+// output, error), grouped by run, with each run's OpenTelemetry trace
+// waterfall in a collapsible section when a trace exists. Per-run token usage
+// is not part of the conversation-history API, so it is omitted rather than
+// fabricated. Unknown sessions render an empty timeline (not an error); other
+// failures render the error state.
+templ SessionPage(agents []AgentDefinitionSummary, detail *ConversationDetail, groups []runGroup, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Session unavailable", loadErr)
+		} else {
+			@sessionDetailHeader(agents, detail)
+			if len(groups) == 0 {
+				@sessionTimelineEmpty()
+			} else {
+				@sessionTimeline(sessionAgentUI(agents, detail), groups)
+			}
+		}
+	}
+}
+
+// sessionAgentUI is the assistant identity accent for a session detail: the
+// linked agent definition's declared appearance, or the zero agentUI.
+func sessionAgentUI(agents []AgentDefinitionSummary, detail *ConversationDetail) agentUI {
+	if detail == nil {
+		return agentUI{}
+	}
+	return agentUIForList(agents, detail.AgentDefinitionID)
+}
+
+templ sessionDetailHeader(agents []AgentDefinitionSummary, detail *ConversationDetail) {
+	if detail != nil {
+		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", sessionTitle(detail))), "", sessionTitle(detail), "Created "+relTime(detail.CreatedAt), detailHeaderOpts{Margin: "mb-6"}) {
+			@countBadgeLabel(strconv.Itoa(len(detail.Messages))+" message"+plural(len(detail.Messages)), "lucide--message-square")
+			if detail.AgentDefinitionID != "" {
+				{{ aui := agentUIForList(agents, detail.AgentDefinitionID) }}
+				@agentNameChip(shortID(detail.AgentDefinitionID), ui.BadgeGhost, aui.Icon, aui.Color)
+			}
+		}
+	} else {
+		@detailHeader(crumbsActive(nav.Crumbs("Sessions", "/sessions", "Session")), "", "Session", "", detailHeaderOpts{Margin: "mb-6"})
+	}
+}
+
+templ sessionTimelineEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--history",
+		Title:       "No timeline",
+		Description: "This session has no recorded messages or tool calls.",
+		Bordered:    true,
+	})
+}
+
+// sessionTimeline renders the timeline grouped by run, in first-seen order.
+// When the transcript captured the run's composed system instruction, its card
+// is shown once at the very top; per-run system records are skipped in the run
+// bodies so an identical instruction is not repeated for every run.
+templ sessionTimeline(aui agentUI, groups []runGroup) {
+	if prompt, ok := firstAgentPrompt(groups); ok {
+		@sessionAgentPrompt(prompt)
+	}
+	for i, g := range groups {
+		@sessionRunBlock(aui, i+1, g)
+	}
+}
+
+// firstAgentPrompt returns the text of the first system message in the
+// transcript — the run's composed agent instruction — and whether one exists.
+// Later system records are intentionally ignored: the instruction is stable
+// across a conversation's runs, so rendering it once avoids duplicate cards.
+func firstAgentPrompt(groups []runGroup) (string, bool) {
+	for _, g := range groups {
+		for _, it := range g.items {
+			if it.Kind == "message" && it.Role == "system" && it.Content != nil && it.Content.Text != "" {
+				return it.Content.Text, true
+			}
+		}
+	}
+	return "", false
+}
+
+// sessionAgentPrompt renders the composed agent instruction as a collapsible
+// card at the top of the timeline, styled like a tool-call card. The prompt is
+// markdown-rendered; the body is collapsed by default so a long instruction
+// never forms a text wall.
+templ sessionAgentPrompt(text string) {
+	<details class="rounded-box mb-6 border border-base-content/10 bg-base-200/30">
+		<summary class="flex cursor-pointer list-none items-center gap-2 p-3 [&::-webkit-details-marker]:hidden">
+			<span class="iconify lucide--scroll-text size-3.5 shrink-0 text-muted-faint" aria-hidden="true"></span>
+			<span class="text-xs font-medium">Agent prompt</span>
+			<span class="ml-auto text-[10px] font-semibold tracking-wider text-muted-faint uppercase">system instruction</span>
+			<span class="iconify lucide--chevron-right size-3 shrink-0 text-muted-faint" aria-hidden="true"></span>
+		</summary>
+		<div class="border-t border-base-content/10 p-3">
+			<div class="memory-md max-h-96 overflow-auto text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(text))</div>
+		</div>
+	</details>
+}
+
+// sessionRunBlock renders one run: a header (model · status · duration), its
+// messages + tool calls in order, and its trace waterfall when one exists.
+// Per-run usage is absent from the conversation-history API and intentionally
+// not shown.
+templ sessionRunBlock(aui agentUI, n int, g runGroup) {
+	{{ model, status, dur := g.runMeta()
+	runErr := g.runError() }}
+	<div class="mb-6">
+		<div class="mb-2 flex flex-wrap items-center gap-2">
+			<span class="font-mono text-[11px] font-medium text-muted">run { strconv.Itoa(n) }</span>
+			if model != "" {
+				@ui.Badge(ui.BadgeProps{Label: model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+			}
+			if status != "" {
+				@runStatusBadge(status)
+			}
+			if dur != "" {
+				@ui.Badge(ui.BadgeProps{Label: dur, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+			}
+		</div>
+		if runErr != "" {
+			<p class="text-error mt-1 flex items-start gap-1.5 text-xs font-medium">
+				<span class="iconify lucide--circle-alert mt-px size-3.5 shrink-0" aria-hidden="true"></span>
+				<span class="min-w-0 break-words">{ runErr }</span>
+			</p>
+		}
+		<div class="space-y-3">
+			for _, it := range g.items {
+				if it.Kind == "message" {
+					if it.Role != "system" {
+						@sessionMessageItem(aui, it)
+					}
+				} else if it.Kind == "tool_call" {
+					@sessionToolItem(it)
+				}
+			}
+		</div>
+		@sessionRunTrace(g)
+	</div>
+}
+
+// sessionMessageItem renders one turn as a daisyUI chat bubble: user turns
+// right-aligned in a primary bubble, every other role left-aligned under the
+// author's name in a neutral bubble. A leading chain-of-thought paragraph
+// (split from the reply) collapses under a "Thinking" disclosure above the
+// answer bubble; a textless planning monologue shows its function calls as
+// ghost badges inside the bubble. A quiet footer carries step number +
+// relative time when the item has them.
+templ sessionMessageItem(aui agentUI, it TimelineItem) {
+	{{ role := it.Role
+	if role == "" {
+		role = "assistant"
+	}
+	author := "Alfred"
+	if role == "tool" || role == "function" {
+		author = "Tool"
+	} else if role == "system" {
+		author = "System"
+		// runrole:allow — this only labels an author for display and defaults every
+		// non-"user"/"tool"/"system" role (including a real agent name and the
+		// literal "assistant") to the assistant bubble below; it is not a reply
+		// filter, so no agent turn is dropped here.
+	} else if role != "assistant" && role != "model" {
+		author = role
+	} }}
+	if role == "user" {
+		@sessionUserMessage(it)
+	} else if it.Content != nil && len(it.Content.FunctionCalls) > 0 {
+		@sessionAssistantBubble(author, aui, it) {
+			<div class="flex flex-wrap gap-1">
+				for _, fc := range it.Content.FunctionCalls {
+					@ui.Badge(ui.BadgeProps{Label: fc.Name, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--wrench"})
+				}
+			</div>
+		}
+	} else {
+		{{ text := ""
+		if it.Content != nil {
+			text = it.Content.Text
+		}
+		// Messages persisted after the #1263 fix carry the model's
+		// chain-of-thought in Content.Reasoning and a clean Content.Text.
+		// splitLeadingReasoning stays as a fallback only for legacy rows that
+		// merged CoT into the text.
+		reasoning, answer := "", text
+		if it.Content != nil && it.Content.Reasoning != "" {
+			reasoning = it.Content.Reasoning
+		} else if text != "" {
+			reasoning, answer = splitLeadingReasoning(text)
+		} }}
+		if reasoning != "" {
+			@sessionThinkingBlock(aui, reasoning)
+		}
+		if answer != "" {
+			@sessionAssistantBubble(author, aui, it) {
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(answer))</div>
+			}
+		}
+	}
+}
+
+// sessionUserMessage renders a user turn as a right-aligned primary chat
+// bubble with a user avatar and a "You" header.
+templ sessionUserMessage(it TimelineItem) {
+	{{ text := ""
+	if it.Content != nil {
+		text = it.Content.Text
+	}
+	footer := sessionItemFooter(it) }}
+	<div class="chat chat-end">
+		<div class="chat-image bg-primary/10 text-primary border-primary/20 flex items-center justify-center rounded-full border p-2">
+			@ui.IconSpan("lucide--user", "size-5")
+		</div>
+		<div class="chat-header text-xs text-muted">You</div>
+		<div class="chat-bubble chat-bubble-primary">
+			if text != "" {
+				<div class="memory-md break-words">@templ.Raw(renderMarkdown(text))</div>
+			}
+		</div>
+		if footer != "" {
+			<div class="chat-footer mt-1 font-mono text-[11px] text-muted-faint">{ footer }</div>
+		}
+	</div>
+}
+
+// sessionAssistantBubble renders a non-user turn as a left-aligned neutral
+// chat bubble under the author's name (bot avatar). The bubble body is
+// supplied as children (markdown reply or function-call badges).
+templ sessionAssistantBubble(author string, aui agentUI, it TimelineItem) {
+	{{ footer := sessionItemFooter(it) }}
+	<div class="chat chat-start">
+		<div class={ "chat-image flex items-center justify-center rounded-full border p-2", templ.KV("bg-primary/5 text-primary border-primary/10", aui.Color == "") } style={ typeColorStyle(aui.Color) }>
+			@agentGlyph(aui.Icon, "size-5", "text-lg")
+		</div>
+		<div class="chat-header text-xs text-muted">{ author }</div>
+		<div class="chat-bubble chat-bubble-neutral">
+			{ children... }
+		</div>
+		if footer != "" {
+			<div class="chat-footer mt-1 font-mono text-[11px] text-muted-faint">{ footer }</div>
+		}
+	</div>
+}
+
+// sessionThinkingBlock renders a run's chain-of-thought as a quiet, collapsed
+// disclosure sitting in the same column as a chat-start bubble (invisible
+// avatar shell, exactly like the live chat's thinking badges).
+templ sessionThinkingBlock(aui agentUI, reasoning string) {
+	<div class="chat chat-start">
+		<div class={ "chat-image invisible flex items-center justify-center rounded-full border p-2", templ.KV("bg-primary/5 text-primary border-primary/10", aui.Color == "") } style={ typeColorStyle(aui.Color) }>
+			@agentGlyph(aui.Icon, "size-5", "text-lg")
+		</div>
+		<details class="col-start-2 row-start-2 w-full">
+			<summary class="mb-1 inline-flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-base-content/10 bg-base-200/40 px-2 py-0.5 text-[10px] font-medium text-muted [&::-webkit-details-marker]:hidden">
+				<span class="iconify lucide--brain size-3" aria-hidden="true"></span>Thinking
+			</summary>
+			<div class="memory-md text-sm leading-relaxed break-words">@templ.Raw(renderMarkdown(reasoning))</div>
+		</details>
+	</div>
+}
+
+// sessionItemFooter builds the quiet "step N · 5m ago" footer label under a
+// message bubble, or "" when the item carries neither step nor timestamp.
+func sessionItemFooter(it TimelineItem) string {
+	footer := ""
+	if it.StepNumber > 0 {
+		footer = "step " + strconv.Itoa(it.StepNumber)
+	}
+	if it.CreatedAt != "" {
+		if footer != "" {
+			footer += " · "
+		}
+		footer += relTime(it.CreatedAt)
+	}
+	return footer
+}
+
+// sessionToolItem renders one tool call the way the chat reads it: the category
+// verb and icon with the subject its arguments gave, the execution duration, the
+// collapsed outcome line, and the readable body of the result. The wire name and
+// both raw blocks sit behind one disclosure, so the card leads with what the call
+// did rather than with its payload. A call paused for approval says so instead of
+// showing a result it does not have.
+//
+// The presentation is built at render time by enrichTimelineSteps through the
+// same toolresult package the live chip uses (design D4); this template only lays
+// it out.
+templ sessionToolItem(it TimelineItem) {
+	{{ step := it.ToolStep }}
+	{{ failure := toolError(it.ToolStatus, string(it.ToolOutput)) }}
+	if step != nil {
+		{{ failure = step.Failure }}
+	}
+	<div class="rounded-box border border-base-content/10 bg-base-200/30 p-3" data-testid="session-tool-step" data-tool={ it.ToolName }>
+		<div class="flex flex-wrap items-center gap-2">
+			if step != nil {
+				<span class={ "iconify " + step.Category.Icon + " size-3.5 text-muted-faint" } aria-hidden="true"></span>
+				<span class="text-xs font-medium" data-testid="session-tool-label">{ step.Label() }</span>
+			} else {
+				<span class="iconify lucide--wrench size-3.5 text-muted-faint" aria-hidden="true"></span>
+				<span class="font-mono text-xs font-medium">{ it.ToolName }</span>
+			}
+			if step != nil && step.Paused {
+				@components.StatusBadge("awaiting approval", ui.BadgeWarning, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+			} else {
+				@toolStatusBadge(it.ToolStatus)
+			}
+			if it.DurationMs != nil {
+				@ui.Badge(ui.BadgeProps{Label: toolDurationLabel(*it.DurationMs), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+			}
+			if it.ID != "" {
+				<span class="font-mono text-[10px] text-muted-faint" title={ it.ID }>#{ shortID(it.ID) }</span>
+			}
+		</div>
+		// The failure is the answer, so it comes first — before the outcome line it
+		// would repeat and before the body that explains it.
+		if failure != "" {
+			<p class="text-error mt-2 flex items-center gap-1 text-xs font-medium" data-testid="session-tool-failure">
+				<span class="iconify lucide--circle-alert size-3.5" aria-hidden="true"></span>
+				{ failure }
+			</p>
+		}
+		if step != nil {
+			if outcome := step.Outcome(); step.ShowOutcome() {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+					{ outcome }
+				}
+			}
+			// A batch's counts belong above its records: the list shows only
+			// created entities, and a failed item would otherwise vanish (#2277).
+			if step.View != nil && step.View.Batch != nil && !step.Paused {
+				@sessionToolBatch(step.View.Batch)
+			}
+			if step.Paused {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Icon: "lucide--clock", IconClass: "size-3.5 shrink-0 text-warning"}) {
+					Waiting for confirmation — the tool has not run yet.
+				}
+			} else if step.Empty() {
+				@sessionToolEmpty(step)
+			} else if step.Records() {
+				@sessionToolRecords(step)
+			} else if step.Fields() {
+				@sessionToolFields(step)
+			} else if step.ShowText() {
+				@sessionToolText(step)
+			} else if step.ShowRawText() {
+				@sessionToolRawText(step, it.ToolName)
+			}
+		}
+		if step == nil {
+			// No presentation (an item built outside the render path): keep the
+			// pre-picture card rather than hiding the payload.
+			@sessionToolRawDisclosure(it, step)
+		} else if step.ShowRawDisclosure() {
+			@sessionToolRawDisclosure(it, step)
+		} else {
+			// A paused call has no result to disclose, and a payload already in the
+			// open does not need a second tap: the arguments are what a reader is
+			// still missing, so they keep a disclosure of their own.
+			@sessionToolInput(it)
+		}
+	</div>
+}
+
+// sessionToolBatch renders a batch create's counts above its records. A failed
+// item marks the line serious — strong tone, warning glyph — so a half-failed
+// batch never reads as a clean list (#2277).
+templ sessionToolBatch(tally *toolresult.BatchTally) {
+	if tally.IsFailure() {
+		@ui.EmptyNote(ui.EmptyNoteProps{
+			Size:      ui.EmptyNoteSizeXS,
+			Tone:      ui.EmptyNoteToneStrong,
+			Class:     "mt-2 font-medium",
+			Icon:      "lucide--triangle-alert",
+			IconClass: "size-3.5 shrink-0 text-warning",
+			Attrs:     templ.Attributes{"data-testid": "session-tool-batch", "data-batch-failure": "true"},
+		}) {
+			{ tally.Text() }
+		}
+	} else {
+		@ui.EmptyNote(ui.EmptyNoteProps{
+			Size:  ui.EmptyNoteSizeXS,
+			Class: "mt-2",
+			Attrs: templ.Attributes{"data-testid": "session-tool-batch"},
+		}) {
+			{ tally.Text() }
+		}
+	}
+}
+
+// sessionToolEmpty renders a result whose list is empty: the copy is the whole
+// answer, and the envelope stays behind the raw disclosure (#2277).
+templ sessionToolEmpty(step *toolStep) {
+	@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "session-tool-empty"}}) {
+		{ step.View.Text }
+	}
+}
+
+// sessionToolRecords renders a list result as title plus, when it has one, a
+// detail and the host of its link.
+templ sessionToolRecords(step *toolStep) {
+	<ul class="mt-2 flex flex-col gap-1.5">
+		for _, item := range step.View.Items {
+			<li class="flex flex-wrap items-baseline gap-x-2 text-xs">
+				<span class="font-medium">{ item.Title }</span>
+				if item.Detail != "" {
+					<span class="text-muted">{ item.Detail }</span>
+				}
+				if host := linkHost(item.Link); host != "" {
+					<a class="text-primary/80 hover:underline" href={ templ.SafeURL(item.Link) } target="_blank" rel="noopener noreferrer">{ host }</a>
+				}
+			</li>
+		}
+	</ul>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolFields renders a record of scalars as label/value pairs.
+templ sessionToolFields(step *toolStep) {
+	<dl class="mt-2 grid grid-cols-[minmax(6rem,auto)_1fr] gap-x-3 gap-y-1 text-xs">
+		for _, field := range step.View.Fields {
+			<dt class="text-muted-faint font-mono">{ field.Label }</dt>
+			<dd class="min-w-0 break-words">{ field.Value }</dd>
+		}
+	</dl>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolText renders a body of text, already bounded by the parser.
+templ sessionToolText(step *toolStep) {
+	<p class="mt-2 text-xs leading-relaxed whitespace-pre-wrap break-words">{ step.View.Text }</p>
+	if more := step.BodyRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolRawText shows a result with no readable shape: its bounded text is
+// the whole answer, so it is in the open, with the wire name kept beside it.
+templ sessionToolRawText(step *toolStep, tool string) {
+	<p class="mt-2 font-mono text-[10px] text-muted-faint break-all">{ tool }</p>
+	<pre class="mt-1 max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">{ step.View.Raw }</pre>
+	if more := step.RawRemainder(); more != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+			{ more }
+		}
+	}
+}
+
+// sessionToolInput renders the arguments of a call that has not run yet.
+templ sessionToolInput(it TimelineItem) {
+	if len(it.ToolInput) > 0 {
+		{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
+		<details class="group mt-2">
+			<summary class="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Input <span class="iconify lucide--chevron-right size-3 transition-transform motion-reduce:transition-none group-open:rotate-90" aria-hidden="true"></span></summary>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if inOK {
+					@templ.Raw(inHL)
+				} else {
+					<span>{ string(it.ToolInput) }</span>
+				}
+			</div>
+		</details>
+	}
+}
+
+// sessionToolRawDisclosure puts the wire name and both raw blocks behind one
+// closed disclosure: the card leads with what the call did, and the payload is one
+// tap away. The summary is a full 44 CSS pixel control (design D8).
+templ sessionToolRawDisclosure(it TimelineItem, step *toolStep) {
+	<details class="group mt-3">
+		<summary class="flex min-h-[44px] cursor-pointer list-none items-center gap-1 text-[10px] font-semibold tracking-wider text-muted-faint uppercase [&::-webkit-details-marker]:hidden">Show raw JSON <span class="iconify lucide--chevron-right size-3 transition-transform motion-reduce:transition-none group-open:rotate-90" aria-hidden="true"></span></summary>
+		<p class="mt-1 font-mono text-[10px] text-muted-faint break-all">{ it.ToolName }</p>
+		if len(it.ToolInput) > 0 {
+			{{ inHL, inOK := highlightJSONValue(it.ToolInput) }}
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Input</p>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if inOK {
+					@templ.Raw(inHL)
+				} else {
+					<span>{ string(it.ToolInput) }</span>
+				}
+			</div>
+		}
+		if step != nil && step.View != nil && step.View.Raw != "" {
+			// The parser's bounded raw text is what the chip discloses: a 300 KB
+			// payload does not become a text wall because it is on a server-rendered
+			// page.
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Output</p>
+			<pre class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words">{ step.View.Raw }</pre>
+			if more := step.RawRemainder(); more != "" {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1.5"}) {
+					{ more }
+				}
+			}
+		} else if len(it.ToolOutput) > 0 {
+			{{ outHL, outOK := highlightJSONValue(it.ToolOutput) }}
+			<p class="mt-2 text-[10px] font-semibold tracking-wider text-muted-faint uppercase">Output</p>
+			<div class="mt-1 max-h-56 overflow-auto rounded-box border border-base-content/10 bg-base-100 p-2 font-mono text-[11px] leading-relaxed">
+				if outOK {
+					@templ.Raw(outHL)
+				} else {
+					<span>{ string(it.ToolOutput) }</span>
+				}
+			</div>
+		}
+	</details>
+}
+
+// runStatusBadge colors a run status.
+templ runStatusBadge(status string) {
+	{{ intent := ui.BadgeNeutral
+	if status == "completed" {
+		intent = ui.BadgeSuccess
+	} else if status == "failed" || status == "error" {
+		intent = ui.BadgeError
+	} else if status == "running" || status == "pending" {
+		intent = ui.BadgeInfo
+	} }}
+	@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+}
+
+// toolStatusBadge colors a tool-call status; an empty status renders a dash.
+templ toolStatusBadge(status string) {
+	if status == "" {
+		@components.EmptyDash()
+	} else {
+		{{ intent := ui.BadgeNeutral
+		if status == "completed" {
+			intent = ui.BadgeSuccess
+		} else if status == "error" || status == "failed" {
+			intent = ui.BadgeError
+		} }}
+		@components.StatusBadge(status, intent, "", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Dot: true})
+	}
+}
+
+// sessionRunTrace renders one run's trace waterfall as a collapsible section
+// of spans, deepest-first by parentage. Runs whose agent-run DTO carries no
+// spans (tracing disabled/absent) render nothing.
+templ sessionRunTrace(g runGroup) {
+	@TraceWaterfall(g.spans)
+}
+

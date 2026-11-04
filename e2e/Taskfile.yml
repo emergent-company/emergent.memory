@@ -1,0 +1,522 @@
+version: "3"
+
+vars:
+  RUNLOG_DB: "{{.TASKFILE_DIR}}/.runlog/runs.db"
+  RUNLOG_PORT: "17432"
+  RUNLOG_URL: "http://localhost:{{.RUNLOG_PORT}}"
+  RUNLOG_PIDFILE: "{{.TASKFILE_DIR}}/.runlog/daemon.pid"
+  LOG_DIR: "{{.TASKFILE_DIR}}/logs/tests"
+  RUNLOG_BIN:
+    sh: |
+      if command -v runlog >/dev/null 2>&1; then
+        command -v runlog
+      else
+        gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
+        echo "$gopath/bin/runlog"
+      fi
+  # Optional systemd unit owning the daemon (see e2e/runlog.service). When it is
+  # installed and enabled it is the supervisor: it owns start/stop and restarts
+  # the daemon after a crash, so the tasks below delegate to it instead of
+  # racing it for the port.
+  RUNLOG_UNIT: "runlog.service"
+  # The runlog version this project's tests are compiled against (e2e/go.mod).
+  # The daemon must be the same version: an older daemon creates runs.db with an
+  # older schema, so tables added later (e.g. test_definitions, migration 27 in
+  # v0.3.0) never exist. Writes to them fail silently — UpsertDefinition's error
+  # is discarded — and the CLI then reports no tests at all.
+  RUNLOG_PINNED_VERSION:
+    sh: grep -E '^[[:space:]]+github.com/emergent-company/runlog[[:space:]]+v' "{{.TASKFILE_DIR}}/go.mod" | awk '{print $2}' | head -1
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmd: task --list
+
+  # ─── runlog daemon + web UI ────────────────────────────────
+  # The daemon serves the runlog web UI on {{.RUNLOG_PORT}} and owns the
+  # runs database at {{.RUNLOG_DB}}. Every task below runs with cwd set to
+  # {{.TASKFILE_DIR}} so runlog resolves `.runlog.yaml` (test categories,
+  # daemon_port, db) from the e2e project directory rather than the caller's.
+
+  runlog:start:
+    desc: Start the runlog daemon + web UI (does NOT start the Docker server)
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required (daemon port detection) but not installed." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
+        if ! command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          echo "runlog binary not found." >&2
+          echo "  build it at the pinned version ({{.RUNLOG_PINNED_VERSION}}), not @latest:" >&2
+          echo "    git clone --branch {{.RUNLOG_PINNED_VERSION}} --depth 1 https://github.com/emergent-company/runlog $HOME/runlog" >&2
+          echo "    cd $HOME/runlog && GOWORK=off go build -o \$(go env GOPATH)/bin/runlog ./cmd/runlog" >&2
+          exit 1
+        fi
+
+        mkdir -p "{{.TASKFILE_DIR}}/.runlog" "{{.LOG_DIR}}"
+
+        # Fail-loud guards for the silent ways the UI ends up empty. When the
+        # systemd unit supervises the daemon it owns the binary and the checkout,
+        # so probe those; otherwise probe this checkout.
+        SUPERVISED=no
+        PROBE_BIN="{{.RUNLOG_BIN}}"
+        PROBE_WD="{{.TASKFILE_DIR}}"
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          SUPERVISED=yes
+          UB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE 'path=[^ ;]+' | head -1 | cut -d= -f2)
+          if [ -n "$UB" ]; then PROBE_BIN="$UB"; fi
+          UW=$(systemctl show {{.RUNLOG_UNIT}} -p WorkingDirectory --value 2>/dev/null)
+          if [ -n "$UW" ]; then PROBE_WD="$UW"; fi
+        fi
+
+        if [ ! -d "$PROBE_WD/tests" ]; then
+          echo "WARNING: no tests/ directory at $PROBE_WD" >&2
+          echo "         discovery will find 0 tests — is that checkout on the right branch?" >&2
+        fi
+        BINV=$(go version -m "$PROBE_BIN" 2>/dev/null | awk '$1=="mod" && $2=="github.com/emergent-company/runlog" {print $3}' || true)
+        if [ -n "${BINV:-}" ] && [ "$BINV" != "(devel)" ] && [ -n "{{.RUNLOG_PINNED_VERSION}}" ] && [ "$BINV" != "{{.RUNLOG_PINNED_VERSION}}" ]; then
+          echo "WARNING: daemon binary $PROBE_BIN is runlog $BINV but e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}}" >&2
+          echo "         an older daemon creates runs.db without newer tables -> empty catalog" >&2
+        fi
+
+        # A supervised daemon wins: the systemd unit owns the lifecycle, so
+        # starting or reclaiming the port here would only fight Restart=always.
+        if [ "$SUPERVISED" = yes ]; then
+          UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
+          if systemctl is-active {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+            echo "runlog is supervised by systemd ({{.RUNLOG_UNIT}}) and already running"
+          else
+            echo "starting runlog via systemd ({{.RUNLOG_UNIT}})..."
+            systemctl start {{.RUNLOG_UNIT}}
+          fi
+          echo "  ui: {{.RUNLOG_URL}}/ui/"
+          if [ -n "${UNIT_DB:-}" ] && [ "$UNIT_DB" != "{{.RUNLOG_DB}}" ]; then
+            echo "  NOTE: {{.RUNLOG_UNIT}} serves $UNIT_DB" >&2
+            echo "        this checkout expects {{.RUNLOG_DB}}" >&2
+          fi
+          exit 0
+        fi
+
+        # Match only LISTEN sockets (not ESTABLISHED clients) and take the first
+        # pid so a dual-stack (v4+v6) listener cannot break the comparison below.
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$LISTEN_PID" ]; then
+          OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
+          if [ "$LISTEN_PID" = "$OWN_PID" ]; then
+            echo "runlog daemon already running (pid $LISTEN_PID)"
+            echo "  ui: {{.RUNLOG_URL}}/ui/"
+            exit 0
+          fi
+          # A daemon is listening but it is not the one this project started.
+          # This is the common "orphaned daemon" case: the pidfile is missing or
+          # points elsewhere, so `runlog daemon start` would silently no-op and
+          # writes would land in the wrong runs.db.
+          echo "port {{.RUNLOG_PORT}} is held by pid $LISTEN_PID, which is not this checkout's daemon" >&2
+          echo "  pidfile {{.RUNLOG_PIDFILE}}: ${OWN_PID:-<missing>}" >&2
+          echo "  reclaim the port with: task -d e2e runlog:stop" >&2
+          exit 1
+        fi
+
+        echo "starting runlog daemon on port {{.RUNLOG_PORT}}..."
+        {{.RUNLOG_BIN}} --db "{{.RUNLOG_DB}}" daemon start --port {{.RUNLOG_PORT}} || exit 1
+        echo "  ui: {{.RUNLOG_URL}}/ui/"
+
+  runlog:stop:
+    desc: Stop the runlog daemon (systemd-aware; pidfile first, port fallback for orphans)
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -eu
+        # Under systemd, killing the process is pointless — Restart=always
+        # brings it straight back. Stop the unit instead.
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          if systemctl is-active {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+            systemctl stop {{.RUNLOG_UNIT}}
+            echo "runlog stopped (systemd unit {{.RUNLOG_UNIT}})"
+          else
+            echo "runlog already stopped (systemd unit {{.RUNLOG_UNIT}})"
+          fi
+          echo "  note: {{.RUNLOG_UNIT}} is enabled, so it starts again on boot;"
+          echo "        'systemctl disable {{.RUNLOG_UNIT}}' to opt out."
+          exit 0
+        fi
+
+        if [ -f "{{.RUNLOG_PIDFILE}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          {{.RUNLOG_BIN}} daemon stop || true
+        fi
+
+        if ! command -v lsof >/dev/null 2>&1; then
+          rm -f "{{.RUNLOG_PIDFILE}}"
+          echo "runlog daemon stopped (lsof not installed; port fallback skipped)"
+          exit 0
+        fi
+
+        # Fall back to whatever still LISTENs on the port — covers daemons whose
+        # pidfile was lost (deleted worktree, killed session, port squatting).
+        # Refuse to kill anything that is not a runlog daemon, so a port collision
+        # with an unrelated service can never be destroyed by `runlog:stop`.
+        for _ in 1 2 3 4 5; do
+          PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+          [ -z "$PID" ] && break
+          CMD=$(ps -p "$PID" -o args= 2>/dev/null || true)
+          [ -z "$CMD" ] && break
+          case "$CMD" in
+            *runlog*) ;;
+            *) echo "refusing to kill pid $PID (not a runlog daemon): $CMD" >&2; exit 1 ;;
+          esac
+          echo "stopping pid $PID holding port {{.RUNLOG_PORT}}"
+          kill "$PID" 2>/dev/null || true
+          sleep 1
+        done
+
+        PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$PID" ]; then
+          echo "pid $PID is still listening on port {{.RUNLOG_PORT}}" >&2
+          exit 1
+        fi
+        rm -f "{{.RUNLOG_PIDFILE}}"
+        echo "runlog daemon stopped"
+
+  runlog:restart:
+    desc: Restart the runlog daemon
+    cmds:
+      - task: runlog:stop
+      - task: runlog:start
+
+  runlog:status:
+    desc: Show runlog daemon health, DB path, and recent runs
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -u
+        echo "=== runlog ==="
+        echo "  binary: {{.RUNLOG_BIN}}"
+        echo "  db    : {{.RUNLOG_DB}}"
+        echo "  ui    : {{.RUNLOG_URL}}/ui/"
+
+        # When systemd supervises the daemon, the unit — not this shell — owns
+        # the binary, the checkout, and the db path. Probe the unit's values so
+        # the warnings below describe the daemon that is actually serving.
+        SUPERVISED=no
+        PROBE_BIN="{{.RUNLOG_BIN}}"
+        PROBE_WD="{{.TASKFILE_DIR}}"
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled {{.RUNLOG_UNIT}} >/dev/null 2>&1; then
+          SUPERVISED=yes
+          UB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE 'path=[^ ;]+' | head -1 | cut -d= -f2)
+          if [ -n "$UB" ]; then PROBE_BIN="$UB"; fi
+          UW=$(systemctl show {{.RUNLOG_UNIT}} -p WorkingDirectory --value 2>/dev/null)
+          if [ -n "$UW" ]; then PROBE_WD="$UW"; fi
+        fi
+
+        # Discovery scans <e2e>/tests/*/, <e2e>/*_test.go and <e2e>/cmd/runlog/.
+        # If tests/ is absent the catalog comes back empty and the UI simply
+        # shows no tests — with no other clue about why.
+        if [ ! -d "$PROBE_WD/tests" ]; then
+          echo "  WARNING: no tests/ directory at $PROBE_WD — discovery will find 0 tests"
+          echo "           (is that checkout on a branch that still has the runlog suite?)"
+        fi
+
+        # Version skew between the daemon and the tests is silent but fatal:
+        # an older daemon's schema lacks tables the tests write to.
+        echo "  probed : $PROBE_BIN"
+        BINV=$(go version -m "$PROBE_BIN" 2>/dev/null | awk '$1=="mod" && $2=="github.com/emergent-company/runlog" {print $3}' || true)
+        echo "  version: ${BINV:-<unknown>} (e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}})"
+        if [ -n "${BINV:-}" ] && [ "$BINV" != "(devel)" ] && [ -n "{{.RUNLOG_PINNED_VERSION}}" ] && [ "$BINV" != "{{.RUNLOG_PINNED_VERSION}}" ]; then
+          echo "  WARNING: daemon is runlog $BINV but e2e/go.mod pins {{.RUNLOG_PINNED_VERSION}}"
+          echo "           an older daemon creates runs.db without newer tables (e.g. test_definitions)"
+          echo "           -> the catalog looks empty; rebuild runlog at {{.RUNLOG_PINNED_VERSION}}"
+        fi
+
+        if [ "$SUPERVISED" = yes ]; then
+          UNIT_DB=$(systemctl show {{.RUNLOG_UNIT}} -p ExecStart --value 2>/dev/null | grep -oE -- '--db [^ ;]+' | awk '{print $2}')
+          echo "  supervisor: systemd {{.RUNLOG_UNIT}} ($(systemctl is-active {{.RUNLOG_UNIT}} 2>/dev/null || true))"
+          echo "  unit wd   : $PROBE_WD"
+          echo "  unit db   : ${UNIT_DB:-<unknown>}"
+          if [ -n "${UNIT_DB:-}" ] && [ "$UNIT_DB" != "{{.RUNLOG_DB}}" ]; then
+            echo "  WARNING: {{.RUNLOG_UNIT}} serves $UNIT_DB, not this checkout's {{.RUNLOG_DB}}"
+            echo "           -> runs started from this checkout land in the other db and will not appear in the UI"
+          fi
+        fi
+
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "  daemon: UNKNOWN (lsof not installed)"
+        else
+          LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+          if [ -z "$LISTEN_PID" ]; then
+            echo "  daemon: STOPPED (run: task -d e2e runlog:start)"
+          else
+            OWN_PID=$(cat "{{.RUNLOG_PIDFILE}}" 2>/dev/null || true)
+            echo "  daemon: RUNNING (pid $LISTEN_PID)"
+            if [ "$SUPERVISED" = no ] && [ "$LISTEN_PID" != "$OWN_PID" ]; then
+              echo "  WARNING: pidfile says '${OWN_PID:-<missing>}' — this daemon may belong to another checkout"
+            fi
+            curl -s --max-time 3 "{{.RUNLOG_URL}}/status" 2>/dev/null || echo "  (no /status response)"
+            echo ""
+          fi
+        fi
+
+        echo ""
+        echo "=== recent runs (24h) ==="
+        if [ -f "{{.RUNLOG_DB}}" ] && command -v {{.RUNLOG_BIN}} >/dev/null 2>&1; then
+          {{.RUNLOG_BIN}} runs --db "{{.RUNLOG_DB}}" --since 24h | head -15
+        else
+          echo "  (no runs.db yet)"
+        fi
+
+  runlog:ui:
+    desc: Open the runlog web UI (starts the daemon if needed)
+    dir: "{{.TASKFILE_DIR}}"
+    deps: [runlog:start]
+    cmds:
+      - |
+        echo "runlog UI: {{.RUNLOG_URL}}/ui/"
+        if command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "{{.RUNLOG_URL}}/ui/" >/dev/null 2>&1 || true
+        elif command -v open >/dev/null 2>&1; then
+          open "{{.RUNLOG_URL}}/ui/" >/dev/null 2>&1 || true
+        fi
+
+  # ─── runlog: inspect the recorded runs ─────────────────────
+
+  runlog:runs:
+    desc: "List recent runs (default 24h; override: task -d e2e runlog:runs -- --since 7d)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} runs --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:failing:
+    desc: "List currently failing tests, streak-sorted"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} failing --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:stats:
+    desc: "Per-test pass rate and average duration (default 24h; override with --since)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} stats --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:tail:
+    desc: "Stream new events as they arrive (Ctrl+C to stop)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} tail --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:reap:
+    desc: "Mark stale/orphaned runs as FAIL (add --dry-run to preview)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - '{{.RUNLOG_BIN}} reap --db "{{.RUNLOG_DB}}" {{.CLI_ARGS}}'
+
+  runlog:clear:
+    desc: "Delete runs.db and all per-run log files (destructive; refuses if daemon running)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - |
+        set -eu
+        if ! command -v lsof >/dev/null 2>&1; then
+          echo "lsof is required to guard against clearing a live daemon's db." >&2
+          echo "  install it, e.g. 'apt-get install lsof' or 'brew install lsof'." >&2
+          exit 1
+        fi
+        LISTEN_PID=$(lsof -tiTCP:{{.RUNLOG_PORT}} -sTCP:LISTEN 2>/dev/null | head -1 || true)
+        if [ -n "$LISTEN_PID" ]; then
+          echo "refusing: runlog daemon is running (pid $LISTEN_PID)" >&2
+          echo "  unlinking runs.db while the daemon holds it open orphans the file." >&2
+          echo "  stop it first: task -d e2e runlog:stop" >&2
+          exit 1
+        fi
+        {{.RUNLOG_BIN}} clear --db "{{.RUNLOG_DB}}"
+
+  runlog:logs:clean:
+    desc: "Remove all per-run log directories (keeps runs.db)"
+    dir: "{{.TASKFILE_DIR}}"
+    cmds:
+      - rm -rf "{{.LOG_DIR}}" "{{.TASKFILE_DIR}}/tests/integration/logs" "{{.TASKFILE_DIR}}/tests/api/logs" "{{.TASKFILE_DIR}}/tests/cli/logs"
+      - echo "logs cleaned"
+
+  # ─── Compose-hosted e2e server ─────────────────────────────
+
+  server:start:
+    desc: Start the compose e2e stack (db + server)
+    cmds:
+      - |
+        echo "  checking Docker server stack..."
+        # Ask Compose for the individual fields instead of grepping its JSON:
+        # the JSON encoding (spacing, ordering, omitted empty fields) is not a
+        # contract, while `.State` and `.Health` are (#2297). The braces are
+        # escaped for Taskfile, which would otherwise treat the field syntax as
+        # its own (empty) variable and pass an empty --format to Compose.
+        state=$(docker compose ps test-emergent-server --format '{{"{{"}}.State}}' 2>/dev/null | head -1 || true)
+        health=$(docker compose ps test-emergent-server --format '{{"{{"}}.Health}}' 2>/dev/null | head -1 || true)
+        if [ "$state" = running ] && [ "$health" = healthy ]; then
+          echo "  compose e2e server already running (healthy)"
+        elif [ "$state" = running ] && [ "$health" = unhealthy ]; then
+          # A bare `docker compose up -d` is a no-op for a created container, so
+          # falling through to the 60 s wait would only delay the same failure.
+          echo "  compose e2e server is running but UNHEALTHY; last 30 log lines:" >&2
+          docker compose logs --tail 30 test-emergent-server >&2 || true
+          exit 1
+        else
+          echo "  starting Docker server stack..."
+          docker compose up -d test-emergent-server 2>&1 | tail -5
+          echo "  waiting for server health..."
+          # The server publishes an ephemeral loopback port, so wait on the
+          # container's own healthcheck rather than guessing a host URL.
+          ok=false
+          for i in $(seq 1 30); do
+            health=$(docker compose ps test-emergent-server --format '{{"{{"}}.Health}}' 2>/dev/null | head -1 || true)
+            if [ "$health" = healthy ]; then
+              ok=true
+              echo "  server healthy after ~$(( i * 2 ))s"
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ok" != true ]; then
+            echo "  server did not report healthy within 60s; last 30 log lines:" >&2
+            docker compose logs --tail 30 test-emergent-server >&2 || true
+            exit 1
+          fi
+        fi
+    dir: "{{.TASKFILE_DIR}}"
+
+  server:stop:
+    desc: Stop Docker server stack
+    cmds:
+      - docker compose down
+    dir: "{{.TASKFILE_DIR}}"
+
+  server:restart:
+    desc: Restart Docker server stack
+    cmds:
+      - task: server:stop
+      - task: server:start
+
+  # ─── Tests — local dev server ──────────────────────────────
+
+  runlog:test:
+    desc: "Run the e2e suite through runlog (usage: task -d e2e runlog:test -- [profile] [TestName])"
+    deps: [runlog:start]
+    cmds:
+      - '{{.RUNLOG_BIN}} test {{.CLI_ARGS}}'
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:rextract:
+    desc: "Run 5-episode Friends re-extraction test against local server (localhost:3002)"
+    deps: [runlog:start]
+    cmds:
+      - |
+        HOME=$HOME MEMORY_TEST_ENV=localhost \
+          {{.RUNLOG_BIN}} test "" TestReExtractionFriends5Episodes -- -timeout 1200s -v
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:integration:
+    desc: "Run all ported integration tests against local server"
+    deps: [runlog:start]
+    cmds:
+      - |
+        HOME=$HOME MEMORY_TEST_ENV=localhost \
+          {{.RUNLOG_BIN}} test "" {{.CLI_ARGS}} -- -timeout 1200s -v
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Tests — compose-hosted server ─────────────────────────
+
+  test:compose:
+    desc: "Run all tests against the compose-hosted server"
+    deps: [server:start, runlog:start]
+    cmds:
+      - '{{.RUNLOG_BIN}} test compose {{.CLI_ARGS}}'
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:compose:single:
+    desc: "Run a single test against the compose-hosted server (usage: task -d e2e test:compose:single -- TestName)"
+    deps: [server:start, runlog:start]
+    cmds:
+      - '{{.RUNLOG_BIN}} test compose {{.CLI_ARGS}}'
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Docker CI runner ──────────────────────────────────────
+
+  test:docker:
+    desc: "Run tests inside Docker full stack (server + tests)"
+    cmds:
+      - ./run_tests.sh {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  test:docker:tests-only:
+    desc: "Run tests inside Docker against already-running server"
+    cmds:
+      - ./run_tests.sh --tests-only {{.CLI_ARGS}}
+    dir: "{{.TASKFILE_DIR}}"
+
+  # ─── Back-compat aliases ───────────────────────────────────
+  # Renamed to the runlog:* family. Kept so existing notes and muscle
+  # memory keep working — note that `daemon:start` no longer pulls in the
+  # Docker server; use test:compose / server:start for that.
+
+  daemon:start:
+    desc: "Alias for runlog:start"
+    cmds:
+      - task: runlog:start
+
+  daemon:stop:
+    desc: "Alias for runlog:stop"
+    cmds:
+      - task: runlog:stop
+
+  daemon:restart:
+    desc: "Alias for runlog:restart"
+    cmds:
+      - task: runlog:restart
+
+  runs:clear:
+    desc: "Alias for runlog:clear"
+    cmds:
+      - task: runlog:clear
+
+  runs:reap:
+    desc: "Alias for runlog:reap"
+    cmds:
+      - task: runlog:reap
+
+  logs:clean:
+    desc: "Alias for runlog:logs:clean"
+    cmds:
+      - task: runlog:logs:clean
+
+  # ─── Lint ──────────────────────────────────────────────────
+
+  lint:
+    desc: Run lefthook lint group (from repo root)
+    dir: "{{.TASKFILE_DIR}}/.."
+    cmds:
+      - lefthook run lint
+
+  # ─── Umbrella status ───────────────────────────────────────
+
+  status:
+    desc: "Show runlog daemon, Docker server, local dev server, and recent runs"
+    cmds:
+      - task: runlog:status
+      - |
+        echo "=== compose e2e server ==="
+        state=$(docker compose ps test-emergent-server --format '{{"{{"}}.State}}' 2>/dev/null | head -1 || true)
+        if [ "$state" = running ]; then
+          port=$(docker compose port test-emergent-server 3002 2>/dev/null | sed 's/.*://')
+          echo "  server: RUNNING (http://127.0.0.1:${port})"
+        else
+          echo "  server: NOT RUNNING"
+        fi
+        echo ""
+        echo "=== Local dev server (localhost:3002) ==="
+        if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
+          echo "  server: RUNNING"
+        else
+          echo "  server: NOT RUNNING"
+        fi
+    dir: "{{.TASKFILE_DIR}}"

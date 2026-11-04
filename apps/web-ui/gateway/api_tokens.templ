@@ -1,0 +1,564 @@
+package main
+
+import (
+	"net/url"
+	"strings"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- API tokens (project page + account area) ---
+//
+// The token TABLE, the grouped scope picker, the standalone create pages, the
+// per-token edit-scopes pages, and the one-shot reveal dialog are shared by
+// the project surface (APITokensPage at /settings/tokens) and the account
+// surface (AccountTokensPage at /profile/tokens). Both surfaces differ only by
+// the action base path (/settings/tokens vs /profile/tokens) and the
+// surrounding page chrome: the project surface is breadcrumb-framed, the
+// account surface sits in the profile two-column rail (profileSubNav, "API
+// tokens" active). Plaintext token values appear ONLY inside the one-shot
+// reveal dialog — never in the table.
+
+// APITokensPage renders the project token list (/settings/tokens): the active
+// project's scoped API tokens in a TABLE with per-token row actions, and a
+// "New token" action linking to the standalone create page at
+// /settings/tokens/new. A failed list fetch renders the whole-page error state
+// (the reveal dialog stays open when a write already succeeded, so the secret
+// is never lost).
+templ APITokensPage(data apiTokensPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens")), "", "API Tokens", "Scoped tokens that let programs act as this project without a browser session.", detailHeaderOpts{Margin: "mb-6"}) {
+			if data.LoadErr == nil {
+				@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
+				@apiTokenNewTokenLink("/settings/tokens")
+			}
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@apiTokenListState("/settings/tokens", data, "No API tokens yet", "Scoped tokens let programs act as this project without a browser session.")
+	}
+}
+
+// AccountTokensPage renders the account token list (/profile/tokens): the
+// signed-in user's account tokens in the shared TABLE (profile sub-nav "API
+// tokens" active) with a "New token" action linking to /profile/tokens/new.
+templ AccountTokensPage(data apiTokensPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@pageHeader("Account", "API tokens", "Account tokens act as you across every project you can access — use them for personal scripts and tools that keep working wherever you log in.") {
+			if data.LoadErr == nil {
+				<div class="flex items-center gap-2">
+					@countBadge(apiTokenActiveCount(data.Tokens), "token", "lucide--key-round")
+					@apiTokenNewTokenLink("/profile/tokens")
+				</div>
+			}
+		}
+		@flashToasts(data.FlashMsg, data.FlashErr)
+		@layout.Rail(profileSubNav("tokens"), nil) {
+			@apiTokenListState("/profile/tokens", data, "No account tokens yet", "Account tokens give personal scripts and tools the same access you have across every project.")
+		}
+	}
+}
+
+// apiTokenNewTokenLink is the primary "New token" action linking to the
+// standalone create page at <base>/new (one per surface).
+templ apiTokenNewTokenLink(actionBase string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeLink,
+		Href:    actionBase + "/new",
+		Variant: ui.ButtonPrimary,
+		Size:    ui.ButtonSM,
+		Icon:    "lucide--plus",
+	}) {
+		New token
+	}
+}
+
+// apiTokenListState renders the shared list-page body for a surface: the
+// one-shot reveal dialog (after a regenerate POST), then either the whole-page
+// error state (or an alert beside the dialog when a write already succeeded) or
+// the token table. Kept out of the page shells so both surfaces render identical
+// plaintext/error semantics.
+templ apiTokenListState(actionBase string, data apiTokensPageData, emptyTitle, emptyDesc string) {
+	if data.Reveal != nil {
+		@apiTokenRevealContent(*data.Reveal)
+	}
+	if data.LoadErr != nil {
+		if data.Reveal != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Couldn't refresh the token list: " + data.LoadErr.Error(),
+			})
+		} else {
+			@pageError("API tokens unavailable", data.LoadErr)
+		}
+	} else {
+		@apiTokenTable(data.Tokens, actionBase, emptyTitle, emptyDesc)
+	}
+}
+
+// apiTokenTable renders the shared token list: the active tokens as the primary
+// table, plus — when any exist — the revoked tokens in a SECOND table inside a
+// collapsed disclosure. One row per token with name (and a "Revoked" badge when
+// revoked), mono prefix, one composed AREA badge per scope area the token holds
+// scopes in, created / last-used times, and — for live tokens only — the
+// regenerate / edit / revoke actions. With no tokens at all it renders the
+// surface's empty state with a "New token" CTA; with only revoked tokens it
+// renders a "no active tokens" state that still exposes the revoked disclosure.
+// Never includes plaintext values.
+templ apiTokenTable(tokens []APIToken, actionBase, emptyTitle, emptyDesc string) {
+	{{ active, revoked := apiTokenPartition(tokens) }}
+	if len(tokens) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--key-round",
+			Title:       emptyTitle,
+			Description: emptyDesc,
+			Bordered:    true,
+			Class:       "py-12",
+			ActionHref:  actionBase + "/new",
+			ActionLabel: "New token",
+			ActionIcon:  "lucide--plus",
+		})
+	} else {
+		if len(active) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--key-round",
+				Title:       "No active tokens",
+				Description: "Every token here has been revoked. Create a new token to replace it.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  actionBase + "/new",
+				ActionLabel: "New token",
+				ActionIcon:  "lucide--plus",
+			})
+		} else {
+			@components.TableCard(nil) {
+				<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Prefix';--h3:'Scopes';--h4:'Created';--h5:'Last used';--h6:''">
+					@apiTokenRowsTable(active, actionBase)
+				</div>
+			}
+		}
+		if len(revoked) > 0 {
+			<div class="mt-6">
+				@apiTokenRevokedSection(revoked, actionBase)
+			</div>
+		}
+	}
+}
+
+// apiTokenRowsTable is the shared token table markup (header columns + one row
+// per token via apiTokenRowContent) used by both the primary active table and
+// the collapsed revoked table.
+templ apiTokenRowsTable(rows []APIToken, actionBase string) {
+	<table class="table table-sm">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Prefix</th>
+				<th>Scopes</th>
+				<th>Created</th>
+				<th>Last used</th>
+				<th class="text-right">Actions</th>
+			</tr>
+		</thead>
+		<tbody>
+			for _, t := range rows {
+				@apiTokenRowContent(t, actionBase)
+			}
+		</tbody>
+	</table>
+}
+
+// apiTokenRevokedSection renders the revoked tokens in their own table inside a
+// ui.Disclosure that is COLLAPSED BY DEFAULT (Open is never set). The summary
+// carries a "Revoked" label and the revoked count; the body reuses the shared
+// row component, so revoked rows keep their badge and show "—" for actions.
+templ apiTokenRevokedSection(revoked []APIToken, actionBase string) {
+	@ui.Disclosure(ui.DisclosureProps{
+		Attrs:        templ.Attributes{"data-testid": "revoked-tokens-section"},
+		SummaryAttrs: templ.Attributes{"data-testid": "revoked-tokens-toggle"},
+	}, apiTokenRevokedSummary(), countBadge(len(revoked), "token", "lucide--key-round")) {
+		<div class="overflow-x-auto stacked-table" style="--h1:'Name';--h2:'Prefix';--h3:'Scopes';--h4:'Created';--h5:'Last used';--h6:''">
+			@apiTokenRowsTable(revoked, actionBase)
+		</div>
+	}
+}
+
+// apiTokenRevokedSummary is the collapsed disclosure's summary label block: a
+// ban icon and the plain "Revoked" label, sitting beside the revoked count.
+templ apiTokenRevokedSummary() {
+	<div class="flex min-w-0 items-center gap-2.5">
+		@ui.IconSpan("lucide--ban", "size-4 shrink-0 text-muted-faint")
+		<span class="truncate text-sm font-medium">Revoked</span>
+	</div>
+}
+
+// apiTokenRowContent is one token in the shared table: name + revocation
+// state, prefix, creation/last-use times, one area badge per scope area, and —
+// for live tokens — the regenerate / revoke forms and an edit-scopes link. The
+// plaintext is never rendered here.
+templ apiTokenRowContent(t APIToken, actionBase string) {
+	{{ tokenBase := actionBase + "/" + url.PathEscape(t.ID) }}
+	<tr data-testid="token-row">
+		<td>
+			<div class="flex flex-wrap items-center gap-2">
+				<p class="font-medium">{ t.Name }</p>
+				if t.IsRevoked {
+					@components.StatusBadge("Revoked", ui.BadgeError, "lucide--ban", components.StatusBadgeOpts{Size: ui.BadgeSizeXS, Attrs: templ.Attributes{"data-testid": "token-revoked-badge"}})
+				}
+			</div>
+		</td>
+		<td>
+			<span class="font-mono text-xs whitespace-nowrap text-muted">{ t.TokenPrefix }…</span>
+		</td>
+		<td>
+			<div class="flex flex-wrap gap-1.5">
+				for _, b := range apiTokenAreaBadges(t.Scopes) {
+					@ui.Badge(ui.BadgeProps{
+						Label:   b.Area,
+						Variant: b.Intent,
+						Size:    ui.BadgeSizeXS,
+						Attrs: templ.Attributes{
+							"data-testid": "token-scope-area",
+							"title":       strings.Join(b.Scopes, ", "),
+							"role":        "img",
+							"aria-label":  b.Area + ": " + strings.Join(b.Scopes, ", "),
+						},
+					})
+				}
+			</div>
+		</td>
+		<td>
+			<span class="text-xs whitespace-nowrap text-muted">{ relTime(t.CreatedAt) }</span>
+		</td>
+		<td>
+			<span class="text-xs whitespace-nowrap text-muted">{ apiTokenLastUsedLabel(t.LastUsedAt) }</span>
+		</td>
+		<td class="text-right">
+			if t.IsRevoked {
+				@components.EmptyDash()
+			} else {
+				<div class="flex items-center justify-end gap-1">
+					<form method="post" action={ templ.URL(tokenBase + "/regenerate") } hx-confirm="Regenerate this token? Its current value stops working immediately and is replaced.">
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Shape:     ui.ButtonShapeSquare,
+							Icon:      "lucide--refresh-cw",
+							AriaLabel: "Regenerate " + t.Name,
+							Attrs:     templ.Attributes{"title": "Revoke and issue a replacement with the same name and scopes"},
+						})
+					</form>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeLink,
+						Href:      tokenBase + "/edit",
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeSquare,
+						Icon:      "lucide--sliders-horizontal",
+						AriaLabel: "Edit scopes of " + t.Name,
+						Attrs:     templ.Attributes{"title": "Edit scopes"},
+					})
+					<form method="post" action={ templ.URL(tokenBase + "/revoke") } hx-confirm="Revoke this token? It stops working immediately.">
+						@ui.Button(ui.ButtonProps{
+							Type:      ui.ButtonTypeSubmit,
+							Variant:   ui.ButtonGhost,
+							Size:      ui.ButtonSM,
+							Shape:     ui.ButtonShapeSquare,
+							Icon:      "lucide--trash-2",
+							ExtraClass: "text-error hover:text-error",
+							AriaLabel: "Revoke " + t.Name,
+							Attrs:     templ.Attributes{"title": "Revoke this token"},
+						})
+					</form>
+				</div>
+			}
+		</td>
+	</tr>
+}
+
+// APITokenCreatePage renders the project create-token page
+// (GET /settings/tokens/new): name + scope picker posting to POST
+// /settings/tokens/new. After a successful create the same page re-renders
+// with the one-shot reveal dialog (no redirect — the plaintext must reach the
+// browser). ?err= surfaces PRG feedback from the create flow.
+templ APITokenCreatePage(data apiTokenCreatePageData) {
+	<div class={ pageFormChromeClass }>
+		@detailHeader(crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens", "/settings/tokens", "New token")), "", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.", detailHeaderOpts{Margin: "mb-6"}) {}
+		@flashToasts("", data.FlashErr)
+		if data.Reveal != nil {
+			@apiTokenRevealContent(*data.Reveal)
+		}
+	</div>
+	@apiTokenCreateFormContent("/settings/tokens", data.Picker, false)
+}
+
+// AccountTokenCreatePage renders the account create-token page
+// (GET /profile/tokens/new): the profile rail ("API tokens" active) plus the
+// shared create body posting to POST /profile/tokens/new.
+templ AccountTokenCreatePage(data apiTokenCreatePageData) {
+	<div class={ pageFormChromeClass }>
+		@pageHeader("Account", "New token", "Name the token and pick at least one scope. The full value is shown once at creation — store it somewhere safe.") {}
+		@flashToasts("", data.FlashErr)
+		if data.Reveal != nil {
+			@apiTokenRevealContent(*data.Reveal)
+		}
+	</div>
+	@apiTokenCreateFormContent("/profile/tokens", data.Picker, true)
+}
+
+// apiTokenCreateFormContent is the create form (fields: name + scopes[]),
+// posting to the surface's create route at actionBase + "/new". A cancel link
+// returns to the list at actionBase. rail wraps the fields in the profile rail
+// (account surface) and mirrors it in the sticky action bar.
+templ apiTokenCreateFormContent(actionBase string, cfg apiTokenScopePickerConfig, rail bool) {
+	<form method="post" action={ templ.URL(actionBase + "/new") }>
+		<div class={ pageFormFieldsClass }>
+			if rail {
+				@layout.Rail(profileSubNav("tokens"), nil) {
+					@components.PanelCard("", nil) {
+						<div class="flex flex-col gap-4">
+							@apiTokenCreateFields(cfg)
+						</div>
+					}
+				}
+			} else {
+				@components.PanelCard("", nil) {
+					<div class="flex flex-col gap-4">
+						@apiTokenCreateFields(cfg)
+					</div>
+				}
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{Rail: rail}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    actionBase,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--x",
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--key-round",
+			}) {
+				Create token
+			}
+		}
+	</form>
+}
+
+// apiTokenCreateFields renders the create form's fieldset (name) and the
+// grouped scope picker.
+templ apiTokenCreateFields(cfg apiTokenScopePickerConfig) {
+	<fieldset class="fieldset">
+		<legend class="fieldset-legend">Name</legend>
+		<input id="api-token-name" name="name" type="text" required maxlength="255" autocomplete="off" placeholder="e.g. CI deploy" class="input w-full"/>
+	</fieldset>
+	@apiTokenScopePickerContent(nil, cfg)
+}
+
+// APITokenEditPage renders the project edit-scopes page
+// (GET /settings/tokens/:tokenId/edit): the token's name and its scope
+// checkboxes pre-checked from the token's current scopes, saving to POST
+// /settings/tokens/:tokenId/scopes. NotFound / LoadErr render their own
+// states; ?err= surfaces PRG feedback from the scope-save flow.
+templ APITokenEditPage(data apiTokenEditPageData) {
+	{{ crumbs := crumbsActive(nav.Crumbs("Settings", "/settings", "API Tokens", "/settings/tokens", "Edit scopes")) }}
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@pageError("Token unavailable", data.LoadErr)
+		} else if data.NotFound || data.Token == nil {
+			@detailHeader(crumbs, "", "Edit scopes", "", detailHeaderOpts{Margin: "mb-6"}) {}
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--key-round",
+				Title:       "Token not found",
+				Description: "No API token with this id.",
+				Bordered:    true,
+			})
+		} else {
+			@detailHeader(crumbs, "", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.", detailHeaderOpts{Margin: "mb-6"}) {}
+			@flashToasts("", data.FlashErr)
+			@apiTokenEditBody("/settings/tokens", *data.Token, data.Picker)
+		}
+	}
+}
+
+// AccountTokenEditPage renders the account edit-scopes page
+// (GET /profile/tokens/:tokenId/edit): the profile rail ("API tokens" active)
+// plus the shared edit body.
+templ AccountTokenEditPage(data apiTokenEditPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageHeader("Account", "Edit scopes", "") {}
+			@flashToasts("", data.FlashErr)
+			@pageError("Token unavailable", data.LoadErr)
+		} else if data.NotFound || data.Token == nil {
+			@pageHeader("Account", "Edit scopes", "") {}
+			@flashToasts("", data.FlashErr)
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--key-round",
+				Title:       "Token not found",
+				Description: "No API token with this id.",
+				Bordered:    true,
+			})
+		} else {
+			@pageHeader("Account", "Edit scopes", "Scopes for "+data.Token.Name+". Changes apply immediately.") {}
+			@flashToasts("", data.FlashErr)
+			@layout.Rail(profileSubNav("tokens"), nil) {
+				@apiTokenEditBody("/profile/tokens", *data.Token, data.Picker)
+			}
+		}
+	}
+}
+
+// apiTokenEditBody is the shared edit-scopes card: the token identity line
+// (name, prefix, created) above the scope picker pre-checked with the token's
+// current scopes, saving to actionBase + "/:id/scopes".
+templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerConfig) {
+	@components.PanelCard("", nil) {
+		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
+			@ui.SoftBox(ui.SoftBoxProps{Padding: "px-3 py-2.5", Class: "flex items-center gap-2.5"}) {
+				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary", Size: "size-9"})
+				<div class="min-w-0 leading-tight">
+					<p class="truncate text-sm font-semibold">{ t.Name }</p>
+					@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+						<span class="font-mono">{ t.TokenPrefix }…</span>
+						<span class="mx-1.5 text-muted-subtle">·</span>
+						created { relTime(t.CreatedAt) }
+					}
+				</div>
+			}
+			@apiTokenScopePickerContent(t.Scopes, cfg)
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    actionBase,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--x",
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--save",
+				}) {
+					Save scopes
+				}
+			</div>
+		</form>
+	}
+}
+
+// apiTokenScopePickerContent renders the grouped scope checklist by AREA
+// (Schemas, Data, …) from scopePickerGroupsFor(cfg). Each area is a bordered
+// block: a header row carrying the area label, its hint, and a group-level
+// checkbox that selects/clears every scope in the area (reflecting
+// all/none/indeterminate — see app.js), then a two-column table of one row per
+// scope — the scope name in mono on the left, its human description on the
+// right (GitHub-style). Both admin and admin:all are platform-tier scopes
+// requiring superadmin_full and are intentionally never offered; project/org
+// admins administer a project via project:admin, offered only for project
+// tokens held by a project_admin or the owning org_admin (see
+// apiTokenScopePickerConfig). selected carries the currently granted scopes
+// (edit form); nil/empty means nothing is pre-checked (create form).
+templ apiTokenScopePickerContent(selected []string, cfg apiTokenScopePickerConfig) {
+	<div class="flex flex-col gap-4">
+		@ui.Eyebrow("Scopes", ui.EyebrowProps{Size: "text-[11px]", Margin: ""})
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "-mt-2"}) { Pick at least one scope. Write scopes include their read counterpart. }
+		for _, g := range scopePickerGroupsFor(cfg) {
+			{{ total := len(g.Options)
+			checkedCount := 0
+			for _, opt := range g.Options {
+				for _, have := range selected {
+					if have == opt.Value {
+						checkedCount++
+						break
+					}
+				}
+			} }}
+			<div class="overflow-hidden rounded-box border border-base-content/10" data-scope-group={ g.Label } data-testid="scope-group">
+				<div class="flex items-start gap-2.5 border-b border-base-200 bg-base-200/40 px-3 py-2">
+					<input
+						type="checkbox"
+						class="checkbox checkbox-sm mt-0.5"
+						data-scope-group-toggle
+						data-testid="scope-group-toggle"
+						checked?={ total > 0 && checkedCount == total }
+						aria-label={ "Select all " + g.Label + " scopes" }
+					/>
+					<div class="min-w-0">
+						<p class="text-xs font-semibold tracking-wide">{ g.Label }</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS}) { { g.Hint } }
+					</div>
+				</div>
+				<table class="table table-sm">
+					<tbody>
+						for _, opt := range g.Options {
+							{{ checked := false
+							for _, have := range selected {
+								if have == opt.Value {
+									checked = true
+								}
+							}
+							fieldID := "scope-" + strings.ReplaceAll(opt.Value, ":", "-") }}
+							<tr data-testid="scope-row" data-scope-group-name={ g.Label }>
+								<td class="w-8">
+									<input
+										id={ fieldID }
+										type="checkbox"
+										name="scopes"
+										value={ opt.Value }
+										class="checkbox checkbox-sm mt-0.5"
+										checked?={ checked }
+										data-scope-group-row
+									/>
+								</td>
+								<td class="font-mono text-xs whitespace-nowrap">
+									<label for={ fieldID } class="cursor-pointer">{ opt.Value }</label>
+								</td>
+								<td class="text-muted text-[11px] leading-snug">
+									<label for={ fieldID } class="cursor-pointer">{ opt.Label }</label>
+								</td>
+							</tr>
+						}
+					</tbody>
+				</table>
+			</div>
+		}
+	</div>
+}
+
+// apiTokenRevealContent is the one-shot plaintext reveal shown on the create /
+// regenerate responses: a dialog the client auto-opens, holding the full token
+// value, a copy affordance, and a Done link back to the list. The dialog (not an
+// inline panel) matches every other one-time reveal in the app — MCP shares, the
+// agent MCP key, and agent share links — and keeps the secret from sitting in
+// the page body where a later htmx swap could re-render over it.
+templ apiTokenRevealContent(r apiTokenReveal) {
+	@components.SecretRevealModal(components.SecretRevealProps{
+		Heading:     r.Heading,
+		Name:        r.Name,
+		Noun:        "value",
+		CopyLabel:   "Copy",
+		SecretID:    "api-token-secret",
+		Secret:      r.Token,
+		Warning:     "This token will not appear on any list or detail view again.",
+		DialogID:    "api-token-reveal-modal",
+		Attrs:       templ.Attributes{"data-testid": "token-secret-panel"},
+		AutoOpen:    true,
+		DismissHref: r.DismissHref,
+	})
+}

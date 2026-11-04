@@ -1,0 +1,28 @@
+{
+  "ok": true,
+  "data": {
+    "data": [
+      {
+        "object": {
+          "id": "e1",
+          "type": "person",
+          "key": "alice",
+          "name": "Alice",
+          "properties": {"description": "Engineer"}
+        },
+        "score": 0.91
+      },
+      {
+        "object": {
+          "id": "e2",
+          "type": "topic",
+          "key": "retrieval",
+          "properties": {"description": "How answers are found"}
+        },
+        "score": 0.72
+      }
+    ],
+    "total": 2,
+    "has_more": false
+  }
+}

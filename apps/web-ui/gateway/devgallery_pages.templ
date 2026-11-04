@@ -1,0 +1,98 @@
+package main
+
+import (
+	"net/url"
+
+	tpl "github.com/a-h/templ"
+	"github.com/emergent-company/emergent.memory/apps/web-ui/webui"
+	"github.com/emergent-company/go-daisy/components/behaviors"
+)
+
+// pagePreviewSection is the gallery's "Page previews" band: whole pages rendered
+// with authored sample data, above the component catalog. It is the review
+// surface for layout work — a page is signed off here before its handler is
+// wired to the components.
+//
+// The iframes run client scripts (sandbox="allow-scripts") so selection, the
+// bulk bar, and the dialogs are actually clickable, but they never get
+// allow-same-origin or allow-forms: a preview cannot read the session cookie or
+// submit a mutation.
+templ pagePreviewSection() {
+	{{ pages := galleryPagePreviews() }}
+	<section id="page-previews" data-testid="page-previews" class="scroll-mt-6">
+		<div class="border-base-content/10 mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b pb-2">
+			<div class="flex items-center gap-2">
+				<h2 class="text-lg font-semibold tracking-tight">Page previews</h2>
+				<span class="badge badge-ghost badge-sm tabular-nums">{ countLabel(len(pages), "page", "pages") }</span>
+			</div>
+			<p class="text-muted-faint text-xs">Whole pages with sample data — evaluated here before they are wired into the app.</p>
+		</div>
+		<div class="space-y-6">
+			for _, p := range pages {
+				<article
+					id={ "page-" + p.Slug }
+					data-testid={ "page-preview-" + p.Slug }
+					class="border-base-content/10 bg-base-100 scroll-mt-6 overflow-hidden rounded-box border"
+				>
+					<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-5 py-4">
+						<div class="min-w-0">
+							<div class="flex flex-wrap items-center gap-2">
+								<h3 class="text-base font-semibold">{ p.Name }</h3>
+								<span class="badge badge-ghost badge-sm font-mono">page</span>
+								<span class="badge badge-info badge-outline badge-sm gap-1">
+									<span class="iconify lucide--mouse-pointer-click size-3" aria-hidden="true"></span>
+									interactive
+								</span>
+							</div>
+							<p class="text-muted mt-1 max-w-3xl text-xs leading-relaxed">{ p.Description }</p>
+						</div>
+						<a
+							href={ tpl.URL("/dev/components/pages/" + p.Slug) }
+							target="_blank"
+							rel="noopener"
+							class="btn btn-ghost btn-sm shrink-0 gap-1.5"
+							data-testid={ "page-preview-open-" + p.Slug }
+						>
+							<span class="iconify lucide--external-link size-3.5 shrink-0" aria-hidden="true"></span>
+							Open full screen
+						</a>
+					</div>
+					<iframe
+						src={ tpl.URL("/dev/components/pages/" + p.Slug) }
+						sandbox="allow-scripts"
+						data-interactive="true"
+						title={ p.Name + " page preview" }
+						data-testid={ "page-preview-frame-" + p.Slug }
+						class="bg-base-200 block w-full border-0"
+						style={ "height: " + p.Height }
+					></iframe>
+				</article>
+			}
+		</div>
+	</section>
+}
+
+// GalleryPagePreviewDocument is the standalone document for one page preview.
+// It is chromeless like the component previews (no app sidebar or topbar) and
+// loads the app's client scripts so the page is interactive.
+templ GalleryPagePreviewDocument(page GalleryPagePreview, query url.Values, feedbackOverlayURL string) {
+	<!DOCTYPE html>
+	<html lang="en" data-theme="dark">
+		<head>
+			<meta charset="UTF-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+			<meta name="color-scheme" content="dark"/>
+			<meta name="robots" content="noindex,nofollow"/>
+			<title>{ page.Name } — page preview</title>
+			@behaviors.Tag()
+			<link rel="stylesheet" href={ webui.AssetPath("/css/app.css") }/>
+		</head>
+		<body class="bg-base-200 text-base-content min-h-screen">
+			@page.Body(query)
+			@galleryClientScripts()
+			if feedbackOverlayURL != "" {
+				<script src={ tpl.SafeURL(feedbackOverlayURL + "/emergent-feedback.js") } data-api={ feedbackOverlayURL } data-repo="emergent-company/emergent.memory" data-label="feedback" async></script>
+			}
+		</body>
+	</html>
+}

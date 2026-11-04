@@ -1,0 +1,425 @@
+package main
+
+import (
+	"net/url"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// objectPreviewDrawer is the global, right-hand read-only object preview. It
+// lives OUTSIDE #main-content in appShell (sibling of sidePanel), so HTMX
+// sidebar navigation never destroys it. object-preview.js drives open/close and
+// loads the body from GET /objects/:id/preview. The static header carries the
+// close button and the "open full object page" action the caller asks for; the
+// object's own icon/type/label identity is rendered by the swapped partial.
+//
+// It reuses the assistant panel's drawer pattern (#1389): a drag-to-resize
+// grip on the left edge, a double-width header toggle, and a modal-window
+// promotion that moves the SAME aside into #object-preview-modal-box — no
+// forked markup. object-preview.js owns the width state (persisted) and the
+// modal move.
+//
+// The <div id="object-preview-actions-slot"> at the foot of the partial is the
+// extension point for surface-specific content: the board fills it with the
+// work item's status-gated actions and its merged comments thread (?actions=board);
+// chat previews pass nothing and it stays empty.
+templ objectPreviewDrawer() {
+	<div id="object-preview-root">
+		<!-- Backdrop: click closes the preview (object-preview.js). -->
+		<div id="object-preview-backdrop" class="fixed inset-0 z-40 hidden bg-black/40"></div>
+		<aside
+			id="object-preview-panel"
+			class="bg-base-100 fixed top-0 right-0 z-50 flex h-full w-full max-w-lg translate-x-full flex-col shadow-2xl transition-transform duration-300 ease-out"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Object preview"
+			aria-hidden="true"
+			inert
+		>
+			<!-- Drag-to-resize grip on the left edge (desktop only). Width is
+			     driven by object-preview.js (single source of truth, persisted);
+			     keyboard operable (Left/Right arrows) as well as draggable. -->
+			<div
+				id="object-preview-resize"
+				class="hidden md:block"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label="Resize object preview"
+				title="Drag to resize"
+				tabindex="0"
+				aria-valuemin="320"
+				aria-valuemax="1120"
+				aria-valuenow="512"
+			></div>
+			<div class="border-base-content/10 flex items-center justify-between gap-2 border-b px-3 py-2.5">
+				<div class="flex min-w-0 items-center gap-2">
+					@ui.IconSpan("lucide--scan-eye", "size-4 text-primary")
+					<span class="text-muted-faint truncate text-[11px] font-medium tracking-wider uppercase">Preview</span>
+				</div>
+				<div class="flex shrink-0 items-center gap-1">
+					<!-- Jump to the edit page. object-preview.js points this at the
+					     clicked reference's href on open, so it resolves even before
+					     the preview body has loaded. -->
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeLink,
+						Href:      "#",
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--pencil",
+						AriaLabel: "Open full object page",
+						Attrs:     templ.Attributes{"id": "object-preview-edit", "data-testid": "object-preview-edit", "title": "Open full object page"},
+					})
+					<!-- Double-width toggle (drawer only; hidden below md where the
+					     drawer is already full-width). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--maximize-2",
+						AriaLabel:  "Toggle double width",
+						ExtraClass: "object-preview-drawer-only hidden md:inline-flex",
+						Attrs:      templ.Attributes{"id": "object-preview-width-toggle", "data-action": "object-preview-toggle-width", "aria-pressed": "false"},
+					})
+					<!-- Promote the drawer to a centered modal window (same DOM,
+					     same loaded preview — object-preview.js moves the aside). -->
+					@ui.Button(ui.ButtonProps{
+						Type:       ui.ButtonTypeButton,
+						Variant:    ui.ButtonGhost,
+						Size:       ui.ButtonSM,
+						Shape:      ui.ButtonShapeCircle,
+						Icon:       "lucide--scan",
+						AriaLabel:  "Open object preview in a modal window",
+						ExtraClass: "object-preview-drawer-only",
+						Attrs:      templ.Attributes{"id": "object-preview-open-modal", "data-action": "object-preview-open-modal"},
+					})
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--x",
+						AriaLabel: "Close object preview",
+						Attrs:     templ.Attributes{"id": "object-preview-close", "data-testid": "object-preview-close"},
+					})
+				</div>
+			</div>
+			<!-- hx target for GET /objects/:id/preview; object-preview.js swaps the
+			     partial in here and renders a spinner / error state around it. -->
+			<div id="object-preview-body" class="min-h-0 grow overflow-y-auto" aria-live="polite"></div>
+		</aside>
+		<!-- Modal window mode: object-preview.js moves #object-preview-panel into
+		     #object-preview-modal-box (same DOM). Closing via X / Escape /
+		     backdrop returns it to the drawer. -->
+		@ui.Dialog(ui.DialogProps{ID: "object-preview-modal", BoxID: "object-preview-modal-box"}) {
+			<!-- #object-preview-panel is appended here by object-preview.js -->
+		}
+	</div>
+}
+
+// objectPreviewContent is the read-only object summary swapped into
+// #object-preview-body: a scannable identity header (icon + type + display
+// label) and the object's values laid out as labelled fields — never inputs.
+// typeUIByType carries the compiled types' declared ui accent so the header
+// icon matches the rest of the UI; relLabel, when set, is the humanised
+// relationship type the reference carried.
+//
+// The fields are split into two panels so platform data and schema data never
+// blur together: "Properties" carries the built-in graph fields (key, version,
+// created, id) and "<Type> Properties" carries the type's own schema
+// properties, each with its schema description as a label tooltip. Workflow
+// status and assignee, when the type declares a workflow, are editable in the
+// top strip (opts.Status / opts.Assignees) rather than repeated as
+// read-only rows.
+//
+// actions, when non-nil, is rendered into #object-preview-actions-slot at the
+// foot of the summary. This is the documented extension point for surface-
+// specific content (the board passes its status-gated work-item actions plus the
+// merged "Activity" thread); chat previews pass nil and stay read-only.
+//
+// opts.Err surfaces a failed status/assignee control POST: the preview is
+// re-rendered in place with a visible error instead of silently doing nothing.
+//
+// Empty values still render (de-emphasised with a muted em dash) so the shape of
+// every field is visible; each row carries data-empty="true" so a future
+// "hide empties" toggle can fold them without a markup change.
+templ objectPreviewContent(obj *GraphObject, typeUIByType map[string]typeUI, relLabel string, schema objectPreviewSchema, actions templ.Component, chrome ...objectPreviewChrome) {
+	{{ var opts objectPreviewChrome
+	if len(chrome) > 0 {
+		opts = chrome[0]
+	} }}
+	{{ tui := typeUIOf(typeUIByType, obj.Type) }}
+	{{ builtins := objectPreviewBuiltinFields(obj) }}
+	{{ typeFields := objectPreviewTypeFields(*obj, schema) }}
+	<div class="flex flex-col gap-5 p-4">
+		<div class="flex items-start gap-3">
+			@typeIconTile(tui.Icon, tui.Color)
+			<div class="min-w-0">
+				<div class="mb-1 flex flex-wrap items-center gap-2">
+					@typeNameChip(obj.Type, ui.BadgePrimary, tui.Icon, tui.Color)
+					// Workflow types render the status as the editable top-strip
+					// trigger below; a second read-only badge here would duplicate it.
+					if obj.Status != "" && objectWorkControlDisabled(opts.Status) {
+						@components.StatusBadge(boardStatusLabel(obj.Status), boardStatusIntent(obj.Status), "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeSM,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": obj.Status},
+						})
+					}
+				</div>
+				<div class="flex items-center gap-1.5">
+					<h3 id="object-preview-heading" class="text-base leading-tight font-semibold break-words">{ graphObjectLabel(*obj) }</h3>
+					<span id="object-preview-id" class="sr-only">{ objectPreviewCanonicalID(*obj) }</span>
+					@ui.Button(ui.ButtonProps{
+						Type:      ui.ButtonTypeButton,
+						Variant:   ui.ButtonGhost,
+						Size:      ui.ButtonSM,
+						Shape:     ui.ButtonShapeCircle,
+						Icon:      "lucide--copy",
+						AriaLabel: "Copy object ID",
+						Attrs:     templ.Attributes{"id": "object-preview-copy-id", "data-testid": "object-preview-copy-id", "data-copy-target": "#object-preview-id"},
+					})
+				</div>
+				if relLabel != "" {
+					<p class="text-muted mt-1 flex items-center gap-1 text-xs">
+						@ui.IconSpan("lucide--link", "size-3")
+						<span>Referenced via { relLabel }</span>
+					</p>
+				}
+			</div>
+		</div>
+
+		if opts.Err != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: opts.Err.Error(),
+				Attrs:   templ.Attributes{"data-testid": "object-preview-action-error"},
+			})
+		}
+
+		@objectWorkControls(obj, opts.Status, opts.Assignees, opts.Surface)
+
+		@objectPreviewSection("Properties") {
+			<dl class="divide-base-content/10 flex flex-col divide-y">
+				for _, f := range builtins {
+					@objectPreviewFieldRow(f)
+				}
+			</dl>
+		}
+
+		if len(typeFields) > 0 {
+			@objectPreviewSection(schema.typePanelTitle()) {
+				<dl class="divide-base-content/10 flex flex-col divide-y">
+					for _, f := range typeFields {
+						@objectPreviewFieldRow(f)
+					}
+				</dl>
+			}
+		}
+
+		@objectPreviewSection("Labels") {
+			if len(obj.Labels) == 0 {
+				@components.EmptyDash()
+			} else {
+				<div class="flex flex-wrap gap-1.5">
+					for _, l := range obj.Labels {
+						@ui.Badge(ui.BadgeProps{
+							Label:   l,
+							Variant: ui.BadgeGhost,
+							Size:    ui.BadgeSizeSM,
+						})
+					}
+				</div>
+			}
+		}
+
+		@objectPreviewSection("History") {
+			<div
+				hx-get={ "/objects/" + obj.ID + "/history/partial" }
+				hx-trigger="load"
+				hx-swap="innerHTML"
+				data-testid="object-preview-history-slot"
+			>
+				<!-- Loading / empty / failure share one note shape (a small leading
+				     mark plus a muted sentence at py-1) so the section reads as a
+				     single voice rather than three different placeholder styles. -->
+				<div class="text-muted flex items-center gap-2 py-1 text-sm">
+					<span class="loading loading-spinner loading-sm text-primary" aria-hidden="true"></span>
+					<span>Loading history…</span>
+				</div>
+			</div>
+			<div class="flex justify-end">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeLink,
+					Href:    "/objects/" + url.PathEscape(obj.ID) + "/history",
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--arrow-up-right",
+					Attrs:   templ.Attributes{"data-testid": "object-preview-history-link"},
+				}) {
+					View full history
+				}
+			</div>
+		}
+
+		<!-- Extension point for surface-specific actions (empty when read-only). -->
+		<div id="object-preview-actions-slot">
+			if actions != nil {
+				@actions
+			}
+		</div>
+	</div>
+}
+
+// objectPreviewSection is the drawer's lightweight titled section: a muted
+// eyebrow heading over its content. Lighter than ui.Section's card chrome,
+// which reads too heavy inside the narrow drawer.
+templ objectPreviewSection(title string) {
+	<section class="flex flex-col gap-2">
+		<h4 class="text-muted-faint text-[11px] font-semibold tracking-wider uppercase">{ title }</h4>
+		{ children... }
+	</section>
+}
+
+// objectPreviewFieldRow renders one field of the summary: the label (with the
+// schema description as an info-icon tooltip after it, not a visible block), and
+// the value. A value that is empty ("") is visually de-emphasised and its row is
+// tagged data-empty="true" for a future fold-empties toggle. The raw property
+// name, when set, is the label's tooltip because the visible label is humanised.
+templ objectPreviewFieldRow(f objectPreviewField) {
+	<div class="flex flex-col gap-0.5 py-2" data-preview-field data-empty?={ f.Empty }>
+		<dt class="text-muted flex items-center gap-1 text-xs font-medium">
+			if f.Name != "" {
+				<span title={ f.Name }>{ f.Label }</span>
+			} else {
+				{ f.Label }
+			}
+			if f.Description != "" {
+				@ui.InfoTip(f.Description)
+			}
+		</dt>
+		<dd class={ "min-w-0 text-sm break-words", templ.KV("text-muted-faint font-mono", f.Empty), templ.KV("font-mono", f.Mono && !f.Empty) }>
+			if f.Empty {
+				—
+			} else {
+				{ f.Value }
+			}
+		</dd>
+	</div>
+}
+
+// objectPreviewNotFound is the drawer's graceful "could not load" state,
+// rendered when GET /objects/:id/preview fails or the object is gone.
+templ objectPreviewNotFound() {
+	<div class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+		@ui.IconSpan("lucide--circle-alert", "size-8 text-warning")
+		<p class="text-sm font-medium">Object unavailable</p>
+		@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) {
+			This reference could not be loaded. It may have been removed or renamed.
+		}
+	</div>
+}
+
+// objectPreviewHistory renders the version timeline for the History section,
+// newest version first (the server returns versions in version-DESC order, so
+// the slice is rendered as received). Each entry is a collapsed <details> whose
+// summary is the scannable meta line (version number + humanised status, with
+// the creation time pushed to the right) and the version's object key beneath
+// it; expanding it reveals that version's change list. The version number leads
+// in the content colour — it is the primary datum of a change history — while
+// the key and time stay muted, so a long history scans by version rather than
+// by repeating an often-unchanged key. The drawer is narrow, so everything
+// wraps rather than introducing horizontal scroll.
+templ objectPreviewHistory(versions []GraphObject) {
+	if len(versions) == 0 {
+		<div class="text-muted flex items-center gap-2 py-1 text-sm">
+			@ui.IconSpan("lucide--history", "size-4 shrink-0 text-muted-faint")
+			<span>No change history recorded.</span>
+		</div>
+	} else {
+		<ol class="flex flex-col gap-3" data-testid="object-preview-history">
+			for i, v := range versions {
+				@objectPreviewHistoryEntry(v, objectPreviewPrevious(versions, i))
+			}
+		</ol>
+	}
+}
+
+// objectPreviewHistoryEntry renders one history entry as a collapsed, native
+// <details> disclosure. The summary is the always-visible meta line + key; the
+// body is the change list for that version. Native <details> is keyboard
+// operable (Enter/Space on the summary) with no JS, so the timeline stays
+// scannable collapsed and every entry is independently expandable.
+templ objectPreviewHistoryEntry(v GraphObject, prev *GraphObject) {
+	<li class="border-base-content/10 border-l-2">
+		<details class="group" data-testid="object-preview-history-entry">
+			<summary class="flex cursor-pointer list-none flex-col gap-1 py-0.5 pl-3 [&::-webkit-details-marker]:hidden">
+				<div class="flex flex-wrap items-center gap-2">
+					<span class="font-mono text-xs font-medium">{ objectPreviewVersionLabel(v.Version) }</span>
+					if v.Status != "" {
+						@components.StatusBadge(boardStatusLabel(v.Status), boardStatusIntent(v.Status), "", components.StatusBadgeOpts{
+							Size:  ui.BadgeSizeXS,
+							Dot:   true,
+							Attrs: templ.Attributes{"data-status": v.Status},
+						})
+					}
+					{{ created := objectPreviewCreated(v.CreatedAt) }}
+					if created != "" {
+						<span class="text-muted-faint ml-auto text-xs">{ created }</span>
+					}
+					@ui.IconSpan("lucide--chevron-down", "size-3.5 shrink-0 text-muted-faint transition-transform group-open:rotate-180")
+				</div>
+				if v.Key != "" {
+					<div class="text-muted min-w-0 text-xs break-words">{ v.Key }</div>
+				}
+			</summary>
+			<div class="flex flex-col pl-3 pt-1" data-testid="object-preview-history-changes">
+				@objectPreviewChangesList(objectPreviewChanges(v, prev))
+			</div>
+		</details>
+	</li>
+}
+
+// objectPreviewChangesList renders one version's change list. Added paths lead
+// with a success "+", removed paths with an error "−", and updates as
+// "<path>: <from> → <to>"; merge provenance and the no-changes note render as
+// muted lines. Values are already compact-JSON-rendered and truncated by
+// objectPreviewChanges, so the list never overflows the narrow drawer.
+templ objectPreviewChangesList(changes []objectChange) {
+	if len(changes) == 0 {
+		return
+	}
+	<ul class="flex flex-col gap-0.5 pb-1">
+		for _, c := range changes {
+			<li>
+				switch c.Kind {
+				case "add":
+					<span class="text-success font-mono text-xs">+ { c.Label }</span>
+				case "remove":
+					<span class="text-error font-mono text-xs">− { c.Label }</span>
+				case "update":
+					<span class="font-mono text-xs break-words">{ c.Label }: { c.From } → { c.To }</span>
+				case "changed":
+					<span class="font-mono text-xs break-words">{ c.Label }: changed</span>
+				default:
+					<span class="text-muted text-xs">{ c.Label }</span>
+				}
+			</li>
+		}
+	</ul>
+}
+
+// objectPreviewHistoryError is the History section's graceful failure state: a
+// small self-contained note sharing the empty state's and the loading
+// placeholder's shape (a leading mark plus a muted sentence), instead of a
+// blank section when GET /objects/:id/history fails.
+templ objectPreviewHistoryError() {
+	<div class="text-muted flex items-center gap-2 py-1 text-sm">
+		@ui.IconSpan("lucide--circle-alert", "size-4 shrink-0 text-warning")
+		<span>History unavailable.</span>
+	</div>
+}

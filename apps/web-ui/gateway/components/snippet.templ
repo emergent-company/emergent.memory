@@ -1,0 +1,22 @@
+package components
+
+import (
+	"github.com/emergent-company/go-daisy/components/form"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// SnippetCard renders one client-configuration snippet with a copy control.
+// value is the plain string to copy (the caller owns syntax highlighting when
+// it wants it; form.ClipboardCopy renders the value as a mono code badge).
+templ SnippetCard(label string, value string) {
+	@ui.SoftBox(ui.SoftBoxProps{Surface: ui.SoftBoxMuted}) {
+		@form.ClipboardCopy([]form.ClipboardCopyItem{
+			{
+				Label:       label,
+				Value:       value,
+				ButtonLabel: "Copy",
+				Mono:        true,
+			},
+		})
+	}
+}

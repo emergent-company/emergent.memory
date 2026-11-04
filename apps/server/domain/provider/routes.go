@@ -1,0 +1,78 @@
+package provider
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers all provider domain routes.
+//
+// Route groups:
+//
+//	GET    /api/v1/organizations/:orgId/project-providers    — list all project-level overrides for org
+//	GET    /api/v1/projects/:projectId/providers             — list project instances
+//	PUT    /api/v1/projects/:projectId/providers/:slug        — upsert project instance (a dialect is accepted as a legacy alias)
+//	GET    /api/v1/projects/:projectId/providers/:slug        — get project instance metadata
+//	DELETE /api/v1/projects/:projectId/providers/:slug        — delete project instance
+//	POST   /api/v1/projects/:projectId/providers/:slug/test   — live project credential test (optional {model,modelType} body)
+//	GET    /api/v1/providers/:provider/models                 — read-only model catalog (per provider)
+//	GET    /api/v1/models                                     — list all models across providers (agents:read)
+//	POST   /api/v1/providers/:provider/test                   — live credential test
+//	GET    /api/v1/users/me/usage                             — current user usage summary
+//	GET    /api/v1/users/me/usage/timeseries                  — current user usage time series
+//	GET    /api/v1/projects/:projectId/pricing-overrides      — list project pricing overrides
+//	PUT    /api/v1/projects/:projectId/pricing-overrides      — upsert a project pricing override
+//	DELETE /api/v1/projects/:projectId/pricing-overrides/:provider/:model — delete a project pricing override
+//	GET    /api/v1/pricing                                    — list global retail pricing (read-only)
+func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
+	api := e.Group("/api/v1")
+	api.Use(authMiddleware.RequireAuth())
+
+	// Org-scoped project-level overrides
+	api.GET("/organizations/:orgId/project-providers", h.ListProjectConfigs)
+
+	// Org-level usage summary and breakdowns
+	api.GET("/organizations/:orgId/usage", h.GetOrgUsageSummary)
+	api.GET("/organizations/:orgId/usage/timeseries", h.GetOrgUsageTimeSeries)
+	api.GET("/organizations/:orgId/usage/by-project", h.GetOrgUsageByProject)
+
+	// Project-level provider configs
+	projects := api.Group("/projects/:projectId/providers")
+	projects.PUT("/:provider", h.SaveProjectConfig)
+	projects.GET("/:provider", h.GetProjectConfig)
+	projects.DELETE("/:provider", h.DeleteProjectConfig)
+	projects.GET("", h.ListProjectProviders)
+	projects.POST("/:provider/test", h.TestProjectProvider)
+
+	// Project-level usage summary and timeseries
+	api.GET("/projects/:projectId/usage", h.GetProjectUsageSummary)
+	api.GET("/projects/:projectId/usage/timeseries", h.GetProjectUsageTimeSeries)
+
+	// Project-level pricing overrides
+	api.GET("/projects/:projectId/pricing-overrides", h.ListProjectPricingOverrides)
+	api.PUT("/projects/:projectId/pricing-overrides", h.UpsertProjectPricingOverrides)
+	api.DELETE("/projects/:projectId/pricing-overrides/:provider/:model", h.DeleteProjectPricingOverride)
+
+	// Current-user usage summary and timeseries
+	api.GET("/users/me/usage", h.GetCurrentUserUsageSummary)
+	api.GET("/users/me/usage/timeseries", h.GetCurrentUserUsageTimeSeries)
+
+	// Read-only model catalog (per provider)
+	api.GET("/providers/:provider/models", h.ListModels)
+
+	// Global model catalog — accessible with agents:read project token
+	globalModels := e.Group("/api/v1/models")
+	globalModels.Use(authMiddleware.RequireAuth())
+	globalModels.Use(authMiddleware.RequireAPITokenScopes("agents:read"))
+	globalModels.GET("", h.ListAllModels)
+
+	// Global retail pricing (read-only)
+	api.GET("/pricing", h.ListPricing)
+
+	// Supported vendor definitions (read-only)
+	api.GET("/provider-definitions", h.ListProviderDefinitions)
+
+	// Live provider credential test
+	api.POST("/providers/:provider/test", h.TestProvider)
+}

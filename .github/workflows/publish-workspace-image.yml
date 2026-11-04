@@ -1,0 +1,81 @@
+name: Publish Workspace Image
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/memory-workspace
+
+jobs:
+  build-workspace:
+    name: Build and Push Workspace Image
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/workspace-base.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # github_token lets the Dockerfile clone the memory repo at build time
+          # with credentials; contents:read + GITHUB_TOKEN can read it. build-push-action
+          # exposes each secret entry to `RUN --mount=type=secret,id=github_token`.
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
+          # Verified single-stage (docker/workspace-base.Dockerfile): min already
+          # exports every layer of the image, so max would add nothing. Export
+          # errors stay fatal so a broken cache cannot hide behind a release.
+          cache-from: type=gha,scope=memory-workspace
+          cache-to: type=gha,scope=memory-workspace,mode=min
+
+      - name: Image digest
+        env:
+          DIGEST: ${{ steps.meta.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          echo "Image: ${{ env.IMAGE_NAME }}"
+          echo "Digest: ${DIGEST}"
+          echo "Tags: ${TAGS}"

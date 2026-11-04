@@ -1,0 +1,2515 @@
+package graph
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Handler handles HTTP requests for graph operations.
+type Handler struct {
+	svc *Service
+	cfg HandlerConfig
+}
+
+// HandlerConfig holds graph handler limits sourced from GraphConfig.
+type HandlerConfig struct {
+	DefaultListLimit      int
+	MaxBatchObjects       int
+	MaxBatchRelationships int
+}
+
+// bulkUpsertMaxItems caps the number of items accepted by the bulk-upsert
+// endpoints. It is independent of HandlerConfig.MaxBatchObjects/MaxBatchRelationships.
+const bulkUpsertMaxItems = 100
+
+// badRequest builds a 400 error with the canonical bad_request code. It avoids
+// the ErrBadRequest message-chaining pattern so the architectural-debt ratchet,
+// which counts that chaining form, does not grow alongside the new bulk-upsert
+// endpoints.
+func badRequest(message string) *apperror.Error {
+	return apperror.New(http.StatusBadRequest, "bad_request", message)
+}
+
+// splitCommaSeparated splits comma-separated query parameter values.
+// SDK clients typically send "labels=tag1,tag2" as a single comma-joined param,
+// but the server expects separate values. This normalizes both forms.
+func splitCommaSeparated(values []string) []string {
+	var result []string
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+	}
+	return result
+}
+
+// propertyOrderPathPattern validates property order paths.
+var propertyOrderPathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// parsePropertyOrder parses an order_by query param of the form "path:direction"
+// (e.g. "ds_score:desc" or "run_date"). Direction defaults to "desc".
+func parsePropertyOrder(raw string) (*PropertyOrderSpec, error) {
+	path := raw
+	direction := "desc"
+	if idx := strings.Index(raw, ":"); idx >= 0 {
+		path = raw[:idx]
+		direction = raw[idx+1:]
+	}
+	if path == "" || !propertyOrderPathPattern.MatchString(path) {
+		return nil, fmt.Errorf("path must match ^[A-Za-z0-9_.-]+$")
+	}
+	if direction != "asc" && direction != "desc" {
+		return nil, fmt.Errorf("direction must be 'asc' or 'desc'")
+	}
+	return &PropertyOrderSpec{Path: path, Direction: direction}, nil
+}
+
+// NewHandler creates a new graph handler.
+func NewHandler(svc *Service, cfg *config.Config) *Handler {
+	return &Handler{
+		svc: svc,
+		cfg: HandlerConfig{
+			DefaultListLimit:      cfg.Graph.DefaultListLimit,
+			MaxBatchObjects:       cfg.Graph.MaxBatchObjects,
+			MaxBatchRelationships: cfg.Graph.MaxBatchRelationships,
+		},
+	}
+}
+
+// getUserID extracts and parses the user ID from the auth user context.
+func getUserID(c echo.Context) (*uuid.UUID, error) {
+	user := auth.GetUser(c)
+	if user == nil || user.ID == "" {
+		return nil, nil
+	}
+
+	id, err := uuid.Parse(user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+// skipTotalFromQuery reports whether the request opted out of the exact total
+// count behind `GET /api/graph/objects/search` (issue #733). Only the literal
+// "false" opts out; any other value — absent, "true", "0", "FALSE", or
+// whitespace — keeps the default exact total, so the wire shape is unchanged
+// for existing clients.
+func skipTotalFromQuery(v string) bool {
+	return v == "false"
+}
+
+// parseActorProvenance parses actor_type, actor_id, and provenance query params
+// into the ListParams actor filter (issue #1193). Returns a 400 error on invalid
+// input. The (actor_type, actor_id) pair rule is enforced here: actor_id without
+// actor_type is rejected. Provenance semantics: the narrowing modes
+// (created/updated) require actor_type; the no-op value "any" is accepted
+// without an actor and leaves the filter unset (it narrows nothing).
+func parseActorProvenance(c echo.Context, params *ListParams) error {
+	if actorType := c.QueryParam("actor_type"); actorType != "" {
+		if !validActorType(actorType) {
+			return apperror.NewBadRequest("invalid actor_type: must be one of 'user', 'agent', 'system'")
+		}
+		params.ActorType = &actorType
+	}
+	if actorIDStr := c.QueryParam("actor_id"); actorIDStr != "" {
+		actorID, err := uuid.Parse(actorIDStr)
+		if err != nil {
+			return apperror.NewBadRequest("invalid actor_id")
+		}
+		params.ActorID = &actorID
+	}
+	if params.ActorID != nil && params.ActorType == nil {
+		return apperror.NewBadRequest("actor_id requires actor_type")
+	}
+	if provenance := c.QueryParam("provenance"); provenance != "" {
+		if !validProvenance(provenance) {
+			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
+		}
+		// "any" is the no-op / default mode: it narrows nothing, so it is
+		// accepted without actor_type and leaves params.Provenance unset (an
+		// empty provenance already behaves like "any" in the query builder).
+		// Only the narrowing modes (created/updated) require an actor.
+		if provenance == ProvenanceAny {
+			return nil
+		}
+		if params.ActorType == nil {
+			return apperror.NewBadRequest("provenance requires actor_type")
+		}
+		params.Provenance = provenance
+	}
+	return nil
+}
+
+// parseWriteStampFilters reads the write-stamp query filters (#2468) into the
+// shared filter struct.
+//
+// allowDataClass is false for the relationship endpoints, which record no data
+// class. A data_class filter there is rejected rather than dropped: silently
+// ignoring it would return rows outside what the caller asked for.
+func parseWriteStampFilters(c echo.Context, allowDataClass bool) (WriteStampFilters, error) {
+	var f WriteStampFilters
+
+	if s := c.QueryParam("run_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return f, apperror.NewBadRequest("invalid run_id")
+		}
+		f.RunID = &id
+	}
+
+	if s := c.QueryParam("credential_id"); s != "" {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return f, apperror.NewBadRequest("invalid credential_id")
+		}
+		f.CredentialID = &id
+	}
+
+	if kind := c.QueryParam("credential_kind"); kind != "" {
+		if !validCredentialKind(kind) {
+			return f, apperror.NewBadRequest("invalid credential_kind: must be one of " + strings.Join(CredentialKinds, ", "))
+		}
+		f.CredentialKind = &kind
+	}
+
+	if class := c.QueryParam("data_class"); class != "" {
+		if !allowDataClass {
+			return f, apperror.NewBadRequest("data_class is not recorded on relationships and cannot be filtered")
+		}
+		if !validDataClass(class) {
+			return f, apperror.NewBadRequest("invalid data_class: must be one of " + strings.Join(DataClasses, ", "))
+		}
+		f.DataClass = &class
+	}
+
+	return f, nil
+}
+
+// ListObjects returns graph objects matching query parameters.
+// @Summary      List graph objects
+// @Description  Search and filter graph objects with pagination, type/label filtering, and relationship queries
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        cursor query string false "Pagination cursor"
+// @Param        type query string false "Object type filter (single)"
+// @Param        types query []string false "Object types filter (multiple)"
+// @Param        label query string false "Label filter (single)"
+// @Param        labels query []string false "Labels filter (multiple)"
+// @Param        status query string false "Object status filter"
+// @Param        key query string false "Object key filter"
+// @Param        order query string false "Sort order (asc/desc)"
+// @Param        order_by query string false "Order by JSONB property path with optional direction (e.g. 'ds_score:desc'; default direction 'desc')"
+// @Param        related_to_id query string false "Filter objects related to this ID"
+// @Param        ids query string false "Comma-separated object IDs"
+// @Param        extraction_job_id query string false "Filter by extraction job"
+// @Param        branch_id query string false "Branch ID (use 'null' for main branch)"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        fields query string false "Comma-separated property fields to include in response (projection)"
+// @Param        exclude_fields query string false "Comma-separated property fields to exclude from the response (applied after include)"
+// @Param        actor_type query string false "Filter by actor type (user|agent|system)"
+// @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
+// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
+// @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
+// @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
+// @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        data_class query string false "Filter by data class (source|synthesized|adopted)"
+// @Param        include_total query boolean false "Set to false to skip the exact total count and omit the 'total' field (default: true). The count is the latency floor for very large projects; cursor-only callers should opt out."
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Paginated list with cursor"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/search [get]
+// @Security     bearerAuth
+func (h *Handler) ListObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Parse query parameters
+	params := ListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+		Limit:          h.cfg.DefaultListLimit,
+	}
+
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			params.Limit = limit
+		}
+	}
+
+	if cursor := c.QueryParam("cursor"); cursor != "" {
+		params.Cursor = &cursor
+	}
+
+	// include_total=false skips the exact COUNT(*) behind the response's
+	// `total`. This is an explicit opt-out for callers that only need a page
+	// (keyset/cursor pagination, list views that ignore the total); the count is
+	// the endpoint's latency floor on projects that dominate a large
+	// kb.graph_objects table (issue #733).
+	params.SkipTotal = skipTotalFromQuery(c.QueryParam("include_total"))
+
+	// Support both "type" (single) and "types" (array/comma-separated)
+	if singleType := c.QueryParam("type"); singleType != "" {
+		params.Type = &singleType
+	} else if types := c.QueryParams()["types"]; len(types) > 0 {
+		params.Types = splitCommaSeparated(types)
+	}
+
+	// Support both "label" (single) and "labels" (array/comma-separated)
+	if singleLabel := c.QueryParam("label"); singleLabel != "" {
+		params.Label = &singleLabel
+	} else if labels := c.QueryParams()["labels"]; len(labels) > 0 {
+		params.Labels = splitCommaSeparated(labels)
+	}
+
+	if status := c.QueryParam("status"); status != "" {
+		params.Status = &status
+	}
+
+	if key := c.QueryParam("key"); key != "" {
+		params.Key = &key
+	}
+
+	if keysParam := c.QueryParam("keys"); keysParam != "" {
+		params.Keys = splitCommaSeparated([]string{keysParam})
+	}
+
+	if namespace := c.QueryParam("namespace"); namespace != "" {
+		params.Namespace = &namespace
+	}
+
+	// Parse order (asc/desc)
+	if order := c.QueryParam("order"); order == "asc" || order == "desc" {
+		params.Order = order
+	}
+
+	// Parse order_by (property path with optional direction, e.g. "ds_score:desc")
+	if orderBy := c.QueryParam("order_by"); orderBy != "" {
+		spec, err := parsePropertyOrder(orderBy)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid order_by: " + err.Error())
+		}
+		params.PropertyOrder = spec
+	}
+
+	// Parse related_to_id
+	if relatedToID := c.QueryParam("related_to_id"); relatedToID != "" {
+		id, err := uuid.Parse(relatedToID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid related_to_id")
+		}
+		params.RelatedToID = &id
+	}
+
+	// Parse ids (comma-separated)
+	if idsParam := c.QueryParam("ids"); idsParam != "" {
+		idStrs := strings.Split(idsParam, ",")
+		for _, idStr := range idStrs {
+			idStr = strings.TrimSpace(idStr)
+			if idStr == "" {
+				continue
+			}
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid id in ids parameter")
+			}
+			params.IDs = append(params.IDs, id)
+		}
+	}
+
+	// Parse extraction_job_id
+	if extractionJobID := c.QueryParam("extraction_job_id"); extractionJobID != "" {
+		id, err := uuid.Parse(extractionJobID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid extraction_job_id")
+		}
+		params.ExtractionJobID = &id
+	}
+
+	// Parse property_filters (JSON-encoded array of PropertyFilter)
+	if pf := c.QueryParam("property_filters"); pf != "" {
+		var filters []PropertyFilter
+		if err := json.Unmarshal([]byte(pf), &filters); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid property_filters: must be JSON array")
+		}
+		// Validate filters
+		validOps := map[string]bool{
+			"eq": true, "neq": true, "gt": true, "gte": true,
+			"lt": true, "lte": true, "contains": true, "exists": true, "in": true,
+		}
+		for _, f := range filters {
+			if f.Path == "" {
+				return apperror.ErrBadRequest.WithMessage("property_filters: path is required")
+			}
+			if !validOps[f.Op] {
+				return apperror.ErrBadRequest.WithMessage("property_filters: invalid operator '" + f.Op + "'")
+			}
+		}
+		params.PropertyFilters = filters
+	}
+
+	// Handle branch_id ("null" string is treated as main branch)
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		if branchIDStr != "null" {
+			branchID, err := uuid.Parse(branchIDStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+			}
+			params.BranchID = &branchID
+		}
+		// If branch_id=null, leave BranchID as nil (main branch)
+	}
+
+	// Parse fields projection (comma-separated property keys to include)
+	if fieldsParam := c.QueryParam("fields"); fieldsParam != "" {
+		params.Fields = splitCommaSeparated([]string{fieldsParam})
+	}
+
+	// Parse exclude_fields projection (comma-separated property keys to drop),
+	// e.g. exclude_fields=content so list views do not ship document bodies.
+	if excludeParam := c.QueryParam("exclude_fields"); excludeParam != "" {
+		params.ExcludeFields = splitCommaSeparated([]string{excludeParam})
+	}
+
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
+		return err
+	}
+
+	// Parse write-stamp filter (#2468)
+	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
+		return err
+	}
+
+	result, err := h.svc.List(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// CountObjects returns the count of graph objects matching the given filters.
+// @Summary      Count graph objects
+// @Description  Returns the total count of graph objects matching the given filters, without returning the objects themselves.
+// @Tags         graph
+// @Produce      json
+// @Param        type query string false "Object type filter (single)"
+// @Param        types query []string false "Object types filter (multiple)"
+// @Param        label query string false "Label filter (single)"
+// @Param        labels query []string false "Labels filter (multiple)"
+// @Param        status query string false "Object status filter"
+// @Param        key query string false "Object key filter"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        ids query string false "Comma-separated list of object IDs"
+// @Param        extraction_job_id query string false "Extraction job ID filter"
+// @Param        property_filters query string false "JSON-encoded property filters"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        actor_type query string false "Filter by actor type (user|agent|system)"
+// @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
+// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
+// @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
+// @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
+// @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        data_class query string false "Filter by data class (source|synthesized|adopted)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]int "Count result"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/count [get]
+// @Security     bearerAuth
+func (h *Handler) CountObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	params := ListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+	}
+
+	// Support both "type" (single) and "types" (array/comma-separated)
+	if singleType := c.QueryParam("type"); singleType != "" {
+		params.Type = &singleType
+	} else if types := c.QueryParams()["types"]; len(types) > 0 {
+		params.Types = splitCommaSeparated(types)
+	}
+
+	// Support both "label" (single) and "labels" (array/comma-separated)
+	if singleLabel := c.QueryParam("label"); singleLabel != "" {
+		params.Label = &singleLabel
+	} else if labels := c.QueryParams()["labels"]; len(labels) > 0 {
+		params.Labels = splitCommaSeparated(labels)
+	}
+
+	if status := c.QueryParam("status"); status != "" {
+		params.Status = &status
+	}
+
+	if key := c.QueryParam("key"); key != "" {
+		params.Key = &key
+	}
+
+	// Parse ids (comma-separated)
+	if idsParam := c.QueryParam("ids"); idsParam != "" {
+		idStrs := strings.Split(idsParam, ",")
+		for _, idStr := range idStrs {
+			idStr = strings.TrimSpace(idStr)
+			if idStr == "" {
+				continue
+			}
+			id, err := uuid.Parse(idStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid id in ids parameter")
+			}
+			params.IDs = append(params.IDs, id)
+		}
+	}
+
+	// Parse extraction_job_id
+	if extractionJobID := c.QueryParam("extraction_job_id"); extractionJobID != "" {
+		id, err := uuid.Parse(extractionJobID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid extraction_job_id")
+		}
+		params.ExtractionJobID = &id
+	}
+
+	// Parse property_filters
+	if pf := c.QueryParam("property_filters"); pf != "" {
+		var filters []PropertyFilter
+		if err := json.Unmarshal([]byte(pf), &filters); err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid property_filters: must be JSON array")
+		}
+		validOps := map[string]bool{
+			"eq": true, "neq": true, "gt": true, "gte": true,
+			"lt": true, "lte": true, "contains": true, "exists": true, "in": true,
+		}
+		for _, f := range filters {
+			if f.Path == "" {
+				return apperror.ErrBadRequest.WithMessage("property_filters: path is required")
+			}
+			if !validOps[f.Op] {
+				return apperror.ErrBadRequest.WithMessage("property_filters: invalid operator '" + f.Op + "'")
+			}
+		}
+		params.PropertyFilters = filters
+	}
+
+	// Handle branch_id
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		if branchIDStr != "null" {
+			branchID, err := uuid.Parse(branchIDStr)
+			if err != nil {
+				return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+			}
+			params.BranchID = &branchID
+		}
+	}
+
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
+		return err
+	}
+
+	// Parse write-stamp filter (#2468)
+	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
+		return err
+	}
+
+	count, err := h.svc.CountObjects(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"count": count})
+}
+
+// GetObject returns a single graph object by ID.
+// @Summary      Get graph object by ID
+// @Description  Retrieve a graph object. Use resolveHead=true to get the latest version when ID refers to an older version in the version chain.
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        resolveHead query boolean false "Return latest version if ID is old version"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [get]
+// @Security     bearerAuth
+func (h *Handler) GetObject(c echo.Context) error {
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	// Parse resolveHead option — defaults to true for user-friendly behavior.
+	// Users can pass resolveHead=false to get a specific historical version by physical ID.
+	resolveHead := c.QueryParam("resolveHead")
+	shouldResolveHead := resolveHead != "false" && resolveHead != "0" && resolveHead != "no"
+
+	result, err := h.svc.GetByID(c.Request().Context(), projectID, id, shouldResolveHead)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// CreateObject creates a new graph object.
+// @Summary      Create graph object
+// @Description  Create a new versioned graph object with properties, labels, and metadata
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphObjectRequest true "Object data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects [post]
+// @Security     bearerAuth
+func (h *Handler) CreateObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.Create(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// ValidateObject checks whether the given type and properties would pass schema
+// validation without creating any object.
+// @Summary      Validate graph object properties
+// @Description  Validates an object's type and properties against the project schema without persisting anything. Returns coerced properties on success.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body ValidateObjectRequest true "Object type and properties to validate"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} ValidateObjectResponse
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/validate [post]
+// @Security     bearerAuth
+func (h *Handler) ValidateObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req ValidateObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+
+	result, err := h.svc.ValidateObject(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// UpsertObject creates or updates a graph object by (type, key).
+// @Summary      Upsert graph object
+// @Description  Create or update a graph object identified by its (type, key) combination. If an object with the same type and key exists, it is updated; otherwise, a new object is created.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphObjectRequest true "Object data (key is required)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObjectResponse "Object was updated (existing)"
+// @Success      201 {object} GraphObjectResponse "Object was created (new)"
+// @Failure      400 {object} apperror.Error "Invalid request (key is required)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/upsert [put]
+// @Security     bearerAuth
+func (h *Handler) UpsertObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+
+	if req.Key == nil || *req.Key == "" {
+		return apperror.ErrBadRequest.WithMessage("key is required for upsert")
+	}
+
+	actorID, _ := getUserID(c)
+	result, created, err := h.svc.CreateOrUpdate(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		return c.JSON(http.StatusCreated, result)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// MoveObject moves a graph object to a different branch.
+// @Summary      Move graph object to another branch
+// @Description  Move a graph object (and its self-referencing relationships) from its current branch to a target branch. Fails if the object has relationships connecting to other objects on the source branch.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Object ID (version_id or entity_id)"
+// @Param        body body MoveObjectRequest true "Move request"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} MoveObjectResponse
+// @Failure      400 {object} apperror.Error "Invalid request or dangling relationships"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      409 {object} apperror.Error "Type+key conflict on target branch"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/move [post]
+// @Security     bearerAuth
+func (h *Handler) MoveObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	var req MoveObjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.MoveObject(c.Request().Context(), projectID, id, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// PatchObject updates a graph object by creating a new version.
+// @Summary      Update graph object
+// @Description  Update a graph object by creating a new version in the version chain
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        request body PatchGraphObjectRequest true "Update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) PatchObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	var req PatchGraphObjectRequest
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.Patch(c.Request().Context(), projectID, id, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// DeleteObject soft-deletes a graph object.
+// @Summary      Delete graph object
+// @Description  Soft-delete a graph object (sets deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        branch_id query string false "Branch ID (omit for main branch)"
+// @Success      200 {object} map[string]string "Deletion confirmation"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	// Parse optional branch_id query param
+	var branchID *uuid.UUID
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" && branchIDStr != "null" {
+		parsed, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		branchID = &parsed
+	}
+
+	// Parse optional reason from JSON body
+	var body struct {
+		Reason *string `json:"reason"`
+	}
+	// Ignore bind errors — body is optional for DELETE
+	_ = c.Bind(&body)
+
+	actorID, _ := getUserID(c)
+	if err := h.svc.Delete(c.Request().Context(), projectID, id, actorID, branchID, body.Reason); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// RestoreObject restores a soft-deleted graph object.
+// @Summary      Restore deleted graph object
+// @Description  Restore a soft-deleted graph object (clears deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphObject
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) RestoreObject(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.Restore(c.Request().Context(), projectID, id, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// GetObjectHistory returns version history for a graph object.
+// @Summary      Get object version history
+// @Description  Retrieve all versions of a graph object ordered by creation time
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} GraphObject "Version history"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Object not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/history [get]
+// @Security     bearerAuth
+func (h *Handler) GetObjectHistory(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	result, err := h.svc.GetHistory(c.Request().Context(), projectID, id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// GetObjectEdges returns incoming and outgoing relationships for an object.
+// @Summary      Get object relationships (edges)
+// @Description  Retrieve all incoming and outgoing relationships for a graph object, with optional type and direction filtering.
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        type query string false "Filter by relationship type (single)"
+// @Param        types query []string false "Filter by relationship types (multiple, comma-separated)"
+// @Param        direction query string false "Filter by direction: 'incoming', 'outgoing', or omit for both"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Edges with incoming/outgoing relationships"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/edges [get]
+// @Security     bearerAuth
+func (h *Handler) GetObjectEdges(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	params := GetEdgesParams{}
+
+	// Parse type filters
+	if singleType := c.QueryParam("type"); singleType != "" {
+		params.Type = singleType
+	} else if types := c.QueryParams()["types"]; len(types) > 0 {
+		params.Types = splitCommaSeparated(types)
+	}
+
+	// Parse direction filter
+	if dir := c.QueryParam("direction"); dir != "" {
+		if dir != "incoming" && dir != "outgoing" {
+			return apperror.ErrBadRequest.WithMessage("direction must be 'incoming' or 'outgoing'")
+		}
+		params.Direction = dir
+	}
+
+	result, err := h.svc.GetEdges(c.Request().Context(), projectID, id, params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Relationship Handlers
+// =============================================================================
+
+// CountRelationships returns the total count of relationships matching filter parameters.
+// @Summary      Count graph relationships
+// @Description  Returns the total count of relationships matching the given filters, without returning the relationships themselves.
+// @Tags         graph
+// @Produce      json
+// @Param        type query string false "Relationship type filter"
+// @Param        src_id query string false "Source object ID filter"
+// @Param        dst_id query string false "Destination object ID filter"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        include_deleted query boolean false "Include soft-deleted relationships"
+// @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
+// @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
+// @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]int "Count result"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/count [get]
+// @Security     bearerAuth
+func (h *Handler) CountRelationships(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	params := RelationshipListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+	}
+
+	if relType := c.QueryParam("type"); relType != "" {
+		params.Type = &relType
+	}
+
+	if srcID := c.QueryParam("src_id"); srcID != "" {
+		id, err := uuid.Parse(srcID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid src_id")
+		}
+		params.SrcID = &id
+	}
+
+	if dstID := c.QueryParam("dst_id"); dstID != "" {
+		id, err := uuid.Parse(dstID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid dst_id")
+		}
+		params.DstID = &id
+	}
+
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		branchID, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		params.BranchID = &branchID
+	}
+
+	// Parse write-stamp filter (#2468)
+	if params.Stamp, err = parseWriteStampFilters(c, false); err != nil {
+		return err
+	}
+
+	count, err := h.svc.CountRelationships(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]int{"count": count})
+}
+
+// ListRelationships returns relationships matching query parameters.
+// @Summary      List graph relationships
+// @Description  Search and filter graph relationships with pagination and filtering by source/destination
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        cursor query string false "Pagination cursor"
+// @Param        type query string false "Relationship type filter"
+// @Param        src_id query string false "Source object ID filter"
+// @Param        dst_id query string false "Destination object ID filter"
+// @Param        order query string false "Sort order"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        include_deleted query boolean false "Include soft-deleted relationships"
+// @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
+// @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
+// @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Paginated list with cursor"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/search [get]
+// @Security     bearerAuth
+func (h *Handler) ListRelationships(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Parse query parameters
+	params := RelationshipListParams{
+		ProjectID:      projectID,
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+		Limit:          h.cfg.DefaultListLimit,
+	}
+
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			params.Limit = limit
+		}
+	}
+
+	if cursor := c.QueryParam("cursor"); cursor != "" {
+		params.Cursor = &cursor
+	}
+
+	if relType := c.QueryParam("type"); relType != "" {
+		normalized := strings.ToLower(relType)
+		params.Type = &normalized
+	}
+
+	if srcID := c.QueryParam("src_id"); srcID != "" {
+		id, err := uuid.Parse(srcID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid src_id")
+		}
+		params.SrcID = &id
+	}
+
+	if dstID := c.QueryParam("dst_id"); dstID != "" {
+		id, err := uuid.Parse(dstID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid dst_id")
+		}
+		params.DstID = &id
+	}
+
+	if order := c.QueryParam("order"); order != "" {
+		params.Order = order
+	}
+
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		branchID, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		params.BranchID = &branchID
+	}
+
+	// Parse write-stamp filter (#2468). Relationships record no data class, so
+	// a data_class filter is rejected rather than silently ignored.
+	if params.Stamp, err = parseWriteStampFilters(c, false); err != nil {
+		return err
+	}
+
+	result, err := h.svc.ListRelationships(c.Request().Context(), params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// GetRelationship returns a single relationship by ID.
+// @Summary      Get relationship by ID
+// @Description  Retrieve a single graph relationship
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [get]
+// @Security     bearerAuth
+func (h *Handler) GetRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+	}
+
+	result, err := h.svc.GetRelationship(c.Request().Context(), projectID, id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// CreateRelationship creates a new relationship.
+// @Summary      Create graph relationship
+// @Description  Create a new relationship (edge) between two graph objects.
+// @Description  Automatically generates a triplet text embedding for semantic search
+// @Description  (e.g., "Elon Musk founded Tesla") using gemini-embedding-2-preview.
+// @Description  Embedding failures are non-blocking — the relationship is created even if embedding fails.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphRelationshipRequest true "Relationship data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships [post]
+// @Security     bearerAuth
+func (h *Handler) CreateRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphRelationshipRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+	if req.SrcID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("src_id is required")
+	}
+	if req.DstID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("dst_id is required")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.CreateRelationship(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// UpsertRelationship creates or returns a relationship identified by (type, src_id, dst_id).
+// @Summary      Upsert graph relationship
+// @Description  Idempotent create-or-skip for relationships. Dedup key: (type, src_id, dst_id).
+// @Description  - If no relationship with the same (type, src_id, dst_id) exists, one is created (HTTP 201).
+// @Description  - If an identical relationship already exists (same properties), it is returned as-is (HTTP 200).
+// @Description  - If the relationship exists but was deleted, it is restored (HTTP 200).
+// @Description  - If properties differ, a new version is created (HTTP 200).
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateGraphRelationshipRequest true "Relationship data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationshipResponse "Relationship already existed (returned as-is or updated)"
+// @Success      201 {object} GraphRelationshipResponse "Relationship was newly created"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/upsert [put]
+// @Security     bearerAuth
+func (h *Handler) UpsertRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateGraphRelationshipRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Type == "" {
+		return apperror.ErrBadRequest.WithMessage("type is required")
+	}
+	if req.SrcID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("src_id is required")
+	}
+	if req.DstID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("dst_id is required")
+	}
+
+	req.Upsert = true
+
+	actorID, _ := getUserID(c)
+	result, created, err := h.svc.UpsertRelationship(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	if created {
+		return c.JSON(http.StatusCreated, result)
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// PatchRelationship updates a relationship by creating a new version.
+// @Summary      Update graph relationship
+// @Description  Update a relationship by creating a new version in the version chain
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        request body PatchGraphRelationshipRequest true "Update data"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) PatchRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+	}
+
+	var req PatchGraphRelationshipRequest
+	if err := json.NewDecoder(c.Request().Body).Decode(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.PatchRelationship(c.Request().Context(), projectID, id, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// DeleteRelationship soft-deletes a relationship.
+// @Summary      Delete graph relationship
+// @Description  Soft-delete a relationship (sets deleted_at timestamp). Pass branch_id to scope the deletion to a specific branch.
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        branch_id query string false "Branch ID to scope deletion to (omit for main branch)"
+// @Success      200 {object} map[string]interface{} "Deletion confirmation"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) DeleteRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+	}
+
+	var branchID *uuid.UUID
+	if branchStr := c.QueryParam("branch_id"); branchStr != "" {
+		parsed, parseErr := uuid.Parse(branchStr)
+		if parseErr != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		branchID = &parsed
+	}
+
+	// Parse optional reason from JSON body
+	var body struct {
+		Reason *string `json:"reason"`
+	}
+	_ = c.Bind(&body)
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.DeleteRelationship(c.Request().Context(), projectID, id, branchID, body.Reason, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RestoreRelationship restores a soft-deleted relationship.
+// @Summary      Restore deleted relationship
+// @Description  Restore a soft-deleted relationship (clears deleted_at timestamp)
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} GraphRelationship
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) RestoreRelationship(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.RestoreRelationship(c.Request().Context(), projectID, id, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// GetRelationshipHistory returns version history for a relationship.
+// @Summary      Get relationship version history
+// @Description  Retrieve all versions of a relationship ordered by creation time
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Relationship ID (UUID)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {array} GraphRelationship "Version history"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      404 {object} apperror.Error "Relationship not found"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/{id}/history [get]
+// @Security     bearerAuth
+func (h *Handler) GetRelationshipHistory(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid relationship id")
+	}
+
+	result, err := h.svc.GetRelationshipHistory(c.Request().Context(), projectID, id)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Search Handlers
+// =============================================================================
+
+// FTSSearch performs full-text search on graph objects.
+// @Summary      Full-text search on objects
+// @Description  Search graph objects using PostgreSQL full-text search with filters
+// @Tags         graph
+// @Produce      json
+// @Param        q query string true "Search query (full-text)"
+// @Param        limit query int false "Max results (default: 20)"
+// @Param        types query []string false "Object types filter"
+// @Param        labels query []string false "Labels filter"
+// @Param        status query string false "Status filter"
+// @Param        branch_id query string false "Branch ID filter"
+// @Param        include_deleted query boolean false "Include soft-deleted objects"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/fts [get]
+// @Security     bearerAuth
+func (h *Handler) FTSSearch(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Parse query parameters
+	req := &FTSSearchRequest{
+		Query:          c.QueryParam("q"),
+		IncludeDeleted: c.QueryParam("include_deleted") == "true",
+		Limit:          h.cfg.DefaultListLimit,
+	}
+
+	if req.Query == "" {
+		return apperror.ErrBadRequest.WithMessage("query parameter 'q' is required")
+	}
+
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			req.Limit = limit
+		}
+	}
+
+	if offsetStr := c.QueryParam("offset"); offsetStr != "" {
+		if offset, err := strconv.Atoi(offsetStr); err == nil {
+			req.Offset = offset
+		}
+	}
+
+	if types := c.QueryParams()["types"]; len(types) > 0 {
+		req.Types = splitCommaSeparated(types)
+	}
+
+	if labels := c.QueryParams()["labels"]; len(labels) > 0 {
+		req.Labels = splitCommaSeparated(labels)
+	}
+
+	if status := c.QueryParam("status"); status != "" {
+		req.Status = &status
+	}
+
+	if branchIDStr := c.QueryParam("branch_id"); branchIDStr != "" {
+		branchID, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+		}
+		req.BranchID = &branchID
+	}
+
+	result, err := h.svc.FTSSearch(c.Request().Context(), projectID, req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// VectorSearch performs vector similarity search on graph objects.
+// @Summary      Vector similarity search
+// @Description  Search graph objects using vector embeddings (768-dimensional)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body VectorSearchRequest true "Search request with embedding vector"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results with similarity scores"
+// @Failure      400 {object} apperror.Error "Invalid request (missing vector)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/vector-search [post]
+// @Security     bearerAuth
+func (h *Handler) VectorSearch(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req VectorSearchRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Vector) == 0 {
+		return apperror.ErrBadRequest.WithMessage("vector is required")
+	}
+
+	result, err := h.svc.VectorSearch(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// HybridSearch performs combined lexical and vector search.
+// @Summary      Hybrid search (text + vector)
+// @Description  Combined full-text and vector similarity search with optional debug mode (requires graph:search:debug scope)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body HybridSearchRequest true "Search request with query and/or vector"
+// @Param        debug query boolean false "Include debug timing and statistics (requires scope)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Fused search results"
+// @Failure      400 {object} apperror.Error "Invalid request (missing query or vector)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Missing graph:search:debug scope"
+// @Router       /api/graph/search [post]
+// @Security     bearerAuth
+func (h *Handler) HybridSearch(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req HybridSearchRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	// At least query or vector must be provided
+	if req.Query == "" && len(req.Vector) == 0 {
+		return apperror.ErrBadRequest.WithMessage("either query or vector is required")
+	}
+
+	// Determine if debug mode is requested (via body field or query param)
+	wantsDebug := req.IncludeDebug || c.QueryParam("debug") == "true"
+
+	// Check scope if debug mode requested
+	if wantsDebug {
+		hasDebugScope := false
+		if user.Scopes != nil {
+			for _, s := range user.Scopes {
+				if s == "graph:search:debug" {
+					hasDebugScope = true
+					break
+				}
+			}
+		}
+		if !hasDebugScope {
+			return apperror.ErrForbidden.WithMessage("graph:search:debug scope required for debug mode")
+		}
+	}
+
+	// Enrich context with project/org IDs so downstream embedding resolver
+	// can look up per-project provider credentials (used by auto-embed).
+	ctx := c.Request().Context()
+	ctx = auth.ContextWithProjectID(ctx, projectID.String())
+	if user.OrgID != "" {
+		ctx = auth.ContextWithOrgID(ctx, user.OrgID)
+	}
+
+	opts := &HybridSearchOptions{Debug: wantsDebug}
+	result, err := h.svc.HybridSearch(ctx, projectID, &req, opts)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Tags and Bulk Operations
+// =============================================================================
+
+// GetTags returns all distinct tags (labels) used by objects in a project.
+// @Summary      Get all object tags
+// @Description  Retrieve all distinct labels/tags used by graph objects in a project
+// @Tags         graph
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        type         query  string false "Filter to tags from objects of this type"
+// @Param        prefix       query  string false "Filter to tags starting with this prefix"
+// @Param        limit        query  int    false "Maximum number of tags to return"
+// @Success      200 {object} map[string][]string "List of unique tags"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/tags [get]
+// @Security     bearerAuth
+func (h *Handler) GetTags(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	params := &GetDistinctTagsParams{}
+	if t := c.QueryParam("type"); t != "" {
+		params.ObjectType = t
+	}
+	if p := c.QueryParam("prefix"); p != "" {
+		params.Prefix = p
+	}
+	if l := c.QueryParam("limit"); l != "" {
+		limit, err := strconv.Atoi(l)
+		if err != nil || limit < 0 {
+			return apperror.ErrBadRequest.WithMessage("invalid limit parameter")
+		}
+		params.Limit = limit
+	}
+
+	tags, err := h.svc.GetTags(c.Request().Context(), projectID, params)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string][]string{"tags": tags})
+}
+
+// BulkUpdateStatus updates the status of multiple objects.
+// @Summary      Bulk update object statuses
+// @Description  Update the status field for multiple graph objects in a single request
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpdateStatusRequest true "Object IDs and new status"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Update results"
+// @Failure      400 {object} apperror.Error "Invalid request (missing IDs)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-update-status [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpdateStatus(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkUpdateStatusRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.IDs) == 0 {
+		return apperror.ErrBadRequest.WithMessage("ids is required")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpdateStatus(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Search with Neighbors Handler
+// =============================================================================
+
+// SearchWithNeighbors performs FTS search and optionally retrieves neighbors.
+// @Summary      Search with graph neighbors
+// @Description  Full-text search on objects with optional retrieval of connected neighbors
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body SearchWithNeighborsRequest true "Search query and neighbor options"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Search results with neighbors"
+// @Failure      400 {object} apperror.Error "Invalid request (missing query)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/search-with-neighbors [post]
+// @Security     bearerAuth
+func (h *Handler) SearchWithNeighbors(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req SearchWithNeighborsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Query == "" {
+		return apperror.ErrBadRequest.WithMessage("query is required")
+	}
+
+	result, err := h.svc.SearchWithNeighbors(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Similar Objects Handler
+// =============================================================================
+
+// GetSimilarObjects finds objects similar to a given object.
+// @Summary      Find similar objects
+// @Description  Find graph objects similar to a given object using vector similarity search
+// @Tags         graph
+// @Produce      json
+// @Param        id path string true "Object ID (UUID)"
+// @Param        limit query int false "Max results"
+// @Param        maxDistance query number false "Maximum vector distance"
+// @Param        minScore query number false "Minimum similarity score"
+// @Param        type query string false "Filter by object type"
+// @Param        branchId query string false "Filter by branch ID"
+// @Param        keyPrefix query string false "Filter by key prefix"
+// @Param        labelsAll query []string false "Must have all labels"
+// @Param        labelsAny query []string false "Must have any label"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Similar objects with scores"
+// @Failure      400 {object} apperror.Error "Invalid ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/{id}/similar [get]
+// @Security     bearerAuth
+func (h *Handler) GetSimilarObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	objectID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid object id")
+	}
+
+	// Parse query parameters
+	req := &SimilarObjectsRequest{}
+
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if limit, err := strconv.Atoi(limitStr); err == nil {
+			req.Limit = limit
+		}
+	}
+
+	if maxDistStr := c.QueryParam("maxDistance"); maxDistStr != "" {
+		if maxDist, err := strconv.ParseFloat(maxDistStr, 32); err == nil {
+			maxDistFloat := float32(maxDist)
+			req.MaxDistance = &maxDistFloat
+		}
+	}
+
+	if minScoreStr := c.QueryParam("minScore"); minScoreStr != "" {
+		if minScore, err := strconv.ParseFloat(minScoreStr, 32); err == nil {
+			minScoreFloat := float32(minScore)
+			req.MinScore = &minScoreFloat
+		}
+	}
+
+	if typeParam := c.QueryParam("type"); typeParam != "" {
+		req.Type = &typeParam
+	}
+
+	if branchIDStr := c.QueryParam("branchId"); branchIDStr != "" {
+		branchID, err := uuid.Parse(branchIDStr)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid branchId")
+		}
+		req.BranchID = &branchID
+	}
+
+	if keyPrefix := c.QueryParam("keyPrefix"); keyPrefix != "" {
+		req.KeyPrefix = &keyPrefix
+	}
+
+	if labelsAll := c.QueryParams()["labelsAll"]; len(labelsAll) > 0 {
+		req.LabelsAll = splitCommaSeparated(labelsAll)
+	}
+
+	if labelsAny := c.QueryParams()["labelsAny"]; len(labelsAny) > 0 {
+		req.LabelsAny = splitCommaSeparated(labelsAny)
+	}
+
+	result, err := h.svc.FindSimilarObjects(c.Request().Context(), projectID, objectID, req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Graph Expand Handler
+// =============================================================================
+
+// ExpandGraph performs bounded BFS graph expansion.
+// @Summary      Expand graph from root nodes
+// @Description  Perform breadth-first expansion from root nodes with depth and node limits
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body GraphExpandRequest true "Root IDs and expansion options (max 50 roots)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Expanded graph with nodes and edges"
+// @Failure      400 {object} apperror.Error "Invalid request (missing root_ids or > 50 items)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/expand [post]
+// @Security     bearerAuth
+func (h *Handler) ExpandGraph(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req GraphExpandRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.RootIDs) == 0 {
+		return apperror.ErrBadRequest.WithMessage("root_ids is required")
+	}
+
+	if len(req.RootIDs) > 50 {
+		return apperror.ErrBadRequest.WithMessage("root_ids cannot exceed 50 items")
+	}
+
+	result, err := h.svc.ExpandGraph(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Graph Traverse Handler
+// =============================================================================
+
+// TraverseGraph performs bounded BFS graph traversal.
+// @Summary      Traverse graph from root nodes
+// @Description  Perform breadth-first traversal from root nodes with depth and node limits
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body TraverseGraphRequest true "Root IDs and traversal options (max 50 roots)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Traversal results with visited nodes and paths"
+// @Failure      400 {object} apperror.Error "Invalid request (missing root_ids or > 50 items)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/traverse [post]
+// @Security     bearerAuth
+func (h *Handler) TraverseGraph(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req TraverseGraphRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.RootIDs) == 0 {
+		return apperror.ErrBadRequest.WithMessage("root_ids is required")
+	}
+
+	if len(req.RootIDs) > 50 {
+		return apperror.ErrBadRequest.WithMessage("root_ids cannot exceed 50 items")
+	}
+
+	result, err := h.svc.TraverseGraph(c.Request().Context(), projectID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Branch Merge Handler
+// =============================================================================
+
+// MergeBranch performs dry-run or actual merge of a source branch into target branch.
+// @Summary      Merge graph branches
+// @Description  Merge a source branch into a target branch (supports dry-run mode)
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        targetBranchId path string true "Target branch ID (UUID)"
+// @Param        request body BranchMergeRequest true "Source branch ID and merge options"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} map[string]interface{} "Merge result or dry-run preview"
+// @Failure      400 {object} apperror.Error "Invalid request (missing sourceBranchId)"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/branches/{targetBranchId}/merge [post]
+// @Security     bearerAuth
+func (h *Handler) MergeBranch(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Accept "main" (or "null") as a sentinel meaning the main graph (branch_id IS NULL).
+	var targetBranchID *uuid.UUID
+	targetParam := c.Param("targetBranchId")
+	if targetParam != "main" && targetParam != "null" {
+		parsed, err := uuid.Parse(targetParam)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid target branch id (use a UUID or 'main')")
+		}
+		targetBranchID = &parsed
+	}
+
+	var req BranchMergeRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.SourceBranchID == uuid.Nil {
+		return apperror.ErrBadRequest.WithMessage("source_branch_id is required")
+	}
+
+	result, err := h.svc.MergeBranch(c.Request().Context(), projectID, targetBranchID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// MergeReadiness returns whether a source branch is ready for similarity-aware merge.
+// It checks that all objects in the branch have embeddings generated.
+// @Summary      Check merge readiness
+// @Description  Returns the count of source branch objects that have not yet been embedded.
+//
+//	When pending_embeddings > 0 the branch is not ready for a similarity-aware merge.
+//
+// @Tags         graph
+// @Produce      json
+// @Param        project_id path string true "Project ID"
+// @Param        branchId path string true "Source branch ID"
+// @Success      200 {object} MergeReadinessResponse
+// @Router       /api/graph/branches/{branchId}/merge-readiness [get]
+func (h *Handler) MergeReadiness(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	branchID, err := uuid.Parse(c.Param("branchId"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+	}
+
+	total, pending, err := h.svc.BranchMergeReadiness(c.Request().Context(), projectID, branchID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, MergeReadinessResponse{
+		Ready:             pending == 0,
+		TotalObjects:      total,
+		PendingEmbeddings: pending,
+	})
+}
+
+// CompareBranches returns a structural diff of a source branch against a target
+// (main by default), including objects already merged from the source branch to
+// the target by a prior merge (status "merged").
+// @Summary      Compare a branch against another
+// @Description  Returns per-object status: merged / unchanged / added / fast_forward / conflict / similar / deleted. Target defaults to "main".
+// @Tags         graph
+// @Produce      json
+// @Param        project_id path string true "Project ID"
+// @Param        branchId path string true "Source branch ID"
+// @Param        target query string false "Target branch ID or 'main' (default 'main')"
+// @Success      200 {object} BranchMergeResponse
+// @Router       /api/graph/branches/{branchId}/compare [get]
+func (h *Handler) CompareBranches(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	sourceID, err := uuid.Parse(c.Param("branchId"))
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid branch_id")
+	}
+
+	var targetBranchID *uuid.UUID
+	targetParam := c.QueryParam("target")
+	if targetParam != "" && targetParam != "main" && targetParam != "null" {
+		parsed, err := uuid.Parse(targetParam)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid target branch id (use a UUID or 'main')")
+		}
+		targetBranchID = &parsed
+	}
+
+	result, err := h.svc.MergeBranch(c.Request().Context(), projectID, targetBranchID, &BranchMergeRequest{
+		SourceBranchID: sourceID,
+		Execute:        false,
+		Policy:         "manual",
+	})
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// =============================================================================
+// Analytics Handlers
+// =============================================================================
+
+// GetMostAccessed returns the most frequently accessed graph objects.
+// @Summary      Get most accessed objects
+// @Description  Returns graph objects sorted by most recent access time for analytics
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default: 50, max: 1000)"
+// @Param        min_access_count query int false "Minimum access count (not yet implemented, default: 1)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} MostAccessedResponse "Most accessed objects"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/analytics/most-accessed [get]
+// @Security     bearerAuth
+func (h *Handler) GetMostAccessed(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	limit := 50
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	minAccessCount := 1
+	if minStr := c.QueryParam("min_access_count"); minStr != "" {
+		if m, err := strconv.Atoi(minStr); err == nil && m > 0 {
+			minAccessCount = m
+		}
+	}
+
+	response, err := h.svc.GetMostAccessed(c.Request().Context(), projectID, limit, minAccessCount)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// GetUnused retrieves objects that have not been accessed recently.
+// @Summary      Get unused objects
+// @Description  List graph objects that have not been accessed within a specified number of days
+// @Tags         graph
+// @Produce      json
+// @Param        limit query int false "Max results (default 50)"
+// @Param        days query int false "Days idle threshold (default 30)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} UnusedObjectsResponse "Unused objects"
+// @Failure      400 {object} apperror.Error "Invalid parameters"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/analytics/unused [get]
+// @Security     bearerAuth
+func (h *Handler) GetUnused(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	limit := 50
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	days := 30
+	if daysStr := c.QueryParam("days"); daysStr != "" {
+		if d, err := strconv.Atoi(daysStr); err == nil && d > 0 {
+			days = d
+		}
+	}
+
+	response, err := h.svc.GetUnused(c.Request().Context(), projectID, limit, days)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// =============================================================================
+// Bulk Create Handlers
+// =============================================================================
+
+// BulkCreateObjects creates multiple graph objects in a single request.
+// @Summary      Bulk create objects
+// @Description  Create multiple graph objects in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkCreateObjectsRequest true "Objects to create (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkCreateObjectsResponse "Create results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk [post]
+// @Security     bearerAuth
+func (h *Handler) BulkCreateObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkCreateObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkCreateObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpdateObjects updates multiple graph objects in a single request.
+// @Summary      Bulk update objects
+// @Description  Update multiple graph objects in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpdateObjectsRequest true "Objects to update (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpdateObjectsResponse "Update results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-update [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpdateObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkUpdateObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpdateObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkCreateRelationships creates multiple graph relationships in a single request.
+// @Summary      Bulk create relationships
+// @Description  Create multiple graph relationships in a single request with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkCreateRelationshipsRequest true "Relationships to create (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkCreateRelationshipsResponse "Create results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/bulk [post]
+// @Security     bearerAuth
+func (h *Handler) BulkCreateRelationships(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkCreateRelationshipsRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return apperror.ErrBadRequest.WithMessage("items is required and must not be empty")
+	}
+	if len(req.Items) > h.cfg.MaxBatchRelationships {
+		return apperror.ErrBadRequest.WithMessage("items must not exceed " + strconv.Itoa(h.cfg.MaxBatchRelationships))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkCreateRelationships(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpsertObjects creates or replaces multiple graph objects keyed by (type, key) in a single request.
+// @Summary      Bulk upsert objects
+// @Description  Bulk create-or-replace objects keyed by (type, key) with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpsertObjectsRequest true "Objects to upsert (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpsertObjectsResponse "Upsert results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-upsert [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpsertObjects(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return badRequest("invalid project_id")
+	}
+
+	var req BulkUpsertObjectsRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return badRequest("items is required and must not be empty")
+	}
+	if len(req.Items) > bulkUpsertMaxItems {
+		return badRequest("items must not exceed " + strconv.Itoa(bulkUpsertMaxItems))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpsertObjects(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// BulkUpsertRelationships creates or updates multiple graph relationships in a single request.
+// @Summary      Bulk upsert relationships
+// @Description  Bulk create-or-update relationships with partial success semantics
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body BulkUpsertRelationshipsRequest true "Relationships to upsert (max 100)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      200 {object} BulkUpsertRelationshipsResponse "Upsert results"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/relationships/bulk-upsert [post]
+// @Security     bearerAuth
+func (h *Handler) BulkUpsertRelationships(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return badRequest("invalid project_id")
+	}
+
+	var req BulkUpsertRelationshipsRequest
+	if err := c.Bind(&req); err != nil {
+		return badRequest("invalid request body")
+	}
+
+	if len(req.Items) == 0 {
+		return badRequest("items is required and must not be empty")
+	}
+	if len(req.Items) > bulkUpsertMaxItems {
+		return badRequest("items must not exceed " + strconv.Itoa(bulkUpsertMaxItems))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkUpsertRelationships(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// CreateSubgraph atomically creates a set of objects and relationships in a single transaction.
+// @Summary      Create subgraph atomically
+// @Description  Create multiple objects and relationships in a single atomic transaction using client-side placeholder references
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateSubgraphRequest true "Subgraph to create (max 100 objects, 200 relationships)"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} CreateSubgraphResponse "Created subgraph"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/subgraph [post]
+// @Security     bearerAuth
+func (h *Handler) CreateSubgraph(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req CreateSubgraphRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if len(req.Objects) == 0 {
+		return apperror.ErrBadRequest.WithMessage("objects is required and must not be empty")
+	}
+	if len(req.Objects) > h.cfg.MaxBatchObjects {
+		return apperror.ErrBadRequest.WithMessage("objects must not exceed " + strconv.Itoa(h.cfg.MaxBatchObjects))
+	}
+	if len(req.Relationships) > h.cfg.MaxBatchRelationships {
+		return apperror.ErrBadRequest.WithMessage("relationships must not exceed " + strconv.Itoa(h.cfg.MaxBatchRelationships))
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.CreateSubgraph(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// ForkBranch forks a source branch into a new branch, copying all HEAD objects and relationships.
+// @Summary      Fork a branch
+// @Description  Creates a new branch and copies HEAD objects/relationships from the source branch
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Source branch ID (UUID or 'main' for the main graph)"
+// @Param        request body ForkBranchRequest true "Fork configuration"
+// @Param        X-Project-ID header string true "Project ID"
+// @Success      201 {object} ForkBranchResponse "Fork result"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Source branch not found"
+// @Failure      409 {object} apperror.Error "Branch name already exists"
+// @Router       /api/graph/branches/{id}/fork [post]
+// @Security     bearerAuth
+func (h *Handler) ForkBranch(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Accept "main" (or "null") as a sentinel meaning the main graph (branch_id IS NULL).
+	var sourceBranchID *uuid.UUID
+	sourceParam := c.Param("id")
+	if sourceParam != "main" && sourceParam != "null" {
+		parsed, err := uuid.Parse(sourceParam)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid source branch id (use a UUID or 'main')")
+		}
+		sourceBranchID = &parsed
+	}
+
+	var req ForkBranchRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+
+	result, err := h.svc.ForkBranch(c.Request().Context(), projectID, sourceBranchID, &req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// =============================================================================
+// Bulk Action by Filter
+// =============================================================================
+
+// BulkAction executes a filter-then-action operation on graph objects matching a filter.
+// @Summary      Bulk action by filter
+// @Description  Execute an action (update_status, soft_delete, hard_delete, merge_properties, replace_properties, add_labels, remove_labels, set_labels) on all graph objects matching the given filter. Supports dry_run mode.
+// @Tags         graph
+// @Accept       json
+// @Produce      json
+// @Param        X-Project-ID header string true "Project ID"
+// @Param        request body BulkActionRequest true "Filter and action definition"
+// @Success      200 {object} BulkActionResponse "Matched and affected counts"
+// @Failure      400 {object} apperror.Error "Invalid request"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Router       /api/graph/objects/bulk-action [post]
+// @Security     bearerAuth
+func (h *Handler) BulkAction(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	var req BulkActionRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Action == "" {
+		return apperror.ErrBadRequest.WithMessage("action is required")
+	}
+
+	actorID, _ := getUserID(c)
+	result, err := h.svc.BulkAction(c.Request().Context(), projectID, &req, actorID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// ReindexEmbeddings queues graph objects and relationships for embedding (re)generation.
+// Supports namespace filtering and force-regeneration of existing embeddings.
+//
+// @Summary      Reindex embeddings
+// @Tags         graph
+// @Produce      json
+// @Param        project_id query string true  "Project ID"
+// @Param        namespace  query string false "Limit to objects/relationships whose key starts with this namespace prefix"
+// @Param        force      query bool   false "Re-enqueue even if embedding already exists (default: false)"
+// @Success      200 {object} ReindexEmbeddingsResponse
+// @Router       /api/graph/reindex-embeddings [post]
+func (h *Handler) ReindexEmbeddings(c echo.Context) error {
+
+	projectID, err := auth.GetProjectUUID(c)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	req := ReindexEmbeddingsRequest{
+		Namespace: c.QueryParam("namespace"),
+		Force:     c.QueryParam("force") == "true" || c.QueryParam("force") == "1",
+	}
+
+	result, err := h.svc.ReindexEmbeddings(c.Request().Context(), projectID, req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}

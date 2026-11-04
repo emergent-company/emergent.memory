@@ -1,0 +1,198 @@
+%PDF-1.4
+1 0 obj
+<</Type /Catalog /Pages 2 0 R>>
+endobj
+2 0 obj
+<</Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3>>
+endobj
+3 0 obj
+<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>
+endobj
+4 0 obj
+<</Length 1233>>
+stream
+BT
+/F1 18 Tf
+72 750 Td
+(GlobalTech Solutions -- System Architecture Specification) Tj
+0 -24 Td
+/F1 12 Tf
+(Version 2.4 | January 2025 | Confidential) Tj
+0 -36 Td
+/F1 14 Tf
+(1. Introduction) Tj
+0 -20 Td
+/F1 11 Tf
+(This document describes the architecture for GlobalTech's next-generation) Tj
+0 -16 Td
+(distributed data platform. The platform handles ingestion, processing, and) Tj
+0 -16 Td
+(querying of petabyte-scale datasets across three geographic regions.) Tj
+0 -24 Td
+/F1 14 Tf
+(1.1 Purpose) Tj
+0 -20 Td
+/F1 11 Tf
+(The primary purpose of this specification is to define the technical) Tj
+0 -16 Td
+(boundaries, component responsibilities, and integration contracts for all) Tj
+0 -16 Td
+(engineering teams contributing to the v2.4 release.) Tj
+0 -24 Td
+/F1 14 Tf
+(1.2 Scope) Tj
+0 -20 Td
+/F1 11 Tf
+(This document covers the following system components:) Tj
+0 -16 Td
+(  - Ingestion Layer: Apache Kafka + custom Flink pipelines) Tj
+0 -16 Td
+(  - Storage Layer: Delta Lake on S3 with Iceberg metadata catalog) Tj
+0 -16 Td
+(  - Query Layer: Trino cluster with adaptive query execution) Tj
+0 -16 Td
+(  - API Layer: GraphQL gateway with DataLoader batching) Tj
+0 -16 Td
+(  - Observability: OpenTelemetry + Prometheus + Grafana stack) Tj
+ET
+endstream
+endobj
+5 0 obj
+<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources <</Font <</F1 3 0 R>>>>>>
+endobj
+6 0 obj
+<</Length 1616>>
+stream
+BT
+/F1 14 Tf
+72 750 Td
+(2. Stakeholders and Responsibilities) Tj
+0 -24 Td
+/F1 11 Tf
+(The following individuals are the primary decision-makers and owners:) Tj
+0 -20 Td
+(  Alice Yamamoto    -- Chief Architect, overall design authority) Tj
+0 -16 Td
+(  Ben Okafor        -- Engineering Lead, ingestion and storage layers) Tj
+0 -16 Td
+(  Carmen Delgado    -- Engineering Lead, query and API layers) Tj
+0 -16 Td
+(  David Park        -- Security Lead, threat model and compliance) Tj
+0 -16 Td
+(  Elena Voroshilova -- Infrastructure Lead, Kubernetes and networking) Tj
+0 -24 Td
+/F1 14 Tf
+(2.1 Decision Log) Tj
+0 -20 Td
+/F1 11 Tf
+(The architecture review board meets weekly. Decisions require quorum of) Tj
+0 -16 Td
+(three senior engineers. All architectural decisions are recorded in the) Tj
+0 -16 Td
+(Architecture Decision Records (ADR) repository.) Tj
+0 -24 Td
+/F1 14 Tf
+(3. Architecture Decisions) Tj
+0 -20 Td
+/F1 11 Tf
+(ADR-001: Adopt Delta Lake for table format.) Tj
+0 -16 Td
+(  Decided by: Alice Yamamoto, approved by architecture board.) Tj
+0 -16 Td
+(  Rationale: ACID transactions, schema evolution, time travel queries.) Tj
+0 -16 Td
+(  Status: Accepted.) Tj
+0 -20 Td
+(ADR-002: Replace custom message broker with Apache Kafka.) Tj
+0 -16 Td
+(  Decided by: Ben Okafor.) Tj
+0 -16 Td
+(  Rationale: Mature ecosystem, exactly-once semantics, compaction.) Tj
+0 -16 Td
+(  Status: Accepted.) Tj
+0 -20 Td
+(ADR-003: Use GraphQL for the external API layer.) Tj
+0 -16 Td
+(  Decided by: Carmen Delgado.) Tj
+0 -16 Td
+(  Rationale: Type-safe contracts, introspection, client-driven queries.) Tj
+0 -16 Td
+(  Status: Accepted.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources <</Font <</F1 3 0 R>>>>>>
+endobj
+8 0 obj
+<</Length 1341>>
+stream
+BT
+/F1 14 Tf
+72 750 Td
+(4. Component Specifications) Tj
+0 -24 Td
+/F1 14 Tf
+(4.1 Ingestion Layer) Tj
+0 -20 Td
+/F1 11 Tf
+(The ingestion layer receives events from three source systems: CRM, ERP,) Tj
+0 -16 Td
+(and IoT sensor network. Events are validated against Avro schemas stored) Tj
+0 -16 Td
+(in the Schema Registry before being forwarded downstream.) Tj
+0 -16 Td
+(Throughput target: 500,000 events per second at p99 < 50ms latency.) Tj
+0 -24 Td
+/F1 14 Tf
+(4.2 Storage Layer) Tj
+0 -20 Td
+/F1 11 Tf
+(Raw events are written to Bronze Delta tables. The daily compaction job) Tj
+0 -16 Td
+(merges Bronze into Silver (cleaned) and Silver into Gold (aggregated).) Tj
+0 -16 Td
+(Retention policy: Bronze 7 days, Silver 90 days, Gold unlimited.) Tj
+0 -24 Td
+/F1 14 Tf
+(4.3 Query Layer) Tj
+0 -20 Td
+/F1 11 Tf
+(Trino is deployed as a 24-node cluster: 4 coordinators and 20 workers.) Tj
+0 -16 Td
+(Adaptive query execution is enabled. Result caching uses Alluxio.) Tj
+0 -16 Td
+(SLA: 95th percentile query latency < 2 seconds for dashboard queries.) Tj
+0 -24 Td
+/F1 14 Tf
+(5. Security) Tj
+0 -20 Td
+/F1 11 Tf
+(All inter-service communication uses mTLS. API authentication uses JWTs) Tj
+0 -16 Td
+(issued by the internal identity provider (Keycloak). Data at rest is) Tj
+0 -16 Td
+(encrypted with AWS KMS. David Park owns the threat model review cycle.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources <</Font <</F1 3 0 R>>>>>>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000056 00000 n 
+0000000123 00000 n 
+0000000191 00000 n 
+0000001474 00000 n 
+0000001594 00000 n 
+0000003260 00000 n 
+0000003380 00000 n 
+0000004771 00000 n 
+trailer
+<</Size 10 /Root 1 0 R>>
+startxref
+4891
+%%EOF

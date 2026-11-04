@@ -1,0 +1,280 @@
+package provider
+
+import (
+	"time"
+
+	"github.com/uptrace/bun"
+)
+
+// ProviderDialect identifies the wire protocol and authentication behaviour of
+// a provider. Several provider instances may share one dialect.
+type ProviderDialect string
+
+const (
+	ProviderGoogleAI    ProviderDialect = "google"
+	ProviderVertexAI    ProviderDialect = "google-vertex"
+	ProviderOpenAI      ProviderDialect = "openai"
+	ProviderDeepSeek    ProviderDialect = "deepseek"
+	ProviderAzureOpenAI ProviderDialect = "azure-openai"
+	ProviderAnthropic   ProviderDialect = "anthropic"
+	ProviderAliyun      ProviderDialect = "aliyun"
+	ProviderZhipu       ProviderDialect = "zhipu"
+	ProviderVolcengine  ProviderDialect = "volcengine"
+	ProviderHunyuan     ProviderDialect = "hunyuan"
+	ProviderSiliconFlow ProviderDialect = "siliconflow"
+	ProviderMiniMax     ProviderDialect = "minimax"
+	ProviderMoonshot    ProviderDialect = "moonshot"
+	ProviderMimo        ProviderDialect = "mimo"
+	ProviderModelScope  ProviderDialect = "modelscope"
+	ProviderQianfan     ProviderDialect = "qianfan"
+	ProviderQiniu       ProviderDialect = "qiniu"
+	ProviderLongCat     ProviderDialect = "longcat"
+	ProviderLKEAP       ProviderDialect = "lkeap"
+	ProviderNVIDIA      ProviderDialect = "nvidia"
+	ProviderNovita      ProviderDialect = "novita"
+	ProviderOpenRouter  ProviderDialect = "openrouter"
+	ProviderRequesty    ProviderDialect = "requesty"
+	ProviderLiteLLM     ProviderDialect = "litellm"
+	ProviderGeneric     ProviderDialect = "generic"
+	ProviderGPUStack    ProviderDialect = "gpustack"
+	ProviderJina        ProviderDialect = "jina"
+	ProviderCohere      ProviderDialect = "cohere"
+)
+
+// ProviderType is a deprecated alias for ProviderDialect, retained so existing
+// call sites keep compiling while they migrate to the dialect vocabulary.
+type ProviderType = ProviderDialect
+
+// ProviderSlug is a project-scoped, user-facing identifier for a provider
+// instance. It defaults to the dialect name and must be unique within a project.
+type ProviderSlug string
+
+// ModelType classifies a model as embedding or generative.
+type ModelType string
+
+const (
+	ModelTypeEmbedding  ModelType = "embedding"
+	ModelTypeGenerative ModelType = "generative"
+	// ModelTypeRerank marks rerank models, which are scored against a query but
+	// are not generative or embedding.
+	ModelTypeRerank ModelType = "rerank"
+	// ModelTypeTranscription marks speech-to-text (ASR) models, which turn
+	// audio into text and are not generative or embedding.
+	ModelTypeTranscription ModelType = "transcription"
+)
+
+// OperationType classifies an LLM operation for usage tracking.
+type OperationType string
+
+const (
+	OperationGenerate OperationType = "generate"
+	OperationEmbed    OperationType = "embed"
+)
+
+// --- Bun entities mapping to migration tables ---
+
+// OrgProviderConfig stores encrypted credentials and model selections for a
+// provider at the organization level.
+// Table: kb.org_provider_configs (migration 00042)
+type OrgProviderConfig struct {
+	bun.BaseModel `bun:"table:kb.org_provider_configs,alias:opc"`
+
+	ID                   string            `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	OrgID                string            `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider             ProviderDialect   `bun:"provider,notnull" json:"provider"`
+	Slug                 ProviderSlug      `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential  []byte            `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce      []byte            `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject           string            `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location             string            `bun:"location" json:"location,omitempty"`
+	BaseURL              string            `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel      string            `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel       string            `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	ExtraConfig          map[string]string `bun:"extra_config,type:jsonb,notnull,default:'{}'" json:"extraConfig,omitempty"`
+	ExtraSecretEncrypted []byte            `bun:"extra_secret_encrypted" json:"-"`
+	ExtraSecretNonce     []byte            `bun:"extra_secret_nonce" json:"-"`
+	CreatedAt            time.Time         `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt            time.Time         `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// ProjectProviderConfig stores encrypted credentials and model selections for a
+// provider at the project level.
+// Table: kb.project_provider_configs (migration 00042)
+type ProjectProviderConfig struct {
+	bun.BaseModel `bun:"table:kb.project_provider_configs,alias:ppc"`
+
+	ID                   string            `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID            string            `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider             ProviderDialect   `bun:"provider,notnull" json:"provider"`
+	Slug                 ProviderSlug      `bun:"slug,notnull" json:"slug"`
+	EncryptedCredential  []byte            `bun:"encrypted_credential,notnull" json:"-"`
+	EncryptionNonce      []byte            `bun:"encryption_nonce,notnull" json:"-"`
+	GCPProject           string            `bun:"gcp_project" json:"gcpProject,omitempty"`
+	Location             string            `bun:"location" json:"location,omitempty"`
+	BaseURL              string            `bun:"base_url" json:"baseUrl,omitempty"`
+	GenerativeModel      string            `bun:"generative_model" json:"generativeModel,omitempty"`
+	EmbeddingModel       string            `bun:"embedding_model" json:"embeddingModel,omitempty"`
+	ExtraConfig          map[string]string `bun:"extra_config,type:jsonb,notnull,default:'{}'" json:"extraConfig,omitempty"`
+	ExtraSecretEncrypted []byte            `bun:"extra_secret_encrypted" json:"-"`
+	ExtraSecretNonce     []byte            `bun:"extra_secret_nonce" json:"-"`
+	CreatedAt            time.Time         `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt            time.Time         `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// UpsertProviderConfigRequest is the request body for creating or updating a
+// provider config (org-level or project-level).
+// For google: set APIKey.
+// For google-vertex: set ServiceAccountJSON, GCPProject, Location.
+type UpsertProviderConfigRequest struct {
+	// Slug optionally names the provider instance. When empty the slug
+	// defaults to the dialect name, with a numeric suffix on collision.
+	Slug               string `json:"slug,omitempty"`
+	APIKey             string `json:"apiKey,omitempty"`
+	ServiceAccountJSON string `json:"serviceAccountJson,omitempty"`
+	GCPProject         string `json:"gcpProject,omitempty"`
+	Location           string `json:"location,omitempty"`
+	BaseURL            string `json:"baseUrl,omitempty"`
+	GenerativeModel    string `json:"generativeModel,omitempty"`
+	EmbeddingModel     string `json:"embeddingModel,omitempty"`
+	// ExtraConfig carries vendor-specific extra fields keyed by field name (e.g.
+	// Azure OpenAI "api_version", Volcengine "region"). A nil map omits the key
+	// and preserves the stored extras; a non-nil map merges per key, where an
+	// empty value clears a non-secret field or preserves a stored secret.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+}
+
+// ProviderConfigResponse is the public-safe representation of a stored provider config.
+// Credential fields (APIKey, ServiceAccountJSON) are never returned.
+type ProviderConfigResponse struct {
+	ID              string          `json:"id"`
+	Provider        ProviderDialect `json:"provider"`
+	Slug            ProviderSlug    `json:"slug"`
+	GCPProject      string          `json:"gcpProject,omitempty"`
+	Location        string          `json:"location,omitempty"`
+	BaseURL         string          `json:"baseUrl,omitempty"`
+	GenerativeModel string          `json:"generativeModel,omitempty"`
+	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
+	// ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+	// fields (ExtraField.Secret) are never serialized.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
+}
+
+// ProjectProviderConfigResponse is the public-safe representation of a
+// project-level provider config. It includes the ProjectID so consumers
+// can identify which project the override belongs to.
+type ProjectProviderConfigResponse struct {
+	ID              string          `json:"id"`
+	ProjectID       string          `json:"projectId"`
+	Provider        ProviderDialect `json:"provider"`
+	Slug            ProviderSlug    `json:"slug"`
+	GCPProject      string          `json:"gcpProject,omitempty"`
+	Location        string          `json:"location,omitempty"`
+	BaseURL         string          `json:"baseUrl,omitempty"`
+	GenerativeModel string          `json:"generativeModel,omitempty"`
+	EmbeddingModel  string          `json:"embeddingModel,omitempty"`
+	// ExtraConfig returns the non-secret vendor-specific extra fields. Secret
+	// fields (ExtraField.Secret) are never serialized.
+	ExtraConfig map[string]string `json:"extraConfig,omitempty"`
+	CreatedAt   time.Time         `json:"createdAt"`
+	UpdatedAt   time.Time         `json:"updatedAt"`
+}
+
+// ProviderSupportedModel is a cached entry of a model available from a provider.
+// Table: kb.provider_supported_models (migration 00038)
+type ProviderSupportedModel struct {
+	bun.BaseModel `bun:"table:kb.provider_supported_models,alias:psm"`
+
+	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
+	ModelName       string       `bun:"model_name,notnull" json:"modelName"`
+	ModelType       ModelType    `bun:"model_type,notnull" json:"modelType"`
+	DisplayName     string       `bun:"display_name" json:"displayName,omitempty"`
+	MaxOutputTokens *int         `bun:"max_output_tokens" json:"maxOutputTokens,omitempty"`
+	MaxInputTokens  *int         `bun:"max_input_tokens" json:"maxInputTokens,omitempty"`
+	LastSynced      time.Time    `bun:"last_synced,notnull,default:now()" json:"lastSynced"`
+}
+
+// LLMUsageEvent records a single LLM operation's token usage and estimated cost.
+// Table: kb.llm_usage_events (migration 00039)
+type LLMUsageEvent struct {
+	bun.BaseModel `bun:"table:kb.llm_usage_events,alias:lue"`
+
+	ID        string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	OrgID     string          `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider  ProviderDialect `bun:"provider,notnull" json:"provider"`
+	// ProviderSlug is the instance that served the request. Empty for rows
+	// recorded before instances existed (legacy).
+	ProviderSlug     ProviderSlug  `bun:"provider_slug" json:"providerSlug,omitempty"`
+	Model            string        `bun:"model,notnull" json:"model"`
+	Operation        OperationType `bun:"operation,notnull,default:'generate'" json:"operation"`
+	TextInputTokens  int64         `bun:"text_input_tokens,notnull,default:0" json:"textInputTokens"`
+	ImageInputTokens int64         `bun:"image_input_tokens,notnull,default:0" json:"imageInputTokens"`
+	VideoInputTokens int64         `bun:"video_input_tokens,notnull,default:0" json:"videoInputTokens"`
+	AudioInputTokens int64         `bun:"audio_input_tokens,notnull,default:0" json:"audioInputTokens"`
+	OutputTokens     int64         `bun:"output_tokens,notnull,default:0" json:"outputTokens"`
+	CachedTokens     int64         `bun:"cached_tokens,notnull,default:0" json:"cachedTokens"`
+	EstimatedCostUSD float64       `bun:"estimated_cost_usd,notnull,default:0" json:"estimatedCostUsd"`
+	RunID            *string       `bun:"run_id,type:uuid,nullzero" json:"runId,omitempty"`
+	RootRunID        *string       `bun:"root_run_id,type:uuid,nullzero" json:"rootRunId,omitempty"`
+	UserID           *string       `bun:"user_id,type:uuid,nullzero" json:"userId,omitempty"`
+	CreatedAt        time.Time     `bun:"created_at,notnull,default:now()" json:"createdAt"`
+}
+
+// ProviderPricing stores global retail pricing per model (synced daily).
+// Prices are per 1 million tokens.
+// Table: kb.provider_pricing (migration 00040)
+type ProviderPricing struct {
+	bun.BaseModel `bun:"table:kb.provider_pricing,alias:pp"`
+
+	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
+	Model           string       `bun:"model,notnull" json:"model"`
+	TextInputPrice  float64      `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
+	ImageInputPrice float64      `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
+	VideoInputPrice float64      `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
+	AudioInputPrice float64      `bun:"audio_input_price,notnull,default:0" json:"audioInputPrice"`
+	OutputPrice     float64      `bun:"output_price,notnull,default:0" json:"outputPrice"`
+	LastSynced      time.Time    `bun:"last_synced,notnull,default:now()" json:"lastSynced"`
+}
+
+// OrganizationCustomPricing stores org-specific pricing overrides (enterprise rates).
+// Prices are per 1 million tokens.
+// Table: kb.organization_custom_pricing (migration 00040)
+type OrganizationCustomPricing struct {
+	bun.BaseModel `bun:"table:kb.organization_custom_pricing,alias:ocp"`
+
+	ID              string       `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	OrgID           string       `bun:"org_id,notnull,type:uuid" json:"orgId"`
+	Provider        ProviderType `bun:"provider,notnull" json:"provider"`
+	Model           string       `bun:"model,notnull" json:"model"`
+	TextInputPrice  float64      `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
+	ImageInputPrice float64      `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
+	VideoInputPrice float64      `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
+	AudioInputPrice float64      `bun:"audio_input_price,notnull,default:0" json:"audioInputPrice"`
+	OutputPrice     float64      `bun:"output_price,notnull,default:0" json:"outputPrice"`
+	CreatedAt       time.Time    `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt       time.Time    `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}
+
+// ProjectCustomPricing stores project-specific pricing overrides (manual rates).
+// Prices are per 1 million tokens.
+// Table: kb.project_custom_pricing (migration 00140)
+type ProjectCustomPricing struct {
+	bun.BaseModel `bun:"table:kb.project_custom_pricing,alias:pcp"`
+
+	ID              string          `bun:"id,pk,type:uuid,default:uuid_generate_v4()" json:"id"`
+	ProjectID       string          `bun:"project_id,notnull,type:uuid" json:"projectId"`
+	Provider        ProviderDialect `bun:"provider,notnull" json:"provider"`
+	ProviderSlug    ProviderSlug    `bun:"provider_slug,notnull" json:"providerSlug"`
+	Model           string          `bun:"model,notnull" json:"model"`
+	TextInputPrice  float64         `bun:"text_input_price,notnull,default:0" json:"textInputPrice"`
+	ImageInputPrice float64         `bun:"image_input_price,notnull,default:0" json:"imageInputPrice"`
+	VideoInputPrice float64         `bun:"video_input_price,notnull,default:0" json:"videoInputPrice"`
+	AudioInputPrice float64         `bun:"audio_input_price,notnull,default:0" json:"audioInputPrice"`
+	OutputPrice     float64         `bun:"output_price,notnull,default:0" json:"outputPrice"`
+	CreatedAt       time.Time       `bun:"created_at,notnull,default:now()" json:"createdAt"`
+	UpdatedAt       time.Time       `bun:"updated_at,notnull,default:now()" json:"updatedAt"`
+}

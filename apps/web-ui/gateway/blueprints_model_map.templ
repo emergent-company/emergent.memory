@@ -1,0 +1,177 @@
+package main
+
+import (
+	"fmt"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// BlueprintModelMapRow is one agent whose manifest pins a model: the agent's
+// name, the source (blueprint) model, the human-readable reason it needs
+// attention (empty when the model resolves against the configured providers),
+// and the pre-filled selection (saved override > pinned model when servable >
+// empty = project default).
+type BlueprintModelMapRow struct {
+	AgentName   string
+	SourceModel string
+	Issue       string
+	Selected    string
+}
+
+// BlueprintModelMapData carries the state for the model-review page. The source
+// is generic: an install resolves by BlueprintID (posted through a hidden `id`
+// input to Action), while a GitHub import resolves by URL/Ref/Token. Action is
+// the confirm route either way. Token is an optional private-repo credential,
+// forwarded through a hidden input so a private-repo import that hits the review
+// step still authenticates on confirm; it is never placed in a redirect target
+// or flash.
+type BlueprintModelMapData struct {
+	Action      string
+	BlueprintID string
+	URL         string
+	Ref         string
+	Token       string
+	Rows        []BlueprintModelMapRow
+	Models      []Model
+}
+
+// BlueprintImportModelMapPage is the standalone review step shown before
+// applying a blueprint whose agents pin models. It shows one row per pinned
+// agent so the user can review each model mapping before committing: keep the
+// project default, or choose a configured model. Nothing is installed until the
+// confirm step.
+templ BlueprintImportModelMapPage(d BlueprintModelMapData) {
+	<div class={ pageFormChromeClass }>
+		@detailHeader(crumbsActive(nav.Crumbs("Blueprints", "/blueprints", "Review blueprint models")), "", "Review blueprint models", "This blueprint pins models for its agents. Review each mapping before installing — keep the project default, or choose a configured model. Nothing is installed until you confirm.", detailHeaderOpts{Margin: "mb-6"}) {
+		}
+	</div>
+	<form method="post" action={ d.Action } data-testid="blueprint-import-map">
+		<div class={ pageFormFieldsClass, "flex flex-col gap-4" }>
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleSoft,
+				Icon:    "lucide--list-checks",
+				Message: blueprintModelMapSummary(len(d.Rows)),
+			})
+			if d.BlueprintID != "" {
+				<input type="hidden" name="id" value={ d.BlueprintID }/>
+			}
+			if d.URL != "" {
+				<input type="hidden" name="url" value={ d.URL }/>
+			}
+			if d.Ref != "" {
+				<input type="hidden" name="ref" value={ d.Ref }/>
+			}
+			if d.Token != "" {
+				<input type="hidden" name="token" value={ d.Token }/>
+			}
+			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden"}) {
+				for _, row := range d.Rows {
+					@blueprintModelMapRow(row, d.Models)
+				}
+			}
+			if len(d.Models) == 0 {
+				@blueprintModelMapNoModels()
+			}
+		</div>
+		@components.StickyFormActions(components.StickyFormActionsProps{}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/blueprints",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-cancel"},
+			}) {
+				Cancel
+			}
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeSubmit,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--download",
+				Attrs:   templ.Attributes{"data-testid": "blueprint-model-map-submit"},
+			}) {
+				Install with these models
+			}
+		}
+	</form>
+}
+
+// blueprintModelMapSummary is the one-line review summary shown above the form.
+// It is a plain Go function (not a templ component) so the count — and its
+// singular/plural wording — stays in one place.
+func blueprintModelMapSummary(n int) string {
+	if n == 1 {
+		return "1 agent model to review before this blueprint is installed."
+	}
+	return fmt.Sprintf("%d agent models to review before this blueprint is installed.", n)
+}
+
+// blueprintModelMapRow renders one pinned agent: its name and "Blueprint:"
+// source-model badge as a heading, the reason it needs attention (wired to the
+// select via aria-describedby) plus a "Configure a provider" link when the
+// pinned model isn't servable and models are configured, and a full-width
+// select of the project's configured models (first option is the project
+// default, an empty value; a selection outside the catalog renders as a
+// synthetic "(current)" option so it stays selectable).
+templ blueprintModelMapRow(row BlueprintModelMapRow, models []Model) {
+	{{ selectID := "model." + row.AgentName
+		issueID := "model-issue." + row.AgentName }}
+	<div class="flex flex-col gap-3 border-b border-base-200 px-4 py-4 last:border-b-0" data-testid="blueprint-model-map-row">
+		<div class="flex flex-wrap items-center gap-2">
+			<h2 class="text-sm font-semibold">{ row.AgentName }</h2>
+			if row.SourceModel != "" {
+				@ui.Badge(ui.BadgeProps{Label: "Blueprint: " + row.SourceModel, Variant: ui.BadgeNeutral, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+			}
+		</div>
+		if row.Issue != "" {
+			<div id={ issueID }>
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: row.Issue,
+				})
+				if len(models) > 0 {
+					<a href="/settings/providers" class="link link-primary self-start text-sm">Configure a provider</a>
+				}
+			</div>
+		}
+		@form.FormControl(selectID, "Replacement model for "+row.AgentName, form.LabelAbove, "Choose a configured model, or keep the project default.", "", nil) {
+			<select
+				id={ selectID }
+				name={ selectID }
+				class="select w-full"
+				data-testid="blueprint-model-map-select"
+				if row.Issue != "" {
+					aria-describedby={ issueID }
+				}>
+				<option value="">Project default</option>
+				for _, m := range models {
+					<option value={ m.Provider + "/" + m.ModelName } if row.Selected == m.Provider+"/"+m.ModelName { selected }>{ m.Provider }/{ m.ModelName }</option>
+				}
+				if row.Selected != "" && !prefixedModelInCatalog(models, row.Selected) {
+					<option value={ row.Selected } selected>{ row.Selected } (current)</option>
+				}
+			</select>
+		}
+	</div>
+}
+
+// blueprintModelMapNoModels is the empty state shown when the project has no
+// configured generative models: it points the user at the providers settings
+// page while making clear they can still proceed with the project default.
+templ blueprintModelMapNoModels() {
+	<div class="flex flex-col gap-2" data-testid="blueprint-model-map-no-models">
+		@ui.Alert(ui.AlertProps{
+			Type:    ui.AlertInfo,
+			Style:   ui.AlertStyleSoft,
+			Icon:    "lucide--circle-help",
+			Message: "No generative models are configured for this project. Add a provider and model to pick a specific replacement, or install now and use the project default.",
+		})
+		<a href="/settings/providers" class="link link-primary self-start text-sm">Configure a provider</a>
+	</div>
+}

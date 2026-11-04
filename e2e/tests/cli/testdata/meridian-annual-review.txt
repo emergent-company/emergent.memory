@@ -1,0 +1,247 @@
+MERIDIAN CAPITAL PARTNERS — ANNUAL PORTFOLIO REVIEW REPORT
+Fiscal Year 2024 | Prepared by: Investment Committee
+Date: December 31, 2024
+Confidential — For Internal Use Only
+
+=============================================================================
+INVESTMENT COMMITTEE MEMBERS
+=============================================================================
+
+  Robert Ashworth    — Managing Partner, Chair of Investment Committee
+  Priscilla Fontaine — General Partner, Growth Equity Lead
+  Kweku Mensah       — General Partner, Infrastructure and Climate Lead
+  Yuki Tanaka        — Partner, Technology Sector Lead
+  Diana Ostrowski    — Partner, Consumer and Healthcare Lead
+  Alejandro Torres   — CFO, Financial Reporting
+  Sophie Leclercq    — Head of ESG and Impact Measurement
+  Tomasz Kowalczyk   — Chief Risk Officer
+
+=============================================================================
+PART 1: EXECUTIVE SUMMARY
+=============================================================================
+
+Meridian Capital Partners closed Fiscal Year 2024 with $4.2 billion in assets
+under management across three active funds: Meridian Growth Fund IV, Meridian
+Infrastructure Fund II, and Meridian Climate Opportunities Fund I.
+
+The portfolio delivered a net IRR of 18.4% for Growth Fund IV, outperforming
+the Cambridge Associates Global Venture benchmark (14.1%) by 430 basis points.
+Infrastructure Fund II delivered a net IRR of 11.2%, in line with expectations
+for the asset class.  Climate Opportunities Fund I, in its second year of
+deployment, reported a 22.7% unrealised return on invested capital.
+
+Robert Ashworth opened the annual review by noting that 2024 was a year of
+significant portfolio maturation.  Seven portfolio companies achieved major
+milestones: two completed IPOs (Vortex Analytics on Nasdaq, QuantumHealth on
+NYSE), three completed strategic acquisitions, and two are now profitable with
+positive free cash flow.
+
+The committee voted unanimously to proceed with fundraising for Meridian Growth
+Fund V, targeting $1.5 billion in commitments, to begin in Q2 2025.
+
+=============================================================================
+PART 2: GROWTH FUND IV PORTFOLIO REVIEW
+=============================================================================
+
+2.1 Fund Overview
+
+Vintage Year: 2019
+Total Commitments: $875 million
+Capital Called: $743 million (85%)
+Distributions to Date: $214 million
+Current NAV: $1.31 billion
+Net IRR: 18.4%
+Net MOIC: 2.1x
+
+2.2 Portfolio Company Updates
+
+─────────────────────────────────────────────────────────────
+Company: Vortex Analytics
+Sector: Enterprise SaaS
+Lead Partner: Yuki Tanaka
+Status: PUBLIC (IPO: March 2024, Nasdaq: VRTX)
+
+Vortex Analytics completed its IPO in March 2024 at $28 per share, valuing the
+company at $1.1 billion.  Meridian's holding was partially distributed to LPs
+at IPO; the retained position is subject to a 90-day lockup that expired in
+June.  The company's ARR at IPO was $142 million with 118% net dollar retention.
+Yuki Tanaka represented Meridian on the board from 2020 through IPO.
+
+─────────────────────────────────────────────────────────────
+Company: QuantumHealth
+Sector: Healthcare Technology
+Lead Partner: Diana Ostrowski
+Status: PUBLIC (IPO: September 2024, NYSE: QMHC)
+
+QuantumHealth provides AI-powered diagnostic imaging tools for radiology
+departments.  Its NYSE listing in September 2024 was oversubscribed 4.2x.
+Market cap at IPO: $2.4 billion.  Meridian invested $65 million across three
+rounds (Series A, B, and C) and realised an approximate 9x return on invested
+capital at the IPO price.  Diana Ostrowski served as board observer from 2021.
+
+─────────────────────────────────────────────────────────────
+Company: NovaBridge Logistics
+Sector: Supply Chain Technology
+Lead Partner: Priscilla Fontaine
+Status: ACQUIRED (Acquirer: GlobalFreight Corp, November 2024)
+
+NovaBridge was acquired by GlobalFreight Corp for $340 million.  Meridian
+invested $42 million at Series B.  The acquisition generated a 3.8x gross
+return.  Priscilla Fontaine notes that the integration thesis — connecting
+mid-market manufacturers with last-mile delivery networks — proved correct,
+with NovaBridge's GMV growing 4x during Meridian's holding period.
+
+─────────────────────────────────────────────────────────────
+Company: Arboreal Carbon
+Sector: Climate Tech / Carbon Markets
+Lead Partner: Kweku Mensah
+Status: ACTIVE — Series C (closed Q3 2024, $120M round)
+
+Arboreal Carbon operates verified reforestation projects across Southeast Asia
+and Central Africa.  The Series C was led by BlackRock's Climate Infrastructure
+fund with Meridian participating for $28 million.  ARR from carbon credit sales:
+$67 million.  Kweku Mensah serves as a board director.  Sophie Leclercq has
+tracked Arboreal's ESG metrics, which include 2.4 million tonnes of CO2
+sequestered to date.
+
+─────────────────────────────────────────────────────────────
+Company: Sentinel Cybersecurity
+Sector: Enterprise Security
+Lead Partner: Yuki Tanaka
+Status: ACTIVE — Series B
+
+Sentinel provides zero-trust network access for distributed enterprise teams.
+ARR: $38 million (up from $14 million in 2023).  NRR: 131%.  The company is
+on track for Series C in H1 2025.  Yuki Tanaka sits on the board.  The
+company's key product differentiator is a proprietary identity graph that
+detects lateral movement attacks with 99.4% precision.
+
+─────────────────────────────────────────────────────────────
+Company: RoboForm Automation
+Sector: Industrial Robotics
+Lead Partner: Priscilla Fontaine
+Status: ACTIVE — Series A (struggling)
+
+RoboForm has experienced headwinds due to a global slowdown in manufacturing
+capex.  Revenue is flat at $8 million.  Priscilla Fontaine is working with
+management on a cost restructuring.  A bridge financing of $5 million was
+approved by the Investment Committee in October 2024.  Tomasz Kowalczyk has
+flagged RoboForm as a watch-list company in the risk register.
+
+=============================================================================
+PART 3: INFRASTRUCTURE FUND II PORTFOLIO REVIEW
+=============================================================================
+
+3.1 Fund Overview
+
+Vintage Year: 2021
+Total Commitments: $1.2 billion
+Capital Called: $890 million (74%)
+Distributions to Date: $87 million
+Current NAV: $1.14 billion
+Net IRR: 11.2%
+
+3.2 Portfolio Company Updates
+
+─────────────────────────────────────────────────────────────
+Company: PeakGrid Energy
+Sector: Grid-Scale Battery Storage
+Lead Partner: Kweku Mensah
+Status: ACTIVE — operational
+
+PeakGrid operates 14 battery energy storage systems (BESS) across the ERCOT
+and CAISO markets.  Total installed capacity: 1.2 GWh.  Revenue in 2024: $94
+million from capacity auctions and energy arbitrage.  Kweku Mensah leads the
+board sub-committee on energy market policy.
+
+─────────────────────────────────────────────────────────────
+Company: UrbanFiber Networks
+Sector: Fiber Broadband Infrastructure
+Lead Partner: Alejandro Torres (financial observer)
+Status: ACTIVE — construction phase
+
+UrbanFiber is building fiber-to-the-premises networks in Tier 2 and Tier 3
+cities across the American Midwest.  14,000 homes passed in 2024; target is
+50,000 by end of 2025.  The project is financed with a combination of Meridian
+equity and $310 million in project finance debt arranged by JPMorgan.
+
+=============================================================================
+PART 4: CLIMATE OPPORTUNITIES FUND I
+=============================================================================
+
+4.1 Fund Overview
+
+Vintage Year: 2023
+Total Commitments: $650 million
+Capital Called: $285 million (44%)
+Current NAV: $350 million
+Unrealised Return on Invested Capital: 22.7%
+
+Sophie Leclercq leads ESG measurement for this fund.  All portfolio companies
+are required to report quarterly to the UN Sustainable Development Goals
+framework and the Task Force on Climate-related Financial Disclosures (TCFD).
+
+=============================================================================
+PART 5: KEY DECISIONS MADE BY THE INVESTMENT COMMITTEE IN FY2024
+=============================================================================
+
+DECISION 1: Approve QuantumHealth follow-on (Series C)
+  Decided by: Diana Ostrowski, ratified by full committee.
+  Rationale: Strong unit economics, clear path to IPO within 18 months.
+  Amount committed: $22 million.
+
+DECISION 2: Approve bridge financing for RoboForm Automation
+  Decided by: Priscilla Fontaine, with approval from Tomasz Kowalczyk.
+  Rationale: Management restructuring plan credible; liquidation value exceeds
+  bridge amount.  Amount: $5 million.
+
+DECISION 3: Launch fundraising for Meridian Growth Fund V
+  Decided by: Robert Ashworth (unanimous committee vote).
+  Target: $1.5 billion. Anchor LP commitments expected from existing LPs.
+
+DECISION 4: Initiate ESG scorecard standardisation across all funds
+  Decided by: Sophie Leclercq with Robert Ashworth sign-off.
+  Rationale: Regulatory requirements under SFDR Article 9 require standardised
+  reporting by Q2 2025.
+
+=============================================================================
+PART 6: RISK REGISTER SUMMARY
+=============================================================================
+
+Tomasz Kowalczyk presented the following risk items to the committee:
+
+HIGH RISK:
+  - RoboForm Automation: revenue stagnation, potential total loss scenario.
+  - UrbanFiber construction delays due to permitting backlog in Ohio.
+
+MEDIUM RISK:
+  - Sentinel Cybersecurity: competitive pressure from CrowdStrike expansion.
+  - Currency risk in Climate Fund I (holdings denominated in EUR and BRL).
+
+LOW RISK:
+  - Vortex Analytics lockup expiry overhang resolved in Q3 2024.
+  - PeakGrid regulatory risk in ERCOT reduced after PUCT ruling in August.
+
+=============================================================================
+PART 7: 2025 OUTLOOK AND PRIORITIES
+=============================================================================
+
+Robert Ashworth outlined three strategic priorities for 2025:
+
+1. Complete fundraising for Meridian Growth Fund V by Q4 2025.
+   Owner: Robert Ashworth and Alejandro Torres.
+
+2. Execute planned exits: Sentinel Cybersecurity (Series C → IPO track) and
+   Arboreal Carbon (secondary sale of Meridian stake at 4x target).
+   Owner: Yuki Tanaka (Sentinel), Kweku Mensah (Arboreal).
+
+3. Deploy remaining $365 million in Infrastructure Fund II into two new
+   infrastructure assets identified in pipeline (fiber and green hydrogen).
+   Owner: Kweku Mensah with support from Alejandro Torres.
+
+=============================================================================
+END OF REPORT
+Prepared by: Alejandro Torres, CFO, Meridian Capital Partners
+Reviewed by: Robert Ashworth, Managing Partner
+Next Review: June 30, 2025
+=============================================================================

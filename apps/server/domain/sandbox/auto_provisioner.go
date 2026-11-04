@@ -1,0 +1,541 @@
+package sandbox
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"time"
+)
+
+// ProvisioningResult holds the result of auto-provisioning a workspace for an agent session.
+type ProvisioningResult struct {
+	Workspace    *AgentSandbox
+	RepoURL      string
+	Branch       string
+	ProviderType ProviderType // Provider used for this attempt
+	Degraded     bool         // True if provisioning failed and session started without workspace
+	Error        error        // Non-nil if provisioning failed
+}
+
+// ResolvedImage contains the result of resolving a base_image name through the image catalog.
+type ResolvedImage struct {
+	Name      string       // The catalog name (e.g., "coder", "py-ml")
+	Provider  ProviderType // Which provider to route to
+	DockerRef string       // Docker image ref (empty for built-in Firecracker variants)
+}
+
+// ImageResolver resolves base_image names from the workspace image catalog.
+// This is implemented by the workspaceimages package and injected via fx.
+type ImageResolver interface {
+	ResolveImage(ctx context.Context, projectID, imageName string) (*ResolvedImage, error)
+	// GetImageStatus returns the current status of an image in the catalog.
+	// Returns ("", nil) if the image is not found in the catalog.
+	GetImageStatus(ctx context.Context, projectID, imageName string) (string, error)
+}
+
+// AutoProvisioner handles automatic workspace provisioning for agent sessions.
+type AutoProvisioner struct {
+	service       *Service
+	orchestrator  *Orchestrator
+	checkoutSvc   *CheckoutService
+	setupExec     *SetupExecutor
+	warmPool      *WarmPool
+	imageResolver ImageResolver // optional — if nil, falls back to ResolveProviderType()
+	log           *slog.Logger
+
+	// createWorkspace persists the initial workspace row. Overridable in tests.
+	createWorkspace func(ctx context.Context, req *CreateWorkspaceRequest) (*WorkspaceResponse, error)
+}
+
+// NewAutoProvisioner creates a new auto-provisioning service.
+// imageResolver is optional — if nil, falls back to ResolveProviderType().
+func NewAutoProvisioner(
+	service *Service,
+	orchestrator *Orchestrator,
+	checkoutSvc *CheckoutService,
+	setupExec *SetupExecutor,
+	warmPool *WarmPool,
+	log *slog.Logger,
+	imageResolver ImageResolver,
+) *AutoProvisioner {
+	ap := &AutoProvisioner{
+		service:       service,
+		orchestrator:  orchestrator,
+		checkoutSvc:   checkoutSvc,
+		setupExec:     setupExec,
+		warmPool:      warmPool,
+		imageResolver: imageResolver,
+		log:           log.With("component", "workspace-auto-provisioner"),
+	}
+	if service != nil {
+		ap.createWorkspace = service.Create
+	}
+	return ap
+}
+
+// createWorkspaceWithContainer persists the workspace row with the container
+// reference set in the same INSERT. This closes the acquire → DB-write window in
+// which a peer reconciler could otherwise see the container as ownerless and
+// unreferenced.
+func (ap *AutoProvisioner) createWorkspaceWithContainer(ctx context.Context, providerType ProviderType, containerProviderID, repoURL, branch string, limits *ResourceLimits) (*WorkspaceResponse, error) {
+	if ap.createWorkspace == nil {
+		return nil, fmt.Errorf("workspace store not configured")
+	}
+	return ap.createWorkspace(ctx, &CreateWorkspaceRequest{
+		ContainerType:       ContainerTypeAgentSandbox,
+		Provider:            string(providerType),
+		ProviderWorkspaceID: containerProviderID,
+		RepositoryURL:       repoURL,
+		Branch:              branch,
+		ResourceLimits:      limits,
+	})
+}
+
+// WaitForImageReady checks whether the sandbox image required by the config is ready.
+// For "pulling" status, it polls with backoff up to maxWait. For "error" status, it
+// fails immediately. Returns nil if the image is ready or not in the catalog (direct routing).
+func (ap *AutoProvisioner) WaitForImageReady(ctx context.Context, projectID string, workspaceConfig map[string]any) error {
+	if ap.imageResolver == nil {
+		return nil // no catalog — direct routing, nothing to check
+	}
+
+	cfg, err := ParseAgentSandboxConfig(workspaceConfig)
+	if err != nil || cfg == nil || !cfg.Enabled || cfg.BaseImage == "" {
+		return nil
+	}
+
+	const (
+		maxWait  = 60 * time.Second
+		pollBase = 2 * time.Second
+	)
+	deadline := time.Now().Add(maxWait)
+
+	for {
+		status, err := ap.imageResolver.GetImageStatus(ctx, projectID, cfg.BaseImage)
+		if err != nil {
+			ap.log.Warn("image status check failed, proceeding with direct routing",
+				"base_image", cfg.BaseImage,
+				"error", err,
+			)
+			return nil // catalog lookup failed — let provisioning try direct
+		}
+
+		switch status {
+		case "":
+			// Not in catalog — direct routing, no wait needed
+			return nil
+		case "ready":
+			return nil
+		case "error":
+			return fmt.Errorf("sandbox image %q has status \"error\" — cannot provision workspace; delete and re-create the image catalog entry to retry", cfg.BaseImage)
+		case "pulling", "pending":
+			if time.Now().After(deadline) {
+				return fmt.Errorf("sandbox image %q still in %q state after %s — cannot provision workspace", cfg.BaseImage, status, maxWait)
+			}
+			wait := pollBase
+			remaining := time.Until(deadline)
+			if wait > remaining {
+				wait = remaining
+			}
+			ap.log.Info("sandbox image not ready, waiting",
+				"base_image", cfg.BaseImage,
+				"status", status,
+				"retry_in", wait,
+			)
+			select {
+			case <-time.After(wait):
+				// retry
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		default:
+			return fmt.Errorf("sandbox image %q has unexpected status %q", cfg.BaseImage, status)
+		}
+	}
+}
+
+// CheckoutService returns the checkout service used by this provisioner.
+// Used by the agent executor to pass credential-aware cloning into workspace tools.
+func (ap *AutoProvisioner) CheckoutService() *CheckoutService {
+	return ap.checkoutSvc
+}
+
+// ProvisionForSession provisions a workspace based on an agent definition's workspace config.
+// This is called when an agent session starts.
+//
+// Flow:
+// 1. Parse workspace config from agent definition
+// 2. Resolve repo source (task_context, fixed, or none)
+// 3. Create workspace via orchestrator with provider selection
+// 4. Clone repository if needed
+// 5. Run setup commands
+// 6. Mark workspace as ready
+//
+// On failure, retries once with a fallback provider. If still failing, returns a degraded result.
+func (ap *AutoProvisioner) ProvisionForSession(
+	ctx context.Context,
+	agentDefID string,
+	projectID string,
+	workspaceConfig map[string]any,
+	taskMetadata map[string]any,
+	authToken string,
+	runtimeEnvVars map[string]string,
+) (*ProvisioningResult, error) {
+	// Parse workspace config
+	cfg, err := ParseAgentSandboxConfig(workspaceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse workspace config: %w", err)
+	}
+
+	if cfg == nil || !cfg.Enabled {
+		return nil, nil // Workspace not configured or disabled
+	}
+
+	// Resolve repo source
+	taskCtx := ExtractTaskContext(taskMetadata)
+	repoURL, branch, shouldCheckout := ResolveRepoSource(cfg, taskCtx)
+
+	ap.log.Info("provisioning workspace for agent session",
+		"agent_definition_id", agentDefID,
+		"repo_url", repoURL,
+		"branch", branch,
+		"should_checkout", shouldCheckout,
+	)
+
+	// Attempt provisioning (with one retry on fallback provider)
+	result, err := ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken, runtimeEnvVars)
+	if err != nil {
+		ap.log.Warn("first provisioning attempt failed, retrying with fallback",
+			"agent_definition_id", agentDefID,
+			"error", err,
+		)
+
+		// Mark the failed provider as unhealthy temporarily to force fallback selection
+		if result != nil && result.ProviderType != "" {
+			ap.orchestrator.UpdateHealth(result.ProviderType, false, fmt.Sprintf("provisioning failed: %v", err))
+		}
+
+		// Retry once with fallback
+		result, err = ap.attemptProvision(ctx, projectID, cfg, repoURL, branch, shouldCheckout, authToken, runtimeEnvVars)
+		if err != nil {
+			ap.log.Error("workspace provisioning failed after retry, starting in degraded mode",
+				"agent_definition_id", agentDefID,
+				"error", err,
+			)
+			return &ProvisioningResult{
+				Degraded: true,
+				Error:    err,
+				RepoURL:  repoURL,
+				Branch:   branch,
+			}, nil
+		}
+	}
+
+	result.RepoURL = repoURL
+	result.Branch = branch
+
+	return result, nil
+}
+
+// LinkToRun associates a provisioned workspace with an agent run by setting
+// the agent_session_id column to the run ID.
+func (ap *AutoProvisioner) LinkToRun(ctx context.Context, workspace *AgentSandbox, runID string) error {
+	workspace.AgentSessionID = &runID
+	_, err := ap.service.store.Update(ctx, workspace, "agent_session_id")
+	if err != nil {
+		return fmt.Errorf("failed to link workspace %s to run %s: %w", workspace.ID, runID, err)
+	}
+	ap.log.Info("workspace linked to agent run",
+		"workspace_id", workspace.ID,
+		"run_id", runID,
+	)
+	return nil
+}
+
+// TeardownWorkspace destroys a workspace's container after an agent run
+// completes and marks the row stopped. It applies to every lifecycle — there is
+// no persistent-workspace exemption: calling it on a persistent workspace
+// destroys that workspace's container. This is best-effort — errors are logged
+// but not returned so teardown cannot mask the run result.
+func (ap *AutoProvisioner) TeardownWorkspace(ctx context.Context, workspace *AgentSandbox) {
+	if workspace == nil {
+		return
+	}
+
+	ap.log.Info("tearing down workspace after agent run",
+		"workspace_id", workspace.ID,
+		"provider", workspace.Provider,
+	)
+
+	// Get the provider to destroy the container
+	provider, err := ap.orchestrator.GetProvider(workspace.Provider)
+	if err != nil {
+		ap.log.Warn("failed to get provider for workspace teardown",
+			"workspace_id", workspace.ID,
+			"provider", workspace.Provider,
+			"error", err,
+		)
+		// Still update the DB status even if we can't destroy the container
+		ap.updateStatusBestEffort(ctx, workspace.ID)
+		return
+	}
+
+	// Destroy the container
+	if err := provider.Destroy(ctx, workspace.ProviderWorkspaceID); err != nil {
+		ap.log.Warn("failed to destroy workspace container",
+			"workspace_id", workspace.ID,
+			"provider_workspace_id", workspace.ProviderWorkspaceID,
+			"error", err,
+		)
+	}
+
+	// Update status to stopped
+	ap.updateStatusBestEffort(ctx, workspace.ID)
+}
+
+// updateStatusBestEffort attempts to update the workspace status to stopped.
+// Errors and panics are logged but never propagated — teardown must not crash.
+func (ap *AutoProvisioner) updateStatusBestEffort(ctx context.Context, workspaceID string) {
+	if ap.service == nil || ap.service.store == nil {
+		return
+	}
+	if _, err := ap.service.UpdateStatus(ctx, workspaceID, StatusStopped); err != nil {
+		ap.log.Warn("failed to update workspace status to stopped",
+			"workspace_id", workspaceID,
+			"error", err,
+		)
+	}
+}
+
+// attemptProvision performs a single provisioning attempt.
+func (ap *AutoProvisioner) attemptProvision(
+	ctx context.Context,
+	projectID string,
+	cfg *AgentSandboxConfig,
+	repoURL, branch string,
+	shouldCheckout bool,
+	authToken string,
+	runtimeEnvVars map[string]string,
+) (*ProvisioningResult, error) {
+	ap.log.Info("starting workspace provisioning attempt",
+		"repo_url", repoURL,
+		"branch", branch,
+		"should_checkout", shouldCheckout,
+		"base_image", cfg.BaseImage,
+	)
+
+	// Resolve base_image through image catalog if available
+	if ap.imageResolver != nil && cfg.BaseImage != "" && projectID != "" {
+		resolved, err := ap.imageResolver.ResolveImage(ctx, projectID, cfg.BaseImage)
+		if err != nil {
+			ap.log.Warn("image catalog resolution failed, falling back to direct routing",
+				"base_image", cfg.BaseImage,
+				"project_id", projectID,
+				"error", err,
+			)
+			// Fall through to ResolveProviderType below
+		} else if resolved != nil {
+			ap.log.Info("resolved image from catalog",
+				"name", resolved.Name,
+				"provider", resolved.Provider,
+				"docker_ref", resolved.DockerRef,
+			)
+			// If the catalog says it's a Docker image, override BaseImage with the docker ref
+			if resolved.DockerRef != "" {
+				cfg.BaseImage = resolved.DockerRef
+			}
+			// Override provider if catalog specifies one
+			if resolved.Provider != "" {
+				cfg.Provider = string(resolved.Provider)
+			}
+		}
+	}
+
+	// Select provider — use smart routing based on workspace config
+	requestedProvider := ResolveProviderType(cfg)
+	ap.log.Info("selecting provider with fallback",
+		"requested_provider", requestedProvider,
+		"base_image", cfg.BaseImage,
+	)
+	provider, providerType, err := ap.orchestrator.SelectProviderWithFallback(
+		ContainerTypeAgentSandbox,
+		DeploymentSelfHosted,
+		requestedProvider,
+	)
+	if err != nil {
+		ap.log.Error("no provider available", "error", err)
+		return nil, fmt.Errorf("no provider available: %w", err)
+	}
+	ap.log.Info("provider selected", "provider_type", providerType)
+
+	// Create container
+	ap.log.Info("creating container via provider", "provider_type", providerType)
+	containerReq := &CreateContainerRequest{
+		ContainerType:  ContainerTypeAgentSandbox,
+		ResourceLimits: cfg.ResourceLimits,
+		BaseImage:      cfg.BaseImage,
+	}
+
+	// Inject environment variables into the container.
+	// Merge priority (later wins): cfg.EnvVars → runtimeEnvVars → system keys.
+	containerEnv := make(map[string]string)
+	for k, v := range cfg.EnvVars {
+		containerEnv[k] = v
+	}
+	for k, v := range runtimeEnvVars {
+		containerEnv[k] = v
+	}
+	// System keys always win — inject SDK credentials if an ephemeral token was minted.
+	// Note: MEMORY_API_URL is already set by the gVisor provider to
+	// http://host.docker.internal:<port> so that sandbox containers can reach
+	// the API server from inside Docker.  We only need to add the token and
+	// project ID here.
+	if authToken != "" {
+		// Inject under both the canonical new name and the deprecated alias so that
+		// containers running older SDK versions still authenticate correctly.
+		containerEnv["MEMORY_ACCOUNT_API_KEY"] = authToken
+		containerEnv["MEMORY_API_KEY"] = authToken // deprecated alias — remove in a future release
+		containerEnv["MEMORY_PROJECT_ID"] = projectID
+	}
+	if len(containerEnv) > 0 {
+		containerReq.Env = containerEnv
+	}
+
+	// Try warm pool first, fall back to cold creation.
+	// Pass cfg.BaseImage as the hint so the pool can match containers pre-booted
+	// with that specific image (e.g. "emergent-memory-python-sdk:latest").
+	// If BaseImage is empty the pool matches against its TargetImage (or provider default).
+	var containerProviderID string
+	if wc := ap.warmPool.Acquire(providerType, cfg.BaseImage); wc != nil {
+		containerProviderID = wc.ProviderID()
+		ap.log.Info("acquired warm container",
+			"provider_type", providerType,
+			"provider_id", containerProviderID,
+			"base_image", cfg.BaseImage,
+		)
+	}
+
+	// Cold create if warm pool was skipped or had no available containers
+	var createResult *CreateContainerResult
+	if containerProviderID == "" {
+		result, err := provider.Create(ctx, containerReq)
+		if err != nil {
+			ap.log.Error("failed to create container", "provider_type", providerType, "error", err)
+			return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create container via %s: %w", providerType, err)
+		}
+		containerProviderID = result.ProviderID
+		createResult = result
+	}
+	ap.log.Info("container created successfully",
+		"provider_type", providerType,
+		"provider_id", containerProviderID,
+	)
+
+	// Create workspace record in DB, with the container reference persisted in the
+	// same INSERT so the container is never observable as ownerless-and-unreferenced.
+	ap.log.Info("creating workspace database record")
+	ws, err := ap.createWorkspaceWithContainer(ctx, providerType, containerProviderID, repoURL, branch, cfg.ResourceLimits)
+	if err != nil {
+		ap.log.Error("failed to create workspace record, cleaning up container",
+			"provider_id", containerProviderID,
+			"error", err,
+		)
+		// Try to clean up the container
+		_ = provider.Destroy(ctx, containerProviderID)
+		return &ProvisioningResult{ProviderType: providerType}, fmt.Errorf("failed to create workspace record: %w", err)
+	}
+	ap.log.Info("workspace database record created", "workspace_id", ws.ID)
+
+	// Build the entity for internal use
+	wsEntity := &AgentSandbox{
+		ID:                  ws.ID,
+		Provider:            providerType,
+		ProviderWorkspaceID: containerProviderID,
+		Status:              StatusCreating,
+	}
+	if createResult != nil {
+		wsEntity.BaseImage = createResult.BaseImage
+		wsEntity.ImageDigest = createResult.ImageDigest
+	}
+
+	// provider_workspace_id was persisted in the INSERT above; only cold-create
+	// metadata (base image / digest) still needs a follow-up update.
+	if createResult != nil && ap.service != nil && ap.service.store != nil {
+		_, err = ap.service.store.Update(ctx, wsEntity, "base_image", "image_digest")
+		if err != nil {
+			ap.log.Warn("failed to update container metadata", "workspace_id", ws.ID, "error", err)
+		}
+	}
+
+	// Clone repository if needed
+	if shouldCheckout && repoURL != "" && ap.checkoutSvc != nil {
+		ap.log.Info("cloning repository",
+			"workspace_id", ws.ID,
+			"repo_url", repoURL,
+			"branch", branch,
+		)
+		// Resolve a git token with precedence git_token_secret_ref → legacy literal
+		// → runtime env vars (GH_TOKEN before GITHUB_TOKEN within each), so private
+		// repositories clone authenticated. The token is never logged.
+		gitToken := ResolveGitTokenForConfig(cfg, runtimeEnvVars)
+		if cloneErr := ap.checkoutSvc.CloneRepository(ctx, provider, containerProviderID, repoURL, branch, "/workspace", gitToken); cloneErr != nil {
+			ap.log.Warn("repository clone failed",
+				"workspace_id", ws.ID,
+				"repo_url", repoURL,
+				"error", cloneErr,
+			)
+			// Don't fail provisioning on clone error — workspace is still usable
+		} else {
+			ap.log.Info("repository cloned successfully", "workspace_id", ws.ID)
+		}
+	}
+
+	// Run setup commands
+	if len(cfg.SetupCommands) > 0 && ap.setupExec != nil {
+		ap.log.Info("running setup commands",
+			"workspace_id", ws.ID,
+			"num_commands", len(cfg.SetupCommands),
+		)
+		completed, setupErr := ap.setupExec.RunSetupCommands(ctx, wsEntity, cfg.SetupCommands)
+		if setupErr != nil {
+			ap.log.Warn("setup commands partially failed",
+				"workspace_id", ws.ID,
+				"completed", completed,
+				"total", len(cfg.SetupCommands),
+				"error", setupErr,
+			)
+			// Don't fail provisioning on setup error — workspace is still usable
+		} else {
+			ap.log.Info("all setup commands completed successfully",
+				"workspace_id", ws.ID,
+				"num_commands", len(cfg.SetupCommands),
+			)
+		}
+	}
+
+	// Mark workspace as ready
+	ap.log.Info("marking workspace as ready", "workspace_id", ws.ID)
+	_, err = ap.service.UpdateStatus(ctx, ws.ID, StatusReady)
+	if err != nil {
+		ap.log.Warn("failed to mark workspace as ready", "workspace_id", ws.ID, "error", err)
+	}
+
+	ap.log.Info("workspace provisioned successfully",
+		"workspace_id", ws.ID,
+		"provider", providerType,
+	)
+
+	return &ProvisioningResult{
+		Workspace:    wsEntity,
+		ProviderType: providerType,
+	}, nil
+}
+
+// GetProviderForWorkspace returns the provider instance for a given workspace.
+// This allows the agent executor to build workspace tools that delegate to the provider.
+func (ap *AutoProvisioner) GetProviderForWorkspace(ws *AgentSandbox) (Provider, error) {
+	if ws == nil {
+		return nil, fmt.Errorf("workspace is nil")
+	}
+	return ap.orchestrator.GetProvider(ws.Provider)
+}

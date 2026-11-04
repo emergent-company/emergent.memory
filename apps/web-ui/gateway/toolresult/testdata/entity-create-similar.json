@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "data": {
+    "results": [
+      {"ok": true, "index": 0, "entity": {"id": "e1", "type": "Note"}},
+      {"ok": true, "index": 1, "entity": {"id": "e2", "type": "Note"}}
+    ],
+    "message": "3 near-duplicate entities found. Prefer entity-update(entity_id=…) to enrich the existing object instead of creating a duplicate."
+  },
+  "meta": {"created": 2, "failed": 0, "total": 5, "similar_count": 3}
+}

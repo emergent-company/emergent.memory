@@ -1,0 +1,392 @@
+package apitoken
+
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+
+	"github.com/lib/pq"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
+)
+
+// Repository handles data access for API tokens
+type Repository struct {
+	db  bun.IDB
+	log *slog.Logger
+}
+
+// NewRepository creates a new API token repository
+func NewRepository(db bun.IDB, log *slog.Logger) *Repository {
+	return &Repository{
+		db:  db,
+		log: log.With(logger.Scope("apitoken.repo")),
+	}
+}
+
+// Create creates a new API token
+func (r *Repository) Create(ctx context.Context, token *ApiToken) error {
+	_, err := r.db.NewInsert().
+		Model(token).
+		Returning("id").
+		Exec(ctx)
+	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.New(409, "token_name_exists", "A token with this name already exists")
+		}
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// FindByUserAndProjectAndName finds an active token by user ID, project ID and name.
+// This matches the DB unique index on (user_id, name) WHERE revoked_at IS NULL,
+// scoped to the specific project.
+func (r *Repository) FindByUserAndProjectAndName(ctx context.Context, userID, projectID, name string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("user_id = ?", userID).
+		Where("project_id = ?", projectID).
+		Where("name = ?", name).
+		Where("revoked_at IS NULL").
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // Not found is not an error
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// ListByProject returns all tokens for a project
+func (r *Repository) ListByProject(ctx context.Context, projectID string) ([]ApiToken, error) {
+	var tokens []ApiToken
+	err := r.db.NewSelect().
+		Model(&tokens).
+		Where("project_id = ?", projectID).
+		Order("created_at DESC").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return tokens, nil
+}
+
+// GetByID returns a token by ID and project ID
+func (r *Repository) GetByID(ctx context.Context, tokenID, projectID string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("id = ?", tokenID).
+		Where("project_id = ?", projectID).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// ListByUser returns all account-level tokens for a user (project_id IS NULL)
+func (r *Repository) ListByUser(ctx context.Context, userID string) ([]ApiToken, error) {
+	var tokens []ApiToken
+	err := r.db.NewSelect().
+		Model(&tokens).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Order("created_at DESC").
+		Scan(ctx)
+
+	if err != nil {
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return tokens, nil
+}
+
+// RevokeByUser revokes an account-level token owned by the user (project_id IS NULL)
+func (r *Repository) RevokeByUser(ctx context.Context, tokenID, userID string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// CreateAccountToken creates a new account-level token (project_id = NULL)
+func (r *Repository) CreateAccountToken(ctx context.Context, token *ApiToken) error {
+	_, err := r.db.NewInsert().
+		Model(token).
+		Exec(ctx)
+	if err != nil {
+		if pgutils.IsUniqueViolation(err) {
+			return apperror.New(409, "token_name_exists", "An account token with this name already exists")
+		}
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// FindByUserAndName finds an account-level token by user ID and name (for uniqueness check)
+func (r *Repository) FindByUserAndName(ctx context.Context, userID, name string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Where("name = ?", name).
+		Where("revoked_at IS NULL").
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// GetByIDAndUser returns an account-level token by ID and user ID (project_id IS NULL)
+func (r *Repository) GetByIDAndUser(ctx context.Context, tokenID, userID string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// GetByIDForUser returns any token (account-level or project-scoped) by ID and user ID.
+// Unlike GetByIDAndUser, this does not filter by project_id IS NULL.
+func (r *Repository) GetByIDForUser(ctx context.Context, tokenID, userID string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// RevokeByID revokes any token by ID regardless of project (used for ephemeral token teardown).
+func (r *Repository) RevokeByID(ctx context.Context, tokenID string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("id = ?", tokenID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// FindByHash looks up a token by its SHA-256 hash.
+// Returns nil (no error) when the token is not found.
+func (r *Repository) FindByHash(ctx context.Context, tokenHash string) (*ApiToken, error) {
+	var token ApiToken
+	err := r.db.NewSelect().
+		Model(&token).
+		Where("token_hash = ?", tokenHash).
+		Scan(ctx)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, apperror.ErrDatabase.WithInternal(err)
+	}
+	return &token, nil
+}
+
+// GetUserProjectRole returns the role of a user in a project (or "" if not a member).
+func (r *Repository) GetUserProjectRole(ctx context.Context, projectID, userID string) (string, error) {
+	var role string
+	err := r.db.NewRaw(`
+		SELECT role FROM kb.project_memberships
+		WHERE project_id = ? AND user_id = ?
+		LIMIT 1
+	`, projectID, userID).Scan(ctx, &role)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return "", nil
+		}
+		return "", apperror.ErrDatabase.WithInternal(err)
+	}
+	return role, nil
+}
+
+// CanGrantAdminAll reports whether the user may grant the admin:all scope. It
+// delegates to the single app-side decision check (pkg/auth.CanGrantAdminAll):
+// an active full superadmin (core.superadmins, revoked_at IS NULL and
+// role = 'superadmin_full') only — an org_admin membership no longer qualifies
+// (issue #949). A superadmin_readonly grant does not qualify, so a read-only
+// principal cannot escalate to full platform administration by minting an
+// admin:all token.
+func (r *Repository) CanGrantAdminAll(ctx context.Context, userID string) (bool, error) {
+	allowed, err := auth.CanGrantAdminAll(ctx, r.db, userID)
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+	return allowed, nil
+}
+
+// CanGrantProjectAdmin reports whether the user may mint the project:admin
+// scope on a token bound to projectID. True when the user is EITHER a
+// project_admin in kb.project_memberships for projectID, OR an org_admin in
+// kb.organization_memberships for the project's owning org
+// (kb.projects.organization_id). Empty/invalid projectID or userID yields
+// false (fail closed). This is deliberately a local query: it does not import
+// the projects domain (which would import this package — a cycle).
+func (r *Repository) CanGrantProjectAdmin(ctx context.Context, projectID, userID string) (bool, error) {
+	if projectID == "" || userID == "" {
+		return false, nil
+	}
+	var allowed bool
+	err := r.db.NewRaw(`
+		SELECT EXISTS(
+			SELECT 1 FROM kb.project_memberships
+			WHERE project_id = ? AND user_id = ? AND role = 'project_admin'
+		) OR EXISTS(
+			SELECT 1 FROM kb.organization_memberships om
+			JOIN kb.projects p ON p.organization_id = om.organization_id
+			WHERE p.id = ? AND om.user_id = ? AND om.role = 'org_admin'
+		)
+	`, projectID, userID, projectID, userID).Scan(ctx, &allowed)
+	if err != nil {
+		return false, apperror.NewDatabase("failed to resolve project admin grant", err)
+	}
+	return allowed, nil
+}
+
+// RevokeByProjectAndUser revokes all active tokens for a user in a project.
+// Used when a member is removed from a project.
+func (r *Repository) RevokeByProjectAndUser(ctx context.Context, projectID, userID string) error {
+	_, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("project_id = ?", projectID).
+		Where("user_id = ?", userID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return apperror.ErrDatabase.WithInternal(err)
+	}
+	return nil
+}
+
+// UpdateScopes updates the scopes of a non-revoked project token.
+func (r *Repository) UpdateScopes(ctx context.Context, tokenID, projectID string, scopes []string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("scopes = ?", pq.StringArray(scopes)).
+		Where("id = ?", tokenID).
+		Where("project_id = ?", projectID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// UpdateScopesByUser updates the scopes of a non-revoked account-level token owned by the user.
+func (r *Repository) UpdateScopesByUser(ctx context.Context, tokenID, userID string, scopes []string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("scopes = ?", pq.StringArray(scopes)).
+		Where("id = ?", tokenID).
+		Where("user_id = ?", userID).
+		Where("project_id IS NULL").
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}
+
+// Revoke sets the revoked_at timestamp on a token
+func (r *Repository) Revoke(ctx context.Context, tokenID, projectID string) (bool, error) {
+	result, err := r.db.NewUpdate().
+		Model((*ApiToken)(nil)).
+		Set("revoked_at = NOW()").
+		Where("id = ?", tokenID).
+		Where("project_id = ?", projectID).
+		Where("revoked_at IS NULL").
+		Exec(ctx)
+
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, apperror.ErrDatabase.WithInternal(err)
+	}
+
+	return rows > 0, nil
+}

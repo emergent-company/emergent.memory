@@ -1,0 +1,2906 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/a-h/templ"
+	"github.com/labstack/echo/v4"
+)
+
+func renderHTML(t *testing.T, c templ.Component) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := c.Render(t.Context(), &buf); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	return buf.String()
+}
+
+// selectShowsValue reports whether the <select name=...> block renders the
+// given option value as selected, scoped to that select so an unrelated select
+// on the page cannot satisfy the assertion.
+func selectShowsValue(html, name, value string) bool {
+	i := strings.Index(html, `name="`+name+`"`)
+	if i < 0 {
+		return false
+	}
+	seg := html[i:]
+	if len(seg) > 400 {
+		seg = seg[:400]
+	}
+	return strings.Contains(seg, `value="`+value+`" selected`)
+}
+
+func TestRenderAgentDashboard(t *testing.T) {
+	agent := &AgentDefinition{
+		ID:          "a1",
+		Name:        "diane",
+		Description: "household assistant with a dry wit",
+		Model:       &ModelConfig{Name: "gpt-4o", Temperature: 0.7},
+		Visibility:  "project",
+		ToolCount:   2,
+		Tools:       []string{"web_search", "memory_lookup"},
+		BannedTools: []string{"code_exec"},
+		UpdatedAt:   "2026-08-25T10:00:00Z",
+	}
+	data := agentDashboardData{
+		Agent: agent,
+		Chats: []Conversation{
+			{ID: "c1", Title: "Morning briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"},
+			{ID: "c2", AgentDefinitionID: "a1", UpdatedAt: "2026-08-25T09:00:00Z"},
+		},
+	}
+	html := renderHTML(t, AgentDashboardPage(data))
+	for _, want := range []string{
+		"diane", "household assistant with a dry wit",
+		"gpt-4o", "project", "2 tools",
+		"web_search", "memory_lookup", "code_exec",
+		"Morning briefing", "Chat " + shortID("c2"),
+		`href="/chat?c=c1"`, `href="/chat?c=c2"`,
+		`href="/agents/a1/objects"`, "Objects",
+		`href="/chat?agent=a1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+
+	// no tools → whole-section empty state
+	noTools := agentDashboardData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}}
+	htmlNoTools := renderHTML(t, AgentDashboardPage(noTools))
+	if !strings.Contains(htmlNoTools, "No tools configured") {
+		t.Error("no-tools state missing")
+	}
+
+	// no chats → empty state
+	noChats := agentDashboardData{Agent: agent}
+	htmlNoChats := renderHTML(t, AgentDashboardPage(noChats))
+	if !strings.Contains(htmlNoChats, "No chats yet") {
+		t.Error("no-chats state missing")
+	}
+
+	// conversations failure degrades the section, keeps the rest
+	broken := agentDashboardData{Agent: agent, ChatsErr: errTest}
+	htmlBroken := renderHTML(t, AgentDashboardPage(broken))
+	if !strings.Contains(htmlBroken, "Failed to load conversations") || !strings.Contains(htmlBroken, "diane") {
+		t.Error("section error should surface while the rest stays usable")
+	}
+
+	// agent fetch failure → whole-page error
+	htmlErr := renderHTML(t, AgentDashboardPage(agentDashboardData{LoadErr: errTest}))
+	if !strings.Contains(htmlErr, "Agent unavailable") {
+		t.Error("agent fetch error state missing")
+	}
+}
+
+// TestUIAgentRoutes exercises both UI routes against the fake backend:
+// dashboard data assembly (agent + filtered conversations) and the
+// agent-scoped objects subpage (provenance-prefiltered browse), plus the
+// unknown-agent error path.
+func TestUIAgentRoutes(t *testing.T) {
+	f := &fakeMemory{
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-4o"}, Tools: []string{"web_search"}, Visibility: "project"},
+			"a2": {ID: "a2", Name: "milo", Tools: []string{"calendar"}},
+		},
+		convs: []Conversation{
+			{ID: "c1", Title: "Briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"},
+			{ID: "c2", Title: "Other agent's chat", AgentDefinitionID: "a2", UpdatedAt: "2026-08-26T10:00:00Z"},
+		},
+		pageObjects: []GraphObject{
+			{ID: "o1", CanonicalID: "o1", Type: "note", Key: "agent-note"},
+		},
+		nextPageCursor: "nc-2",
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id", s.uiAgent)
+	e.GET("/agents/:id/objects", s.uiAgentObjects)
+
+	// dashboard: agent summary + only its own conversations
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dashboard status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"diane", "gpt-4o", "web_search", "Briefing", `/agents/a1/objects`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dashboard route missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Other agent's chat") {
+		t.Error("dashboard should not list another agent's conversations")
+	}
+
+	// agent-scoped objects subpage: browser scoped to the agent's provenance
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/objects?provenance=updated", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("agent objects status %d", rec.Code)
+	}
+	body = rec.Body.String()
+	for _, want := range []string{"agent-note", "Created by", "Updated by", "Any"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("agent objects route missing %q", want)
+		}
+	}
+	// The route id IS the provenance actor id; the actor pair is fixed to agent.
+	if f.lastPageActorType != "agent" || f.lastPageActorID != "a1" {
+		t.Errorf("actor filter = %q/%q, want agent/a1", f.lastPageActorType, f.lastPageActorID)
+	}
+	if f.lastPageProvenance != "updated" {
+		t.Errorf("provenance = %q, want updated", f.lastPageProvenance)
+	}
+
+	// unknown agent id → whole-page error, not a broken render
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/nope", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("error page status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Agent unavailable") {
+		t.Error("unknown agent should render the error state")
+	}
+}
+
+// TestVisibilityIntent covers the badge mapping for the memory visibility
+// enum (external/project/internal) and the default label.
+func TestVisibilityIntent(t *testing.T) {
+	if visibilityIntent("external") == visibilityIntent("project") {
+		t.Error("external and project must map to different intents")
+	}
+	if visibilityIntent("project") == visibilityIntent("internal") {
+		t.Error("project and internal must map to different intents")
+	}
+	if visibilityIntent("external") == visibilityIntent("internal") {
+		t.Error("external and internal must map to different intents")
+	}
+	if visibilityIntent("mystery") == visibilityIntent("external") {
+		t.Error("unknown visibility should not map to external")
+	}
+	if visibilityLabel("") != "project" {
+		t.Errorf("empty visibility should display as project, got %q", visibilityLabel(""))
+	}
+	if visibilityLabel("internal") != "internal" {
+		t.Errorf("internal label should pass through, got %q", visibilityLabel("internal"))
+	}
+}
+
+var errTest = errTestType{}
+
+type errTestType struct{}
+
+func (errTestType) Error() string { return "backend unreachable" }
+
+// TestAgentFormDialogOmitsToolsAndSkills covers #1305: the create/edit dialog
+// must not offer tools or skills configuration (the max-w-lg modal is too
+// narrow for those pickers). Both stay configurable on the agent's settings
+// subpages, whose own tests cover them. The dialog keeps every remaining field
+// and the create flow's submit hook.
+func TestAgentFormDialogOmitsToolsAndSkills(t *testing.T) {
+	agents := []AgentDefinitionSummary{{ID: "a1", Name: "diane"}}
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+
+	for _, gone := range []string{
+		`id="agent-tools"`, `name="tools"`,
+		`id="agent-skills"`, `name="skill"`, "agent-skills-empty", "No skills yet",
+	} {
+		if strings.Contains(html, gone) {
+			t.Errorf("add-agent dialog must not render tools/skills control %q", gone)
+		}
+	}
+	for _, want := range []string{
+		`id="agent-form"`, `id="agent-name"`, `id="agent-prompt"`,
+		`id="agent-model"`, `id="agent-color"`, "agent-delegation",
+		`id="agent-form-submit"`, "Create agent",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("add-agent dialog missing %q", want)
+		}
+	}
+}
+
+// TestAgentModelDisplay asserts the model shown for an agent is the resolved
+// one: the explicit override when present, else memory's EffectiveModel, else
+// the project default — each default suffixed with a muted "(default)" — and
+// the legacy "auto — default model" fallback when nothing is known.
+func TestAgentModelDisplay(t *testing.T) {
+	dashboard := func(agent *AgentDefinition, defaultModel string) string {
+		return renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent, DefaultModel: defaultModel}))
+	}
+
+	// 1. no override, no effective model → project default + (default)
+	h := dashboard(&AgentDefinition{ID: "a1", Name: "diane"}, "deepseek/deepseek-v4-flash")
+	for _, want := range []string{"deepseek/deepseek-v4-flash", "(default)"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("default-model dashboard missing %q", want)
+		}
+	}
+
+	// 2. no override → memory's effective model + (default)
+	h = dashboard(&AgentDefinition{ID: "a1", Name: "diane", EffectiveModel: "google/gemini-3-pro"}, "")
+	for _, want := range []string{"google/gemini-3-pro", "(default)"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("effective-model dashboard missing %q", want)
+		}
+	}
+
+	// 3. explicit override wins, no (default) suffix
+	h = dashboard(&AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "openai/gpt-4o"}}, "")
+	if !strings.Contains(h, "openai/gpt-4o") {
+		t.Error("explicit-model dashboard missing model name")
+	}
+	if strings.Contains(h, "(default)") {
+		t.Error("explicit override must not render the (default) suffix")
+	}
+
+	// 4. nothing resolvable → legacy fallback text
+	h = dashboard(&AgentDefinition{ID: "a1", Name: "diane"}, "")
+	if !strings.Contains(h, "auto — default model") {
+		t.Error("unresolvable model should keep the auto — default model fallback")
+	}
+
+	// 5. agents list is responsive: a desktop table (md and up) restores the
+	// metadata columns and per-row edit/delete actions, while below md the
+	// mobile card grid keeps the bot icon + name + chat affordance with the
+	// whole card (data-href) opening the agent dashboard.
+	agents := []AgentDefinitionSummary{
+		{ID: "a1", Name: "diane", EffectiveModel: "openai/gpt-4o"},
+		{ID: "a2", Name: "milo"},
+		{ID: "a3", Name: "reggie"},
+	}
+	html := renderHTML(t, AgentsPage(agents, nil, "", nil))
+
+	// both breakpoint wrappers present: table desktop-only, cards mobile-only.
+	for _, want := range []string{`class="hidden md:block"`, `class="md:hidden"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("agents page missing responsive wrapper %q", want)
+		}
+	}
+
+	// mobile cards: name + data-href details target + chat <a> per agent.
+	for _, a := range agents {
+		if !strings.Contains(html, a.Name) {
+			t.Errorf("agents grid missing agent %q", a.Name)
+		}
+		if want := `data-href="/agents/` + a.ID + `"`; !strings.Contains(html, want) {
+			t.Errorf("agents grid missing details data-href %q", want)
+		}
+		if want := `href="/chat?agent=` + a.ID + `"`; !strings.Contains(html, want) {
+			t.Errorf("agents grid missing chat link %q", want)
+		}
+	}
+	if got := strings.Count(html, "lucide--messages-square"); got != len(agents) {
+		t.Errorf("chat icons = %d, want %d (one per card)", got, len(agents))
+	}
+
+	// desktop table headers restored.
+	for _, want := range []string{">Agent</th>", ">Model</th>", ">Tools</th>", ">Visibility</th>", ">Updated</th>"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("agents table missing header %q", want)
+		}
+	}
+
+	// desktop table rows: resolved model text plus per-row edit/delete actions.
+	if !strings.Contains(html, "openai/gpt-4o") {
+		t.Error("agents table should render the agent's effective model")
+	}
+	if strings.Contains(html, "(default)") {
+		t.Error("agents page must not render a (default) model suffix")
+	}
+	for _, a := range agents {
+		if want := `href="/agents/` + a.ID + `/settings"`; !strings.Contains(html, want) {
+			t.Errorf("agents table missing edit link %q", want)
+		}
+		if want := `aria-label="Delete ` + a.Name + `"`; !strings.Contains(html, want) {
+			t.Errorf("agents table missing delete action %q", want)
+		}
+	}
+	if got := strings.Count(html, "lucide--pencil"); got != len(agents) {
+		t.Errorf("edit icons = %d, want %d (one per row)", got, len(agents))
+	}
+	// the confirm dialog also carries a trash icon, so assert presence rather
+	// than an exact count for the row delete buttons.
+	if !strings.Contains(html, "lucide--trash-2") {
+		t.Error("agents table missing delete icon lucide--trash-2")
+	}
+}
+
+// TestAgentModelWarnings asserts the config warnings rendered when an agent's
+// model can't be served: legacy no-model rules (error when the project has no
+// configured provider, warning when providers exist but nothing pins the
+// model) plus the explicit-model rules (error when no provider is configured
+// or the model's provider prefix isn't among the configured ones, none when
+// the prefix matches). Both pages link to /settings/providers.
+func TestAgentModelWarnings(t *testing.T) {
+	noModel := &AgentDefinition{ID: "a1", Name: "diane"}
+	pinned := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "openai/gpt-4o"}}
+	foreign := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "anthropic/claude-sonnet-4"}}
+	bare := &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-4o"}}
+
+	const (
+		errDash      = "No provider or default model is configured"
+		warnDash     = "No project default model is set"
+		errSettings  = "This agent has no model. The project has no configured provider"
+		warnSettings = "This agent has no explicit model and the project has no default"
+		providersURL = `href="/settings/providers"`
+	)
+
+	// ModelConfigKnown mirrors production: the project model-config fetch
+	// succeeded, so DefaultModel is the authoritative PINNED default.
+	dash := func(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) string {
+		return renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
+	}
+
+	// 1. no provider, no default → error alert on the dashboard
+	h := dash(noModel, "", false, nil)
+	for _, want := range []string{errDash, "can&#39;t run chats", providersURL, "Configure a provider"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("dashboard error warning missing %q", want)
+		}
+	}
+	if strings.Contains(h, warnDash) {
+		t.Error("dashboard must not show the warning copy when no provider is configured")
+	}
+
+	// 2. providers configured but no default → warning alert
+	h = dash(noModel, "", true, []string{"openai"})
+	for _, want := range []string{warnDash, "isn&#39;t pinned", providersURL, "Set a default model"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("dashboard warning missing %q", want)
+		}
+	}
+	if strings.Contains(h, errDash) {
+		t.Error("dashboard must not show the error copy when providers exist")
+	}
+
+	// 2b. providers configured but no pinned default, while memory resolves a
+	//     provider-credential fallback into EffectiveModel → still the unpinned
+	//     warning (the fallback must not mask an unpinned default).
+	fallback := &AgentDefinition{ID: "a1", Name: "diane", EffectiveModel: "openai/deepseek-v4-flash"}
+	h = dash(fallback, "", true, []string{"openai"})
+	for _, want := range []string{warnDash, "isn&#39;t pinned", providersURL, "Set a default model"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("provider-fallback warning missing %q", want)
+		}
+	}
+	if strings.Contains(h, errDash) {
+		t.Error("provider fallback must not show the error copy")
+	}
+
+	// 3. providers + pinned default → no warning, model shown
+	h = dash(noModel, "openai/gpt-4o", true, []string{"openai"})
+	for _, bad := range []string{errDash, warnDash} {
+		if strings.Contains(h, bad) {
+			t.Error("resolvable default must suppress the model warning")
+		}
+	}
+	if !strings.Contains(h, "openai/gpt-4o") {
+		t.Error("default model name missing on the dashboard")
+	}
+
+	// 4. explicit model, no providers → error: no provider configured
+	h = dash(pinned, "", false, nil)
+	for _, want := range []string{
+		"No provider is configured, so this agent&#39;s model openai/gpt-4o can&#39;t run yet",
+		"Configure a provider or change the agent&#39;s model",
+		providersURL, "Configure a provider",
+	} {
+		if !strings.Contains(h, want) {
+			t.Errorf("dashboard zero-provider error warning missing %q", want)
+		}
+	}
+	for _, bad := range []string{errDash, warnDash} {
+		if strings.Contains(h, bad) {
+			t.Error("explicit-model error must use the new copy, not the legacy no-model copy")
+		}
+	}
+
+	// 5. explicit model whose provider IS configured → no warning
+	h = dash(pinned, "", true, []string{"openai"})
+	for _, bad := range []string{errDash, warnDash, "No provider is configured", "isn&#39;t configured"} {
+		if strings.Contains(h, bad) {
+			t.Error("explicit model with a matching configured provider must not warn")
+		}
+	}
+	if !strings.Contains(h, "openai/gpt-4o") {
+		t.Error("explicit model name missing on the dashboard")
+	}
+
+	// 6. explicit model whose provider is NOT configured → prefix-missing error
+	h = dash(foreign, "", true, []string{"openai"})
+	for _, want := range []string{
+		"This agent&#39;s model anthropic/claude-sonnet-4 needs the anthropic provider, which isn&#39;t configured",
+		"Add it or choose another model",
+		providersURL, "Configure a provider",
+	} {
+		if !strings.Contains(h, want) {
+			t.Errorf("dashboard prefix-missing error warning missing %q", want)
+		}
+	}
+
+	// 7. bare explicit model + providers configured → treated as satisfied
+	h = dash(bare, "", true, []string{"openai"})
+	for _, bad := range []string{errDash, warnDash, "No provider is configured", "isn&#39;t configured"} {
+		if strings.Contains(h, bad) {
+			t.Error("bare explicit model with providers configured must not warn")
+		}
+	}
+
+	// settings page: warning renders above the model picker
+	settings := func(agent *AgentDefinition, defaultModel string, hasProviders bool, providerNames []string) string {
+		return renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "model", Agent: agent, DefaultModel: defaultModel, ModelConfigKnown: true, HasProviders: hasProviders, ProviderNames: providerNames}))
+	}
+	hs := settings(noModel, "", false, nil)
+	for _, want := range []string{errSettings, "so chats will fail", providersURL, "Configure a provider"} {
+		if !strings.Contains(hs, want) {
+			t.Errorf("settings error warning missing %q", want)
+		}
+	}
+	hs = settings(noModel, "openai/gpt-4o", true, []string{"openai"})
+	for _, bad := range []string{errSettings, warnSettings} {
+		if strings.Contains(hs, bad) {
+			t.Error("settings must not warn when a default model resolves")
+		}
+	}
+
+	// settings: the Auto option names the resolved default when the agent has
+	// no explicit model, and stays generic when nothing resolves.
+	if !strings.Contains(hs, `<option value="">Auto — openai/gpt-4o (default)</option>`) {
+		t.Error("settings Auto option should name the resolved default model")
+	}
+	hs = settings(noModel, "", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic when no default resolves")
+	}
+	// an explicitly pinned agent keeps the generic label (its model is the
+	// selected catalog option, not the Auto fallback).
+	hs = settings(pinned, "openai/gpt-4o", true, []string{"openai"})
+	if !strings.Contains(hs, `<option value="">Auto — default model</option>`) {
+		t.Error("settings Auto option should stay generic for a pinned agent")
+	}
+
+	// settings, explicit model, no providers → pinned zero-provider error
+	hs = settings(pinned, "", false, nil)
+	for _, want := range []string{
+		"This agent is pinned to openai/gpt-4o, but the project has no configured provider",
+		"until one is added or the model is changed",
+		providersURL, "Configure a provider",
+	} {
+		if !strings.Contains(hs, want) {
+			t.Errorf("settings zero-provider error warning missing %q", want)
+		}
+	}
+	for _, bad := range []string{errSettings, warnSettings} {
+		if strings.Contains(hs, bad) {
+			t.Error("settings explicit-model error must not use the legacy no-model copy")
+		}
+	}
+
+	// settings, explicit model, provider prefix not configured → error
+	hs = settings(foreign, "", true, []string{"openai"})
+	for _, want := range []string{
+		"This agent&#39;s model anthropic/claude-sonnet-4 uses the anthropic provider, which isn&#39;t configured",
+		"until it is added or the model is changed",
+		providersURL, "Configure a provider",
+	} {
+		if !strings.Contains(hs, want) {
+			t.Errorf("settings prefix-missing error warning missing %q", want)
+		}
+	}
+
+	// settings, explicit model, matching provider configured → no warning
+	hs = settings(pinned, "", true, []string{"openai"})
+	for _, bad := range []string{errSettings, warnSettings, "No provider is configured", "isn&#39;t configured"} {
+		if strings.Contains(hs, bad) {
+			t.Error("settings must not warn when the explicit model's provider is configured")
+		}
+	}
+}
+
+// TestUIAgentsRouteRendersWithoutSkills asserts uiAgents renders the list
+// without any local skill picker: tools/skills are configured on the agent
+// settings subpages, not the add-agent dialog (#1305).
+func TestUIAgentsRouteRendersWithoutSkills(t *testing.T) {
+	f := &fakeMemory{
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		defs: map[string]*AgentDefinition{
+			"a1": {ID: "a1", Name: "diane", EffectiveModel: "deepseek/deepseek-v4-flash"},
+		},
+		skills: []Skill{
+			{Name: "summarize-email", Description: "Condenses threads"},
+			{Name: "recall-memory"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents", s.uiAgents)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`data-href="/agents/a1"`, `href="/chat?agent=a1"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("agents route missing %q", want)
+		}
+	}
+	if strings.Contains(body, `name="skill"`) {
+		t.Error("agents route must not render the dialog skill picker")
+	}
+}
+
+// TestRenderAgentSettingsPage covers the split in-page edit subpages: each
+// section renders its own panel with the current values, the settings nav
+// renders as a group with all eight children (active child highlighted), and the
+// per-section regression guards hold (bare boolean attrs, unlisted tools,
+// delegation-managed tool exclusion, synthetic current model).
+func TestRenderAgentSettingsPage(t *testing.T) {
+	agent := &AgentDefinition{
+		ID:           "a1",
+		Name:         "diane",
+		SystemPrompt: "be terse",
+		Model:        &ModelConfig{Name: "openai/gpt-4o", Temperature: 0.7, MaxTokens: 4096},
+		Tools:        []string{"web_search", "memory_lookup"},
+		Skills:       []string{"recall-memory"},
+		Delegation:   &Delegation{Enabled: true, Targets: []string{"milo"}},
+	}
+	data := agentSettingsData{
+		Agent:  agent,
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		Models: []Model{{Provider: "openai", ModelName: "gpt-4o", DisplayName: "GPT-4o"}},
+		MCPServers: []MCPServer{
+			{Name: "builtin", ToolCount: 3, Tools: []MCPTool{
+				{ToolName: "web_search", Description: "search the web"},
+				{ToolName: "memory_lookup", Description: "look up memory"},
+				{ToolName: "code_exec"},
+			}},
+		},
+		Skills: []Skill{{Name: "recall-memory", Description: "recall stuff"}, {Name: "summarize-email"}},
+	}
+	render := func(section string) string {
+		d := data
+		d.Section = section
+		return renderHTML(t, AgentSettingsPage(d))
+	}
+
+	// Every settings subpage renders the seven-item settings nav group (General /
+	// Graph / Model / Tools / Skills / Delegation / MCP sharing) plus the sibling
+	// rail items (Dashboard / Settings / Sandbox / Sessions).
+	settingsNavHrefs := []string{
+		`href="/agents/a1"`, `href="/agents/a1/settings"`,
+		`href="/agents/a1/settings/graph"`,
+		`href="/agents/a1/settings/work"`,
+		`href="/agents/a1/settings/model"`, `href="/agents/a1/settings/tools"`,
+		`href="/agents/a1/settings/skills"`, `href="/agents/a1/settings/delegation"`,
+		`href="/agents/a1/settings/mcp"`,
+		`href="/agents/a1/sandbox"`, `href="/agents/a1/sessions"`,
+	}
+	for _, section := range []string{"", "general", "graph", "work", "model", "tools", "skills", "delegation", "mcp"} {
+		h := render(section)
+		for _, want := range settingsNavHrefs {
+			if !strings.Contains(h, want) {
+				t.Errorf("settings section %q nav missing %q", section, want)
+			}
+		}
+	}
+
+	// General page: name, system prompt, language, its POST target, and the
+	// debounced auto-save wiring (form marker + endpoint + status node).
+	general := render("general")
+	for _, want := range []string{
+		`name="name"`, `value="diane"`,
+		`name="systemPrompt"`, "be terse",
+		`name="language"`,
+		`/agents/a1/settings/general`,
+		`data-agent-autosave="general"`,
+		`data-autosave-url="/agents/a1/settings/general/autosave"`,
+		`data-testid="agent-settings-autosave-status"`,
+		`data-autosave-status`,
+	} {
+		if !strings.Contains(general, want) {
+			t.Errorf("general settings page missing %q", want)
+		}
+	}
+	// The auto-saving General form drops the shared explicit save button.
+	if strings.Contains(general, "Save changes") {
+		t.Error("general settings page must not render the explicit Save changes button")
+	}
+	// The graph type-scope pickers moved off General to the Graph subpage.
+	if strings.Contains(general, `name="objectType"`) || strings.Contains(general, `name="relationshipType"`) {
+		t.Error("general settings page must not render the graph type-scope pickers (moved to the Graph page)")
+	}
+
+	// Graph page: the moved type-scope pickers (hidden companions guarantee the
+	// fields submit even when every box is cleared) and their POST target.
+	graph := render("graph")
+	for _, want := range []string{
+		`name="objectType"`, `name="relationshipType"`,
+		`/agents/a1/settings/graph`,
+	} {
+		if !strings.Contains(graph, want) {
+			t.Errorf("graph settings page missing %q", want)
+		}
+	}
+
+	// Model page: model picker + temperature + max tokens.
+	model := render("model")
+	for _, want := range []string{
+		`name="modelName"`, `value="openai/gpt-4o"`,
+		`name="temperature"`, `value="0.7"`,
+		`name="maxTokens"`, `value="4096"`,
+		`/agents/a1/settings/model`,
+	} {
+		if !strings.Contains(model, want) {
+			t.Errorf("model settings page missing %q", want)
+		}
+	}
+
+	// Tools page: grouped tool checkboxes reflect stored state.
+	tools := render("tools")
+	for _, want := range []string{
+		`name="tool"`, `value="web_search"`, `value="memory_lookup"`, `value="code_exec"`,
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		`value="web_search" class="toggle toggle-sm shrink-0" checked`,
+		`/agents/a1/settings/tools`,
+	} {
+		if !strings.Contains(tools, want) {
+			t.Errorf("tools settings page missing %q", want)
+		}
+	}
+	if strings.Contains(tools, `value="code_exec" checked`) {
+		t.Error("unselected tool must not render checked")
+	}
+
+	// Skills page: skill checkboxes reflect stored state.
+	skills := render("skills")
+	for _, want := range []string{
+		`name="skill"`, `value="recall-memory"`, `value="summarize-email"`,
+		`value="recall-memory" checked`,
+		`/agents/a1/settings/skills`,
+	} {
+		if !strings.Contains(skills, want) {
+			t.Errorf("skills settings page missing %q", want)
+		}
+	}
+	if strings.Contains(skills, `value="summarize-email" checked`) {
+		t.Error("unselected skill must not render checked")
+	}
+
+	// Delegation page: enable toggle + target picker; self is excluded. The
+	// versioned control id is the contract the agent-delegation e2e scenario
+	// waits on (#1506: the scenario was pointed at the General page after the
+	// settings-subpage split moved delegation here) — pin it so a rename cannot
+	// silently break the scenario again.
+	delegation := render("delegation")
+	for _, want := range []string{
+		`id="agent-settings-delegation-enabled"`,
+		`name="delegationEnabled"`,
+		`name="delegation-target"`, `value="milo"`,
+		`/agents/a1/settings/delegation`,
+	} {
+		if !strings.Contains(delegation, want) {
+			t.Errorf("delegation settings page missing %q", want)
+		}
+	}
+	if strings.Contains(delegation, `name="delegation-target" type="checkbox" value="diane"`) {
+		t.Error("self must not appear in delegation targets")
+	}
+
+	// MCP page: the non-form MCP section block.
+	if mcp := render("mcp"); !strings.Contains(mcp, `data-testid="agent-mcp-section"`) {
+		t.Error("mcp settings page missing the MCP section")
+	}
+
+	// regression: boolean attrs must render bare `selected`/`checked`, never
+	// `selected="false"`/`checked="false"` (HTML treats the latter as true).
+	// The leading space avoids matching the pickers' aria-selected="false".
+	for _, section := range []string{"model", "tools", "skills"} {
+		h := render(section)
+		if strings.Contains(h, ` selected="false"`) {
+			t.Errorf("section %q must not render selected=\"false\" (boolean-attribute bug)", section)
+		}
+		if strings.Contains(h, ` checked="false"`) {
+			t.Errorf("section %q must not render checked=\"false\" (boolean-attribute bug)", section)
+		}
+	}
+	if !strings.Contains(model, `value="openai/gpt-4o" selected>`) {
+		t.Error("stored model option should be selected")
+	}
+
+	// empty model → no selected attribute at all (Auto — default model stays first)
+	emptyModel := agentSettingsData{
+		Section: "model",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane"},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Models:  []Model{{Provider: "openai", ModelName: "gpt-4o"}},
+	}
+	if h := renderHTML(t, AgentSettingsPage(emptyModel)); strings.Contains(h, " selected") {
+		t.Error("empty model must not render any selected option")
+	}
+
+	// tools from no registered server → "Other" group, preserved checked
+	unlisted := agentSettingsData{
+		Section:    "tools",
+		Agent:      &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search", "ha_get_state"}},
+		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", ToolCount: 1, Tools: []MCPTool{{ToolName: "web_search"}}}},
+	}
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if h := renderHTML(t, AgentSettingsPage(unlisted)); !strings.Contains(h, "Other") || !strings.Contains(h, `value="ha_get_state" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("unlisted tool should appear checked in the Other group")
+	}
+
+	// delegation-managed tools are never listed (managed by the delegation toggle)
+	delOnly := agentSettingsData{
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"spawn_agents", "list_available_agents"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+	}
+	if h := renderHTML(t, AgentSettingsPage(delOnly)); strings.Contains(h, "spawn_agents") {
+		t.Error("delegation-managed tools must not render in the picker")
+	}
+
+	// model absent from catalog → synthetic "(current)" option
+	unknown := agentSettingsData{
+		Section: "model",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Model: &ModelConfig{Name: "gpt-5"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		Models:  []Model{{Provider: "openai", ModelName: "gpt-4o"}},
+	}
+	if h := renderHTML(t, AgentSettingsPage(unknown)); !strings.Contains(h, "gpt-5 (current)") {
+		t.Error("synthetic current-model option missing")
+	}
+
+	// flash + error + load-error states
+	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "general", Agent: agent, FlashMsg: "Agent updated."})); !strings.Contains(h, "Agent updated.") {
+		t.Error("flash success missing")
+	}
+	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: "general", Agent: agent, FlashErr: errTest})); !strings.Contains(h, "backend unreachable") {
+		t.Error("flash error should render the real error, missing")
+	}
+	if h := renderHTML(t, AgentSettingsPage(agentSettingsData{LoadErr: errTest})); !strings.Contains(h, "Agent unavailable") {
+		t.Error("load-error state missing")
+	}
+}
+
+// agentRailHTML returns the agent details sub-navigation markup — the
+// aria-label="Agent sections" nav block — or "" when a page renders no rail
+// (e.g. the whole-page error state).
+func agentRailHTML(html string) string {
+	const marker = `aria-label="Agent sections"`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		return ""
+	}
+	rail := html[i:]
+	if j := strings.Index(rail, "</nav>"); j >= 0 {
+		return rail[:j]
+	}
+	return rail
+}
+
+var navAnchorRe = regexp.MustCompile(`<a\b[^>]*>`)
+
+// activeNavHrefs returns the sorted hrefs of the rail anchors marked
+// aria-current="page".
+func activeNavHrefs(rail string) []string {
+	var hrefs []string
+	for _, tag := range navAnchorRe.FindAllString(rail, -1) {
+		if !strings.Contains(tag, `aria-current="page"`) {
+			continue
+		}
+		if i := strings.Index(tag, `href="`); i >= 0 {
+			rest := tag[i+len(`href="`):]
+			if j := strings.Index(rest, `"`); j >= 0 {
+				hrefs = append(hrefs, rest[:j])
+			}
+		}
+	}
+	slices.Sort(hrefs)
+	return hrefs
+}
+
+// TestRenderAgentSubNavSettingsAlwaysVisible guards the agent details rail: the
+// second level (Settings parent + its seven children) stays visible on every agent
+// section, not only on settings subpages. Off the settings surface the only
+// active item is that surface's own entry; on a settings section exactly the
+// matching child is active (the parent Settings link shares the General child's
+// destination, so it is never marked current).
+func TestRenderAgentSubNavSettingsAlwaysVisible(t *testing.T) {
+	agent := &AgentDefinition{ID: "a1", Name: "diane"}
+
+	const settingsParent = "/agents/a1/settings"
+	children := []struct {
+		section string
+		href    string
+	}{
+		{"general", settingsParent},
+		{"graph", settingsParent + "/graph"},
+		{"work", settingsParent + "/work"},
+		{"model", settingsParent + "/model"},
+		{"tools", settingsParent + "/tools"},
+		{"skills", settingsParent + "/skills"},
+		{"delegation", settingsParent + "/delegation"},
+		{"mcp", settingsParent + "/mcp"},
+	}
+	// Every agent section must expose the Settings parent plus all eight children.
+	allSettingsHrefs := []string{settingsParent}
+	for _, c := range children {
+		allSettingsHrefs = append(allSettingsHrefs, c.href)
+	}
+
+	// Off the settings surface: dashboard / sandbox / sessions each render the
+	// full second level, with no settings entry marked active.
+	offSurface := []struct {
+		name       string
+		html       string
+		activeHref string
+	}{
+		{"dashboard", renderHTML(t, AgentDashboardPage(agentDashboardData{Agent: agent})), "/agents/a1"},
+		{"sandbox", renderHTML(t, AgentSandboxPage(agentSandboxData{Agent: agent})), "/agents/a1/sandbox"},
+		{"sessions", renderHTML(t, AgentSessionsPage(agentSessionsData{Agent: agent})), "/agents/a1/sessions"},
+	}
+	for _, tc := range offSurface {
+		t.Run(tc.name, func(t *testing.T) {
+			rail := agentRailHTML(tc.html)
+			if rail == "" {
+				t.Fatal("agent rail not rendered")
+			}
+			for _, href := range allSettingsHrefs {
+				if !strings.Contains(rail, `href="`+href+`"`) {
+					t.Errorf("%s rail missing settings link %q", tc.name, href)
+				}
+			}
+			got := activeNavHrefs(rail)
+			if !slices.Equal(got, []string{tc.activeHref}) {
+				t.Errorf("%s active rail items = %v, want only %q", tc.name, got, tc.activeHref)
+			}
+			for _, c := range children {
+				if slices.Contains(got, c.href) {
+					t.Errorf("%s settings child %q must not be active off the settings surface", tc.name, c.href)
+				}
+			}
+		})
+	}
+
+	// On a settings section: exactly the matching child is active; no other
+	// section entry is. The Settings parent is never active — on General it would
+	// duplicate the child's href.
+	for _, c := range children {
+		t.Run("settings_"+c.section, func(t *testing.T) {
+			html := renderHTML(t, AgentSettingsPage(agentSettingsData{Section: c.section, Agent: agent}))
+			rail := agentRailHTML(html)
+			if rail == "" {
+				t.Fatal("agent rail not rendered")
+			}
+			want := []string{c.href}
+			if got := activeNavHrefs(rail); !slices.Equal(got, want) {
+				t.Errorf("section %q active rail items = %v, want %v", c.section, got, want)
+			}
+		})
+	}
+}
+
+func TestRenderAgentSessionsPage(t *testing.T) {
+	agent := &AgentDefinition{ID: "a1", Name: "diane"}
+	data := agentSessionsData{
+		Agent: agent,
+		Chats: []Conversation{{ID: "c1", Title: "Briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"}},
+	}
+	html := renderHTML(t, AgentSessionsPage(data))
+	for _, want := range []string{
+		"Sessions", "Briefing", `href="/chat?c=c1"`,
+		`href="/agents/a1/sessions"`, `href="/agents/a1/settings"`, `href="/agents/a1"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("sessions page missing %q", want)
+		}
+	}
+	if h := renderHTML(t, AgentSessionsPage(agentSessionsData{Agent: agent})); !strings.Contains(h, "No sessions yet") {
+		t.Error("empty state missing")
+	}
+	if h := renderHTML(t, AgentSessionsPage(agentSessionsData{Agent: agent, ChatsErr: errTest})); !strings.Contains(h, "Failed to load conversations") {
+		t.Error("chats error state missing")
+	}
+	if h := renderHTML(t, AgentSessionsPage(agentSessionsData{LoadErr: errTest})); !strings.Contains(h, "Agent unavailable") {
+		t.Error("load-error state missing")
+	}
+}
+
+// TestUIAgentSettingsRoute exercises the settings GET routes against the fake
+// backend: the General landing route (name/prompt/language) and each subpage
+// route (model/tools/skills/delegation), including deriveDelegation
+// reconstructing delegation from Tools + Config.spawnPolicy (the memory
+// representation) and an unknown section returning 404.
+func TestUIAgentSettingsRoute(t *testing.T) {
+	f := &fakeMemory{
+		defs: map[string]*AgentDefinition{
+			"a1": {
+				ID: "a1", Name: "diane", SystemPrompt: "hi",
+				Model:  &ModelConfig{Name: "gpt-4o", Temperature: 0.7},
+				Tools:  []string{"web_search", "spawn_agents", "list_available_agents"},
+				Config: map[string]any{"spawnPolicy": map[string]any{"allow": []any{"milo"}}},
+				Skills: []string{"recall-memory"},
+			},
+		},
+		agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		skills: []Skill{{Name: "recall-memory"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id/settings", s.uiAgentSettings)
+	e.GET("/agents/:id/settings/:section", s.uiAgentSettingsSection)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		return rec
+	}
+
+	// General landing page: name, system prompt, language — no model/tools/etc.
+	rec := get("/agents/a1/settings")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`value="diane"`, "hi", `name="language"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("general settings route missing %q", want)
+		}
+	}
+	if strings.Contains(body, `name="modelName"`) {
+		t.Error("general settings page must not render the model picker")
+	}
+
+	// Model subpage carries the stored model.
+	body = get("/agents/a1/settings/model").Body.String()
+	for _, want := range []string{`value="gpt-4o"`, `value="0.7"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("model settings route missing %q", want)
+		}
+	}
+
+	// Delegation subpage reconstructs the persisted delegation targets.
+	body = get("/agents/a1/settings/delegation").Body.String()
+	if !strings.Contains(body, `name="delegation-target" type="checkbox" value="milo"`) {
+		t.Error("delegation route missing derived target milo")
+	}
+
+	// Skills subpage renders the stored skill.
+	body = get("/agents/a1/settings/skills").Body.String()
+	if !strings.Contains(body, "recall-memory") {
+		t.Error("skills route missing stored skill")
+	}
+
+	// Unknown section → 404.
+	if rec := get("/agents/a1/settings/nope"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown section status = %d, want 404", rec.Code)
+	}
+}
+
+// TestLoadAgentSettingsScopesCatalogFetches proves the settings loader fetches
+// only the catalogs the requested subpage renders (see loadAgentSettings):
+// "graph" is the only subpage that loads the project's compiled graph types,
+// "tools" loads the MCP server catalog + relay nodes, "model" loads the model
+// config/providers/catalog, "skills" loads skills, "delegation" loads the other
+// agents, and "general"/"mcp" load none of those. GetAgentDefinition
+// (+ deriveDelegation) always run for every section.
+func TestLoadAgentSettingsScopesCatalogFetches(t *testing.T) {
+	agent := &AgentDefinition{ID: "a1", Name: "diane"}
+	newFake := func() *fakeMemory {
+		return &fakeMemory{
+			defs:             map[string]*AgentDefinition{"a1": agent},
+			agents:           []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+			servers:          []MCPServer{{Name: "builtin", Tools: []MCPTool{{ToolName: "web_search"}}}},
+			skills:           []Skill{{Name: "recall-memory"}},
+			relaySessions:    []RelaySession{{InstanceID: "mac-ada", ToolCount: 1}},
+			relayTools:       map[string][]RelayTool{"mac-ada": {{Name: "notes_search"}}},
+			modelConfig:      &ProjectModelConfig{GenerativeModel: "openai/gpt-4o"},
+			projectProviders: []ProjectProviderConfig{{Provider: "openai"}},
+		}
+	}
+
+	// Every catalog method the loader can call (see loadAgentSettings).
+	allCatalogs := []string{
+		"GetProjectModelConfig", "ListProjectProviders", "ListModels", "ListProviderModels",
+		"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools",
+		"ListSkills", "ListAgentDefinitions", "GetCompiledTypes",
+	}
+
+	cases := []struct {
+		section string
+		loads   []string // methods that MUST be fetched
+	}{
+		{section: "general"},
+		{section: "graph", loads: []string{"GetCompiledTypes"}},
+		{section: "model", loads: []string{"GetProjectModelConfig", "ListProjectProviders", "ListProviderModels"}},
+		{section: "tools", loads: []string{"ListMCPServers", "ListRelaySessions", "GetRelaySessionTools"}},
+		{section: "skills", loads: []string{"ListSkills"}},
+		{section: "delegation", loads: []string{"ListAgentDefinitions"}},
+		{section: "mcp"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.section, func(t *testing.T) {
+			f := newFake()
+			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+			data := agentSettingsData{Section: tc.section}
+			if err := s.loadAgentSettings(t.Context(), "a1", &data); err != nil {
+				t.Fatalf("loadAgentSettings(%q): %v", tc.section, err)
+			}
+			loaded := map[string]bool{}
+			for _, m := range tc.loads {
+				loaded[m] = true
+				if got := f.catalogCallCount(m); got != 1 {
+					t.Errorf("%s section: expected %s to be fetched exactly once, got %d calls", tc.section, m, got)
+				}
+			}
+			for _, m := range allCatalogs {
+				if got := f.catalogCallCount(m); got != 0 && !loaded[m] {
+					t.Errorf("%s section: %s fetched %d times, want 0", tc.section, m, got)
+				}
+			}
+		})
+	}
+}
+
+// TestLoadAgentSettingsModelCatalogIsConfiguredOnly proves the settings Model
+// section offers only configured providers' models: the global ListModels
+// catalog (which the fake returns as deepseek) must be ignored in favour of the
+// configured providers' own catalog.
+func TestLoadAgentSettingsModelCatalogIsConfiguredOnly(t *testing.T) {
+	f := &fakeMemory{
+		defs:             map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		projectProviders: []ProjectProviderConfig{{Provider: "openai"}},
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative", DisplayName: "GPT-4o"}},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	data := agentSettingsData{Section: "model"}
+	if err := s.loadAgentSettings(t.Context(), "a1", &data); err != nil {
+		t.Fatalf("loadAgentSettings: %v", err)
+	}
+	if len(data.Models) != 1 || data.Models[0].Provider != "openai" || data.Models[0].ModelName != "gpt-4o" {
+		t.Errorf("model catalog = %+v, want only openai/gpt-4o", data.Models)
+	}
+}
+
+// TestConfiguredGenerativeModelsFiltersToConfiguredProviders covers the shared
+// helper: it keeps configured providers' generative models, drops embedding
+// models, and never leaks unconfigured providers.
+func TestConfiguredGenerativeModelsFiltersToConfiguredProviders(t *testing.T) {
+	f := &fakeMemory{
+		modelsByProvider: map[string][]ProviderSupportedModel{
+			"openai": {
+				{Provider: "openai", ModelName: "gpt-4o", ModelType: "generative", DisplayName: "GPT-4o"},
+				{Provider: "openai", ModelName: "text-embedding-3", ModelType: "embedding", DisplayName: "Embedding"},
+			},
+			"deepseek": {
+				{Provider: "deepseek", ModelName: "deepseek-chat", ModelType: "generative"},
+			},
+		},
+	}
+	s := &Server{memory: f}
+	models := s.configuredGenerativeModels(t.Context(), []ProjectProviderConfig{{Provider: "openai"}})
+	got := map[string]bool{}
+	for _, m := range models {
+		got[m.Provider+"/"+m.ModelName] = true
+	}
+	if !got["openai/gpt-4o"] {
+		t.Errorf("configured provider generative model missing: %+v", models)
+	}
+	if got["openai/text-embedding-3"] {
+		t.Error("embedding model must be excluded from the generative catalog")
+	}
+	if got["deepseek/deepseek-chat"] {
+		t.Error("unconfigured provider model must be excluded")
+	}
+}
+
+// TestUIAgentSessionsRoute exercises the sessions GET route: only the agent's
+// own conversations are listed.
+func TestUIAgentSessionsRoute(t *testing.T) {
+	f := &fakeMemory{
+		defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		convs: []Conversation{
+			{ID: "c1", Title: "Briefing", AgentDefinitionID: "a1", UpdatedAt: "2026-08-26T09:00:00Z"},
+			{ID: "c2", Title: "Other", AgentDefinitionID: "a2", UpdatedAt: "2026-08-26T10:00:00Z"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id/sessions", s.uiAgentSessions)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sessions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessions status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Briefing") {
+		t.Error("sessions route missing own conversation")
+	}
+	if strings.Contains(body, "Other") {
+		t.Error("sessions route should not list another agent's conversations")
+	}
+}
+
+// TestUIAgentUpdateRoute exercises the split per-section POST handlers (PRG):
+// each handler maps only its own fields onto the definition, delegation is
+// applied via applyDelegation, and success redirects to the section's ?updated=1
+// while validation failures redirect to ?err=<msg>. The back-compat
+// POST /agents/:id/update still works as the General alias.
+func TestUIAgentUpdateRoute(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/update", s.uiAgentUpdateGeneral)
+		e.POST("/agents/:id/settings/general", s.uiAgentUpdateGeneral)
+		e.POST("/agents/:id/settings/model", s.uiAgentUpdateModel)
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		e.POST("/agents/:id/settings/skills", s.uiAgentUpdateSkills)
+		e.POST("/agents/:id/settings/delegation", s.uiAgentUpdateDelegation)
+		return e
+	}
+	post := func(e *echo.Echo, path, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("general maps name/prompt/language", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=diane&systemPrompt=be+terse&language=Spanish")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status %d, want 303", rec.Code)
+		}
+		if loc := rec.Header().Get("Location"); loc != "/agents/a1/settings?updated=1" {
+			t.Errorf("redirect = %q, want general?updated=1", loc)
+		}
+		u := f.updatedAgent
+		if u == nil {
+			t.Fatal("UpdateAgentDefinition not called")
+		}
+		if u.Name != "diane" || u.SystemPrompt != "be terse" || u.Config["language"] != "Spanish" {
+			t.Errorf("general mapping wrong: %+v", u)
+		}
+	})
+
+	t.Run("general clears empty language and preserves delegation", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {
+				ID: "a1", Name: "diane",
+				Tools:  []string{"spawn_agents", "list_available_agents"},
+				Config: map[string]any{"spawnPolicy": map[string]any{"allow": []any{"milo"}}, "language": "Spanish"},
+			}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=diane&systemPrompt=be+terse&language=+++")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("status %d, want 303", rec.Code)
+		}
+		u := f.updatedAgent
+		if _, ok := u.Config["language"]; ok {
+			t.Errorf("Config[language] should be deleted on empty value: %+v", u.Config)
+		}
+		if _, ok := u.Config["spawnPolicy"]; !ok {
+			t.Errorf("spawnPolicy should survive language clear: %+v", u.Config)
+		}
+		if !containsString(u.Tools, "spawn_agents") {
+			t.Errorf("delegation tools should survive a general save: %v", u.Tools)
+		}
+	})
+
+	t.Run("update alias targets general", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/update", "name=renamed&systemPrompt=x")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?updated=1" {
+			t.Fatalf("alias redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		if f.updatedAgent == nil || f.updatedAgent.Name != "renamed" {
+			t.Errorf("alias should map the name, got %+v", f.updatedAgent)
+		}
+	})
+
+	t.Run("empty name errors", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/general", "name=&systemPrompt=x")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings?err=name+is+required" {
+			t.Errorf("empty name redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+	})
+
+	t.Run("model maps explicit and auto", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/model", "modelName=gpt-4o&temperature=0.7&maxTokens=4096")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/model?updated=1" {
+			t.Fatalf("model redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if u.Model == nil || u.Model.Name != "gpt-4o" || u.Model.Temperature != 0.7 || u.Model.MaxTokens != 4096 {
+			t.Errorf("model mapping wrong: %+v", u.Model)
+		}
+		// empty model name clears the override
+		_ = post(e, "/agents/a1/settings/model", "modelName=")
+		if f.updatedAgent.Model != nil {
+			t.Errorf("empty model name should clear the override, got %+v", f.updatedAgent.Model)
+		}
+	})
+
+	t.Run("tools preserves name/model/skills", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {
+				ID: "a1", Name: "diane", SystemPrompt: "be terse",
+				Model:  &ModelConfig{Name: "gpt-4o"},
+				Tools:  []string{"web_search"},
+				Skills: []string{"recall-memory"},
+			}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/tools", "defaultToolPolicy=ask&tool=web_search&tool=memory_lookup&toolPolicy.web_search=deny")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/tools?updated=1" {
+			t.Fatalf("tools redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		// the section only touches tools/policies — name/model/skills survive
+		if u.Name != "diane" || u.SystemPrompt != "be terse" {
+			t.Errorf("tools save must not clear name/prompt: %+v", u)
+		}
+		if u.Model == nil || u.Model.Name != "gpt-4o" {
+			t.Errorf("tools save must not clear the model: %+v", u.Model)
+		}
+		if len(u.Skills) != 1 || u.Skills[0] != "recall-memory" {
+			t.Errorf("tools save must not clear skills: %v", u.Skills)
+		}
+		if !containsString(u.Tools, "web_search") || !containsString(u.Tools, "memory_lookup") {
+			t.Errorf("tools mapping wrong: %v", u.Tools)
+		}
+		if u.DefaultToolPolicy != "ask" {
+			t.Errorf("defaultToolPolicy = %q, want ask", u.DefaultToolPolicy)
+		}
+		if p := u.ToolPolicies["web_search"]; !p.Disabled {
+			t.Errorf("web_search policy should be deny (Disabled), got %+v", p)
+		}
+	})
+
+	t.Run("skills preserves tools", func(t *testing.T) {
+		f := &fakeMemory{
+			defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", Tools: []string{"web_search"}}},
+		}
+		e := newServer(f)
+		rec := post(e, "/agents/a1/settings/skills", "skill=recall-memory")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/skills?updated=1" {
+			t.Fatalf("skills redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if len(u.Skills) != 1 || u.Skills[0] != "recall-memory" {
+			t.Errorf("skills mapping wrong: %v", u.Skills)
+		}
+		if !containsString(u.Tools, "web_search") {
+			t.Errorf("skills save must not clear tools: %v", u.Tools)
+		}
+		// empty skills list clears skills
+		_ = post(e, "/agents/a1/settings/skills", "")
+		if len(f.updatedAgent.Skills) != 0 {
+			t.Errorf("empty skills should clear, got %v", f.updatedAgent.Skills)
+		}
+	})
+
+	t.Run("delegation validates and applies", func(t *testing.T) {
+		f := &fakeMemory{
+			defs:   map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+			agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}, {ID: "a2", Name: "milo"}},
+		}
+		e := newServer(f)
+		// enabled without targets → error redirect
+		rec := post(e, "/agents/a1/settings/delegation", "delegationEnabled=on")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/delegation?err=delegation+requires+at+least+one+target" {
+			t.Errorf("delegation without targets redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		// enabled with a target → success + spawnPolicy + delegation tools
+		rec = post(e, "/agents/a1/settings/delegation", "delegationEnabled=on&delegation-target=milo")
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/settings/delegation?updated=1" {
+			t.Fatalf("delegation redirect = %d %q", rec.Code, rec.Header().Get("Location"))
+		}
+		u := f.updatedAgent
+		if u.Delegation != nil {
+			t.Errorf("Delegation should be cleared after applyDelegation: %+v", u.Delegation)
+		}
+		if !containsString(u.Tools, "spawn_agents") || !containsString(u.Tools, "list_available_agents") {
+			t.Errorf("delegation tools missing: %v", u.Tools)
+		}
+		sp, ok := u.Config["spawnPolicy"].(map[string]any)
+		if !ok {
+			t.Fatalf("spawnPolicy missing: %+v", u.Config)
+		}
+		if allow, _ := sp["allow"].([]string); len(allow) != 1 || allow[0] != "milo" {
+			t.Errorf("spawnPolicy.allow = %v, want [milo]", allow)
+		}
+	})
+}
+
+// TestUIAgentAutosaveGeneral covers the JSON auto-save endpoint the General
+// form posts to (agent-settings.js): success returns 200 {"ok":true} and
+// persists the section in place, a validation failure returns 422 with the
+// message and persists nothing, and an unavailable agent returns 502 — all
+// without a PRG redirect.
+func TestUIAgentAutosaveGeneral(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/general/autosave", s.uiAgentAutosaveGeneral)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/general/autosave", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("success returns ok and persists", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "name=renamed&systemPrompt=be+terse")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), `"ok":true`) {
+			t.Errorf("body = %s, want ok true", rec.Body.String())
+		}
+		if rec.Header().Get("Location") != "" {
+			t.Error("auto-save must not redirect")
+		}
+		if f.updatedAgent == nil || f.updatedAgent.Name != "renamed" || f.updatedAgent.SystemPrompt != "be terse" {
+			t.Errorf("auto-save mapping wrong: %+v", f.updatedAgent)
+		}
+	})
+
+	// A partial auto-save body that omits the Appearance pickers must not wipe
+	// the stored uiConfig — the General form has no Save button, so a colour
+	// picked with a preset (which never dispatches input/change) has to survive
+	// any save that does not carry the appearance fields.
+	t.Run("partial body preserves the stored appearance", func(t *testing.T) {
+		stored := json.RawMessage(`{"icon":"database","color":"#16A34A"}`)
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", UIConfig: stored}}}
+		e := newServer(f)
+		rec := post(e, "name=renamed")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("nothing persisted")
+		}
+		var got map[string]string
+		if err := json.Unmarshal(f.updatedAgent.UIConfig, &got); err != nil {
+			t.Fatalf("unmarshal uiConfig %s: %v", f.updatedAgent.UIConfig, err)
+		}
+		if got["icon"] != "database" || got["color"] != "#16A34A" {
+			t.Errorf("appearance not preserved: %s", f.updatedAgent.UIConfig)
+		}
+	})
+
+	// An explicit empty value (both picker keys present) still clears the
+	// appearance, so the Clear affordance keeps working.
+	t.Run("explicit empty appearance clears it", func(t *testing.T) {
+		stored := json.RawMessage(`{"icon":"database","color":"#16A34A"}`)
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane", UIConfig: stored}}}
+		e := newServer(f)
+		rec := post(e, "name=diane&icon=&color=")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if f.updatedAgent == nil {
+			t.Fatal("nothing persisted")
+		}
+		var got map[string]string
+		if err := json.Unmarshal(f.updatedAgent.UIConfig, &got); err != nil {
+			t.Fatalf("unmarshal uiConfig %s: %v", f.updatedAgent.UIConfig, err)
+		}
+		if len(got) != 0 {
+			t.Errorf("appearance not cleared: %s", f.updatedAgent.UIConfig)
+		}
+	})
+
+	t.Run("validation error returns 422 and persists nothing", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}}}
+		e := newServer(f)
+		rec := post(e, "name=&systemPrompt=x")
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status %d, want 422", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "name is required") {
+			t.Errorf("body = %s, want the validation error", rec.Body.String())
+		}
+		if f.updatedAgent != nil {
+			t.Errorf("a rejected auto-save must not persist: %+v", f.updatedAgent)
+		}
+	})
+
+	t.Run("missing agent returns 502", func(t *testing.T) {
+		f := &fakeMemory{}
+		e := newServer(f)
+		rec := post(e, "name=renamed")
+		if rec.Code != http.StatusBadGateway {
+			t.Fatalf("status %d, want 502", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "not found") {
+			t.Errorf("body = %s, want the backend error", rec.Body.String())
+		}
+	})
+}
+
+// TestRenderAgentSandboxPage covers the sandbox config form: the enabled
+// toggle, provider/base-image/repo/resource fields reflecting stored state,
+// the provider availability list (enabled healthy options, disabled
+// unavailable ones with their reason), the tool whitelist checkboxes, and the
+// section layout.
+func TestRenderAgentSandboxPage(t *testing.T) {
+	cfg := &AgentSandboxConfig{
+		Enabled:  true,
+		Provider: "gvisor",
+		RepoSource: &RepoSourceConfig{
+			Type:   "fixed",
+			URL:    "https://github.com/org/repo",
+			Branch: "main",
+		},
+		Tools:          []string{"bash", "read"},
+		ResourceLimits: &ResourceLimits{CPU: "2", Memory: "4G", Disk: "10G"},
+		BaseImage:      "memory-workspace:latest",
+		SetupCommands:  []string{"pip install -r requirements.txt"},
+		EnvVars:        map[string]string{"FOO": "bar"},
+	}
+	data := agentSandboxData{
+		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
+		Config: cfg,
+		Providers: []SandboxProvider{
+			{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
+		},
+		Images: []SandboxImage{{ID: "img-1", Name: "memory-workspace:latest"}},
+	}
+	html := renderHTML(t, AgentSandboxPage(data))
+	for _, want := range []string{
+		`name="enabled" type="checkbox" checked`, "Enable sandbox",
+		`name="provider"`, `value="gvisor" selected`, "gVisor (Docker)",
+		`name="baseImage"`, `value="memory-workspace:latest"`,
+		`name="repoSourceType"`, `value="fixed" selected`, `value="task_context"`,
+		`name="repoSourceUrl"`, `value="https://github.com/org/repo"`,
+		`name="repoSourceBranch"`, `value="main"`,
+		`name="sandboxTool"`, `value="bash" checked`, `value="ast_grep"`,
+		`name="cpu"`, `value="2"`, `name="memory"`, `value="4G"`, `name="disk"`, `value="10G"`,
+		`name="setupCommands"`, "pip install -r requirements.txt",
+		`name="envVars"`, "FOO=bar",
+		"If none selected, all tools are allowed.",
+		// availability list: healthy enabled, unavailable disabled + reason
+		`value="gvisor" selected`, `>available<`,
+		`value="e2b" disabled`, "E2B — unavailable", "E2B_API_KEY not set",
+		`/agents/a1/sandbox/update`, `href="/agents/a1/sandbox"`, "Sandbox",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("sandbox page missing %q", want)
+		}
+	}
+	// a healthy provider must not be marked unavailable
+	if strings.Contains(html, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
+
+	// empty config → Auto selected by default, nothing checked, no
+	// provider list → availability-unknown warning, no env content
+	empty := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}}
+	h := renderHTML(t, AgentSandboxPage(empty))
+	if strings.Contains(h, `value="gvisor" selected`) || strings.Contains(h, `value="firecracker" selected`) || strings.Contains(h, `value="e2b" selected`) {
+		t.Error("empty config must not select a concrete provider")
+	}
+	if !strings.Contains(h, `value="" selected`) {
+		t.Error("empty config should default to Auto selected")
+	}
+	if strings.Contains(h, "checked") {
+		t.Error("empty config must not render checked attributes")
+	}
+	if !strings.Contains(h, "No sandbox providers were reported") {
+		t.Error("empty provider list must render the availability warning")
+	}
+	if strings.Contains(h, "FOO=bar</textarea>") {
+		t.Error("empty config must not render env vars as content")
+	}
+
+	// failed provider fetch → same warning, but explaining the fetch failure
+	warnErr := agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}, ProviderListErr: true}
+	if h := renderHTML(t, AgentSandboxPage(warnErr)); !strings.Contains(h, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure must render the availability warning")
+	}
+
+	// saved provider missing from the API list → synthetic option stays
+	// selected and selectable, so the form still submits it
+	missing := agentSandboxData{
+		Agent:     &AgentDefinition{ID: "a1", Name: "diane"},
+		Config:    &AgentSandboxConfig{Provider: "firecracker"},
+		Providers: []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true}},
+	}
+	hm := renderHTML(t, AgentSandboxPage(missing))
+	if !strings.Contains(hm, `value="firecracker" selected`) {
+		t.Error("saved provider missing from the list must render selected")
+	}
+	if strings.Contains(hm, "firecracker\" selected disabled") || strings.Contains(hm, "firecracker\" disabled") {
+		t.Error("saved provider option must stay selectable so it round-trips on submit")
+	}
+	if !strings.Contains(hm, "Firecracker — unavailable") {
+		t.Error("saved provider missing from the list must be marked unavailable")
+	}
+
+	// stored but reported-unavailable provider → its option stays selectable
+	// (a disabled selected option is omitted from form data); a different
+	// unavailable provider is still disabled.
+	storedUnavailable := agentSandboxData{
+		Agent:  &AgentDefinition{ID: "a1", Name: "diane"},
+		Config: &AgentSandboxConfig{Provider: "firecracker"},
+		Providers: []SandboxProvider{
+			{Name: "E2B", Type: "e2b", Healthy: false, Message: "E2B_API_KEY not set"},
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+		},
+	}
+	su := renderHTML(t, AgentSandboxPage(storedUnavailable))
+	if !strings.Contains(su, `value="firecracker" selected`) {
+		t.Error("stored unavailable provider must stay selected")
+	}
+	if strings.Contains(su, "firecracker\" selected disabled") || strings.Contains(su, "firecracker\" disabled") {
+		t.Error("stored unavailable provider option must stay selectable so it round-trips on submit")
+	}
+	if !strings.Contains(su, `value="e2b" disabled`) {
+		t.Error("a non-stored unavailable provider must still be disabled")
+	}
+
+	// load-error → whole-page error state
+	if h := renderHTML(t, AgentSandboxPage(agentSandboxData{LoadErr: errTest})); !strings.Contains(h, "Agent unavailable") {
+		t.Error("load-error state missing")
+	}
+
+	// flash states
+	if h := renderHTML(t, AgentSandboxPage(agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}, FlashMsg: "Sandbox updated."})); !strings.Contains(h, "Sandbox updated.") {
+		t.Error("flash success missing")
+	}
+	if h := renderHTML(t, AgentSandboxPage(agentSandboxData{Agent: &AgentDefinition{ID: "a1", Name: "diane"}, FlashErr: errTest})); !strings.Contains(h, "backend unreachable") {
+		t.Error("flash error should render the real error, missing")
+	}
+}
+
+// TestUIAgentSandboxRoutes exercises the sandbox GET + POST routes against the
+// fake backend: config prefill, best-effort provider/image lists, and the PRG
+// update flow (success redirect + stored config, fixed-source URL validation).
+func TestUIAgentSandboxRoutes(t *testing.T) {
+	f := &fakeMemory{
+		defs:      map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		providers: []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Healthy: true}},
+		images:    []SandboxImage{{ID: "img-1", Name: "memory-workspace:latest"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+	// GET: default config renders the form with catalog data
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET status %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"diane", `name="enabled"`, `value="gvisor"`, "gVisor (Docker)", ">available<", `value="memory-workspace:latest"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sandbox GET missing %q", want)
+		}
+	}
+	if strings.Contains(body, "gVisor (Docker) — unavailable") {
+		t.Error("healthy provider must not be marked unavailable")
+	}
+
+	// GET with a failing provider fetch: the page still renders (no whole-page
+	// error) and shows the availability warning.
+	f.providersErr = errTest
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	f.providersErr = nil
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET with provider error status %d", rec.Code)
+	}
+	if got := rec.Body.String(); !strings.Contains(got, "Could not load sandbox provider availability") {
+		t.Error("provider fetch failure should render the availability warning")
+	}
+
+	// POST: full form maps onto AgentSandboxConfig, redirects to ?updated=1
+	form := "enabled=on&provider=gvisor&baseImage=memory-workspace%3Alatest" +
+		"&repoSourceType=fixed&repoSourceUrl=https%3A%2F%2Fgithub.com%2Forg%2Frepo&repoSourceBranch=main" +
+		"&sandboxTool=bash&sandboxTool=read" +
+		"&cpu=2&memory=4G&disk=10G" +
+		"&setupCommands=pip+install+-r+requirements.txt" +
+		"&envVars=FOO%3Dbar%0ABAZ%3Dqux"
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sandbox update status %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/agents/a1/sandbox?updated=1" {
+		t.Errorf("redirect = %q, want /agents/a1/sandbox?updated=1", loc)
+	}
+	c := f.sandboxConfig
+	if c == nil {
+		t.Fatal("SetAgentSandboxConfig not called")
+	}
+	if !c.Enabled || c.Provider != "gvisor" || c.BaseImage != "memory-workspace:latest" {
+		t.Errorf("provider mapping wrong: %+v", c)
+	}
+	if c.RepoSource == nil || c.RepoSource.Type != "fixed" || c.RepoSource.URL != "https://github.com/org/repo" || c.RepoSource.Branch != "main" {
+		t.Errorf("repo source mapping wrong: %+v", c.RepoSource)
+	}
+	if len(c.Tools) != 2 || c.Tools[0] != "bash" || c.Tools[1] != "read" {
+		t.Errorf("tools mapping wrong: %v", c.Tools)
+	}
+	if c.ResourceLimits == nil || c.ResourceLimits.CPU != "2" || c.ResourceLimits.Memory != "4G" || c.ResourceLimits.Disk != "10G" {
+		t.Errorf("resource limits mapping wrong: %+v", c.ResourceLimits)
+	}
+	if len(c.SetupCommands) != 1 || c.SetupCommands[0] != "pip install -r requirements.txt" {
+		t.Errorf("setup commands mapping wrong: %v", c.SetupCommands)
+	}
+	if len(c.EnvVars) != 2 || c.EnvVars["FOO"] != "bar" || c.EnvVars["BAZ"] != "qux" {
+		t.Errorf("env vars mapping wrong: %v", c.EnvVars)
+	}
+
+	// POST: fixed source with empty URL → error redirect
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("repoSourceType=fixed"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/agents/a1/sandbox?err=repository+URL+is+required+for+a+fixed+source" {
+		t.Errorf("fixed without URL should redirect with error, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// POST: malformed env var line → error redirect
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("envVars=NOPE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "err=env+vars%3A+each+line+must+be+KEY%3DVALUE") {
+		t.Errorf("bad env var should redirect with error, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// POST: task_context source (no URL needed), no tools → all allowed (empty list)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("repoSourceType=task_context&repoSourceBranch=dev"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("task_context update status %d", rec.Code)
+	}
+	c = f.sandboxConfig
+	if c.RepoSource == nil || c.RepoSource.Type != "task_context" || c.RepoSource.URL != "" || c.RepoSource.Branch != "dev" {
+		t.Errorf("task_context repo source mapping wrong: %+v", c.RepoSource)
+	}
+	if len(c.Tools) != 0 {
+		t.Errorf("no tools selected → empty list (all allowed), got %v", c.Tools)
+	}
+	if c.ResourceLimits != nil {
+		t.Errorf("empty resource fields → nil limits, got %+v", c.ResourceLimits)
+	}
+
+	// unknown agent id → whole-page error
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/nope/sandbox", nil))
+	if !strings.Contains(rec.Body.String(), "Agent unavailable") {
+		t.Error("unknown agent should render the error state")
+	}
+}
+
+// TestApplyAgentToolsSectionGroups covers the capability-group form mapping:
+// group policies land under reserved "@group:<id>" keys, group enable/disable
+// fans out to Tools + BannedTools, per-tool overrides still win, delegation
+// tools are never fanned out, and a group the form did not render is untouched.
+func TestApplyAgentToolsSectionGroups(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	groups := []ToolGroup{
+		{ID: "graph-write", Label: "Graph · Write", Tools: []string{"entity-create", "entity-delete"}},
+		{ID: "web", Label: "Web", Tools: []string{"web_search"}},
+		{ID: "agents", Label: "Agents", Tools: []string{"spawn_agents", "list_available_agents"}},
+	}
+	newFake := func(def *AgentDefinition) *fakeMemory {
+		return &fakeMemory{defs: map[string]*AgentDefinition{"a1": def}}
+	}
+
+	t.Run("group ask writes a group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=ask&groupEnabled.graph-write=on")
+		p, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]
+		if !ok || !p.Confirm || p.Disabled {
+			t.Errorf("@group:graph-write = %+v (ok=%v), want confirm", p, ok)
+		}
+	})
+
+	t.Run("group inherit writes no group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=inherit&groupEnabled.graph-write=on")
+		if _, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]; ok {
+			t.Errorf("inherit must not write a group entry: %+v", f.updatedAgent.ToolPolicies)
+		}
+	})
+
+	t.Run("group deny writes a disabled group entry", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.graph-write=deny&groupEnabled.graph-write=on")
+		p, ok := f.updatedAgent.ToolPolicies["@group:graph-write"]
+		if !ok || !p.Disabled {
+			t.Errorf("@group:graph-write = %+v (ok=%v), want disabled", p, ok)
+		}
+	})
+
+	t.Run("disabling a group removes and bans its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create", "entity-delete"},
+		})
+		// Rendered ON (both members enabled) then switched off: the policy field
+		// is present, the enable switch is absent, and the baseline is "true".
+		post(newServer(f), "tool=entity-create&tool=entity-delete&groupPolicy.graph-write=inherit&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-create") || containsString(u.Tools, "entity-delete") {
+			t.Errorf("disabled group members must leave Tools: %v", u.Tools)
+		}
+		if !containsString(u.BannedTools, "entity-create") || !containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("disabled group members must be banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("enabling a group restores its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			BannedTools: []string{"entity-create", "entity-delete"},
+		})
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabled group members must be in Tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "entity-create") || containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("enabled group members must be un-banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("per-tool override still wins alongside a group policy", func(t *testing.T) {
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "tool=entity-create&toolPolicy.entity-create=deny&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if p := u.ToolPolicies["entity-create"]; !p.Disabled {
+			t.Errorf("explicit tool override must survive: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["@group:graph-write"]; !ok || !p.Confirm {
+			t.Errorf("group policy must also be written: %+v", u.ToolPolicies)
+		}
+		if !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabling the group must fan out its other member: %v", u.Tools)
+		}
+	})
+
+	t.Run("delegation tools are never fanned out", func(t *testing.T) {
+		// enabling a group that (wrongly) lists delegation tools must not add
+		// them, and disabling must not ban them.
+		f := newFake(&AgentDefinition{ID: "a1", Name: "diane", ToolGroups: groups})
+		post(newServer(f), "groupPolicy.agents=ask&groupEnabled.agents=on&groupWasEnabled.agents=false&groupPolicy.graph-write=ask&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if containsString(u.Tools, "spawn_agents") || containsString(u.Tools, "list_available_agents") {
+			t.Errorf("group enable must not add delegation tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "spawn_agents") || containsString(u.BannedTools, "list_available_agents") {
+			t.Errorf("group enable must not ban delegation tools: %v", u.BannedTools)
+		}
+
+		f2 := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"spawn_agents", "list_available_agents"},
+		})
+		post(newServer(f2), "groupPolicy.agents=inherit&groupWasEnabled.agents=true")
+		u2 := f2.updatedAgent
+		if containsString(u2.BannedTools, "spawn_agents") || containsString(u2.BannedTools, "list_available_agents") {
+			t.Errorf("group disable must not ban delegation tools: %v", u2.BannedTools)
+		}
+	})
+
+	t.Run("a group absent from the form is left alone", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+		})
+		post(newServer(f), "tool=entity-create&groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "web_search") {
+			t.Errorf("an unrendered group must not be disabled: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "web_search") {
+			t.Errorf("an unrendered group must not be enabled: %v", u.Tools)
+		}
+		if _, ok := u.ToolPolicies["@group:web"]; ok {
+			t.Errorf("an unrendered group must write no policy: %+v", u.ToolPolicies)
+		}
+	})
+
+	t.Run("no-op group save does not fan out the full group", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"}, // partial: entity-delete not enabled
+		})
+		// The switch is rendered ON (entity-create is enabled) and submitted
+		// unchanged; a no-op save must not add the full-catalog remainder.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-delete") {
+			t.Errorf("a no-op group save must not fan out the full group: %v", u.Tools)
+		}
+		if !containsString(u.Tools, "entity-create") {
+			t.Errorf("the enabled member must survive a no-op save: %v", u.Tools)
+		}
+	})
+
+	t.Run("toggling a partially-enabled group off bans its members", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+		})
+		// Switch rendered ON (entity-create enabled) but submitted OFF: every
+		// member (including the not-currently-enabled entity-delete) is banned.
+		post(newServer(f), "tool=entity-create&groupWasEnabled.graph-write=true")
+		u := f.updatedAgent
+		if containsString(u.Tools, "entity-create") {
+			t.Errorf("toggling off must remove enabled members: %v", u.Tools)
+		}
+		if !containsString(u.BannedTools, "entity-create") || !containsString(u.BannedTools, "entity-delete") {
+			t.Errorf("toggling off must ban all group members: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("save preserves existing per-tool and group policies", func(t *testing.T) {
+		f := newFake(&AgentDefinition{
+			ID: "a1", Name: "diane", ToolGroups: groups,
+			Tools: []string{"entity-create"},
+			ToolPolicies: map[string]ToolPolicy{
+				"entity-delete":   {Confirm: true},
+				"some_other_tool": {Disabled: true},
+				"@group:web":      {Disabled: true},
+			},
+		})
+		// A no-touch save: no toolPolicy.* or groupPolicy.* control submitted.
+		post(newServer(f), "tool=entity-create&groupEnabled.graph-write=on&groupWasEnabled.graph-write=true&groupWasEnabled.web=false&groupWasEnabled.agents=false")
+		u := f.updatedAgent
+		if p, ok := u.ToolPolicies["entity-delete"]; !ok || !p.Confirm {
+			t.Errorf("existing per-tool override must survive a no-touch save: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["some_other_tool"]; !ok || !p.Disabled {
+			t.Errorf("unrendered per-tool entry must survive: %+v", u.ToolPolicies)
+		}
+		if p, ok := u.ToolPolicies["@group:web"]; !ok || !p.Disabled {
+			t.Errorf("existing @group: entry must survive a no-touch save: %+v", u.ToolPolicies)
+		}
+	})
+}
+
+// TestRenderAgentSettingsToolGroups covers the source-first capability panel:
+// the top-level "Built-in" section, a collapsible header per capability group
+// with its enable switch + policy select, the group's member tools as direct
+// rows (no nested "builtin" server sub-group), the inherited value inlined into
+// each policy select's Inherit option, an "Other" group for uncovered tools,
+// and no header for a group with no member tools.
+func TestRenderAgentSettingsToolGroups(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools:        []string{"entity-create", "ha_get_state"},
+			ToolPolicies: map[string]ToolPolicy{"entity-create": {Confirm: true}},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Description: "Create, update, or delete graph objects.", Policy: "ask", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "web", Label: "Web", Description: "Search and fetch web content.", Tools: []string{"web_search"}},
+				{ID: "empty", Label: "Empty group"},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+			{ToolName: "entity-create", Description: "create an object"},
+			{ToolName: "entity-delete", Description: "delete an object"},
+			{ToolName: "web_search", Description: "search the web"},
+		}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+	for _, want := range []string{
+		// Built-in is the top-level source section wrapping the capability groups.
+		`data-testid="tool-source-builtin"`,
+		`data-testid="tool-source-header-builtin"`,
+		">Built-in</span>",
+		"Graph · Write", "Create, update, or delete graph objects.",
+		`data-testid="tool-group-header-graph-write"`,
+		`data-tool-group="graph-write"`,
+		`name="groupPolicy.graph-write"`,
+		// Below: ToggleInput pins a canonical attribute order — type before name,
+		// class before checked. Semantically identical to the former hand-rolled
+		// markup; only the byte order differs.
+		`name="groupEnabled.graph-write" value="on" class="toggle toggle-sm" checked`,
+		`data-testid="tool-group-policy-graph-write"`,
+		`data-testid="tool-group-enabled-graph-write"`,
+		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="entity-delete"`,
+		"Inherit (Ask)",            // graph-write's policy, shown inline on inheriting rows
+		"Inherit (Default)",        // the agent default, shown on rows whose group inherits
+		`data-tool-default-policy`, // the default select is the inheritance recompute root
+		`data-inherit-option`,      // the Inherit option carries its inherited value
+		"Web", `name="groupPolicy.web"`,
+		`type="checkbox" name="tool" value="web_search"`,
+		`data-testid="tool-group-other"`,
+		`type="checkbox" name="tool" value="ha_get_state" class="toggle toggle-sm shrink-0" checked`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("grouped tools page missing %q", want)
+		}
+	}
+	// the separate inheritance hint labels are gone: the Inherit option carries
+	// the value instead.
+	if strings.Contains(html, "Inherits ") || strings.Contains(html, "→ ") {
+		t.Error("the separate inheritance hint labels must be inlined into the policy select")
+	}
+	// the builtin server is no longer a nested sub-group: its tools render as
+	// direct rows inside their capability group.
+	if strings.Contains(html, ">builtin</span>") {
+		t.Error("the nested builtin server sub-group must be gone")
+	}
+	if strings.Contains(html, `data-testid="tool-source-server-builtin"`) {
+		t.Error("the builtin server must not render as an external source block")
+	}
+	// the policy select reflects the stored group policy (scoped to each select)
+	if !selectShowsValue(html, "groupPolicy.graph-write", "ask") {
+		t.Error("graph-write policy select should show Ask")
+	}
+	if !selectShowsValue(html, "groupPolicy.web", "inherit") {
+		t.Error("web policy select should show Inherit")
+	}
+	if strings.Contains(html, "Empty group") {
+		t.Error("a group with no member tools must not render a header")
+	}
+	// an enabled group opens by default; an idle group stays collapsed
+	if !strings.Contains(html, `open data-testid="tool-group" data-tool-group="graph-write"`) {
+		t.Error("a group with enabled members should default open")
+	}
+	if strings.Contains(html, `open data-testid="tool-group" data-tool-group="web"`) {
+		t.Error("a group with no enabled members should stay collapsed")
+	}
+
+	// no groups reported → fall back to the source-only grouping unchanged
+	fallback := agentSettingsData{
+		Section: "tools",
+		Agent:   &AgentDefinition{ID: "a1", Name: "diane", Tools: []string{"web_search"}},
+		Agents:  []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 1, Tools: []MCPTool{
+			{ToolName: "web_search", Description: "search the web"},
+		}}},
+	}
+	fh := renderHTML(t, AgentSettingsPage(fallback))
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(fh, `type="checkbox" name="tool" value="web_search" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("fallback source-only grouping should still render server tools")
+	}
+	if strings.Contains(fh, `data-testid="tool-groups"`) {
+		t.Error("fallback must not render the source-first wrapper")
+	}
+}
+
+// TestApplyAgentToolsSectionGroupsFullMembership covers the form mapping against
+// full-membership toolGroups (the server's reconciled contract): a group the
+// agent has fully disabled arrives with enabled:false and its whole member
+// list, so switching it on restores every member; a relay tool's per-tool
+// policy persists under its agent-facing <instance>_<tool> name.
+func TestApplyAgentToolsSectionGroupsFullMembership(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("a fully disabled group can be switched back on", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+			ID: "a1", Name: "diane",
+			// full membership; the agent currently allows none of it
+			ToolGroups: []ToolGroup{{ID: "graph-write", Label: "Graph · Write", Enabled: false, Tools: []string{"entity-create", "entity-delete"}}},
+		}}}
+		post(newServer(f), "groupPolicy.graph-write=allow&groupEnabled.graph-write=on&groupWasEnabled.graph-write=false")
+		u := f.updatedAgent
+		if !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "entity-delete") {
+			t.Errorf("enabling a disabled group must restore its full membership: %v", u.Tools)
+		}
+		if len(u.BannedTools) != 0 {
+			t.Errorf("restored members must not stay banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("relay tool per-tool policy persists under its instance name", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+			ID: "a1", Name: "diane",
+			ToolGroups: []ToolGroup{{ID: "mac", Label: "Mac", Tools: []string{"mac-ada_notes_search"}}},
+		}}}
+		post(newServer(f), "tool=mac-ada_notes_search&toolPolicy.mac-ada_notes_search=ask&groupPolicy.mac=inherit&groupEnabled.mac=on")
+		p, ok := f.updatedAgent.ToolPolicies["mac-ada_notes_search"]
+		if !ok || !p.Confirm {
+			t.Errorf("relay tool override must persist: %+v", f.updatedAgent.ToolPolicies)
+		}
+	})
+}
+
+// TestApplyAgentToolsSectionBanManagedTools covers the write-side reconciliation
+// of the ban-managed hidden builtin set_session_title when the Session group was
+// rendered: a submitted membership keeps the tool out of BannedTools; an absent
+// membership (row unchecked) adds it. In every case the builtin is stripped from
+// the allowed-tools whitelist — its enable state lives only in BannedTools.
+func TestApplyAgentToolsSectionBanManagedTools(t *testing.T) {
+	newServer := func(f *fakeMemory) *echo.Echo {
+		s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+		e := echo.New()
+		e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+		return e
+	}
+	post := func(e *echo.Echo, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	def := func() *AgentDefinition {
+		return &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools: []string{"session-todo-list"},
+			ToolGroups: []ToolGroup{{
+				ID: "session", Label: "Session", Enabled: true,
+				Tools: []string{"session-todo-list", "session-todo-update", "set_session_title"},
+			}},
+		}
+	}
+
+	t.Run("submitted tool is kept out of BannedTools", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// the Session group is rendered (groupWasEnabled.session) and the row is
+		// checked, so set_session_title is present in the submitted membership.
+		post(newServer(f), "tool=session-todo-list&tool=set_session_title&groupWasEnabled.session=true&groupEnabled.session=on")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("a checked ban-managed tool must not be banned: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a checked ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
+	})
+
+	t.Run("absent tool is added to BannedTools", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// row unchecked → no tool=set_session_title entry in the submitted form.
+		post(newServer(f), "tool=session-todo-list&groupWasEnabled.session=true&groupEnabled.session=on")
+		u := f.updatedAgent
+		if !containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("an unchecked ban-managed tool must be banned: %v", u.BannedTools)
+		}
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("a banned ban-managed tool must not persist in Tools: %v", u.Tools)
+		}
+	})
+
+	t.Run("enabling the Session group does not persist the builtin in Tools", func(t *testing.T) {
+		d := def()
+		d.Tools = nil
+		d.ToolGroups[0].Enabled = false
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": d}}
+		// baseline off → switched on: the group fan-out appends every member,
+		// including the hidden builtin, to Tools; it must be stripped again.
+		post(newServer(f), "groupWasEnabled.session=false&groupEnabled.session=on")
+		u := f.updatedAgent
+		if containsString(u.Tools, "set_session_title") {
+			t.Errorf("group enable must not persist the ban-managed builtin in Tools: %v", u.Tools)
+		}
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("enabling the group must leave the builtin un-banned: %v", u.BannedTools)
+		}
+	})
+
+	t.Run("no session group rendered leaves BannedTools untouched", func(t *testing.T) {
+		f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": def()}}
+		// a save from a panel without the Session group must not ban the tool.
+		post(newServer(f), "tool=session-todo-list")
+		u := f.updatedAgent
+		if containsString(u.BannedTools, "set_session_title") {
+			t.Errorf("without the Session group the ban state must be left untouched: %v", u.BannedTools)
+		}
+	})
+}
+
+// TestGroupWritePathIgnoresToolGroups asserts the write path never depends on
+// the read-only toolGroups field: with toolGroups populated, a save makes only
+// the intended Tools / ToolPolicies / BannedTools changes.
+func TestGroupWritePathIgnoresToolGroups(t *testing.T) {
+	groups := []ToolGroup{
+		{ID: "graph-write", Label: "Graph · Write", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+		{ID: "web", Label: "Web", Enabled: false, Tools: []string{"web_search"}},
+	}
+	f := &fakeMemory{defs: map[string]*AgentDefinition{"a1": {
+		ID: "a1", Name: "diane",
+		Tools:        []string{"entity-create"},
+		BannedTools:  []string{"web_search"},
+		ToolPolicies: map[string]ToolPolicy{"@group:web": {Confirm: true}},
+		ToolGroups:   groups,
+	}}}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/agents/:id/settings/tools", s.uiAgentUpdateTools)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/settings/tools", strings.NewReader("tool=entity-create&groupPolicy.web=deny&groupEnabled.web=on&groupWasEnabled.web=false"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+
+	u := f.updatedAgent
+	if len(u.Tools) != 2 || !containsString(u.Tools, "entity-create") || !containsString(u.Tools, "web_search") {
+		t.Errorf("Tools = %v, want [entity-create web_search] only", u.Tools)
+	}
+	if len(u.BannedTools) != 0 {
+		t.Errorf("BannedTools = %v, want empty after enabling the web group", u.BannedTools)
+	}
+	if p, ok := u.ToolPolicies["@group:web"]; !ok || !p.Disabled {
+		t.Errorf("@group:web = %+v (ok=%v), want disabled", p, ok)
+	}
+	if _, ok := u.ToolPolicies["web_search"]; ok {
+		t.Errorf("enabling a group must not write per-tool entries: %+v", u.ToolPolicies)
+	}
+	if len(u.ToolGroups) != len(groups) {
+		t.Errorf("the applier must not depend on toolGroups: %+v", u.ToolGroups)
+	}
+}
+
+// TestSanitizeAgentWriteDropsToolGroups asserts the client write path strips the
+// server-computed toolGroups field before serializing an agent definition.
+func TestSanitizeAgentWriteDropsToolGroups(t *testing.T) {
+	def := &AgentDefinition{ID: "a1", ToolGroups: []ToolGroup{{ID: "g", Tools: []string{"t"}}}}
+	sanitizeAgentWrite(def)
+	if def.ToolGroups != nil {
+		t.Errorf("sanitizeAgentWrite must clear toolGroups, got %+v", def.ToolGroups)
+	}
+	sanitizeAgentWrite(nil) // must not panic
+}
+
+// TestRenderAgentSettingsToolGroupsFullMembership covers the picker against
+// full-membership toolGroups: a fully disabled group still renders with its
+// switch off and every member row unchecked (so it can be switched on), each
+// member renders exactly once and never leaks into Other, a banned-only member
+// still appears in its group, a relay tool renders in its own top-level source
+// block (not Other), and the inherited value is inlined into the policy select.
+func TestRenderAgentSettingsToolGroupsFullMembership(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools:       []string{"mac-ada_notes_search"},
+			BannedTools: []string{"entity-delete"},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Description: "Create, update, or delete graph objects.", Enabled: false, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "web", Label: "Web", Description: "Search and fetch web content.", Enabled: false, Tools: []string{"web_search"}},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+			{ToolName: "entity-create"},
+			{ToolName: "entity-delete"},
+			{ToolName: "web_search"},
+		}}},
+		RelayNodes: []relayNode{{Session: RelaySession{InstanceID: "mac-ada", ToolCount: 1}, Tools: []RelayTool{{Name: "notes_search"}}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	// a fully disabled group is still rendered (not dropped) with its switch off
+	for _, want := range []string{
+		`data-testid="tool-group-header-graph-write"`,
+		`data-testid="tool-group-header-web"`,
+		`name="groupEnabled.graph-write"`,
+		`name="groupEnabled.web"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("grouped picker missing %q", want)
+		}
+	}
+	for _, group := range []string{"graph-write", "web"} {
+		// Pins ToggleInput's canonical attribute order (class before checked).
+		if strings.Contains(html, `name="groupEnabled.`+group+`" value="on" class="toggle toggle-sm" checked`) {
+			t.Errorf("group %s has no enabled members, switch must be off", group)
+		}
+	}
+
+	// every member renders exactly once, unchecked (banned-only included)
+	for _, name := range []string{"entity-create", "entity-delete", "web_search"} {
+		if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+			t.Errorf("%s rendered %d times, want 1 (no duplicate, no Other leak)", name, got)
+		}
+		if strings.Contains(html, `value="`+name+`" checked`) {
+			t.Errorf("%s must render unchecked", name)
+		}
+	}
+
+	// the relay tool renders in its own top-level remote source block, checked,
+	// so it is never lost — and never duplicates into Other.
+	if !strings.Contains(html, `data-testid="tool-source-relay-mac-ada"`) {
+		t.Error("relay nodes should render as a top-level source block")
+	}
+	if !strings.Contains(html, "remote") {
+		t.Error("relay source block should carry the remote badge")
+	}
+	if strings.Contains(html, `data-testid="tool-group-other"`) {
+		t.Error("all tools are covered, Other must not render")
+	}
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("relay tool should appear checked in its source block")
+	}
+	if got := strings.Count(html, `value="mac-ada_notes_search"`); got != 1 {
+		t.Errorf("relay tool rendered %d times, want 1", got)
+	}
+
+	// the inherited value is inlined into the Inherit option at all widths (no
+	// separate hint label): rows whose group inherits fall back to the default.
+	if !strings.Contains(html, "Inherit (Default)") {
+		t.Error("the Inherit option should carry the inherited value")
+	}
+	if strings.Contains(html, "Inherits ") || strings.Contains(html, "→ ") {
+		t.Error("the separate inheritance hint labels must be gone")
+	}
+}
+
+// TestRenderAgentSettingsSessionBanManagedRow covers the ban-managed hidden
+// builtin (set_session_title): its row maps to ban state (checked unless banned)
+// and carries no per-tool policy select, while its ordinary session-group
+// siblings keep theirs.
+func TestRenderAgentSettingsSessionBanManagedRow(t *testing.T) {
+	newData := func(banned bool) agentSettingsData {
+		var bannedTools []string
+		if banned {
+			bannedTools = []string{"set_session_title"}
+		}
+		return agentSettingsData{
+			Section: "tools",
+			Agent: &AgentDefinition{
+				ID: "a1", Name: "diane",
+				Tools:       []string{"session-todo-list"},
+				BannedTools: bannedTools,
+				ToolGroups: []ToolGroup{{
+					ID: "session", Label: "Session", Enabled: true,
+					Tools: []string{"session-todo-list", "session-todo-update", "set_session_title"},
+				}},
+			},
+			Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+			MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+				{ToolName: "session-todo-list"},
+				{ToolName: "session-todo-update"},
+				{ToolName: "set_session_title"},
+			}}},
+		}
+	}
+
+	html := renderHTML(t, AgentSettingsPage(newData(false)))
+	// not banned → the row renders checked (checked = not banned).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="set_session_title" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("the set_session_title row must render checked when not banned")
+	}
+	// the ban-managed row carries no per-tool policy select ...
+	if strings.Contains(html, `name="toolPolicy.set_session_title"`) {
+		t.Error("the set_session_title row must render no per-tool policy select")
+	}
+	// ... while its ordinary session siblings keep theirs.
+	for _, sibling := range []string{"session-todo-list", "session-todo-update"} {
+		if !strings.Contains(html, `name="toolPolicy.`+sibling+`"`) {
+			t.Errorf("%s must keep its per-tool policy select", sibling)
+		}
+	}
+
+	// banned → the row renders unchecked.
+	bannedHTML := renderHTML(t, AgentSettingsPage(newData(true)))
+	if strings.Contains(bannedHTML, `value="set_session_title" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("the set_session_title row must render unchecked when banned")
+	}
+}
+
+// TestRenderAgentSettingsToolSourceSiblings covers the source-first hierarchy:
+// the top-level Built-in section (capability groups with direct rows) is a
+// sibling of one block per external MCP server and per relay node. External
+// server tools render in their own block with per-tool policies, relay tools
+// render enable-only with the remote badge, builtin server tools stay inside
+// their capability groups, and the uncovered fallback stays reachable.
+func TestRenderAgentSettingsToolSourceSiblings(t *testing.T) {
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "diane",
+			Tools: []string{"entity-create", "github_get_issue", "mac-ada_notes_search", "ha_get_state"},
+			ToolGroups: []ToolGroup{
+				{ID: "graph-write", Label: "Graph · Write", Enabled: true, Tools: []string{"entity-create", "entity-delete"}},
+				{ID: "search", Label: "Search", Tools: []string{"web_search"}},
+				// External and relay tools land in the display-only "other" group
+				// server-side; they must move to their own top-level source blocks,
+				// so this group renders no builtin rows and is dropped.
+				{ID: "other", Label: "Other", Tools: []string{"github_get_issue", "mac-ada_notes_search"}},
+			},
+		},
+		Agents: []AgentDefinitionSummary{{ID: "a1", Name: "diane"}},
+		MCPServers: []MCPServer{
+			{Name: "builtin", Type: "builtin", ToolCount: 3, Tools: []MCPTool{
+				{ToolName: "entity-create", Description: "create an object"},
+				{ToolName: "entity-delete", Description: "delete an object"},
+				{ToolName: "web_search", Description: "search the web"},
+			}},
+			{Name: "github-mcp", Type: "stdio", ToolCount: 2, Tools: []MCPTool{
+				{ToolName: "github_get_issue", Description: "fetch an issue"},
+				{ToolName: "github_list_repos", Description: "list repos"},
+			}},
+		},
+		RelayNodes: []relayNode{{Session: RelaySession{InstanceID: "mac-ada", ToolCount: 1}, Tools: []RelayTool{{Name: "notes_search", Description: "Search Apple Notes"}}}},
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	for _, want := range []string{
+		// Built-in section wraps the capability groups.
+		`data-testid="tool-source-builtin"`,
+		`data-testid="tool-group-header-graph-write"`,
+		`data-testid="tool-group-header-search"`,
+		`name="groupPolicy.graph-write"`,
+		`type="checkbox" name="tool" value="entity-create" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="entity-delete"`,
+		// External MCP server: a sibling block with per-tool policy selects.
+		`data-testid="tool-source-server-github-mcp"`,
+		"fetch an issue",
+		`name="toolPolicy.github_get_issue"`,
+		`type="checkbox" name="tool" value="github_get_issue" class="toggle toggle-sm shrink-0" checked`,
+		`type="checkbox" name="tool" value="github_list_repos"`,
+		// Relay node: a sibling block with the remote badge, no per-tool policy.
+		`data-testid="tool-source-relay-mac-ada"`,
+		"remote",
+		`type="checkbox" name="tool" value="mac-ada_notes_search" class="toggle toggle-sm shrink-0" checked`,
+		// Uncovered fallback stays reachable for tools no source offers.
+		`data-testid="tool-group-other"`,
+		`type="checkbox" name="tool" value="ha_get_state" class="toggle toggle-sm shrink-0" checked`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("source-first picker missing %q", want)
+		}
+	}
+
+	// the builtin server is the Built-in section, never a source block of its own
+	if strings.Contains(html, `data-testid="tool-source-server-builtin"`) {
+		t.Error("the builtin server must not render as an external source block")
+	}
+	// the display-only "other" group is dropped: its members moved to sources
+	if strings.Contains(html, `data-tool-group="other"`) {
+		t.Error("an external-only capability group must not render an empty header")
+	}
+	// relay tools never carry a per-tool policy select (allow-only)
+	if strings.Contains(html, `name="toolPolicy.mac-ada_notes_search"`) {
+		t.Error("relay source block must not render per-tool policy selects")
+	}
+	// Built-in precedes the external source blocks.
+	if bi, si := strings.Index(html, `data-testid="tool-source-builtin"`), strings.Index(html, `data-testid="tool-source-server-github-mcp"`); bi < 0 || si < 0 || bi > si {
+		t.Error("the Built-in section must precede external source blocks")
+	}
+	// every tool renders exactly once across the whole picker
+	for _, name := range []string{"entity-create", "entity-delete", "web_search", "github_get_issue", "github_list_repos", "mac-ada_notes_search", "ha_get_state"} {
+		if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+			t.Errorf("%s rendered %d times, want exactly 1", name, got)
+		}
+	}
+}
+
+// goldenToolGroupsPath resolves the server-lane golden fixture relative to this
+// test file, so it works from any working directory and never needs an absolute
+// machine path.
+func goldenToolGroupsPath(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve the test file path")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..",
+		"server", "domain", "agents", "testdata", "tool-groups.golden.json")
+}
+
+// TestGoldenToolGroupsFixtureContract is the cross-lane contract test: it parses
+// the server-lane golden fixture — the real serialized AgentDefinition.toolGroups
+// payload — into the gateway's local ToolGroup type and drives the real Tools
+// panel render path with it. Deterministic: file + in-process render only.
+func TestGoldenToolGroupsFixtureContract(t *testing.T) {
+	raw, err := os.ReadFile(goldenToolGroupsPath(t))
+	if err != nil {
+		t.Fatalf("read golden tool-groups fixture: %v", err)
+	}
+	var groups []ToolGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		t.Fatalf("unmarshal golden fixture into []ToolGroup via the gateway JSON tags: %v", err)
+	}
+	if len(groups) == 0 {
+		t.Fatal("golden fixture has no tool groups")
+	}
+
+	// Frozen shape: every entry must carry all six D6 keys, with valid values.
+	var entries []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("unmarshal golden fixture as raw entries: %v", err)
+	}
+	if len(entries) != len(groups) {
+		t.Fatalf("raw entry count %d != decoded group count %d", len(entries), len(groups))
+	}
+	ids := map[string]bool{}
+	for i, g := range groups {
+		for _, key := range []string{"id", "label", "description", "policy", "enabled", "tools"} {
+			if _, ok := entries[i][key]; !ok {
+				t.Errorf("group %q is missing the %q field", g.ID, key)
+			}
+		}
+		if g.ID == "" || g.Label == "" || g.Description == "" {
+			t.Errorf("group %d has an empty id/label/description: %+v", i, g)
+		}
+		if ids[g.ID] {
+			t.Errorf("duplicate group id %q", g.ID)
+		}
+		ids[g.ID] = true
+		switch g.Policy {
+		case "", "allow", "ask", "deny":
+		default:
+			t.Errorf("group %q has invalid policy %q", g.ID, g.Policy)
+		}
+		if g.Tools == nil {
+			t.Errorf("group %q has a null tools list (want an array)", g.ID)
+		}
+	}
+
+	// The fixture must actually exercise every case this contract depends on.
+	var (
+		disabledWithMembers bool
+		askGroupWithMembers bool
+		relayStyleMember    bool
+	)
+	for _, g := range groups {
+		if !g.Enabled && len(g.Tools) > 0 {
+			disabledWithMembers = true
+		}
+		if g.Policy == "ask" && len(g.Tools) > 0 {
+			askGroupWithMembers = true
+		}
+		for _, tool := range g.Tools {
+			if strings.Contains(tool, "_") {
+				relayStyleMember = true
+			}
+		}
+	}
+	if !disabledWithMembers {
+		t.Fatal("fixture is missing case: a group with enabled:false and a non-empty tools list")
+	}
+	if !askGroupWithMembers {
+		t.Fatal("fixture is missing case: a group with policy:\"ask\" and at least one member (needed to exercise an explicit override alongside a group policy)")
+	}
+	if !relayStyleMember {
+		t.Fatal("fixture is missing case: a relay-style <instance>_<tool> member name")
+	}
+
+	// Reconstruct the representative agent + catalog from the fixture. Every
+	// group member is either allowed (its group is enabled) or banned (disabled),
+	// names with an underscore are relay-style, the rest come from one registry
+	// server. The explicit overrides mirror the README: entity-create has a
+	// per-tool entry, and document-list overrides its group's ask policy.
+	var (
+		tools       []string
+		banned      []string
+		serverTools []MCPTool
+		relayTools  = map[string][]RelayTool{}
+		relayOrder  []string
+	)
+	for _, g := range groups {
+		for _, name := range g.Tools {
+			if g.Enabled {
+				tools = append(tools, name)
+			} else {
+				banned = append(banned, name)
+			}
+			instance, tool, isRelay := strings.Cut(name, "_")
+			if isRelay {
+				if _, ok := relayTools[instance]; !ok {
+					relayOrder = append(relayOrder, instance)
+				}
+				relayTools[instance] = append(relayTools[instance], RelayTool{Name: tool})
+				continue
+			}
+			serverTools = append(serverTools, MCPTool{ToolName: name})
+		}
+	}
+	var relayNodes []relayNode
+	for _, instance := range relayOrder {
+		relayNodes = append(relayNodes, relayNode{
+			Session: RelaySession{InstanceID: instance, ToolCount: len(relayTools[instance])},
+			Tools:   relayTools[instance],
+		})
+	}
+
+	data := agentSettingsData{
+		Section: "tools",
+		Agent: &AgentDefinition{
+			ID: "a1", Name: "fixture-agent",
+			Tools:       tools,
+			BannedTools: banned,
+			ToolPolicies: map[string]ToolPolicy{
+				"entity-create": {Confirm: true},
+				"document-list": {Disabled: true},
+			},
+			ToolGroups: groups,
+		},
+		Agents:     []AgentDefinitionSummary{{ID: "a1", Name: "fixture-agent"}},
+		MCPServers: []MCPServer{{Name: "builtin", Type: "builtin", ToolCount: len(serverTools), Tools: serverTools}},
+		RelayNodes: relayNodes,
+	}
+	html := renderHTML(t, AgentSettingsPage(data))
+
+	// Every fixture group with at least one builtin member renders a header (no
+	// builtin group dropped); the relay-only "other" group has no builtin rows
+	// and is not rendered — its member moves to the top-level relay source block.
+	rendersBuiltin := func(g ToolGroup) bool {
+		for _, name := range g.Tools {
+			if _, _, isRelay := strings.Cut(name, "_"); !isRelay {
+				return true
+			}
+		}
+		return false
+	}
+	for _, g := range groups {
+		if !rendersBuiltin(g) {
+			continue
+		}
+		if !strings.Contains(html, `data-testid="tool-group-header-`+g.ID+`"`) {
+			t.Errorf("group %q header is missing from the panel", g.ID)
+		}
+	}
+	if !strings.Contains(html, `data-testid="tool-source-relay-relay1"`) {
+		t.Error("relay-style member should render in its own top-level relay source block")
+	}
+	// Pins ToggleInput's canonical attribute order (type before name, class
+	// before checked).
+	if !strings.Contains(html, `type="checkbox" name="tool" value="relay1_reminders_list" class="toggle toggle-sm shrink-0" checked`) {
+		t.Error("relay-style member should render checked in its relay source block")
+	}
+
+	// (a) a disabled group still renders its rows unchecked and offers the
+	//     controls needed to switch it on.
+	if !strings.Contains(html, `data-testid="tool-group-enabled-schema-write"`) ||
+		!strings.Contains(html, `data-testid="tool-group-policy-schema-write"`) {
+		t.Error("a fully disabled group must still render its enable switch and policy select")
+	}
+	// Pins ToggleInput's canonical attribute order (class before checked).
+	if strings.Contains(html, `name="groupEnabled.schema-write" value="on" class="toggle toggle-sm" checked`) {
+		t.Error("schema-write has no enabled members, its switch must be off")
+	}
+	for _, name := range []string{"schema-create", "schema-delete"} {
+		// Pins ToggleInput's canonical attribute order (type before name).
+		if !strings.Contains(html, `type="checkbox" name="tool" value="`+name+`"`) {
+			t.Errorf("disabled group member %s is missing from the panel", name)
+		}
+		if strings.Contains(html, `value="`+name+`" checked`) {
+			t.Errorf("disabled group member %s must render unchecked", name)
+		}
+	}
+
+	// (b) the stored ask policy renders on the group's policy select.
+	if !selectShowsValue(html, "groupPolicy.documents", "ask") {
+		t.Error("documents group policy select should show Ask")
+	}
+
+	// (c) the inherited value is inlined into each policy select's Inherit
+	//     option; the separate hint labels are gone.
+	if !strings.Contains(html, "Inherit (") {
+		t.Error("the Inherit option must carry the inherited value")
+	}
+	for _, gone := range []string{"Override · ", "Inherits ", "→ Default"} {
+		if strings.Contains(html, gone) {
+			t.Errorf("removed hint text %q must not render", gone)
+		}
+	}
+
+	// (d) every fixture member renders exactly once (so no duplicate row inside a
+	//     group) and none leaks into the Other fallback block.
+	for _, g := range groups {
+		for _, name := range g.Tools {
+			if got := strings.Count(html, `value="`+name+`"`); got != 1 {
+				t.Errorf("fixture member %s rendered %d times, want exactly 1", name, got)
+			}
+		}
+	}
+	if strings.Contains(html, `data-testid="tool-group-other"`) {
+		t.Error("no fixture member may leak into the Other fallback block")
+	}
+}
+
+// sandboxSelectedProvider parses the rendered provider <select> and returns the
+// value a browser would submit: the first selected option that is not disabled,
+// or "" when no such option exists (a disabled selected option contributes
+// nothing to the form data set).
+func sandboxSelectedProvider(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, `id="agent-sandbox-provider"`)
+	if start < 0 {
+		t.Fatal("provider select not found")
+	}
+	end := strings.Index(html[start:], "</select>")
+	if end < 0 {
+		t.Fatal("provider select not closed")
+	}
+	block := html[start : start+end]
+	for {
+		i := strings.Index(block, "<option")
+		if i < 0 {
+			return ""
+		}
+		j := strings.Index(block[i:], ">")
+		if j < 0 {
+			return ""
+		}
+		tag := block[i : i+j]
+		block = block[i+j+1:]
+		if !strings.Contains(tag, "selected") || strings.Contains(tag, "disabled") {
+			continue
+		}
+		v := strings.Index(tag, `value="`)
+		if v < 0 {
+			continue
+		}
+		v += len(`value="`)
+		e := strings.Index(tag[v:], `"`)
+		if e < 0 {
+			continue
+		}
+		return tag[v : v+e]
+	}
+}
+
+// TestUIAgentSandboxProviderRoundTripSubmit is the submit regression for the
+// disabled-option defect: saving an unchanged sandbox form must never drop a
+// stored-but-unavailable provider into Auto. The test mirrors what a browser
+// submits (selected option that is not disabled) and asserts the handler
+// persists that value.
+func TestUIAgentSandboxProviderRoundTripSubmit(t *testing.T) {
+	cases := []struct {
+		name       string
+		cfg        *AgentSandboxConfig
+		providers  []SandboxProvider
+		wantSubmit string // value a browser would send for the provider field
+		wantStored string // provider the handler must persist
+	}{
+		{
+			name: "stored unavailable provider round-trips",
+			cfg:  &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+				{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+				{Name: "E2B", Type: "e2b", Registered: false, Healthy: false, Message: "E2B_API_KEY not set"},
+			},
+			wantSubmit: "firecracker",
+			wantStored: "firecracker",
+		},
+		{
+			name: "stored provider absent from the list round-trips",
+			cfg:  &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true},
+			},
+			wantSubmit: "firecracker",
+			wantStored: "firecracker",
+		},
+		{
+			name: "stored Auto round-trips as Auto",
+			cfg:  &AgentSandboxConfig{Enabled: true},
+			providers: []SandboxProvider{
+				{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: false, Message: "docker daemon unreachable"},
+			},
+			wantSubmit: "",
+			wantStored: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &fakeMemory{
+				defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+				sandboxConfig: tc.cfg,
+				providers:     tc.providers,
+			}
+			s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+			e := echo.New()
+			e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+			e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("sandbox GET status %d", rec.Code)
+			}
+			html := rec.Body.String()
+
+			got := sandboxSelectedProvider(t, html)
+			if got != tc.wantSubmit {
+				t.Errorf("browser would submit provider %q, want %q", got, tc.wantSubmit)
+			}
+			// exactly one provider control: no hidden fallback that could
+			// override an explicit Auto choice
+			if n := strings.Count(html, `name="provider"`); n != 1 {
+				t.Errorf("expected exactly one provider control, got %d", n)
+			}
+
+			// submit the form unchanged (only the provider field matters here)
+			rec = httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&provider="+got))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			e.ServeHTTP(rec, req)
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("sandbox update status %d", rec.Code)
+			}
+			if f.sandboxConfig == nil {
+				t.Fatal("SetAgentSandboxConfig not called")
+			}
+			if f.sandboxConfig.Provider != tc.wantStored {
+				t.Errorf("stored provider = %q, want %q", f.sandboxConfig.Provider, tc.wantStored)
+			}
+		})
+	}
+}
+
+// TestUIAgentSandboxExplicitAutoSubmit is the control: a user who explicitly
+// picks Auto submits provider="" and Auto persists (nothing re-injects the
+// stored provider).
+func TestUIAgentSandboxExplicitAutoSubmit(t *testing.T) {
+	f := &fakeMemory{
+		defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		sandboxConfig: &AgentSandboxConfig{Enabled: true, Provider: "firecracker"},
+		providers: []SandboxProvider{
+			{Name: "Firecracker", Type: "firecracker", Registered: false, Healthy: false, Message: "KVM not available on this host"},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&provider="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sandbox update status %d", rec.Code)
+	}
+	if f.sandboxConfig == nil || f.sandboxConfig.Provider != "" {
+		t.Errorf("explicit Auto must persist an empty provider, got %+v", f.sandboxConfig)
+	}
+}
+
+// TestUIAgentSandboxGitTokenRef covers the git-token secret-reference field: it is
+// rendered from the stored config, mapped back on submit, and a raw git token in
+// the env-vars textarea is rejected (issue #1844).
+func TestUIAgentSandboxGitTokenRef(t *testing.T) {
+	f := &fakeMemory{
+		defs:          map[string]*AgentDefinition{"a1": {ID: "a1", Name: "diane"}},
+		sandboxConfig: &AgentSandboxConfig{Enabled: true, GitTokenSecretRef: "SANDBOX_GIT_TOKEN"},
+		providers:     []SandboxProvider{{Name: "gVisor (Docker)", Type: "gvisor", Registered: true, Healthy: true}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/agents/:id/sandbox", s.uiAgentSandbox)
+	e.POST("/agents/:id/sandbox/update", s.uiAgentSandboxUpdate)
+
+	// Renders the stored reference.
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/agents/a1/sandbox", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sandbox GET status %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `name="gitTokenSecretRef"`) || !strings.Contains(rec.Body.String(), `value="SANDBOX_GIT_TOKEN"`) {
+		t.Errorf("sandbox page should render the git token secret reference input, got body=%s", rec.Body.String())
+	}
+
+	// Maps back on submit.
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&gitTokenSecretRef=SANDBOX_GIT_TOKEN"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("sandbox update status %d", rec.Code)
+	}
+	if f.sandboxConfig == nil || f.sandboxConfig.GitTokenSecretRef != "SANDBOX_GIT_TOKEN" {
+		t.Errorf("git token secret ref not persisted, got %+v", f.sandboxConfig)
+	}
+
+	// Rejects a raw GH_TOKEN line in the env-vars textarea.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&envVars=GH_TOKEN%3Dghp_raw"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "git+token+must+be+set+via+the+Git+token+reference") {
+		t.Errorf("raw GH_TOKEN env var should be rejected, got %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// A non-secret env var still maps through.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/agents/a1/sandbox/update", strings.NewReader("enabled=on&envVars=FOO%3Dbar"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || f.sandboxConfig.EnvVars["FOO"] != "bar" {
+		t.Errorf("non-secret env var should map through, got %d %+v", rec.Code, f.sandboxConfig)
+	}
+}

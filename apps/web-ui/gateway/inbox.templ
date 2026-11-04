@@ -1,0 +1,478 @@
+package main
+
+import (
+	"strconv"
+
+	"github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Inbox page (web-inbox capability) ---
+
+// InboxPage renders the inbox: an Account | Project scope switch, a tab strip
+// (All / Unread / Action required / Snoozed / Cleared) with counts, the
+// notification list, and tab-aware empty states. The wrapping element carries
+// the data-scope/data-tab/data-project-id attributes the inbox JS reads to
+// subscribe to the right event stream and reconcile counts.
+templ InboxPage(d inboxView) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@inboxHeader(d)
+		@flashToastsWarn(d.FlashMsg, d.WarnMsg, d.FlashErr)
+		<div
+			data-inbox-page
+			data-scope={ d.Scope }
+			data-tab={ d.Tab }
+			data-project-id={ inboxProjectID(d) }
+			data-project-filter={ d.ProjectFilter }
+		>
+			@inboxScopeSwitch(d)
+			if d.Scope == "project" && !d.ProjectSelected {
+				@inboxNoProject()
+			} else if d.LoadErr != nil {
+				@pageError("Inbox unavailable", d.LoadErr)
+			} else {
+				@inboxProjectFilterControl(d)
+				@inboxTabs(d)
+				if len(d.Notifications) == 0 {
+					@inboxEmpty(d)
+				} else {
+					@inboxList(d)
+				}
+			}
+		</div>
+	}
+}
+
+// inboxHeader is the page header with the scope-wide "Mark all read" action.
+templ inboxHeader(d inboxView) {
+	@pageHeader("Inbox", "Inbox", "Everything that needs you — account events and project activity in one place.") {
+		<div class="flex items-center gap-2">
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--check-check",
+				Attrs:   templ.Attributes{"data-inbox-action": "mark-all-read"},
+			}) {
+				Mark all read
+			}
+		</div>
+	}
+}
+
+// inboxScopeSwitch is the Everything | Account | Project switch. Everything is
+// the default and lists both scopes, so the bell (which counts this scope) shows
+// project activity too. Project shows its unread count when that scope is
+// active.
+templ inboxScopeSwitch(d inboxView) {
+	<div class="mb-4 flex flex-wrap items-center gap-2" data-inbox-scope-switch>
+		@inboxScopeLink(d, inboxScopeAll, "Everything", "lucide--inbox")
+		@inboxScopeLink(d, inboxScopeAccount, "Account", "lucide--user-round")
+		@inboxScopeLink(d, inboxScopeProject, "Project", "lucide--folder")
+	</div>
+}
+
+// inboxProjectFilterControl is the project filter dropdown for the scopes that
+// span several projects (Everything and Account). It is omitted for the project
+// inbox — that scope already narrows to one project via the scope switch and
+// must not repeat the label.
+templ inboxProjectFilterControl(d inboxView) {
+	if d.Scope != inboxScopeProject {
+		<form class="mb-4 flex flex-wrap items-center gap-2" method="get" action={ templ.URL("/inbox") } data-inbox-project-filter>
+			<input type="hidden" name="scope" value={ d.Scope }/>
+			<input type="hidden" name="tab" value={ d.Tab }/>
+			<span class="text-muted-faint flex items-center gap-1.5">
+				@ui.IconSpan("lucide--folder", "size-3.5 shrink-0")
+				<span class="text-xs font-medium">Project</span>
+			</span>
+			<select name="project" class="select select-bordered select-sm" aria-label="Filter by project" onchange="this.form.submit()">
+				<option value="" selected?={ d.ProjectFilter == "" }>All projects</option>
+				for _, p := range d.ProjectOptions {
+					<option value={ p.ID } selected?={ p.ID == d.ProjectFilter }>{ p.Name }</option>
+				}
+			</select>
+		</form>
+	}
+}
+
+templ inboxScopeLink(d inboxView, scope, label, icon string) {
+	{{ variant := ui.ButtonGhost }}
+	if d.Scope == scope {
+		{{ variant = ui.ButtonPrimary }}
+	}
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeLink,
+		Href:       inboxScopeHref(scope),
+		Variant:    variant,
+		Size:       ui.ButtonSM,
+		ExtraClass: "gap-2",
+		Attrs:      templ.Attributes{"data-inbox-scope": scope},
+	}) {
+		@ui.IconSpan(icon, "size-4")
+		<span>{ label }</span>
+		if scope == "project" && d.Scope == "project" && d.scopeUnread() > 0 {
+			@ui.Badge(ui.BadgeProps{
+				Label:   strconv.Itoa(d.scopeUnread()),
+				Variant: ui.BadgeNeutral,
+				Size:    ui.BadgeSizeXS,
+			})
+		}
+	}
+}
+
+// inboxTabs is the tab strip with per-tab counts.
+templ inboxTabs(d inboxView) {
+	<div class="border-base-content/10 mb-4 flex flex-wrap items-center gap-1 border-b" role="tablist" data-inbox-tabs>
+		for _, t := range inboxTabDefs {
+			@inboxTab(d, t)
+		}
+	</div>
+}
+
+templ inboxTab(d inboxView, t inboxTabDef) {
+	{{ active := d.Tab == t.Key }}
+	{{ count, show := inboxTabCount(d.Counts, t.Key) }}
+	<a
+		href={ templ.SafeURL(inboxFilterHref(d.Scope, t.Key, d.ProjectFilter)) }
+		role="tab"
+		aria-selected={ strconv.FormatBool(active) }
+		data-inbox-tab={ t.Key }
+		class={ "relative -mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors", templ.KV("border-primary text-base-content font-medium", active), templ.KV("border-transparent text-muted hover:text-base-content", !active) }
+	>
+		@ui.IconSpan(t.Icon, "size-4")
+		<span>{ t.Label }</span>
+		if show {
+			<span class={ "badge badge-xs tabular-nums", templ.KV("badge-primary", active), templ.KV("badge-ghost", !active) }>{ strconv.Itoa(count) }</span>
+		}
+	</a>
+}
+
+// inboxList is the notification list container the client refreshes in place.
+templ inboxList(d inboxView) {
+	<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y" data-inbox-list>
+		for _, n := range d.Notifications {
+			@inboxRow(d, n)
+		}
+	</div>
+}
+
+// inboxRow is one notification: leading icon tile (with unread dot), title +
+// message + metadata, and a trailing control cluster. A plain <div> (not
+// components.LinkRow) because rows host nested action buttons. When the
+// notification carries a navigation target its title/message block is an
+// anchor (`data-notification-open`) so clicking the item deep-links to the
+// pending question/approval and marks it read (issue #1362).
+templ inboxRow(d inboxView, n Notification) {
+	<div
+		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
+		data-notification-id={ n.ID }
+		data-notification-unread={ strconv.FormatBool(!n.Read) }
+	>
+		<div class="relative mt-0.5 shrink-0">
+			<span class="border-base-content/10 bg-base-200/60 grid size-9 place-items-center rounded-selector border">
+				@ui.IconSpan(notificationIcon(n), "size-4")
+			</span>
+			if !n.Read {
+				<span class="bg-primary border-base-100 absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2" aria-hidden="true"></span>
+			}
+		</div>
+		<div class="min-w-0 grow">
+			if n.ActionURL != "" {
+				<a
+					href={ templ.SafeURL(n.ActionURL) }
+					class="block min-w-0"
+					data-notification-open
+					data-notif-id={ n.ID }
+				>
+					@inboxRowBody(d, n)
+				</a>
+			} else {
+				@inboxRowBody(d, n)
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				{ notificationMeta(n) }
+			}
+		</div>
+		@inboxRowControls(n)
+		@inboxReviewMergeTarget(n)
+	</div>
+}
+
+// inboxRowBody is the navigable part of a notification row: title, the
+// originating-project chip (account scope only), state badges, and message.
+// Extracted so the same markup renders as plain content or inside the open
+// anchor.
+templ inboxRowBody(d inboxView, n Notification) {
+	{{ label := notificationProjectLabel(d, n) }}
+	<div class="flex flex-wrap items-center gap-2">
+		<p class={ "truncate text-sm", templ.KV("font-semibold", !n.Read), templ.KV("text-base-content/75", n.Read) }>{ n.Title }</p>
+		if label != "" {
+			@ui.Badge(ui.BadgeProps{Label: label, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS, Icon: "lucide--folder"})
+		}
+		if !n.Read {
+			@ui.Badge(ui.BadgeProps{Label: "New", Variant: ui.BadgePrimary, Size: ui.BadgeSizeXS})
+		}
+		if n.RequiresAction {
+			@ui.Badge(ui.BadgeProps{Label: "Action", Variant: ui.BadgeWarning, Size: ui.BadgeSizeXS, Icon: "lucide--hand"})
+		}
+	</div>
+	if n.Message != "" {
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5 line-clamp-2"}) {
+			{ n.Message }
+		}
+	}
+}
+
+// inboxRowControls is the per-item action cluster: resolve buttons for
+// actionable items and the read/snooze/clear/dismiss affordances. Navigation
+// targets are owned by the row body anchor, not a duplicate control here.
+templ inboxRowControls(n Notification) {
+	<div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
+		@inboxReviewMergeButton(n)
+		if n.RequiresAction {
+			for _, a := range n.Actions {
+				@inboxResolveButton(n.ID, a)
+			}
+		}
+		@inboxReadToggle(n)
+		if n.SnoozedUntil != "" {
+			@inboxIconButton("unsnooze", n.ID, "Unsnooze", "lucide--alarm-clock-off")
+		} else if n.ClearedAt == "" {
+			@inboxIconButton("snooze", n.ID, "Snooze", "lucide--alarm-clock")
+		}
+		if n.ClearedAt != "" {
+			@inboxIconButton("restore", n.ID, "Restore", "lucide--archive-restore")
+		} else {
+			@inboxIconButton("clear", n.ID, "Clear", "lucide--archive")
+		}
+		@inboxIconButton("dismiss", n.ID, "Dismiss", "lucide--x")
+	</div>
+}
+
+// inboxReviewMergeButton renders the "Review merge" CTA for a review-ready
+// extraction notification. It lazily fetches the shared merge preview modal via
+// htmx into the row's target div (data-dialog-autoopen opens it on swap).
+templ inboxReviewMergeButton(n Notification) {
+	{{ documentID, jobID, ok := inboxReviewMerge(n) }}
+	if ok {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonXS,
+			Icon:    "lucide--git-merge",
+			Attrs: templ.Attributes{
+				"data-testid": "inbox-review-merge",
+				"hx-get":      inboxMergePreviewHref(documentID, jobID),
+				"hx-target":   "#inbox-merge-preview-target-" + n.ID,
+				"hx-swap":     "innerHTML",
+			},
+		}) {
+			Review merge
+		}
+	}
+}
+
+// inboxReviewMergeTarget is the per-row drop target the merge preview modal is
+// swapped into. Rendered only for review-ready notifications.
+templ inboxReviewMergeTarget(n Notification) {
+	{{ _, _, ok := inboxReviewMerge(n) }}
+	if ok {
+		<div id={ "inbox-merge-preview-target-" + n.ID }></div>
+	}
+}
+
+templ inboxResolveButton(id string, a NotificationAction) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonVariant(notificationActionClass(a)),
+		Size:    ui.ButtonXS,
+		Attrs: templ.Attributes{
+			"data-notif-action": "resolve",
+			"data-notif-id":     id,
+			"data-notif-verb":   a.Value,
+		},
+	}) {
+		{ a.Label }
+	}
+}
+
+templ inboxReadToggle(n Notification) {
+	if n.Read {
+		@inboxIconButton("unread", n.ID, "Mark unread", "lucide--circle-dot")
+	} else {
+		@inboxIconButton("read", n.ID, "Mark read", "lucide--check")
+	}
+}
+
+templ inboxIconButton(action, id, label, icon string) {
+	@ui.Button(ui.ButtonProps{
+		Type:    ui.ButtonTypeButton,
+		Variant: ui.ButtonGhost,
+		Size:    ui.ButtonXS,
+		Shape:   ui.ButtonShapeSquare,
+		Attrs: templ.Attributes{
+			"title":            label,
+			"aria-label":       label,
+			"data-notif-action": action,
+			"data-notif-id":     id,
+		},
+	}) {
+		@ui.IconSpan(icon, "size-4")
+	}
+}
+
+// inboxEmpty is the tab/scope-aware empty state. Project scope with nothing
+// delivered at all points at the notification preferences.
+templ inboxEmpty(d inboxView) {
+	if inboxProjectAllOptional(d) {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--bell-ring",
+			Title:       "No project activity yet",
+			Description: "Document activity is delivered by default; comment replies and agent-configuration changes are opt-in. Choose what you want to receive.",
+			Bordered:    true,
+			Class:       "py-12",
+		}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/inbox/preferences",
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--sliders-horizontal",
+			}) {
+				Notification settings
+			}
+		}
+	} else if d.Scope == "project" {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--check-check",
+			Title:       "Nothing here",
+			Description: inboxEmptyDescription(d),
+			Bordered:    true,
+			Class:       "py-12",
+		}) {
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeLink,
+				Href:    "/inbox/preferences",
+				Variant: ui.ButtonGhost,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--sliders-horizontal",
+			}) {
+				Notification settings
+			}
+		}
+	} else {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--check-check",
+			Title:       "All caught up",
+			Description: inboxEmptyDescription(d),
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	}
+}
+
+// inboxNoProject is the Project-scope empty state when no project is active.
+templ inboxNoProject() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--folder",
+		Title:       "No project selected",
+		Description: "Choose a project to see its activity inbox. Project notifications are scoped to one project at a time.",
+		Bordered:    true,
+		Class:       "py-12",
+		ActionHref:  "/",
+		ActionLabel: "Choose a project",
+		ActionIcon:  "lucide--folder-open",
+	})
+}
+
+// --- Notification preferences page (project event delivery) ---
+
+// NotificationPreferencesPage renders the per-key delivery controls for project
+// events: `optout` keys (document activity) start enabled and can be turned off,
+// `optin` keys start disabled, and `required` keys are shown as always delivered.
+templ NotificationPreferencesPage(d notificationPrefsView) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@detailHeader(crumbsActive(nav.Crumbs("Inbox", "/inbox", "Notification settings")), "", "Notification settings", "Document activity is on by default and can be turned off. Comment replies and agent-configuration changes are opt-in; assignments, mentions, approvals and account events are always delivered.", detailHeaderOpts{Margin: "mb-6"}) {
+			@ui.Button(ui.ButtonProps{
+				Type:       ui.ButtonTypeLink,
+				Href:       "/inbox?scope=project",
+				Variant:    ui.ButtonGhost,
+				Size:       ui.ButtonSM,
+				ExtraClass: "gap-2",
+			}) {
+				@ui.IconSpan("lucide--arrow-left", "size-4")
+				<span>Back to inbox</span>
+			}
+		}
+		@flashToasts(d.FlashMsg, d.FlashErr)
+		if d.LoadErr != nil {
+			@pageError("Notification settings unavailable", d.LoadErr)
+		} else if d.Project == nil {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--folder",
+				Title:       "No project selected",
+				Description: "Choose a project to manage its notification preferences.",
+				Bordered:    true,
+				Class:       "py-12",
+				ActionHref:  "/",
+				ActionLabel: "Choose a project",
+				ActionIcon:  "lucide--folder-open",
+			})
+		} else if len(d.Preferences) == 0 {
+			@ui.EmptyState(ui.EmptyStateProps{
+				Icon:        "lucide--bell-off",
+				Title:       "No project events",
+				Description: "There are no configurable project notifications yet.",
+				Bordered:    true,
+				Class:       "py-12",
+			})
+		} else {
+			<form method="post" action="/inbox/preferences">
+				<input type="hidden" name="project_id" value={ d.Project.ID }/>
+				<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y">
+					for _, p := range d.Preferences {
+						@preferenceRow(p)
+					}
+				</div>
+				<div class="mt-6 flex justify-end">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--check",
+					}) {
+						Save preferences
+					}
+				</div>
+			</form>
+		}
+	}
+}
+
+templ preferenceRow(p NotificationPreference) {
+	<label class={ "flex items-start gap-3 px-4 py-3", templ.KV("cursor-pointer", !p.Required), templ.KV("opacity-80", p.Required) }>
+		{{ attrs := templ.Attributes{} }}
+		if p.Required {
+			{{ attrs["disabled"] = true }}
+		}
+		@form.ToggleInput(form.ToggleInputProps{
+			Name:    "pref_" + p.EventKey,
+			Checked: p.Enabled,
+			Class:   "toggle toggle-sm mt-0.5",
+			Attrs:   attrs,
+		})
+		<span class="min-w-0 grow">
+			<span class="flex flex-wrap items-center gap-2">
+				<span class="text-sm font-medium">{ preferenceLabel(p) }</span>
+				if p.Required {
+					@ui.Badge(ui.BadgeProps{Label: "Always on", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS})
+				}
+			</span>
+			if p.Description != "" {
+				<span class="text-muted mt-0.5 block text-xs">{ p.Description }</span>
+			}
+		</span>
+	</label>
+}

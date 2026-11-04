@@ -1,0 +1,227 @@
+package orgs
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+)
+
+// fakeOrgRepo is an in-memory orgRepository double for service/handler tests.
+// Only the fields exercised by a given test need to be set.
+type fakeOrgRepo struct {
+	org    *Org   // returned by UpdateName/GetByID when err is nil
+	err    error  // UpdateName/GetByID failure
+	member bool   // result returned by IsUserMember
+	role   string // result returned by IsOrgAdmin / GetMembershipRole
+
+	membershipRoleOverride    string
+	hasMembershipRoleOverride bool
+
+	updatedID   string // last id passed to UpdateName
+	updatedName string // last name passed to UpdateName
+	updateCalls int
+
+	deletedID    string
+	deleteCalls  int
+	deleteResult bool
+
+	// org-member management surfaces
+	foundUser      *orgMemberUser
+	findUserErr    error
+	findUserEmail  string
+	addedMember    *OrgMemberDTO
+	addMemberErr   error
+	addMemberCalls int
+	addedOrgID     string
+	addedUserID    string
+	addedRole      string
+
+	updateRoleResult bool
+	updateRoleErr    error
+	updateRoleCalls  int
+	updatedRole      string
+
+	adminCount    int
+	adminCountErr error
+
+	soleProjects []string
+	soleErr      error
+
+	removedProjectIDs []string
+	removed           bool
+	removeErr         error
+	removeCalls       int
+}
+
+func (f *fakeOrgRepo) List(context.Context, string) ([]OrgDTO, error) { return nil, nil }
+
+func (f *fakeOrgRepo) GetByID(context.Context, string) (*Org, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.org, nil
+}
+
+func (f *fakeOrgRepo) Create(context.Context, string, string) (*Org, error) { return nil, nil }
+
+func (f *fakeOrgRepo) UpdateName(_ context.Context, id, name string) (*Org, error) {
+	f.updateCalls++
+	f.updatedID = id
+	f.updatedName = name
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.org, nil
+}
+
+func (f *fakeOrgRepo) Delete(_ context.Context, id string) (bool, error) {
+	f.deleteCalls++
+	f.deletedID = id
+	return f.deleteResult, nil
+}
+
+func (f *fakeOrgRepo) ListMembers(context.Context, string) ([]OrgMemberDTO, error) {
+	return nil, nil
+}
+
+func (f *fakeOrgRepo) CountUserMemberships(context.Context, string) (int, error) { return 0, nil }
+
+func (f *fakeOrgRepo) IsUserMember(context.Context, string, string) (bool, error) {
+	return f.member, nil
+}
+
+func (f *fakeOrgRepo) GetMembershipRole(context.Context, string, string) (string, error) {
+	if f.hasMembershipRoleOverride {
+		return f.membershipRoleOverride, nil
+	}
+	return f.role, nil
+}
+
+func (f *fakeOrgRepo) IsOrgAdmin(context.Context, string, string) (bool, error) {
+	return f.role == "org_admin", nil
+}
+
+func (f *fakeOrgRepo) FindOrgToolSettings(context.Context, string) ([]OrgToolSetting, error) {
+	return nil, nil
+}
+
+func (f *fakeOrgRepo) UpsertOrgToolSetting(context.Context, *OrgToolSetting) (*OrgToolSetting, error) {
+	return nil, nil
+}
+
+func (f *fakeOrgRepo) DeleteOrgToolSetting(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeOrgRepo) FindVerifiedUserByEmail(_ context.Context, email string) (*orgMemberUser, error) {
+	f.findUserEmail = email
+	return f.foundUser, f.findUserErr
+}
+
+func (f *fakeOrgRepo) AddMember(_ context.Context, orgID, userID, role string) (*OrgMemberDTO, error) {
+	f.addMemberCalls++
+	f.addedOrgID = orgID
+	f.addedUserID = userID
+	f.addedRole = role
+	return f.addedMember, f.addMemberErr
+}
+
+func (f *fakeOrgRepo) UpdateMemberRole(_ context.Context, _, _, role string) (bool, error) {
+	f.updateRoleCalls++
+	f.updatedRole = role
+	return f.updateRoleResult, f.updateRoleErr
+}
+
+func (f *fakeOrgRepo) CountAdmins(context.Context, string) (int, error) {
+	return f.adminCount, f.adminCountErr
+}
+
+func (f *fakeOrgRepo) SoleProjectAdminProjects(context.Context, string, string) ([]string, error) {
+	return f.soleProjects, f.soleErr
+}
+
+func (f *fakeOrgRepo) RemoveMemberWithCascade(context.Context, string, string) ([]string, bool, error) {
+	f.removeCalls++
+	return f.removedProjectIDs, f.removed, f.removeErr
+}
+
+// fakeTokenRevoker records the projects whose tokens were revoked.
+type fakeTokenRevoker struct {
+	revoked []string
+	err     error
+}
+
+func (f *fakeTokenRevoker) RevokeByProjectAndUser(_ context.Context, projectID, _ string) error {
+	f.revoked = append(f.revoked, projectID)
+	return f.err
+}
+
+func testOrgService(repo orgRepository) *Service {
+	return &Service{
+		repo: repo,
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+}
+
+func TestServiceUpdate_Success(t *testing.T) {
+	repo := &fakeOrgRepo{org: &Org{ID: "org-1", Name: "Renamed"}, member: true, role: "org_admin"}
+	svc := testOrgService(repo)
+
+	dto, err := svc.Update(context.Background(), "org-1", "user-1", "  Renamed  ")
+
+	require.NoError(t, err)
+	require.NotNil(t, dto)
+	assert.Equal(t, "org-1", dto.ID)
+	assert.Equal(t, "Renamed", dto.Name)
+	// The service trims before persisting.
+	assert.Equal(t, "Renamed", repo.updatedName)
+	assert.Equal(t, "org-1", repo.updatedID)
+}
+
+func TestServiceUpdate_InvalidName(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+	}{
+		{name: "empty", in: ""},
+		{name: "whitespace only", in: "   "},
+		{name: "too long", in: string(make([]byte, MaxOrgNameLength+1))},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeOrgRepo{member: true, role: "org_admin"}
+			svc := testOrgService(repo)
+
+			dto, err := svc.Update(context.Background(), "org-1", "user-1", tt.in)
+
+			assert.Nil(t, dto)
+			require.Error(t, err)
+			var appErr *apperror.Error
+			require.ErrorAs(t, err, &appErr)
+			assert.Equal(t, 400, appErr.HTTPStatus)
+			// Validation short-circuits before any repository write.
+			assert.Zero(t, repo.updateCalls)
+		})
+	}
+}
+
+func TestServiceUpdate_NotFound(t *testing.T) {
+	repo := &fakeOrgRepo{err: apperror.ErrNotFound.WithMessage("Organization not found"), member: true, role: "org_admin"}
+	svc := testOrgService(repo)
+
+	dto, err := svc.Update(context.Background(), "missing", "user-1", "New name")
+
+	assert.Nil(t, dto)
+	require.Error(t, err)
+	var appErr *apperror.Error
+	require.ErrorAs(t, err, &appErr)
+	assert.Equal(t, 404, appErr.HTTPStatus)
+	assert.Equal(t, "missing", repo.updatedID)
+}

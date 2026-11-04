@@ -1,0 +1,237 @@
+name: Publish Self-Hosted Images
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build-server:
+    name: Build and Push Server Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      # On tag pushes, detect whether the image's *inputs* changed since the last
+      # release tag. The published server image is built from
+      # deploy/self-hosted/Dockerfile.server with the repo root as its context,
+      # so apps/cli, deploy/self-hosted/* and the migrations are inputs too — a
+      # CLI-only change used to read as "unchanged" here and then be refused by
+      # the alias assertion below (#2169). Both sides use the same input set now.
+      - name: Check if changed since last tag
+        id: changed
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHANGED_DOCKERFILE: deploy/self-hosted/Dockerfile.server
+          CHANGED_CONTEXT: .
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ] && [ "$(.github/scripts/release-versions.sh changed "$PREV" HEAD)" = "false" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Independent second opinion on the alias decision (#2111). The step above
+      # resolves PREV with `git describe`; a force-moved rolling tag can win that
+      # lookup (v0.88.0 / #2087). The script re-resolves the previous RELEASE tag
+      # from the tag list, diffs apps/server against it, and fails the release
+      # when the two signals disagree. A missing previous map (a release cut
+      # before #2111) degrades to the tree comparison.
+      - name: Download previous release version map
+        if: startsWith(github.ref, 'refs/tags/v') && steps.changed.outputs.prev != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          mkdir -p .release-prev
+          if gh release download "${PREV}" --pattern release-versions.json \
+               --dir .release-prev --repo "${GITHUB_REPOSITORY}" --clobber 2>/dev/null; then
+            echo "::notice::using ${PREV}'s recorded digest for the alias check"
+          else
+            echo "::notice::no release-versions.json on ${PREV}; degrading the alias check to the tree comparison"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check previous release image
+        id: source
+        if: steps.changed.outputs.changed == 'false'
+        shell: bash
+        env:
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          prev="${PREV#v}"
+          IMG="${IMAGE_PREFIX}/memory-server"
+          if docker buildx imagetools inspect "${IMG}:${prev}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' \
+              "${IMG}:${prev}" 2>/dev/null | jq -r '.digest // empty' || true)"
+            echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+          else
+            echo "exists=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Assert alias decision (independent second signal)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHECK_SERVICE: server
+          CHECK_PATH: apps/server
+          # The published server image is built from deploy/self-hosted/ with the
+          # repo root as context, so its inputs also include apps/cli and
+          # deploy/self-hosted/* — not just apps/server (#2143).
+          CHECK_DOCKERFILE: deploy/self-hosted/Dockerfile.server
+          CHECK_CONTEXT: .
+          CHECK_CHANGED: ${{ steps.changed.outputs.changed }}
+          CHECK_PREV_TAG: ${{ steps.changed.outputs.prev }}
+          CHECK_CURRENT_TAG: ${{ github.ref_name }}
+          CHECK_PREV_MAP: .release-prev/release-versions.json
+          CHECK_PREV_DIGEST: ${{ steps.source.outputs.digest }}
+        run: .github/scripts/release-versions.sh check
+
+      - name: Extract metadata
+        id: meta
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/memory-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      # Cache poisoning is transient (an evicted Azure blob makes the gha
+      # cache manifest resolve to a 404 BlobNotFound, which buildx treats as
+      # fatal). Bypassing cache on retry guarantees the release tag is
+      # published instead of silently missing.
+      - name: Build and push
+        id: build
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
+        continue-on-error: true
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+          # 4-stage image: mode=max caches the Go builder stages, which are
+          # absent from the final image; the weekly scheduled run (default
+          # branch) keeps this scope warm for later tag and manual runs.
+          cache-from: type=gha,scope=memory-server
+          cache-to: type=gha,scope=memory-server,mode=max
+
+      - name: Build and push (retry, cache bypassed)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+          # Keep cache-to so a fresh cache is written for subsequent runs.
+          cache-to: type=gha,scope=memory-server,mode=max
+          no-cache: true
+
+      # Unchanged tag push: re-tag the previous version's multi-arch manifest list
+      # to the new version tags (no rebuild).
+      - name: Alias unchanged image to new version
+        if: steps.changed.outputs.changed == 'false' && steps.source.outputs.exists == 'true'
+        shell: bash
+        env:
+          COMMIT: ${{ steps.version.outputs.commit }}
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          MAJOR_MINOR="${VERSION%.*}"
+          MAJOR="${VERSION%%.*}"
+          PREV="${PREV#v}"
+          IMG="${IMAGE_PREFIX}/memory-server"
+          docker buildx imagetools create \
+            -t "$IMG:$VERSION" \
+            -t "$IMG:$MAJOR_MINOR" \
+            -t "$IMG:$MAJOR" \
+            -t "$IMG:sha-${COMMIT}" \
+            "$IMG:$PREV"
+
+      - name: Image digest
+        if: steps.changed.outputs.changed != 'false' || steps.source.outputs.exists == 'false'
+        env:
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: echo "${DIGEST}"
+
+      - name: Mark release as ready
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "Docker images built and pushed successfully for $TAG" > images-ready.txt
+          echo "Server image: ghcr.io/${{ github.repository_owner }}/memory-server:${TAG#v}" >> images-ready.txt
+          echo "Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> images-ready.txt
+
+          for i in $(seq 1 90); do
+            if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
+              echo "Release $TAG found, uploading sentinel..."
+              gh release upload "$TAG" images-ready.txt --repo "${{ github.repository }}" --clobber
+              echo "✓ Release $TAG marked as ready"
+              exit 0
+            fi
+            echo "Waiting for release $TAG to be created... (attempt $i/90)"
+            sleep 15
+          done
+
+          echo "⚠️  Release $TAG not found after 15 minutes. Sentinel not uploaded."
+          exit 1

@@ -1,0 +1,146 @@
+package search
+
+import (
+	"net/http"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Handler handles HTTP requests for unified search
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler creates a new search handler
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// Search handles POST /search/unified
+// @Summary Unified search
+// @Description Search across graph objects, relationships, and document chunks with configurable fusion strategies
+// @Description Supports multiple result types: graph nodes, relationship edges (triplets), and text chunks
+// @Description Relationships are returned when embeddings are available and fusion strategy is RRF or weighted
+// @Tags search
+// @Accept json
+// @Produce json
+// @Param body body UnifiedSearchRequest true "Search request"
+// @Param debug query bool false "If true, includes timing and statistics in response (requires search:debug scope)"
+// @Success 200 {object} UnifiedSearchResponse
+// @Failure 400 {object} apperror.Error
+// @Failure 401 {object} apperror.Error
+// @Failure 403 {object} apperror.Error
+// @Router /search/unified [post]
+func (h *Handler) Search(c echo.Context) error {
+	// Get authenticated user
+	user := auth.MustGetUser(c)
+
+	// Get project ID
+	projectIDStr, err := auth.GetProjectID(c)
+	if err != nil {
+		return err
+	}
+
+	projectID, err := uuid.Parse(projectIDStr)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid project ID")
+	}
+
+	// Get org ID from user context
+	var orgID uuid.UUID
+	if user.OrgID != "" {
+		orgID, err = uuid.Parse(user.OrgID)
+		if err != nil {
+			return apperror.ErrBadRequest.WithMessage("invalid org ID")
+		}
+	}
+
+	// Parse request body
+	var req UnifiedSearchRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	// Validate request
+	if req.Query == "" {
+		return apperror.ErrBadRequest.WithMessage("query is required")
+	}
+	if len(req.Query) > 800 {
+		return apperror.ErrBadRequest.WithMessage("query must be 800 characters or less")
+	}
+	if req.MinScore != nil && (*req.MinScore < 0 || *req.MinScore > 1) {
+		return apperror.ErrBadRequest.WithMessage("minScore must be between 0 and 1")
+	}
+
+	// Get user scopes
+	scopes := user.Scopes
+	if scopes == nil {
+		scopes = []string{}
+	}
+
+	// Determine if debug mode is requested (via body field or query param)
+	wantsDebug := req.IncludeDebug || c.QueryParam("debug") == "true"
+
+	// Check debug scope if debug mode requested
+	if wantsDebug && !hasScope(scopes, "search:debug") {
+		return apperror.ErrForbidden.WithMessage("debug scope required for debug mode")
+	}
+
+	// Update request to reflect actual debug mode (handles query param case)
+	req.IncludeDebug = wantsDebug
+
+	// Build search context
+	searchCtx := &SearchContext{
+		OrgID:     orgID,
+		ProjectID: projectID,
+		Scopes:    scopes,
+	}
+
+	// Execute unified search
+	response, err := h.svc.Search(c.Request().Context(), projectID, &req, searchCtx)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// GetTrace handles GET /api/search/trace/:traceId
+// @Summary Get retrieval trace
+// @Description Returns a persisted retrieval trace (query + ordered selected IDs) by trace ID
+// @Tags search
+// @Produce json
+// @Param traceId path string true "Trace ID"
+// @Success 200 {object} UnifiedSearchTraceResponse
+// @Failure 400 {object} apperror.Error
+// @Failure 401 {object} apperror.Error
+// @Failure 404 {object} apperror.Error
+// @Router /api/search/trace/{traceId} [get]
+func (h *Handler) GetTrace(c echo.Context) error {
+	traceIDStr := c.Param("traceId")
+	traceID, err := uuid.Parse(traceIDStr)
+	if err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid traceId")
+	}
+
+	resp, err := h.svc.GetTrace(c.Request().Context(), traceID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, resp)
+}
+
+// hasScope checks if the given scope exists in the list
+func hasScope(scopes []string, scope string) bool {
+	for _, s := range scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,2815 @@
+// Generated from the live PostgreSQL catalog by apps/server/cmd/schema-dbml.
+// Do not hand-edit: apply migrations, then regenerate.
+
+Enum "kb"."document_conversion_status" {
+  "pending"
+  "processing"
+  "completed"
+  "failed"
+  "not_required"
+}
+
+Enum "kb"."email_delivery_status" {
+  "pending"
+  "delivered"
+  "opened"
+  "clicked"
+  "bounced"
+  "soft_bounced"
+  "complained"
+  "unsubscribed"
+  "failed"
+}
+
+Enum "kb"."session_todo_status" {
+  "draft"
+  "pending"
+  "in_progress"
+  "completed"
+  "cancelled"
+}
+
+Table "core"."agent_mcp_endpoints" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "agent_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "revoked_at" timestamptz
+
+  Indexes {
+    (agent_id) [name: "uq_agent_mcp_endpoints_agent", unique]
+  }
+}
+
+Table "core"."agent_mcp_keys" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "endpoint_id" uuid [not null]
+  "token_id" uuid [not null, unique]
+  "label" text [not null]
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "revoked_at" timestamptz
+
+  Indexes {
+    (endpoint_id) [name: "idx_agent_mcp_keys_endpoint"]
+    (endpoint_id, `lower(label)`) [name: "uq_agent_mcp_keys_endpoint_label", unique]
+  }
+}
+
+Table "core"."agent_mcp_sessions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "endpoint_id" uuid [not null]
+  "key_id" uuid [not null]
+  "session_ref" text [not null]
+  "status" text [not null, default: 'active']
+  "turn_count" integer [not null, default: 0]
+  "total_steps" integer [not null, default: 0]
+  "last_run_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_active_at" timestamptz [not null, default: `now()`]
+  "expires_at" timestamptz
+
+  Indexes {
+    (key_id) [name: "idx_agent_mcp_sessions_key"]
+    (session_ref) [name: "uq_agent_mcp_sessions_ref", unique]
+  }
+}
+
+Table "core"."api_tokens" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid
+  "user_id" uuid
+  "name" varchar(255) [not null]
+  "token_hash" varchar(64) [not null, unique]
+  "token_prefix" varchar(12) [not null]
+  "scopes" text[] [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+  "token_encrypted" text [note: 'Encrypted raw token value (pgp_sym_encrypt). Allows retrieval by authorized users.']
+  "expires_at" timestamptz
+
+  Indexes {
+    (user_id, name) [name: "api_tokens_user_name_unique", unique]
+    (expires_at) [name: "idx_api_tokens_expires_at"]
+    (project_id) [name: "idx_api_tokens_project_id"]
+    (token_hash) [name: "idx_api_tokens_token_hash"]
+    (user_id) [name: "idx_api_tokens_user_id"]
+  }
+}
+
+Table "core"."mcp_share_instances" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "name" text [not null]
+  "description" text
+  "token_id" uuid [not null]
+  "allowed_tools" text[] [note: 'Explicit memory-tool allowlist; NULL means all scope-permitted tools']
+  "is_legacy" boolean [not null, default: false, note: 'True for instances recorded from the legacy /mcp/share flow']
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "revoked_at" timestamptz
+
+  Indexes {
+    (project_id) [name: "idx_mcp_share_instances_project"]
+    (token_id) [name: "idx_mcp_share_instances_token"]
+    (project_id, `lower(name)`) [name: "uq_mcp_share_instances_project_name", unique]
+  }
+}
+// core.mcp_share_instances: Named MCP access grants binding an API token to tool/agent allowlists
+
+Table "core"."oauth_authorization_codes" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "code_hash" text [not null, unique]
+  "client_id" text [not null]
+  "user_id" uuid [not null]
+  "project_id" uuid [not null]
+  "scopes" jsonb [not null]
+  "redirect_uri" text [not null]
+  "code_challenge" text [not null]
+  "code_challenge_method" text [not null, default: 'S256']
+  "expires_at" timestamptz [not null]
+  "consumed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+}
+// core.oauth_authorization_codes: Single-use OAuth authorization codes stored only as a SHA-256 hash; 5 minute TTL
+
+Table "core"."oauth_clients" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "client_id" text [not null, unique]
+  "client_name" text [not null]
+  "redirect_uris" jsonb [not null]
+  "grant_types" jsonb [not null, default: '["authorization_code"]']
+  "token_endpoint_auth_method" text [not null, default: 'none']
+  "scope" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+}
+// core.oauth_clients: Dynamically registered OAuth 2.1 public clients (RFC 7591); no client secrets are stored
+
+Table "core"."oauth_grants" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "client_id" text [not null]
+  "user_id" uuid [not null]
+  "project_id" uuid [not null]
+  "scopes" jsonb [not null]
+  "token_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+
+  Indexes {
+    (client_id) [name: "idx_oauth_grants_client_id"]
+    (token_id) [name: "idx_oauth_grants_token_id"]
+    (user_id) [name: "idx_oauth_grants_user_id"]
+  }
+}
+// core.oauth_grants: Links a registered OAuth client to the project-scoped API token minted for it
+
+Table "core"."superadmins" {
+  "user_id" uuid [pk]
+  "granted_by" uuid
+  "granted_at" timestamptz [not null, default: `now()`]
+  "revoked_at" timestamptz
+  "revoked_by" uuid
+  "notes" text
+  "role" varchar(50) [not null, default: 'superadmin_full']
+
+  Indexes {
+    (user_id) [name: "idx_superadmins_active"]
+  }
+}
+
+Table "core"."user_email_preferences" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "user_id" uuid [not null, unique]
+  "release_emails_enabled" boolean [not null, default: true]
+  "marketing_emails_enabled" boolean [not null, default: true]
+  "unsubscribe_token" varchar(64) [not null, unique, default: `encode(gen_random_bytes(32), 'hex'::text)`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (unsubscribe_token) [name: "idx_user_email_preferences_token"]
+    (user_id) [name: "idx_user_email_preferences_user"]
+  }
+}
+
+Table "core"."user_emails" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "user_id" uuid [not null]
+  "email" text [not null]
+  "verified" boolean [not null, default: false]
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (user_id) [name: "IDX_2e88b95787b903d46ab3cc3eb9"]
+    (email) [name: "IDX_6594597afde633cfeab9a806e4", unique]
+  }
+}
+
+Table "core"."user_profiles" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "zitadel_user_id" text [not null]
+  "first_name" text
+  "last_name" text
+  "display_name" text
+  "phone_e164" text
+  "avatar_object_key" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "welcome_email_sent_at" timestamptz
+  "deleted_at" timestamptz
+  "deleted_by" uuid
+  "last_synced_at" timestamptz
+  "last_activity_at" timestamptz
+
+  Indexes {
+    (zitadel_user_id) [name: "IDX_3ef997e65ad4f83f35356a1a6e", unique]
+    (deleted_at) [name: "idx_user_profiles_deleted_at"]
+    (last_activity_at) [name: "idx_user_profiles_last_activity_at"]
+    (last_synced_at) [name: "idx_user_profiles_last_synced_at"]
+  }
+}
+
+Table "kb"."adk_events" {
+  "id" text [pk]
+  "app_name" text [pk]
+  "user_id" text [pk]
+  "session_id" text [pk]
+  "invocation_id" text
+  "author" text
+  "actions" jsonb
+  "long_running_tool_ids_json" jsonb
+  "branch" text
+  "timestamp" timestamptz [not null, default: `now()`]
+  "content" jsonb
+  "grounding_metadata" jsonb
+  "custom_metadata" jsonb
+  "usage_metadata" jsonb
+  "citation_metadata" jsonb
+  "partial" boolean
+  "turn_complete" boolean
+  "error_code" text
+  "error_message" text
+  "interrupted" boolean
+
+  Indexes {
+    (app_name, user_id, session_id) [name: "idx_adk_events_session"]
+    (`"timestamp"`) [name: "idx_adk_events_timestamp"]
+  }
+}
+
+Table "kb"."adk_sessions" {
+  "id" text [pk]
+  "app_name" text [pk]
+  "user_id" text [pk]
+  "state" jsonb [default: '{}']
+  "create_time" timestamptz [not null, default: `now()`]
+  "update_time" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."adk_states" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "scope" text [not null]
+  "app_name" text [not null]
+  "user_id" text
+  "session_id" text
+  "state" jsonb [default: '{}']
+  "update_time" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (scope, app_name, `COALESCE(user_id, ''::text)`, `COALESCE(session_id, ''::text)`) [name: "idx_adk_states_unique", unique]
+  }
+}
+
+Table "kb"."agent_definitions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "product_id" uuid [note: 'References the product version this definition came from (NULL for manually created)']
+  "project_id" uuid [not null]
+  "name" varchar(255) [not null]
+  "description" text
+  "system_prompt" text
+  "model" jsonb [default: '{}']
+  "tools" text[] [default: '{}']
+  "is_default" boolean [not null, default: false]
+  "max_steps" integer
+  "default_timeout" integer [note: 'Default execution timeout in seconds']
+  "visibility" varchar(50) [not null, default: 'project', note: 'Agent visibility level: external (ACP-discoverable), project (admin-visible), internal (agent-only)']
+  "acp_config" jsonb [note: 'Agent Card Protocol metadata for externally-visible agents']
+  "config" jsonb [default: '{}']
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "sandbox_config" jsonb [note: 'Declarative workspace configuration: enabled, repo_source, tools, resource_limits, setup_commands, base_image']
+  "dispatch_mode" text [not null, default: 'sync', note: 'Dispatch mode: sync (blocking, default) or queued (worker pool)']
+  "skills" text[] [not null, default: '{}']
+  "banned_tools" text[]
+  "auto_load_skills" boolean [not null, default: false]
+  "max_session_events" integer
+  "tool_policies" jsonb [not null, default: '{}']
+  "enabled" boolean [not null, default: true]
+  "default_tool_policy" text [not null, default: 'allow']
+  "source_blueprint_id" uuid
+  "ui_config" jsonb [not null, default: '{}']
+  "default_queue" text [not null, default: 'default']
+  "work_config" jsonb [not null, default: '{}', note: 'Object-driven work config: {status:{ready,inProgress,review,revision,blocked,done}, requiresReview, failureLimit, retryPolicy}.']
+
+  Indexes {
+    (product_id) [name: "idx_agent_definitions_product_id"]
+    (project_id, is_default) [name: "idx_agent_definitions_project_default"]
+    (project_id, name) [name: "idx_agent_definitions_project_name", unique]
+    (project_id, source_blueprint_id) [name: "idx_agent_definitions_source_blueprint"]
+  }
+}
+// kb.agent_definitions: Agent definitions from product manifests defining agent behavior, tools, and configuration
+
+Table "kb"."agent_processing_log" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "agent_id" uuid [not null]
+  "graph_object_id" uuid [not null]
+  "object_version" integer [not null]
+  "event_type" text [not null]
+  "status" text [not null, default: 'pending']
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "error_message" text
+  "result_summary" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (agent_id, created_at) [name: "idx_agent_processing_log_agent"]
+    (agent_id, graph_object_id, object_version, event_type) [name: "idx_agent_processing_log_lookup"]
+    (graph_object_id, created_at) [name: "idx_agent_processing_log_object"]
+    (status, started_at) [name: "idx_agent_processing_log_stuck"]
+  }
+}
+
+Table "kb"."agent_questions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null]
+  "agent_id" uuid [not null]
+  "project_id" uuid [not null]
+  "question" text [not null]
+  "options" jsonb [not null, default: '[]', note: 'JSON array of {label, value, description?} for structured choices']
+  "response" text
+  "responded_by" uuid
+  "responded_at" timestamptz
+  "status" text [not null, default: 'pending', note: 'Question lifecycle: pending, answered, expired, cancelled']
+  "notification_id" uuid [note: 'Link to the kb.notifications record created for this question']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "interaction_type" text [not null, default: 'buttons']
+  "placeholder" text
+  "max_length" integer
+  "proposal" jsonb [note: 'Optional structured proposal envelope {kind, summary, body} attached to an ask_user checkpoint']
+
+  Indexes {
+    (agent_id) [name: "idx_agent_questions_agent_id"]
+    (project_id, status) [name: "idx_agent_questions_project_status"]
+    (run_id) [name: "idx_agent_questions_run_id"]
+  }
+}
+// kb.agent_questions: Questions posed by agents to users via the ask_user tool during execution
+
+Table "kb"."agent_queues" {
+  "project_id" uuid [pk]
+  "name" text [pk]
+  "display_name" text [not null, default: '']
+  "description" text [not null, default: '']
+  "concurrency" integer [not null, default: 1]
+  "priority" integer [not null, default: 100]
+  "enabled" boolean [not null, default: true]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+// kb.agent_queues: Named agent work queues. Each project has a default queue; agents bind to a queue and their dispatch jobs are enqueued there.
+
+Table "kb"."agent_run_jobs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null, note: 'FK to kb.agent_runs — the run this job drives']
+  "status" text [not null, default: 'pending']
+  "attempt_count" integer [not null, default: 0, note: 'Number of execution attempts so far']
+  "max_attempts" integer [not null, default: 1, note: 'Maximum allowed attempts (from agent definition max_retries + 1)']
+  "next_run_at" timestamptz [not null, default: `now()`, note: 'Earliest time a worker may claim this job (supports exponential backoff)']
+  "created_at" timestamptz [not null, default: `now()`]
+  "completed_at" timestamptz
+  "queue" text [not null, default: 'default']
+  "priority" integer [not null, default: 100]
+  "project_id" uuid
+
+  Indexes {
+    (status, next_run_at) [name: "idx_agent_run_jobs_poll"]
+    (project_id, queue, status, priority, next_run_at) [name: "idx_agent_run_jobs_queue_poll"]
+    (run_id) [name: "idx_agent_run_jobs_run_id"]
+  }
+}
+// kb.agent_run_jobs: Dispatch ledger for queued agent runs. Workers claim rows with FOR UPDATE SKIP LOCKED.
+
+Table "kb"."agent_run_messages" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null]
+  "role" text [not null]
+  "content" jsonb [not null, default: '{}']
+  "step_number" integer [not null, default: 0]
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (run_id, step_number) [name: "idx_agent_run_messages_run_step"]
+  }
+}
+
+Table "kb"."agent_run_tool_calls" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null]
+  "message_id" uuid
+  "tool_name" varchar(255) [not null]
+  "input" jsonb [not null, default: '{}']
+  "output" jsonb [not null, default: '{}']
+  "status" varchar(20) [not null, default: 'completed']
+  "duration_ms" integer
+  "step_number" integer [not null, default: 0]
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (run_id, step_number) [name: "idx_agent_run_tool_calls_run_step"]
+    (run_id, tool_name) [name: "idx_agent_run_tool_calls_run_tool"]
+  }
+}
+
+Table "kb"."agent_runs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "agent_id" uuid [not null]
+  "status" text [not null]
+  "started_at" timestamptz [not null]
+  "completed_at" timestamptz
+  "duration_ms" integer
+  "summary" jsonb [not null, default: '{}']
+  "error_message" text
+  "skip_reason" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "parent_run_id" uuid [note: 'References the parent orchestrator run that spawned this sub-agent run']
+  "step_count" integer [not null, default: 0, note: 'Cumulative step counter across resumes (increments with each LLM turn)']
+  "max_steps" integer [note: 'Per-run step limit; NULL means use global default (MaxTotalStepsPerRun=500)']
+  "resumed_from" uuid [note: 'References the prior run this execution was resumed from']
+  "trigger_source" text
+  "trigger_metadata" jsonb
+  "trigger_message" text [note: 'Optional message injected as the user message when this run starts. Set by trigger_agent (task instructions to child) or by the server on parent re-enqueue (child completion result). Overrides the agent default prompt.']
+  "trace_id" text
+  "root_run_id" uuid
+  "model" text
+  "session_id" uuid
+  "provider" text
+  "tools" text[] [not null, default: '{}']
+  "agent_definition_id" uuid
+  "suspend_context" jsonb
+  "last_step_at" timestamptz
+  "trusted_internal" boolean [not null, default: false]
+  "provider_slug" varchar(63)
+  "dialect" varchar(50)
+  "subject_object_id" uuid
+  "subject_object_type" text
+  "failure_class" text
+
+  Indexes {
+    (agent_id) [name: "idx_agent_runs_agent_id"]
+    (parent_run_id) [name: "idx_agent_runs_parent_run_id"]
+    (resumed_from) [name: "idx_agent_runs_resumed_from"]
+    (root_run_id) [name: "idx_agent_runs_root_run_id"]
+    (session_id) [name: "idx_agent_runs_session_id"]
+    (started_at) [name: "idx_agent_runs_started_at"]
+    (status) [name: "idx_agent_runs_status"]
+    (subject_object_id) [name: "idx_agent_runs_subject_object"]
+    (trace_id) [name: "idx_agent_runs_trace_id"]
+  }
+}
+
+Table "kb"."agent_sandboxes" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "agent_session_id" uuid
+  "container_type" text [not null, note: 'Type of container: agent_workspace (ephemeral compute) or mcp_server (persistent daemon)']
+  "provider" text [not null, note: 'Sandbox provider: firecracker (microVM), e2b (managed), or gvisor (Docker runtime)']
+  "provider_workspace_id" text [not null, default: '']
+  "repository_url" text
+  "branch" text
+  "deployment_mode" text [not null, default: 'self-hosted']
+  "lifecycle" text [not null, default: 'ephemeral', note: 'Lifecycle mode: ephemeral (session-scoped) or persistent (daemon)']
+  "status" text [not null, default: 'creating']
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "last_used_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "expires_at" timestamptz
+  "resource_limits" jsonb [default: '{}']
+  "snapshot_id" text
+  "mcp_config" jsonb [note: 'MCP server configuration including stdio bridge settings and restart policy']
+  "metadata" jsonb [default: '{}']
+  "base_image" text
+  "image_digest" text
+
+  Indexes {
+    (expires_at) [name: "idx_agent_sandboxes_expires"]
+    (container_type, lifecycle, status) [name: "idx_agent_sandboxes_persistent_mcp"]
+    (agent_session_id) [name: "idx_agent_sandboxes_session"]
+    (status) [name: "idx_agent_sandboxes_status"]
+  }
+}
+// kb.agent_sandboxes: Tracks isolated agent workspaces and persistent MCP server containers
+
+Table "kb"."agent_share_access_log" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "share_link_id" uuid [not null]
+  "end_user_ref" varchar(64) [not null]
+  "ip_hash" varchar(64) [not null]
+  "action" varchar(64) [not null]
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (share_link_id, created_at) [name: "idx_agent_share_access_log_link"]
+  }
+}
+
+Table "kb"."agent_share_end_users" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "share_link_id" uuid [not null]
+  "end_user_ref" varchar(64) [not null]
+  "email" varchar(255)
+  "email_normalized" varchar(255)
+  "verified" boolean [not null, default: false]
+  "consent_at" timestamptz
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "last_seen_at" timestamptz
+
+  Indexes {
+    (share_link_id, email_normalized) [name: "idx_agent_share_end_users_email"]
+    (share_link_id, end_user_ref) [name: "idx_agent_share_end_users_ref", unique]
+  }
+}
+
+Table "kb"."agent_share_links" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "agent_definition_id" uuid [not null]
+  "api_token_id" uuid [not null, unique]
+  "label" varchar(255) [not null]
+  "config" jsonb [not null, default: '{}']
+  "created_by_user_id" uuid
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "last_used_at" timestamptz
+  "revoked_at" timestamptz
+  "expires_at" timestamptz
+
+  Indexes {
+    (agent_definition_id, `lower(label::text)`) [name: "idx_agent_share_links_def_label_active", unique]
+    (project_id) [name: "idx_agent_share_links_project_active"]
+  }
+}
+
+Table "kb"."agent_share_sessions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "share_link_id" uuid [not null]
+  "session_id" uuid [not null]
+  "end_user_ref" varchar(64) [not null]
+  "title" varchar(255)
+  "last_activity_at" timestamptz
+  "is_archived" boolean [not null, default: false]
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (session_id, share_link_id) [name: "idx_agent_share_sessions_link", unique]
+    (share_link_id, end_user_ref, is_archived, last_activity_at) [name: "idx_agent_share_sessions_user"]
+  }
+}
+
+Table "kb"."agent_share_usage" {
+  "link_id" uuid [pk]
+  "period_start" timestamptz [pk]
+  "messages" integer [not null, default: 0]
+  "tokens" bigint [not null, default: 0]
+  "cost_usd" numeric [not null, default: 0]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+}
+
+Table "kb"."agent_tool_approvals" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null]
+  "project_id" uuid [not null]
+  "agent_id" uuid [not null]
+  "question_id" uuid [not null]
+  "tool_name" varchar(255) [not null]
+  "args_summary" jsonb [not null, default: '{}']
+  "decision" varchar(20) [not null, default: 'pending']
+  "message" text
+  "decided_by" uuid
+  "decided_at" timestamptz
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "share_link_id" uuid
+
+  Indexes {
+    (project_id) [name: "idx_agent_tool_approvals_project_id"]
+    (question_id) [name: "idx_agent_tool_approvals_question_id"]
+    (run_id) [name: "idx_agent_tool_approvals_run_id"]
+    (share_link_id) [name: "idx_agent_tool_approvals_share_link_id"]
+  }
+}
+
+Table "kb"."agent_webhook_hooks" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "agent_id" uuid [not null]
+  "project_id" text [not null]
+  "label" text [not null]
+  "token_hash" text [not null]
+  "enabled" boolean [not null, default: true]
+  "rate_limit_config" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "allow_internal" boolean [not null, default: false]
+
+  Indexes {
+    (agent_id) [name: "idx_agent_webhook_hooks_agent_id"]
+  }
+}
+
+Table "kb"."agents" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "name" text [not null]
+  "strategy_type" text [not null]
+  "prompt" text
+  "cron_schedule" text [not null]
+  "enabled" boolean [not null, default: true]
+  "config" jsonb [not null, default: '{}']
+  "description" text
+  "last_run_at" timestamptz
+  "last_run_status" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "trigger_type" text [not null, default: 'schedule']
+  "reaction_config" jsonb
+  "execution_mode" text [default: 'execute']
+  "capabilities" jsonb
+  "project_id" uuid [not null]
+  "consecutive_failures" integer [not null, default: 0]
+  "agent_definition_id" uuid
+  "disabled_reason" text
+
+  Indexes {
+    (strategy_type) [name: "IDX_agents_strategy_type"]
+    (consecutive_failures) [name: "idx_agents_consecutive_failures"]
+    (enabled) [name: "idx_agents_enabled"]
+    (project_id) [name: "idx_agents_project_id"]
+    (strategy_type) [name: "idx_agents_role"]
+  }
+}
+
+Table "kb"."audit_log" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "timestamp" timestamptz [not null, default: `now()`]
+  "event_type" text [not null]
+  "outcome" text [not null]
+  "user_id" uuid
+  "user_email" text
+  "resource_type" text
+  "resource_id" text
+  "action" text [not null]
+  "endpoint" text [not null]
+  "http_method" text [not null]
+  "status_code" integer
+  "error_code" text
+  "error_message" text
+  "ip_address" text
+  "user_agent" text
+  "request_id" text
+  "details" jsonb
+}
+
+Table "kb"."auth_introspection_cache" {
+  "token_hash" varchar(128) [pk]
+  "introspection_data" jsonb [not null]
+  "expires_at" timestamptz [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (expires_at) [name: "IDX_d05c07bafeabc0850f94db035b"]
+  }
+}
+
+Table "kb"."backups" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid [not null]
+  "project_id" uuid [not null]
+  "project_name" text [not null]
+  "storage_key" text [not null, note: 'MinIO object key: backups/{orgId}/{backupId}/backup.zip']
+  "size_bytes" bigint [not null, default: 0]
+  "status" text [not null, default: 'creating']
+  "progress" integer [not null, default: 0]
+  "error_message" text
+  "backup_type" text [not null, default: 'full', note: 'Type of backup: full (complete snapshot) or incremental (changes only)']
+  "includes" jsonb [not null, default: '{}', note: 'What data is included: {documents: true, chat: true, graph: true}']
+  "stats" jsonb [note: 'Backup statistics: {documents: 150, chunks: 3000, files: 150, ...}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "created_by" uuid
+  "completed_at" timestamptz
+  "expires_at" timestamptz
+  "deleted_at" timestamptz
+  "manifest_checksum" text
+  "content_checksum" text
+  "parent_backup_id" uuid
+  "baseline_backup_id" uuid
+  "change_window" jsonb [note: 'For incremental backups: {from: timestamp, to: timestamp}']
+  "imported" boolean [not null, default: false, note: 'True when the backup was imported from another deployment; project_id is the foreign source project (no local kb.projects row) and such backups are clone-restore only']
+
+  Indexes {
+    (baseline_backup_id) [name: "idx_backups_baseline"]
+    (created_at) [name: "idx_backups_created"]
+    (expires_at) [name: "idx_backups_expires"]
+    (organization_id, project_id) [name: "idx_backups_org_project"]
+    (parent_backup_id) [name: "idx_backups_parent"]
+    (status) [name: "idx_backups_status"]
+  }
+}
+// kb.backups: Stores metadata for project backups stored in MinIO
+
+Table "kb"."blueprint_applications" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "blueprint_id" uuid [not null]
+  "project_id" uuid [not null]
+  "version" text [not null]
+  "checksum" text [not null, default: '']
+  "applied_by" uuid
+  "status" text [not null, default: 'applied']
+  "applied_at" timestamptz [not null, default: `now()`]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, blueprint_id) [unique]
+    (project_id) [name: "idx_blueprint_applications_project"]
+  }
+}
+
+Table "kb"."blueprint_model_overrides" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "blueprint_name" text [not null]
+  "agent_name" text [not null]
+  "model" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, blueprint_name, agent_name) [unique]
+    (project_id, blueprint_name) [name: "idx_blueprint_model_overrides_project_name"]
+  }
+}
+
+Table "kb"."blueprint_pack_claims" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "blueprint_id" uuid [not null]
+  "project_id" uuid [not null]
+  "schema_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, blueprint_id, schema_id) [unique]
+    (project_id, schema_id) [name: "idx_blueprint_pack_claims_project_schema"]
+  }
+}
+
+Table "kb"."blueprint_update_checks" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "blueprint_name" text [not null]
+  "source_url" text
+  "source_ref" text
+  "latest_version" text
+  "latest_checksum" text
+  "update_available" boolean [not null, default: false]
+  "last_checked_at" timestamptz
+  "last_check_error" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, blueprint_name) [unique]
+    (project_id) [name: "idx_blueprint_update_checks_project"]
+  }
+}
+
+Table "kb"."blueprint_update_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "blueprint_name" text [not null]
+  "action" text [not null]
+  "status" text [not null, default: 'pending']
+  "attempts" integer [not null, default: 0]
+  "last_error" text
+  "result" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "finished_at" timestamptz
+
+  Indexes {
+    (status, created_at) [name: "idx_blueprint_update_jobs_status_created"]
+  }
+}
+
+Table "kb"."blueprints" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "name" text [not null]
+  "version" text [not null]
+  "description" text [not null, default: '']
+  "author" text [not null, default: '']
+  "status" text [not null, default: 'draft']
+  "manifest" jsonb [not null, default: '{}']
+  "checksum" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "project_id" uuid
+  "source_kind" text
+  "source_url" text
+  "source_ref" text
+  "source_manifest_checksum" text
+  "origin" text [not null, default: 'user']
+
+  Indexes {
+    (name, version) [name: "blueprints_name_version_global_key", unique]
+    (name, version, project_id) [name: "blueprints_name_version_project_key", unique]
+    (origin) [name: "blueprints_origin_idx"]
+    (project_id) [name: "blueprints_project_id_idx"]
+    (name) [name: "idx_blueprints_name"]
+  }
+}
+
+Table "kb"."branch_lineage" {
+  "branch_id" uuid [pk]
+  "ancestor_branch_id" uuid [pk]
+  "depth" integer [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."branches" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "name" text [not null]
+  "parent_branch_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "description" text
+  "merged_at" timestamptz
+}
+
+Table "kb"."chat_conversations" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "title" text [not null]
+  "owner_user_id" uuid
+  "is_private" boolean [not null, default: true]
+  "project_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "object_id" uuid
+  "draft_text" text
+  "canonical_id" uuid
+  "enabled_tools" text[]
+  "agent_definition_id" uuid
+  "session_id" uuid
+  "is_archived" boolean [not null, default: false]
+  "archived_at" timestamptz
+  "parent_conversation_id" uuid
+  "spawn_source" text
+
+  Indexes {
+    (canonical_id) [name: "IDX_chat_conversations_canonical_id", unique]
+    (object_id) [name: "IDX_chat_conversations_object_id_unique", unique]
+    (parent_conversation_id) [name: "idx_chat_conversations_parent"]
+    (project_id, updated_at) [name: "idx_chat_conversations_project_active_updated"]
+    (session_id) [name: "idx_chat_conversations_session_id_unique", unique]
+  }
+}
+
+Table "kb"."chat_messages" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "conversation_id" uuid [not null]
+  "role" text [not null]
+  "content" text [not null]
+  "citations" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+  "context_summary" text [note: 'Compressed summary of previous conversation turns for maintaining context']
+  "retrieval_context" jsonb [note: 'JSON array of graph object IDs used in generating this message (for tracking which knowledge was accessed)']
+
+  Indexes {
+    (conversation_id, created_at) [name: "idx_chat_messages_conversation_history"]
+  }
+}
+
+Table "kb"."chunk_embedding_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "chunk_id" uuid [not null]
+  "status" text [not null, default: 'pending']
+  "attempt_count" integer [not null, default: 0]
+  "last_error" text
+  "priority" integer [not null, default: 0]
+  "scheduled_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (chunk_id) [name: "idx_chunk_embedding_jobs_chunk_id"]
+    (status, scheduled_at, priority) [name: "idx_chunk_embedding_jobs_dequeue"]
+    (status) [name: "idx_chunk_embedding_jobs_status"]
+    (chunk_id) [name: "uidx_chunk_embedding_jobs_active", unique]
+  }
+}
+
+Table "kb"."chunk_revisions" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "chunk_id" uuid [not null]
+  "seq" integer [not null]
+  "text" text [not null]
+  "author" text
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (chunk_id, seq) [unique]
+  }
+}
+// kb.chunk_revisions: Append-only revision history for curated chunks; seq is monotonic per chunk and defines ordering.
+
+Table "kb"."chunks" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "document_id" uuid [not null]
+  "chunk_index" integer [not null]
+  "text" text [not null]
+  "embedding" vector(768)
+  "tsv" tsvector
+  "created_at" timestamptz [not null, default: `now()`]
+  "metadata" jsonb
+  "updated_at" timestamptz [not null, default: `now()`]
+  "parent_chunk_id" uuid
+  "edited" boolean [not null, default: false]
+  "current_revision" integer [not null, default: 1]
+
+  Indexes {
+    (document_id, chunk_index) [name: "IDX_6f5a7e4467cdc44037f209122e", unique]
+    (document_id) [name: "IDX_d841de45a719fe1f35213d7920"]
+    (embedding) [name: "idx_chunks_embedding_hnsw"]
+    (parent_chunk_id) [name: "idx_chunks_parent_chunk_id"]
+    (tsv) [name: "idx_chunks_tsv"]
+  }
+}
+
+Table "kb"."database_backups" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "status" text [not null, default: 'pending']
+  "storage_key" text
+  "size_bytes" bigint
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "error" text
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (created_at) [name: "idx_database_backups_created_at"]
+    (status) [name: "idx_database_backups_status"]
+  }
+}
+
+Table "kb"."discovery_jobs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid [not null]
+  "project_id" uuid [not null]
+  "status" text [not null]
+  "progress" jsonb [not null, default: '{}']
+  "config" jsonb [not null, default: '{}']
+  "kb_purpose" text [not null, default: '']
+  "discovered_types" jsonb [default: '[]']
+  "discovered_relationships" jsonb [default: '[]']
+  "schema_id" uuid
+  "error_message" text
+  "retry_count" integer [not null, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id) [name: "idx_discovery_jobs_project_id"]
+    (status) [name: "idx_discovery_jobs_status"]
+  }
+}
+
+Table "kb"."discovery_type_candidates" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "job_id" uuid [not null]
+  "batch_number" integer [not null]
+  "type_name" text [not null]
+  "description" text
+  "confidence" real [not null]
+  "inferred_schema" jsonb [not null]
+  "example_instances" jsonb [default: '[]']
+  "frequency" integer [not null, default: 1]
+  "proposed_relationships" jsonb [default: '[]']
+  "source_document_ids" uuid[] [default: '{}']
+  "extraction_context" text
+  "refinement_iteration" integer [not null, default: 1]
+  "merged_from" uuid[]
+  "status" text [not null, default: 'candidate']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (job_id) [name: "idx_discovery_type_candidates_job_id"]
+  }
+}
+
+Table "kb"."document_artifacts" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "document_id" uuid [not null]
+  "artifact_type" text [not null]
+  "content" jsonb
+  "storage_key" text
+  "position_in_document" integer
+  "page_number" integer
+  "metadata" jsonb [default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (document_id) [name: "idx_document_artifacts_document"]
+    (document_id, artifact_type) [name: "idx_document_artifacts_type"]
+  }
+}
+
+Table "kb"."document_parsing_jobs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid
+  "project_id" uuid [not null]
+  "status" text [not null, default: 'pending']
+  "source_type" text [not null]
+  "source_filename" text
+  "mime_type" text
+  "file_size_bytes" bigint
+  "storage_key" text
+  "document_id" uuid
+  "extraction_job_id" uuid
+  "parsed_content" text
+  "metadata" jsonb [default: '{}']
+  "error_message" text
+  "retry_count" integer [default: 0]
+  "max_retries" integer [default: 3]
+  "next_retry_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (document_id) [name: "idx_document_parsing_jobs_document"]
+    (status, updated_at) [name: "idx_document_parsing_jobs_orphaned"]
+    (status, created_at) [name: "idx_document_parsing_jobs_pending"]
+    (project_id) [name: "idx_document_parsing_jobs_project"]
+    (status, next_retry_at) [name: "idx_document_parsing_jobs_retry"]
+  }
+}
+
+Table "kb"."documents" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid
+  "source_url" text
+  "filename" text
+  "mime_type" text
+  "content" text
+  "content_hash" text
+  "parent_document_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "source_type" text [not null, default: 'upload']
+  "storage_key" text
+  "storage_url" text
+  "metadata" jsonb [default: '{}']
+  "file_size_bytes" bigint
+  "conversion_status" text [default: 'not_required']
+  "conversion_error" text
+  "conversion_completed_at" timestamptz
+  "file_hash" text
+  "domain_name" text
+  "domain_confidence" real
+  "classification_signals" jsonb
+  "canonical_id" uuid [not null, default: `uuid_generate_v4()`]
+  "supersedes_id" uuid
+  "version" integer [not null, default: 1]
+  "source_id" uuid
+  "source_external_id" text
+  "source_revision_id" text
+  "source_text_hash" text
+  "source_synced_at" timestamptz
+  "source_status" text [not null, default: 'active']
+  "source_deleted_at" timestamptz
+  "created_by_user_id" uuid [note: 'Authenticated user who uploaded the document; NULL for source-synced documents and for rows predating #2260.']
+
+  Indexes {
+    (project_id, content_hash) [name: "IDX_3bbf4ea30357bf556110f034d4", unique]
+    (project_id) [name: "IDX_e156b298c20873e14c362e789b"]
+    (canonical_id, version) [name: "idx_documents_canonical_version", unique]
+    (conversion_status) [name: "idx_documents_conversion_status"]
+    (project_id, `(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id", unique]
+    (`(metadata ->> 'messageId'::text)`) [name: "idx_documents_email_message_id_lookup"]
+    (metadata) [name: "idx_documents_metadata"]
+    (parent_document_id) [name: "idx_documents_parent_document_id"]
+    (project_id, created_at, id) [name: "idx_documents_project_created_id"]
+    (project_id, source_id, source_status) [name: "idx_documents_project_source_status"]
+    (project_id, updated_at, id) [name: "idx_documents_project_updated_id"]
+    (source_id, source_external_id) [name: "idx_documents_source_external_head", unique]
+    (source_type) [name: "idx_documents_source_type"]
+    (storage_key) [name: "idx_documents_storage_key"]
+  }
+}
+
+Table "kb"."email_jobs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "template_name" varchar(100) [not null]
+  "to_email" varchar(320) [not null]
+  "to_name" varchar(255)
+  "subject" varchar(500) [not null]
+  "template_data" jsonb [not null, default: '{}']
+  "status" varchar(20) [not null, default: 'pending']
+  "attempts" integer [not null, default: 0]
+  "max_attempts" integer [not null, default: 3]
+  "last_error" text
+  "mailgun_message_id" varchar(255)
+  "created_at" timestamptz [not null, default: `now()`]
+  "processed_at" timestamptz
+  "next_retry_at" timestamptz
+  "source_type" varchar(50)
+  "source_id" uuid
+  "delivery_status" kb.email_delivery_status
+  "delivery_status_at" timestamptz
+  "delivery_status_synced_at" timestamptz
+  "started_at" timestamptz
+  "project_id" uuid
+
+  Indexes {
+    (mailgun_message_id) [name: "idx_email_jobs_mailgun_id"]
+    (`btrim(mailgun_message_id::text, '<>'::text)`) [name: "idx_email_jobs_mailgun_message_id_btrim"]
+    (processed_at) [name: "idx_email_jobs_needs_status_sync"]
+    (project_id, status) [name: "idx_email_jobs_project_status"]
+    (source_type, source_id) [name: "idx_email_jobs_source"]
+    (status, next_retry_at) [name: "idx_email_jobs_status_next_retry"]
+  }
+}
+
+Table "kb"."email_logs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "email_job_id" uuid
+  "event_type" varchar(50) [not null]
+  "mailgun_event_id" varchar(255)
+  "details" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (event_type) [name: "idx_email_logs_event_type"]
+    (email_job_id) [name: "idx_email_logs_job"]
+    (mailgun_event_id) [name: "ux_email_logs_mailgun_event_id", unique]
+  }
+}
+
+Table "kb"."email_template_versions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "template_id" uuid [not null]
+  "version_number" integer [not null]
+  "subject_template" varchar(500) [not null]
+  "mjml_content" text [not null]
+  "variables" jsonb [not null, default: '[]']
+  "sample_data" jsonb [not null, default: '{}']
+  "change_summary" varchar(500)
+  "created_at" timestamptz [not null, default: `now()`]
+  "created_by" uuid
+
+  Indexes {
+    (template_id, version_number) [unique]
+    (created_at) [name: "idx_email_template_versions_created"]
+    (template_id) [name: "idx_email_template_versions_template"]
+  }
+}
+
+Table "kb"."email_templates" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "name" varchar(100) [not null, unique]
+  "description" text
+  "subject_template" varchar(500) [not null]
+  "mjml_content" text [not null]
+  "variables" jsonb [not null, default: '[]']
+  "sample_data" jsonb [not null, default: '{}']
+  "current_version_id" uuid
+  "is_customized" boolean [not null, default: false]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "updated_by" uuid
+
+  Indexes {
+    (name) [name: "idx_email_templates_name"]
+  }
+}
+
+Table "kb"."embedding_cache" {
+  "cache_key" text [pk]
+  "model_id" text [not null, default: '']
+  "embedding" jsonb [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."embedding_policies" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "object_type" text [not null]
+  "enabled" boolean [not null, default: true]
+  "max_property_size" integer
+  "required_labels" text[] [not null, default: '{}']
+  "excluded_labels" text[] [not null, default: '{}']
+  "relevant_paths" text[] [not null, default: '{}']
+  "excluded_statuses" text[] [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "is_system" boolean [not null, default: false]
+
+  Indexes {
+    (project_id, object_type) [name: "IDX_26573c7e713682c72216747770", unique]
+    (project_id, is_system) [name: "idx_embedding_policies_is_system"]
+  }
+}
+
+Table "kb"."external_sources" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "provider_type" text [not null]
+  "external_id" text [not null]
+  "original_url" text [not null]
+  "normalized_url" text [not null]
+  "display_name" text
+  "mime_type" text
+  "sync_policy" text [not null, default: 'manual']
+  "sync_interval_minutes" integer
+  "last_checked_at" timestamptz
+  "last_synced_at" timestamptz
+  "last_etag" text
+  "status" text [not null, default: 'active']
+  "error_count" integer [not null, default: 0]
+  "last_error" text
+  "last_error_at" timestamptz
+  "provider_metadata" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, normalized_url) [name: "idx_external_sources_normalized_url"]
+    (project_id, provider_type, external_id) [name: "idx_external_sources_project_provider_external_id", unique]
+    (status, sync_policy, last_checked_at) [name: "idx_external_sources_sync_status"]
+  }
+}
+
+Table "kb"."github_credentials" {
+  "project_id" uuid [pk]
+  "encrypted_token" bytea [not null]
+  "nonce" bytea [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."graph_embedding_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "object_id" uuid [not null]
+  "status" text [not null]
+  "attempt_count" integer [not null, default: 0]
+  "last_error" text
+  "priority" integer [not null, default: 0]
+  "scheduled_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (object_id) [name: "IDX_df895a2e1799c53ef660d0aae6"]
+    (status) [name: "IDX_f0021c2230e47af51928f35975"]
+    (object_id) [name: "uidx_graph_embedding_jobs_active", unique]
+  }
+}
+
+Table "kb"."graph_objects" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "type" text [not null]
+  "key" text
+  "status" text
+  "version" integer [not null, default: 1]
+  "supersedes_id" uuid
+  "canonical_id" uuid [not null]
+  "properties" jsonb [not null, default: '{}']
+  "labels" text[] [not null, default: '{}']
+  "deleted_at" timestamptz
+  "change_summary" jsonb
+  "content_hash" bytea
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "branch_id" uuid
+  "fts" tsvector
+  "embedding_updated_at" timestamptz
+  "extraction_job_id" uuid
+  "extraction_confidence" real
+  "needs_review" boolean [default: false]
+  "reviewed_by" uuid
+  "reviewed_at" timestamptz
+  "embedding_v2" vector(768)
+  "schema_version" text
+  "actor_type" text [default: 'user']
+  "actor_id" uuid
+  "migration_archive" jsonb [default: '[]', note: 'Archive of dropped properties from schema migrations. Each entry contains: from_version, to_version, timestamp, dropped_data']
+  "last_accessed_at" timestamptz
+  "namespace" text
+  "delete_reason" text
+  "merged_to_canonical_id" uuid
+  "assignee" text [note: 'Work lane for board-enabled types: the agent identity expected to claim the object. NULL = any listening agent.']
+  "credential_kind" text [not null, default: 'none']
+  "credential_id" uuid
+  "run_id" uuid
+  "root_run_id" uuid
+  "data_class" text [not null, default: 'synthesized']
+  "owner_source_id" uuid
+  "input_hash" text
+
+  Indexes {
+    (type) [name: "IDX_b8c7752534a444c2f16ebf3d91"]
+    (canonical_id) [name: "IDX_c04db004625a1c8be8abb6c046"]
+    (embedding_v2) [name: "IDX_graph_objects_embedding_v2_hnsw"]
+    (project_id, branch_id, type, key) [name: "IDX_graph_objects_upsert_branch", unique]
+    (project_id, type, key) [name: "IDX_graph_objects_upsert_main", unique]
+    (actor_type, actor_id) [name: "idx_graph_objects_actor"]
+    (project_id) [name: "idx_graph_objects_embedding_coverage"]
+    (fts) [name: "idx_graph_objects_fts"]
+    (`(migration_archive <> '[]'::jsonb)`) [name: "idx_graph_objects_has_archive"]
+    (project_id, created_at, id) [name: "idx_graph_objects_head_main"]
+    (project_id, status, created_at, id) [name: "idx_graph_objects_head_status"]
+    (project_id, type, id) [name: "idx_graph_objects_head_type_count"]
+    (project_id) [name: "idx_graph_objects_labels_head"]
+    (last_accessed_at) [name: "idx_graph_objects_last_accessed"]
+    (created_at) [name: "idx_graph_objects_missing_embedding"]
+    (project_id, namespace) [name: "idx_graph_objects_namespace"]
+    (project_id, assignee) [name: "idx_graph_objects_project_assignee"]
+    (project_id, branch_id, type, key) [name: "idx_graph_objects_project_branch_type_key_c"]
+    (project_id, credential_id) [name: "idx_graph_objects_project_credential"]
+    (project_id, extraction_job_id) [name: "idx_graph_objects_project_extraction_job"]
+    (project_id, run_id) [name: "idx_graph_objects_project_run"]
+    (project_id, type, created_at, id) [name: "idx_graph_objects_project_type_created_id"]
+    (project_id, type, key) [name: "idx_graph_objects_project_type_key_c"]
+    (project_id, type, `"left"(properties ->> 'name'::text, 256)`, key) [name: "idx_graph_objects_project_type_name"]
+    (project_id, type, properties) [name: "idx_graph_objects_project_type_props_gin"]
+    (schema_version) [name: "idx_graph_objects_schema_version"]
+    (project_id, last_accessed_at, id) [name: "idx_graph_objects_unused_main"]
+    (project_id, namespace, type, key) [name: "idx_graph_objects_upsert_namespace", unique]
+  }
+}
+
+Table "kb"."graph_relationship_embedding_jobs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "relationship_id" uuid [not null]
+  "status" text [not null, default: 'pending']
+  "priority" integer [not null, default: 0]
+  "attempt_count" integer [not null, default: 0]
+  "last_error" text
+  "scheduled_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (relationship_id, status) [name: "idx_graph_rel_emb_jobs_relationship_status"]
+    (scheduled_at) [name: "idx_graph_rel_emb_jobs_scheduled"]
+    (status) [name: "idx_graph_rel_emb_jobs_status"]
+    (relationship_id) [name: "uidx_graph_rel_embedding_jobs_active", unique]
+  }
+}
+
+Table "kb"."graph_relationships" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "type" text [not null]
+  "src_id" uuid [not null]
+  "dst_id" uuid [not null]
+  "properties" jsonb [not null, default: '{}']
+  "weight" real
+  "valid_from" timestamptz
+  "valid_to" timestamptz
+  "deleted_at" timestamptz
+  "change_summary" jsonb
+  "content_hash" bytea
+  "created_at" timestamptz [not null, default: `now()`]
+  "canonical_id" uuid [not null]
+  "supersedes_id" uuid
+  "version" integer [not null, default: 1]
+  "branch_id" uuid
+  "embedding" vector(768) [note: 'Vector embedding of relationship triplet text (e.g., "Elon Musk founded Tesla"). Generated from source.name + relation_type + target.name using Vertex AI text-embedding-004. Nullable to support backfill of existing relationships.']
+  "embedding_updated_at" timestamptz [note: 'Timestamp when the embedding vector was last generated/updated. Used to track freshness of relationship embeddings.']
+  "label" text
+  "delete_reason" text
+  "namespace" text
+  "actor_type" text
+  "actor_id" uuid
+  "credential_kind" text [not null, default: 'none']
+  "credential_id" uuid
+  "run_id" uuid
+  "root_run_id" uuid
+
+  Indexes {
+    (project_id) [name: "IDX_a0dadc1ffc4ee153226f786e99"]
+    (src_id) [name: "IDX_a970f04cced6336cb2b1ad1f4e"]
+    (type) [name: "IDX_f35de415032037ea629b1772e4"]
+    (dst_id) [name: "IDX_f8d6b0b40d75cdabb27cf81084"]
+    (actor_type, actor_id) [name: "idx_graph_relationships_actor"]
+    (project_id) [name: "idx_graph_relationships_embedding_coverage"]
+    (embedding) [name: "idx_graph_relationships_embedding_hnsw"]
+    (project_id, created_at, id) [name: "idx_graph_relationships_head_main"]
+    (created_at) [name: "idx_graph_relationships_missing_embedding"]
+    (project_id, namespace) [name: "idx_graph_relationships_namespace"]
+    (project_id, id) [name: "idx_graph_relationships_project_id_id"]
+    (project_id, run_id) [name: "idx_graph_relationships_project_run"]
+    (project_id, branch_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_branch", unique]
+    (project_id, type, src_id, dst_id) [name: "uq_graph_relationships_head_main", unique]
+  }
+}
+
+Table "kb"."graph_schemas" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "name" text [not null]
+  "version" text [not null]
+  "description" text
+  "author" text
+  "license" text
+  "repository_url" text
+  "documentation_url" text
+  "source" text [default: 'manual']
+  "discovery_job_id" uuid
+  "pending_review" boolean [not null, default: false]
+  "object_type_schemas" jsonb [not null]
+  "relationship_type_schemas" jsonb [not null, default: '{}']
+  "ui_configs" jsonb [not null, default: '{}']
+  "extraction_prompts" jsonb [not null, default: '{}']
+  "sql_views" jsonb [not null, default: '[]']
+  "signature" text
+  "checksum" text
+  "published_at" timestamptz [not null, default: `now()`]
+  "deprecated_at" timestamptz
+  "superseded_by" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "parent_version_id" uuid
+  "draft" boolean [default: false]
+  "project_id" uuid
+  "migrations" jsonb
+
+  Indexes {
+    (draft) [name: "IDX_graph_schemas_draft"]
+    (parent_version_id) [name: "IDX_graph_schemas_parent_version_id"]
+    (name, version) [name: "graph_schemas_builtin_name_version_key", unique]
+    (project_id) [name: "idx_graph_schemas_project_id"]
+  }
+}
+
+Table "kb"."invites" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "organization_id" uuid [not null]
+  "project_id" uuid
+  "email" text [not null]
+  "role" text [not null]
+  "token" text [not null]
+  "status" text [not null, default: 'pending']
+  "expires_at" timestamptz
+  "accepted_at" timestamptz
+  "revoked_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "invited_by_user_id" uuid
+}
+
+Table "kb"."llm_call_logs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "process_id" text [not null]
+  "process_type" text [not null]
+  "model_name" text [not null]
+  "request_payload" jsonb
+  "response_payload" jsonb
+  "status" text [not null]
+  "error_message" text
+  "input_tokens" integer
+  "output_tokens" integer
+  "total_tokens" integer
+  "cost_usd" numeric(10,6)
+  "started_at" timestamptz [not null, default: `now()`]
+  "completed_at" timestamptz
+  "duration_ms" integer
+}
+
+Table "kb"."llm_usage_events" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "org_id" uuid [not null]
+  "provider" varchar(50) [not null]
+  "model" varchar(255) [not null]
+  "operation" varchar(50) [not null, default: 'generate']
+  "text_input_tokens" bigint [not null, default: 0]
+  "image_input_tokens" bigint [not null, default: 0]
+  "video_input_tokens" bigint [not null, default: 0]
+  "audio_input_tokens" bigint [not null, default: 0]
+  "output_tokens" bigint [not null, default: 0]
+  "estimated_cost_usd" numeric(12,8) [not null, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "run_id" uuid
+  "root_run_id" uuid
+  "cached_tokens" bigint [not null, default: 0]
+  "user_id" uuid
+  "provider_slug" varchar(63)
+
+  Indexes {
+    (provider, model, created_at) [name: "idx_llm_usage_events_model"]
+    (org_id, created_at) [name: "idx_llm_usage_events_org"]
+    (project_id, created_at) [name: "idx_llm_usage_events_project"]
+    (provider_slug, model, created_at) [name: "idx_llm_usage_events_provider_slug"]
+    (run_id) [name: "idx_llm_usage_events_run_id"]
+    (user_id, created_at) [name: "idx_llm_usage_events_user"]
+  }
+}
+
+Table "kb"."mcp_server_oauth" {
+  "server_id" uuid [not null]
+  "project_id" uuid [not null]
+  "authorization_server" text [not null, default: '']
+  "token_endpoint" text [not null, default: '']
+  "registration_endpoint" text [not null, default: '']
+  "resource" text [not null, default: '', note: 'RFC 8707 protected resource identifier sent on authorize/token/refresh']
+  "scope" text [not null, default: '']
+  "client_id" text [not null, default: '']
+  "client_secret" jsonb [note: 'AES-GCM encrypted client secret: {ct, nonce}']
+  "access_token" jsonb [note: 'AES-GCM encrypted access token: {ct, nonce}']
+  "refresh_token" jsonb [note: 'AES-GCM encrypted refresh token: {ct, nonce}']
+  "expires_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "user_id" uuid [note: 'Owning user for a personal OAuth credential; NULL is the project-wide shared credential']
+
+  Indexes {
+    (project_id) [name: "idx_mcp_server_oauth_project_id"]
+    (server_id) [name: "mcp_server_oauth_shared_uniq", unique]
+    (user_id) [name: "mcp_server_oauth_user_id"]
+    (server_id, user_id) [name: "mcp_server_oauth_user_uniq", unique]
+  }
+}
+// kb.mcp_server_oauth: OAuth credentials (client registration + token set) for a remote MCP server
+
+Table "kb"."mcp_server_tools" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "server_id" uuid [not null]
+  "tool_name" varchar(255) [not null, note: 'Tool name as reported by the MCP server (unprefixed)']
+  "description" text [note: 'Tool description for display and agent introspection']
+  "input_schema" jsonb [default: '{}', note: 'JSON Schema for tool input parameters']
+  "enabled" boolean [not null, default: true, note: 'Whether this tool is available for use (per-tool toggle)']
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "config" jsonb
+  "config_keys" text[] [default: '{}']
+  "output_schema" jsonb
+  "enabled_override" boolean
+
+  Indexes {
+    (server_id, enabled) [name: "idx_mcp_server_tools_enabled"]
+    (server_id) [name: "idx_mcp_server_tools_server_id"]
+    (server_id, tool_name) [name: "idx_mcp_server_tools_server_name", unique]
+  }
+}
+// kb.mcp_server_tools: Cached tool definitions from MCP servers with per-tool enable/disable
+
+Table "kb"."mcp_servers" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "name" varchar(255) [not null]
+  "enabled" boolean [not null, default: true]
+  "type" varchar(50) [not null, note: 'Server transport type: builtin, stdio, sse, http']
+  "command" text [note: 'Command to execute for stdio-type servers']
+  "args" text[] [default: '{}', note: 'Command arguments for stdio-type servers']
+  "env" jsonb [default: '{}', note: 'Environment variables passed to the server process']
+  "url" text [note: 'Endpoint URL for sse/http-type servers']
+  "headers" jsonb [default: '{}', note: 'HTTP headers for sse/http-type servers']
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "description" text
+  "secret_env" jsonb [default: '{}', note: 'AES-GCM encrypted secret env vars: {KEY: {ct, nonce}}']
+  "secret_headers" jsonb [default: '{}', note: 'AES-GCM encrypted secret HTTP headers: {KEY: {ct, nonce}}']
+  "target" text [not null, default: 'server', note: 'server (connected outbound) or device (pushed over the relay)']
+  "target_instance_id" text [note: 'relay instance_id for device target; NULL = all eligible devices in the project']
+  "required_config" jsonb [not null, default: '[]', note: 'credential keys (kind=header|env) the server needs before it can be enabled; [{"name","kind","isSecret","isRequired","description","valueHint"}]']
+  "registry_name" text [note: 'registry server name a row was installed from; NULL for manual creates']
+  "registry_repository_url" text [note: 'source repository URL from the registry entry; backs the configure form docs link']
+
+  Indexes {
+    (project_id, enabled) [name: "idx_mcp_servers_project_enabled"]
+    (project_id) [name: "idx_mcp_servers_project_id"]
+    (project_id, name) [name: "idx_mcp_servers_project_name", unique]
+  }
+}
+// kb.mcp_servers: Registry of MCP servers (builtin and external) per project
+
+Table "kb"."merge_provenance" {
+  "child_version_id" uuid [pk]
+  "parent_version_id" uuid [pk]
+  "role" text [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."notification_preferences" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "user_id" uuid [not null]
+  "project_id" uuid
+  "event_key" text [not null]
+  "channel" text [not null, default: 'in_app']
+  "enabled" boolean [not null, default: false]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (user_id, project_id, event_key, channel) [unique]
+    (user_id) [name: "idx_notification_preferences_user_id"]
+  }
+}
+
+Table "kb"."notifications" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid
+  "user_id" uuid [not null]
+  "title" text [not null]
+  "message" text [not null]
+  "type" text
+  "severity" text [not null, default: 'info']
+  "related_resource_type" text
+  "related_resource_id" uuid
+  "read" boolean [not null, default: false]
+  "dismissed" boolean [not null, default: false]
+  "dismissed_at" timestamptz
+  "actions" jsonb [not null, default: '[]']
+  "expires_at" timestamptz
+  "read_at" timestamptz
+  "importance" text [not null, default: 'other']
+  "cleared_at" timestamptz
+  "snoozed_until" timestamptz
+  "category" text
+  "source_type" text
+  "source_id" text
+  "action_url" text
+  "action_label" text
+  "group_key" text
+  "details" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "action_status" text
+  "action_status_at" timestamptz
+  "action_status_by" uuid
+  "task_id" uuid
+  "scope" text [not null, default: 'account']
+  "requires_action" boolean [not null, default: false]
+  "event_key" text
+
+  Indexes {
+    (project_id) [name: "IDX_95464140d7dc04d7efb0afd6be"]
+    (user_id) [name: "IDX_9a8a82462cab47c73d25f49261"]
+    (read) [name: "IDX_f8b7ed75170d2d7dca4477cc94"]
+    (action_status) [name: "idx_notifications_action_status"]
+    (task_id) [name: "idx_notifications_task"]
+    (type, action_status) [name: "idx_notifications_type_action_status"]
+    (user_id, requires_action, read) [name: "idx_notifications_user_requires_action_read"]
+    (user_id, scope, project_id, read) [name: "idx_notifications_user_scope_project_read"]
+    (user_id, group_key) [name: "ux_notifications_user_group_key_active", unique]
+  }
+}
+
+Table "kb"."oauth_client_configs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "organization_id" uuid [not null]
+  "provider" text [not null]
+  "encrypted_client" bytea [not null]
+  "scopes" jsonb [not null, default: '[]']
+  "strategy" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "config" jsonb [not null, default: '{}']
+  "project_id" uuid
+
+  Indexes {
+    (organization_id, provider) [name: "idx_oauth_client_configs_org_provider", unique]
+    (project_id, provider) [name: "idx_oauth_client_configs_project_provider", unique]
+  }
+}
+
+Table "kb"."oauth_pending_states" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "state" text [not null]
+  "project_id" uuid [not null]
+  "provider" text [not null]
+  "user_id" uuid
+  "code_verifier" text [not null]
+  "redirect_uri" text [not null]
+  "config" jsonb [not null, default: '{}']
+  "scopes" jsonb [not null, default: '[]']
+  "expires_at" timestamptz [not null]
+  "consumed_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (expires_at) [name: "idx_oauth_pending_states_expires_at"]
+    (state) [name: "idx_oauth_pending_states_state", unique]
+  }
+}
+
+Table "kb"."object_chunks" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "object_id" uuid [not null]
+  "chunk_id" uuid [not null]
+  "extraction_job_id" uuid
+  "confidence" real
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (object_id, chunk_id) [unique]
+    (chunk_id) [name: "IDX_object_chunks_chunk_id"]
+    (extraction_job_id) [name: "IDX_object_chunks_extraction_job_id"]
+    (object_id) [name: "IDX_object_chunks_object_id"]
+  }
+}
+
+Table "kb"."object_comments" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "canonical_id" uuid [not null]
+  "author" text
+  "body" text [not null]
+  "actor_type" text
+  "run_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, canonical_id, created_at) [name: "idx_object_comments_item_created"]
+  }
+}
+// kb.object_comments: Append-only durable comments on object-driven work items. Authored by humans (actor_type=user) or work agents (actor_type=agent), optionally tied to a run.
+
+Table "kb"."object_extraction_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "document_id" uuid
+  "chunk_id" uuid
+  "job_type" text [not null, default: 'full_extraction']
+  "status" text [not null, default: 'pending']
+  "enabled_types" text[] [not null, default: '{}']
+  "extraction_config" jsonb [not null, default: '{}']
+  "objects_created" integer [not null, default: 0]
+  "relationships_created" integer [not null, default: 0]
+  "suggestions_created" integer [not null, default: 0]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "error_message" text
+  "retry_count" integer [not null, default: 0]
+  "max_retries" integer [not null, default: 3]
+  "created_by" uuid
+  "reprocessing_of" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "source_type" text
+  "source_id" text
+  "source_metadata" jsonb [not null, default: '{}']
+  "debug_info" jsonb
+  "total_items" integer [not null, default: 0]
+  "processed_items" integer [not null, default: 0]
+  "successful_items" integer [not null, default: 0]
+  "failed_items" integer [not null, default: 0]
+  "logs" jsonb [not null, default: '[]']
+  "discovered_types" jsonb [default: '[]']
+  "created_objects" jsonb [default: '[]']
+  "error_details" jsonb
+  "staging_branch_id" uuid [note: 'Staging branch where extracted objects land pending review. NULL = legacy (objects on main) or no branch isolation.']
+  "created_object_ids" uuid[] [not null, default: '{}']
+  "trace_id" text
+  "run_id" uuid [note: 'Agent run that records this job\'s pipeline transcript (kb.agent_runs); NULL for jobs that predate the link or when transcript recording is unavailable.']
+
+  Indexes {
+    (project_id) [name: "IDX_1c7f91f13d7e1a438519d37ec3"]
+    (status) [name: "IDX_3844c9efd6d2e06105a117f90c"]
+    (document_id, created_at) [name: "idx_object_extraction_jobs_document_created"]
+    (run_id) [name: "idx_object_extraction_jobs_run_id"]
+    (trace_id) [name: "idx_object_extraction_jobs_trace_id"]
+  }
+}
+
+Table "kb"."object_extraction_logs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "extraction_job_id" uuid [not null]
+  "started_at" timestamptz [not null, default: `now()`]
+  "completed_at" timestamptz
+  "step_index" integer [not null]
+  "operation_type" text [not null]
+  "operation_name" text
+  "step" text [not null]
+  "status" text [not null]
+  "message" text
+  "input_data" jsonb
+  "output_data" jsonb
+  "error_message" text
+  "error_stack" text
+  "error_details" jsonb
+  "duration_ms" integer
+  "tokens_used" integer
+  "entity_count" integer
+  "relationship_count" integer
+}
+
+Table "kb"."object_type_schemas" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid
+  "type" text [not null]
+  "version" integer [not null, default: 1]
+  "supersedes_id" uuid
+  "canonical_id" uuid
+  "json_schema" jsonb [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."org_model_config" {
+  "org_id" uuid [pk]
+  "generative_model" text [not null, default: '']
+  "embedding_model" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+// kb.org_model_config: DEPRECATED: org-level model config. All model config is now per-project via kb.project_model_config.
+
+Table "kb"."org_provider_configs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "org_id" uuid [not null]
+  "provider" varchar(50) [not null]
+  "encrypted_credential" bytea [not null]
+  "encryption_nonce" bytea [not null]
+  "gcp_project" varchar(255)
+  "location" varchar(100)
+  "generative_model" varchar(255)
+  "embedding_model" varchar(255)
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "base_url" text
+  "slug" varchar(63) [not null]
+  "extra_config" jsonb [not null, default: '{}', note: 'Non-secret vendor-specific extra config as a field-key to value jsonb map.']
+  "extra_secret_encrypted" bytea [note: 'AES-GCM ciphertext of the json object of secret extra config fields; NULL when none configured.']
+  "extra_secret_nonce" bytea [note: 'Nonce for extra_secret_encrypted.']
+
+  Indexes {
+    (org_id, slug) [name: "uq_org_provider_configs_org_slug", unique]
+  }
+}
+// kb.org_provider_configs: DEPRECATED: org-level provider credentials. All provider config is now per-project via kb.project_provider_configs.
+
+Table "kb"."org_tool_settings" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "org_id" uuid [not null]
+  "tool_name" text [not null]
+  "enabled" boolean [not null, default: true]
+  "config" jsonb
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (org_id, tool_name) [unique]
+    (org_id) [name: "idx_org_tool_settings_org_id"]
+  }
+}
+
+Table "kb"."organization_custom_pricing" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "org_id" uuid [not null]
+  "provider" varchar(50) [not null]
+  "model" varchar(255) [not null]
+  "text_input_price" numeric(12,8) [not null, default: 0]
+  "image_input_price" numeric(12,8) [not null, default: 0]
+  "video_input_price" numeric(12,8) [not null, default: 0]
+  "audio_input_price" numeric(12,8) [not null, default: 0]
+  "output_price" numeric(12,8) [not null, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (org_id, provider, model) [unique]
+    (org_id) [name: "idx_org_custom_pricing_org_id"]
+  }
+}
+
+Table "kb"."organization_memberships" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "organization_id" uuid [not null]
+  "user_id" uuid [not null]
+  "role" text [not null, note: 'Member role: org_admin']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (user_id) [name: "IDX_5352fc550034d507d6c76dd290"]
+    (organization_id) [name: "IDX_86ae2efbb9ce84dd652e0c96a4"]
+    (organization_id, user_id) [name: "IDX_caa73db1b161fa6b3a042290fe", unique]
+  }
+}
+
+Table "kb"."orgs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "name" text [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "deleted_at" timestamptz
+  "deleted_by" uuid
+
+  Indexes {
+    (deleted_at) [name: "idx_orgs_deleted_at"]
+  }
+}
+
+Table "kb"."product_version_members" {
+  "product_version_id" uuid [pk]
+  "object_canonical_id" uuid [pk]
+  "object_version_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."product_versions" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "name" text [not null]
+  "description" text
+  "base_product_version_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."project_custom_pricing" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "provider" varchar(50) [not null]
+  "model" varchar(255) [not null]
+  "text_input_price" numeric(12,8) [not null, default: 0]
+  "image_input_price" numeric(12,8) [not null, default: 0]
+  "video_input_price" numeric(12,8) [not null, default: 0]
+  "audio_input_price" numeric(12,8) [not null, default: 0]
+  "output_price" numeric(12,8) [not null, default: 0]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "provider_slug" varchar(63) [not null]
+
+  Indexes {
+    (project_id) [name: "idx_project_custom_pricing_project_id"]
+    (project_id, provider_slug, model) [name: "uq_project_custom_pricing_project_slug_model", unique]
+  }
+}
+
+Table "kb"."project_edge_schema_registry" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "schema_id" uuid [not null]
+  "type_name" text [not null]
+  "json_schema" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id) [name: "idx_project_edge_schema_registry_project_id"]
+    (schema_id) [name: "idx_project_edge_schema_registry_schema_id"]
+    (project_id, schema_id, type_name) [name: "idx_project_edge_schema_registry_unique", unique]
+  }
+}
+
+Table "kb"."project_journal" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "event_type" text [not null]
+  "entity_type" text
+  "entity_id" uuid
+  "object_type" text
+  "actor_type" text [not null, default: 'system']
+  "actor_id" uuid
+  "metadata" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "branch_id" uuid
+
+  Indexes {
+    (project_id, created_at) [name: "idx_project_journal_project_created"]
+  }
+}
+
+Table "kb"."project_journal_notes" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "journal_id" uuid
+  "body" text [not null]
+  "actor_type" text [not null, default: 'user']
+  "actor_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "branch_id" uuid
+
+  Indexes {
+    (journal_id) [name: "idx_project_journal_notes_journal"]
+    (project_id, created_at) [name: "idx_project_journal_notes_project"]
+  }
+}
+
+Table "kb"."project_memberships" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "user_id" uuid [not null]
+  "role" text [not null, note: 'Member role: project_admin | project_user | project_viewer']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, user_id) [unique]
+    (project_id) [name: "IDX_38a73cbcc58fbed8e62a66d79b"]
+    (user_id) [name: "IDX_7cb6c36ad5bf1bd4a413823ace"]
+    (project_id, user_id) [name: "IDX_b877acbf8d466f2889a2eeb147", unique]
+  }
+}
+
+Table "kb"."project_model_config" {
+  "project_id" uuid [pk]
+  "generative_model" text [not null, default: '']
+  "embedding_model" text [not null, default: '']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "generative_provider_slug" varchar(63)
+  "embedding_provider_slug" varchar(63)
+  "generative_slug_review_required" boolean [not null, default: false]
+  "embedding_slug_review_required" boolean [not null, default: false]
+}
+
+Table "kb"."project_object_schema_registry" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "type_name" text [not null]
+  "source" text [not null]
+  "schema_id" uuid
+  "schema_version" integer [not null, default: 1]
+  "json_schema" jsonb [not null]
+  "ui_config" jsonb
+  "extraction_config" jsonb
+  "enabled" boolean [not null, default: true]
+  "discovery_confidence" float8
+  "description" text
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "namespace" text
+}
+
+Table "kb"."project_object_schema_registry_versions" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "registry_id" uuid [not null]
+  "project_id" uuid [not null]
+  "type_name" text [not null]
+  "schema_version" integer [not null]
+  "source" text [not null]
+  "schema_id" uuid
+  "json_schema" jsonb [not null]
+  "ui_config" jsonb
+  "extraction_config" jsonb
+  "enabled" boolean [not null, default: true]
+  "discovery_confidence" float8
+  "description" text
+  "namespace" text
+  "created_by" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (registry_id, schema_version) [unique]
+    (project_id, type_name, schema_version) [name: "idx_object_type_versions_project_type"]
+  }
+}
+
+Table "kb"."project_provider_configs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "provider" varchar(50) [not null]
+  "encrypted_credential" bytea [not null]
+  "encryption_nonce" bytea [not null]
+  "gcp_project" varchar(255)
+  "location" varchar(100)
+  "generative_model" varchar(255)
+  "embedding_model" varchar(255)
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "base_url" text
+  "slug" varchar(63) [not null]
+  "extra_config" jsonb [not null, default: '{}', note: 'Non-secret vendor-specific extra config as a field-key to value jsonb map (e.g. {"api_version": "2024-10-21"}).']
+  "extra_secret_encrypted" bytea [note: 'AES-GCM ciphertext of the json object of secret extra config fields; NULL when none configured.']
+  "extra_secret_nonce" bytea [note: 'Nonce for extra_secret_encrypted.']
+
+  Indexes {
+    (project_id, slug) [name: "uq_project_provider_configs_project_slug", unique]
+  }
+}
+
+Table "kb"."project_schemas" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "schema_id" uuid [not null]
+  "installed_at" timestamptz [not null, default: `now()`]
+  "installed_by" uuid
+  "active" boolean [not null, default: true]
+  "customizations" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "removed_at" timestamptz
+  "source_blueprint_id" uuid
+
+  Indexes {
+    (project_id, schema_id) [unique]
+    (project_id, source_blueprint_id) [name: "idx_project_schemas_source_blueprint"]
+  }
+}
+
+Table "kb"."project_settings" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "category" text [not null]
+  "key" text [not null]
+  "value" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, category, key) [unique]
+    (project_id, category) [name: "idx_project_settings_project_category"]
+  }
+}
+
+Table "kb"."projects" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "organization_id" uuid [not null]
+  "name" text [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "auto_extract_objects" boolean [not null, default: false]
+  "auto_extract_config" jsonb [not null, default: '{}']
+  "chat_prompt_template" text
+  "chunking_config" jsonb
+  "extraction_config" jsonb
+  "deleted_at" timestamptz
+  "deleted_by" uuid
+  "project_info" text
+  "budget_usd" numeric(10,4) [default: 10.0]
+  "budget_alert_threshold" numeric(3,2) [not null, default: 0.80]
+  "auto_merge_extraction_branches" boolean [not null, default: false]
+  "deletion_scheduled_for" timestamptz
+
+  Indexes {
+    (deleted_at) [name: "idx_projects_deleted_at"]
+    (deletion_scheduled_for) [name: "idx_projects_deletion_scheduled_for"]
+  }
+}
+
+Table "kb"."provider_pricing" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "provider" varchar(50) [not null]
+  "model" varchar(255) [not null]
+  "text_input_price" numeric(12,8) [not null, default: 0]
+  "image_input_price" numeric(12,8) [not null, default: 0]
+  "video_input_price" numeric(12,8) [not null, default: 0]
+  "audio_input_price" numeric(12,8) [not null, default: 0]
+  "output_price" numeric(12,8) [not null, default: 0]
+  "last_synced" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (provider, model) [unique]
+  }
+}
+
+Table "kb"."provider_supported_models" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "provider" varchar(50) [not null]
+  "model_name" varchar(255) [not null]
+  "model_type" varchar(50) [not null]
+  "display_name" varchar(255)
+  "last_synced" timestamptz [not null, default: `now()`]
+  "max_output_tokens" integer
+  "max_input_tokens" integer
+
+  Indexes {
+    (provider, model_name) [unique]
+    (provider) [name: "idx_provider_supported_models_provider"]
+    (provider, model_type) [name: "idx_provider_supported_models_type"]
+  }
+}
+
+Table "kb"."release_notification_recipients" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "release_notification_id" uuid [not null]
+  "user_id" uuid [not null]
+  "email_sent" boolean [not null, default: false]
+  "email_sent_at" timestamptz
+  "mailgun_message_id" varchar(255)
+  "email_status" varchar(50) [default: 'pending']
+  "email_status_updated_at" timestamptz
+  "in_app_notification_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "email_job_id" uuid
+
+  Indexes {
+    (release_notification_id, user_id) [unique]
+    (email_job_id) [name: "idx_release_notification_recipients_email_job_id"]
+    (mailgun_message_id) [name: "idx_release_recipients_mailgun"]
+    (release_notification_id) [name: "idx_release_recipients_release"]
+    (user_id) [name: "idx_release_recipients_user"]
+  }
+}
+
+Table "kb"."release_notification_state" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "branch" varchar(255) [not null, unique, default: 'main']
+  "last_notified_commit" varchar(40) [not null]
+  "last_notified_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."release_notifications" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "version" varchar(50) [not null]
+  "from_commit" varchar(40) [not null]
+  "to_commit" varchar(40) [not null]
+  "commit_count" integer [not null]
+  "changelog_json" jsonb [not null]
+  "target_mode" varchar(20) [not null]
+  "target_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+  "created_by" uuid
+  "status" varchar(20) [not null, default: 'published']
+
+  Indexes {
+    (created_at) [name: "idx_release_notifications_created_at"]
+    (status) [name: "idx_release_notifications_status"]
+    (to_commit) [name: "idx_release_notifications_to_commit"]
+    (version) [name: "idx_release_notifications_version"]
+  }
+}
+
+Table "kb"."restores" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "organization_id" uuid [not null]
+  "backup_id" uuid [not null]
+  "mode" text [not null, note: 'Restore mode: overwrite (same project) or clone (new project)']
+  "source_project_id" uuid
+  "target_project_id" uuid
+  "status" text [not null, default: 'pending']
+  "progress" integer [not null, default: 0]
+  "error_message" text
+  "stats" jsonb [note: 'Per-table restore statistics: {documents: 150, chunks: 3000, ...}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "created_by" uuid
+  "completed_at" timestamptz
+
+  Indexes {
+    (backup_id) [name: "idx_restores_backup"]
+    (organization_id) [name: "idx_restores_org"]
+    (status) [name: "idx_restores_status"]
+  }
+}
+// kb.restores: Tracks project backup restore jobs (overwrite and clone modes)
+
+Table "kb"."retrieval_traces" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "trace_id" uuid [not null]
+  "query" text [not null]
+  "filters" jsonb [note: 'Search filters applied: resultTypes, fusionStrategy, weights, minScore']
+  "candidates" jsonb [note: 'Capped candidate list (id, type, score) fed into fusion']
+  "selected_ids" jsonb [note: 'Ordered IDs of the fused results returned to the caller']
+  "scores" jsonb [note: 'Fused scores of selected_ids, in the same order']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (created_at) [name: "idx_retrieval_traces_created"]
+    (project_id) [name: "idx_retrieval_traces_project"]
+    (trace_id) [name: "idx_retrieval_traces_trace"]
+  }
+}
+// kb.retrieval_traces: Persisted retrieval traces for unified search debugging and reconstruction
+
+Table "kb"."run_events" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "run_id" uuid [not null]
+  "event_type" text [not null]
+  "data" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (run_id, created_at) [name: "idx_run_events_run_id_created"]
+  }
+}
+
+Table "kb"."sandbox_images" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "name" varchar(100) [not null, note: 'User-facing alias used in agent definitions (e.g. "coder", "py-ml")']
+  "type" varchar(20) [not null, default: 'custom', note: 'Image type: built_in (pre-built rootfs) or custom (Docker pull)']
+  "docker_ref" text [note: 'Docker image reference for custom images; NULL for built-in Firecracker rootfs']
+  "provider" varchar(20) [not null, default: 'firecracker', note: 'Provider that handles this image: firecracker or gvisor']
+  "status" varchar(20) [not null, default: 'pending', note: 'Image readiness: pending, pulling, ready, or error']
+  "error_msg" text
+  "project_id" uuid [not null]
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (project_id) [name: "idx_sandbox_images_project_id"]
+    (project_id, name) [name: "idx_sandbox_images_project_name", unique]
+  }
+}
+// kb.sandbox_images: Catalog of available workspace images per project
+
+Table "kb"."schema_migration_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "from_schema_id" uuid [not null]
+  "to_schema_id" uuid [not null]
+  "chain" jsonb [not null, default: '[]']
+  "status" text [not null, default: 'pending']
+  "risk_level" text
+  "objects_migrated" integer [not null, default: 0]
+  "objects_failed" integer [not null, default: 0]
+  "error" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "started_at" timestamptz
+  "completed_at" timestamptz
+  "auto_uninstall" boolean [not null, default: false]
+
+  Indexes {
+    (project_id) [name: "idx_schema_migration_jobs_project_id"]
+    (status) [name: "idx_schema_migration_jobs_status"]
+  }
+}
+
+Table "kb"."schema_migration_runs" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "from_version" text [not null]
+  "to_version" text [not null]
+  "started_at" timestamptz [not null, default: `now()`]
+  "completed_at" timestamptz
+  "status" text [not null]
+  "total_objects" integer [not null, default: 0]
+  "successful" integer [not null, default: 0]
+  "failed" integer [not null, default: 0]
+  "skipped" integer [not null, default: 0]
+  "with_warnings" integer [not null, default: 0]
+  "risk_level" text [not null, default: 'unknown']
+  "dry_run" boolean [not null, default: false]
+  "forced" boolean [not null, default: false]
+  "confirmed_data_loss" boolean [not null, default: false]
+  "error_summary" jsonb
+
+  Indexes {
+    (project_id) [name: "idx_migration_runs_project"]
+    (started_at) [name: "idx_migration_runs_started"]
+    (status) [name: "idx_migration_runs_status"]
+  }
+}
+// kb.schema_migration_runs: Tracks all schema migration runs with statistics and outcomes
+
+Table "kb"."schema_studio_messages" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "session_id" uuid [not null]
+  "role" text [not null]
+  "content" text [not null]
+  "suggestions" jsonb [default: '[]']
+  "metadata" jsonb [default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (session_id) [name: "IDX_schema_studio_messages_session_id"]
+  }
+}
+
+Table "kb"."schema_studio_sessions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "user_id" text [not null]
+  "project_id" uuid [not null]
+  "pack_id" uuid
+  "status" text [not null, default: 'active']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (pack_id) [name: "IDX_schema_studio_sessions_schema_id"]
+    (status) [name: "IDX_schema_studio_sessions_status"]
+    (user_id) [name: "IDX_schema_studio_sessions_user_id"]
+  }
+}
+
+Table "kb"."session_todos" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "session_id" uuid [not null]
+  "content" text [not null]
+  "status" kb.session_todo_status [not null, default: 'draft']
+  "author" text
+  "order" integer [not null, default: 0]
+  "context_snapshot" text
+  "created_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+  "updated_at" timestamptz [not null, default: `CURRENT_TIMESTAMP`]
+
+  Indexes {
+    (session_id) [name: "idx_session_todos_session_id"]
+    (status) [name: "idx_session_todos_status"]
+  }
+}
+
+Table "kb"."sessions" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "agent_name" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "title" text
+  "is_archived" boolean [not null, default: false]
+
+  Indexes {
+    (project_id, is_archived) [name: "idx_sessions_is_archived"]
+    (project_id) [name: "idx_sessions_project_id"]
+  }
+}
+
+Table "kb"."settings" {
+  "key" text [pk]
+  "value" jsonb [not null, default: '{}']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."skills" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "name" text [not null, note: 'Slug identifier: lowercase alphanumeric with hyphens, 1–64 chars']
+  "description" text [not null, default: '']
+  "content" text [not null, default: '']
+  "metadata" jsonb [not null, default: '{}']
+  "description_embedding" vector(768) [note: '768-dim embedding of description text for semantic retrieval (gemini-embedding-001 with MRL); NULL when embedding generation failed or is disabled']
+  "project_id" uuid [note: 'NULL for global skills; set for project-scoped skills. Project-scoped wins on name collision.']
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "org_id" uuid [note: 'NULL for global and project-scoped skills; set for org-wide skills. Mutually exclusive with project_id.']
+
+  Indexes {
+    (description_embedding) [name: "idx_skills_embedding_hnsw"]
+    (name) [name: "idx_skills_name_global", unique]
+    (name, org_id) [name: "idx_skills_name_org", unique]
+    (name, project_id) [name: "idx_skills_name_project", unique]
+    (org_id) [name: "idx_skills_org_id"]
+    (project_id) [name: "idx_skills_project_id"]
+  }
+}
+// kb.skills: Reusable Markdown workflow instructions (skills) for agents. Global when project_id IS NULL; project-scoped otherwise.
+
+Table "kb"."source_credentials" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "provider" text [not null]
+  "name" text [not null]
+  "encrypted_credentials" bytea [not null]
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, provider, name) [unique]
+    (project_id, provider) [name: "idx_source_credentials_project_provider"]
+  }
+}
+
+Table "kb"."source_sync_jobs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "status" text [not null, default: 'pending']
+  "scheduled_at" timestamptz [not null, default: `now()`]
+  "priority" integer [not null, default: 0]
+  "started_at" timestamptz
+  "updated_at" timestamptz [not null, default: `now()`]
+  "attempt_count" integer [not null, default: 0]
+  "last_error" text
+  "completed_at" timestamptz
+  "project_id" uuid [not null]
+  "source_id" uuid [not null]
+  "trigger_type" text [not null, default: 'manual']
+  "total_items" integer [not null, default: 0]
+  "processed_items" integer [not null, default: 0]
+  "successful_items" integer [not null, default: 0]
+  "failed_items" integer [not null, default: 0]
+  "skipped_items" integer [not null, default: 0]
+  "current_phase" text
+  "status_message" text
+  "error" jsonb
+  "cursor_before" jsonb
+  "cursor_after" jsonb
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (source_id) [name: "idx_source_sync_jobs_active_source", unique]
+    (project_id) [name: "idx_source_sync_jobs_project_id"]
+    (status, scheduled_at) [name: "idx_source_sync_jobs_status_scheduled"]
+  }
+}
+
+Table "kb"."sources" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "provider" text [not null]
+  "display_name" text
+  "config" jsonb [not null, default: '{}']
+  "encrypted_credentials" bytea
+  "sync_policy" text [not null, default: 'manual']
+  "sync_interval_minutes" integer
+  "cursor" jsonb [not null, default: '{}']
+  "status" text [not null, default: 'active']
+  "error_count" integer [not null, default: 0]
+  "last_error" text
+  "last_error_at" timestamptz
+  "last_synced_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+  "credential_id" uuid
+  "credentials_updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (credential_id) [name: "idx_sources_credential_id"]
+  }
+}
+
+Table "kb"."system_process_logs" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "process_id" text [not null]
+  "process_type" text [not null]
+  "level" text [not null]
+  "message" text [not null]
+  "metadata" jsonb
+  "timestamp" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."tags" {
+  "id" uuid [pk, default: `uuid_generate_v4()`]
+  "project_id" uuid [not null]
+  "product_version_id" uuid [not null]
+  "name" text [not null]
+  "description" text
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+}
+
+Table "kb"."tasks" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "title" text [not null]
+  "description" text
+  "type" text [not null]
+  "status" text [not null, default: 'pending']
+  "resolved_at" timestamptz
+  "resolved_by" uuid
+  "resolution_notes" text
+  "source_type" text
+  "source_id" text
+  "metadata" jsonb [default: '{}']
+  "created_at" timestamptz [default: `now()`]
+  "updated_at" timestamptz [default: `now()`]
+
+  Indexes {
+    (status) [name: "idx_tasks_pending"]
+    (project_id, status) [name: "idx_tasks_project_status"]
+    (type) [name: "idx_tasks_type"]
+  }
+}
+
+Table "kb"."user_activity_daily" {
+  "id" uuid [pk, note: 'Deterministic UUID over (day,user_id,organization_id,project_id) for idempotent upserts']
+  "day" date [not null]
+  "user_id" uuid [not null]
+  "organization_id" uuid
+  "project_id" uuid
+  "request_count" integer [not null, default: 0]
+  "action_count" integer [not null, default: 0]
+  "last_seen_at" timestamptz
+  "last_action_at" timestamptz
+  "created_at" timestamptz [not null, default: `now()`]
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (organization_id, day) [name: "idx_user_activity_daily_org_day"]
+    (project_id, day) [name: "idx_user_activity_daily_project_day"]
+    (user_id, day) [name: "idx_user_activity_daily_user_day"]
+  }
+}
+// kb.user_activity_daily: Per-user daily activity rollup for org/project member activity indicators
+
+Table "kb"."user_recent_items" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "user_id" text [not null]
+  "project_id" uuid [not null]
+  "resource_type" varchar(20) [not null]
+  "resource_id" uuid [not null]
+  "resource_name" text
+  "resource_subtype" text
+  "action_type" varchar(20) [not null]
+  "accessed_at" timestamptz [not null, default: `now()`]
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (user_id, project_id, resource_type, resource_id) [name: "idx_user_recent_items_unique_resource", unique]
+    (user_id, project_id, accessed_at) [name: "idx_user_recent_items_user_project_accessed"]
+  }
+}
+
+Table "kb"."work_item_feedback" {
+  "id" uuid [pk, default: `gen_random_uuid()`]
+  "project_id" uuid [not null]
+  "canonical_id" uuid [not null]
+  "round" integer [not null]
+  "author" text
+  "text" text [not null]
+  "run_id" uuid
+  "created_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (project_id, canonical_id, round) [name: "idx_work_item_feedback_item_round"]
+  }
+}
+// kb.work_item_feedback: Append-only rework feedback for object-driven work items. Keyed by (project_id, canonical_id, round); MAX(round) is the revision count.
+
+Table "kb"."work_item_state" {
+  "project_id" uuid [pk]
+  "canonical_id" uuid [pk]
+  "failure_count" integer [not null, default: 0]
+  "last_failure_class" text
+  "requeue_backoff_at" timestamptz
+  "updated_at" timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (updated_at) [name: "idx_work_item_state_updated_at"]
+  }
+}
+// kb.work_item_state: Per-work-item failure budget ledger (object-driven work). Keyed by canonical_id so the count survives re-enqueue and version churn.
+
+Table "public"."goose_db_version" {
+  "id" integer [pk]
+  "version_id" bigint [not null]
+  "is_applied" boolean [not null]
+  "tstamp" timestamp [not null, default: `now()`]
+}
+
+// References
+Ref: "core"."agent_mcp_endpoints"."agent_id" > "kb"."agents"."id"
+Ref: "core"."agent_mcp_keys"."endpoint_id" > "core"."agent_mcp_endpoints"."id"
+Ref: "core"."agent_mcp_keys"."token_id" > "core"."api_tokens"."id"
+Ref: "core"."agent_mcp_sessions"."endpoint_id" > "core"."agent_mcp_endpoints"."id"
+Ref: "core"."agent_mcp_sessions"."key_id" > "core"."agent_mcp_keys"."id"
+Ref: "core"."api_tokens"."project_id" > "kb"."projects"."id"
+Ref: "core"."api_tokens"."user_id" > "core"."user_profiles"."id"
+Ref: "core"."mcp_share_instances"."token_id" > "core"."api_tokens"."id"
+Ref: "core"."superadmins"."granted_by" > "core"."user_profiles"."id"
+Ref: "core"."superadmins"."revoked_by" > "core"."user_profiles"."id"
+Ref: "core"."superadmins"."user_id" > "core"."user_profiles"."id"
+Ref: "core"."user_email_preferences"."user_id" > "core"."user_profiles"."id"
+Ref: "core"."user_emails"."user_id" > "core"."user_profiles"."id"
+Ref: "core"."user_profiles"."deleted_by" > "core"."user_profiles"."id"
+Ref: "kb"."adk_events".("app_name", "user_id", "session_id") > "kb"."adk_sessions".("app_name", "user_id", "id")
+Ref: "kb"."adk_states".("app_name", "user_id", "session_id") > "kb"."adk_sessions".("app_name", "user_id", "id")
+Ref: "kb"."agent_definitions"."product_id" > "kb"."product_versions"."id"
+Ref: "kb"."agent_processing_log"."agent_id" > "kb"."agents"."id"
+Ref: "kb"."agent_processing_log"."graph_object_id" > "kb"."graph_objects"."id"
+Ref: "kb"."agent_questions"."agent_id" > "kb"."agents"."id"
+Ref: "kb"."agent_questions"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_run_jobs"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_run_messages"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_run_tool_calls"."message_id" > "kb"."agent_run_messages"."id"
+Ref: "kb"."agent_run_tool_calls"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_runs"."session_id" > "kb"."sessions"."id"
+Ref: "kb"."agent_runs"."agent_definition_id" > "kb"."agent_definitions"."id"
+Ref: "kb"."agent_runs"."agent_id" > "kb"."agents"."id"
+Ref: "kb"."agent_runs"."parent_run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_runs"."resumed_from" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_runs"."root_run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."agent_share_access_log"."share_link_id" > "kb"."agent_share_links"."id"
+Ref: "kb"."agent_share_end_users"."share_link_id" > "kb"."agent_share_links"."id"
+Ref: "kb"."agent_share_links"."agent_definition_id" > "kb"."agent_definitions"."id"
+Ref: "kb"."agent_share_links"."api_token_id" > "core"."api_tokens"."id"
+Ref: "kb"."agent_share_links"."created_by_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."agent_share_links"."project_id" > "kb"."projects"."id"
+Ref: "kb"."agent_share_sessions"."session_id" > "kb"."sessions"."id"
+Ref: "kb"."agent_share_sessions"."share_link_id" > "kb"."agent_share_links"."id"
+Ref: "kb"."agent_share_usage"."link_id" > "kb"."agent_share_links"."id"
+Ref: "kb"."agent_tool_approvals"."share_link_id" > "kb"."agent_share_links"."id"
+Ref: "kb"."agent_webhook_hooks"."agent_id" > "kb"."agents"."id"
+Ref: "kb"."agents"."agent_definition_id" > "kb"."agent_definitions"."id"
+Ref: "kb"."agents"."project_id" > "kb"."projects"."id"
+Ref: "kb"."backups"."baseline_backup_id" > "kb"."backups"."id"
+Ref: "kb"."backups"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."backups"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."backups"."parent_backup_id" > "kb"."backups"."id"
+Ref: "kb"."blueprint_applications"."blueprint_id" > "kb"."blueprints"."id"
+Ref: "kb"."blueprint_pack_claims"."blueprint_id" > "kb"."blueprints"."id"
+Ref: "kb"."blueprint_pack_claims"."schema_id" > "kb"."graph_schemas"."id"
+Ref: "kb"."branches"."project_id" > "kb"."projects"."id"
+Ref: "kb"."chat_conversations"."owner_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."chat_conversations"."project_id" > "kb"."projects"."id"
+Ref: "kb"."chat_conversations"."session_id" > "kb"."sessions"."id"
+Ref: "kb"."chat_conversations"."agent_definition_id" > "kb"."agent_definitions"."id"
+Ref: "kb"."chat_conversations"."object_id" > "kb"."graph_objects"."id"
+Ref: "kb"."chat_conversations"."parent_conversation_id" > "kb"."chat_conversations"."id"
+Ref: "kb"."chat_messages"."conversation_id" > "kb"."chat_conversations"."id"
+Ref: "kb"."chunk_embedding_jobs"."chunk_id" > "kb"."chunks"."id"
+Ref: "kb"."chunk_revisions"."chunk_id" > "kb"."chunks"."id"
+Ref: "kb"."chunks"."document_id" > "kb"."documents"."id"
+Ref: "kb"."discovery_type_candidates"."job_id" > "kb"."discovery_jobs"."id"
+Ref: "kb"."document_artifacts"."document_id" > "kb"."documents"."id"
+Ref: "kb"."document_parsing_jobs"."document_id" > "kb"."documents"."id"
+Ref: "kb"."document_parsing_jobs"."extraction_job_id" > "kb"."object_extraction_jobs"."id"
+Ref: "kb"."document_parsing_jobs"."project_id" > "kb"."projects"."id"
+Ref: "kb"."documents"."project_id" > "kb"."projects"."id"
+Ref: "kb"."documents"."created_by_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."documents"."source_id" > "kb"."sources"."id"
+Ref: "kb"."documents"."supersedes_id" > "kb"."documents"."id"
+Ref: "kb"."email_logs"."email_job_id" > "kb"."email_jobs"."id"
+Ref: "kb"."email_template_versions"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."email_template_versions"."template_id" > "kb"."email_templates"."id"
+Ref: "kb"."email_templates"."updated_by" > "core"."user_profiles"."id"
+Ref: "kb"."email_templates"."current_version_id" > "kb"."email_template_versions"."id"
+Ref: "kb"."embedding_policies"."project_id" > "kb"."projects"."id"
+Ref: "kb"."external_sources"."project_id" > "kb"."projects"."id"
+Ref: "kb"."graph_embedding_jobs"."object_id" > "kb"."graph_objects"."id"
+Ref: "kb"."graph_objects"."project_id" > "kb"."projects"."id"
+Ref: "kb"."graph_objects"."owner_source_id" > "kb"."sources"."id"
+Ref: "kb"."graph_relationship_embedding_jobs"."relationship_id" > "kb"."graph_relationships"."id"
+Ref: "kb"."graph_relationships"."project_id" > "kb"."projects"."id"
+Ref: "kb"."graph_schemas"."parent_version_id" > "kb"."graph_schemas"."id"
+Ref: "kb"."invites"."project_id" > "kb"."projects"."id"
+Ref: "kb"."invites"."invited_by_user_id" > "core"."user_profiles"."id"
+Ref: "kb"."llm_usage_events"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."llm_usage_events"."project_id" > "kb"."projects"."id"
+Ref: "kb"."llm_usage_events"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."llm_usage_events"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."mcp_server_oauth"."server_id" > "kb"."mcp_servers"."id"
+Ref: "kb"."mcp_server_tools"."server_id" > "kb"."mcp_servers"."id"
+Ref: "kb"."notification_preferences"."project_id" > "kb"."projects"."id"
+Ref: "kb"."notification_preferences"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."notifications"."project_id" > "kb"."projects"."id"
+Ref: "kb"."notifications"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."notifications"."task_id" > "kb"."tasks"."id"
+Ref: "kb"."oauth_client_configs"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."oauth_client_configs"."project_id" > "kb"."projects"."id"
+Ref: "kb"."object_chunks"."chunk_id" > "kb"."chunks"."id"
+Ref: "kb"."object_chunks"."extraction_job_id" > "kb"."object_extraction_jobs"."id"
+Ref: "kb"."object_chunks"."object_id" > "kb"."graph_objects"."id"
+Ref: "kb"."object_extraction_jobs"."project_id" > "kb"."projects"."id"
+Ref: "kb"."object_extraction_jobs"."document_id" > "kb"."documents"."id"
+Ref: "kb"."object_extraction_jobs"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."object_extraction_jobs"."staging_branch_id" > "kb"."branches"."id"
+Ref: "kb"."object_type_schemas"."project_id" > "kb"."projects"."id"
+Ref: "kb"."org_model_config"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."org_provider_configs"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."org_tool_settings"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."organization_custom_pricing"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."organization_memberships"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."organization_memberships"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."orgs"."deleted_by" > "core"."user_profiles"."id"
+Ref: "kb"."product_versions"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_custom_pricing"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_edge_schema_registry"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_edge_schema_registry"."schema_id" > "kb"."graph_schemas"."id"
+Ref: "kb"."project_journal_notes"."journal_id" > "kb"."project_journal"."id"
+Ref: "kb"."project_memberships"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_memberships"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."project_model_config"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_object_schema_registry"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_object_schema_registry_versions"."registry_id" > "kb"."project_object_schema_registry"."id"
+Ref: "kb"."project_provider_configs"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_schemas"."project_id" > "kb"."projects"."id"
+Ref: "kb"."project_schemas"."schema_id" > "kb"."graph_schemas"."id"
+Ref: "kb"."project_settings"."project_id" > "kb"."projects"."id"
+Ref: "kb"."projects"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."projects"."deleted_by" > "core"."user_profiles"."id"
+Ref: "kb"."release_notification_recipients"."email_job_id" > "kb"."email_jobs"."id"
+Ref: "kb"."release_notification_recipients"."in_app_notification_id" > "kb"."notifications"."id"
+Ref: "kb"."release_notification_recipients"."release_notification_id" > "kb"."release_notifications"."id"
+Ref: "kb"."release_notification_recipients"."user_id" > "core"."user_profiles"."id"
+Ref: "kb"."release_notifications"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."restores"."backup_id" > "kb"."backups"."id"
+Ref: "kb"."restores"."created_by" > "core"."user_profiles"."id"
+Ref: "kb"."restores"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."retrieval_traces"."project_id" > "kb"."projects"."id"
+Ref: "kb"."run_events"."run_id" > "kb"."agent_runs"."id"
+Ref: "kb"."schema_studio_messages"."session_id" > "kb"."schema_studio_sessions"."id"
+Ref: "kb"."schema_studio_sessions"."project_id" > "kb"."projects"."id"
+Ref: "kb"."schema_studio_sessions"."pack_id" > "kb"."graph_schemas"."id"
+Ref: "kb"."sessions"."project_id" > "kb"."projects"."id"
+Ref: "kb"."skills"."org_id" > "kb"."orgs"."id"
+Ref: "kb"."skills"."project_id" > "kb"."projects"."id"
+Ref: "kb"."source_sync_jobs"."source_id" > "kb"."sources"."id"
+Ref: "kb"."sources"."credential_id" > "kb"."source_credentials"."id"
+Ref: "kb"."tags"."project_id" > "kb"."projects"."id"
+Ref: "kb"."tasks"."project_id" > "kb"."projects"."id"
+Ref: "kb"."user_activity_daily"."organization_id" > "kb"."orgs"."id"
+Ref: "kb"."user_activity_daily"."project_id" > "kb"."projects"."id"
+Ref: "kb"."user_activity_daily"."user_id" > "core"."user_profiles"."id"

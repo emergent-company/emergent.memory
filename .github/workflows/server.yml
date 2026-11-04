@@ -1,0 +1,528 @@
+name: Server Go CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - '.github/workflows/server.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - '.github/workflows/server.yml'
+  workflow_dispatch:
+
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: '1.26'
+  # Every Go step in this workflow resolves through apps/server/go.mod alone,
+  # never the repo-root go.work. Both images that ship this binary
+  # (apps/server/Dockerfile and deploy/self-hosted/Dockerfile.server) copy only
+  # apps/server + pkg/sdk, so they build in module mode; workspace MVS instead
+  # picks the highest version any *other* module requires, which is how the
+  # gateway shipped a grpc pin this CI never exercised (#2300, #2309). A
+  # go.mod-only problem here would be invisible until image-build time (#2314).
+  GOWORK: "off"
+
+# Least privilege: PR-controlled source runs on the self-hosted runner only
+# behind the fork guard; keep the checkout token read-only as defense-in-depth.
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the --new-from-rev ratchet
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
+          # with no hosted fallback, and the runner is persistent:
+          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
+          # GH cache is redundant — it tries to upload ~10GB and always exceeds
+          # the 10GB cache limit.
+          cache: false
+
+      - name: Install golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: golangci-lint (new issues only)
+        working-directory: apps/server
+        env:
+          # Per-job cache dir: the self-hosted runner shares HOME across
+          # concurrent jobs, which makes the default golangci-lint lock
+          # collide ("parallel golangci-lint is running").
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint-cache
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags origin "${GITHUB_BASE_REF}" 2>/dev/null || true
+            BASE="origin/${GITHUB_BASE_REF}"
+          else
+            BASE="${BEFORE}"
+          fi
+          # A push that creates a ref has no `before` commit — GitHub sends the
+          # null SHA — and `workflow_dispatch` has none at all, so "new issues"
+          # has no meaning there: every pre-existing finding would be counted and
+          # the ratchet would fail on debt it exists to preserve. Skip only that
+          # case. The next push uses this commit as its base, so the baseline is
+          # kept, not reset.
+          #
+          # Any *other* unresolvable base is an error, not a skip: on a PR the
+          # base is `origin/${GITHUB_BASE_REF}`, which exists only because of the
+          # `git fetch ... || true` above — treating a failed fetch as "no base"
+          # would turn a red lint into a green one, and a finding skipped at PR
+          # time becomes baseline debt after merge.
+          case "$BASE" in
+            "" | 0000000000000000000000000000000000000000)
+              echo "::warning::no base commit (ref created by this push) — skipping the new-issues ratchet"
+              exit 0
+              ;;
+          esac
+          if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "::error::base '${BASE}' does not resolve, so the new-issues ratchet cannot run"
+            exit 1
+          fi
+          # `--allow-parallel-runners` drops golangci-lint's lock file. It is
+          # `os.TempDir()/golangci-lint.lock` — /tmp, which every runner install on
+          # a self-hosted host shares, and GOLANGCI_LINT_CACHE does not move it. So
+          # two lint jobs landing on different runners of the same host collide
+          # with "parallel golangci-lint is running" even though each job has its
+          # own cache dir. Safe here because those caches are per-job: the lock
+          # protects a cache nothing else writes.
+          golangci-lint run --allow-parallel-runners --new-from-rev="$BASE" ./...
+
+      - name: Architectural debt ratchet
+        working-directory: apps/server
+        run: ./scripts/lint-ratchet.sh
+
+      - name: Go test coverage guard
+        # Fails when a *_test.go package under apps/server is not referenced by
+        # any `go test` / `go list` glob in this workflow — the #923 class of
+        # bug where a package's tests silently rot because no job runs them.
+        run: .github/scripts/check-go-test-coverage.sh
+
+  build:
+    name: Build
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
+          # with no hosted fallback, and the runner is persistent:
+          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
+          # GH cache is redundant — it tries to upload ~10GB and always exceeds
+          # the 10GB cache limit.
+          cache: false
+
+      - name: Build
+        working-directory: apps/server
+        run: go build -o dist/server ./cmd/server
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-binary
+          path: apps/server/dist/server
+          retention-days: 1
+
+  test-unit:
+    name: Unit Tests
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # This job is pinned to runs-on: [self-hosted, linux, x64, memory]
+          # with no hosted fallback, and the runner is persistent:
+          # GOMODCACHE/GOCACHE already survive between jobs on disk, so setup-go's
+          # GH cache is redundant — it tries to upload ~10GB and always exceeds
+          # the 10GB cache limit.
+          cache: false
+
+      - name: Guard migration workspace
+        run: bash scripts/preflight/migration-workspace.sh
+
+      - name: Run unit tests
+        working-directory: apps/server
+        run: |
+          # ./cmd/... carries three pure-Go test packages — cmd/migrate
+          # (target/DSN resolution, no DB: its main() is never invoked under
+          # `go test`), cmd/swiftbridge (pure-Go internals behind the CGO
+          # exports; ships a !cgo main stub) and cmd/storage-init (bucket
+          # selection/ensure-bucket logic). None needs Postgres or CGO, so they
+          # run under -short here. Before this line they executed in no CI job
+          # at all (#923).
+          go test -short ./internal/... ./pkg/... ./domain/... ./cmd/... -v -count=1 \
+            -coverprofile=coverage.out \
+            -covermode=atomic
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        continue-on-error: true
+        with:
+          files: apps/server/coverage.out
+          flags: server-go-unit
+          fail_ci_if_error: false
+
+  # Runs the database-backed tests the unit job skips under -short. Before this
+  # job existed the DB-backed suites never executed in CI (see #778): every
+  # *_db_test.go skipped because no Postgres was provisioned and the harness
+  # treats "database unavailable" as a skip.
+  #
+  # REQUIRE_DB=1 flips that: the harnesses now fail instead of skip when the
+  # database is missing/unreachable (or the run is -short), so this coverage
+  # cannot silently vanish again. TEST_DATABASE_URL is the explicit test DSN —
+  # harnesses prefer it over ambient POSTGRES_*, so they can never touch a
+  # shared/application database.
+  #
+  # Every DB-backed harness is now hermetic (#785): it creates a uniquely-named
+  # throwaway database it drops on cleanup, via internal/testdb's template
+  # mechanism, so tests never mutate a shared database and can run in parallel.
+  # See apps/server/internal/testdb.
+  test-db:
+    name: DB-backed Tests
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 30
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      # A missing/unreachable DSN must fail this job, not skip its tests.
+      REQUIRE_DB: '1'
+      # Several tests assert on UTC timestamps; pin the runner's zone so they
+      # are deterministic regardless of the host's local timezone.
+      TZ: UTC
+      # Unique per run so concurrent jobs on the shared self-hosted runner
+      # never fight over the container name.
+      PG_CONTAINER: server-test-db-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # Same rationale as the other jobs: the persistent self-hosted runner
+          # already keeps GOMODCACHE/GOCACHE on disk.
+          cache: false
+
+      - name: Guard migration workspace
+        run: bash scripts/preflight/migration-workspace.sh
+
+      # Postgres is started explicitly rather than as a workflow `service` so it
+      # can publish on an *ephemeral* host port. A fixed host port (the first
+      # cut used 54329) collides whenever two server.yml runs reach this job on
+      # the same self-hosted runner at once — which happened on the first CI
+      # run, with `Bind for :::54329 failed: port is already allocated`.
+      - name: Start Postgres
+        run: |
+          set -euo pipefail
+          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+          # pgvector image: testutil's template DB creates the `vector` extension.
+          # 127.0.0.1::5432 publishes the container port on a free host port.
+          # The shipped image, not a trailing major: the integration suite has to
+          # run what an install runs (postgres_pin_drift_test.go guards the pin).
+          docker run -d --name "$PG_CONTAINER" \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres \
+            -e POSTGRES_DB=emergent \
+            -p 127.0.0.1::5432 \
+            pgvector/pgvector:pg18-trixie
+          HOST_PORT=$(docker port "$PG_CONTAINER" 5432/tcp | head -1 | awk -F: '{print $NF}')
+          if [ -z "$HOST_PORT" ]; then
+            echo "::error::could not determine the Postgres host port"
+            docker logs "$PG_CONTAINER" || true
+            exit 1
+          fi
+          for i in $(seq 1 60); do
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker exec "$PG_CONTAINER" pg_isready -U postgres
+          echo "Postgres is accepting connections on 127.0.0.1:${HOST_PORT}"
+          {
+            echo "TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:${HOST_PORT}/emergent?sslmode=disable"
+            echo "POSTGRES_HOST=127.0.0.1"
+            echo "POSTGRES_PORT=${HOST_PORT}"
+            echo "POSTGRES_USER=postgres"
+            echo "POSTGRES_PASSWORD=postgres"
+            echo "POSTGRES_DB=emergent"
+            echo "POSTGRES_SSL_MODE=disable"
+          } >> "$GITHUB_ENV"
+
+      - name: Migrate test database
+        working-directory: apps/server
+        run: |
+          # Independent smoke test that the migrations apply cleanly to a fresh
+          # database: the DB-backed harnesses no longer need a pre-migrated
+          # database (since #785 each builds a uniquely-named throwaway database
+          # and drops it; since #820 that template applies the embedded
+          # migrations to head rather than cloning a stale schema.sql dump).
+          # Kept because this is the only place CI runs the migrate CLI against
+          # a real Postgres.
+          #
+          # cmd/migrate gives DATABASE_URL precedence over POSTGRES_* (and a
+          # DATABASE_URL bypasses the -allow-localhost guard), so pin it to the
+          # throwaway test DSN: an inherited DATABASE_URL on the persistent
+          # self-hosted runner must not redirect this migration at a real DB.
+          export DATABASE_URL="$TEST_DATABASE_URL"
+          go run ./cmd/migrate -c up -allow-localhost
+
+      - name: Check schema documentation is current
+        working-directory: apps/server
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+        run: |
+          # The DBML in docs/schema.dbml is generated from this same
+          # migrated database. A migration that changes the schema must
+          # regenerate it in the same PR; otherwise the document silently rots
+          # the way it did after the Nx tooling was removed.
+          #
+          # Run from apps/server (module mode, like the rest of the job) and
+          # point -out at the repo-root document the tool defaults to.
+          go run ./cmd/schema-dbml -check -out ../../docs/schema.dbml
+
+      - name: Run DB-backed tests
+        working-directory: apps/server
+        run: |
+          # domain/sandbox's E2E tests need a Docker workspace image and are not
+          # database-backed; they stay -short-gated in the unit job. Everything
+          # else runs WITHOUT -short so the DB-backed suites execute.
+          # ./tests/integration is the DB-backed integration suite (issue #911) —
+          # it must be listed here or it never runs in CI. It provisions its own
+          # throwaway databases via internal/testdb, so it is parallel-safe.
+          PKGS=$(go list ./internal/... ./pkg/... ./domain/... ./tests/integration/... | grep -v '/domain/sandbox$')
+          # -p 4 runs package binaries in parallel. The go_test_template
+          # bootstrap is serialized across processes with a Postgres advisory
+          # lock (internal/testdb), and every throwaway database is uniquely
+          # named, so parallel packages no longer race the template create
+          # (#785). Verified locally with the affected packages at -p 4 and -p 8.
+          go test -p 4 $PKGS -v -count=1 -timeout 20m
+
+      - name: Stop Postgres
+        if: always()
+        run: docker rm -f "$PG_CONTAINER" || true
+
+  docker:
+    name: Docker Build
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    needs: [lint, build, test-unit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for git describe
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD)
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "build_time=$BUILD_TIME" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/self-hosted/Dockerfile.server
+          push: false
+          tags: memory-server:${{ github.sha }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.commit }}
+            BUILD_TIME=${{ steps.version.outputs.build_time }}
+          # Validation job: runs on PRs, main pushes and workflow_dispatch.
+          # Only non-PR runs export — a cache written on a PR ref is readable by
+          # re-runs of that same PR alone, so exporting all four stages there
+          # just churns the shared 10 GB budget. Main pushes write the
+          # default-branch cache that PR runs then import.
+          cache-from: type=gha,scope=memory-server-ci
+          cache-to: ${{ github.event_name != 'pull_request' && 'type=gha,scope=memory-server-ci,mode=max,ignore-error=true' || '' }}
+
+      - name: Get image size
+        run: |
+          docker images memory-server:${{ github.sha }} --format "{{.Size}}"
+
+  migration-guard:
+    name: Migration Immutability
+    if: github.event_name == 'pull_request' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject changes to existing migrations
+        # Single implementation of the immutability rule, shared with the local
+        # preflight (scripts/preflight/migration-number.sh calls the same
+        # script) so both gates always agree. It refreshes the base ref itself
+        # and includes the narrow duplicate-version REPAIR exception (see the
+        # script header).
+        run: bash scripts/preflight/migration-immutability.sh --base "origin/${GITHUB_BASE_REF}"
+
+  migration-order-guard:
+    name: Migration Order Guard
+    if: github.event_name == 'pull_request'
+    # Hosted runner: `go run ./cmd/migration-order-guard` builds PR-controlled
+    # Go source, so it must not run on a persistent self-hosted runner. Kept on
+    # the billed runner deliberately (see sibling route-authority-guard).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # The guard imports only the stdlib + internal/migrationguard, so there
+          # is nothing worth caching; avoid consuming the shared cache budget.
+          cache: false
+
+      - name: Guard migration order
+        working-directory: apps/server
+        run: |
+          # No --depth=1 here: a shallow graft of the base tip can make
+          # `base...HEAD` fail with "no merge base" when the PR head does not
+          # already contain the base tip. The fetch-depth: 0 checkout already
+          # has full history, so this fetch is cheap and stays complete.
+          git fetch --no-tags origin "${GITHUB_BASE_REF}"
+          go run ./cmd/migration-order-guard -base "origin/${GITHUB_BASE_REF}"
+
+  route-authority-guard:
+    name: Route Authority Guard
+    if: github.event_name == 'pull_request'
+    # Hosted runner, like the sibling Migration Order guard: this executes
+    # PR-controlled Go source (the AST extractor), so it must not run on the
+    # persistent self-hosted runner where a broken/malicious PR could otherwise
+    # execute arbitrary code or corrupt the shared module cache.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The guard executes PR-controlled Go source (go run ./cmd/route-authority-guard).
+    # Restrict the checkout token to read-only so a malicious PR cannot exfiltrate
+    # a write-scoped GITHUB_TOKEN to push to the repo or mint credentials.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          # The guard imports stdlib + internal/routeguard + yaml.v3; nothing
+          # worth consuming the shared cache budget.
+          cache: false
+
+      - name: Guard route authority
+        working-directory: apps/server
+        run: |
+          # Compares the whole current tree's route table (apps/server/domain)
+          # against the checked-in route-authority.yaml. No base ref needed: an
+          # undeclared route, a vanished route, or a drifted tier all fail.
+          go run ./cmd/route-authority-guard
+
+  server-ci:
+    name: server-ci
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, memory]
+    # Aggregate gate for this path-filtered server workflow. It is NOT a required
+    # status check: the required context on main is Meta CI's `ci`
+    # (.github/workflows/ci.yml). Renamed from `ci` to `server-ci` (#1673)
+    # to remove the check-name collision with Meta CI — two distinct jobs both
+    # named `ci` made the required context ambiguous.
+    # test-db is part of this gate: a failing DB-backed test must fail the
+    # aggregate (otherwise running it would not block the server suite), the same
+    # "ran but did not gate" trap as #759/#778.
+    needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard, route-authority-guard]
+    steps:
+      - name: Server CI gate
+        run: echo "Server CI passed"
+
+  server-ci-status:
+    name: server-ci-status
+    # Always-run, hosted aggregate so a fork PR (whose self-hosted jobs are
+    # skipped by the fork guard) still yields a single satisfiable status check.
+    # 'skipped' is treated as pass — guarded jobs are legitimately skipped on
+    # fork PRs — so only 'failure'/'cancelled' fail the gate. ubuntu-latest keeps
+    # this summary off the self-hosted runner and it needs no secrets.
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, build, test-unit, test-db, migration-guard, migration-order-guard, route-authority-guard]
+    steps:
+      - name: CI gate
+        run: |
+          failed=0
+          for result in "${{ needs['lint'].result }}" "${{ needs['build'].result }}" "${{ needs['test-unit'].result }}" "${{ needs['test-db'].result }}" "${{ needs['migration-guard'].result }}" "${{ needs['migration-order-guard'].result }}" "${{ needs['route-authority-guard'].result }}"; do
+            echo "dependency result: ${result}"
+            case "${result}" in
+              success|skipped) ;;
+              *) failed=1 ;;
+            esac
+          done
+          if [ "${failed}" -ne 0 ]; then
+            echo "CI gate failed: one or more required jobs did not succeed"
+            exit 1
+          fi
+          echo "Server CI passed"

@@ -1,0 +1,376 @@
+package provider
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/uptrace/bun"
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/domain/notifications"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+)
+
+const (
+	// usageBufferSize is the maximum number of events buffered before the
+	// background writer blocks. Sized to hold ~30 seconds of heavy traffic.
+	usageBufferSize = 1024
+
+	// pricePerMillionTokens is the divisor for per-token cost calculation
+	// (all prices in the DB are stored per 1M tokens).
+	pricePerMillionTokens = 1_000_000.0
+)
+
+// UsageService records LLM usage events asynchronously.
+// Events are dispatched via a buffered channel; a background goroutine
+// persists them to the database with estimated cost calculation.
+type UsageService struct {
+	repo   *Repository
+	db     bun.IDB
+	ch     chan *LLMUsageEvent
+	log    *slog.Logger
+	doneCh chan struct{} // closed when the worker goroutine exits
+
+	// notificationsSvc is the central notification producer used for budget
+	// alerts. Injected as *notifications.Service — provider → notifications is
+	// acyclic (notifications imports events/taxonomy/apperror/logger, none of
+	// which import provider), so the leaf-package hand-off D7 warned about is
+	// unnecessary. nil is safe: budget alerts are skipped when not wired.
+	notificationsSvc *notifications.Service
+}
+
+// NewUsageService creates a UsageService and registers lifecycle hooks with fx.
+func NewUsageService(lc fx.Lifecycle, repo *Repository, db bun.IDB, notificationsSvc *notifications.Service, log *slog.Logger) *UsageService {
+	s := &UsageService{
+		repo:             repo,
+		db:               db,
+		ch:               make(chan *LLMUsageEvent, usageBufferSize),
+		log:              log.With(logger.Scope("provider.usage")),
+		doneCh:           make(chan struct{}),
+		notificationsSvc: notificationsSvc,
+	}
+
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			go s.worker()
+			return nil
+		},
+		OnStop: func(ctx context.Context) error {
+			return s.shutdown(ctx)
+		},
+	})
+
+	return s
+}
+
+// RecordAsync enqueues an LLMUsageEvent for asynchronous persistence.
+// Non-blocking: if the buffer is full, the event is dropped with a warning.
+func (s *UsageService) RecordAsync(event *LLMUsageEvent) {
+	select {
+	case s.ch <- event:
+	default:
+		s.log.Warn("usage event buffer full, dropping event",
+			slog.String("project", event.ProjectID),
+			slog.String("model", event.Model),
+		)
+	}
+}
+
+// worker drains the event channel and persists events to the database.
+func (s *UsageService) worker() {
+	defer close(s.doneCh)
+
+	for event := range s.ch {
+		if err := s.persist(context.Background(), event); err != nil {
+			s.log.Error("failed to persist usage event",
+				logger.Error(err),
+				slog.String("project", event.ProjectID),
+				slog.String("model", event.Model),
+			)
+		}
+	}
+}
+
+// persist calculates estimated cost, inserts the event, then asynchronously
+// checks whether a budget alert should be sent.
+func (s *UsageService) persist(ctx context.Context, event *LLMUsageEvent) error {
+	event.EstimatedCostUSD = s.calculateCost(ctx, event)
+	if err := s.repo.InsertUsageEvent(ctx, event); err != nil {
+		return err
+	}
+	// Fire-and-forget budget check so it never blocks the event pipeline.
+	go s.checkBudget(context.Background(), event.ProjectID)
+	return nil
+}
+
+// pricingLookup abstracts the pricing queries used during cost resolution so
+// that calculateCostWith can be tested without a database. *Repository satisfies
+// this interface.
+type pricingLookup interface {
+	GetProjectCustomPricing(ctx context.Context, projectID string, providerSlug string, model string) (*ProjectCustomPricing, error)
+	GetPricing(ctx context.Context, provider ProviderType, model string) (*ProviderPricing, error)
+	GetPricingByModel(ctx context.Context, model string) (*ProviderPricing, error)
+}
+
+// calculateCost resolves pricing via project override → global retail
+// (optimistic matching) and returns the estimated cost in USD.
+//
+// Pricing is per 1 million tokens. Returns 0.0 when no pricing data is found.
+func (s *UsageService) calculateCost(ctx context.Context, event *LLMUsageEvent) float64 {
+	return s.calculateCostWith(ctx, s.repo, event)
+}
+
+// calculateCostWith resolves a usage event's price in order:
+//
+//  1. Project override for the exact (project_id, provider, model).
+//  2. Global retail for the exact (provider, model).
+//  3. Global retail by model name only (the model may be served via a
+//     different provider, e.g. an OpenAI-compatible/LiteLLM proxy).
+//  4. Global retail by a normalized model name (stripVendorModelName first,
+//     then normalizeModelName for path prefixes).
+//  5. $0 when no match is found.
+//
+// The first non-nil match SHALL be used. The recorded model name is never
+// mutated; normalization only affects the fallback lookup.
+func (s *UsageService) calculateCostWith(ctx context.Context, lookup pricingLookup, event *LLMUsageEvent) float64 {
+	// 1. Project override (manual rates) — highest precedence. Keyed by the
+	// provider instance slug; legacy events without a slug fall back to the
+	// dialect (which was the pre-instance identity).
+	providerSlug := string(event.ProviderSlug)
+	if providerSlug == "" {
+		providerSlug = string(event.Provider)
+	}
+	if pricing, err := lookup.GetProjectCustomPricing(ctx, event.ProjectID, providerSlug, event.Model); err == nil && pricing != nil {
+		return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
+			pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
+	}
+
+	// 2. Global retail — exact provider + model.
+	if pricing, err := lookup.GetPricing(ctx, event.Provider, event.Model); err == nil && pricing != nil {
+		return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
+			pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
+	}
+
+	// 3. Global retail — model name only.
+	if pricing, err := lookup.GetPricingByModel(ctx, event.Model); err == nil && pricing != nil {
+		return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
+			pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
+	}
+
+	// 4. Global retail — normalized model name (vendor prefixes, :tag/@version).
+	if stripped := stripVendorModelName(event.Model); stripped != "" && stripped != event.Model {
+		if pricing, err := lookup.GetPricingByModel(ctx, stripped); err == nil && pricing != nil {
+			return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
+				pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
+		}
+	}
+	if normalized := normalizeModelName(event.Model); normalized != "" && normalized != event.Model {
+		if pricing, err := lookup.GetPricingByModel(ctx, normalized); err == nil && pricing != nil {
+			return computeCost(event, pricing.TextInputPrice, pricing.ImageInputPrice,
+				pricing.VideoInputPrice, pricing.AudioInputPrice, pricing.OutputPrice)
+		}
+	}
+
+	// 5. No pricing data — log debug and return 0.
+	s.log.Debug("no pricing data found for model",
+		slog.String("provider", string(event.Provider)),
+		slog.String("model", event.Model),
+	)
+	return 0.0
+}
+
+// stripVendorModelName reduces a model name to its bare, vendor-free form for
+// optimistic price matching: take the substring after the last '/', strip a
+// trailing ':tag' or '@version' suffix, then lower-case and trim.
+//
+// It is conservative by design — it is applied only for the fallback price
+// lookup and never mutates the recorded model name.
+func stripVendorModelName(model string) string {
+	// Vendor-prefixed names like "deepseek/deepseek-v4-pro" or
+	// "azure/gpt-4o": keep only the last path segment.
+	if idx := strings.LastIndex(model, "/"); idx != -1 {
+		model = model[idx+1:]
+	}
+	// Strip a trailing ":tag" or "@version" (split on ':' and '@').
+	for _, sep := range []string{":", "@"} {
+		if idx := strings.Index(model, sep); idx != -1 {
+			model = model[:idx]
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(model))
+}
+
+// computeCost multiplies per-modality token counts by their respective prices.
+// All prices are per 1M tokens.
+func computeCost(
+	event *LLMUsageEvent,
+	textInputPrice, imageInputPrice, videoInputPrice, audioInputPrice, outputPrice float64,
+) float64 {
+	cost := float64(event.TextInputTokens)*textInputPrice/pricePerMillionTokens +
+		float64(event.ImageInputTokens)*imageInputPrice/pricePerMillionTokens +
+		float64(event.VideoInputTokens)*videoInputPrice/pricePerMillionTokens +
+		float64(event.AudioInputTokens)*audioInputPrice/pricePerMillionTokens +
+		float64(event.OutputTokens)*outputPrice/pricePerMillionTokens
+	return cost
+}
+
+// checkBudget checks whether the project's current-month spend has crossed its
+// alert threshold, and if so inserts a warning notification for each project
+// admin. Alerts are coalesced per (user, project, month) group_key by the
+// notifications producer, which enforces uniqueness atomically in the database.
+func (s *UsageService) checkBudget(ctx context.Context, projectID string) {
+	// 1. Fetch the project's budget config from kb.projects.
+	var budget struct {
+		BudgetUSD            *float64 `bun:"budget_usd"`
+		BudgetAlertThreshold float64  `bun:"budget_alert_threshold"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("budget_usd, budget_alert_threshold").
+		Where("id = ?", projectID).
+		Scan(ctx, &budget)
+	if err != nil || budget.BudgetUSD == nil || *budget.BudgetUSD <= 0 {
+		// No budget set — nothing to check.
+		return
+	}
+
+	// 2. Get current-month spend.
+	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+	if err != nil {
+		s.log.Warn("checkBudget: failed to get current month spend", logger.Error(err), slog.String("projectID", projectID))
+		return
+	}
+
+	// A threshold of 0 (or a non-positive budget) is not a real breach level:
+	// `spend < 0` is false even at $0 spend, which produced spurious alerts at
+	// 0% usage. Require a positive threshold, then alert only on a real breach.
+	threshold := *budget.BudgetUSD * budget.BudgetAlertThreshold
+	if budget.BudgetAlertThreshold <= 0 || threshold <= 0 {
+		return
+	}
+	if spend < threshold {
+		return
+	}
+
+	// Deduplication is enforced atomically at insert time by the partial unique
+	// index on (user_id, group_key) via notifications.Service.Create. The old
+	// read-then-insert COUNT here was racy (concurrent checks all saw zero
+	// rows) and cross-user (any admin's alert suppressed the others).
+
+	// 3. Look up project admin user IDs.
+	var adminIDs []string
+	err = s.db.NewSelect().
+		TableExpr("kb.project_memberships").
+		ColumnExpr("user_id").
+		Where("project_id = ?", projectID).
+		Where("role = 'project_admin'").
+		Scan(ctx, &adminIDs)
+	if err != nil || len(adminIDs) == 0 {
+		return
+	}
+
+	// 4. Insert a notification for each admin via the central producer. The
+	// group_key is passed through so Service.Create coalesces durably
+	// (ON CONFLICT DO NOTHING against ux_notifications_user_group_key_active).
+	pctUsed := (spend / *budget.BudgetUSD) * 100
+	title := "Budget alert"
+	message := fmt.Sprintf(
+		"Project has used $%.2f of its $%.2f monthly budget (%.0f%%).",
+		spend, *budget.BudgetUSD, pctUsed,
+	)
+	sourceType := "project"
+	category := "budget"
+	severity := "warning"
+	importance := "important"
+
+	// One alert per project per calendar month. The same key is used for every
+	// admin (a user_id is part of the uniqueness key), so each admin receives
+	// exactly one alert while an active one exists.
+	groupKey := fmt.Sprintf("budget-alert-%s-%s", projectID, time.Now().UTC().Format("2006-01"))
+
+	if s.notificationsSvc == nil {
+		return
+	}
+
+	for _, userID := range adminIDs {
+		gk := groupKey
+		st := sourceType
+		sid := projectID
+		cat := category
+		_, err := s.notificationsSvc.Create(ctx, notifications.CreateInput{
+			UserID:     userID,
+			ProjectID:  &projectID,
+			Scope:      notifications.ScopeAccount,
+			EventKey:   "account.usage.budget_alert",
+			Title:      title,
+			Message:    message,
+			Severity:   severity,
+			Importance: importance,
+			GroupKey:   &gk,
+			SourceType: &st,
+			SourceID:   &sid,
+			Category:   &cat,
+		})
+		if err != nil {
+			s.log.Warn("checkBudget: failed to create budget alert notification",
+				logger.Error(err),
+				slog.String("projectID", projectID),
+				slog.String("userID", userID),
+			)
+		}
+	}
+
+	s.log.Info("budget alert sent",
+		slog.String("projectID", projectID),
+		slog.Float64("spend", spend),
+		slog.Float64("budget", *budget.BudgetUSD),
+		slog.Int("admins", len(adminIDs)),
+	)
+}
+
+// CheckBudgetExceeded returns true when the project's current-month spend has
+// reached or exceeded its configured budget_usd. If no budget is set (NULL or
+// zero), it returns false (no limit). If any query fails, it returns false so
+// that callers fail-open and do not block agent execution.
+func (s *UsageService) CheckBudgetExceeded(ctx context.Context, projectID string) (bool, error) {
+	// 1. Fetch the project's budget from kb.projects.
+	var result struct {
+		BudgetUSD *float64 `bun:"budget_usd"`
+	}
+	err := s.db.NewSelect().
+		TableExpr("kb.projects").
+		ColumnExpr("budget_usd").
+		Where("id = ?", projectID).
+		Scan(ctx, &result)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: fetch budget: %w", err)
+	}
+	// No budget configured — treat as unlimited.
+	if result.BudgetUSD == nil || *result.BudgetUSD <= 0 {
+		return false, nil
+	}
+
+	// 2. Get current-month spend.
+	spend, err := s.repo.GetProjectCurrentMonthSpend(ctx, projectID)
+	if err != nil {
+		return false, fmt.Errorf("CheckBudgetExceeded: fetch spend: %w", err)
+	}
+
+	return spend >= *result.BudgetUSD, nil
+}
+
+// shutdown closes the event channel and waits for the worker to drain.
+func (s *UsageService) shutdown(ctx context.Context) error {
+	close(s.ch)
+
+	select {
+	case <-s.doneCh:
+		return nil
+	case <-ctx.Done():
+		s.log.Warn("usage service shutdown timed out; some events may be lost")
+		return nil
+	}
+}

@@ -1,0 +1,36 @@
+package components
+
+import ui "github.com/emergent-company/go-daisy/components/ui"
+
+// AlertModal is the app-wide result dialog opened by MemoryApp.alert(kind,
+// title, message) — used for provider/model test outcomes instead of a
+// transient toast so a long provider reply stays readable and dismissible.
+//
+// Rendered once in the app shell. app.js fills #memory-alert-title and
+// #memory-alert-message as text (textContent — provider replies are untrusted,
+// never innerHTML) and sets the #memory-alert-banner tone class + #memory-alert-icon
+// glyph from kind before opening. Tone is dynamic, so the banner markup is
+// hand-rolled rather than ui.Alert (whose Message is baked at render time).
+templ AlertModal(attrs templ.Attributes) {
+	@ui.Dialog(ui.DialogProps{ID: "memory-alert-modal", BoxClass: "max-w-md", Attrs: alertModalDialogAttrs(attrs)}) {
+		<div
+			id="memory-alert-banner"
+			class="alert alert-info items-start gap-3"
+			role="alert"
+			data-testid="memory-alert-banner"
+		>
+			<span id="memory-alert-icon" class="iconify lucide--info size-5 shrink-0" aria-hidden="true"></span>
+			<div class="min-w-0">
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "memory-alert-title", Size: ui.DialogTitleSizeMD}) { Test result }
+				<p id="memory-alert-message" class="mt-1 text-sm break-words whitespace-pre-wrap"></p>
+			</div>
+		</div>
+		<div class="mt-5 flex justify-end">
+			<form method="dialog">
+				@ui.Button(ui.ButtonProps{Type: ui.ButtonTypeSubmit, Variant: ui.ButtonPrimary, Size: ui.ButtonSM}) {
+					Close
+				}
+			</form>
+		</div>
+	}
+}

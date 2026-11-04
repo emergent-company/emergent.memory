@@ -1,0 +1,278 @@
+package orgs
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// errInvalidBody is the shared 400 for unparseable request bodies, reused by
+// the Create and Update handlers.
+var errInvalidBody = apperror.ErrBadRequest.WithMessage("invalid request body")
+
+// Handler handles HTTP requests for organizations
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler creates a new organization handler
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// List returns all organizations the authenticated user is a member of
+// @Summary      List user's organizations
+// @Description  Returns all organizations the authenticated user is a member of
+// @Tags         organizations
+// @Produce      json
+// @Success      200 {array} OrgDTO "List of organizations"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs [get]
+// @Security     bearerAuth
+func (h *Handler) List(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	orgs, err := h.svc.List(c.Request().Context(), user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, orgs)
+}
+
+// Get returns a single organization by ID
+// @Summary      Get organization by ID
+// @Description  Returns a single organization by its unique identifier
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {object} Org "Organization details"
+// @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [get]
+// @Security     bearerAuth
+func (h *Handler) Get(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	org, err := h.svc.GetByID(c.Request().Context(), id, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, org)
+}
+
+// Create creates a new organization
+// @Summary      Create a new organization
+// @Description  Creates a new organization with the authenticated user as the initial member
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateOrgRequest true "Organization creation request"
+// @Success      201 {object} Org "Organization created"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs [post]
+// @Security     bearerAuth
+func (h *Handler) Create(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	var req CreateOrgRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	org, err := h.svc.Create(c.Request().Context(), req.Name, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, org)
+}
+
+// Update renames an organization by ID
+// @Summary      Update organization
+// @Description  Updates an organization's name (name-only; description/logo deferred pending a DB column)
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        request body UpdateOrgRequest true "Organization update request"
+// @Success      200 {object} OrgDTO "Organization updated"
+// @Failure      400 {object} apperror.Error "Invalid request body or name"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) Update(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	var req UpdateOrgRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	org, err := h.svc.Update(c.Request().Context(), id, user.ID, req.Name)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, org)
+}
+
+// Delete deletes an organization by ID
+// @Summary      Delete organization
+// @Description  Permanently deletes an organization by ID
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {object} map[string]string "Deletion status"
+// @Failure      400 {object} apperror.Error "Invalid organization ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Organization not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	if err := h.svc.Delete(c.Request().Context(), id, user.ID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// ListMembers returns all members of an organization
+// @Summary      List organization members
+// @Description  Returns all members of an organization with their roles
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Success      200 {array} OrgMemberDTO "List of members"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members [get]
+// @Security     bearerAuth
+func (h *Handler) ListMembers(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	members, err := h.svc.ListMembers(c.Request().Context(), id, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, members)
+}
+
+// AddMember directly adds an already-registered user to an organization
+// @Summary      Add organization member
+// @Description  Adds a registered user (exact verified email) to the organization with the given role
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        request body AddOrgMemberRequest true "Member add request"
+// @Success      201 {object} OrgMemberDTO "Member added"
+// @Failure      400 {object} apperror.Error "Invalid request or role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "No registered user with that email"
+// @Failure      409 {object} apperror.Error "User is already a member"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members [post]
+// @Security     bearerAuth
+func (h *Handler) AddMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+
+	var req AddOrgMemberRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	member, err := h.svc.AddMember(c.Request().Context(), id, user.ID, req.Email, req.Role)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, member)
+}
+
+// UpdateMemberRole changes an organization member's role
+// @Summary      Update organization member role
+// @Description  Changes a member's organization role in place
+// @Tags         organizations
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        userId path string true "User ID (UUID)"
+// @Param        request body UpdateOrgMemberRoleRequest true "Role update request"
+// @Success      200 {object} map[string]string "Role updated"
+// @Failure      400 {object} apperror.Error "Invalid role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden or last admin"
+// @Failure      404 {object} apperror.Error "Member not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members/{userId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateMemberRole(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+	userID := c.Param("userId")
+
+	var req UpdateOrgMemberRoleRequest
+	if err := c.Bind(&req); err != nil {
+		return errInvalidBody
+	}
+
+	if err := h.svc.UpdateMemberRole(c.Request().Context(), id, user.ID, userID, req.Role); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}
+
+// RemoveMember removes an organization member (and their project memberships in
+// the organization).
+// @Summary      Remove organization member
+// @Description  Removes a member from the organization, cascading to their project memberships in it
+// @Tags         organizations
+// @Produce      json
+// @Param        id path string true "Organization ID (UUID)"
+// @Param        userId path string true "User ID (UUID)"
+// @Success      200 {object} map[string]string "Member removed"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden or last admin"
+// @Failure      404 {object} apperror.Error "Member not found"
+// @Failure      409 {object} apperror.Error "Member is the sole project admin"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/orgs/{id}/members/{userId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RemoveMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+	userID := c.Param("userId")
+
+	if err := h.svc.RemoveMember(c.Request().Context(), id, user.ID, userID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "removed"})
+}

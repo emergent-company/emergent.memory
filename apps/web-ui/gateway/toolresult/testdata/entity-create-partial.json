@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "error": "1 of 2 entities failed to create",
+  "data": {
+    "results": [
+      {"ok": true, "index": 0, "entity": {"id": "e1", "type": "Note"}},
+      {"ok": false, "index": 1, "error": "duplicate entity"}
+    ],
+    "message": "Batch create completed: 1 created, 1 failed, 0 near-duplicate"
+  },
+  "meta": {"created": 1, "failed": 1, "total": 2, "similar_count": 0}
+}

@@ -1,0 +1,411 @@
+package projects
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Handler handles HTTP requests for projects
+type Handler struct {
+	svc *Service
+}
+
+// NewHandler creates a new project handler
+func NewHandler(svc *Service) *Handler {
+	return &Handler{svc: svc}
+}
+
+// currentProjectResponse is the response for the /api/projects/current endpoint.
+// When no project is bound to the token, Project is nil and Message explains why.
+type currentProjectResponse struct {
+	Project *ProjectDTO `json:"project"`
+	Message string      `json:"message,omitempty"`
+}
+
+// Current returns the project bound to the current auth token.
+// For project-scoped tokens it returns that single project.
+// For account-level tokens or OAuth sessions it returns a 200 with no project
+// and an informational message.
+// @Summary      Get current project
+// @Description  Returns the project bound to the current authentication token. For project-scoped tokens this is the single bound project. For account-level API keys or OAuth sessions no project is bound and the response will contain only a message.
+// @Tags         projects
+// @Produce      json
+// @Success      200 {object} currentProjectResponse "Current project or informational message"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/current [get]
+// @Security     bearerAuth
+func (h *Handler) Current(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	if user.APITokenProjectID == "" {
+		return c.JSON(http.StatusOK, currentProjectResponse{
+			Message: "no current project — using account-level API key",
+		})
+	}
+
+	project, err := h.svc.GetByID(c.Request().Context(), user.APITokenProjectID, false)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, currentProjectResponse{Project: project})
+}
+
+// List returns all projects the authenticated user is a member of
+// @Summary      List user's projects
+// @Description  Returns all projects the authenticated user is a member of. Supports filtering by organization and pagination.
+// @Tags         projects
+// @Produce      json
+// @Param        limit query int false "Max results (1-500, default 100)" minimum(1) maximum(500)
+// @Param        orgId query string false "Filter by organization ID (UUID)"
+// @Success      200 {array} ProjectDTO "List of projects"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects [get]
+// @Security     bearerAuth
+func (h *Handler) List(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	// Parse query parameters; 0 (default) means no limit
+	limit := 0
+	if limitStr := c.QueryParam("limit"); limitStr != "" {
+		if parsed, err := strconv.Atoi(limitStr); err == nil {
+			limit = parsed
+		}
+	}
+
+	orgID := c.QueryParam("orgId")
+
+	// If authenticated via a project-scoped API token, restrict to that project only
+	var projectID string
+	if user.APITokenProjectID != "" {
+		projectID = user.APITokenProjectID
+	}
+
+	includeStats := c.QueryParam("include_stats") == "true"
+	includePending := c.QueryParam("include_pending") == "true"
+
+	projects, err := h.svc.List(c.Request().Context(), ServiceListParams{
+		UserID:         user.ID,
+		OrgID:          orgID,
+		ProjectID:      projectID,
+		IncludeStats:   includeStats,
+		IncludePending: includePending,
+		Limit:          limit,
+	})
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, projects)
+}
+
+// Get returns a single project by ID
+// @Summary      Get project by ID
+// @Description  Returns a single project by its unique identifier
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} Project "Project details"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [get]
+// @Security     bearerAuth
+func (h *Handler) Get(c echo.Context) error {
+	user := auth.MustGetUser(c)
+	id := c.Param("id")
+	includeStats := c.QueryParam("include_stats") == "true"
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessProjectMember); err != nil {
+		return err
+	}
+
+	project, err := h.svc.GetByID(c.Request().Context(), id, includeStats)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, project)
+}
+
+// Create creates a new project
+// @Summary      Create a new project
+// @Description  Creates a new project with the authenticated user as the initial member
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateProjectRequest true "Project creation request"
+// @Success      201 {object} Project "Project created"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects [post]
+// @Security     bearerAuth
+func (h *Handler) Create(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	var req CreateProjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	project, err := h.svc.Create(c.Request().Context(), req, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusCreated, project)
+}
+
+// Update updates a project
+// @Summary      Update project
+// @Description  Updates an existing project's properties (name, KB purpose, chat template, auto-extraction settings)
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        request body UpdateProjectRequest true "Project update request"
+// @Success      200 {object} Project "Updated project"
+// @Failure      400 {object} apperror.Error "Invalid request body or project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [patch]
+// @Security     bearerAuth
+func (h *Handler) Update(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+
+	var req UpdateProjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessProjectAdmin); err != nil {
+		return err
+	}
+
+	project, err := h.svc.Update(c.Request().Context(), id, req)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, project)
+}
+
+// Transfer transfers a project to another organization
+// @Summary      Transfer project to another organization
+// @Description  Reparents a project to a destination organization. The project's organization_id becomes the destination org; identity, history, settings and memberships are preserved. The requester must be an org_admin of the project's current org and a member of the destination org.
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        request body TransferProjectRequest true "Project transfer request"
+// @Success      200 {object} Project "Transferred project"
+// @Failure      400 {object} apperror.Error "Invalid request body, project ID, or project already in destination org"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/transfer [post]
+// @Security     bearerAuth
+func (h *Handler) Transfer(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+
+	var req TransferProjectRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	project, err := h.svc.Transfer(c.Request().Context(), id, req.OrgID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, project)
+}
+
+// Delete marks a project as pending deletion
+// @Summary      Delete project
+// @Description  Marks a project for deletion. The project is hidden from normal listings and hard-purged after a grace period; it can be restored in the meantime via POST /api/projects/{id}/restore.
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      202 {object} map[string]any "Pending deletion status"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id} [delete]
+// @Security     bearerAuth
+func (h *Handler) Delete(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessOrgAdmin); err != nil {
+		return err
+	}
+
+	info, err := h.svc.RequestDeletion(c.Request().Context(), id, user.ID)
+	if err != nil {
+		return err
+	}
+
+	message := "Project scheduled for deletion. It can be restored until the deletion grace period elapses."
+	if info.AlreadyPending {
+		message = "Project is already pending deletion."
+	}
+
+	return c.JSON(http.StatusAccepted, map[string]any{
+		"status":               "pending_deletion",
+		"projectId":            id,
+		"deletionScheduledFor": info.ScheduledFor.UTC().Format(time.RFC3339),
+		"alreadyPending":       info.AlreadyPending,
+		"message":              message,
+	})
+}
+
+// Restore cancels a pending project deletion
+// @Summary      Restore project
+// @Description  Cancels a pending deletion for a project still within its grace period, returning it to active status.
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {object} map[string]any "Restored status"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not pending deletion"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/restore [post]
+// @Security     bearerAuth
+func (h *Handler) Restore(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	id := c.Param("id")
+
+	if err := h.svc.authorizeProject(c.Request().Context(), id, user.ID, accessOrgAdmin); err != nil {
+		return err
+	}
+
+	if err := h.svc.CancelDeletion(c.Request().Context(), id); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status":    "active",
+		"projectId": id,
+	})
+}
+
+// ListMembers returns all members of a project
+// @Summary      List project members
+// @Description  Returns all users who are members of the specified project with their roles
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Success      200 {array} ProjectMemberDTO "List of project members"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members [get]
+// @Security     bearerAuth
+func (h *Handler) ListMembers(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("id")
+	includeStats := c.QueryParam("stats") == "true"
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectMemberOrOrgAdmin); err != nil {
+		return err
+	}
+
+	members, err := h.svc.ListMembers(c.Request().Context(), projectID, includeStats, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, members)
+}
+
+// RemoveMember removes a member from a project
+// @Summary      Remove project member
+// @Description  Removes a user from the specified project
+// @Tags         projects
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        userId path string true "User ID to remove (UUID)"
+// @Success      200 {object} map[string]string "Removal status"
+// @Failure      400 {object} apperror.Error "Invalid project ID or user ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project or user not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members/{userId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RemoveMember(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("id")
+	userID := c.Param("userId")
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectAdmin); err != nil {
+		return err
+	}
+
+	if err := h.svc.RemoveMember(c.Request().Context(), projectID, userID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "removed"})
+}
+
+// UpdateMemberRole changes a project member's role.
+// @Summary      Update project member role
+// @Description  Changes the role of a user within the specified project
+// @Tags         projects
+// @Accept       json
+// @Produce      json
+// @Param        id path string true "Project ID (UUID)"
+// @Param        userId path string true "User ID to update (UUID)"
+// @Param        request body UpdateMemberRoleRequest true "Role update request"
+// @Success      200 {object} map[string]string "Role update status"
+// @Failure      400 {object} apperror.Error "Invalid project ID, user ID, or role"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Project or user not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{id}/members/{userId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateMemberRole(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("id")
+	userID := c.Param("userId")
+
+	var req UpdateMemberRoleRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+
+	if err := h.svc.authorizeProject(c.Request().Context(), projectID, user.ID, accessProjectAdmin); err != nil {
+		return err
+	}
+
+	if err := h.svc.UpdateMemberRole(c.Request().Context(), projectID, userID, req.Role); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "updated"})
+}

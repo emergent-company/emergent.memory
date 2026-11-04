@@ -1,0 +1,616 @@
+package health
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/internal/storage"
+	"github.com/emergent-company/emergent.memory/internal/version"
+	"github.com/emergent-company/emergent.memory/pkg/embeddings"
+	"github.com/emergent-company/emergent.memory/pkg/governor"
+	"github.com/emergent-company/emergent.memory/pkg/whisper"
+	"github.com/emergent-company/emergent.memory/pkg/xberg"
+)
+
+// Handler handles health check requests
+type Handler struct {
+	pool       *pgxpool.Pool
+	db         rowQuerier
+	cfg        *config.Config
+	storage    *storage.Service
+	xberg      *xberg.Client
+	whisper    *whisper.Client
+	embeddings *embeddings.Service
+	gov        *governor.Governor
+	startAt    time.Time
+}
+
+// rowQuerier is the subset of *pgxpool.Pool used by databaseBackupCheck,
+// extracted so the check can be tested with a fake without a live database.
+type rowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// NewHandler creates a new health handler
+func NewHandler(
+	pool *pgxpool.Pool,
+	cfg *config.Config,
+	storageSvc *storage.Service,
+	xbergClient *xberg.Client,
+	whisperClient *whisper.Client,
+	embeddingsSvc *embeddings.Service,
+	gov *governor.Governor,
+) *Handler {
+	return &Handler{
+		pool:       pool,
+		db:         pool,
+		cfg:        cfg,
+		storage:    storageSvc,
+		xberg:      xbergClient,
+		whisper:    whisperClient,
+		embeddings: embeddingsSvc,
+		gov:        gov,
+		startAt:    time.Now(),
+	}
+}
+
+// TracingInfo holds tracing configuration exposed in the health response.
+type TracingInfo struct {
+	Enabled   bool   `json:"enabled"`
+	TracesURL string `json:"traces_url,omitempty"`
+}
+
+// GovernorStatus is the informational resource-governor state surfaced in the
+// health response. It never affects overall status or HTTP code.
+type GovernorStatus struct {
+	Mode          string  `json:"mode"`
+	DBPoolPercent float64 `json:"db_pool_percent"`
+	BulkInflight  int64   `json:"bulk_inflight"`
+}
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string           `json:"status"`
+	Timestamp string           `json:"timestamp"`
+	Uptime    string           `json:"uptime"`
+	Version   string           `json:"version"`
+	GitCommit string           `json:"git_commit,omitempty"`
+	BuildTime string           `json:"build_time,omitempty"`
+	Checks    map[string]Check `json:"checks"`
+	Tracing   *TracingInfo     `json:"tracing,omitempty"`
+	Governor  *GovernorStatus  `json:"governor,omitempty"`
+}
+
+// buildInfo returns the health response's build identity fields from the
+// ldflag-injected version package. The "unknown" sentinel (no ldflags at build
+// time) is normalized to the empty string so an un-injected build is reported
+// as "no commit reported" rather than as a bogus commit hash — consumers (the
+// infra dashboard's source-drift probe) treat an absent commit as legacy.
+func buildInfo() (versionStr, commit, buildTime string) {
+	info := version.Info()
+	commit = info.GitCommit
+	if commit == "unknown" {
+		commit = ""
+	}
+	buildTime = info.BuildTime
+	if buildTime == "unknown" {
+		buildTime = ""
+	}
+	return info.Version, commit, buildTime
+}
+
+// Check represents an individual health check result
+type Check struct {
+	Status  string `json:"status"`
+	Message string `json:"message,omitempty"`
+}
+
+// databaseBackupStaleAfter is how long a running/pending backup may run before
+// the health check considers it wedged.
+const databaseBackupStaleAfter = 6 * time.Hour
+
+// longRunningQueriesSQL lists long-running sessions from pg_stat_activity. It
+// must never select the raw query text: a live SQL body can carry literals
+// (secrets, user data, connection targets) that must not leave the server, even
+// to a superadmin. Only the query length is exposed (see TestLongRunningQueriesSQLRedactsQueryText).
+const longRunningQueriesSQL = "SELECT COALESCE(json_agg(json_build_object('pid', pid, 'query_length', length(query), 'duration', age(clock_timestamp(), query_start), 'state', state)), '[]'::json) FROM pg_stat_activity WHERE state != 'idle' AND query_start < clock_timestamp() - interval '2 seconds' AND pid <> pg_backend_pid()"
+
+// classifyDatabaseBackup derives a health Check from the newest scheduled
+// database backup row. `completed` is healthy; `failed` is unhealthy with the
+// stored error message (truncated); a `running`/`pending` backup older than the
+// staleness window is unhealthy; anything else is healthy. An unknown status is
+// echoed as healthy so an unfamiliar value never manufactures an outage.
+func classifyDatabaseBackup(status string, errMsg *string, startedAt *time.Time, now time.Time) Check {
+	switch status {
+	case "completed":
+		return Check{Status: "healthy"}
+	case "failed":
+		msg := "database backup failed"
+		if errMsg != nil {
+			msg = *errMsg
+		}
+		return Check{Status: "unhealthy", Message: truncateMessage(msg, 200)}
+	case "running", "pending":
+		if startedAt != nil && now.Sub(*startedAt) > databaseBackupStaleAfter {
+			return Check{
+				Status:  "unhealthy",
+				Message: fmt.Sprintf("database backup %s since %s", status, startedAt.Format(time.RFC3339)),
+			}
+		}
+		return Check{Status: "healthy"}
+	default:
+		return Check{Status: "healthy", Message: status}
+	}
+}
+
+// truncateMessage returns s if it is no longer than limit, otherwise the first
+// limit runes followed by an ellipsis.
+func truncateMessage(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "..."
+}
+
+// Health returns the overall service health
+// @Summary      Get service health
+// @Description  Returns detailed health status including database, storage, auth, and service connectivity
+// @Tags         health
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} HealthResponse "Service is healthy or degraded"
+// @Success      503 {object} HealthResponse "Service is unhealthy"
+// @Router       /health [get]
+func (h *Handler) Health(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	checks := h.runChecks(ctx)
+
+	overallStatus, statusCode := overallHealth(checks)
+
+	var tracingInfo *TracingInfo
+	if h.cfg.Otel.Enabled() {
+		tracingInfo = &TracingInfo{
+			Enabled:   true,
+			TracesURL: "/api/traces",
+		}
+	}
+
+	versionStr, commit, buildTime := buildInfo()
+
+	response := HealthResponse{
+		Status:    overallStatus,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(h.startAt).String(),
+		Version:   versionStr,
+		GitCommit: commit,
+		BuildTime: buildTime,
+		Checks:    checks,
+		Tracing:   tracingInfo,
+		Governor:  h.governorStatus(),
+	}
+
+	return c.JSON(statusCode, response)
+}
+
+// governorStatus snapshots the resource governor's mode for the health
+// response. It is informational only — the field is never added to
+// criticalComponents/optionalComponents, so it cannot change the overall status
+// or HTTP code. Nil-safe (returns nil when no governor is wired).
+func (h *Handler) governorStatus() *GovernorStatus {
+	if h.gov == nil {
+		return nil
+	}
+	snap := h.gov.Snapshot()
+	return &GovernorStatus{
+		Mode:          snap.Mode,
+		DBPoolPercent: snap.DBPoolPercent,
+		BulkInflight:  snap.BulkInflight,
+	}
+}
+
+// Health component classification. Critical components make the overall status
+// "unhealthy" (HTTP 503); optional components make it "degraded" but keep the
+// HTTP 200. Any check that is in neither list never affects the overall status
+// or the HTTP code, whatever its own status is.
+var (
+	criticalComponents = []string{"database", "storage", "auth"}
+	optionalComponents = []string{"xberg", "whisper", "embeddings", "database_backup"}
+)
+
+// overallHealth derives the overall status and HTTP status code from the
+// per-component checks. Only critical/optional components can move the status;
+// all other entries are informational.
+func overallHealth(checks map[string]Check) (status string, statusCode int) {
+	status = "healthy"
+
+	for _, name := range optionalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			status = "degraded"
+		}
+	}
+	for _, name := range criticalComponents {
+		if chk, ok := checks[name]; ok && chk.Status == "unhealthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	statusCode = http.StatusOK
+	if status == "unhealthy" {
+		statusCode = http.StatusServiceUnavailable
+	}
+	return status, statusCode
+}
+
+// runChecks executes all health checks concurrently and returns the results.
+func (h *Handler) runChecks(ctx context.Context) map[string]Check {
+	var (
+		mu      sync.Mutex
+		wg      sync.WaitGroup
+		results = make(map[string]Check, 8)
+	)
+
+	emit := func(name string, chk Check) {
+		mu.Lock()
+		results[name] = chk
+		mu.Unlock()
+	}
+
+	// Database
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := h.pool.Ping(ctx); err != nil {
+			emit("database", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("database", Check{Status: "healthy"})
+		}
+	}()
+
+	// Storage (MinIO/S3)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.storage.Enabled() {
+			emit("storage", Check{Status: "unhealthy", Message: "not configured"})
+			return
+		}
+		if err := h.storage.Ping(ctx); err != nil {
+			emit("storage", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("storage", Check{Status: "healthy"})
+		}
+	}()
+
+	// Auth (Zitadel OIDC discovery)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// In standalone mode the server authenticates via API key; Zitadel is
+		// not required, so report auth as healthy to avoid a spurious 503.
+		if h.cfg.Standalone.Enabled {
+			emit("auth", Check{Status: "healthy", Message: "standalone mode"})
+			return
+		}
+		issuer := h.cfg.Zitadel.GetIssuer()
+		if issuer == "" || h.cfg.Zitadel.Domain == "" {
+			emit("auth", Check{Status: "unhealthy", Message: "not configured"})
+			return
+		}
+
+		url := issuer + "/.well-known/openid-configuration"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			emit("auth", Check{Status: "unhealthy", Message: err.Error()})
+			return
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			emit("auth", Check{Status: "unhealthy", Message: err.Error()})
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			emit("auth", Check{Status: "unhealthy", Message: "OIDC discovery returned " + resp.Status})
+		} else {
+			emit("auth", Check{Status: "healthy"})
+		}
+	}()
+
+	// Xberg (document extraction)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.xberg.IsEnabled() {
+			emit("xberg", Check{Status: "healthy", Message: "disabled"})
+			return
+		}
+		healthResp, _ := h.xberg.HealthCheck(ctx)
+		if healthResp == nil || healthResp.Status != "healthy" {
+			msg := "unreachable"
+			// This is NOT dead code: xberg's /health never returns
+			// "unhealthy"/"details" itself, but xberg.Client.HealthCheck
+			// synthesizes an unhealthy response carrying Details["error"] on
+			// transport/decode failure, and this surfaces that cause rather
+			// than the generic "unreachable". The Details read is additionally
+			// defensive: should /health ever start returning its own
+			// unhealthy/details payload, it is displayed here too.
+			if healthResp != nil {
+				// Comma-ok, not a bare assertion: Details is
+				// map[string]interface{}, so a remote /health could return a
+				// non-string error (JSON number/object). This runs on its own
+				// goroutine, where no recover middleware applies, so a panicking
+				// assertion would crash the whole process.
+				if errDetail, ok := healthResp.Details["error"].(string); ok && errDetail != "" {
+					msg = errDetail
+				}
+			}
+			emit("xberg", Check{Status: "unhealthy", Message: msg})
+		} else {
+			emit("xberg", Check{Status: "healthy"})
+		}
+	}()
+
+	// Whisper (audio transcription)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if !h.whisper.IsEnabled() {
+			emit("whisper", Check{Status: "healthy", Message: "disabled"})
+			return
+		}
+		if err := h.whisper.HealthCheck(ctx); err != nil {
+			emit("whisper", Check{Status: "unhealthy", Message: err.Error()})
+		} else {
+			emit("whisper", Check{Status: "healthy"})
+		}
+	}()
+
+	// Embeddings (config-only, no live ping)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if h.embeddings.IsEnabled() {
+			emit("embeddings", Check{Status: "healthy", Message: "enabled"})
+		} else {
+			emit("embeddings", Check{Status: "healthy", Message: "disabled"})
+		}
+	}()
+
+	// Database backup (most recent scheduled backup). A probe must never
+	// manufacture an outage: a query error or a missing table is reported as
+	// healthy with an explanatory message.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		emit("database_backup", h.databaseBackupCheck(ctx))
+	}()
+
+	wg.Wait()
+	return results
+}
+
+// databaseBackupCheck derives the database_backup health check from the newest
+// kb.database_backups row. A query error or missing table is reported healthy
+// so a probe never manufactures an outage.
+func (h *Handler) databaseBackupCheck(ctx context.Context) Check {
+	var (
+		status    string
+		errMsg    *string
+		startedAt *time.Time
+	)
+	err := h.db.QueryRow(ctx,
+		"SELECT status, error, started_at FROM kb.database_backups ORDER BY created_at DESC LIMIT 1",
+	).Scan(&status, &errMsg, &startedAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return Check{Status: "healthy", Message: "no backups recorded yet"}
+	case err != nil:
+		return Check{Status: "healthy", Message: "backup status unavailable: " + err.Error()}
+	default:
+		return classifyDatabaseBackup(status, errMsg, startedAt, time.Now())
+	}
+}
+
+// ScopeAuthorityInfo is the scope-authority posture. After §8 (issue #1161) the
+// app is the sole authority for fine-grained Memory scopes, so the only
+// remaining transitional signal is whether RFC 7662 introspection is configured.
+// It is served only on an authenticated endpoint (issue #812 Q5).
+type ScopeAuthorityInfo struct {
+	IntrospectionConfigured bool `json:"introspection_configured"`
+}
+
+// scopeAuthorityInfo derives the scope-authority posture from configuration.
+func (h *Handler) scopeAuthorityInfo() *ScopeAuthorityInfo {
+	if h.cfg == nil {
+		return &ScopeAuthorityInfo{}
+	}
+	return &ScopeAuthorityInfo{
+		IntrospectionConfigured: h.cfg.Zitadel.IntrospectionConfigured(),
+	}
+}
+
+// ScopeAuthority returns the scope-authority posture. It is registered behind
+// RequireAuth so the posture is not exposed anonymously.
+// @Summary      Get scope-authority posture
+// @Description  Returns the scope-authority posture (introspection status). Authenticated only.
+// @Tags         health
+// @Produce      json
+// @Success      200 {object} map[string]any "scope-authority posture"
+// @Router       /api/health/scope-authority [get]
+// @Security     bearerAuth
+func (h *Handler) ScopeAuthority(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"scope_authority": h.scopeAuthorityInfo(),
+	})
+}
+
+// Healthz returns a simple health check (for k8s liveness probe)
+// @Summary      Liveness probe
+// @Description  Simple health check endpoint for Kubernetes liveness probes
+// @Tags         health
+// @Produce      plain
+// @Success      200 {string} string "OK"
+// @Router       /healthz [get]
+func (h *Handler) Healthz(c echo.Context) error {
+	return c.String(http.StatusOK, "OK")
+}
+
+// Ready returns readiness status (for k8s readiness probe)
+// @Summary      Readiness probe
+// @Description  Returns readiness status based on database connectivity (for Kubernetes readiness probes)
+// @Tags         health
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]any "Service is ready"
+// @Success      503 {object} map[string]any "Service is not ready"
+// @Router       /ready [get]
+func (h *Handler) Ready(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	// Check database connectivity
+	if err := h.pool.Ping(ctx); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]any{
+			"status":  "not_ready",
+			"message": "Database connection failed",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status": "ready",
+	})
+}
+
+// Debug returns debug information (only in development)
+// @Summary      Get debug information
+// @Description  Returns debug information including memory stats and database pool stats (development only)
+// @Tags         health
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string]any "Debug information"
+// @Failure      404 {object} map[string]any "Not found in production"
+// @Router       /debug [get]
+// @Security     bearerAuth
+func (h *Handler) Debug(c echo.Context) error {
+	if h.cfg.Environment == "production" {
+		return echo.NewHTTPError(http.StatusNotFound, "Not found")
+	}
+
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"environment": h.cfg.Environment,
+		"debug":       h.cfg.Debug,
+		"go_version":  runtime.Version(),
+		"goroutines":  runtime.NumGoroutine(),
+		"memory": map[string]any{
+			"alloc_mb":       mem.Alloc / 1024 / 1024,
+			"total_alloc_mb": mem.TotalAlloc / 1024 / 1024,
+			"sys_mb":         mem.Sys / 1024 / 1024,
+			"num_gc":         mem.NumGC,
+		},
+		"database": map[string]any{
+			"host":        h.cfg.Database.Host,
+			"port":        h.cfg.Database.Port,
+			"database":    h.cfg.Database.Database,
+			"pool_total":  h.pool.Stat().TotalConns(),
+			"pool_idle":   h.pool.Stat().IdleConns(),
+			"pool_in_use": h.pool.Stat().AcquiredConns(),
+		},
+	})
+}
+
+// Diagnose returns detailed DB and server diagnostics
+// @Router /api/diagnostics [get]
+// @Security     bearerAuth
+func (h *Handler) Diagnose(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+
+	result := map[string]any{
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"uptime":    time.Since(h.startAt).String(),
+		"server":    make(map[string]any),
+		"database":  make(map[string]any),
+	}
+
+	// Server Stats
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+	result["server"] = map[string]any{
+		"goroutines":   runtime.NumGoroutine(),
+		"memory_alloc": mem.Alloc / 1024 / 1024,
+		"memory_sys":   mem.Sys / 1024 / 1024,
+		"num_cpu":      runtime.NumCPU(),
+		"go_version":   runtime.Version(),
+	}
+
+	// DB Pool Stats
+	stats := h.pool.Stat()
+	result["database"].(map[string]any)["pool"] = map[string]any{
+		"total_conns":       stats.TotalConns(),
+		"acquired_conns":    stats.AcquiredConns(),
+		"idle_conns":        stats.IdleConns(),
+		"max_conns":         stats.MaxConns(),
+		"canceled_acquires": stats.CanceledAcquireCount(),
+		"empty_acquires":    stats.EmptyAcquireCount(),
+	}
+
+	// DB Connections from pg_stat_activity
+	var connStatesJSON []byte
+	err := h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('state', COALESCE(state, 'unknown'), 'count', count)), '[]'::json) FROM (SELECT state, count(*) as count FROM pg_stat_activity GROUP BY state) s").Scan(&connStatesJSON)
+	if err != nil {
+		result["database"].(map[string]any)["error"] = err.Error()
+		return c.JSON(http.StatusOK, result)
+	}
+	var connStates []map[string]any
+	_ = json.Unmarshal(connStatesJSON, &connStates)
+	result["database"].(map[string]any)["connections"] = connStates
+
+	// DB Long Running Queries. The raw query text is deliberately NOT returned:
+	// a live SQL body can embed literals (secrets, user data, connection
+	// targets) that must never leave the server even to a superadmin. Expose
+	// only the query length plus its pid/duration/state.
+	var longQueriesJSON []byte
+	_ = h.pool.QueryRow(ctx, longRunningQueriesSQL).Scan(&longQueriesJSON)
+	var longQueries []map[string]any
+	_ = json.Unmarshal(longQueriesJSON, &longQueries)
+	result["database"].(map[string]any)["long_queries"] = longQueries
+
+	// DB Settings
+	var dbSettingsJSON []byte
+	_ = h.pool.QueryRow(ctx, "SELECT json_agg(json_build_object('name', name, 'setting', setting)) FROM pg_settings WHERE name IN ('max_connections', 'shared_buffers', 'work_mem', 'idle_in_transaction_session_timeout', 'statement_timeout')").Scan(&dbSettingsJSON)
+	var dbSettings []map[string]any
+	_ = json.Unmarshal(dbSettingsJSON, &dbSettings)
+	result["database"].(map[string]any)["settings"] = dbSettings
+
+	// DB Table Sizes
+	var tableStatsJSON []byte
+	_ = h.pool.QueryRow(ctx, "SELECT COALESCE(json_agg(json_build_object('table', c.relname, 'size', pg_size_pretty(pg_total_relation_size(c.oid)), 'rows', COALESCE(s.n_live_tup,0))), '[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables s ON s.relname = c.relname AND s.schemaname = n.nspname WHERE n.nspname IN ('kb', 'core') AND c.relkind = 'r' ORDER BY pg_total_relation_size(c.oid) DESC LIMIT 10").Scan(&tableStatsJSON)
+	var tableStats []map[string]any
+	_ = json.Unmarshal(tableStatsJSON, &tableStats)
+	result["database"].(map[string]any)["tables"] = tableStats
+
+	return c.JSON(http.StatusOK, result)
+}

@@ -1,0 +1,132 @@
+package tracing
+
+import (
+	"context"
+	"strings"
+
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+)
+
+// attrRenames maps third-party OTel attribute keys (emitted by the Google ADK)
+// to memory.* equivalents so all span attributes use a consistent namespace.
+//
+// Aligned to ADK v1.2.0 + OTel GenAI semconv v1.36.0.
+// Keys not in this map but prefixed with gcp.vertex.* or gen_ai.* are written
+// to memory.llm.unknown.* by the fallback branch in rewriteSpan — this acts as
+// a safety net so future ADK version bumps don't silently drop span data.
+var attrRenames = map[string]string{
+	// ── gcp.vertex.agent.* → memory.llm.* ────────────────────────────────────
+	"gcp.vertex.agent.llm_request":    "memory.llm.request",
+	"gcp.vertex.agent.llm_response":   "memory.llm.response",
+	"gcp.vertex.agent.tool_call_args": "memory.llm.tool_call_args",
+	"gcp.vertex.agent.tool_response":  "memory.llm.tool_response",
+	"gcp.vertex.agent.event_id":       "memory.llm.event_id",
+	"gcp.vertex.agent.invocation_id":  "memory.llm.invocation_id",
+	"gcp.vertex.agent.session_id":     "memory.llm.session_id",
+
+	// ── gen_ai.operation / request ───────────────────────────────────────────
+	"gen_ai.operation.name": "memory.llm.operation",
+	"gen_ai.request.model":  "memory.llm.request.model",
+
+	// ── gen_ai.agent.* (ADK v1.2.0 / semconv v1.36.0) ───────────────────────
+	"gen_ai.agent.name":        "memory.llm.agent.name",
+	"gen_ai.agent.description": "memory.llm.agent.description",
+	"gen_ai.conversation.id":   "memory.llm.conversation.id",
+
+	// ── gen_ai.usage.* (semconv v1.36.0 — replaces gen_ai.response.*_token_count)
+	"gen_ai.usage.input_tokens":            "memory.llm.usage.input_tokens",
+	"gen_ai.usage.output_tokens":           "memory.llm.usage.output_tokens",
+	"gen_ai.usage.cache_read.input_tokens": "memory.llm.usage.cache_read_tokens",
+	"gen_ai.usage.reasoning.output_tokens": "memory.llm.usage.reasoning_tokens",
+
+	// ── gen_ai.response.* ────────────────────────────────────────────────────
+	"gen_ai.response.finish_reasons": "memory.llm.response.finish_reasons",
+
+	// ── gen_ai.tool.* ────────────────────────────────────────────────────────
+	"gen_ai.tool.name":        "memory.llm.tool.name",
+	"gen_ai.tool.description": "memory.llm.tool.description",
+	"gen_ai.tool.call.id":     "memory.llm.tool.call_id",
+}
+
+// AttrRewriteProcessor is an OTel SpanProcessor that renames third-party
+// attribute keys (Google ADK gcp.vertex.agent.* and gen_ai.*) to the
+// memory.llm.* namespace before spans are exported.
+//
+// It wraps a delegate processor and is registered on the server's
+// sdktrace.TracerProvider. ADK spans flow through the global OTel provider
+// and are therefore rewritten by this processor automatically — there is no
+// need to register a separate processor on the ADK's local provider via
+// adktelemetry.RegisterSpanProcessor (doing so would cause every ADK span
+// to be exported twice).
+type AttrRewriteProcessor struct {
+	delegate sdktrace.SpanProcessor
+}
+
+// NewAttrRewriteProcessor wraps delegate with attribute rewriting.
+func NewAttrRewriteProcessor(delegate sdktrace.SpanProcessor) *AttrRewriteProcessor {
+	return &AttrRewriteProcessor{delegate: delegate}
+}
+
+func (p *AttrRewriteProcessor) OnStart(parent context.Context, s sdktrace.ReadWriteSpan) {
+	p.delegate.OnStart(parent, s)
+}
+
+func (p *AttrRewriteProcessor) OnEnd(s sdktrace.ReadOnlySpan) {
+	p.delegate.OnEnd(rewriteSpan(s))
+}
+
+func (p *AttrRewriteProcessor) Shutdown(ctx context.Context) error {
+	return p.delegate.Shutdown(ctx)
+}
+
+func (p *AttrRewriteProcessor) ForceFlush(ctx context.Context) error {
+	return p.delegate.ForceFlush(ctx)
+}
+
+// rewriteSpan returns a wrapper that presents renamed attributes to the exporter.
+func rewriteSpan(s sdktrace.ReadOnlySpan) sdktrace.ReadOnlySpan {
+	orig := s.Attributes()
+	renamed := make([]attribute.KeyValue, 0, len(orig))
+	changed := false
+	for _, kv := range orig {
+		k := string(kv.Key)
+		if newKey, ok := attrRenames[k]; ok {
+			renamed = append(renamed, attribute.KeyValue{
+				Key:   attribute.Key(newKey),
+				Value: kv.Value,
+			})
+			changed = true
+		} else if strings.HasPrefix(k, "gcp.vertex.") || strings.HasPrefix(k, "gen_ai.") {
+			// Unknown future ADK attributes: move to memory.llm.unknown.* rather
+			// than dropping them, so we don't silently lose data.
+			suffix := k
+			if after, ok2 := strings.CutPrefix(k, "gcp.vertex.agent."); ok2 {
+				suffix = after
+			} else if after2, ok3 := strings.CutPrefix(k, "gen_ai."); ok3 {
+				suffix = after2
+			}
+			renamed = append(renamed, attribute.KeyValue{
+				Key:   attribute.Key("memory.llm.unknown." + suffix),
+				Value: kv.Value,
+			})
+			changed = true
+		} else {
+			renamed = append(renamed, kv)
+		}
+	}
+	if !changed {
+		return s
+	}
+	return &rewrittenSpan{ReadOnlySpan: s, attrs: renamed}
+}
+
+// rewrittenSpan wraps a ReadOnlySpan and overrides Attributes().
+type rewrittenSpan struct {
+	sdktrace.ReadOnlySpan
+	attrs []attribute.KeyValue
+}
+
+func (r *rewrittenSpan) Attributes() []attribute.KeyValue {
+	return r.attrs
+}

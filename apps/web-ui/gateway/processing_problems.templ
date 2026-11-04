@@ -1,0 +1,277 @@
+package main
+
+import (
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// documentsProblemsPanel is the project's terminal-failure surface on the
+// Documents page. It is driven by the processing-problems read model, so a new
+// queue shows up here by adding an adapter server-side, not a second UI.
+//
+// data.Attention names the one area whose rows are shown in full. The panel is
+// the only surface that lists a queue's failures: "View all" used to hand the
+// reader to a document-status filter, which cannot represent a failed chunk
+// embedding or a conversion job that never got a document, so the link landed
+// on "No documents match" under a non-zero count. Expanding the same read model
+// keeps the count and the list identical by construction.
+templ documentsProblemsPanel(data documentPageData) {
+	{{ report := data.Problems }}
+	if report != nil && report.Total > 0 {
+		<section id="needs-attention" class="mb-5 scroll-mt-24 overflow-hidden rounded-box border border-error/40 bg-base-100" data-testid="processing-problems">
+			<div class="flex flex-wrap items-start justify-between gap-3 border-b border-error/30 px-4 py-3">
+				<div class="flex items-start gap-3">
+					@ui.IconTile("lucide--triangle-alert", ui.IconTileProps{Tone: "error"})
+					<div>
+						<div class="flex items-center gap-2">
+							<h2 class="text-base font-semibold">Needs attention</h2>
+							@ui.Badge(ui.BadgeProps{
+								Label:   groupDigits(int64(report.Total)) + " open",
+								Variant: ui.BadgeError,
+								Size:    ui.BadgeSizeXS,
+							})
+						</div>
+						@ui.EmptyNote() {
+							These runs stopped permanently. Retrying re-runs the work with a fresh budget; extraction retries keep the failed attempt in history.
+						}
+					</div>
+				</div>
+			</div>
+			<div class="divide-y divide-base-300">
+				for _, area := range report.Areas {
+					@processingProblemsArea(data, area, area.Area == data.Attention)
+				}
+			</div>
+		</section>
+	}
+}
+
+// processingProblemsArea is one area group inside the panel. The retry
+// embeddings button is rendered once per area, not per failed object.
+//
+// expanded shows every row the report carried for this area instead of the
+// panel's default clip. The expansion is page state (data.Attention), so
+// "Show fewer" can restore the previous view with its filters intact.
+templ processingProblemsArea(data documentPageData, area ProcessingArea, expanded bool) {
+	{{ action, hasAction := processingAreaAction(area) }}
+	{{ canManage := data.CanManage }}
+	{{ clip := processingAreaClip(area, expanded) }}
+	<div class="px-4 py-3" data-testid={ "processing-area-" + area.Area }>
+		<div class="flex flex-wrap items-center justify-between gap-2">
+			<div class="flex flex-wrap items-center gap-2">
+				<h3 class="text-sm font-semibold">{ area.Label }</h3>
+				@ui.Badge(ui.BadgeProps{
+					Label:   processingAreaCountLabel(area),
+					Variant: ui.BadgeWarning,
+					Size:    ui.BadgeSizeXS,
+				})
+				if area.Summary != "" {
+					<span class="text-muted text-xs">{ area.Summary }</span>
+				}
+			</div>
+			<div class="flex flex-wrap items-center justify-end gap-2">
+				if hasAction && (canManage || (action.Kind != "retry_embeddings" && action.RequiresRole != "project_admin")) {
+					<form method="post" action="/embeddings/retrigger">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--rotate-ccw",
+						}) {
+							{ action.Label }
+						}
+					</form>
+				}
+				if canManage && processingAreaHasFixableEmbeddings(area) {
+					// The retrigger filters retryable failures by default; the
+					// explicit include_non_retryable flag is what reaches the
+					// deterministic ones (a missing model), so it is offered only
+					// behind the "I fixed the cause" confirmation.
+					<form method="post" action="/embeddings/retrigger?include_non_retryable=1" hx-confirm="Only continue if you fixed the reported cause (for example configured an embedding model in Project settings → Providers). Retry every failed object and chunk embedding job in this project, including the ones marked non-retryable?">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--wrench",
+						}) {
+							Retry all embeddings after fixing the cause
+						}
+					</form>
+				}
+				if processingAreaHasRetryableExtractions(area) {
+					<form method="post" action="/documents/retry-extraction-failures">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--rotate-ccw",
+						}) {
+							Retry all extractions in project
+						}
+					</form>
+				}
+				if processingAreaHasFixableExtractions(area) {
+					// The explicit "I fixed the cause" path: the server re-runs
+					// configuration/permission failures only when this flag is set.
+					<form method="post" action="/documents/retry-extraction-failures?include_non_retryable=1" hx-confirm="Only continue if you fixed the reported cause (for example configured a model in Project settings → Providers). Retry every extraction failure, including the ones marked non-retryable?">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--wrench",
+						}) {
+							Retry all after fixing the cause
+						}
+					</form>
+				}
+				if processingAreaHasParsingFailures(area) {
+					<form method="post" action="/documents/retry-conversion-failures">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--rotate-ccw",
+						}) {
+							Retry all conversions in project
+						}
+					</form>
+				}
+				if processingAreaHasFixableParsing(area) {
+					<form method="post" action="/documents/retry-conversion-failures?include_non_retryable=1" hx-confirm="Only continue if you fixed the reported cause. Retry every conversion failure, including the ones marked non-retryable?">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonSecondary,
+							Style:   ui.ButtonStyleOutline,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--wrench",
+						}) {
+							Retry all conversions after fixing the cause
+						}
+					</form>
+				}
+			</div>
+			if processingAreaHasRetryableExtractions(area) || processingAreaHasParsingFailures(area) || processingAreaHasFixableExtractions(area) || processingAreaHasFixableParsing(area) || processingAreaHasFixableEmbeddings(area) {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "w-full"}) {
+					Bulk retries re-run only failures marked retryable unless you confirm the cause was fixed. A single failure that supports a retry offers one on its row.
+				}
+			}
+		</div>
+		<div class="mt-3 flex flex-col gap-2">
+			for i, p := range area.Problems {
+				if i < clip {
+					@processingProblemRow(p)
+				}
+			}
+		</div>
+		if len(area.Problems) > clip {
+			<a class="link link-primary mt-2 inline-block text-xs" href={ templ.URL(data.attentionHref(area.Area)) } data-testid={ "processing-area-view-all-" + area.Area }>
+				{ processingAreaViewAllLabel(area) } →
+			</a>
+		}
+		if expanded && len(area.Problems) > processingProblemsClip {
+			<a class="link mt-2 inline-block text-xs" href={ templ.URL(data.attentionCollapseHref()) } data-testid={ "processing-area-collapse-" + area.Area }>
+				Show fewer
+			</a>
+		}
+	</div>
+}
+
+// processingProblemRow is one failed unit: what it is, the classified cause,
+// the remediation, the raw error behind a disclosure, and its next step.
+templ processingProblemRow(p ProcessingProblem) {
+	<div class="flex flex-wrap items-start justify-between gap-3 border border-line px-3 py-2" data-testid="processing-problem-row">
+		<div class="min-w-0">
+			<div class="flex flex-wrap items-center gap-2">
+				<span class="truncate text-sm font-medium">{ p.Label }</span>
+				@ui.Badge(ui.BadgeProps{
+					Label:   processingClassLabel(p.Failure.Class),
+					Variant: processingClassIntent(p.Failure.Class),
+					Size:    ui.BadgeSizeXS,
+				})
+				if p.Attempts > 0 {
+					if p.Failure.Retryable {
+						<span class="text-muted-faint text-xs" title="Automatic attempts so far; Retry starts a fresh run.">{ strconv.Itoa(p.Attempts) } automatic attempt{ plural(p.Attempts) } so far</span>
+					} else {
+						<span class="text-muted-faint text-xs" title="Automatic retries are not attempted after this many runs.">{ strconv.Itoa(p.Attempts) } automatic run{ plural(p.Attempts) } exhausted</span>
+					}
+				}
+			</div>
+			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+				{ p.Failure.Summary }
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS}) {
+				{ p.Failure.Remediation }
+			}
+			if p.ErrorMessage != "" {
+				<details class="mt-1">
+					<summary class="link cursor-pointer text-xs">Technical detail</summary>
+					<pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-base-200 p-2 text-[11px]">{ p.ErrorMessage }</pre>
+				</details>
+			}
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSize2XS, Class: "mt-1"}) {
+				{ relTime(p.OccurredAt) }
+			}
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
+			if retry, ok := processingProblemRetry(p); ok {
+				<form { processingRetryFormAttrs(retry)... }>
+					if p.Queue == "document_parsing" && p.DocumentID != "" {
+						<input type="hidden" name="document_id" value={ p.DocumentID }/>
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonSecondary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--rotate-ccw",
+					}) {
+						{ retry.Label }
+					}
+				</form>
+			}
+			if fix := processingProblemFixHref(p); fix != "" {
+				<a class="link link-primary text-xs" href={ templ.URL(fix) }>{ processingProblemFixLabel(p) }</a>
+			}
+			if p.Drilldown != "" {
+				<a class="link text-xs" href={ templ.URL(p.Drilldown) }>View</a>
+			}
+		</div>
+	</div>
+}
+
+// processingRetryFormAttrs builds the POST form attributes for a per-problem
+// retry. The confirmation only appears when the failure is non-retryable, so a
+// retryable row stays a single-click action.
+func processingRetryFormAttrs(r processingRetryAction) templ.Attributes {
+	attrs := templ.Attributes{"method": "post", "action": r.Href}
+	if r.Confirm != "" {
+		attrs["hx-confirm"] = r.Confirm
+	}
+	return attrs
+}
+
+// sidebarWarnBadge is the Documents nav count. It counts document problems
+// only; other areas will get their own badges if they need one.
+templ sidebarWarnBadge(n int) {
+	@ui.Badge(ui.BadgeProps{
+		Label:   processingBadgeCount(n),
+		Variant: ui.BadgeError,
+		Size:    ui.BadgeSizeXS,
+		Attrs:   templ.Attributes{"data-testid": "documents-problem-badge", "class": "ml-1"},
+	})
+}
+
+// extractionJobStatusBadge renders an extraction job's real status. Job
+// statuses ("queued"/"running"/"failed") are a different vocabulary from a
+// document's derived processing status; feeding them to documentStatusBadge
+// was why a failed run rendered as a neutral raw "failed" chip.
+templ extractionJobStatusBadge(status string, deadLettered bool) {
+	@components.StatusBadge(extractionJobStatusLabel(status, deadLettered), extractionJobStatusIntent(status, deadLettered), "", components.StatusBadgeOpts{
+		Size:  ui.BadgeSizeXS,
+		Dot:   true,
+		Attrs: templ.Attributes{"data-status": status, "data-dead-lettered": strconv.FormatBool(deadLettered)},
+	})
+}

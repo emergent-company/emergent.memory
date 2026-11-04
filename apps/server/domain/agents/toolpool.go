@@ -1,0 +1,1220 @@
+package agents
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"path"
+	"strings"
+	"sync"
+
+	"github.com/google/jsonschema-go/jsonschema"
+	"google.golang.org/adk/v2/agent"
+	"google.golang.org/adk/v2/tool"
+	"google.golang.org/adk/v2/tool/functiontool"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/domain/mcpregistry"
+	"github.com/emergent-company/emergent.memory/domain/mcprelay"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Coordination tool names that are restricted for sub-agents by default.
+const (
+	ToolNameSpawnAgents         = "spawn_agents"
+	ToolNameListAvailableAgents = "list_available_agents"
+	ToolNameAskUser             = "ask_user"
+)
+
+// Run-finalizing work terminator tool names (object-driven work). These are
+// only injected for runs dispatched against a subject work object.
+const (
+	ToolNameWorkComplete = "work_complete"
+	ToolNameWorkBlock    = "work_block"
+	// ToolNameWorkComment is the per-run comment tool: it appends a durable note
+	// to the subject work object but does NOT end the run.
+	ToolNameWorkComment = "comment"
+)
+
+// ACP tool names that require explicit opt-in at all agent depths.
+const (
+	ToolNameACPListAgents        = "agent-list"
+	ToolNameACPTriggerRun        = "trigger_agent"
+	ToolNameACPGetRunStatus      = "agent-run-get"
+	ToolNameACPMCPServerList     = "mcp-server-list"
+	ToolNameACPMCPServerGet      = "mcp-server-get"
+	ToolNameACPSearchMCPRegistry = "search_mcp_registry"
+	// Device MCP configuration is a privileged capability (it can define a
+	// process a device executes): device-targeted create/update and the device
+	// server list are opt-in.
+	ToolNameACPMCPServerCreate  = "mcp-server-create"
+	ToolNameACPUpdateMCPServer  = "update_mcp_server"
+	ToolNameACPDeviceServerList = "mcp-device-server-list"
+)
+
+// coordinationTools is the set of tools denied to sub-agents by default.
+var coordinationTools = map[string]bool{
+	ToolNameSpawnAgents:         true,
+	ToolNameListAvailableAgents: true,
+}
+
+// acpTools is the set of ACP tools that require explicit opt-in.
+// Unlike coordinationTools (which are stripped only from sub-agents),
+// ACP tools are stripped from ALL agents unless explicitly listed in
+// the agent's Tools whitelist.
+var acpTools = map[string]bool{
+	ToolNameACPListAgents:        true,
+	ToolNameACPTriggerRun:        true,
+	ToolNameACPGetRunStatus:      true,
+	ToolNameACPMCPServerList:     true,
+	ToolNameACPMCPServerGet:      true,
+	ToolNameACPSearchMCPRegistry: true,
+	ToolNameACPMCPServerCreate:   true,
+	ToolNameACPUpdateMCPServer:   true,
+	ToolNameACPDeviceServerList:  true,
+}
+
+// DefaultMaxDepth is the default maximum agent spawning depth.
+const DefaultMaxDepth = 6
+
+// maxFunctionNameLen matches the LLM function-name contract
+// (^[A-Za-z0-9_-]{1,64}$) that tool-calling providers enforce: names outside
+// this charset/limit are silently dropped or rejected, so the tool never fires.
+const maxFunctionNameLen = 64
+
+// externalToolKey builds the pooled cache key for an external MCP tool:
+// SlugifyServerName(server) + "_" + bare tool name (Diane convention), capped
+// at maxFunctionNameLen so the key is always a legal LLM function name. The
+// bare tool-name suffix is always kept whole; when the combined key is too long
+// the slugged server part is truncated at the budget boundary (and any trailing
+// "_" stripped before the joining "_"). Deterministic; collisions between
+// servers whose names slug to the same prefix are tolerated (bare-alias
+// resolution already handles multi-server ambiguity).
+func externalToolKey(serverName, toolName string) string {
+	slug := mcpregistry.SlugifyServerName(serverName)
+	if slug != "" && len(slug)+1+len(toolName) <= maxFunctionNameLen {
+		return slug + "_" + toolName
+	}
+	// Reserve one character for the joining "_" and the rest for the full
+	// tool-name suffix; the slug gets whatever budget remains.
+	budget := maxFunctionNameLen - len(toolName) - 1
+	switch {
+	case budget >= 1:
+		slug = strings.TrimRight(slug[:budget], "_")
+		return slug + "_" + toolName
+	case len(toolName) <= maxFunctionNameLen:
+		// Tool name alone consumes the entire budget — emit the bare tool name.
+		return toolName
+	default:
+		// Pathological: the bare tool name alone exceeds the function-name cap.
+		return toolName[:maxFunctionNameLen]
+	}
+}
+
+// ToolPoolConfig holds configuration for creating a ToolPool.
+type ToolPoolConfig struct {
+	MCPService      *mcp.Service
+	RegistryService *mcpregistry.Service
+	RelayService    *mcprelay.Service
+	Logger          *slog.Logger
+}
+
+// ToolPool maintains a per-project cache of available tools, combining
+// built-in MCP tools with external MCP server tools into a unified set.
+// Tool resolution filters this pool per agent definition at pipeline build time.
+type ToolPool struct {
+	mcpService      *mcp.Service
+	registryService *mcpregistry.Service
+	relayService    *mcprelay.Service
+	log             *slog.Logger
+
+	// Per-project cache of tool definitions
+	mu    sync.RWMutex
+	cache map[string]*projectToolCache
+}
+
+// projectToolCache holds the cached tool definitions for a single project.
+type projectToolCache struct {
+	// toolDefs maps tool name → ToolDefinition for fast lookup
+	toolDefs map[string]mcp.ToolDefinition
+	// toolNames is the ordered list of tool names (for deterministic iteration)
+	toolNames []string
+	// builtinTools tracks which tools came from builtin MCP service (not external servers)
+	builtinTools map[string]bool
+	// relayToolInstance maps prefixed tool name → instance ID for relay tool routing
+	relayToolInstance map[string]string
+	// bareNameToKeys maps a bare tool name → every prefixed pool key exposing it.
+	// External MCP tools are pooled as <slugified server>_ToolName while the admin
+	// API persists whitelists with bare ToolName values, so whitelist resolution
+	// falls back through this index when an exact pool-key match misses.
+	bareNameToKeys map[string][]string
+}
+
+// NewToolPool creates a new ToolPool.
+func NewToolPool(cfg ToolPoolConfig) *ToolPool {
+	log := cfg.Logger
+	if log == nil {
+		log = slog.Default()
+	}
+
+	return &ToolPool{
+		mcpService:      cfg.MCPService,
+		registryService: cfg.RegistryService,
+		relayService:    cfg.RelayService,
+		log:             log,
+		cache:           make(map[string]*projectToolCache),
+	}
+}
+
+// getOrBuildCache returns the cached tool definitions for a project,
+// building the cache on first access.
+func (tp *ToolPool) getOrBuildCache(projectID string) *projectToolCache {
+	// Fast path: read lock
+	tp.mu.RLock()
+	if c, ok := tp.cache[projectID]; ok {
+		tp.mu.RUnlock()
+		return c
+	}
+	tp.mu.RUnlock()
+
+	// Slow path: write lock and build
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if c, ok := tp.cache[projectID]; ok {
+		return c
+	}
+
+	c := tp.buildCache(projectID)
+	tp.cache[projectID] = c
+	return c
+}
+
+// buildCache creates the tool cache for a project by combining all tool sources.
+func (tp *ToolPool) buildCache(projectID string) *projectToolCache {
+	cache := &projectToolCache{
+		toolDefs:          make(map[string]mcp.ToolDefinition),
+		builtinTools:      make(map[string]bool),
+		relayToolInstance: make(map[string]string),
+		bareNameToKeys:    make(map[string][]string),
+	}
+
+	// 1. Built-in MCP tools — load from DB (respects per-project enabled flag).
+	//    EnsureBuiltinServer is called inside GetEnabledBuiltinToolsForProject so
+	//    tools are always present in the DB before we query them.
+	if tp.registryService != nil {
+		builtinTools, err := tp.registryService.GetEnabledBuiltinToolsForProject(context.Background(), projectID)
+		if err != nil {
+			tp.log.Warn("failed to load builtin tools from DB, falling back to mcpService",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+			// Fallback: load all builtin tools unconditionally from mcp.Service
+			if tp.mcpService != nil {
+				builtinDefs := tp.mcpService.GetToolDefinitions()
+				for _, td := range builtinDefs {
+					cache.toolDefs[td.Name] = td
+					cache.toolNames = append(cache.toolNames, td.Name)
+					cache.builtinTools[td.Name] = true
+				}
+			}
+		} else {
+			for _, bt := range builtinTools {
+				td := mcp.ToolDefinition{
+					Name:         bt.ToolName,
+					InputSchema:  mapToInputSchema(bt.InputSchema),
+					OutputSchema: mapToOutputSchema(bt.OutputSchema),
+				}
+				if bt.Description != nil {
+					td.Description = *bt.Description
+				}
+				cache.toolDefs[bt.ToolName] = td
+				cache.toolNames = append(cache.toolNames, bt.ToolName)
+				cache.builtinTools[bt.ToolName] = true
+			}
+			tp.log.Debug("loaded built-in MCP tools from DB into pool",
+				slog.String("project_id", projectID),
+				slog.Int("count", len(builtinTools)),
+			)
+		}
+	} else if tp.mcpService != nil {
+		// No registry service — fall back to unconditional mcp.Service load
+		builtinDefs := tp.mcpService.GetToolDefinitions()
+		for _, td := range builtinDefs {
+			cache.toolDefs[td.Name] = td
+			cache.toolNames = append(cache.toolNames, td.Name)
+			cache.builtinTools[td.Name] = true
+		}
+		tp.log.Debug("loaded built-in MCP tools into pool",
+			slog.String("project_id", projectID),
+			slog.Int("count", len(builtinDefs)),
+		)
+	}
+
+	// 2. External MCP server tools from mcpregistry
+	if tp.registryService != nil {
+		extTools, err := tp.registryService.GetEnabledToolsForProject(context.Background(), projectID)
+		if err != nil {
+			tp.log.Warn("failed to load external MCP tools into pool",
+				slog.String("project_id", projectID),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			for _, et := range extTools {
+				// Prefix external tool names: servername_toolname (Diane convention).
+				// The server-name part is slugified because LLM function names must
+				// match ^[A-Za-z0-9_-]{1,64}$ — raw names like "E2E MCP 123" would
+				// otherwise produce an illegal key that providers silently drop.
+				prefixedName := externalToolKey(et.ServerName, et.ToolName)
+				desc := ""
+				if et.Description != nil {
+					desc = *et.Description
+				}
+				td := mcp.ToolDefinition{
+					Name:         prefixedName,
+					Description:  desc,
+					InputSchema:  mapToInputSchema(et.InputSchema),
+					OutputSchema: mapToOutputSchema(et.OutputSchema),
+				}
+				cache.toolDefs[prefixedName] = td
+				cache.toolNames = append(cache.toolNames, prefixedName)
+				// Index the bare tool name → prefixed key so whitelist entries
+				// persisted by the admin API (bare ToolName, no server prefix)
+				// can be resolved back to the pooled ServerName_ToolName key.
+				cache.bareNameToKeys[et.ToolName] = append(cache.bareNameToKeys[et.ToolName], prefixedName)
+			}
+			if len(extTools) > 0 {
+				tp.log.Debug("loaded external MCP tools into pool",
+					slog.String("project_id", projectID),
+					slog.Int("count", len(extTools)),
+				)
+			}
+		}
+	}
+
+	// 3. MCP Relay tools from connected relay instances
+	if tp.relayService != nil {
+		sessions := tp.relayService.ListByProject(projectID)
+		relayToolCount := 0
+		for _, sess := range sessions {
+			relayToolDefs, err := extractRelayToolDefs(sess.Tools)
+			if err != nil {
+				tp.log.Warn("failed to extract relay tool definitions from session",
+					slog.String("instance_id", sess.InstanceID),
+					slog.String("error", err.Error()),
+				)
+				continue
+			}
+			relayToolCount += len(relayToolDefs)
+			for _, rt := range relayToolDefs {
+				// extractRelayToolDefs returns the bare MCP tool name. The pool key
+				// (and relay call routing in wrapSingleTool/CallTool) requires the
+				// prefixed form {instanceID}_{tool} — the same key stored in agent
+				// whitelists by the gateway relay agent picker.
+				fullName := sess.InstanceID + "_" + rt.Name
+				cache.toolDefs[fullName] = mcp.ToolDefinition{
+					Name:         fullName,
+					Description:  rt.Description,
+					InputSchema:  rt.InputSchema,
+					OutputSchema: rt.OutputSchema,
+				}
+				cache.toolNames = append(cache.toolNames, fullName)
+				cache.relayToolInstance[fullName] = sess.InstanceID
+			}
+		}
+		if relayToolCount > 0 {
+			tp.log.Debug("loaded MCP relay tools into pool",
+				slog.String("project_id", projectID),
+				slog.Int("sessions", len(sessions)),
+				slog.Int("tools", relayToolCount),
+			)
+		}
+	}
+
+	return cache
+}
+
+// InvalidateCache removes the cached tool pool for a project,
+// forcing a rebuild on the next access.
+// Call this when a project's MCP server configuration changes.
+func (tp *ToolPool) InvalidateCache(projectID string) {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	delete(tp.cache, projectID)
+	tp.log.Info("invalidated tool pool cache",
+		slog.String("project_id", projectID),
+	)
+}
+
+// InvalidateAll removes all cached tool pools.
+func (tp *ToolPool) InvalidateAll() {
+	tp.mu.Lock()
+	defer tp.mu.Unlock()
+	tp.cache = make(map[string]*projectToolCache)
+	tp.log.Info("invalidated all tool pool caches")
+}
+
+// ResolveTools filters the project's ToolPool to only the tools allowed by the
+// agent definition's tools whitelist, then wraps them as ADK tool.Tool instances.
+//
+// Parameters:
+//   - projectID: the project context
+//   - agentDef: the agent definition with tools whitelist (may be nil for legacy agents)
+//   - depth: the current agent spawn depth (0 = top-level)
+//   - maxDepth: the maximum allowed spawn depth (use DefaultMaxDepth if 0)
+//
+// Tool filtering is enforced at the Go level — the ADK pipeline only receives
+// resolved tools. The LLM cannot call tools not in this set.
+func (tp *ToolPool) ResolveTools(projectID string, agentDef *AgentDefinition, depth int, maxDepth int) ([]tool.Tool, error) {
+	if maxDepth <= 0 {
+		maxDepth = DefaultMaxDepth
+	}
+
+	cache := tp.getOrBuildCache(projectID)
+
+	// Determine which tool definitions to include
+	resolvedDefs := tp.filterToolDefs(cache, agentDef, depth, maxDepth)
+
+	// Wrap resolved definitions as ADK tools
+	tools, err := tp.wrapTools(projectID, resolvedDefs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Always inject hidden built-in tools — these bypass all whitelist/scope filters.
+	// set_session_title: lets agents update the session display title.
+	// Agents can opt out by adding "set_session_title" to their BannedTools list.
+	sessionTitleBanned := false
+	for _, b := range agentDef.BannedTools {
+		if b == "set_session_title" {
+			sessionTitleBanned = true
+			break
+		}
+	}
+	if tp.mcpService != nil && !sessionTitleBanned {
+		tools = append(tools, tp.wrapHiddenBuiltin(projectID, "set_session_title",
+			"Update the display title for the current session. Call this when you can infer a meaningful title from the conversation (e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature').",
+			map[string]any{
+				"type":     "object",
+				"required": []string{"title"},
+				"properties": map[string]any{
+					"title": map[string]any{
+						"type":        "string",
+						"description": "The display title for the session, e.g. '🐛 Login Timeout Bug' or '✨ Export to PDF Feature'",
+					},
+					"session_id": map[string]any{
+						"type":        "string",
+						"description": "Optional session ID to update. Only needed when the session ID is not already available in context (e.g. when the agent received it via a [Session: <id>] tag in the prompt). If omitted, the active session from context is used.",
+					},
+				},
+			},
+		))
+	}
+
+	return tools, nil
+}
+
+// filterToolDefs selects tool definitions from the cache based on the agent
+// definition's tools whitelist and depth restrictions.
+func (tp *ToolPool) filterToolDefs(cache *projectToolCache, agentDef *AgentDefinition, depth int, maxDepth int) []mcp.ToolDefinition {
+	var defs []mcp.ToolDefinition
+
+	if agentDef == nil {
+		// No agent definition at all (legacy/system agents) — return all tools.
+		for _, name := range cache.toolNames {
+			defs = append(defs, cache.toolDefs[name])
+		}
+	} else if len(agentDef.Tools) == 0 {
+		// Agent definition exists but Tools list is empty — deny all tools.
+		// An explicit empty whitelist means the agent has no tool access.
+		// This prevents agents from silently inheriting the full tool set
+		// when their configuration is incomplete or intentionally tool-free.
+		tp.log.Debug("agent has empty tools whitelist — no tools granted",
+			slog.String("agent", agentDef.Name),
+		)
+		return nil
+	} else {
+		defs = tp.matchToolsByWhitelist(cache, agentDef.Tools)
+	}
+
+	// Apply ACP tool opt-in restrictions (all depths, including top-level)
+	defs = tp.applyACPRestrictions(defs, agentDef)
+
+	// Apply sub-agent tool restrictions
+	defs = tp.applyDepthRestrictions(defs, agentDef, depth, maxDepth)
+
+	return defs
+}
+
+// matchToolsByWhitelist filters tool definitions using the agent's tools whitelist.
+// Supports exact name matching, glob patterns (via path.Match), and wildcard "*".
+func (tp *ToolPool) matchToolsByWhitelist(cache *projectToolCache, whitelist []string) []mcp.ToolDefinition {
+	var result []mcp.ToolDefinition
+	matched := make(map[string]bool) // track which tools have been matched
+
+	for _, pattern := range whitelist {
+		// Wildcard: return all tools
+		if pattern == "*" {
+			result = result[:0] // clear any partial results
+			matched = make(map[string]bool)
+			for _, name := range cache.toolNames {
+				result = append(result, cache.toolDefs[name])
+				matched[name] = true
+			}
+			// Wildcard overrides everything — no point checking more patterns
+			return result
+		}
+
+		// Check if this is a glob pattern (contains glob metacharacters)
+		isGlob := isGlobPattern(pattern)
+
+		if isGlob {
+			// Glob pattern: match against all tool names
+			matchCount := 0
+			for _, name := range cache.toolNames {
+				if matched[name] {
+					continue
+				}
+				ok, err := path.Match(pattern, name)
+				if err != nil {
+					tp.log.Warn("invalid glob pattern in tools whitelist",
+						slog.String("pattern", pattern),
+						slog.String("error", err.Error()),
+					)
+					break
+				}
+				if ok {
+					result = append(result, cache.toolDefs[name])
+					matched[name] = true
+					matchCount++
+				}
+			}
+			if matchCount == 0 {
+				tp.log.Warn("glob pattern matched no tools",
+					slog.String("pattern", pattern),
+				)
+			}
+		} else {
+			// Exact name match. External MCP tools are pooled under prefixed keys
+			// (ServerName_ToolName — Diane convention) while the admin API persists
+			// whitelists with bare ToolName values, so a whitelist entry can carry
+			// either form. An exact pool-key hit takes priority; when it misses,
+			// fall back to resolving the bare name against every prefixed pool key
+			// that exposes it (this branch only runs for non-glob entries).
+			if td, ok := cache.toolDefs[pattern]; ok {
+				if !matched[td.Name] {
+					result = append(result, td)
+					matched[td.Name] = true
+				}
+			} else if keys := cache.bareNameToKeys[pattern]; len(keys) > 0 {
+				for _, key := range keys {
+					if matched[key] {
+						continue
+					}
+					td, ok := cache.toolDefs[key]
+					if !ok {
+						continue
+					}
+					result = append(result, td)
+					matched[key] = true
+				}
+				if len(keys) > 1 {
+					// Ambiguous bare name exposed by multiple servers — resolve all
+					// of them so the agent gets every matching tool.
+					tp.log.Warn("bare tool name in whitelist is ambiguous across servers — resolved all pool keys",
+						slog.String("tool", pattern),
+						slog.Any("pool_keys", keys),
+					)
+				} else {
+					tp.log.Debug("resolved bare tool name to prefixed pool key",
+						slog.String("tool", pattern),
+						slog.String("pool_key", keys[0]),
+					)
+				}
+			} else {
+				// Tool not found — log warning, skip (do not fail)
+				tp.log.Warn("tool not found in pool, skipping",
+					slog.String("tool", pattern),
+					slog.Int("pool_tool_count", len(cache.toolNames)),
+				)
+			}
+		}
+	}
+
+	return result
+}
+
+// applyDepthRestrictions removes coordination tools from sub-agents unless
+// explicitly opted in and within the max depth limit.
+func (tp *ToolPool) applyDepthRestrictions(defs []mcp.ToolDefinition, agentDef *AgentDefinition, depth int, maxDepth int) []mcp.ToolDefinition {
+	if depth == 0 {
+		// Top-level agents have no restrictions
+		return defs
+	}
+
+	// Build set of explicitly requested coordination tools
+	explicitlyRequested := make(map[string]bool)
+	if agentDef != nil {
+		for _, t := range agentDef.Tools {
+			if coordinationTools[t] {
+				explicitlyRequested[t] = true
+			}
+		}
+	}
+
+	var filtered []mcp.ToolDefinition
+	for _, td := range defs {
+		if !coordinationTools[td.Name] {
+			// Not a coordination tool — always include
+			filtered = append(filtered, td)
+			continue
+		}
+
+		// This is a coordination tool at depth > 0
+		if depth >= maxDepth {
+			// At or beyond max depth — always remove, regardless of opt-in
+			tp.log.Warn("removing coordination tool at max depth",
+				slog.String("tool", td.Name),
+				slog.Int("depth", depth),
+				slog.Int("max_depth", maxDepth),
+			)
+			continue
+		}
+
+		if explicitlyRequested[td.Name] {
+			// Explicitly opted in and within depth limit — keep
+			tp.log.Debug("sub-agent retains coordination tool via opt-in",
+				slog.String("tool", td.Name),
+				slog.Int("depth", depth),
+			)
+			filtered = append(filtered, td)
+		} else {
+			// Not explicitly requested — remove by default at depth > 0
+			tp.log.Debug("removing coordination tool from sub-agent (no opt-in)",
+				slog.String("tool", td.Name),
+				slog.Int("depth", depth),
+			)
+		}
+	}
+
+	return filtered
+}
+
+// applyACPRestrictions removes ACP tools from agents that have not explicitly
+// opted in by listing them in their Tools whitelist.
+//
+// Unlike coordinationTools (which are only restricted for sub-agents), ACP tools
+// require explicit opt-in at ALL depths — including top-level agents. This prevents
+// agents from inadvertently triggering external agent runs when they have a broad
+// or empty tool whitelist.
+//
+// An agent opts in by listing the specific ACP tool name (e.g. "acp-trigger-run")
+// or a matching glob (e.g. "acp-*") in its Tools field.
+func (tp *ToolPool) applyACPRestrictions(defs []mcp.ToolDefinition, agentDef *AgentDefinition) []mcp.ToolDefinition {
+	// Build set of explicitly requested ACP tools from the whitelist
+	explicitlyRequested := make(map[string]bool)
+	if agentDef != nil {
+		for _, pattern := range agentDef.Tools {
+			if pattern == "*" {
+				// Wildcard — all tools including ACP are explicitly requested
+				return defs
+			}
+			for name := range acpTools {
+				if pattern == name {
+					explicitlyRequested[name] = true
+					continue
+				}
+				if isGlobPattern(pattern) {
+					if ok, err := path.Match(pattern, name); err == nil && ok {
+						explicitlyRequested[name] = true
+					}
+				}
+			}
+		}
+	}
+
+	var filtered []mcp.ToolDefinition
+	for _, td := range defs {
+		if !acpTools[td.Name] {
+			// Not an ACP tool — always include
+			filtered = append(filtered, td)
+			continue
+		}
+		if explicitlyRequested[td.Name] {
+			// Explicitly opted in — keep
+			tp.log.Debug("agent retains ACP tool via opt-in",
+				slog.String("tool", td.Name),
+			)
+			filtered = append(filtered, td)
+		} else {
+			// Not explicitly requested — strip
+			tp.log.Debug("removing ACP tool (no explicit opt-in)",
+				slog.String("tool", td.Name),
+			)
+		}
+	}
+	return filtered
+}
+
+// wrapTools wraps MCP tool definitions as ADK tool.Tool instances that
+// delegate execution to the MCP service.
+func (tp *ToolPool) wrapTools(projectID string, defs []mcp.ToolDefinition) ([]tool.Tool, error) {
+	if tp.mcpService == nil {
+		return nil, nil
+	}
+
+	tools := make([]tool.Tool, 0, len(defs))
+
+	for _, td := range defs {
+		// Skip coordination tool stubs — they'll be registered separately
+		// by the executor when coordination tools are implemented (Task Group 6)
+		if coordinationTools[td.Name] {
+			continue
+		}
+
+		t, err := tp.wrapSingleTool(projectID, td)
+		if err != nil {
+			tp.log.Warn("failed to wrap tool, skipping",
+				slog.String("tool", td.Name),
+				slog.String("error", err.Error()),
+			)
+			continue
+		}
+		tools = append(tools, t)
+	}
+
+	return tools, nil
+}
+
+// convertMCPSchemaToADK converts an MCP InputSchema to an ADK jsonschema.Schema.
+// This ensures the LLM receives proper parameter names and types for tools.
+func convertMCPSchemaToADK(input mcp.InputSchema) *jsonschema.Schema {
+	if input.Type == "" {
+		return nil
+	}
+
+	schema := &jsonschema.Schema{
+		Type:       input.Type,
+		Required:   input.Required,
+		Properties: make(map[string]*jsonschema.Schema),
+	}
+
+	for propName, propSchema := range input.Properties {
+		schema.Properties[propName] = convertMCPPropertySchema(propSchema)
+	}
+
+	return schema
+}
+
+// convertMCPPropertySchema converts a single MCP property, recursing into Items
+// so an array keeps its element type (#2374). Without the recursion every array
+// parameter reached the model as {"type":"array"}: it had to guess the element
+// shape, and a wrong guess surfaced as a validation error it could not foresee.
+func convertMCPPropertySchema(propSchema mcp.PropertySchema) *jsonschema.Schema {
+	prop := &jsonschema.Schema{
+		Type:        propSchema.Type,
+		Description: propSchema.Description,
+	}
+
+	// Convert enum values
+	if len(propSchema.Enum) > 0 {
+		enumValues := make([]any, len(propSchema.Enum))
+		for i, v := range propSchema.Enum {
+			enumValues[i] = v
+		}
+		prop.Enum = enumValues
+	}
+
+	// Convert numeric constraints
+	if propSchema.Minimum != nil {
+		min := float64(*propSchema.Minimum)
+		prop.Minimum = &min
+	}
+	if propSchema.Maximum != nil {
+		max := float64(*propSchema.Maximum)
+		prop.Maximum = &max
+	}
+
+	// Convert default value
+	if propSchema.Default != nil {
+		defaultJSON, _ := json.Marshal(propSchema.Default)
+		prop.Default = defaultJSON
+	}
+
+	// Recurse: an array of arrays is expressible, so the recursion has to bottom
+	// out on its own rather than assuming a one-level element schema.
+	if propSchema.Items != nil {
+		prop.Items = convertMCPPropertySchema(*propSchema.Items)
+	}
+
+	return prop
+}
+
+// wrapSingleTool wraps a single MCP tool definition as an ADK tool.
+// For builtin tools, it delegates to mcp.Service.ExecuteTool().
+// For external tools (prefixed with server name), it delegates to
+// mcpregistry.Service.CallExternalTool() which proxies through the
+// external MCP server connection.
+// For relay tools (prefixed with instance ID), it delegates to
+// mcprelay.Service.CallTool() which forwards through the WebSocket relay.
+func (tp *ToolPool) wrapSingleTool(projectID string, td mcp.ToolDefinition) (tool.Tool, error) {
+	// Capture for closure
+	toolName := td.Name
+
+	// Convert MCP InputSchema to ADK jsonschema for proper parameter typing
+	inputSchema := convertMCPSchemaToADK(td.InputSchema)
+
+	// Check if this is a builtin tool by looking at the project cache
+	cache := tp.getOrBuildCache(projectID)
+	isBuiltin := cache.builtinTools[toolName]
+
+	// Check if this is a relay tool
+	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		// Relay tool: forward through mcprelay.Service
+		relaySvc := tp.relayService
+		pid := projectID
+		instID := instanceID
+		// Parse bare tool name by stripping the instanceID prefix and underscore
+		prefix := instID + "_"
+		if !strings.HasPrefix(toolName, prefix) {
+			return nil, fmt.Errorf("unexpected relay tool name %q for instance %q", toolName, instID)
+		}
+		bareToolName := strings.TrimPrefix(toolName, prefix)
+		return functiontool.New(
+			functiontool.Config{
+				Name:        toolName,
+				Description: td.Description,
+				InputSchema: inputSchema,
+			},
+			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+				// Relay tools forward to a connected client device and are, by
+				// construction, the agent-only class: they must not be reachable
+				// from an untrusted (external) run. This mirrors the ExecuteTool
+				// AgentOnly gate, which relay tools bypass by routing here instead
+				// of through mcp.Service.ExecuteTool (issue #994).
+				if !mcp.TrustedInternalFromContext(ctx) {
+					return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+				}
+				result, err := relaySvc.CallTool(ctx, pid, instID, bareToolName, args)
+				if err != nil {
+					if errors.Is(err, mcprelay.ErrSessionNotFound) {
+						return map[string]any{
+							"error": fmt.Sprintf(
+								"Tool %q is provided by a connected client (%s) that is currently offline. "+
+									"The client may have disconnected (e.g. laptop went to sleep, network dropped). "+
+									"Please try again later when the device reconnects.",
+								toolName, instID,
+							),
+						}, nil
+					}
+					return map[string]any{"error": err.Error()}, nil
+				}
+				return convertRelayResponse(result)
+			},
+		)
+	}
+
+	if !isBuiltin && tp.registryService != nil {
+		// External tool: route through proxy
+		regSvc := tp.registryService
+		pid := projectID
+		return functiontool.New(
+			functiontool.Config{
+				Name:        toolName,
+				Description: td.Description,
+				InputSchema: inputSchema,
+			},
+			func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+				result, err := regSvc.CallExternalTool(ctx, pid, toolName, args)
+				if err != nil {
+					return map[string]any{"error": err.Error()}, nil
+				}
+				return convertToolResult(result)
+			},
+		)
+	}
+
+	// Builtin tool: route through mcp.Service
+	svc := tp.mcpService
+	pid := projectID
+	return functiontool.New(
+		functiontool.Config{
+			Name:        toolName,
+			Description: td.Description,
+			InputSchema: inputSchema,
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			// Auto-inject namespace from context if the agent didn't supply one.
+			// This allows callers to set a namespace once (e.g. via /query?namespace=)
+			// and have it propagate to every MCP tool call transparently.
+			if ns := auth.NamespaceFromContext(ctx); ns != "" {
+				if _, ok := args["namespace"]; !ok {
+					args["namespace"] = ns
+				}
+			}
+			result, err := svc.ExecuteTool(ctx, pid, toolName, args)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return convertToolResult(result)
+		},
+	)
+}
+
+// convertToolResult converts an MCP ToolResult to a map for the ADK function tool response.
+func convertToolResult(result *mcp.ToolResult) (map[string]any, error) {
+	if result != nil && len(result.Content) > 0 {
+		// If the external tool reported an error, surface a uniform ok=false.
+		if result.IsError {
+			var textParts []string
+			for _, block := range result.Content {
+				if block.Text != "" {
+					textParts = append(textParts, block.Text)
+				}
+			}
+			errMsg := "tool execution failed"
+			if len(textParts) > 0 {
+				errMsg = textParts[0]
+			}
+			return map[string]any{"ok": false, "error": errMsg}, nil
+		}
+
+		var textParts []string
+		for _, block := range result.Content {
+			if block.Text != "" {
+				textParts = append(textParts, block.Text)
+			}
+		}
+		if len(textParts) == 1 {
+			// Try to parse as JSON first. Preserve a tool-provided "ok" field
+			// (e.g. entity-create's ok=failed==0); otherwise add a uniform
+			// ok=true so consumers can classify success generically.
+			var parsed any
+			if err := json.Unmarshal([]byte(textParts[0]), &parsed); err == nil {
+				if m, ok := parsed.(map[string]any); ok {
+					// Object result: return it directly (flattened), injecting
+					// ok=true when absent. Preserves the existing shape.
+					if _, has := m["ok"]; !has {
+						m["ok"] = true
+					}
+					return m, nil
+				}
+				// Array or scalar result: wrap the decoded value so consumers
+				// receive structured data, not a re-encoded JSON string.
+				// Previously unmarshalling into a map failed for top-level
+				// arrays (e.g. agent-def-list) and fell through to the
+				// escaped-string path below.
+				return map[string]any{"ok": true, "result": parsed}, nil
+			}
+			return map[string]any{"ok": true, "result": textParts[0]}, nil
+		}
+		return map[string]any{"ok": true, "results": textParts}, nil
+	}
+
+	return map[string]any{"ok": true, "result": "ok"}, nil
+}
+
+// CallTool executes a tool by name directly, bypassing the ADK runner loop.
+// This is used when the executor needs to call a tool on behalf of the user
+// (e.g. after tool-policy approval) without going through an LLM re-invocation.
+// It routes to the same backends as wrapSingleTool: relay → mcprelay.Service,
+// external → mcpregistry.Service, builtin → mcp.Service.ExecuteTool.
+func (tp *ToolPool) CallTool(ctx context.Context, projectID, toolName string, args map[string]any) (map[string]any, error) {
+	cache := tp.getOrBuildCache(projectID)
+
+	// Relay tool?
+	if instanceID, ok := cache.relayToolInstance[toolName]; ok && tp.relayService != nil {
+		// Relay tools are the agent-only class (they forward to a connected
+		// device) and must not be reachable from an untrusted (external) run.
+		// This mirrors the ExecuteTool AgentOnly gate that relay tools bypass by
+		// routing here (issue #994).
+		if !mcp.TrustedInternalFromContext(ctx) {
+			return map[string]any{"error": "relay tool not reachable from an untrusted surface"}, nil
+		}
+		prefix := instanceID + "_"
+		bareToolName := strings.TrimPrefix(toolName, prefix)
+		result, err := tp.relayService.CallTool(ctx, projectID, instanceID, bareToolName, args)
+		if err != nil {
+			if errors.Is(err, mcprelay.ErrSessionNotFound) {
+				return map[string]any{
+					"error": fmt.Sprintf(
+						"Tool %q is provided by a connected client (%s) that is currently offline.",
+						toolName, instanceID,
+					),
+				}, nil
+			}
+			return map[string]any{"error": err.Error()}, nil
+		}
+		return convertRelayResponse(result)
+	}
+
+	isBuiltin := cache.builtinTools[toolName]
+
+	// External tool?
+	if !isBuiltin && tp.registryService != nil {
+		result, err := tp.registryService.CallExternalTool(ctx, projectID, toolName, args)
+		if err != nil {
+			return map[string]any{"error": err.Error()}, nil
+		}
+		return convertToolResult(result)
+	}
+
+	// Builtin tool
+	if tp.mcpService == nil {
+		return map[string]any{"error": "mcp service not available"}, nil
+	}
+	result, err := tp.mcpService.ExecuteTool(ctx, projectID, toolName, args)
+	if err != nil {
+		return map[string]any{"error": err.Error()}, nil
+	}
+	return convertToolResult(result)
+}
+
+// StripOperatorTools removes superadmin-only operator tools from a resolved tool
+// set unless the caller in ctx is a superadmin_full principal. It is the
+// resolution-level complement to mcp.Service.ExecuteTool's dispatch-time
+// enforcement (issue #948): a non-superadmin run never sees the operator tools
+// in its toolset. A superadmin-status resolution failure fails closed (the
+// operator tools are stripped).
+func (tp *ToolPool) StripOperatorTools(ctx context.Context, tools []tool.Tool) []tool.Tool {
+	if tp.mcpService == nil {
+		return tools
+	}
+	isSuper := false
+	if ok, err := tp.mcpService.IsSuperadminCaller(ctx); err == nil {
+		isSuper = ok
+	}
+	if isSuper {
+		return tools
+	}
+	out := make([]tool.Tool, 0, len(tools))
+	for _, t := range tools {
+		if tp.mcpService.IsSuperadminOnlyTool(t.Name()) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// isGlobPattern returns true if the string contains glob metacharacters.
+func isGlobPattern(s string) bool {
+	for _, c := range s {
+		switch c {
+		case '*', '?', '[':
+			return true
+		}
+	}
+	return false
+}
+
+// ToolNames returns the names of all tools in the pool for a project.
+// Useful for debugging and admin endpoints.
+func (tp *ToolPool) ToolNames(projectID string) []string {
+	cache := tp.getOrBuildCache(projectID)
+	names := make([]string, len(cache.toolNames))
+	copy(names, cache.toolNames)
+	return names
+}
+
+// ToolScopes returns a name→RequiredScope map for the built-in and dynamic MCP
+// tool catalog. It is the authoritative scope source for policy enforcement,
+// matching the scope the read DTO derives group membership from (dynamic tools
+// set RequiredScope at definition time, which the tool-pool cache does not
+// retain). Built once per run; the catalog is rebuilt in memory via
+// mcp.Service.GetToolDefinitions() with no DB scan. Returns nil when the MCP
+// service is unavailable (callers then fall back to the catalog-less resolver).
+func (tp *ToolPool) ToolScopes() map[string]string {
+	if tp.mcpService == nil {
+		return nil
+	}
+	defs := tp.mcpService.GetToolDefinitions()
+	scopes := make(map[string]string, len(defs))
+	for _, td := range defs {
+		scopes[td.Name] = td.RequiredScope
+	}
+	return scopes
+}
+
+// ToolCount returns the number of tools in the pool for a project.
+func (tp *ToolPool) ToolCount(projectID string) int {
+	cache := tp.getOrBuildCache(projectID)
+	return len(cache.toolNames)
+}
+
+// String returns a human-readable description of the tool pool for a project.
+func (tp *ToolPool) String(projectID string) string {
+	cache := tp.getOrBuildCache(projectID)
+	return fmt.Sprintf("ToolPool[project=%s, tools=%d]", projectID, len(cache.toolNames))
+}
+
+// mapToInputSchema converts a generic map[string]any (from JSONB) back to mcp.InputSchema.
+// This is the inverse of mcpregistry.schemaToMap().
+func mapToInputSchema(m map[string]any) mcp.InputSchema {
+	if m == nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+
+	// Marshal map to JSON, then unmarshal into InputSchema
+	data, err := json.Marshal(m)
+	if err != nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+	var schema mcp.InputSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return mcp.InputSchema{Type: "object"}
+	}
+	if schema.Type == "" {
+		schema.Type = "object"
+	}
+	return schema
+}
+
+// mapToOutputSchema converts a generic map[string]any (from JSONB) back to a
+// *mcp.InputSchema used as a tool's outputSchema (MCP 2025-06-18). Unlike
+// mapToInputSchema it preserves an absent top-level "type" (a valid JSON Schema
+// may omit it), so it never forces Type:"object". Returns nil when the source
+// map is empty or nil (i.e. no outputSchema was declared/persisted).
+func mapToOutputSchema(m map[string]any) *mcp.InputSchema {
+	if len(m) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return nil
+	}
+	var schema mcp.InputSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil
+	}
+	return &schema
+}
+
+// wrapHiddenBuiltin creates an ADK tool for a hidden built-in tool (one that is always
+// available but never listed in tools/list or any discovery endpoint).
+// The schema is passed as a plain map and converted internally.
+func (tp *ToolPool) wrapHiddenBuiltin(projectID, name, description string, schemaMap map[string]any) tool.Tool {
+	svc := tp.mcpService
+	pid := projectID
+	inputSchema := mapToInputSchema(schemaMap)
+	adkSchema := convertMCPSchemaToADK(inputSchema)
+	t, _ := functiontool.New(
+		functiontool.Config{
+			Name:        name,
+			Description: description,
+			InputSchema: adkSchema,
+		},
+		func(ctx agent.Context, args map[string]any) (map[string]any, error) {
+			result, err := svc.ExecuteTool(ctx, pid, name, args)
+			if err != nil {
+				return map[string]any{"error": err.Error()}, nil
+			}
+			return convertToolResult(result)
+		},
+	)
+	return t
+}
+
+// extractRelayToolDefs extracts MCP tool definitions from a relay session's tools/list
+// result map. The map is expected to have a "tools" key whose value is an array of
+// MCP tool objects, each with "name", "description", and "inputSchema" fields.
+//
+// Returned ToolDefinition names are BARE MCP tool names (e.g. "reminders_list").
+// Callers that register these in the tool pool must prefix them with the relay
+// instance ID ({instanceID}_{tool}) to match relay routing and agent whitelists.
+func extractRelayToolDefs(toolsMap map[string]any) ([]mcp.ToolDefinition, error) {
+	toolsRaw, ok := toolsMap["tools"]
+	if !ok {
+		return nil, fmt.Errorf("tools/list result missing 'tools' key")
+	}
+	toolsArr, ok := toolsRaw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("tools value is not an array")
+	}
+
+	var defs []mcp.ToolDefinition
+	for _, tRaw := range toolsArr {
+		tMap, ok := tRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := tMap["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := tMap["description"].(string)
+
+		var inputSchema mcp.InputSchema
+		if is, ok := tMap["inputSchema"]; ok {
+			data, err := json.Marshal(is)
+			if err == nil {
+				json.Unmarshal(data, &inputSchema)
+			}
+		}
+		if inputSchema.Type == "" {
+			inputSchema.Type = "object"
+		}
+
+		var outputSchema *mcp.InputSchema
+		if os, ok := tMap["outputSchema"]; ok {
+			if osMap, ok := os.(map[string]any); ok && relayOutputSchemaDeclared(osMap) {
+				data, err := json.Marshal(os)
+				if err == nil {
+					var osd mcp.InputSchema
+					if err := json.Unmarshal(data, &osd); err == nil {
+						outputSchema = &osd
+					}
+				}
+			}
+		}
+
+		defs = append(defs, mcp.ToolDefinition{
+			Name:         name,
+			Description:  desc,
+			InputSchema:  inputSchema,
+			OutputSchema: outputSchema,
+		})
+	}
+
+	return defs, nil
+}
+
+// relayOutputSchemaDeclared reports whether a relay tools/list outputSchema map
+// declares any schema content, mirroring mcpregistry.convertToolOutputSchema's
+// leniency: a valid JSON Schema may omit the top-level "type" yet still declare
+// properties/required/additionalProperties. Empty or absent maps are undeclared.
+func relayOutputSchemaDeclared(m map[string]any) bool {
+	if t, _ := m["type"].(string); t != "" {
+		return true
+	}
+	if p, ok := m["properties"]; ok && p != nil {
+		return true
+	}
+	if r, ok := m["required"].([]any); ok && len(r) > 0 {
+		return true
+	}
+	if ap, ok := m["additionalProperties"]; ok && ap != nil {
+		return true
+	}
+	return false
+}
+
+// convertRelayResponse converts a raw relay tool result map into the shape
+// expected by ADK function tools via convertToolResult.
+//
+// The relay ResponseFrame carries the raw tool result directly (not a JSON-RPC
+// envelope) — see the relay branch of mcp.Service.ExecuteTool. Real relay
+// failures surface as a Go error from CallTool (the connector sets
+// ResponseFrame.Error), so callers handle those before reaching here.
+func convertRelayResponse(response map[string]any) (map[string]any, error) {
+	resultBytes, err := json.Marshal(response)
+	if err != nil {
+		return map[string]any{"error": "invalid relay tool result"}, nil
+	}
+	return convertToolResult(&mcp.ToolResult{
+		Content: []mcp.ContentBlock{{Type: "text", Text: string(resultBytes)}},
+	})
+}

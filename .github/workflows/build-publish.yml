@@ -1,0 +1,222 @@
+name: Web UI Build & Publish
+
+on:
+  push:
+    branches: [master, main]
+    # Rebuild only when the web-ui tree changes: `paths:` is evaluated for
+    # branch pushes only, so tag pushes still always run (the "changed since
+    # last tag" step below skips no-op tag builds).
+    paths:
+      - 'apps/web-ui/**'
+      - '.github/workflows/build-publish.yml'
+    tags: ['v*']
+  workflow_dispatch:
+
+# Serialize image builds per ref; never cancel an in-flight release build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/memory-web-ui
+
+jobs:
+  build:
+    name: Build & Push Image
+    runs-on: [self-hosted, linux, x64, memory]
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version info
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          fi
+          COMMIT=$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # BuildKit solver parallelism bound: must match the value the CI hosts
+          # are configured with. Set inline because the self-hosted pool spans
+          # hosts whose configuration this workflow cannot read, so the number is
+          # kept here as well.
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # On tag pushes, detect whether the web-ui image's *inputs* changed since
+      # the last release tag. The image is built from apps/web-ui/Dockerfile with
+      # apps/web-ui as its context, so the diff is the Dockerfile's COPY/ADD
+      # sources resolved against that context — the same input set the alias
+      # assertion below uses (#2169).
+      #
+      # `--match 'v[0-9]*'` is load-bearing: the repo also carries rolling
+      # lightweight tags (`cli-dev`, `mac-dev`, `dev`, `memory-appcast`) that are
+      # force-moved onto main. A bare `git describe --tags --abbrev=0 HEAD^`
+      # resolves the NEAREST tag, so a rolling tag parked on the commit right
+      # before the release bump wins over the previous `vX.Y.Z` tag. The diff
+      # then covers only the bump commit (VERSION, main.go, swagger, pbxproj) and
+      # the web-ui tree looks unchanged — v0.88.0 shipped a `web-ui:0.88.0` that
+      # was a re-alias of the 0.87.4 image. Match release tags only.
+      - name: Check if changed since last tag
+        id: changed
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHANGED_DOCKERFILE: apps/web-ui/Dockerfile
+          CHANGED_CONTEXT: apps/web-ui
+        run: |
+          PREV=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || true)
+          echo "prev=${PREV}" >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ] && [ "$(.github/scripts/release-versions.sh changed "$PREV" HEAD)" = "false" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Independent second opinion on the alias decision (#2111). The step above
+      # resolves PREV with `git describe`; that is one signal. A force-moved
+      # rolling tag can still win it, which is exactly how v0.88.0 aliased an
+      # eight-day-old web-ui (#2087). The script below re-resolves the previous
+      # RELEASE tag from the tag list, diffs apps/web-ui against it, and fails
+      # the release when the two signals disagree. A missing previous map (a
+      # release cut before #2111) degrades to the tree comparison.
+      - name: Download previous release version map
+        if: startsWith(github.ref, 'refs/tags/v') && steps.changed.outputs.prev != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          mkdir -p .release-prev
+          if gh release download "${PREV}" --pattern release-versions.json \
+               --dir .release-prev --repo "${GITHUB_REPOSITORY}" --clobber 2>/dev/null; then
+            echo "::notice::using ${PREV}'s recorded digest for the alias check"
+          else
+            echo "::notice::no release-versions.json on ${PREV}; degrading the alias check to the tree comparison"
+          fi
+
+      - name: Resolve alias source digest
+        id: alias-source
+        if: startsWith(github.ref, 'refs/tags/v') && steps.changed.outputs.changed == 'false' && steps.changed.outputs.prev != ''
+        env:
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          digest="$(docker buildx imagetools inspect --format '{{json .Manifest}}' \
+            "${REGISTRY}/${IMAGE_NAME}:${PREV#v}" 2>/dev/null | jq -r '.digest // empty' || true)"
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Assert alias decision (independent second signal)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          CHECK_SERVICE: web-ui
+          CHECK_PATH: apps/web-ui
+          CHECK_DOCKERFILE: apps/web-ui/Dockerfile
+          CHECK_CONTEXT: apps/web-ui
+          CHECK_CHANGED: ${{ steps.changed.outputs.changed }}
+          CHECK_PREV_TAG: ${{ steps.changed.outputs.prev }}
+          CHECK_CURRENT_TAG: ${{ github.ref_name }}
+          CHECK_PREV_MAP: .release-prev/release-versions.json
+          CHECK_PREV_DIGEST: ${{ steps.alias-source.outputs.digest }}
+        run: .github/scripts/release-versions.sh check
+
+      # Normal path: build + push (branch pushes always; tag pushes when changed).
+      - name: Extract metadata
+        id: meta
+        if: steps.changed.outputs.changed != 'false'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=dev,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{raw}}
+            type=semver,pattern={{version}}
+
+      # Cache poisoning is transient (an evicted Azure blob makes the gha
+      # cache manifest resolve to a 404 BlobNotFound, which buildx treats as
+      # fatal). Bypassing cache on retry guarantees the release tag is
+      # published instead of silently missing.
+      - name: Build and push
+        id: build
+        if: steps.changed.outputs.changed != 'false'
+        continue-on-error: true
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/web-ui
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ steps.version.outputs.commit }}
+          # 2-stage image: mode=max is what caches the builder stage, which is
+          # absent from the final image and reused by later main-branch builds.
+          cache-from: type=gha,scope=memory-web-ui
+          cache-to: type=gha,scope=memory-web-ui,mode=max
+
+      - name: Build and push (retry, cache bypassed)
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: apps/web-ui
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_SHA=${{ steps.version.outputs.commit }}
+          # Keep cache-to so a fresh cache is written for subsequent runs.
+          cache-to: type=gha,scope=memory-web-ui,mode=max
+          no-cache: true
+
+      # Unchanged tag push: re-alias the PREVIOUS RELEASE image to the new
+      # version tag (seconds instead of ~2min).
+      #
+      # Alias `${PREV#v}`, never `:latest`: `latest` is only republished on tag
+      # pushes, so when a release is cut from a tree whose web-ui did not change
+      # the `latest` tag is still the previous release's — but if a release is
+      # ever cut without publishing `latest` (or `latest` was moved by hand) the
+      # alias silently ships an older image. Failing loudly is better than
+      # publishing a mislabelled release.
+      - name: Alias unchanged image to new version
+        if: steps.changed.outputs.changed == 'false'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PREV: ${{ steps.changed.outputs.prev }}
+        run: |
+          BASE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          PREV_TAG="${PREV#v}"
+          if [ -z "$PREV_TAG" ]; then
+            echo "::error::no previous release tag resolved; refusing to alias an unknown image"
+            exit 1
+          fi
+          if ! docker buildx imagetools inspect "$BASE:${PREV_TAG}" >/dev/null 2>&1; then
+            echo "::error::$BASE:${PREV_TAG} does not exist, so there is nothing to alias; rebuild the image instead"
+            exit 1
+          fi
+          docker buildx imagetools create \
+            -t "$BASE:v${VERSION}" \
+            -t "$BASE:${VERSION}" \
+            "$BASE:${PREV_TAG}"

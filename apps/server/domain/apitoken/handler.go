@@ -1,0 +1,570 @@
+package apitoken
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// Handler handles HTTP requests for API tokens
+type Handler struct {
+	svc         *Service
+	userProfile *auth.UserProfileService
+}
+
+// NewHandler creates a new API token handler
+func NewHandler(svc *Service, userProfile *auth.UserProfileService) *Handler {
+	return &Handler{svc: svc, userProfile: userProfile}
+}
+
+// Create creates a new API token
+// @Summary      Create API token
+// @Description  Creates a new API token for a project. Returns the full token value only once at creation.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body CreateApiTokenRequest true "Token creation request"
+// @Success      201 {object} CreateApiTokenResponseDTO "Token created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens [post]
+// @Security     bearerAuth
+func (h *Handler) Create(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req CreateApiTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	// Validate request
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+	if len(req.Name) > 255 {
+		return apperror.ErrBadRequest.WithMessage("name must be at most 255 characters")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.Create(c.Request().Context(), projectID, user.ID, req.Name, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	// Sync email while we have it (browser session has email; API token auth does not)
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// deviceTokenLifetime is the default expiry minted on a device credential:
+// 90 days, the design's operator-overridable default. A device re-onboards via
+// a fresh QR rather than outliving a rotated credential indefinitely.
+const deviceTokenLifetime = 90 * 24 * time.Hour
+
+// createDeviceTokenRequest is the body for POST /api/projects/:projectId/device-tokens.
+// Only the human-facing name is accepted — the scope set is hardcoded server-side.
+type createDeviceTokenRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateDeviceToken mints a scoped per-device credential for the project. The
+// scope set is hardcoded (device:api + agents:read + data:read) — the request
+// carries no scopes, so the ceiling cannot be widened by any caller.
+// @Summary      Create device credential
+// @Description  Mints a scoped per-device credential (device:api marker + read-only scopes) for a project. Returns the full token value once.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body createDeviceTokenRequest true "Device credential request (name only)"
+// @Success      201 {object} CreateApiTokenResponseDTO "Device credential created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/device-tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateDeviceToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId is required")
+	}
+
+	var req createDeviceTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "device"
+	}
+	if len(name) > 255 {
+		return apperror.ErrBadRequest.WithMessage("name must be at most 255 characters")
+	}
+
+	expiresAt := time.Now().Add(deviceTokenLifetime)
+	result, err := h.svc.CreateDeviceToken(c.Request().Context(), projectID, user.ID, name, &expiresAt)
+	if err != nil {
+		return err
+	}
+
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// webhookTriggerTokenLifetime is the default expiry minted on a webhook trigger
+// credential: 90 days, matching the device-credential default. An operator
+// rotates via the shared project-token Regenerate surface before expiry.
+const webhookTriggerTokenLifetime = 90 * 24 * time.Hour
+
+// createWebhookTriggerTokenRequest is the body for
+// POST /api/projects/:projectId/webhook-trigger-tokens. Only the integration
+// name is accepted — the scope set is hardcoded server-side.
+type createWebhookTriggerTokenRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateWebhookTriggerToken mints a scoped per-integration webhook trigger
+// credential for the project. The scope set is hardcoded (webhook:trigger +
+// agents:read + agents:write + data:read) — the request carries no scopes, so
+// the ceiling cannot be widened by any caller.
+// @Summary      Create webhook trigger credential
+// @Description  Mints a scoped webhook trigger credential (webhook:trigger marker + ceiling) for a project. Returns the full token value once.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        request body createWebhookTriggerTokenRequest true "Webhook trigger credential request (name only)"
+// @Success      201 {object} CreateApiTokenResponseDTO "Webhook trigger credential created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/webhook-trigger-tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateWebhookTriggerToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	var req createWebhookTriggerTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.NewBadRequest("invalid request body")
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "webhook-trigger"
+	}
+	if len(name) > 255 {
+		return apperror.NewBadRequest("name must be at most 255 characters")
+	}
+
+	expiresAt := time.Now().Add(webhookTriggerTokenLifetime)
+	result, err := h.svc.CreateWebhookTriggerToken(c.Request().Context(), projectID, name, &expiresAt)
+	if err != nil {
+		return err
+	}
+
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// List returns all API tokens for a project
+// @Summary      List API tokens
+// @Description  Returns all API tokens for a project (active and revoked). Token values are not returned.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Success      200 {object} ApiTokenListResponseDTO "List of tokens"
+// @Failure      400 {object} apperror.Error "Invalid project ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens [get]
+// @Security     bearerAuth
+func (h *Handler) List(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	if projectID == "" {
+		return apperror.NewBadRequest("projectId is required")
+	}
+
+	// Scope the enumeration to what the caller is authorized to see. A
+	// project-bound emt_* token always enumerates its own bound project, never a
+	// caller-supplied :projectId (RequireProjectTokenScope has already rejected
+	// any mismatch, but deriving from the binding keeps the enumeration trusting
+	// only the authorized context). Session and account-token callers use the
+	// :projectId that RequireProjectMember has already authorized against
+	// membership, so a foreign project cannot be enumerated at all.
+	if user.APITokenProjectID != "" {
+		projectID = user.APITokenProjectID
+	}
+
+	result, err := h.svc.ListByProject(c.Request().Context(), projectID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// Get returns a single API token by ID
+// @Summary      Get API token by ID
+// @Description  Returns a single API token by ID, including the full token value if encryption is configured.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} GetApiTokenResponseDTO "Token details (includes full token value if available)"
+// @Failure      400 {object} apperror.Error "Invalid project ID or token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId} [get]
+// @Security     bearerAuth
+func (h *Handler) Get(c echo.Context) error {
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	result, err := h.svc.GetByID(c.Request().Context(), tokenID, projectID)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// Revoke revokes an API token
+// @Summary      Revoke API token
+// @Description  Revokes an API token, making it permanently unusable
+// @Tags         api-tokens
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} map[string]string "Revocation status"
+// @Failure      400 {object} apperror.Error "Invalid project ID or token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId} [delete]
+// @Security     bearerAuth
+func (h *Handler) Revoke(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	if err := h.svc.Revoke(c.Request().Context(), tokenID, projectID, user.ID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+// CreateAccountToken creates a new account-level API token
+// @Summary      Create account API token
+// @Description  Creates a new API token bound to the authenticated user (not to a specific project). The token can be used across all projects the user has access to.
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        request body CreateAccountTokenRequest true "Token creation request"
+// @Success      201 {object} CreateApiTokenResponseDTO "Token created (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens [post]
+// @Security     bearerAuth
+func (h *Handler) CreateAccountToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	var req CreateAccountTokenRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+
+	if req.Name == "" {
+		return apperror.ErrBadRequest.WithMessage("name is required")
+	}
+	if len(req.Name) > 255 {
+		return apperror.ErrBadRequest.WithMessage("name must be at most 255 characters")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.CreateAccountToken(c.Request().Context(), user.ID, req.Name, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	// Sync email while we have it (browser session has email; API token auth does not)
+	if user.Email != "" && h.userProfile != nil {
+		_ = h.userProfile.SyncEmail(c.Request().Context(), user.ID, user.Email)
+	}
+
+	return c.JSON(http.StatusCreated, result)
+}
+
+// ListAccountTokens returns all account-level tokens for the authenticated user
+// @Summary      List account API tokens
+// @Description  Returns all account-level API tokens (not bound to any project) for the authenticated user.
+// @Tags         api-tokens
+// @Produce      json
+// @Success      200 {object} ApiTokenListResponseDTO "List of tokens"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens [get]
+// @Security     bearerAuth
+func (h *Handler) ListAccountTokens(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	result, err := h.svc.ListAccountTokens(c.Request().Context(), user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// GetAccountToken returns an account-level API token by ID
+// @Summary      Get account API token by ID
+// @Description  Returns an account-level API token owned by the authenticated user, including the full token value if encryption is configured.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} GetApiTokenResponseDTO "Token details"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [get]
+// @Security     bearerAuth
+func (h *Handler) GetAccountToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	result, err := h.svc.GetAccountToken(c.Request().Context(), tokenID, user.ID)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return apperror.ErrNotFound.WithMessage("Token not found")
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RevokeAccountToken revokes an account-level API token
+// @Summary      Revoke account API token
+// @Description  Revokes an account-level API token owned by the authenticated user
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} map[string]string "Revocation status"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [delete]
+// @Security     bearerAuth
+func (h *Handler) RevokeAccountToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	if err := h.svc.RevokeAccountToken(c.Request().Context(), tokenID, user.ID); err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+// UpdateScopes updates the scopes of an existing project API token
+// @Summary      Update API token scopes
+// @Description  Updates the scopes of a non-revoked project API token
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Param        request body UpdateApiTokenScopesRequest true "New scopes"
+// @Success      200 {object} ApiTokenDTO "Updated token"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      403 {object} apperror.Error "Forbidden"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateScopes(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	var req UpdateApiTokenScopesRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.UpdateScopes(c.Request().Context(), tokenID, projectID, user.ID, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RegenerateToken atomically revokes a project API token and issues a new one with the same name and scopes.
+// @Summary      Regenerate API token
+// @Description  Atomically revokes an existing project API token and creates a replacement with the same name and scopes. Returns the new plaintext token value once.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        projectId path string true "Project ID (UUID)"
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} CreateApiTokenResponseDTO "New token (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid project ID or token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      409 {object} apperror.Error "Token already revoked"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/projects/{projectId}/tokens/{tokenId}/regenerate [post]
+// @Security     bearerAuth
+func (h *Handler) RegenerateToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	projectID := c.Param("projectId")
+	tokenID := c.Param("tokenId")
+
+	if projectID == "" || tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("projectId and tokenId are required")
+	}
+
+	result, err := h.svc.Regenerate(c.Request().Context(), tokenID, projectID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// RegenerateAccountToken atomically revokes an account-level API token and issues a new one.
+// @Summary      Regenerate account API token
+// @Description  Atomically revokes an existing account-level API token and creates a replacement with the same name and scopes. Returns the new plaintext token value once.
+// @Tags         api-tokens
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Success      200 {object} CreateApiTokenResponseDTO "New token (includes full token value)"
+// @Failure      400 {object} apperror.Error "Invalid token ID"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      409 {object} apperror.Error "Token already revoked"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId}/regenerate [post]
+// @Security     bearerAuth
+func (h *Handler) RegenerateAccountToken(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	result, err := h.svc.RegenerateAccountToken(c.Request().Context(), tokenID, user.ID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+// UpdateAccountTokenScopes updates the scopes of an existing account-level API token
+// @Summary      Update account API token scopes
+// @Description  Updates the scopes of a non-revoked account-level API token owned by the authenticated user
+// @Tags         api-tokens
+// @Accept       json
+// @Produce      json
+// @Param        tokenId path string true "Token ID (UUID)"
+// @Param        request body UpdateApiTokenScopesRequest true "New scopes"
+// @Success      200 {object} ApiTokenDTO "Updated token"
+// @Failure      400 {object} apperror.Error "Invalid request body"
+// @Failure      401 {object} apperror.Error "Unauthorized"
+// @Failure      404 {object} apperror.Error "Token not found"
+// @Failure      500 {object} apperror.Error "Internal server error"
+// @Router       /api/tokens/{tokenId} [patch]
+// @Security     bearerAuth
+func (h *Handler) UpdateAccountTokenScopes(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	tokenID := c.Param("tokenId")
+	if tokenID == "" {
+		return apperror.ErrBadRequest.WithMessage("tokenId is required")
+	}
+
+	var req UpdateApiTokenScopesRequest
+	if err := c.Bind(&req); err != nil {
+		return apperror.ErrBadRequest.WithMessage("invalid request body")
+	}
+	if len(req.Scopes) == 0 {
+		return apperror.ErrBadRequest.WithMessage("at least one scope is required")
+	}
+
+	result, err := h.svc.UpdateAccountTokenScopes(c.Request().Context(), tokenID, user.ID, req.Scopes)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, result)
+}

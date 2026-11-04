@@ -1,0 +1,7 @@
+project:
+  description: >
+    Webpage feedback triage blueprint. Installs an Issue object type for
+    reports captured by emergent.feedback, an IssueGroup type for recurring
+    problems, and an issue-triager agent that classifies each new report and
+    groups duplicates. Apply with
+    `memory blueprints install blueprints/webpage-feedback`.

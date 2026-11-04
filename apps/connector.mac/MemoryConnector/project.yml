@@ -1,0 +1,157 @@
+name: MemoryConnector
+options:
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    # Enhanced Security: compiler-driven hardened-runtime protections. The
+    # runtime-driven pieces are the hardened-process entitlements in
+    # MemoryConnector.entitlements. Cascades security compiler warnings,
+    # typed-allocator support, and C++ stdlib hardening automatically.
+    ENABLE_ENHANCED_SECURITY: "YES"
+    # Zero-initialize stack variables so uninitialized stack values are unused.
+    CLANG_ENABLE_STACK_ZERO_INIT: "YES"
+    # Manual signing (see MemoryConnector.xcconfig). A stable Apple Development
+    # identity is the default; an ad-hoc signature was measured to re-run the UI
+    # suite after the one-time Automation (TCC) approval.
+    ENABLE_HARDENED_RUNTIME: YES
+    GENERATE_INFOPLIST_FILE: NO
+    # Xcode 16+ Debug "debug dylib" splits the app into a thin launcher plus a
+    # Memory.debug.dylib holding the real code. apps/connector.mac/Scripts/mac-build.sh re-signs the
+    # .app with the stable self-signed identity but leaves that nested dylib
+    # ad-hoc; hardened-runtime library validation then refuses to load it at
+    # launch ("mapping process and mapped file (non-platform) have different
+    # Team IDs"), aborting with SIGABRT / DYLD "Library missing". Disable the
+    # debug dylib so Debug builds are a single normally-signed executable.
+    ENABLE_DEBUG_DYLIB: "NO"
+
+# Sparkle 2 powers in-app updates: a signed appcast feed plus EdDSA-signed
+# archives. The package product is also named `Sparkle`, so the target
+# dependency below resolves without an explicit `product` key.
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
+
+targets:
+  MemoryConnector:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Sources
+      # The asset catalog MUST be a source entry (not `resources:`) so XcodeGen
+      # routes it through the asset-catalog compiler into Assets.car; a
+      # `resources:` entry would merely copy the folder and the app icon would
+      # never be compiled in.
+      - path: Resources/Assets.xcassets
+      # String Catalog: a source entry so XcodeGen routes it through the strings
+      # compiler into the built bundle (Xcode extracts keys from the code).
+      - path: Resources/Localizable.xcstrings
+    settings:
+      base:
+        # ENABLE_ENHANCED_SECURITY cascades arm64e (pointer authentication)
+        # into the target's architectures, but the linked Sparkle 2.x
+        # framework ships only x86_64/arm64 slices. Pointer authentication is
+        # therefore disabled until Sparkle (and any other linked binary)
+        # provides an arm64e slice. See harden-mac-connector-app design D5.
+        ENABLE_POINTER_AUTHENTICATION: "NO"
+        # Product/process/bundle name shown by macOS: "Memory". The XcodeGen
+        # target + scheme stay "MemoryConnector", and PRODUCT_MODULE_NAME keeps
+        # the Swift module "MemoryConnector" so `@testable import
+        # MemoryConnector` (and the target identity) are unchanged.
+        PRODUCT_NAME: Memory
+        PRODUCT_MODULE_NAME: MemoryConnector
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector
+        INFOPLIST_FILE: Info.plist
+        # Hand-maintained entitlements file, wired via CODE_SIGN_ENTITLEMENTS.
+        # Do NOT add a top-level `entitlements:` block for this target: XcodeGen
+        # regenerates that file from its `properties:` (there are none), which
+        # silently empties MemoryConnector.entitlements and drops the
+        # hardened-process Enhanced Security entitlements — the release re-sign
+        # then fails its post-sign entitlements check.
+        CODE_SIGN_ENTITLEMENTS: MemoryConnector.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+      configFiles:
+        Debug: MemoryConnector.xcconfig
+        Release: MemoryConnector.xcconfig
+    dependencies:
+      - package: Sparkle
+    preBuildScripts:
+      - name: Build embedded engine binary
+        path: Scripts/build-engine.sh
+        # Always rebuild the engine: its source lives outside the Xcode
+        # project (connector/ Go module), so Xcode cannot track changes.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/memory-connector"
+      - name: Build embedded reminders helper
+        path: Scripts/build-reminders-helper.sh
+        # Always rebuild: the Swift source is compiled by the script, not a
+        # normal Xcode target, so Xcode cannot track it.
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/memory-reminders"
+
+  MemoryConnectorTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: Tests
+      # RemindersHelperCore.swift is EventKit-free by design so the pure CLI
+      # parsing/encoding helpers can be compiled into the unit-test bundle.
+      - path: RemindersHelper/RemindersHelperCore.swift
+    dependencies:
+      - target: MemoryConnector
+    settings:
+      base:
+        # Match the app target's architectures. The project base sets
+        # ENABLE_ENHANCED_SECURITY, which cascades arm64e (pointer
+        # authentication) into every target; the app opts out because the
+        # linked Sparkle 2.x framework ships no arm64e slice. Without the same
+        # opt-out here the test bundle targets arm64e while the app module it
+        # imports is arm64/x86_64 only, so `@testable import MemoryConnector`
+        # can fail with "built for incompatible target".
+        ENABLE_POINTER_AUTHENTICATION: "NO"
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector.tests
+        GENERATE_INFOPLIST_FILE: YES
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Memory.app/Contents/MacOS/Memory"
+
+  MemoryConnectorUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - path: UITests
+    dependencies:
+      - target: MemoryConnector
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.emergent.memory.connector.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: MemoryConnector
+
+schemes:
+  MemoryConnector:
+    build:
+      targets:
+        MemoryConnector: all
+        MemoryConnectorTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: MemoryConnectorTests
+          parallelizable: false
+        - name: MemoryConnectorUITests
+          parallelizable: false

@@ -1,0 +1,53 @@
+package main
+
+import (
+	"github.com/emergent-company/go-daisy/components/layout"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// AgentSharePage renders the owner-facing share-link list page (GET
+// /agents/:id/share): the agent header, the section sub-nav, and the list of
+// links (or empty state) with the "New share link" call to action. A flash
+// banner surfaces the create/revoke result, and a reveal modal carries the
+// one-time URL after a create or rotate — that URL's key exists only in this
+// one response.
+templ AgentSharePage(data shareLinksPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Share links")
+			@layout.Rail(agentSubNav(data.Agent.ID, "share", ""), nil) {
+				if data.FlashMsg != "" {
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertSuccess,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--circle-check",
+						Message: data.FlashMsg,
+						Attrs:   templ.Attributes{"data-testid": "share-links-flash"},
+					})
+				}
+				@ShareLinksListPanel(data.Panel)
+				if data.Reveal != nil {
+					@ShareLinkRevealModal(*data.Reveal)
+				}
+			}
+		}
+	}
+}
+
+// AgentShareCreatePage renders the standalone create page (GET
+// /agents/:id/share/new): the agent header, the section sub-nav, and the full
+// create form with its own back-link.
+templ AgentShareCreatePage(data shareLinkCreatePageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if data.LoadErr != nil {
+			@pageError("Agent unavailable", data.LoadErr)
+		} else {
+			@agentDashboardHeader(data.Agent, "Share links")
+			@layout.Rail(agentSubNav(data.Agent.ID, "share", ""), nil) {
+				@ShareLinkCreatePanel(data.Form)
+			}
+		}
+	}
+}

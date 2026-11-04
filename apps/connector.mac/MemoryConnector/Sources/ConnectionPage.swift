@@ -1,0 +1,183 @@
+import SwiftUI
+
+/// Connection settings page.
+///
+/// Auth-only: a "Memory Account" section signs in/out through the bundled
+/// `memory-connector` CLI. When no account is signed in, the page shows the
+/// sign-in affordance; signed in, it shows the active account. There is no
+/// manual project-token entry anymore.
+struct ConnectionPage: View {
+    @SwiftUI.Environment(AccountStore.self) private var accountStore
+    @SwiftUI.Environment(ProjectStore.self) private var projectStore
+
+    @State private var alertMessage: String?
+    @State private var confirmSignOut = false
+
+    var body: some View {
+        Form {
+            memoryAccountSection
+        }
+        .formStyle(.grouped)
+        .navigationTitle("Connection")
+        .alert("Memory", isPresented: Binding(
+            get: { alertMessage != nil },
+            set: {
+                if !$0 {
+                    alertMessage = nil
+                }
+            }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(alertMessage ?? "")
+        }
+        // Confirmed sign-out, matching the Project & Account page and the
+        // menu-bar surface so the destructive action reads the same everywhere.
+        .confirmationDialog(Text(SignOutConfirmation.title),
+                            isPresented: $confirmSignOut,
+                            titleVisibility: .visible)
+        {
+            Button(role: .destructive) {
+                signOutActive()
+            } label: {
+                Text(SignOutConfirmation.confirmButtonTitle(displayTitle: activeName))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(SignOutConfirmation.message(displayTitle: activeName))
+        }
+    }
+
+    // MARK: - Memory Account
+
+    private var memoryAccountSection: some View {
+        Section {
+            if accountStore.isEffectivelySignedIn {
+                signedInRow
+            } else {
+                signInControl
+            }
+        } header: {
+            HStack(spacing: 6) {
+                Text("Memory Account")
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.tertiary)
+                    .accessibilityLabel("Sign-in details")
+                    .help("Sign-in uses a native OAuth app with PKCE; the callback scheme com.emergent.memory.connector must be registered with the identity provider.")
+            }
+        } footer: {
+            Text("Sign in with your Memory identity to list and switch projects.")
+        }
+    }
+
+    private var signedInRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                AccountAvatar(initials: activeInitials, size: 44)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(activeName)
+                            .font(.title3.weight(.semibold))
+                            .lineLimit(1)
+                        if let environment = accountStore.activeEnvironment {
+                            EnvironmentBadge(environment: environment)
+                        }
+                    }
+                    if !activeEmail.isEmpty {
+                        Text(activeEmail)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            HStack {
+                Spacer()
+                Button("Sign out", role: .destructive) { confirmSignOut = true }
+            }
+        }
+    }
+
+    /// One prominent sign-in action for the page's location; no environment
+    /// choice is offered here.
+    private var signInControl: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Sign in with Memory to connect your account and projects.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack {
+                Button {
+                    signIn(signInEnvironment)
+                } label: {
+                    if accountStore.isSigningIn {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Signing in…")
+                        }
+                    } else {
+                        Label("Sign in with Memory", systemImage: "person.crop.circle.badge.checkmark")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(accountStore.isSigningIn)
+                Spacer()
+            }
+
+            if let message = accountStore.lastError {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    // MARK: - Active identity
+
+    private var activeAccount: Account? {
+        accountStore.activeAccount
+    }
+
+    private var activeName: String {
+        activeAccount?.displayTitle ?? ""
+    }
+
+    private var activeEmail: String {
+        activeAccount?.email ?? ""
+    }
+
+    private var activeInitials: String {
+        activeAccount?.initials ?? ""
+    }
+
+    // MARK: - Actions
+
+    /// The environment this page's sign-in action targets, from the shared
+    /// per-surface policy.
+    private var signInEnvironment: Environment {
+        Environment.signInEnvironments(for: .connectionPage).first ?? Environment.primary
+    }
+
+    private func signIn(_ environment: Environment) {
+        Task {
+            do {
+                _ = try await accountStore.signIn(environment: environment)
+                // `AppEnvironment` applies the account scope and reloads the
+                // projects/identity for a NEW active account. Re-signing in to
+                // the same account does not change the id, so reload here too.
+                let token = await (try? accountStore.currentAccessToken()) ?? ""
+                await projectStore.loadProjects(accessToken: token)
+            } catch {
+                alertMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func signOutActive() {
+        guard let id = accountStore.activeAccountID else { return }
+        Task { await accountStore.signOut(accountID: id) }
+    }
+}

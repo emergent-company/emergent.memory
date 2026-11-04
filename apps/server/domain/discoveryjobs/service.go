@@ -1,0 +1,1988 @@
+package discoveryjobs
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"google.golang.org/adk/v2/model"
+	"google.golang.org/genai"
+
+	"github.com/emergent-company/emergent.memory/domain/documents"
+	"github.com/emergent-company/emergent.memory/domain/extraction"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/apperror"
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+	"github.com/emergent-company/emergent.memory/pkg/llmjson"
+	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/tracing"
+)
+
+// discoveryMaxOutputTokens bounds one discovery model call. Schema discovery
+// asks for rich per-type schemas plus examples, so 4k was regularly truncating
+// mid-object and surfacing as "failed to parse LLM response: unexpected EOF".
+// 8k matches the extraction default; a batch that still overflows is split.
+const discoveryMaxOutputTokens int32 = 8192
+
+// ErrOutputTruncated reports that the model stopped at the output-token limit.
+// Callers can retry with a smaller document batch instead of treating it as a
+// malformed response.
+var ErrOutputTruncated = errors.New("model output truncated at the output token limit")
+
+// modelFactory is the interface for creating LLM models.
+// Implemented by *adk.ModelFactory in production; mocked in tests.
+type modelFactory interface {
+	CreateModel(ctx context.Context) (model.LLM, error)
+}
+
+// Service handles business logic for discovery jobs
+type Service struct {
+	repo         *Repository
+	docSvc       *documents.Service
+	cfg          *config.Config
+	modelFactory modelFactory
+	log          *slog.Logger
+}
+
+// completeWithLLM sends a text prompt and returns the text response.
+// Uses the configured modelFactory to create a model per call.
+func (s *Service) completeWithLLM(ctx context.Context, prompt string) (string, error) {
+	ctx, span := tracing.Start(ctx, "discovery.llm_complete",
+		attribute.Int("memory.discovery.prompt_length", len(prompt)),
+	)
+	defer span.End()
+	_ = ctx // ctx carries the span for any downstream instrumentation
+
+	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
+		return "", fmt.Errorf("LLM provider not configured")
+	}
+	llmModel, err := s.modelFactory.CreateModel(ctx)
+	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
+		return "", fmt.Errorf("create model: %w", err)
+	}
+	req := &model.LLMRequest{
+		Contents: []*genai.Content{
+			genai.NewContentFromText(prompt, "user"),
+		},
+		Config: &genai.GenerateContentConfig{
+			Temperature:      genai.Ptr[float32](0.0),
+			MaxOutputTokens:  discoveryMaxOutputTokens,
+			ResponseMIMEType: "application/json",
+		},
+	}
+	var sb strings.Builder
+	truncated := false
+	for resp, err := range llmModel.GenerateContent(ctx, req, false) {
+		if err != nil {
+			span.SetAttributes(attribute.String("error", err.Error()))
+			return "", fmt.Errorf("LLM call failed: %w", err)
+		}
+		if resp != nil {
+			if resp.FinishReason == genai.FinishReasonMaxTokens {
+				truncated = true
+			}
+			if resp.Content != nil {
+				for _, part := range resp.Content.Parts {
+					if part.Text != "" {
+						sb.WriteString(part.Text)
+					}
+				}
+			}
+		}
+	}
+	result := sb.String()
+	span.SetAttributes(attribute.Int("memory.discovery.response_length", len(result)))
+	span.SetAttributes(attribute.Bool("memory.discovery.output_truncated", truncated))
+	preview := result
+	if len(preview) > 2000 {
+		preview = preview[:2000]
+	}
+	span.SetAttributes(attribute.String("memory.discovery.response_preview", preview))
+	// Also store the tail for debugging truncated responses
+	if len(result) > 2000 {
+		tail := result[len(result)-500:]
+		span.SetAttributes(attribute.String("memory.discovery.response_tail", tail))
+	}
+	s.log.Debug("LLM raw response", slog.String("preview", preview), slog.Int("length", len(result)), slog.Bool("truncated", truncated))
+	if truncated {
+		// Return the partial response with a typed error. The caller first tries
+		// to parse it (a repaired partial is still useful) and otherwise splits
+		// the batch before giving up.
+		return result, fmt.Errorf("%w (max_output_tokens=%d)", ErrOutputTruncated, discoveryMaxOutputTokens)
+	}
+	return result, nil
+}
+
+// StartDiscovery starts a new discovery job
+func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *StartDiscoveryRequest) (*StartDiscoveryResponse, error) {
+	// Set defaults
+	if req.BatchSize <= 0 {
+		req.BatchSize = 5
+	}
+	if req.MinConfidence <= 0 {
+		req.MinConfidence = 0.5
+	}
+	if req.MaxIterations <= 0 {
+		req.MaxIterations = 3
+	}
+
+	// Resolve org from project.
+	orgID, err := s.repo.GetProjectOrgID(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("StartDiscovery: resolve org: %w", err)
+	}
+
+	// Get KB purpose from project
+	projectInfo, err := s.repo.GetProjectInfo(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert document IDs to strings for config
+	docIDStrings := make([]string, len(req.DocumentIDs))
+	for i, id := range req.DocumentIDs {
+		docIDStrings[i] = id.String()
+	}
+
+	// Calculate total steps for progress tracking
+	numBatches := (len(req.DocumentIDs) + req.BatchSize - 1) / req.BatchSize
+	totalSteps := numBatches + 2 // batches + refinement + pack creation
+
+	// Create job
+	job := &DiscoveryJob{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		ProjectID:      projectID,
+		Status:         StatusPending,
+		Progress: JSONMap{
+			"current_step": 0,
+			"total_steps":  totalSteps,
+			"message":      "Discovery job created, waiting to start...",
+		},
+		Config: JSONMap{
+			"document_ids":          docIDStrings,
+			"batch_size":            req.BatchSize,
+			"min_confidence":        req.MinConfidence,
+			"include_relationships": req.IncludeRelationships,
+			"max_iterations":        req.MaxIterations,
+		},
+		KBPurpose:               projectInfo,
+		DiscoveredTypes:         JSONArray{},
+		DiscoveredRelationships: JSONArray{},
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
+	}
+
+	if err := s.repo.Create(ctx, job); err != nil {
+		return nil, err
+	}
+
+	// Start processing asynchronously
+	go s.processDiscoveryJob(auth.ContextWithProjectID(context.Background(), projectID.String()), job.ID, projectID)
+
+	return &StartDiscoveryResponse{JobID: job.ID}, nil
+}
+
+// GetJobStatus retrieves the status of a discovery job
+func (s *Service) GetJobStatus(ctx context.Context, jobID uuid.UUID) (*JobStatusResponse, error) {
+	job, err := s.requireJobAccess(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &JobStatusResponse{
+		ID:                      job.ID,
+		Status:                  job.Status,
+		Progress:                job.Progress,
+		CreatedAt:               job.CreatedAt,
+		StartedAt:               job.StartedAt,
+		CompletedAt:             job.CompletedAt,
+		ErrorMessage:            job.ErrorMessage,
+		DiscoveredTypes:         job.DiscoveredTypes,
+		DiscoveredRelationships: job.DiscoveredRelationships,
+		SchemaID:                job.SchemaID,
+	}, nil
+}
+
+// ListJobsForProject retrieves discovery jobs for a project
+func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) ([]*JobListItem, error) {
+	jobs, err := s.repo.ListByProject(ctx, projectID, 20)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]*JobListItem, len(jobs))
+	for i, job := range jobs {
+		result[i] = &JobListItem{
+			ID:                      job.ID,
+			Status:                  job.Status,
+			Progress:                job.Progress,
+			CreatedAt:               job.CreatedAt,
+			CompletedAt:             job.CompletedAt,
+			DiscoveredTypes:         job.DiscoveredTypes,
+			DiscoveredRelationships: job.DiscoveredRelationships,
+			SchemaID:                job.SchemaID,
+		}
+	}
+	return result, nil
+}
+
+// CancelJob cancels a discovery job
+func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID) error {
+	if _, err := s.requireJobAccess(ctx, jobID); err != nil {
+		return err
+	}
+	return s.repo.CancelJob(ctx, jobID)
+}
+
+// requireJobAccess fetches the job and asserts the authenticated caller is a
+// member of the org owning the job's project. The job's project is resolved
+// server-side (kb.discovery_jobs), never from a client-supplied value, so a
+// caller addressing another project's job id can never self-satisfy the check
+// (issue #913). Returns 404 when the job does not exist and 403 when the
+// caller is not a member.
+func (s *Service) requireJobAccess(ctx context.Context, jobID uuid.UUID) (*DiscoveryJob, error) {
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := auth.RequireProjectMembership(ctx, s.repo.db, job.ProjectID.String()); err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
+// FinalizeDiscovery finalizes discovery and creates/extends a memory schema
+func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.UUID, req *FinalizeDiscoveryRequest) (*FinalizeDiscoveryResponse, error) {
+	s.log.Info("finalizing discovery",
+		slog.String("job_id", jobID.String()),
+		slog.String("mode", req.Mode),
+		slog.Int("types_count", len(req.IncludedTypes)),
+		slog.Int("relationships_count", len(req.IncludedRelationships)))
+
+	// Validate includedTypes against discovered candidates
+	job, err := s.requireJobAccess(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("finalize: fetch job: %w", err)
+	}
+	if len(job.DiscoveredTypes) > 0 {
+		candidateNames := make(map[string]bool)
+		for _, raw := range job.DiscoveredTypes {
+			if m, ok := raw.(map[string]any); ok {
+				if name, ok := m["type_name"].(string); ok {
+					candidateNames[name] = true
+				}
+			}
+		}
+		var unknown []string
+		for _, t := range req.IncludedTypes {
+			if !candidateNames[t.TypeName] {
+				unknown = append(unknown, t.TypeName)
+			}
+		}
+		if len(unknown) > 0 {
+			s.log.Warn("finalize: included types not in discovered candidates",
+				slog.Any("unknown_types", unknown),
+				slog.String("job_id", jobID.String()))
+		}
+	}
+
+	// Build memory schema schemas
+	objectTypeSchemas := make(JSONMap)
+	uiConfigs := make(JSONMap)
+
+	for _, t := range req.IncludedTypes {
+		// Skip types that should be graph edges, not entity objects
+		// (e.g. "Relationship", "CharacterRelationship", "Friendship").
+		if extraction.IsRelationshipObjectType(t.TypeName) {
+			s.log.Debug("filtering relationship-like type from object schemas",
+				slog.String("type_name", t.TypeName))
+			continue
+		}
+		objectTypeSchemas[t.TypeName] = map[string]any{
+			"type":       "object",
+			"required":   t.RequiredProperties,
+			"properties": t.Properties,
+		}
+		uiConfigs[t.TypeName] = map[string]any{
+			"icon":        s.suggestIconForType(t.TypeName),
+			"color":       s.generateColorForType(t.TypeName),
+			"displayName": t.TypeName,
+			"description": t.Description,
+		}
+	}
+
+	relationshipTypeSchemas := make(JSONMap)
+	for _, rel := range req.IncludedRelationships {
+		relationshipTypeSchemas[rel.RelationType] = map[string]any{
+			"sourceTypes": []string{rel.SourceType},
+			"targetTypes": []string{rel.TargetType},
+			"cardinality": rel.Cardinality,
+			"description": rel.Description,
+		}
+	}
+
+	var schemaID uuid.UUID
+	var message string
+
+	if req.Mode == "create" {
+		// Create new memory schema
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Discovery pack with %d types and %d relationships", len(req.IncludedTypes), len(req.IncludedRelationships)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       objectTypeSchemas,
+			RelationshipTypeSchemas: relationshipTypeSchemas,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created new memory schema \"%s\" with %d types", req.PackName, len(req.IncludedTypes))
+		s.log.Info("created new memory schema", slog.String("pack_id", packID.String()))
+
+		// Auto-install schema into project so it appears in installed list.
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("failed to install schema to project", slog.String("schema_id", packID.String()), slog.Any("err", installErr))
+		}
+
+		// Generate extraction prompts (keywords, domain description) and write back to schema.
+		discoveredTypes := make([]DiscoveredType, len(req.IncludedTypes))
+		for i, t := range req.IncludedTypes {
+			discoveredTypes[i] = DiscoveredType{
+				TypeName:           t.TypeName,
+				Description:        t.Description,
+				Properties:         t.Properties,
+				RequiredProperties: t.RequiredProperties,
+				ExampleInstances:   t.ExampleInstances,
+				Frequency:          t.Frequency,
+			}
+		}
+		discoveredRels := make([]DiscoveredRelationship, len(req.IncludedRelationships))
+		for i, r := range req.IncludedRelationships {
+			discoveredRels[i] = DiscoveredRelationship{
+				SourceType:   r.SourceType,
+				TargetType:   r.TargetType,
+				RelationType: r.RelationType,
+				Description:  r.Description,
+				Cardinality:  r.Cardinality,
+			}
+		}
+		// Generate extraction prompts — use a detached context with a generous timeout
+		// so a slow LLM call does not cause the finalize-discovery request context to
+		// expire, making the tool call appear to fail (which causes the agent to retry
+		// and hit a unique-name constraint on the second attempt).
+		// context.WithoutCancel preserves the parent trace context so OTel spans
+		// from generateExtractionPrompts appear as children of the MCP tool span.
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		// Use real project description as kbPurpose so extraction hints are grounded
+		// in the KB's actual domain. Falls back to the generic string when project_info
+		// is NULL (see GetProjectInfo). Previously this passed req.PackName which is
+		// just a short schema name like "Friends Transcript" — not useful context.
+		kbPurpose, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, discoveredRels, kbPurpose); promptErr != nil {
+			s.log.Warn("failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+	} else if req.Mode == "extend" {
+		// Extend existing pack with new types (agent-supplied, may still have null properties).
+		if req.ExistingPackID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage("existingPackId is required for extend mode")
+		}
+
+		existingPack, err := s.repo.GetMemorySchema(ctx, *req.ExistingPackID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Merge schemas — new type wins over existing when keys collide.
+		mergedObjectSchemas := existingPack.ObjectTypeSchemas
+		for k, v := range objectTypeSchemas {
+			mergedObjectSchemas[k] = v
+		}
+		mergedRelSchemas := existingPack.RelationshipTypeSchemas
+		for k, v := range relationshipTypeSchemas {
+			mergedRelSchemas[k] = v
+		}
+		mergedUIConfigs := existingPack.UIConfigs
+		for k, v := range uiConfigs {
+			mergedUIConfigs[k] = v
+		}
+
+		if err := s.repo.UpdateMemorySchema(ctx, *req.ExistingPackID, mergedObjectSchemas, mergedRelSchemas, mergedUIConfigs); err != nil {
+			return nil, err
+		}
+
+		schemaID = *req.ExistingPackID
+		message = fmt.Sprintf("Extended memory schema with %d additional types", len(req.IncludedTypes))
+		s.log.Info("extended memory schema", slog.String("pack_id", schemaID.String()))
+
+		// Re-run extraction prompts so TypeHints reflect the updated type set.
+		discoveredTypes := make([]DiscoveredType, len(req.IncludedTypes))
+		for i, t := range req.IncludedTypes {
+			discoveredTypes[i] = DiscoveredType{TypeName: t.TypeName, Description: t.Description}
+		}
+		// Add existing types not already covered.
+		coveredNames := make(map[string]bool, len(req.IncludedTypes))
+		for _, t := range req.IncludedTypes {
+			coveredNames[t.TypeName] = true
+		}
+		for typeName := range mergedObjectSchemas {
+			if !coveredNames[typeName] {
+				discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName})
+			}
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		kbPurpose, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("failed to generate extraction prompts for extend", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, schemaID, raw); updateErr != nil {
+				s.log.Warn("failed to update extraction prompts for extend", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "enrich" {
+		// Enrich existing schema: fill null property maps using the document as source.
+		// The agent passes empty included_types — server loads existing types and enriches them.
+		if req.ExistingPackID == nil {
+			return nil, apperror.ErrBadRequest.WithMessage("existingPackId is required for enrich mode")
+		}
+
+		existingPack, err := s.repo.GetMemorySchema(ctx, *req.ExistingPackID)
+		if err != nil {
+			return nil, err
+		}
+
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			s.log.Warn("enrich: could not create LLM model, skipping property enrichment", slog.Any("err", llmErr))
+		} else {
+			enriched, enrichErr := extraction.EnrichSchemaProperties(ctx, docText, kbPurpose, existingPack.ObjectTypeSchemas, llm)
+			if enrichErr != nil {
+				s.log.Warn("enrich: property enrichment failed, using existing schema", slog.Any("err", enrichErr))
+			} else {
+				existingPack.ObjectTypeSchemas = enriched
+			}
+		}
+
+		// Also merge any additional types the agent may have supplied.
+		for k, v := range objectTypeSchemas {
+			existingPack.ObjectTypeSchemas[k] = v
+		}
+
+		// Also generate relationship types if the existing schema has none.
+		if len(existingPack.RelationshipTypeSchemas) == 0 && llmErr == nil {
+			typeNames := make([]string, 0, len(existingPack.ObjectTypeSchemas))
+			for k := range existingPack.ObjectTypeSchemas {
+				typeNames = append(typeNames, k)
+			}
+			if relSchemas, relErr := extraction.GenerateRelationshipsFromSchema(ctx, docText, kbPurpose, typeNames, llm); relErr != nil {
+				s.log.Warn("enrich: relationship generation failed, continuing without rels", slog.Any("err", relErr))
+			} else {
+				existingPack.RelationshipTypeSchemas = relSchemas
+			}
+		}
+
+		if err := s.repo.UpdateMemorySchema(ctx, *req.ExistingPackID, existingPack.ObjectTypeSchemas,
+			existingPack.RelationshipTypeSchemas, existingPack.UIConfigs); err != nil {
+			return nil, err
+		}
+		schemaID = *req.ExistingPackID
+		message = fmt.Sprintf("Enriched memory schema with property descriptions for %d types", len(existingPack.ObjectTypeSchemas))
+		s.log.Info("enriched memory schema", slog.String("pack_id", schemaID.String()))
+
+		// Re-run extraction prompts with full type context.
+		discoveredTypes := make([]DiscoveredType, 0, len(existingPack.ObjectTypeSchemas))
+		for typeName, raw := range existingPack.ObjectTypeSchemas {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		kbPurposePrompt, _ := s.repo.GetProjectInfo(promptCtx, projectID)
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurposePrompt); promptErr != nil {
+			s.log.Warn("enrich: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, schemaID, raw); updateErr != nil {
+				s.log.Warn("enrich: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich" {
+		// Generate a fresh schema with full property descriptions from document content.
+		// The agent passes empty included_types — server generates types+properties via LLM.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich: could not create LLM model: %w", llmErr)
+		}
+		generated, genErr := extraction.GenerateSchemaFromDocument(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich: schema generation failed: %w", genErr)
+		}
+		// Also merge any types the agent explicitly supplied (optional).
+		for k, v := range objectTypeSchemas {
+			generated[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Enriched discovery pack with %d types", len(generated)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generated,
+			RelationshipTypeSchemas: relationshipTypeSchemas,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created enriched schema \"%s\" with %d types", req.PackName, len(generated))
+		s.log.Info("created enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich: failed to install schema", slog.Any("err", installErr))
+		}
+
+		// Generate extraction prompts from the generated types.
+		discoveredTypes := make([]DiscoveredType, 0, len(generated))
+		for typeName, raw := range generated {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich_combined" {
+		// Variant A: generate object types AND relationship types in ONE LLM call.
+		// More efficient (single round-trip); LLM has full context to coherently design
+		// both entity properties and edge types together.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich_combined: could not create LLM model: %w", llmErr)
+		}
+		generated, genErr := extraction.GenerateSchemaWithRelationships(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich_combined: schema generation failed: %w", genErr)
+		}
+		// Merge any explicitly supplied types from the agent.
+		for k, v := range objectTypeSchemas {
+			generated.ObjectTypes[k] = v
+		}
+		for k, v := range relationshipTypeSchemas {
+			generated.RelationshipTypes[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Combined-enriched schema with %d types, %d rel types", len(generated.ObjectTypes), len(generated.RelationshipTypes)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generated.ObjectTypes,
+			RelationshipTypeSchemas: generated.RelationshipTypes,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created combined-enriched schema \"%s\" with %d types, %d rel types",
+			req.PackName, len(generated.ObjectTypes), len(generated.RelationshipTypes))
+		s.log.Info("created combined-enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich_combined: failed to install schema", slog.Any("err", installErr))
+		}
+
+		discoveredTypes := make([]DiscoveredType, 0, len(generated.ObjectTypes))
+		for typeName, raw := range generated.ObjectTypes {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich_combined: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich_combined: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else if req.Mode == "create_rich_sequential" {
+		// Variant B: generate object types first, THEN relationship types in a second LLM call.
+		// Second call uses actual type names so edges reference concrete types, not hypothetical ones.
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectID)
+		docText := s.loadDocumentText(ctx, req.DocumentID)
+
+		llm, llmErr := s.modelFactory.CreateModel(auth.ContextWithProjectID(ctx, projectID.String()))
+		if llmErr != nil {
+			return nil, fmt.Errorf("create_rich_sequential: could not create LLM model: %w", llmErr)
+		}
+
+		// Call 1: object types with properties.
+		generatedObjects, genErr := extraction.GenerateSchemaFromDocument(ctx, docText, kbPurpose, llm)
+		if genErr != nil {
+			return nil, fmt.Errorf("create_rich_sequential: object schema generation failed: %w", genErr)
+		}
+		for k, v := range objectTypeSchemas {
+			generatedObjects[k] = v
+		}
+
+		// Call 2: relationship types using the actual object type names as anchors.
+		typeNames := make([]string, 0, len(generatedObjects))
+		for k := range generatedObjects {
+			typeNames = append(typeNames, k)
+		}
+		generatedRels, relErr := extraction.GenerateRelationshipsFromSchema(ctx, docText, kbPurpose, typeNames, llm)
+		if relErr != nil {
+			s.log.Warn("create_rich_sequential: relationship generation failed, continuing without rels", slog.Any("err", relErr))
+			generatedRels = make(JSONMap)
+		}
+		for k, v := range relationshipTypeSchemas {
+			generatedRels[k] = v
+		}
+
+		packID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+			Name:                    req.PackName,
+			Version:                 "1.0.0",
+			Description:             fmt.Sprintf("Sequential-enriched schema with %d types, %d rel types", len(generatedObjects), len(generatedRels)),
+			Author:                  "Auto-Discovery System",
+			ObjectTypeSchemas:       generatedObjects,
+			RelationshipTypeSchemas: generatedRels,
+			UIConfigs:               uiConfigs,
+			Source:                  "discovered",
+			DiscoveryJobID:          &jobID,
+			PendingReview:           false,
+			ProjectID:               &projectID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		schemaID = packID
+		message = fmt.Sprintf("Created sequential-enriched schema \"%s\" with %d types, %d rel types",
+			req.PackName, len(generatedObjects), len(generatedRels))
+		s.log.Info("created sequential-enriched memory schema", slog.String("pack_id", packID.String()))
+
+		if installErr := s.repo.InstallSchemaToProject(ctx, projectID, packID); installErr != nil {
+			s.log.Warn("create_rich_sequential: failed to install schema", slog.Any("err", installErr))
+		}
+
+		discoveredTypes := make([]DiscoveredType, 0, len(generatedObjects))
+		for typeName, raw := range generatedObjects {
+			desc := ""
+			if m, ok := raw.(map[string]any); ok {
+				desc, _ = m["description"].(string)
+			}
+			discoveredTypes = append(discoveredTypes, DiscoveredType{TypeName: typeName, Description: desc})
+		}
+		promptCtx, promptCancel := context.WithTimeout(
+			auth.ContextWithProjectID(context.WithoutCancel(ctx), projectID.String()),
+			3*time.Minute,
+		)
+		defer promptCancel()
+		if prompts, promptErr := s.generateExtractionPrompts(promptCtx, discoveredTypes, nil, kbPurpose); promptErr != nil {
+			s.log.Warn("create_rich_sequential: failed to generate extraction prompts", slog.Any("err", promptErr))
+		} else if prompts != nil {
+			raw, _ := json.Marshal(prompts)
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(promptCtx, packID, raw); updateErr != nil {
+				s.log.Warn("create_rich_sequential: failed to update extraction prompts", slog.Any("err", updateErr))
+			}
+		}
+
+	} else {
+		return nil, apperror.ErrBadRequest.WithMessage("mode must be one of: create, extend, enrich, create_rich, create_rich_combined, create_rich_sequential")
+	}
+
+	// Update discovery job
+	if err := s.repo.SetJobMemorySchema(ctx, jobID, schemaID); err != nil {
+		return nil, err
+	}
+
+	return &FinalizeDiscoveryResponse{
+		SchemaID: schemaID,
+		Message:  message,
+	}, nil
+}
+
+// processDiscoveryJob runs the discovery job in the background
+func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid.UUID) {
+	s.log.Info("starting discovery job", slog.String("job_id", jobID.String()), slog.String("project_id", projectID.String()))
+
+	// Update status to analyzing
+	if err := s.repo.UpdateStatus(ctx, jobID, StatusAnalyzingDocuments, nil); err != nil {
+		s.log.Error("failed to update job status", logger.Error(err))
+		return
+	}
+	if err := s.repo.MarkStarted(ctx, jobID); err != nil {
+		s.log.Error("failed to mark job started", logger.Error(err))
+		return
+	}
+
+	// Get job to access config
+	job, err := s.repo.GetByID(ctx, jobID)
+	if err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+
+	// Parse config
+	configBytes, _ := json.Marshal(job.Config)
+	var config JobConfig
+	if err := json.Unmarshal(configBytes, &config); err != nil {
+		s.handleJobError(ctx, jobID, fmt.Errorf("invalid job config: %w", err))
+		return
+	}
+
+	// Parse document IDs
+	documentIDs := make([]uuid.UUID, 0, len(config.DocumentIDs))
+	for _, idStr := range config.DocumentIDs {
+		id, err := uuid.Parse(idStr)
+		if err != nil {
+			s.handleJobError(ctx, jobID, fmt.Errorf("invalid document ID: %s", idStr))
+			return
+		}
+		documentIDs = append(documentIDs, id)
+	}
+
+	// Step 1: Batch documents
+	batches := s.batchDocuments(documentIDs, config.BatchSize)
+	s.log.Info("processing batches", slog.Int("batch_count", len(batches)))
+
+	// Step 2: Extract types from each batch
+	if err := s.repo.UpdateStatus(ctx, jobID, StatusExtractingTypes, nil); err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+
+	successfulBatches := 0
+	failedBatches := 0
+	var batchErrors []string
+
+	for i, batch := range batches {
+		batchNum := i + 1
+		s.updateProgress(ctx, jobID, batchNum, len(batches)+2, fmt.Sprintf("Analyzing batch %d/%d...", batchNum, len(batches)))
+
+		if err := s.extractTypesFromBatch(ctx, jobID, batch, batchNum, job.KBPurpose); err != nil {
+			failedBatches++
+			batchErrors = append(batchErrors, fmt.Sprintf("Batch %d: %v", batchNum, err))
+			s.log.Error("batch extraction failed", slog.Int("batch", batchNum), logger.Error(err))
+			// Continue with other batches
+		} else {
+			successfulBatches++
+		}
+	}
+
+	// If ALL batches failed, fail the entire job
+	if failedBatches > 0 && successfulBatches == 0 {
+		errorMsg := fmt.Sprintf("All %d batches failed. Errors: %s", failedBatches, strings.Join(batchErrors, "; "))
+		s.handleJobError(ctx, jobID, fmt.Errorf("%s", errorMsg))
+		return
+	}
+
+	// Step 3: Refine and merge types
+	if err := s.repo.UpdateStatus(ctx, jobID, StatusRefiningSchemas, nil); err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+	s.updateProgress(ctx, jobID, len(batches)+1, len(batches)+2, "Refining discovered types and merging duplicates...")
+
+	refinedTypes, err := s.refineAndMergeTypes(ctx, jobID, config.MinConfidence)
+	if err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+
+	// Step 4: Discover relationships (if enabled and we have types)
+	var relationships []DiscoveredRelationship
+	if config.IncludeRelationships && len(refinedTypes) > 1 {
+		relationships, err = s.discoverRelationships(ctx, jobID, refinedTypes, job.KBPurpose)
+		if err != nil {
+			s.log.Warn("relationship discovery failed, continuing without relationships", logger.Error(err))
+			relationships = []DiscoveredRelationship{}
+		}
+	}
+
+	// Step 5: Create memory schema
+	if len(refinedTypes) == 0 {
+		s.handleJobError(ctx, jobID, fmt.Errorf("no entity types were discovered in these documents; add documents with substantive entities or choose a different model"))
+		return
+	}
+
+	if err := s.repo.UpdateStatus(ctx, jobID, StatusCreatingPack, nil); err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating memory schema from discovered types...")
+
+	// Convert types and relationships to JSONArray for storage
+	typesArray := make(JSONArray, len(refinedTypes))
+	for i, t := range refinedTypes {
+		typesArray[i] = map[string]any{
+			"type_name":           t.TypeName,
+			"description":         t.Description,
+			"confidence":          t.Confidence,
+			"properties":          t.Properties,
+			"required_properties": t.RequiredProperties,
+			"example_instances":   t.ExampleInstances,
+			"frequency":           t.Frequency,
+		}
+	}
+
+	relsArray := make(JSONArray, len(relationships))
+	for i, r := range relationships {
+		relsArray[i] = map[string]any{
+			"source_type":   r.SourceType,
+			"target_type":   r.TargetType,
+			"relation_type": r.RelationType,
+			"description":   r.Description,
+			"confidence":    r.Confidence,
+			"cardinality":   r.Cardinality,
+		}
+	}
+
+	// Create auto memory schema
+	timestamp := time.Now().Format("2006-01-02-15-04-05")
+	packName := fmt.Sprintf("Discovered Types - %s", timestamp)
+
+	schemaID, err := s.repo.CreateMemorySchema(ctx, CreateMemorySchemaParams{
+		Name:                    packName,
+		Version:                 "1.0.0",
+		Description:             fmt.Sprintf("Auto-discovered types from %d entities", len(refinedTypes)),
+		Author:                  "Auto-Discovery System",
+		ObjectTypeSchemas:       s.typesToObjectSchemas(refinedTypes),
+		RelationshipTypeSchemas: s.relationshipsToSchemas(relationships),
+		UIConfigs:               s.typesToUIConfigs(refinedTypes),
+		Source:                  "discovered",
+		DiscoveryJobID:          &jobID,
+		PendingReview:           true,
+		ProjectID:               &projectID,
+	})
+	if err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+
+	// Phase 7: Generate SchemaExtractionPrompts and write back to the schema.
+	if prompts, promptErr := s.generateExtractionPrompts(ctx, refinedTypes, relationships, job.KBPurpose); promptErr != nil {
+		s.log.Warn("failed to generate extraction prompts, continuing", slog.String("error", promptErr.Error()))
+	} else if prompts != nil {
+		if raw, merr := json.Marshal(prompts); merr == nil {
+			if updateErr := s.repo.UpdateSchemaExtractionPrompts(ctx, schemaID, raw); updateErr != nil {
+				s.log.Warn("failed to save extraction prompts", slog.String("error", updateErr.Error()))
+			}
+		}
+	}
+
+	// Step 6: Complete
+	if err := s.repo.MarkCompleted(ctx, jobID, &schemaID, typesArray, relsArray); err != nil {
+		s.handleJobError(ctx, jobID, err)
+		return
+	}
+
+	s.log.Info("discovery job completed",
+		slog.String("job_id", jobID.String()),
+		slog.String("pack_id", schemaID.String()),
+		slog.Int("types_count", len(refinedTypes)),
+		slog.Int("relationships_count", len(relationships)))
+}
+
+// batchDocuments splits document IDs into batches
+func (s *Service) batchDocuments(documentIDs []uuid.UUID, batchSize int) [][]uuid.UUID {
+	var batches [][]uuid.UUID
+	for i := 0; i < len(documentIDs); i += batchSize {
+		end := i + batchSize
+		if end > len(documentIDs) {
+			end = len(documentIDs)
+		}
+		batches = append(batches, documentIDs[i:end])
+	}
+	return batches
+}
+
+// discoveryRetrySmaller reports whether a failed batch should be retried with
+// fewer documents. Only truncation benefits from splitting; other parse
+// failures would fail the same way on a smaller batch.
+func discoveryRetrySmaller(callErr error, docCount, typeCount int) bool {
+	return errors.Is(callErr, ErrOutputTruncated) && typeCount == 0 && docCount > 1
+}
+
+// discoveryBatchOutcome is the decision for one batch: store these types, retry
+// the same documents split in half, or fail.
+type discoveryBatchOutcome struct {
+	Types        []DiscoveredType
+	RetrySmaller bool
+	Err          error
+}
+
+// decideDiscoveryBatch distinguishes a complete answer that legitimately found
+// no types from a response that was cut off before it could produce any. Only
+// the latter should fail or trigger a smaller-batch retry; a complete empty
+// answer is a valid batch (the job-level no-types check reports the outcome).
+func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount int) discoveryBatchOutcome {
+	types, truncated, parseErr := s.parseTypeDiscoveryResponse(response)
+
+	if parseErr != nil {
+		if strings.TrimSpace(response) == "" && callErr == nil {
+			// The model returned nothing at all. Try a smaller batch before
+			// giving up; an empty body is not a usable answer.
+			err := fmt.Errorf("model returned an empty response")
+			if docCount > 1 {
+				return discoveryBatchOutcome{RetrySmaller: true, Err: err}
+			}
+			return discoveryBatchOutcome{Err: err}
+		}
+		if discoveryRetrySmaller(callErr, docCount, len(types)) {
+			return discoveryBatchOutcome{RetrySmaller: true, Err: parseErr}
+		}
+		if errors.Is(callErr, ErrOutputTruncated) || truncated {
+			return discoveryBatchOutcome{Err: fmt.Errorf("schema discovery output was truncated at the model output limit; reduce the document size or switch model: %w", parseErr)}
+		}
+		return discoveryBatchOutcome{Err: fmt.Errorf("failed to parse LLM response: %w", parseErr)}
+	}
+
+	if truncated && len(types) == 0 {
+		err := fmt.Errorf("schema discovery output was truncated at the model output limit and contained no types; reduce the document size or switch model: %w", ErrOutputTruncated)
+		if docCount > 1 {
+			return discoveryBatchOutcome{RetrySmaller: true, Err: err}
+		}
+		return discoveryBatchOutcome{Err: err}
+	}
+
+	return discoveryBatchOutcome{Types: types}
+}
+
+// extractTypesFromBatch extracts types from a batch of documents using LLM
+func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string) error {
+	s.log.Info("extracting types from batch",
+		slog.Int("batch", batchNum),
+		slog.Int("doc_count", len(documentIDs)))
+
+	// Get document contents
+	docs, err := s.repo.GetDocumentContents(ctx, documentIDs)
+	if err != nil {
+		return err
+	}
+
+	if len(docs) == 0 {
+		s.log.Warn("no documents found for batch", slog.Int("batch", batchNum))
+		return nil
+	}
+
+	// Build prompt
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose)
+
+	// Call LLM
+	response, callErr := s.completeWithLLM(ctx, prompt)
+	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
+		return fmt.Errorf("LLM call failed: %w", callErr)
+	}
+
+	// Decide what to do with the batch: store, split, or fail. A complete
+	// response that found no types is not a failure; a truncated one is.
+	outcome := s.decideDiscoveryBatch(response, callErr, len(documentIDs))
+	if outcome.RetrySmaller {
+		mid := len(documentIDs) / 2
+		s.log.Warn("discovery response truncated; retrying with smaller document batches",
+			slog.Int("batch", batchNum),
+			slog.Int("documents", len(documentIDs)),
+			slog.Int("half", mid))
+		if err := s.extractTypesFromBatch(ctx, jobID, documentIDs[:mid], batchNum, kbPurpose); err != nil {
+			return err
+		}
+		return s.extractTypesFromBatch(ctx, jobID, documentIDs[mid:], batchNum, kbPurpose)
+	}
+	if outcome.Err != nil {
+		return outcome.Err
+	}
+	types := outcome.Types
+	if errors.Is(callErr, ErrOutputTruncated) {
+		s.log.Warn("discovery response was truncated but recovered after JSON repair",
+			slog.Int("batch", batchNum),
+			slog.Int("type_count", len(types)))
+	}
+
+	s.log.Info("LLM discovered types",
+		slog.Int("batch", batchNum),
+		slog.Int("type_count", len(types)))
+
+	// Store candidates
+	for _, t := range types {
+		candidate := &DiscoveryTypeCandidate{
+			ID:                uuid.New(),
+			JobID:             jobID,
+			BatchNumber:       batchNum,
+			TypeName:          t.TypeName,
+			Description:       &t.Description,
+			Confidence:        t.Confidence,
+			InferredSchema:    t.Properties,
+			ExampleInstances:  toJSONArray(t.ExampleInstances),
+			Frequency:         len(t.ExampleInstances),
+			SourceDocumentIDs: documentIDs,
+			ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(docs))),
+			Status:            CandidateStatusCandidate,
+			CreatedAt:         time.Now(),
+			UpdatedAt:         time.Now(),
+		}
+		if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
+			s.log.Error("failed to store type candidate", logger.Error(err))
+			// Continue with other candidates
+		}
+	}
+
+	return nil
+}
+
+// buildTypeDiscoveryPrompt builds the LLM prompt for type discovery
+func (s *Service) buildTypeDiscoveryPrompt(docs []DocumentContent, kbPurpose string) string {
+	var combinedContent strings.Builder
+	for _, doc := range docs {
+		combinedContent.WriteString(fmt.Sprintf("=== %s ===\n%s\n\n", doc.Filename, doc.Content))
+	}
+
+	return fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
+
+%s
+
+Based on the documents provided, discover up to 20 important entity types that should be tracked in this knowledge base.
+
+Rules for type discovery:
+- Only create entity types for THINGS (nouns that have identity), not for actions, events, or relationships between things. For example, "ReportingRelationship" or "FoundingEvent" are NOT entity types — they are relationships and should be captured in the relationship discovery phase instead.
+- If a value appears as a distinct classifiable concept with multiple instances (e.g., a category like "Electronics", "Accessories", "Hardware"), treat it as a separate entity type — do NOT flatten it into a string property of another type.
+- Prefer fewer, cleaner types over many overlapping types. Merge similar types (e.g., "Employee" and "Person" → just "Person").
+
+For each type, provide:
+- type_name: A clear, singular name (e.g., "Customer", "Product", "Issue")
+- description: What this type represents
+- inferred_schema: A JSON schema describing the properties of this type. Properties that reference another entity type should use {"type": "string", "description": "reference to <TypeName>"} — do NOT embed the full object inline.
+- example_instances: 2-3 example instances from the documents
+- confidence: How confident you are about this type (0-1)
+- occurrences: Estimate how many times this type appears
+
+Documents:
+%s
+
+Return ONLY a JSON object with this structure (no markdown, no code blocks):
+{
+  "discovered_types": [
+    {
+      "type_name": "...",
+      "description": "...",
+      "inferred_schema": {...},
+      "example_instances": [...],
+      "confidence": 0.9,
+      "occurrences": 5
+    }
+  ]
+}`, kbPurpose, combinedContent.String())
+}
+
+// extractJSON strips prose and markdown fences, returning the JSON object found.
+// It preferentially finds an object containing the given key (e.g. "discovered_types").
+// Falls back to finding the last top-level '{' if the key is not found.
+func extractJSON(response, preferKey string) string {
+	response = strings.TrimSpace(response)
+	if strings.HasPrefix(response, "```json") {
+		response = strings.TrimPrefix(response, "```json")
+		if idx := strings.LastIndex(response, "```"); idx >= 0 {
+			response = response[:idx]
+		}
+	} else if strings.HasPrefix(response, "```") {
+		response = strings.TrimPrefix(response, "```")
+		if idx := strings.LastIndex(response, "```"); idx >= 0 {
+			response = response[:idx]
+		}
+	}
+	response = strings.TrimSpace(response)
+
+	// Prefer the last occurrence of preferKey — reasoning models often emit
+	// JSON-like fragments in their CoT before the real answer at the end.
+	if preferKey != "" {
+		keyPattern := `"` + preferKey + `"`
+		if idx := strings.LastIndex(response, keyPattern); idx >= 0 {
+			// Walk back to find the enclosing '{'
+			for i := idx - 1; i >= 0; i-- {
+				if response[i] == '{' {
+					candidate := strings.TrimSpace(response[i:])
+					// Trim trailing prose after last '}'
+					if end := strings.LastIndex(candidate, "}"); end >= 0 {
+						candidate = candidate[:end+1]
+					}
+					return candidate
+				}
+			}
+		}
+	}
+
+	// Fallback: find last '{' in response
+	if idx := strings.LastIndex(response, "{"); idx >= 0 {
+		candidate := strings.TrimSpace(response[idx:])
+		if end := strings.LastIndex(candidate, "}"); end >= 0 {
+			candidate = candidate[:end+1]
+		}
+		return candidate
+	}
+	return response
+}
+
+// parseTypeDiscoveryResponse parses the LLM response for type discovery. The
+// truncated flag distinguishes a complete empty answer from a response that was
+// cut off before any types were emitted.
+func (s *Service) parseTypeDiscoveryResponse(response string) ([]DiscoveredType, bool, error) {
+	response = extractJSON(response, "discovered_types")
+
+	var result struct {
+		DiscoveredTypes []struct {
+			TypeName         string         `json:"type_name"`
+			Description      string         `json:"description"`
+			InferredSchema   map[string]any `json:"inferred_schema"`
+			ExampleInstances []any          `json:"example_instances"`
+			Confidence       float32        `json:"confidence"`
+			Occurrences      int            `json:"occurrences"`
+		} `json:"discovered_types"`
+	}
+
+	_, truncated, err := llmjson.DecodeWithMeta(response, &result)
+	if err != nil {
+		return nil, truncated, err
+	}
+
+	var types []DiscoveredType
+	for _, t := range result.DiscoveredTypes {
+		if isReifiedType(t.TypeName) {
+			s.log.Warn("filtered reified type from discovery response",
+				slog.String("type_name", t.TypeName),
+			)
+			continue
+		}
+		types = append(types, DiscoveredType{
+			TypeName:           t.TypeName,
+			Description:        t.Description,
+			Confidence:         t.Confidence,
+			Properties:         normalizePropertyCrossRefs(t.InferredSchema),
+			RequiredProperties: []string{},
+			ExampleInstances:   t.ExampleInstances,
+			Frequency:          t.Occurrences,
+		})
+	}
+
+	return types, truncated, nil
+}
+
+// isReifiedType returns true for type names that are relational concepts
+// masquerading as entity types (e.g. "ReportingRelationship", "EmployeeAssociation").
+// Only suffix-matches on unambiguously relational nouns to avoid false positives.
+func isReifiedType(name string) bool {
+	return strings.HasSuffix(name, "Relationship") || strings.HasSuffix(name, "Association")
+}
+
+// normalizePropertyCrossRefs walks an inferred_schema properties map and flattens
+// any embedded-object property (a nested map lacking a scalar "type" field) into
+// a string reference descriptor. This prevents downstream extraction failures caused
+// by the LLM embedding sub-objects instead of using string ID references.
+func normalizePropertyCrossRefs(properties map[string]any) map[string]any {
+	if properties == nil {
+		return nil
+	}
+	out := make(map[string]any, len(properties))
+	for k, v := range properties {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			out[k] = v
+			continue
+		}
+		// If the map has a scalar "type" string value it's a JSON Schema leaf — keep it.
+		if typeVal, hasType := obj["type"]; hasType {
+			if _, isString := typeVal.(string); isString {
+				out[k] = v
+				continue
+			}
+		}
+		// Otherwise it's an embedded object — flatten to a string cross-reference.
+		out[k] = map[string]any{
+			"type":        "string",
+			"description": fmt.Sprintf("reference to %s", k),
+		}
+	}
+	return out
+}
+
+// refineAndMergeTypes refines and merges type candidates
+func (s *Service) refineAndMergeTypes(ctx context.Context, jobID uuid.UUID, minConfidence float32) ([]DiscoveredType, error) {
+	candidates, err := s.repo.GetCandidatesByJob(ctx, jobID, CandidateStatusCandidate)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(candidates) == 0 {
+		s.log.Warn("no type candidates found for job", slog.String("job_id", jobID.String()))
+		return nil, nil
+	}
+
+	s.log.Info("refining type candidates", slog.Int("candidate_count", len(candidates)))
+
+	// Group by similar names
+	groups := s.groupSimilarTypes(candidates)
+
+	var refinedTypes []DiscoveredType
+	for _, group := range groups {
+		merged := s.mergeTypeSchemas(group)
+		if merged.Confidence >= minConfidence {
+			refinedTypes = append(refinedTypes, merged)
+
+			// Mark originals as merged
+			for _, candidate := range group {
+				_ = s.repo.UpdateCandidateStatus(ctx, candidate.ID, CandidateStatusMerged)
+			}
+		}
+	}
+
+	// Save refined types
+	typesArray := make(JSONArray, len(refinedTypes))
+	for i, t := range refinedTypes {
+		typesArray[i] = map[string]any{
+			"type_name":           t.TypeName,
+			"description":         t.Description,
+			"confidence":          t.Confidence,
+			"properties":          t.Properties,
+			"required_properties": t.RequiredProperties,
+			"example_instances":   t.ExampleInstances,
+			"frequency":           t.Frequency,
+		}
+	}
+	if err := s.repo.SaveDiscoveredTypes(ctx, jobID, typesArray); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("refined types", slog.Int("count", len(refinedTypes)))
+	return refinedTypes, nil
+}
+
+// groupSimilarTypes groups similar type candidates
+func (s *Service) groupSimilarTypes(candidates []*DiscoveryTypeCandidate) [][]*DiscoveryTypeCandidate {
+	var groups [][]*DiscoveryTypeCandidate
+	used := make(map[uuid.UUID]bool)
+
+	for _, candidate := range candidates {
+		if used[candidate.ID] {
+			continue
+		}
+
+		group := []*DiscoveryTypeCandidate{candidate}
+		used[candidate.ID] = true
+
+		for _, other := range candidates {
+			if used[other.ID] {
+				continue
+			}
+
+			similarity := s.calculateTypeSimilarity(candidate.TypeName, other.TypeName)
+			if similarity > 0.8 {
+				group = append(group, other)
+				used[other.ID] = true
+			}
+		}
+
+		groups = append(groups, group)
+	}
+
+	return groups
+}
+
+// calculateTypeSimilarity calculates similarity between two type names
+func (s *Service) calculateTypeSimilarity(name1, name2 string) float64 {
+	n1 := strings.ToLower(strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r
+		}
+		return -1
+	}, name1))
+	n2 := strings.ToLower(strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' {
+			return r
+		}
+		return -1
+	}, name2))
+
+	if n1 == n2 {
+		return 1.0
+	}
+
+	maxLen := len(n1)
+	if len(n2) > maxLen {
+		maxLen = len(n2)
+	}
+	if maxLen == 0 {
+		return 0.0
+	}
+
+	distance := levenshteinDistance(n1, n2)
+	return 1 - float64(distance)/float64(maxLen)
+}
+
+// levenshteinDistance calculates the Levenshtein distance between two strings
+func levenshteinDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+
+	matrix := make([][]int, len(b)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(a)+1)
+		matrix[i][0] = i
+	}
+	for j := 0; j <= len(a); j++ {
+		matrix[0][j] = j
+	}
+
+	for i := 1; i <= len(b); i++ {
+		for j := 1; j <= len(a); j++ {
+			if b[i-1] == a[j-1] {
+				matrix[i][j] = matrix[i-1][j-1]
+			} else {
+				min := matrix[i-1][j-1]
+				if matrix[i][j-1] < min {
+					min = matrix[i][j-1]
+				}
+				if matrix[i-1][j] < min {
+					min = matrix[i-1][j]
+				}
+				matrix[i][j] = min + 1
+			}
+		}
+	}
+
+	return matrix[len(b)][len(a)]
+}
+
+// mergeTypeSchemas merges multiple type candidates into one
+func (s *Service) mergeTypeSchemas(candidates []*DiscoveryTypeCandidate) DiscoveredType {
+	// Find best candidate
+	best := candidates[0]
+	for _, c := range candidates[1:] {
+		if c.Confidence > best.Confidence {
+			best = c
+		}
+	}
+
+	// Merge properties
+	allProperties := make(map[string]any)
+	allExamples := make([]any, 0)
+
+	for _, c := range candidates {
+		for k, v := range c.InferredSchema {
+			allProperties[k] = v
+		}
+		allExamples = append(allExamples, c.ExampleInstances...)
+	}
+
+	// Calculate average confidence
+	var totalConfidence float32
+	var totalFrequency int
+	for _, c := range candidates {
+		totalConfidence += c.Confidence
+		totalFrequency += c.Frequency
+	}
+	avgConfidence := totalConfidence / float32(len(candidates))
+
+	// Limit examples
+	if len(allExamples) > 5 {
+		allExamples = allExamples[:5]
+	}
+
+	description := ""
+	if best.Description != nil {
+		description = *best.Description
+	}
+
+	return DiscoveredType{
+		TypeName:           best.TypeName,
+		Description:        description,
+		Confidence:         avgConfidence,
+		Properties:         allProperties,
+		RequiredProperties: []string{},
+		ExampleInstances:   allExamples,
+		Frequency:          totalFrequency,
+	}
+}
+
+// discoverRelationships discovers relationships between types using LLM
+func (s *Service) discoverRelationships(ctx context.Context, jobID uuid.UUID, types []DiscoveredType, kbPurpose string) ([]DiscoveredRelationship, error) {
+	ctx, span := tracing.Start(ctx, "discovery.discover_relationships",
+		attribute.Int("type_count", len(types)),
+		attribute.String("job_id", jobID.String()),
+	)
+	defer span.End()
+
+	s.log.Info("discovering relationships", slog.Int("type_count", len(types)))
+
+	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
+		return nil, fmt.Errorf("LLM provider not configured")
+	}
+
+	// Build types list
+	var typesList strings.Builder
+	for _, t := range types {
+		typesList.WriteString(fmt.Sprintf("- %s: %s\n", t.TypeName, t.Description))
+	}
+
+	prompt := fmt.Sprintf(`You are analyzing a knowledge base with the following purpose:
+
+%s
+
+We have discovered the following entity types:
+%s
+
+Discover important relationships between these types.
+
+For each relationship, provide:
+- from_type: The source type (must be one of the types above)
+- to_type: The target type (must be one of the types above)
+- relationship_name: A clear name for the relationship
+- description: What this relationship represents
+- cardinality: one-to-one, one-to-many, or many-to-many
+- confidence: How confident you are about this relationship (0-1)
+
+Return ONLY a JSON object with this structure (no markdown, no code blocks):
+{
+  "discovered_relationships": [
+    {
+      "from_type": "...",
+      "to_type": "...",
+      "relationship_name": "...",
+      "description": "...",
+      "cardinality": "one-to-many",
+      "confidence": 0.9
+    }
+  ]
+}
+
+Focus on the most important relationships.`, kbPurpose, typesList.String())
+
+	span.SetAttributes(attribute.Int("prompt_length", len(prompt)))
+	response, err := s.completeWithLLM(ctx, prompt)
+	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
+		return nil, fmt.Errorf("LLM call failed: %w", err)
+	}
+	span.SetAttributes(attribute.Int("response_length", len(response)))
+
+	// Parse response
+	relationships, err := s.parseRelationshipDiscoveryResponse(response)
+	if err != nil {
+		span.SetAttributes(attribute.String("error", fmt.Sprintf("parse: %s", err.Error())))
+		return nil, fmt.Errorf("failed to parse LLM response: %w", err)
+	}
+	span.SetAttributes(attribute.Int("relationship_count_discovered", len(relationships)))
+
+	// Save relationships
+	relsArray := make(JSONArray, len(relationships))
+	for i, r := range relationships {
+		relsArray[i] = map[string]any{
+			"source_type":   r.SourceType,
+			"target_type":   r.TargetType,
+			"relation_type": r.RelationType,
+			"description":   r.Description,
+			"confidence":    r.Confidence,
+			"cardinality":   r.Cardinality,
+		}
+	}
+	if err := s.repo.SaveDiscoveredRelationships(ctx, jobID, relsArray); err != nil {
+		return nil, err
+	}
+
+	s.log.Info("discovered relationships", slog.Int("count", len(relationships)))
+	return relationships, nil
+}
+
+// parseRelationshipDiscoveryResponse parses the LLM response for relationship discovery
+func (s *Service) parseRelationshipDiscoveryResponse(response string) ([]DiscoveredRelationship, error) {
+	response = extractJSON(response, "discovered_relationships")
+
+	var result struct {
+		DiscoveredRelationships []struct {
+			FromType         string  `json:"from_type"`
+			ToType           string  `json:"to_type"`
+			RelationshipName string  `json:"relationship_name"`
+			Description      string  `json:"description"`
+			Cardinality      string  `json:"cardinality"`
+			Confidence       float32 `json:"confidence"`
+		} `json:"discovered_relationships"`
+	}
+
+	if err := llmjson.Decode(response, &result); err != nil {
+		return nil, err
+	}
+
+	relationships := make([]DiscoveredRelationship, len(result.DiscoveredRelationships))
+	for i, r := range result.DiscoveredRelationships {
+		relationships[i] = DiscoveredRelationship{
+			SourceType:   r.FromType,
+			TargetType:   r.ToType,
+			RelationType: r.RelationshipName,
+			Description:  r.Description,
+			Confidence:   r.Confidence,
+			Cardinality:  r.Cardinality,
+		}
+	}
+
+	return relationships, nil
+}
+
+// Helper functions
+
+func (s *Service) handleJobError(ctx context.Context, jobID uuid.UUID, err error) {
+	errMsg := err.Error()
+	s.log.Error("discovery job failed", slog.String("job_id", jobID.String()), logger.Error(err))
+	_ = s.repo.UpdateStatus(ctx, jobID, StatusFailed, &errMsg)
+}
+
+func (s *Service) updateProgress(ctx context.Context, jobID uuid.UUID, current, total int, message string) {
+	progress := JSONMap{
+		"current_step": current,
+		"total_steps":  total,
+		"message":      message,
+	}
+	_ = s.repo.UpdateProgress(ctx, jobID, progress)
+}
+
+func (s *Service) typesToObjectSchemas(types []DiscoveredType) JSONMap {
+	schemas := make(JSONMap)
+	for _, t := range types {
+		schemas[t.TypeName] = map[string]any{
+			"type":       "object",
+			"required":   t.RequiredProperties,
+			"properties": t.Properties,
+		}
+	}
+	return schemas
+}
+
+func (s *Service) relationshipsToSchemas(relationships []DiscoveredRelationship) JSONMap {
+	schemas := make(JSONMap)
+	for _, r := range relationships {
+		schemas[r.RelationType] = map[string]any{
+			"sourceTypes": []string{r.SourceType},
+			"targetTypes": []string{r.TargetType},
+			"cardinality": r.Cardinality,
+			"description": r.Description,
+		}
+	}
+	return schemas
+}
+
+func (s *Service) typesToUIConfigs(types []DiscoveredType) JSONMap {
+	configs := make(JSONMap)
+	for _, t := range types {
+		configs[t.TypeName] = map[string]any{
+			"icon":        s.suggestIconForType(t.TypeName),
+			"color":       s.generateColorForType(t.TypeName),
+			"displayName": t.TypeName,
+			"description": t.Description,
+		}
+	}
+	return configs
+}
+
+func (s *Service) suggestIconForType(typeName string) string {
+	lower := strings.ToLower(typeName)
+	switch {
+	case strings.Contains(lower, "decision"):
+		return "check-circle"
+	case strings.Contains(lower, "requirement"):
+		return "file-text"
+	case strings.Contains(lower, "task"):
+		return "check-square"
+	case strings.Contains(lower, "issue"):
+		return "alert-circle"
+	case strings.Contains(lower, "risk"):
+		return "alert-triangle"
+	case strings.Contains(lower, "person"), strings.Contains(lower, "user"):
+		return "user"
+	case strings.Contains(lower, "team"), strings.Contains(lower, "group"):
+		return "users"
+	case strings.Contains(lower, "component"), strings.Contains(lower, "system"):
+		return "box"
+	case strings.Contains(lower, "document"):
+		return "file"
+	case strings.Contains(lower, "meeting"):
+		return "calendar"
+	default:
+		return "circle"
+	}
+}
+
+func (s *Service) generateColorForType(typeName string) string {
+	colors := []string{
+		"#3B82F6", // Blue
+		"#10B981", // Green
+		"#F59E0B", // Amber
+		"#EF4444", // Red
+		"#8B5CF6", // Purple
+		"#EC4899", // Pink
+		"#06B6D4", // Cyan
+		"#84CC16", // Lime
+	}
+
+	var hash int
+	for _, c := range typeName {
+		hash = int(c) + ((hash << 5) - hash)
+	}
+	if hash < 0 {
+		hash = -hash
+	}
+
+	return colors[hash%len(colors)]
+}
+
+// mcpDiscoveryFinalizeRequest mirrors mcp.DiscoveryFinalizeRequest without importing mcp.
+type mcpDiscoveryFinalizeRequest struct {
+	JobID          string
+	DocumentID     string
+	ProjectID      string
+	Mode           string
+	PackName       string
+	ExistingPackID string
+	IncludedTypes  []map[string]any
+	IncludedRels   []map[string]any
+}
+
+// mcpDiscoveryFinalizeResponse mirrors mcp.DiscoveryFinalizeResponse.
+type mcpDiscoveryFinalizeResponse struct {
+	SchemaID string `json:"schema_id"`
+	Message  string `json:"message"`
+}
+
+// FinalizeDiscoveryFromMCP is the mcp.DiscoveryFinalizer interface implementation.
+// It adapts the loosely-typed MCP request into the typed FinalizeDiscovery call.
+func (s *Service) FinalizeDiscoveryFromMCP(ctx context.Context, req interface{}) (interface{}, error) {
+	// req is mcp.DiscoveryFinalizeRequest passed as interface{} — re-marshal to decode.
+	b, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("FinalizeDiscoveryFromMCP marshal: %w", err)
+	}
+	var r mcpDiscoveryFinalizeRequest
+	if err := json.Unmarshal(b, &r); err != nil {
+		return nil, fmt.Errorf("FinalizeDiscoveryFromMCP unmarshal: %w", err)
+	}
+
+	projectUUID, err := uuid.Parse(r.ProjectID)
+	if err != nil {
+		return nil, apperror.ErrBadRequest.WithMessage("invalid project_id")
+	}
+
+	// Resolve org from project
+	orgID, err := s.repo.GetProjectOrgID(ctx, projectUUID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve org from project: %w", err)
+	}
+
+	// Resolve job ID: use explicit job_id, or create a minimal stub job from document_id.
+	// We do NOT call StartDiscovery here because that launches a background goroutine
+	// that runs full LLM-based discovery — producing an orphaned schema whose result
+	// is immediately discarded. Instead, create a pre-completed stub job so
+	// FinalizeDiscovery can link the schema to a valid job row without side effects.
+	jobID, err := uuid.Parse(r.JobID)
+	if err != nil {
+		// No valid job_id — create stub from document_id if provided.
+		if r.DocumentID == "" {
+			return nil, apperror.ErrBadRequest.WithMessage("either job_id or document_id is required")
+		}
+		if _, parseErr := uuid.Parse(r.DocumentID); parseErr != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid document_id")
+		}
+		kbPurpose, _ := s.repo.GetProjectInfo(ctx, projectUUID)
+		stub := &DiscoveryJob{
+			ID:             uuid.New(),
+			OrganizationID: orgID,
+			ProjectID:      projectUUID,
+			Status:         StatusCompleted,
+			KBPurpose:      kbPurpose,
+			Progress:       JSONMap{"message": "stub job created by MCP finalize"},
+			Config:         JSONMap{"document_ids": []string{r.DocumentID}},
+		}
+		if createErr := s.repo.Create(ctx, stub); createErr != nil {
+			return nil, fmt.Errorf("create stub discovery job: %w", createErr)
+		}
+		jobID = stub.ID
+	}
+
+	inReq := &FinalizeDiscoveryRequest{
+		Mode:       r.Mode,
+		PackName:   r.PackName,
+		DocumentID: r.DocumentID,
+	}
+	if r.ExistingPackID != "" {
+		ep, err := uuid.Parse(r.ExistingPackID)
+		if err != nil {
+			return nil, apperror.ErrBadRequest.WithMessage("invalid existing_pack_id")
+		}
+		inReq.ExistingPackID = &ep
+	}
+
+	// Convert included types
+	for _, t := range r.IncludedTypes {
+		it := IncludedType{}
+		if v, ok := t["type_name"].(string); ok {
+			it.TypeName = v
+		}
+		if v, ok := t["description"].(string); ok {
+			it.Description = v
+		}
+		if v, ok := t["properties"].(map[string]any); ok {
+			it.Properties = v
+		}
+		if v, ok := t["frequency"].(float64); ok {
+			it.Frequency = int(v)
+		}
+		inReq.IncludedTypes = append(inReq.IncludedTypes, it)
+	}
+
+	// Convert included relationships
+	for _, rel := range r.IncludedRels {
+		ir := IncludedRelationship{}
+		if v, ok := rel["source_type"].(string); ok {
+			ir.SourceType = v
+		}
+		if v, ok := rel["target_type"].(string); ok {
+			ir.TargetType = v
+		}
+		if v, ok := rel["relation_type"].(string); ok {
+			ir.RelationType = v
+		}
+		if v, ok := rel["description"].(string); ok {
+			ir.Description = v
+		}
+		if v, ok := rel["cardinality"].(string); ok {
+			ir.Cardinality = v
+		}
+		inReq.IncludedRelationships = append(inReq.IncludedRelationships, ir)
+	}
+
+	resp, err := s.FinalizeDiscovery(ctx, jobID, projectUUID, inReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update domain_name on the source document so classifiers and tests can read it.
+	if r.DocumentID != "" && s.docSvc != nil {
+		domainLabel := "new_domain"
+		if r.Mode == "extend" {
+			domainLabel = "existing_domain"
+		}
+		// Agent explicitly confirmed the schema — confidence is 1.0.
+		conf := float32(1.0)
+		schemaIDStr := resp.SchemaID.String()
+		// Only pass pack_name when it is non-empty (extend mode omits it).
+		// Passing an empty string would overwrite the document's existing domain name.
+		var packNamePtr *string
+		if r.PackName != "" {
+			packNamePtr = &r.PackName
+		}
+		if updateErr := s.docSvc.UpdateDomainClassification(ctx, r.DocumentID, packNamePtr, &conf, map[string]any{
+			"stage":           domainLabel,
+			"matchedSchemaId": schemaIDStr,
+		}, true); updateErr != nil {
+			s.log.Warn("failed to update document domain classification", slog.String("doc_id", r.DocumentID), slog.Any("err", updateErr))
+		}
+	}
+
+	return mcpDiscoveryFinalizeResponse{
+		SchemaID: resp.SchemaID.String(),
+		Message:  resp.Message,
+	}, nil
+}
+
+func toJSONArray(items []any) JSONArray {
+	if items == nil {
+		return JSONArray{}
+	}
+	return JSONArray(items)
+}
+
+// extractionPrompts is a local mirror of extraction.SchemaExtractionPrompts
+// used to avoid an import cycle between discoveryjobs and extraction packages.
+type extractionPrompts struct {
+	DomainContext     string            `json:"domainContext,omitempty"`
+	TypeHints         map[string]string `json:"typeHints,omitempty"`
+	RelationshipHints map[string]string `json:"relationshipHints,omitempty"`
+	NegativeExamples  []string          `json:"negativeExamples,omitempty"`
+}
+
+// generateExtractionPrompts calls the LLM to produce per-schema extraction hints
+// based on the discovered types and relationships from a discovery job.
+func (s *Service) generateExtractionPrompts(
+	ctx context.Context,
+	types []DiscoveredType,
+	relationships []DiscoveredRelationship,
+	kbPurpose string,
+) (*extractionPrompts, error) {
+	ctx, span := tracing.Start(ctx, "discovery.generate_prompts",
+		attribute.Int("memory.discovery.type_count", len(types)),
+		attribute.Int("memory.discovery.relationship_count", len(relationships)),
+	)
+	defer span.End()
+
+	if s.modelFactory == nil {
+		span.SetAttributes(attribute.String("error", "modelFactory is nil"))
+		s.log.Warn("generateExtractionPrompts: modelFactory is nil, cannot generate extraction prompts")
+		return nil, nil
+	}
+
+	// Build a compact type summary for the prompt.
+	var sb strings.Builder
+	sb.WriteString("Knowledge base purpose: ")
+	sb.WriteString(kbPurpose)
+	sb.WriteString("\n\nDiscovered entity types:\n")
+	for _, t := range types {
+		sb.WriteString(fmt.Sprintf("- %s: %s\n", t.TypeName, t.Description))
+	}
+	if len(relationships) > 0 {
+		sb.WriteString("\nDiscovered relationships:\n")
+		for _, r := range relationships {
+			sb.WriteString(fmt.Sprintf("- %s -[%s]-> %s\n", r.SourceType, r.RelationType, r.TargetType))
+		}
+	}
+
+	prompt := fmt.Sprintf(`You are an expert knowledge extraction system. Given the schema below, generate concise extraction guidance.
+
+%s
+
+Return ONLY valid JSON with this exact structure:
+{
+  "domainContext": "<1-2 sentence domain description to guide entity extraction>",
+  "typeHints": {
+    "<TypeName>": "<short extraction hint for this type>"
+  },
+  "relationshipHints": {
+    "<RelationType>": "<short hint for extracting this relationship>"
+  },
+  "negativeExamples": [
+    "<example of what NOT to extract>"
+  ]
+}`, sb.String())
+
+	// Pass span ctx so discovery.llm_complete is a child of discovery.generate_prompts.
+	response, err := s.completeWithLLM(ctx, prompt)
+	if err != nil {
+		span.SetAttributes(attribute.String("error", err.Error()))
+		return nil, fmt.Errorf("generateExtractionPrompts LLM call: %w", err)
+	}
+	span.SetAttributes(
+		attribute.Int("memory.discovery.raw_response_length", len(response)),
+		attribute.Int("memory.discovery.prompt_length", len(prompt)),
+	)
+
+	clean := extractJSON(response, "domainContext")
+	var prompts extractionPrompts
+	if err := json.NewDecoder(strings.NewReader(clean)).Decode(&prompts); err != nil {
+		span.SetAttributes(attribute.String("error", fmt.Sprintf("parse: %s", err.Error())))
+		return nil, fmt.Errorf("generateExtractionPrompts parse response: %w", err)
+	}
+	span.SetAttributes(
+		attribute.Int("memory.discovery.domain_context_length", len(prompts.DomainContext)),
+		attribute.Int("memory.discovery.type_hints_count", len(prompts.TypeHints)),
+		attribute.Int("memory.discovery.relationship_hints_count", len(prompts.RelationshipHints)),
+		attribute.Int("memory.discovery.negative_examples_count", len(prompts.NegativeExamples)),
+	)
+	return &prompts, nil
+}
+
+// strPtr returns a pointer to the given string value.
+func strPtr(s string) *string { return &s }
+
+// loadDocumentText fetches the raw text content of a document by ID.
+// Returns empty string on any error (enrichment is best-effort).
+// Tries context project ID first (MCP/handler path), then falls back to
+// an unscoped query by document ID alone (direct service call path).
+func (s *Service) loadDocumentText(ctx context.Context, documentID string) string {
+	if documentID == "" || s.docSvc == nil {
+		return ""
+	}
+	projectID := auth.ProjectIDFromContext(ctx)
+	if projectID != "" {
+		doc, err := s.docSvc.GetContentByID(ctx, projectID, documentID)
+		if err == nil && doc != nil && doc.Content != nil {
+			return *doc.Content
+		}
+	}
+	// Fallback: load directly from DB without project scope (direct service call path).
+	return s.repo.GetDocumentContent(ctx, documentID)
+}

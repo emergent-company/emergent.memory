@@ -1,0 +1,110 @@
+package mcpregistry
+
+import (
+	"context"
+	"log/slog"
+
+	"go.uber.org/fx"
+
+	"github.com/emergent-company/emergent.memory/domain/mcp"
+	"github.com/emergent-company/emergent.memory/internal/config"
+	"github.com/emergent-company/emergent.memory/pkg/crypto"
+)
+
+// Module provides the MCP registry domain
+//
+// Features:
+// - Central registry of MCP server configurations (builtin + external)
+// - Per-tool enable/disable for fine-grained agent tool control
+// - REST API at /api/admin/mcp-servers for managing servers and tools
+// - REST API at /api/admin/mcp-registry for browsing/installing from official MCP registry
+// - MCP tools (delegated via MCPRegistryToolHandler):
+//   - list_mcp_servers, get_mcp_server, create_mcp_server, update_mcp_server, delete_mcp_server
+//   - toggle_mcp_server_tool, sync_mcp_server_tools
+//   - search_mcp_registry, get_mcp_registry_server, install_mcp_from_registry
+var Module = fx.Module("mcpregistry",
+	fx.Provide(
+		NewRepository,
+		provideRegistryClient,
+		provideService,
+		NewHandler,
+	),
+	fx.Invoke(
+		RegisterRoutes,
+		registerServiceLifecycle,
+		registerMCPRegistryToolHandler,
+		registerDeviceConfigPusher,
+	),
+)
+
+// provideRegistryClient builds the RegistryClient, honouring the optional
+// MCP_REGISTRY_BASE_URL override (empty → official registry).
+//
+// NOTE: this client is currently unused by the browse/install request path,
+// which serves from the embedded curated catalog (catalog.go). It is retained
+// for a possible future opt-in "full registry" mode that would re-point browse
+// at the live upstream.
+func provideRegistryClient(cfg *config.Config) *RegistryClient {
+	if cfg == nil {
+		return NewRegistryClient()
+	}
+	return NewRegistryClientWithBaseURL(cfg.MCPRegistry.BaseURL)
+}
+
+// serviceParams bundles dependencies for provideService.
+type serviceParams struct {
+	fx.In
+
+	Repo       *Repository
+	MCPService *mcp.Service
+	Cfg        *config.Config
+	Log        *slog.Logger
+}
+
+// provideService creates a Service from fx dependencies.
+// The encryptor is optional: when LLM_ENCRYPTION_KEY is unset, secret MCP
+// env/header values cannot be stored or read (see Service).
+func provideService(p serviceParams) (*Service, error) {
+	var enc *crypto.Encryptor
+	if p.Cfg != nil && p.Cfg.LLMProvider.IsEncryptionConfigured() {
+		e, err := crypto.NewEncryptor(p.Cfg.LLMProvider.EncryptionKey)
+		if err != nil {
+			p.Log.Error("failed to initialize MCP secret encryptor", "error", err)
+		} else {
+			enc = e
+		}
+	}
+	oauthCfg := OAuthConfig{}
+	if p.Cfg != nil {
+		oauthCfg = OAuthConfig{
+			RedirectBaseURL: p.Cfg.MCPRegistry.OAuthRedirectBaseURL,
+			LandingURL:      p.Cfg.MCPRegistry.OAuthLandingURL,
+			ClientName:      p.Cfg.MCPRegistry.OAuthClientName,
+		}
+	}
+	return NewServiceWithOAuth(p.Repo, p.MCPService, enc, oauthCfg, p.Log)
+}
+
+// registerMCPRegistryToolHandler wires the MCP registry tool handler into
+// mcp.Service after construction (mcpregistry → mcp; deferred to fx.Invoke to
+// break the constructor cycle).
+func registerMCPRegistryToolHandler(mcpService *mcp.Service, svc *Service, log *slog.Logger) {
+	mcpService.RegisterMCPRegistryToolHandler(NewMCPRegistryToolHandler(svc, log))
+}
+
+// registerDeviceConfigPusher wires the relay push bridge (provided by mcprelay)
+// into the registry service after construction.
+func registerDeviceConfigPusher(svc *Service, pusher DeviceConfigPusher) {
+	svc.RegisterDeviceConfigPusher(pusher)
+}
+
+// registerServiceLifecycle registers the service's Close method with the fx lifecycle
+// to ensure all proxy connections are cleanly shut down when the server stops.
+func registerServiceLifecycle(lc fx.Lifecycle, svc *Service) {
+	lc.Append(fx.Hook{
+		OnStop: func(ctx context.Context) error {
+			svc.Close()
+			return nil
+		},
+	})
+}

@@ -1,0 +1,9 @@
+{
+  "documents": [
+    {"id": "d1", "filename": "notes.md", "mimeType": "text/markdown"},
+    {"id": "d2", "filename": "spec.pdf", "mimeType": "application/pdf"}
+  ],
+  "total": 2,
+  "next_cursor": null,
+  "ok": true
+}

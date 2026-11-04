@@ -1,0 +1,480 @@
+package apitoken
+
+import (
+	"context"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
+
+	"github.com/emergent-company/emergent.memory/internal/testdb"
+)
+
+// connectTestDB opens a throwaway test database owned by this test, so each
+// test runs against a uniquely-named database it drops on cleanup. Skips when
+// unavailable or in short mode; fails when REQUIRE_DB is set.
+func connectTestDB(t *testing.T) *bun.DB {
+	t.Helper()
+	if testing.Short() {
+		testdb.SkipOrFatal(t, "Skipping database integration test in short mode")
+	}
+	tdb := testdb.SetupTestDBOrFail(t, context.Background(), "apitoken")
+	t.Cleanup(tdb.Close)
+	return tdb.DB
+}
+
+// seedSuperadmin creates a core.user_profiles row (FK target of
+// core.superadmins) and an active superadmin grant with the given role.
+func seedSuperadmin(t *testing.T, db bun.IDB, userID, role string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
+		userID, "zitadel-"+userID, "Test User "+userID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO core.superadmins (user_id, role) VALUES (?, ?)`,
+		userID, role)
+	require.NoError(t, err)
+}
+
+// seedUser inserts a core.user_profiles row and returns nothing.
+func seedUser(t *testing.T, db bun.IDB, userID string) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(),
+		`INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
+		userID, "zitadel-"+userID, "Test User "+userID)
+	require.NoError(t, err)
+}
+
+// seedOrgAdmin inserts a core.user_profiles row, an org, and an org_admin
+// membership in that org.
+func seedOrgAdmin(t *testing.T, db bun.IDB, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`,
+		orgID, userID)
+	require.NoError(t, err)
+}
+
+// seedProjectAdmin inserts a core.user_profiles row, an org, a project in that
+// org, and a project_admin membership. No superadmin grant and no org_admin
+// membership is created — this is the "bare project_admin" principal.
+func seedProjectAdmin(t *testing.T, db bun.IDB, userID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID := uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, 'project_admin')`,
+		projectID, userID)
+	require.NoError(t, err)
+}
+
+// CanGrantAdminAll must require the superadmin_full role: a superadmin_readonly
+// grant is a non-minting platform-observation role and must not be able to mint
+// an admin:all token (issue #810), and an org_admin membership no longer
+// qualifies — org-scoped authority must not buy platform-scoped power
+// (issue #949).
+func TestRepository_CanGrantAdminAll_RequiresSuperadminFull(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	ctx := context.Background()
+
+	t.Run("superadmin_readonly cannot mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_readonly")
+
+		allowed, err := repo.CanGrantAdminAll(ctx, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "superadmin_readonly must not mint admin:all")
+	})
+
+	t.Run("superadmin_full can mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+
+		allowed, err := repo.CanGrantAdminAll(ctx, userID)
+		require.NoError(t, err)
+		require.True(t, allowed, "superadmin_full must mint admin:all")
+	})
+
+	t.Run("revoked superadmin_full cannot mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+		_, err := db.ExecContext(ctx,
+			`UPDATE core.superadmins SET revoked_at = NOW() WHERE user_id = ?`, userID)
+		require.NoError(t, err)
+
+		allowed, err := repo.CanGrantAdminAll(ctx, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "revoked superadmin_full must not mint admin:all")
+	})
+
+	t.Run("non-superadmin non-org-admin cannot mint admin:all", func(t *testing.T) {
+		allowed, err := repo.CanGrantAdminAll(ctx, uuid.NewString())
+		require.NoError(t, err)
+		require.False(t, allowed, "unprivileged user must not mint admin:all")
+	})
+
+	t.Run("org_admin cannot mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedOrgAdmin(t, db, userID)
+
+		allowed, err := repo.CanGrantAdminAll(ctx, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "org_admin must not mint admin:all (org-scoped authority does not buy platform power)")
+	})
+
+	t.Run("bare project_admin cannot mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedProjectAdmin(t, db, userID)
+
+		allowed, err := repo.CanGrantAdminAll(ctx, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "project tier must not mint admin:all")
+	})
+}
+
+// checkPlatformScopeGrant must fold bare "admin" into "admin:all" + platform
+// (#1041 E1): minting a bare admin scope requires an active superadmin_full,
+// exactly like admin:all. This is the fail-first guard for the mint hole — a
+// non-superadmin who could previously mint a bare admin token is now denied at
+// the single platform-scope check.
+func TestService_checkPlatformScopeGrant_FoldsBareAdminIntoPlatform(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	t.Run("non-superadmin cannot mint bare admin", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"admin"})
+		require.Error(t, err, "bare admin must be denied for a non-superadmin")
+	})
+
+	t.Run("non-superadmin cannot mint admin:all", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"admin:all"})
+		require.Error(t, err, "admin:all must be denied for a non-superadmin")
+	})
+
+	t.Run("superadmin_readonly cannot mint bare admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_readonly")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin"})
+		require.Error(t, err, "superadmin_readonly must not mint bare admin")
+	})
+
+	t.Run("superadmin_full can mint bare admin", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin"})
+		require.NoError(t, err, "superadmin_full must mint bare admin")
+	})
+
+	t.Run("superadmin_full can mint admin:all", func(t *testing.T) {
+		userID := uuid.NewString()
+		seedSuperadmin(t, db, userID, "superadmin_full")
+		err := svc.checkPlatformScopeGrant(ctx, userID, []string{"admin:all"})
+		require.NoError(t, err, "superadmin_full must mint admin:all")
+	})
+
+	t.Run("non-platform scopes need no platform grant", func(t *testing.T) {
+		err := svc.checkPlatformScopeGrant(ctx, uuid.NewString(), []string{"data:read", "graph:write"})
+		require.NoError(t, err, "project scopes must not require a platform grant")
+	})
+}
+
+// seedProject inserts a core.user_profiles row, an org, and a project in that
+// org, returning the project ID. No superadmin grant and no membership is
+// created — the project exists only so FK targets resolve.
+func seedProject(t *testing.T, db bun.IDB, userID string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	return projectID
+}
+
+// seedProjectWithMembership inserts a user, an org, a project in that org, and a
+// project membership for the user with the given role. Returns the projectID.
+func seedProjectWithMembership(t *testing.T, db bun.IDB, userID, role string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, ?)`,
+		projectID, userID, role)
+	require.NoError(t, err)
+	return projectID
+}
+
+// seedOwningOrgAdmin inserts a user, an org, a project in that org, and an
+// org_admin membership for the user. Returns the projectID. The user has NO
+// project membership — this isolates the owning-org org_admin path.
+func seedOwningOrgAdmin(t *testing.T, db bun.IDB, userID string) (projectID string) {
+	t.Helper()
+	ctx := context.Background()
+	seedUser(t, db, userID)
+	orgID := uuid.NewString()
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.orgs (id, name) VALUES (?, ?)`, orgID, "Org "+orgID)
+	require.NoError(t, err)
+	projectID = uuid.NewString()
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.projects (id, organization_id, name) VALUES (?, ?, ?)`,
+		projectID, orgID, "Project "+projectID)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx,
+		`INSERT INTO kb.organization_memberships (organization_id, user_id, role) VALUES (?, ?, 'org_admin')`,
+		orgID, userID)
+	require.NoError(t, err)
+	return projectID
+}
+
+// seedProjectToken inserts a non-revoked, non-expired project-scoped token with
+// the given SQL scope literal, owned by userID in projectID.
+func seedProjectToken(t *testing.T, db bun.IDB, projectID, userID, scopesLiteral string) string {
+	t.Helper()
+	ctx := context.Background()
+	tokenID := uuid.NewString()
+	// token_hash has a global unique constraint, so mint a fresh value per row.
+	hash := uuid.NewString()
+	prefix := uuid.NewString()[:12]
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO core.api_tokens (id, user_id, project_id, name, token_hash, token_prefix, scopes)
+		VALUES (?, ?, ?, ?, ?, ?, `+scopesLiteral+`)`,
+		tokenID, userID, projectID, "seed-"+tokenID, hash, prefix)
+	require.NoError(t, err)
+	return tokenID
+}
+
+// CreateEphemeral must never mint a platform scope: the sandbox token is minted
+// on behalf of ordinary project members and must not carry bare admin or
+// admin:all (which require superadmin_full). Fail-first: if a platform scope is
+// (re)added to the ephemeral set, this test goes red.
+func TestService_CreateEphemeral_NeverMintsPlatformScopes(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	seedUser(t, db, userID)
+
+	tokenID, raw, err := svc.CreateEphemeral(ctx, uuid.NewString(), uuid.NewString(), userID, time.Hour)
+	require.NoError(t, err)
+	require.NotEmpty(t, tokenID, "ephemeral mint must return a token id")
+	require.NotEmpty(t, raw, "ephemeral mint must return the raw token")
+
+	token, err := repo.GetByIDAndUser(ctx, tokenID, userID)
+	require.NoError(t, err)
+	require.NotNil(t, token, "ephemeral token must be persisted and retrievable")
+	for _, sc := range token.Scopes {
+		require.NotEqual(t, "admin", sc, "ephemeral token must never carry bare admin")
+		require.NotEqual(t, "admin:all", sc, "ephemeral token must never carry admin:all")
+	}
+}
+
+// Regenerate and RegenerateAccountToken must re-validate scopes through the
+// platform gate: a caller who no longer holds superadmin_full cannot regenerate
+// a token that still carries admin or admin:all. Fail-first: without the
+// re-check the regeneration would succeed and copy a now-unmintable scope.
+func TestService_Regenerate_RevalidatesPlatformScope(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	userID := uuid.NewString()
+	projectID := seedProject(t, db, userID)
+
+	t.Run("project token carrying admin:all is refused", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['admin:all']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.Error(t, err, "regenerate must re-validate platform scopes and refuse a non-superadmin")
+	})
+
+	t.Run("project token carrying bare admin is refused", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['admin']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.Error(t, err, "regenerate must refuse a non-superadmin carrying bare admin")
+	})
+
+	t.Run("account token carrying admin:all is refused", func(t *testing.T) {
+		tokenID := uuid.NewString()
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO core.api_tokens (id, user_id, project_id, name, token_hash, token_prefix, scopes)
+			VALUES (?, ?, NULL, ?, ?, ?, ARRAY['admin:all'])`,
+			tokenID, userID, "seed-"+tokenID, uuid.NewString(), uuid.NewString()[:12])
+		require.NoError(t, err)
+
+		_, err = svc.RegenerateAccountToken(ctx, tokenID, userID)
+		require.Error(t, err, "account regenerate must re-validate platform scopes and refuse a non-superadmin")
+	})
+
+	t.Run("project token without platform scope still regenerates", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, userID, `ARRAY['data:read']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, userID)
+		require.NoError(t, err, "a non-platform token must still regenerate for a non-superadmin")
+	})
+}
+
+// Regenerate and RegenerateAccountToken must re-validate the project:admin
+// umbrella through the same gate as minting: a token carrying project:admin may
+// only be regenerated by a caller who is currently a project_admin of the
+// project (or an org_admin of its owning org). Fail-first: without the re-check a
+// plain project member could copy a project:admin token — its plaintext —
+// through the regenerate path, bypassing the mint gate.
+func TestService_Regenerate_RevalidatesProjectAdminScope(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	svc := NewService(db, repo, nil, slog.Default())
+	ctx := context.Background()
+
+	adminID := uuid.NewString()
+	projectID := seedProjectWithMembership(t, db, adminID, "project_admin")
+
+	memberID := uuid.NewString()
+	seedUser(t, db, memberID)
+	_, err := db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, 'project_user')`,
+		projectID, memberID)
+	require.NoError(t, err)
+
+	t.Run("non-admin cannot regenerate a project:admin token", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, adminID, `ARRAY['project:admin']`)
+		_, err := svc.Regenerate(ctx, tokenID, projectID, memberID)
+		require.Error(t, err, "a non-admin must not regenerate a project:admin token")
+	})
+
+	t.Run("project_admin can regenerate a project:admin token", func(t *testing.T) {
+		tokenID := seedProjectToken(t, db, projectID, adminID, `ARRAY['project:admin']`)
+		dto, err := svc.Regenerate(ctx, tokenID, projectID, adminID)
+		require.NoError(t, err, "a project_admin must still regenerate a project:admin token")
+		require.NotNil(t, dto)
+		require.Contains(t, dto.Scopes, "project:admin")
+	})
+
+	t.Run("account token carrying project:admin is refused", func(t *testing.T) {
+		tokenID := uuid.NewString()
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO core.api_tokens (id, user_id, project_id, name, token_hash, token_prefix, scopes)
+			VALUES (?, ?, NULL, ?, ?, ?, ARRAY['project:admin'])`,
+			tokenID, adminID, "seed-"+tokenID, uuid.NewString(), uuid.NewString()[:12])
+		require.NoError(t, err)
+
+		_, err = svc.RegenerateAccountToken(ctx, tokenID, adminID)
+		require.Error(t, err, "an account token must never carry project:admin")
+	})
+}
+
+// CanGrantProjectAdmin must admit exactly two principals: a project_admin in the
+// project, and an org_admin of the project's OWNING org. Every other principal —
+// project_user, project_viewer, a foreign user, an org_admin of a different org
+// — is refused, and an empty/invalid projectID or userID fails closed.
+func TestRepository_CanGrantProjectAdmin(t *testing.T) {
+	db := connectTestDB(t)
+	repo := NewRepository(db, slog.Default())
+	ctx := context.Background()
+
+	t.Run("project_admin can grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_admin")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.True(t, allowed, "project_admin must mint project:admin")
+	})
+
+	t.Run("owning org_admin can grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedOwningOrgAdmin(t, db, userID)
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.True(t, allowed, "owning org_admin must mint project:admin")
+	})
+
+	t.Run("project_user cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_user")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "project_user must not mint project:admin")
+	})
+
+	t.Run("project_viewer cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProjectWithMembership(t, db, userID, "project_viewer")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "project_viewer must not mint project:admin")
+	})
+
+	t.Run("foreign user cannot grant", func(t *testing.T) {
+		userID := uuid.NewString()
+		projectID := seedProject(t, db, userID) // project exists; user has no membership
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, userID)
+		require.NoError(t, err)
+		require.False(t, allowed, "foreign user must not mint project:admin")
+	})
+
+	t.Run("foreign org_admin cannot grant", func(t *testing.T) {
+		foreignUser := uuid.NewString()
+		_ = seedOwningOrgAdmin(t, db, foreignUser) // org_admin of some other org
+		projectID := seedProjectWithMembership(t, db, uuid.NewString(), "project_admin")
+
+		allowed, err := repo.CanGrantProjectAdmin(ctx, projectID, foreignUser)
+		require.NoError(t, err)
+		require.False(t, allowed, "an org_admin of a different org must not mint project:admin here")
+	})
+
+	t.Run("empty projectID cannot grant", func(t *testing.T) {
+		allowed, err := repo.CanGrantProjectAdmin(ctx, "", uuid.NewString())
+		require.NoError(t, err)
+		require.False(t, allowed, "empty projectID must not mint project:admin")
+	})
+
+	t.Run("empty userID cannot grant", func(t *testing.T) {
+		allowed, err := repo.CanGrantProjectAdmin(ctx, uuid.NewString(), "")
+		require.NoError(t, err)
+		require.False(t, allowed, "empty userID must not mint project:admin")
+	})
+}

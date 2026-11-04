@@ -1,0 +1,34 @@
+package chunks
+
+import (
+	"github.com/labstack/echo/v4"
+
+	"github.com/emergent-company/emergent.memory/pkg/auth"
+)
+
+// RegisterRoutes registers the chunks routes
+func RegisterRoutes(e *echo.Echo, handler *Handler, authMiddleware *auth.Middleware) {
+	// All chunks routes require authentication and project ID
+	chunks := e.Group("/api/chunks")
+	chunks.Use(authMiddleware.RequireAuth())
+	chunks.Use(authMiddleware.RequireProjectID())
+	chunks.Use(authMiddleware.RequireProjectTokenScope())
+	chunks.Use(authMiddleware.RequireProjectMember())
+
+	// List chunks (requires chunks:read scope)
+	chunksRead := chunks.Group("")
+	chunksRead.Use(authMiddleware.RequireAPITokenScopes("chunks:read"))
+	chunksRead.GET("", handler.List)
+	chunksRead.GET("/:id/revisions", handler.ListRevisions)
+	chunksRead.GET("/:id/revisions/diff", handler.DiffRevisions)
+
+	// Write operations (requires chunks:write scope)
+	chunksWrite := chunks.Group("")
+	chunksWrite.Use(authMiddleware.RequireAPITokenScopes("chunks:write"))
+	chunksWrite.DELETE("/:id", handler.Delete)
+	chunksWrite.DELETE("", handler.BulkDelete)
+	chunksWrite.DELETE("/by-document/:documentId", handler.DeleteByDocument)
+	chunksWrite.DELETE("/by-documents", handler.BulkDeleteByDocuments)
+	chunksWrite.PATCH("/:id", handler.EditChunk)
+	chunksWrite.POST("/:id/rollback", handler.RollbackChunk)
+}

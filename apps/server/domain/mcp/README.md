@@ -1,0 +1,1134 @@
+# Model Context Protocol (MCP) Server
+
+The Memory MCP server provides AI assistants with **self-documenting, schema-aware access** to the knowledge graph via the [Model Context Protocol](https://modelcontextprotocol.io/).
+
+## Overview
+
+This implementation exposes three core MCP capabilities:
+
+1. **Tools** (~50+, across multiple tool files) - Execute operations on the knowledge graph (search, create, query, manage agents, documents, providers, skills, and more)
+2. **Resources** (6) - Browse schema, templates, and project metadata
+3. **Prompts** (5) - Guided workflows for common tasks
+
+## Quick Start
+
+### HTTP Transport
+
+```bash
+# Initialize session
+curl -X POST http://localhost:3002/api/mcp/rpc \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-token>" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-11-25",
+      "capabilities": {},
+      "clientInfo": {"name": "test", "version": "1.0"}
+    }
+  }'
+
+# List all resources
+curl -X POST http://localhost:3002/api/mcp/rpc \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-token>" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "resources/list"
+  }'
+```
+
+### SSE Transport (project-scoped)
+
+The SSE transport uses a two-step flow: open a persistent SSE stream, then POST messages to the returned endpoint.
+
+```bash
+# Step 1 — Open SSE stream (replace <project-id> with your project UUID)
+curl -N "http://localhost:3002/api/mcp/sse/<project-id>" \
+  -H "Authorization: Bearer <your-api-token>"
+# Server sends: event: endpoint\ndata: /api/mcp/sse/<project-id>/message?sessionId=<id>
+
+# Step 2 — POST JSON-RPC to the message endpoint
+curl -X POST "http://localhost:3002/api/mcp/sse/<project-id>/message?sessionId=<session-id>" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-token>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+# Returns: HTTP 200 with JSON-RPC response body
+```
+
+**SSE Configuration:**
+
+- **Connection Timeout**: 10 minutes (600s)
+- **Ping Interval**: 4 hours (keeps connection alive under proxy timeouts)
+- **Session state**: Survives SSE reconnects — `initialize` only needs to be called once per `sessionId`
+- **OpenCode compatibility**: POST responses return `200 OK` with the JSON-RPC body directly
+
+## Authentication
+
+All requests require a valid API token. Two header formats are accepted:
+
+| Header | Format | Notes |
+|---|---|---|
+| `Authorization` | `Bearer <api-token>` | **Recommended** — standard HTTP bearer auth |
+| `X-API-Key` | `<api-token>` | Also accepted for backwards compatibility |
+
+The project is resolved automatically from the token's scope. The legacy `X-Project-ID` header is no longer required.
+
+## Protocol Methods
+
+### Core Methods
+
+| Method           | Description              | Params                            | Returns                   |
+| ---------------- | ------------------------ | --------------------------------- | ------------------------- |
+| `initialize`     | Start session            | `protocolVersion`, `capabilities` | Server capabilities       |
+| `tools/list`     | List available tools     | -                                 | Array of tool definitions |
+| `tools/call`     | Execute a tool           | `name`, `arguments`               | Tool result               |
+| `resources/list` | List available resources | -                                 | Array of resource URIs    |
+| `resources/read` | Read resource content    | `uri`                             | Resource contents         |
+| `prompts/list`   | List available prompts   | -                                 | Array of prompt templates |
+| `prompts/get`    | Generate prompt          | `name`, `arguments`               | Formatted prompt          |
+
+## Resources (Self-Documenting Context)
+
+Resources provide **read-only access** to schema, templates, and project metadata.
+
+### Global Resources (No Project Required)
+
+#### `emergent://schema/entity-types`
+
+**Entity Type Catalog** - All registered entity types with counts
+
+```json
+{
+  "uri": "emergent://schema/entity-types",
+  "mimeType": "application/json",
+  "text": "{\"entity_types\": [{\"name\": \"Person\", \"count\": 142, ...}]}"
+}
+```
+
+**Use When:**
+
+- Discovering what entity types exist
+- Understanding schema structure
+- Finding type-specific counts
+
+---
+
+#### `emergent://schema/relationships`
+
+**Relationship Type Registry** - All valid relationship types
+
+```json
+{
+  "uri": "emergent://schema/relationships",
+  "mimeType": "application/json",
+  "text": "{\"relationship_types\": [{\"name\": \"works_for\", ...}]}"
+}
+```
+
+**Use When:**
+
+- Discovering valid relationship types
+- Understanding graph connections
+- Designing queries
+
+---
+
+#### `emergent://templates/catalog`
+
+**Template Pack Catalog** - All available template packs
+
+```json
+{
+  "uri": "emergent://templates/catalog",
+  "mimeType": "application/json",
+  "text": "{\"template_packs\": [{\"id\": \"...\", \"name\": \"Research Project\", ...}]}"
+}
+```
+
+**Use When:**
+
+- Browsing available templates
+- Finding templates for specific domains
+- Understanding template structure
+
+---
+
+### Project-Scoped Resources
+
+Require `X-Project-ID` header or `project_id` in URI.
+
+#### `emergent://project/{id}/metadata`
+
+**Project Statistics** - Entity/relationship counts, recent activity
+
+```json
+{
+  "uri": "emergent://project/uuid/metadata",
+  "mimeType": "application/json",
+  "text": "{\"project_id\": \"...\", \"total_entities\": 1523, \"total_relationships\": 842, ...}"
+}
+```
+
+**Use When:**
+
+- Understanding project scope
+- Monitoring graph growth
+- Checking recent activity
+
+---
+
+#### `emergent://project/{id}/recent-entities`
+
+**Recent Entities** - Last 50 modified entities
+
+```json
+{
+  "uri": "emergent://project/uuid/recent-entities",
+  "mimeType": "application/json",
+  "text": "{\"entities\": [{\"id\": \"...\", \"type_name\": \"Person\", \"name\": \"Jane Doe\", ...}]}"
+}
+```
+
+**Use When:**
+
+- Tracking recent changes
+- Finding recently added entities
+- Understanding user activity
+
+---
+
+#### `emergent://project/{id}/templates`
+
+**Installed Templates** - Template packs installed in project
+
+```json
+{
+  "uri": "emergent://project/uuid/templates",
+  "mimeType": "application/json",
+  "text": "{\"installed_packs\": [{\"pack_id\": \"...\", \"installed_at\": \"...\", ...}]}"
+}
+```
+
+**Use When:**
+
+- Checking which templates are available
+- Understanding project configuration
+- Finding template-based creation options
+
+---
+
+## Prompts (Guided Workflows)
+
+Prompts generate **formatted guidance** for common tasks. Each prompt accepts arguments and returns a structured message.
+
+### Available Prompts
+
+#### `explore_entity_type`
+
+**Browse Specific Entity Type** - Paginated exploration with filtering
+
+**Arguments:**
+
+- `entity_type` (required) - Type name to explore (e.g., "Person", "Organization")
+- `limit` (optional, default: 50) - Results per page
+- `offset` (optional, default: 0) - Pagination offset
+
+**Example:**
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "explore_entity_type",
+    "arguments": {
+      "entity_type": "Decision",
+      "limit": 20
+    }
+  }
+}
+```
+
+**Returns:**
+
+- Guidance on exploring entities
+- Tool call: `search_entities` with pre-filled parameters
+- Example usage patterns
+
+---
+
+#### `create_from_template`
+
+**Template-Based Entity Creation** - Step-by-step creation workflow
+
+**Arguments:**
+
+- `template_pack_id` (required) - UUID of template pack
+- `entity_type` (optional) - Specific entity type from pack
+
+**Example:**
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "create_from_template",
+    "arguments": {
+      "template_pack_id": "pack-uuid",
+      "entity_type": "ResearchQuestion"
+    }
+  }
+}
+```
+
+**Returns:**
+
+- Template selection guidance
+- Required fields explanation
+- Tool call: `create_entity` with template structure
+
+---
+
+#### `analyze_relationships`
+
+**Relationship Discovery** - Find connections between entities
+
+**Arguments:**
+
+- `entity_id` (optional) - Starting entity UUID
+- `depth` (optional, default: 1) - Traversal depth (1-3)
+- `relationship_type` (optional) - Filter by relationship type
+
+**Example:**
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "analyze_relationships",
+    "arguments": {
+      "entity_id": "entity-uuid",
+      "depth": 2,
+      "relationship_type": "collaborates_with"
+    }
+  }
+}
+```
+
+**Returns:**
+
+- Relationship exploration strategy
+- Tool calls: `get_relationships`, `traverse_graph`
+- Visualization suggestions
+
+---
+
+#### `setup_research_project`
+
+**Complete Research Project Setup** - Multi-step project initialization
+
+**Arguments:**
+
+- `research_domain` (required) - Domain/field of research
+- `include_templates` (optional, default: true) - Install domain templates
+
+**Example:**
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "setup_research_project",
+    "arguments": {
+      "research_domain": "machine learning",
+      "include_templates": true
+    }
+  }
+}
+```
+
+**Returns:**
+
+- Step-by-step setup guide
+- Entity type recommendations
+- Template pack suggestions
+- Tool calls: `create_entity_type`, `install_template_pack`
+
+---
+
+#### `find_related_entities`
+
+**Graph Traversal** - Discover connected entities
+
+**Arguments:**
+
+- `starting_entity_name` (required) - Name to search for
+- `relationship_types` (optional) - Filter by specific relationship types
+- `max_depth` (optional, default: 2) - Maximum traversal depth
+
+**Example:**
+
+```json
+{
+  "method": "prompts/get",
+  "params": {
+    "name": "find_related_entities",
+    "arguments": {
+      "starting_entity_name": "John Doe",
+      "relationship_types": ["works_for", "manages"],
+      "max_depth": 3
+    }
+  }
+}
+```
+
+**Returns:**
+
+- Search strategy
+- Traversal guidance
+- Tool calls: `search_entities`, `get_relationships`, `traverse_graph`
+
+---
+
+## Tools (Operations)
+
+**100+ tools** across multiple tool files (see source for authoritative list).
+
+### Result Format
+
+Structured tool results (entity/relationship writes, search, query, remember, forget) return a uniform JSON envelope so clients can classify success/failure without per-tool heuristics:
+
+```json
+{
+  "ok": true,
+  "data": { "...tool-specific fields...": "..." },
+  "meta": { "created": 2, "failed": 0, "total": 2 }
+}
+```
+
+Contract:
+
+- `ok` (bool) — `true` on success, `false` when the operation failed. For batch tools, `false` when any item failed (partial failure is still `ok: false`).
+- `error` (string) — present and non-empty only when `ok` is `false`.
+- `data` — tool-specific payload; pre-existing field names are preserved here (`results`, `entities`, `data`, `pagination`, `run_id`, ...).
+- `meta` — numeric counts and non-payload metadata (`created`, `failed`, `total`, `similar`, ...); omitted when empty.
+- `message` (when present) is a human summary only — never a status signal. Determine status from `ok`/`error` alone.
+- Status fields are booleans (`ok`); numeric counts never use the name `success`. Per-item results in `data.results` carry their own boolean `ok`.
+
+`remember`/`forget` return structured JSON with `data.run_id` on both sync and async modes, so clients can call `remember-status` with the returned `run_id` without parsing prose.
+
+### Quick Reference by Category
+
+> **Note:** Tool counts below are approximate. For the authoritative list consult the source files in `apps/server/domain/mcp/`. Operator (platform-admin) tools are **not** on this table — they are served only on the dedicated `/api/mcp/admin` endpoint; see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin).
+
+| Category | Tools | Count |
+|---|---|---|
+| **Search** | `search-hybrid`, `search-semantic`, `search-similar`, `search-knowledge` | 4 |
+| **Entity Management** | `entity-create`, `entity-update`, `entity-delete`, `entity-restore`, `entity-query`, `entity-search`, `entity-edges-get`, `entity-type-list` | 8 |
+| **Relationship Management** | `relationship-create`, `relationship-update`, `relationship-delete`, `relationship-list` | 4 |
+| **Graph Traversal** | `graph-traverse` | 1 |
+| **Schema Management** | `schema-version`, `schema-list`, `schema-get`, `schema-create`, `schema-delete`, `schema-assign`, `schema-assignment-update`, `schema-uninstall`, `schema-list-available`, `schema-list-installed`, `schema-history`, `schema-compiled-types`, `schema-icon-list`, `schema-migrate-preview`, `schema-migrate-execute`, `schema-migrate-rollback`, `schema-migrate-commit`, `schema-migration-job-status`, `schema-migration-preview` (legacy), `migration-archive-list`, `migration-archive-get` | 21 |
+| **Blueprints** | `blueprint-create`, `blueprint-list`, `blueprint-get`, `blueprint-update`, `blueprint-publish`, `blueprint-new-version`, `blueprint-versions`, `blueprint-apply`, `blueprint-unapply`, `blueprint-list-applied` | 10 |
+| **Metadata** | `tag-list`, `project-get`, `project-create` | 3 |
+| **Documents** | `document-list`, `document-get`, `document-upload`, `document-delete` | 4 |
+| **Agents** | `agent-question-list`, `agent-question-list-project`, `agent-question-respond`, `agent-hook-list`, `agent-hook-create`, `agent-hook-delete`, `adk-session-list`, `adk-session-get`, `remember-status` | 9 |
+| **Providers (project)** | `provider-configure-project`, `provider-models-list` | 2 |
+| **Skills** | `skill-list`, `skill-get`, `skill-create`, `skill-update`, `skill-delete` | 5 |
+| **Tokens** | `token-list`, `token-create`, `token-get`, `token-revoke` | 4 |
+| **MCP registry** | `search_mcp_registry`, `mcp-registry-get`, `mcp-registry-install` (requires `admin` scope) | 3 |
+| **Operator (superadmin)** | 40 tools — see [Operator MCP Surface](#operator-mcp-surface-apimcpadmin) | 40 |
+
+---
+
+### Operator MCP Surface (`/api/mcp/admin`)
+
+Platform administration tools are served on a **dedicated endpoint** — `GET|POST|DELETE /api/mcp/admin` — gated by `RequireAuth()` + `RequireSuperadminFull()` (an active `superadmin_full` grant in `core.superadmins`; a `superadmin_readonly` grant, `admin`/`admin:all` token, or `org_admin` does **not** satisfy it). The endpoint speaks the same MCP protocol/transport as `/api/mcp`, resolves no project context, and requires no project membership.
+
+Operator tools are **no longer reachable on `/api/mcp`**: the project endpoint always excludes them from `tools/list` and refuses calls to them (method-not-found), regardless of the caller's superadmin status.
+
+**Operator tool catalog** (40 tools; all `SuperadminOnly`):
+
+- **Reads** (16): `superadmin-get`, `user-list`, `user-get`, `org-list`, `org-get`, `project-list`, `project-record-get`, `project-member-list`, `email-job-list`, `email-job-get`, `embedding-job-list`, `embedding-job-stats`, `extraction-job-list`, `extraction-job-stats`, `document-parsing-job-list`, `document-parsing-job-stats`.
+- **Mutations** (14): `user-delete`, `org-delete`, `project-delete`, `superadmin-grant`, `project-member-create`, `project-member-delete`, `service-token-create`, `embedding-job-delete`, `embedding-job-cleanup`, `embedding-job-reset`, `extraction-job-delete`, `extraction-job-cancel`, `document-parsing-job-delete`, `document-parsing-job-retry`.
+- **Pre-existing operator tools** (10): `embedding-status`, `embedding-pause`, `embedding-resume`, `embedding-config-update`, `provider-list-org`, `provider-configure-org`, `provider-test`, `provider-usage-get`, `trace-list`, `trace-get`.
+
+Every **mutation** requires an explicit `confirm=true` argument — this includes the pre-existing mutators `provider-configure-org`, `embedding-pause`, `embedding-resume`, and `embedding-config-update`. With `confirm` absent or false the tool performs **no side effect** and returns a structured dry-run (`dry_run`, `action`, `targets`, `message`) naming the intended action and its target identifiers.
+
+See [`OPERATOR_MCP.md`](./OPERATOR_MCP.md) for the full runbook (authentication, connecting a client, the confirm/dry-run protocol, and the audit trail).
+
+---
+
+### Remember Status Tracking
+
+**`remember-status`** - Check what an async `remember`/`forget` run actually did
+
+`remember` and `forget` support `mode=async`, returning a `run_id` immediately while the graph mutation runs in the background. Use `remember-status` with that `run_id` to poll for completion and get a summary of the graph impact.
+
+```json
+{
+  "name": "remember-status",
+  "arguments": {
+    "run_id": "uuid-here"
+  }
+}
+```
+
+Response fields: `run_id`, `status` (`running`/`completed`/`failed`), `objects_created`, `objects_updated`, `relationships_created`, `created_object_ids`, `created_relationship_ids`, `discovered_types`, `stale_jobs`, `summary`, and `error` (when failed). While the run is still in progress, counts are marked partial via a `partial: true` flag. `stale_jobs` counts queued extraction jobs terminal-failed by the stale-job sweep (error text equal to `jobs.StaleJobMessage`) — these are historical cleanup reaps, not current failures, so they are excluded from the `error`/failure list and never force `status: "failed"`; the count is always present (`0` when none) so the reap stays visible. When the run created objects, embedding readiness is also reported: `embeddings_pending`, `embeddings_failed`, `embeddings_stale`, and `embeddings_ready` (true when nothing is still processing) — embedding status does not affect the overall `status`, and stale-swept embedding jobs are counted in `embeddings_stale` rather than `embeddings_failed`. Aggregation is derived from the run's recorded `entity-create`/`entity-update`/`entity-relationship-create` tool calls, plus any `queue-reextraction` extraction jobs and their created objects' embedding jobs.
+
+---
+
+### New Tools (Added 2025-02-10)
+
+#### Advanced Search \u0026 Discovery
+
+**`search-hybrid`** - Most powerful search option
+
+```json
+{
+  "name": "search-hybrid",
+  "arguments": {
+    "query": "architecture decisions",
+    "types": ["Decision"],
+    "limit": 20
+  }
+}
+```
+
+Combines full-text search, semantic similarity, and graph context for best results.
+
+**`search-semantic`** - Find conceptually similar entities
+
+```json
+{
+  "name": "search-semantic",
+  "arguments": {
+    "query": "strategic planning and resource allocation",
+    "limit": 10
+  }
+}
+```
+
+Uses vector embeddings to find entities with similar meaning, even with different wording.
+
+**`search-similar`** - Find entities similar to a given entity
+
+```json
+{
+  "name": "search-similar",
+  "arguments": {
+    "entity_id": "uuid-here",
+    "types": ["Document"],
+    "limit": 10
+  }
+}
+```
+
+Discovers similar entities based on semantic similarity to a reference entity. Requires the entity to have an embedding (generated automatically when an LLM provider is configured). Returns an empty list if the entity has no embedding yet.
+
+---
+
+#### Graph Traversal
+
+**`graph-traverse`** - Multi-hop graph exploration
+
+```json
+{
+  "name": "graph-traverse",
+  "arguments": {
+    "start_entity_id": "uuid-here",
+    "max_depth": 3,
+    "direction": "both",
+    "relationship_types": ["influences", "depends_on"]
+  }
+}
+```
+
+Explore deep connections beyond immediate neighbors (up to 5 hops).
+
+---
+
+#### Relationship Management (Complete CRUD)
+
+**`relationship-list`** - Query relationships
+
+```json
+{
+  "name": "relationship-list",
+  "arguments": {
+    "type": "works_at",
+    "limit": 50
+  }
+}
+```
+
+**`relationship-update`** - Modify existing relationships
+
+```json
+{
+  "name": "relationship-update",
+  "arguments": {
+    "relationship_id": "uuid-here",
+    "properties": { "role": "Senior Engineer" },
+    "weight": 0.9
+  }
+}
+```
+
+**`relationship-delete`** - Remove relationships
+
+```json
+{
+  "name": "relationship-delete",
+  "arguments": {
+    "relationship_id": "uuid-here"
+  }
+}
+```
+
+---
+
+#### Entity Lifecycle
+
+**`entity-restore`** - Undo entity deletion
+
+```json
+{
+  "name": "entity-restore",
+  "arguments": {
+    "entity_id": "uuid-here"
+  }
+}
+```
+
+---
+
+#### Batch Operations (High Performance)
+
+**`entity-create`** (batch) - Create up to 100 entities in one request (100x faster!)
+
+Supply an optional `key` per entity for idempotent operations — if an entity with the same (type, key) already exists it is updated in-place rather than duplicated.
+
+```json
+{
+  "name": "entity-create",
+  "arguments": {
+    "entities": [
+      {
+        "type": "Person",
+        "key": "person-alice",
+        "properties": { "name": "Alice" },
+        "labels": ["employee"]
+      },
+      {
+        "type": "Person",
+        "properties": { "name": "Bob" },
+        "labels": ["contractor"]
+      }
+    ]
+  }
+}
+```
+
+**`relationship-create`** (batch) - Create up to 100 relationships in one request
+
+```json
+{
+  "name": "relationship-create",
+  "arguments": {
+    "relationships": [
+      {
+        "type": "works_with",
+        "source_id": "uuid-1",
+        "target_id": "uuid-2"
+      },
+      {
+        "type": "reports_to",
+        "source_id": "uuid-2",
+        "target_id": "uuid-3",
+        "weight": 1.0
+      }
+    ]
+  }
+}
+```
+
+---
+
+#### Metadata \u0026 Discovery
+
+**`tag-list`** - Get all unique tags used in project
+
+```json
+{
+  "name": "tag-list"
+}
+```
+
+---
+
+### Legacy Tools (Existing)
+
+See the Quick Reference table above for the full list of current tool names. The legacy `verb_noun` snake_case names (e.g., `query_entities`, `create_entity`, `assign_template_pack`) are no longer used — all tools follow the `area[-noun]-action` hyphenated format.
+
+## Error Handling
+
+All methods return standard JSON-RPC 2.0 error responses:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32603,
+    "message": "Entity not found",
+    "data": {
+      "entity_id": "...",
+      "project_id": "..."
+    }
+  }
+}
+```
+
+**Common Error Codes:**
+
+- `-32700` - Parse error (invalid JSON)
+- `-32600` - Invalid request (missing params)
+- `-32601` - Method not found
+- `-32603` - Internal error (database, validation)
+
+## Performance \u0026 Limits
+
+### Resource Limits
+
+- **Recent Entities**: Maximum 50 items
+- **Entity Search**: Default 50, max 100 per page
+- **Traversal Depth**: Maximum 5 levels (recommended: 1-3)
+
+### Timeout Configuration
+
+- **HTTP Request**: 30 seconds
+- **SSE Connection**: 10 minutes (600s)
+- **SSE Ping Interval**: 4 minutes (240s)
+
+### Caching
+
+- Schema metadata cached for 5 minutes
+- Template catalogs cached for 10 minutes
+- Project metadata refreshed on-demand
+
+## Best Practices
+
+### 1. Start with Resources
+
+Before calling tools, browse resources to understand:
+
+- Available entity types (`emergent://schema/entity-types`)
+- Valid relationships (`emergent://schema/relationships`)
+- Project context (`emergent://project/{id}/metadata`)
+
+### 2. Use Prompts for Guidance
+
+Instead of manually constructing tool calls:
+
+1. Call `prompts/get` with task-appropriate prompt
+2. Review returned guidance
+3. Execute suggested tool calls
+
+### 3. Handle Errors Gracefully
+
+- Check resource existence before operations
+- Validate entity types against schema
+- Use search before create to avoid duplicates
+
+### 4. Optimize Traversals
+
+- Start with depth=1, increase if needed
+- Filter by relationship type when possible
+- Use recent entities for quick discovery
+
+## Integration Examples
+
+### OpenCode
+
+Add to `opencode.json` in your project directory:
+
+```json
+{
+  "mcp": {
+    "memory": {
+      "type": "remote",
+      "url": "https://api.example.com/api/mcp/sse/<project-id>",
+      "headers": {"Authorization": "Bearer <your-api-token>"},
+      "oauth": false,
+      "enabled": true,
+      "timeout": 60000
+    }
+  }
+}
+```
+
+Replace `<project-id>` with your project UUID and `<your-api-token>` with a project-scoped API token.
+
+Verify the connection:
+```bash
+opencode mcp list
+# Should show "memory" as connected with tool count
+```
+
+### Python Client
+
+```python
+import requests
+
+class EmergentMCP:
+    def __init__(self, base_url, api_key):
+        self.base_url = base_url
+        self.headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+
+    def call_method(self, method, params=None):
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params or {}
+        }
+        resp = requests.post(
+            f"{self.base_url}/api/mcp/rpc",
+            json=payload,
+            headers=self.headers
+        )
+        return resp.json()["result"]
+
+    # Resources
+    def list_resources(self):
+        return self.call_method("resources/list")
+
+    def read_resource(self, uri):
+        return self.call_method("resources/read", {"uri": uri})
+
+    # Prompts
+    def get_prompt(self, name, arguments):
+        return self.call_method("prompts/get", {
+            "name": name,
+            "arguments": arguments
+        })
+
+    # Tools
+    def search_entities(self, query, type_filter=None):
+        return self.call_method("tools/call", {
+            "name": "entity-search",
+            "arguments": {
+                "query": query,
+                "type_filter": type_filter
+            }
+        })
+
+# Usage
+client = EmergentMCP(
+    base_url="http://localhost:3002",
+    api_key="your-api-token"
+)
+
+# Browse schema
+resources = client.list_resources()
+entity_types = client.read_resource("emergent://schema/entity-types")
+
+# Get guidance
+prompt = client.get_prompt("explore_entity_type", {"entity_type": "Person"})
+
+# Execute operation
+results = client.search_entities("John Doe", type_filter=["Person"])
+```
+
+### TypeScript Client
+
+```typescript
+interface MCPClient {
+  callMethod<T>(method: string, params?: any): Promise<T>;
+}
+
+class EmergentMCP implements MCPClient {
+  constructor(
+    private baseURL: string,
+    private apiKey: string
+  ) {}
+
+  async callMethod<T>(method: string, params?: any): Promise<T> {
+    const response = await fetch(`${this.baseURL}/api/mcp/rpc`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method,
+        params: params || {},
+      }),
+    });
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.result;
+  }
+
+  // Resources
+  listResources() {
+    return this.callMethod('resources/list');
+  }
+
+  readResource(uri: string) {
+    return this.callMethod('resources/read', { uri });
+  }
+
+  // Prompts
+  getPrompt(name: string, arguments: any) {
+    return this.callMethod('prompts/get', { name, arguments });
+  }
+
+  // Tools
+  searchEntities(query: string, typeFilter?: string[]) {
+    return this.callMethod('tools/call', {
+      name: 'entity-search',
+      arguments: { query, type_filter: typeFilter },
+    });
+  }
+}
+
+// Usage
+const client = new EmergentMCP(
+  'http://localhost:3002',
+  'your-api-token'
+);
+
+// Browse + Execute
+const types = await client.readResource('emergent://schema/entity-types');
+const prompt = await client.getPrompt('explore_entity_type', {
+  entity_type: 'Decision',
+});
+const results = await client.searchEntities('strategic decisions');
+```
+
+## Troubleshooting
+
+### Common Issues
+
+**"Method not found" error:**
+
+- Check method name spelling (case-sensitive)
+- Verify protocol version in initialize (2025-11-25)
+
+**"Resource not found" error:**
+
+- Verify URI format: `emergent://category/resource`
+- For project resources, ensure a project-scoped API token is used
+- Check resource list: `resources/list`
+
+**"Invalid arguments" error:**
+
+- Check prompt argument names (case-sensitive)
+- Required arguments must be provided
+- Validate argument types (string, number, boolean)
+
+**SSE Connection Drops:**
+
+- Normal after 10 minutes (configured timeout)
+- Implement auto-reconnect in client
+- Check firewall/proxy settings
+
+### Debug Mode
+
+Enable verbose logging:
+
+```bash
+LOG_LEVEL=debug /usr/local/go/bin/go run ./cmd/server
+```
+
+Check logs:
+
+```bash
+tail -f logs/mcp.log | grep -E "(RESOURCE|PROMPT|TOOL)"
+```
+
+## Development
+
+### Adding a New Resource
+
+1. **Define resource URI** in `service.go`:
+
+   ```go
+   const ResourceNewFeature = "emergent://category/new-feature"
+   ```
+
+2. **Add to resource list** in `listResources()`:
+
+   ```go
+   {
+       URI:         ResourceNewFeature,
+       Name:        "New Feature Resource",
+       Description: "Description of what it provides",
+       MimeType:    "application/json",
+   }
+   ```
+
+3. **Implement reader** in `service.go`:
+
+   ```go
+   func (s *Service) readNewFeatureResource(ctx context.Context, projectID string) (string, error) {
+       // Fetch data
+       // Return JSON string
+   }
+   ```
+
+4. **Add to router** in `readResource()`:
+   ```go
+   case ResourceNewFeature:
+       return s.readNewFeatureResource(ctx, projectID)
+   ```
+
+### Adding a New Prompt
+
+1. **Define prompt definition** in `listPrompts()`:
+
+   ```go
+   {
+       Name:        "new_workflow",
+       Description: "Guide for new workflow",
+       Arguments: []PromptArgument{
+           {Name: "param1", Description: "Parameter description", Required: true},
+       },
+   }
+   ```
+
+2. **Implement generator** in `service.go`:
+
+   ```go
+   func (s *Service) generateNewWorkflowPrompt(args map[string]interface{}) (PromptMessage, error) {
+       // Validate arguments
+       // Generate guidance
+       // Return PromptMessage
+   }
+   ```
+
+3. **Add to router** in `getPrompt()`:
+   ```go
+   case "new_workflow":
+       return s.generateNewWorkflowPrompt(args)
+   ```
+
+### Testing
+
+Run E2E tests:
+
+```bash
+cd apps/server
+POSTGRES_PASSWORD=... /usr/local/go/bin/go test ./tests/e2e/... -run "TestMCP" -v
+```
+
+Test via HTTP:
+
+```bash
+./scripts/test_mcp.sh
+```
+
+## References
+
+- [MCP Specification](https://modelcontextprotocol.io/specification/draft)
+- [Implementation Guide](./MCP_RESOURCES_PROMPTS_IMPLEMENTATION.md)
+- [Timeout Optimization](./MCP_SSE_TIMEOUT_INCREASE.md)
+- [Tools Reference](./MCP_TOOLS.md)
+
+## Sharing Read-Only MCP Access
+
+Project admins can generate a read-only MCP token and optionally email setup instructions to teammates or external agents — no Memory account required on the recipient's end.
+
+### Endpoint
+
+```
+POST /api/projects/:projectId/mcp/share
+```
+
+**Request body** (all fields optional):
+
+```json
+{
+  "name": "Alice CI agent",
+  "emails": ["alice@example.com"]
+}
+```
+
+**Response:**
+
+```json
+{
+  "token": "emt_...",
+  "mcpUrl": "https://api.example.com/api/mcp",
+  "projectId": "<uuid>",
+  "snippets": {
+    "claudeDesktop": "{ ... }",
+    "cursor": "{ ... }"
+  }
+}
+```
+
+**Implementation notes (`share.go`):**
+
+- Calls `apitokenSvc.Create` with `readOnlyMCPScopes` (`data:read`, `schema:read`, `agents:read`, `projects:read`)
+- Enforces `project_admin` role via `apitokenSvc.GetUserProjectRole` — returns 403 for non-admins
+- Email addresses are validated (RFC 5322 regex) before token creation — invalid address → 422, no token created
+- Emails dispatched via `emailSvc.Enqueue` (async, non-blocking) using the `mcp-invite` Handlebars template
+- `mcpUrl` is derived from the incoming request's `Host` + `X-Forwarded-Proto` headers
+- Token name defaults to `"MCP Read-Only Share — YYYY-MM-DD HH:MM:SS"` to avoid duplicate-name conflicts
+
+
+---
+
+## Changelog
+
+### 2026-03 (current)
+
+**SSE transport: OpenCode compatibility fix**
+
+- `POST /api/mcp/sse/:projectId/message` now returns `200 OK` with the JSON-RPC response object directly in the HTTP body (previously returned `202 Accepted` with a `{status, jsonrpc, id, result, error}` envelope)
+- Session initialization state is now stored independently of the SSE stream — `tools/list` and `tools/call` work after an SSE reconnect as long as `initialize` was called at least once in the session
+
+**Branch fork endpoint**
+
+- New `POST /api/graph/branches/:id/fork` endpoint creates a branch and bulk-copies HEAD objects + relationships from the source
+- Canonical IDs preserved for merge-back identity awareness
+- Optional `filter_types` for selective type copying
+
+**Tool naming standardisation & expansion (~50+ tools)**
+
+All tool names were standardised to `area[-noun]-action` hyphenated kebab-case. Legacy `verb_noun` snake_case names are no longer used. Additional tool files were added covering agents, documents, embeddings, providers, skills, tokens, and traces.
+
+Selected renames: `hybrid_search` → `search-hybrid`, `semantic_search` → `search-semantic`, `find_similar` → `search-similar`, `traverse_graph` → `graph-traverse`, `list_relationships` → `relationship-list`, `restore_entity` → `entity-restore`, `list_tags` → `tag-list`.
+
+**Authentication simplified**
+
+- `Authorization: Bearer <token>` is now the recommended authentication method
+- `X-API-Key` header continues to be accepted for backwards compatibility
+- The `X-Project-ID` header is no longer required; project scope is derived from the token
+
+### 2025-02-10
+
+**MCP Tools Expansion (18 → 29 tools)**
+
+- Added 11 new tools for enhanced AI agent capabilities: `search-hybrid`, `search-semantic`, `search-similar`, `graph-traverse`, `relationship-list`, `relationship-update`, `relationship-delete`, `entity-restore`, `entity-create` (batch), `relationship-create` (batch), `tag-list`
+- Added 6 resources for self-documenting context
+- Added 5 prompts for guided workflows
+- Increased SSE timeout to 10 minutes
+- Optimized ping interval to 4 minutes
+
+### 2024-12-XX
+
+- Initial MCP implementation
+- 18 tools for graph operations
+- HTTP and SSE transports
+- Authentication via API keys

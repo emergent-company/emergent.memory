@@ -1,0 +1,209 @@
+name: Meta CI
+
+# NO `paths:` filter on either trigger.
+#
+# `ci` is the branch-protection-required status check on `main` (the
+# required context list is exactly ["ci"]). A
+# path-filtered required check never reports for PRs that do not touch the
+# listed paths, so the required check would simply be absent for those PRs and
+# the whole required-check set would become unenforceable. This workflow is
+# therefore unfiltered and MUST run for every PR and every push to main.
+#
+# The heavy suites (server unit/DB, E2E, CLI, web-ui, iOS, docker) are
+# intentionally path-filtered and are therefore NOT required: their job contexts
+# cannot be made required without deadlocking PRs that do not touch those paths.
+# To make the cheap, always-applicable guards actually gate merges, they run here
+# in the required `ci` job instead:
+#   * migration numbering + immutability (through scripts/preflight/all.sh, which
+#     calls migration-number.sh -> migration-immutability.sh --base origin/main),
+#   * migration workspace hygiene (stray untracked files / duplicate versions),
+#   * the route-authority guard,
+#   * the swagger spec drift guard (#2082).
+# The heavy suites still run for the PRs that touch their paths; they stay
+# advisory. See emergent-company/emergent.memory#1673.
+#
+# Fork PRs run a green no-op `ci`: every step is gated on
+# `github.event_name != 'pull_request' || head.repo.full_name == repository`, so
+# a fork PR cannot execute checked-out (untrusted) code on the persistent
+# self-hosted runner. The job still reports a real result (success with all steps
+# skipped), satisfying the required context; a maintainer must re-run from a
+# trusted ref to actually validate a fork.
+#
+# There is no review bot: a maintainer posts the review verdict before a merge.
+# That verdict is process, not a check — the required `ci` check does not read it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded PR runs; never cancel a default-branch run (a merge to main
+# should always finish and report its status).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: [self-hosted, linux, x64, memory]
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          # Full history: the preflight/migration guards diff the working tree
+          # against the base ref (`--base origin/main`) and need the base commit
+          # and blob history present in this checkout.
+          fetch-depth: 0
+      # Repo-wide secret scan (#1917). gitleaks was previously only wired into
+      # lefthook.yml — never into a workflow — and each lefthook job silently
+      # `exit 0` when the binary was absent, so the required `ci` check could
+      # merge a secret-bearing commit while reporting green. Provision a pinned,
+      # checksum-verified gitleaks here (never assume the runner's PATH) and run
+      # the same invocation the lint group uses. A missing binary is a hard
+      # failure, and findings fail the step. Waivers are value-pinned
+      # `[[allowlists]]` in `.gitleaks.toml` (issue #2022): a `path:rule:line`
+      # fingerprint re-opens the finding whenever lines shift above it.
+      - name: Install gitleaks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash .github/scripts/install-gitleaks.sh
+      - name: Secrets scan (gitleaks)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: gitleaks dir . --config .gitleaks.toml --no-banner
+      # Canonical version guard: root VERSION must equal the `// @version`
+      # annotation in apps/server/cmd/server/main.go. A release bumps both
+      # together; this fails early when they drift (see #auto-tag dead-path).
+      - name: Version drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/version-drift.sh
+      - name: Setup Go
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: false
+      # Guard against silently-committed unformatted Go. `task lint` from
+      # apps/web-ui is scoped to the gateway, so the whole repo is only checked
+      # here — over *tracked* files, so generated/untracked artifacts don't
+      # produce noise. (See emergent-company/emergent.memory#1058.)
+      - name: gofmt (tracked Go files)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          files=$(git ls-files '*.go' | xargs gofmt -l)
+          if [ -n "$files" ]; then
+            echo "Unformatted tracked Go files:"
+            echo "$files"
+            echo "Fix with: gofmt -w <file>"
+            exit 1
+          fi
+      # Cheap, always-applicable guards folded into the required `ci` job so they
+      # actually gate merges (#1673). The path-filtered server.yml workflow cannot
+      # be a required check, so its guards would otherwise only surface after
+      # merge. Migration numbering + immutability are already covered by the
+      # all.sh step below (migration-number.sh calls
+      # migration-immutability.sh --base origin/main), so they are deliberately
+      # not repeated here.
+      - name: Guard migration workspace
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/migration-workspace.sh
+      - name: Guard route authority
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        working-directory: apps/server
+        run: |
+          # Parses the whole current tree's route table (apps/server/domain) and
+          # compares it against the checked-in route-authority.yaml. No base ref
+          # needed: an undeclared route, a vanished route, or a drifted tier all
+          # fail. Same invocation as server.yml's `route-authority-guard` job.
+          go run ./cmd/route-authority-guard
+      # Swagger spec drift guard (#2082). apps/server/docs/swagger/{docs.go,
+      # swagger.json,swagger.yaml} are generated from the handler/DTO
+      # annotations, committed, and published by docs.yml — but nothing
+      # regenerated them, so a stale artifact shipped silently. #2057 had to
+      # regenerate and picked up three source changes that had gone
+      # unregenerated (+220 lines); #931 was closed with "no CI verifies
+      # either". The script derives the swag version from go.mod (no second pin,
+      # per #2057), re-runs the generator, and fails on any difference —
+      # including an untracked docs_<handler>.go, which a bare `git diff` misses.
+      # It runs here rather than in server.yml because server.yml is
+      # path-filtered and advisory, so a guard there cannot gate. Measured cost
+      # ~5 s warm, ~14 s from an empty Go build cache. It is deliberately not in
+      # scripts/preflight/all.sh (run by the step below) so it runs exactly once.
+      - name: Swagger spec drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/swagger-drift.sh
+      # Go module file drift guard (#2193). apps/server/go.sum was 40 `/go.mod`
+      # hash lines short for months (#2083): a warm module cache hides that,
+      # because verification happens at download time, so only the first cold
+      # consumer — fresh container, new workstation, `docker build` — failed, with
+      # "missing go.sum entry for go.mod file". Nothing checked it; #2057 had
+      # papered one instance over with a second `go mod download` inside
+      # apps/server/Dockerfile. The script runs `go mod tidy -diff` over the
+      # modules that are clean today and fails on any diff, in go.mod or go.sum.
+      # It runs here rather than in server.yml because server.yml is
+      # path-filtered and advisory, so a guard there cannot gate. Measured cost
+      # ~0.2 s per module on a warm module cache (the guards above already warmed
+      # it); the first run on a cold runner downloads each graph once (~25 s for
+      # connector.linux, ~71 s for apps/server).
+      - name: Go module file drift guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/go-mod-tidy.sh
+      # Preflight guards: the same checks lanes run locally before pushing —
+      # stale base, migration numbering + immutability (goose panics on duplicate
+      # versions; migration-number.sh delegates the immutability rule to
+      # migration-immutability.sh --base origin/main), tracked-file gofmt, skip
+      # census, mcp authz, modelref split, and schemadrift. Runs here so the
+      # branch-protection-required `ci` check enforces them on merge.
+      # (See emergent-company/emergent.memory#1074.)
+      - name: Preflight guards
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: bash scripts/preflight/all.sh
+      # Reject dynamic ${{ ... }} interpolation (refs, inputs, outputs, event
+      # payloads) inside shell run:/github-script script: payloads. Runs here so
+      # the branch-protection-required `ci` check enforces it repo-wide.
+      - name: Workflow injection guard (self-test)
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python3 .github/scripts/check-injection.py --self-test
+      - name: Workflow injection guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python3 .github/scripts/check-injection.py .github/workflows
+      - name: go.work coverage guard
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/check-go-work-coverage.sh
+      # Regression test for the iOS release skip decision (#1612): a genuinely
+      # new iOS version must build, a re-run / duplicate must skip, and neither
+      # the dual SDK tag series nor a skipped intermediate tag may suppress it.
+      - name: iOS release skip-check tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/ios-release-should-build.test.sh
+      # Xcode selection: "/Applications/Xcode.app wins" and
+      # "sort -V compares paths, not bundles" both meant the newest *installed*
+      # Xcode was not the one used, so the auto-update App Store Connect later
+      # rejected could not be routed around. Also pins the deliberate-pin path
+      # and the fail-closed behaviour when the pin is missing.
+      - name: Xcode selection tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/select-xcode.test.sh
+      # Same guarantee for the Mac release skip decision (mac-update-channel).
+      - name: Mac release skip-check tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/mac-release-should-build.test.sh
+      # Hermetic tests for the release version map and the alias assertion
+      # (#2111): built vs aliased entries, the 0.88.0 wrong-PREV case, missing
+      # previous maps degrading rather than failing.
+      - name: Release version map tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/release-versions.test.sh
+      # The leak gate's own test (#2343): the scan lived in a workflow run:
+      # body, so a pattern change could only be checked by retyping the regex,
+      # and three regressions shipped that way (#2145, #2290/#2342, #2336). The
+      # fixtures are a temporary tree -- a fake leak inside the scanned tree
+      # would fail the gate it is meant to test.
+      - name: Tree hygiene tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: .github/scripts/tree-hygiene.test.sh
+      - name: Meta checks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: 'echo "Meta CI: no meta checks remain in this repository."'

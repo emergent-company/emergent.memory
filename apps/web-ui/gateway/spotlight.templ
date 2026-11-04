@@ -1,0 +1,55 @@
+package main
+
+import (
+	"net/url"
+
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// spotlightItemAttrs builds the htmx navigation + dismiss attrs shared by every
+// palette row: swap #main-content (SPA nav) and uncheck the palette toggle on
+// click so the modal closes after navigating.
+func spotlightItemAttrs(href string) templ.Attributes {
+	return templ.Attributes{
+		"hx-get":      href,
+		"hx-target":   "#main-content",
+		"hx-swap":     "innerHTML",
+		"hx-push-url": "true",
+		"onclick":     "document.getElementById('spotlight-toggle').checked = false",
+	}
+}
+
+// spotlightItems builds the palette rows: static navigation + one row per agent.
+func spotlightItems(agents []AgentDefinitionSummary) []ui.CommandPaletteItem {
+	items := []ui.CommandPaletteItem{
+		{Label: "Agents", Description: "Manage personas, models and tools", Icon: "lucide--bot", Href: "/agents", Group: "Navigate"},
+		{Label: "Chat", Description: "Open the chat workspace", Icon: "lucide--messages-square", Href: "/chat", Group: "Navigate"},
+		{Label: "Sessions", Description: "Inspect session timelines and tool calls", Icon: "lucide--history", Href: "/sessions", Group: "Navigate"},
+		{Label: "Usage", Description: "Token usage and session activity", Icon: "lucide--chart-column", Href: "/usage", Group: "Navigate"},
+		{Label: "Documents", Description: "Browse ingested documents", Icon: "lucide--file-text", Href: "/documents", Group: "Navigate"},
+	}
+	for _, a := range agents {
+		items = append(items, ui.CommandPaletteItem{
+			Label:       a.Name,
+			Description: shortID(a.ID),
+			Icon:        agentIconifyClass(agentIcon(a.UIConfig)),
+			Href:        "/agents/" + url.PathEscape(a.ID),
+			Group:       "Agents",
+		})
+	}
+	for i := range items {
+		items[i].Attrs = spotlightItemAttrs(items[i].Href)
+	}
+	return items
+}
+
+// spotlightSearch is the ⌘K command palette modal, rendered once in the shell.
+templ spotlightSearch(agents []AgentDefinitionSummary) {
+	@ui.CommandPalette(ui.CommandPaletteProps{
+		ID:              "spotlight",
+		Placeholder:     "Search pages and agents…",
+		Items:           spotlightItems(agents),
+		Groups:          []string{"Navigate", "Agents"},
+		FullScreenMobile: true,
+	})
+}

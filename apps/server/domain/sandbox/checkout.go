@@ -1,0 +1,292 @@
+package sandbox
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"regexp"
+	"strings"
+	"time"
+)
+
+const (
+	maxCloneRetries   = 3
+	initialRetryDelay = 2 * time.Second
+	cloneTimeoutMs    = 300000 // 5 minutes for clone operations
+	pushPullTimeoutMs = 120000 // 2 minutes for push/pull
+)
+
+// GitCredentialProvider is an interface for getting GitHub installation tokens.
+// This breaks the circular dependency between workspace and githubapp packages.
+type GitCredentialProvider interface {
+	// GetInstallationToken returns a valid short-lived GitHub installation access token.
+	GetInstallationToken(ctx context.Context) (string, error)
+	// GetBotIdentity returns the git user.name and user.email for commits.
+	GetBotIdentity(ctx context.Context) (name string, email string, err error)
+}
+
+// CheckoutService handles git clone operations and credential injection for workspaces.
+type CheckoutService struct {
+	credProvider GitCredentialProvider
+	log          *slog.Logger
+}
+
+// NewCheckoutService creates a new checkout service.
+func NewCheckoutService(credProvider GitCredentialProvider, log *slog.Logger) *CheckoutService {
+	return &CheckoutService{
+		credProvider: credProvider,
+		log:          log.With("component", "workspace-checkout"),
+	}
+}
+
+// CloneRepository clones a repository into a workspace container.
+// destPath is the absolute path inside the container to clone into (e.g. "/workspace").
+// token is an optional git token (GH_TOKEN/GITHUB_TOKEN) used to authenticate the
+// clone; when non-empty it is injected into https://github.com/ URLs so that private
+// repositories can be cloned. The token is never logged or returned in errors.
+// Handles public/private repos, branch/SHA checkout, and retries.
+// Returns nil on success or if no repository URL is provided.
+func (cs *CheckoutService) CloneRepository(ctx context.Context, provider Provider, providerID string, repoURL string, branch string, destPath string, token string) error {
+	if repoURL == "" {
+		return nil // No repo to clone
+	}
+	if destPath == "" {
+		destPath = "/workspace"
+	}
+
+	// Build clone URL (with credentials for private repos)
+	cloneURL, err := cs.buildCloneURL(ctx, repoURL, token)
+	if err != nil {
+		cs.log.Warn("failed to build authenticated clone URL, trying unauthenticated",
+			"repo", repoURL,
+			"error", err,
+		)
+		cloneURL = repoURL
+	}
+
+	// Clone with retry
+	var lastErr error
+	for attempt := 0; attempt < maxCloneRetries; attempt++ {
+		if attempt > 0 {
+			delay := initialRetryDelay * time.Duration(1<<(attempt-1)) // exponential: 2s, 4s, 8s
+			cs.log.Info("retrying clone", "attempt", attempt+1, "delay", delay, "repo", repoURL)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		cmd := fmt.Sprintf("git clone --depth 1 %q %q 2>&1", cloneURL, destPath)
+		if branch != "" && !isSHA(branch) {
+			cmd = fmt.Sprintf("git clone --depth 1 --branch %q %q %q 2>&1", branch, cloneURL, destPath)
+		}
+
+		result, err := provider.Exec(ctx, providerID, &ExecRequest{
+			Command:   cmd,
+			TimeoutMs: cloneTimeoutMs,
+		})
+		if err != nil {
+			lastErr = fmt.Errorf("exec failed: %w", err)
+			continue
+		}
+		if result.ExitCode != 0 {
+			lastErr = fmt.Errorf("git clone failed (exit %d): %s", result.ExitCode, sanitizeGitOutput(result.Stderr))
+			continue
+		}
+
+		// Clone succeeded — now handle SHA checkout if needed
+		if branch != "" && isSHA(branch) {
+			// Need full history for SHA checkout
+			_, _ = provider.Exec(ctx, providerID, &ExecRequest{
+				Command:   "git fetch --unshallow 2>&1 || true",
+				Workdir:   destPath,
+				TimeoutMs: cloneTimeoutMs,
+			})
+
+			checkoutResult, err := provider.Exec(ctx, providerID, &ExecRequest{
+				Command:   fmt.Sprintf("git checkout %q 2>&1", branch),
+				Workdir:   destPath,
+				TimeoutMs: 30000,
+			})
+			if err != nil {
+				return fmt.Errorf("SHA checkout failed: %w", err)
+			}
+			if checkoutResult.ExitCode != 0 {
+				return fmt.Errorf("SHA checkout failed (exit %d): %s", checkoutResult.ExitCode, checkoutResult.Stderr)
+			}
+		}
+
+		// Configure bot identity
+		cs.configureGitIdentity(ctx, provider, providerID)
+
+		cs.log.Info("repository cloned successfully",
+			"repo", repoURL,
+			"branch", branch,
+			"dest", destPath,
+		)
+		return nil
+	}
+
+	cs.log.Error("all clone retries exhausted",
+		"repo", repoURL,
+		"attempts", maxCloneRetries,
+		"last_error", lastErr,
+	)
+	return lastErr
+}
+
+// InjectCredentialsForPush temporarily injects credentials into the git remote URL
+// for a push/pull operation, then removes them after completion.
+func (cs *CheckoutService) InjectCredentialsForPush(ctx context.Context, provider Provider, providerID string, gitCmd string) (*ExecResult, error) {
+	// Guard nil credential provider — fall back to unauthenticated
+	if cs.credProvider == nil {
+		cs.log.Warn("no credentials provider configured for git operation, trying unauthenticated")
+		return provider.Exec(ctx, providerID, &ExecRequest{
+			Command:   gitCmd,
+			Workdir:   "/workspace",
+			TimeoutMs: pushPullTimeoutMs,
+		})
+	}
+
+	// Get token
+	token, err := cs.credProvider.GetInstallationToken(ctx)
+	if err != nil {
+		// Fall back to unauthenticated (will likely fail for private repos)
+		cs.log.Warn("no credentials available for git operation, trying unauthenticated", "error", err)
+		return provider.Exec(ctx, providerID, &ExecRequest{
+			Command:   gitCmd,
+			Workdir:   "/workspace",
+			TimeoutMs: pushPullTimeoutMs,
+		})
+	}
+
+	// Inject credentials using git credential helper approach
+	// The token is ephemeral and workspace is isolated, so this is safe
+	script := fmt.Sprintf(`
+ORIG_URL=$(git remote get-url origin 2>/dev/null)
+if [ -n "$ORIG_URL" ]; then
+    # Inject token into URL (ephemeral token, isolated workspace)
+    AUTH_URL=$(echo "$ORIG_URL" | sed "s|https://|https://x-access-token:%s@|")
+    git remote set-url origin "$AUTH_URL" 2>/dev/null
+    %s 2>&1
+    EXIT_CODE=$?
+    # Restore original URL
+    git remote set-url origin "$ORIG_URL" 2>/dev/null
+    exit $EXIT_CODE
+else
+    %s 2>&1
+fi
+`, token, gitCmd, gitCmd)
+
+	return provider.Exec(ctx, providerID, &ExecRequest{
+		Command:   script,
+		Workdir:   "/workspace",
+		TimeoutMs: pushPullTimeoutMs,
+	})
+}
+
+// configureGitIdentity sets the git user.name and user.email in the workspace.
+func (cs *CheckoutService) configureGitIdentity(ctx context.Context, provider Provider, providerID string) {
+	var name, email string
+	if cs.credProvider != nil {
+		var err error
+		name, email, err = cs.credProvider.GetBotIdentity(ctx)
+		if err != nil {
+			name = ""
+			email = ""
+		}
+	}
+	if name == "" || email == "" {
+		name = "Memory Agent"
+		email = "agent@memory.local"
+		cs.log.Debug("using default git identity (no GitHub App configured)")
+	}
+
+	cmd := fmt.Sprintf(
+		`git config user.name %q && git config user.email %q`,
+		name, email,
+	)
+	_, execErr := provider.Exec(ctx, providerID, &ExecRequest{
+		Command: cmd,
+		Workdir: "/workspace",
+	})
+	if execErr != nil {
+		cs.log.Warn("failed to configure git identity", "error", execErr)
+	}
+}
+
+// buildCloneURL creates an authenticated clone URL. An explicit token (from
+// GH_TOKEN/GITHUB_TOKEN) takes precedence: when non-empty and the repo URL is a
+// GitHub HTTPS URL, it is injected as `https://x-access-token:<token>@github.com/…`.
+// Otherwise it falls back to the configured GitCredentialProvider (GitHub App
+// installation tokens), and finally to the repoURL unchanged (public clone).
+func (cs *CheckoutService) buildCloneURL(ctx context.Context, repoURL string, token string) (string, error) {
+	// Explicit token (GH_TOKEN/GITHUB_TOKEN) wins — this is the load-bearing path
+	// for private repositories when no GitHub App credential provider is wired.
+	if token != "" && strings.HasPrefix(repoURL, "https://github.com/") {
+		return strings.Replace(repoURL, "https://github.com/", fmt.Sprintf("https://x-access-token:%s@github.com/", token), 1), nil
+	}
+
+	if cs.credProvider == nil {
+		return repoURL, nil
+	}
+
+	credToken, err := cs.credProvider.GetInstallationToken(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	// Inject token: https://github.com/org/repo -> https://x-access-token:TOKEN@github.com/org/repo
+	if strings.HasPrefix(repoURL, "https://") {
+		return strings.Replace(repoURL, "https://", fmt.Sprintf("https://x-access-token:%s@", credToken), 1), nil
+	}
+
+	return repoURL, nil
+}
+
+// ResolveGitToken returns the first non-empty git token across the given env maps,
+// checking GH_TOKEN before GITHUB_TOKEN within each map, in the order the maps are
+// provided. Returns "" when no token is configured.
+func ResolveGitToken(envs ...map[string]string) string {
+	for _, env := range envs {
+		for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+			if v := env[key]; v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// ResolveGitTokenForConfig resolves the effective git token for a sandbox config
+// using the documented precedence (first non-empty wins):
+//
+//  1. cfg.GitTokenSecretRef → resolved from the server environment (allowlisted
+//     name only; see ResolveGitTokenSecretRef).
+//  2. cfg.GitToken — the legacy plaintext literal backfilled by migration 00244.
+//  3. cfg.EnvVars GH_TOKEN / GITHUB_TOKEN — pre-migration stored literals.
+//  4. runtimeEnv maps — per-run env vars (GH_TOKEN / GITHUB_TOKEN), never persisted.
+//
+// The token is never logged.
+func ResolveGitTokenForConfig(cfg *AgentSandboxConfig, runtimeEnv ...map[string]string) string {
+	if cfg != nil {
+		if t := ResolveGitTokenSecretRef(cfg.GitTokenSecretRef); t != "" {
+			return t
+		}
+		if cfg.GitToken != "" {
+			return cfg.GitToken
+		}
+		if t := ResolveGitToken(cfg.EnvVars); t != "" {
+			return t
+		}
+	}
+	return ResolveGitToken(runtimeEnv...)
+}
+
+// isSHA checks if a string looks like a git commit SHA (40 or 7+ hex chars).
+var shaPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+func isSHA(s string) bool {
+	return shaPattern.MatchString(s)
+}

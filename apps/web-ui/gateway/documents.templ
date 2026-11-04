@@ -1,0 +1,1352 @@
+package main
+
+import (
+	"fmt"
+	"net/url"
+	"strconv"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	fm "github.com/emergent-company/go-daisy/components/form"
+	"github.com/emergent-company/go-daisy/components/layout"
+	"github.com/emergent-company/go-daisy/components/nav"
+	table "github.com/emergent-company/go-daisy/components/table"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// --- Documents ---
+
+// DocumentsPage renders the document browser: a stats strip, status filter,
+// search/filter/sort controls, and one page of the listing as a table at md+
+// (a card list below md), plus the upload form. A failed list fetch renders the
+// whole-page error state; a failed upload surfaces as flashErr, a successful one
+// as flashMsg.
+templ DocumentsPage(data documentPageData) {
+	@layout.Container(layout.ContainerLG, nil) {
+		@documentsHeader(data.Total, data.LoadErr == nil)
+		if data.LoadErr != nil {
+			@pageError("Failed to load documents", data.LoadErr)
+		} else {
+			@flashToasts(data.FlashMsg, data.FlashErr)
+			@documentsProblemsPanel(data)
+			@documentsStats(data)
+			@documentsToolbar(data)
+			@documentsResults(data)
+			@documentUploadDialog()
+		}
+	}
+}
+
+templ documentsHeader(total int, ok bool) {
+	@pageHeader("Knowledge", "Documents", "Source documents ingested into memory — upload new ones, preview chunks, and trigger extraction.") {
+		if ok {
+			<span data-testid="documents-count">@countBadgeLabel(documentsCountLabel(total), "lucide--file-text")</span>
+			@ui.Button(ui.ButtonProps{
+				Type:    ui.ButtonTypeButton,
+				Variant: ui.ButtonPrimary,
+				Size:    ui.ButtonSM,
+				Icon:    "lucide--upload",
+				Attrs: templ.Attributes{
+					"data-dialog-open": "document-upload-modal",
+					"data-testid":      "documents-upload-open",
+				},
+			}) {
+				Upload
+			}
+		}
+	}
+}
+
+// documentsStats is the small stats strip: the project's document total and the
+// per-status breakdown the tabs filter on. The numbers come with the listing
+// response, so they are correct on first paint — there is no deferred fetch and
+// no placeholder flash.
+templ documentsStats(data documentPageData) {
+	<div class="mb-4 [&>.stats]:w-full max-sm:[&_.stat]:px-2 max-sm:[&_.stat-title]:text-[10px] max-sm:[&_.stat-value]:text-xl max-sm:[&_.stat-desc]:text-[10px]" data-testid="documents-stats">
+		@ui.StatsGroup([]ui.StatsGroupItem{
+			{Title: "documents", Value: groupDigits(int64(data.Counts.All))},
+			{Title: "processing", Value: groupDigits(int64(data.Counts.Processing)), Color: "text-info"},
+			{Title: "ready", Value: groupDigits(int64(data.Counts.Ready))},
+			{Title: "extracted", Value: groupDigits(int64(data.Counts.Extracted)), Color: "text-success"},
+			{Title: "failed", Value: groupDigits(int64(data.Counts.Failed)), Color: "text-error"},
+		})
+	</div>
+}
+
+// documentUploadDialog holds the upload form. The page keeps a single Upload
+// button in its header; the form itself only appears here, so the listing gets
+// the vertical space it needs instead of paying for an always-open drop zone.
+// Its submit handler (below) opens the file picker when no file is chosen, so
+// an empty submit never reaches the API.
+templ documentUploadDialog() {
+	@ui.Dialog(ui.DialogProps{
+		ID:       "document-upload-modal",
+		BoxClass: "max-w-lg",
+		Attrs:    templ.Attributes{"aria-labelledby": "document-upload-title", "data-testid": "documents-upload-modal"},
+	}) {
+		@ui.DialogTitle(ui.DialogTitleProps{ID: "document-upload-title"}) {
+			Upload a document
+		}
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Single file up to 10 MB. Text-based files chunk and extract best. }
+		<form method="post" action="/documents" enctype="multipart/form-data" data-document-upload class="mt-4 flex flex-col gap-4">
+			<input type="file" name="file" class="file-input file-input-bordered w-full" data-testid="documents-upload-input"/>
+			@fm.FormActions("", "") {
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeButton,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"data-dialog-close": "document-upload-modal"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonPrimary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--upload",
+					Attrs:   templ.Attributes{"data-testid": "documents-upload-submit"},
+				}) {
+					Upload
+				}
+			}
+		</form>
+	}
+	<script>
+		// Clicking Upload with no file chosen opens the file picker instead of
+		// posting an empty multipart form (which the API rejects with a 400).
+		// ui.Dialog sets hx-boost="false" on the <dialog>, so this form is not
+		// boosted today; the listener still runs in the capture phase and stops
+		// propagation so the guard keeps working if the form is ever rendered
+		// outside the dialog, where the page shell's hx-boost has already claimed
+		// the submit by the time a bubbling handler runs. Delegated from document
+		// so it survives htmx-boosted navigations; the one-shot guard keeps it
+		// from stacking listeners across visits.
+		if (!window.__documentsUploadInit) {
+			window.__documentsUploadInit = true;
+			document.addEventListener('submit', function (event) {
+				var form = event.target;
+				if (!form || !form.matches('[data-document-upload]')) return;
+				var input = form.querySelector('input[type="file"]');
+				if (input && input.files && input.files.length === 0) {
+					event.preventDefault();
+					event.stopPropagation();
+					input.click();
+				}
+			}, true);
+		}
+	</script>
+}
+
+// documentsToolbar puts the search box and the status/source/sort controls in
+// one card. Search and filters stay two forms: the search form submits a query
+// while the filter form applies each control on change, and a single form
+// cannot do both without dropping one of them.
+templ documentsToolbar(data documentPageData) {
+	<div class="mb-4">
+		@components.PanelCard("", nil, "p-3 sm:p-4") {
+			<div class="flex flex-col gap-3">
+				<form method="get" action="/documents" class="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="documents-search-form">
+					if data.Status != "" {
+						<input type="hidden" name="status" value={ data.Status }/>
+					}
+					if data.SourceType != "" {
+						<input type="hidden" name="sourceType" value={ data.SourceType }/>
+					}
+					if data.Attention != "" {
+						<input type="hidden" name="attention" value={ data.Attention }/>
+					}
+					if data.Sort != "" && data.Sort != documentSortCreated {
+						<input type="hidden" name="sort" value={ data.Sort }/>
+					}
+					if data.Order != "" && data.Order != documentOrderDesc {
+						<input type="hidden" name="order" value={ data.Order }/>
+					}
+					<label class="input flex w-full min-w-0 flex-1 items-center gap-2">
+						@ui.IconSpan("lucide--search", "size-4 shrink-0 text-muted")
+						<input type="search" name="q" value={ data.Query } placeholder="Search documents by name or source URL…" class="grow" autocomplete="off" aria-label="Search documents"/>
+					</label>
+					<div class="flex shrink-0 items-center gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--search",
+						}) {
+							Search
+						}
+					</div>
+				</form>
+				<form method="get" action="/documents" class="flex flex-wrap items-end gap-x-3 gap-y-2 border-base-content/10 border-t pt-3" data-testid="documents-filter-form">
+					if data.Query != "" {
+						<input type="hidden" name="q" value={ data.Query }/>
+					}
+					if data.Attention != "" {
+						<input type="hidden" name="attention" value={ data.Attention }/>
+					}
+					@fm.FormControl("documents-filter-status", "Status", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-status" name="status" class="select select-sm" aria-label="Filter by status" data-testid="documents-status-filter" onchange="this.form.submit()">
+							for _, opt := range documentStatusOptions(data) {
+								<option value={ opt.Value } selected?={ opt.Value == data.Status }>{ documentStatusOptionLabel(opt) }</option>
+							}
+						</select>
+					}
+					@fm.FormControl("documents-filter-source", "Source", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-source" name="sourceType" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
+							for _, opt := range documentSourceSelectOptions(data) {
+								<option value={ opt.Value } selected?={ opt.Value == data.SourceType }>{ opt.Label }</option>
+							}
+						</select>
+					}
+					@fm.FormControl("documents-filter-sort", "Sort", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-sort" name="sort" class="select select-sm" aria-label="Sort by" onchange="this.form.submit()">
+							for _, opt := range documentSortSelectOptions() {
+								<option value={ opt.Value } selected?={ opt.Value == data.Sort }>{ opt.Label }</option>
+							}
+						</select>
+					}
+					@fm.FormControl("documents-filter-order", "Direction", fm.LabelAbove, "", "", nil) {
+						<select id="documents-filter-order" name="order" class="select select-sm" aria-label="Sort direction" onchange="this.form.submit()">
+							for _, opt := range documentOrderSelectOptions() {
+								<option value={ opt.Value } selected?={ opt.Value == data.Order }>{ opt.Label }</option>
+							}
+						</select>
+					}
+					<noscript>
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+						}) {
+							Apply filters
+						}
+					</noscript>
+				</form>
+			</div>
+		}
+	</div>
+}
+
+// documentsResults renders one page of the listing: the table at md and up, the
+// card list below md (the table is hidden there, so both are rendered), and the
+// footer with the order note and the load-more control. An empty result renders
+// "nothing stored" or "nothing matched" depending on whether a filter is active.
+templ documentsResults(data documentPageData) {
+	if len(data.Rows) == 0 {
+		if data.filtered() {
+			@documentsNoMatches(data)
+		} else {
+			@documentsEmpty()
+		}
+	} else {
+		<div class="hidden md:block">
+			@components.TableCard(nil, components.TableCardOpt{CardClass: "overflow-hidden", BodyClass: "p-0"}) {
+				@table.TableWithProps(table.TableProps{Size: "sm", Attrs: templ.Attributes{"data-testid": "documents-table"}}) {
+					@documentsTableHead(data)
+					<tbody id="documents-list">
+						for _, r := range data.Rows {
+							@documentTableRow(r)
+						}
+					</tbody>
+				}
+			}
+		</div>
+		<div id="documents-mobile-list" class="md:hidden">
+			@cardList("", cardListProps{}) {
+				for _, r := range data.Rows {
+					@documentMobileCard(r)
+				}
+			}
+		</div>
+		@documentsFooter(data)
+	}
+}
+
+// documentsTableHead renders the column headers. Created and Updated are the
+// two sortable columns — the only two keys the list endpoint can order by while
+// keeping the keyset cursor correct.
+templ documentsTableHead(data documentPageData) {
+	@table.TableHead() {
+		@table.TableHeadRow() {
+			@table.TableHeadCell("Document")
+			@table.TableHeadCell("Status")
+			<th scope="col" class="text-right text-xs font-semibold text-base-content/60 uppercase">Versions</th>
+			@table.TableHeadCell("Source")
+			@table.TableHeadCell("Uploaded by")
+			@documentsSortHead("Created", documentsSortHref(data, documentSortCreated), documentsSortDir(data, documentSortCreated))
+			@documentsSortHead("Updated", documentsSortHref(data, documentSortUpdated), documentsSortDir(data, documentSortUpdated))
+			<th class="w-10"></th>
+		}
+	}
+}
+
+// documentsSortHead renders one sortable column header with its state in
+// aria-sort. The glyph is always present (dimmed when inactive) so the header
+// advertises that the column sorts at all.
+templ documentsSortHead(label, href, dir string) {
+	{{
+		ariaSort := "none"
+		icon := "lucide--chevrons-up-down"
+		iconClass := "text-base-content/25"
+		switch dir {
+		case "asc":
+			ariaSort, icon, iconClass = "ascending", "lucide--chevron-up", ""
+		case "desc":
+			ariaSort, icon, iconClass = "descending", "lucide--chevron-down", ""
+		}
+	}}
+	<th scope="col" aria-sort={ ariaSort } class="text-right text-xs font-semibold text-base-content/60 uppercase">
+		<a href={ href } class="inline-flex items-center justify-end gap-1 hover:text-base-content">
+			@ui.IconSpan(icon, "size-3 shrink-0 "+iconClass)
+			<span>{ label }</span>
+		</a>
+	</th>
+}
+
+// documentTableRow is one desktop row. The row is clickable through data-href
+// (app.js ignores clicks that land on form controls, so delete still works).
+templ documentTableRow(r documentRow) {
+	<tr class="hover cursor-pointer" data-href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } data-document-id={ r.ID }>
+		@table.TableCell("max-w-[26rem]", nil) {
+			<div class="flex min-w-0 items-center gap-3">
+				@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
+				<div class="min-w-0">
+					<a href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } class="hover:text-primary block truncate text-sm font-medium hover:underline">{ r.Name }</a>
+					<span class="text-muted-faint text-xs">{ strconv.Itoa(r.Chunks) } chunk{ plural(r.Chunks) }</span>
+				</div>
+			</div>
+		}
+		@table.TableCell("", nil) {
+			@documentStatusBadge(r.Status)
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-xs tabular-nums">{ documentVersionLabel(r.Versions) }</span>
+		}
+		@table.TableCell("max-w-[14rem]", nil) {
+			if r.SourceID != "" && r.Source != "" {
+				// A row from a connected source names that source and links to it,
+				// so "where did this come from" is one click rather than a guess.
+				<a class="link link-hover text-muted block truncate text-xs" href={ templ.URL("/data-sources/" + url.PathEscape(r.SourceID)) } title={ "From " + r.Source } data-testid="documents-source-link">{ r.Source }</a>
+			} else if r.Source != "" {
+				<span class="text-muted block truncate text-xs" title={ r.Source }>{ r.Source }</span>
+			} else {
+				@components.EmptyDash()
+			}
+		}
+		@table.TableCell("max-w-[10rem]", nil) {
+			if r.Uploader != "" {
+				<span class="block truncate text-xs" title={ r.Uploader } data-testid="documents-uploader">{ r.Uploader }</span>
+			} else {
+				// A source-synced document has no single uploader, and pre-#2260 rows
+				// cannot be attributed: an em dash says "unknown", blank looks broken.
+				@components.EmptyDash()
+			}
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-muted-faint text-xs tabular-nums" title={ r.CreatedAt }>{ relTime(r.CreatedAt) }</span>
+		}
+		@table.TableCell("text-right whitespace-nowrap", nil) {
+			<span class="text-muted-faint text-xs tabular-nums" title={ documentUpdatedLabel(r) }>{ relTime(documentUpdatedLabel(r)) }</span>
+		}
+		@table.TableActionCell() {
+			@documentDeleteForm(r.ID, r.Name)
+		}
+	</tr>
+}
+
+// documentMobileCard is the same document rendered for a phone: the name and
+// chunk count, status, then the metadata the table shows in its own columns.
+templ documentMobileCard(r documentRow) {
+	// The card navigates through data-href (as the table row does) rather than
+	// wrapping everything in one <a>: the source cell is its own link, and an
+	// anchor cannot legally nest inside another.
+	<div class="hover:bg-base-200/40 flex cursor-pointer items-start gap-2 px-4 py-3 transition-colors" data-href={ templ.URL("/documents/" + url.PathEscape(r.ID)) } data-document-id={ r.ID }>
+		<div class="flex min-w-0 grow items-start gap-3">
+			@ui.IconSpan("lucide--file-text", "size-4 shrink-0 text-muted-faint")
+			<div class="min-w-0 grow">
+				<a class="hover:text-primary block truncate text-sm font-medium hover:underline" href={ templ.URL("/documents/" + url.PathEscape(r.ID)) }>{ r.Name }</a>
+				<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+					@ui.Badge(ui.BadgeProps{
+						Label:   strconv.Itoa(r.Chunks) + " chunk" + plural(r.Chunks),
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--braces",
+					})
+					@documentStatusBadge(r.Status)
+					if r.Versions > 0 {
+						@ui.Badge(ui.BadgeProps{Label: documentVersionLabel(r.Versions) + " v", Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--layers"})
+					}
+				</div>
+				<div class="text-muted-faint mt-1 flex flex-wrap items-center gap-x-2 text-xs">
+					if r.SourceID != "" && r.Source != "" {
+						<a class="link link-hover truncate" href={ templ.URL("/data-sources/" + url.PathEscape(r.SourceID)) } title={ "From " + r.Source } data-testid="documents-source-link-card">{ r.Source }</a>
+					} else if r.Source != "" {
+						<span class="truncate">{ r.Source }</span>
+					}
+					if r.Uploader != "" {
+						<span class="truncate" title={ "Uploaded by " + r.Uploader } data-testid="documents-uploader-card">{ r.Uploader }</span>
+					}
+					<span title={ documentUpdatedLabel(r) }>updated { relTime(documentUpdatedLabel(r)) }</span>
+				</div>
+			</div>
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+		</div>
+		@documentDeleteForm(r.ID, r.Name)
+	</div>
+}
+
+// documentsFooter sits below the listing: the active-order note on the left and
+// the cursor-pagination trigger on the right. #documents-load-more is the OOB
+// swap target the /documents/partial response replaces when a page is appended.
+templ documentsFooter(data documentPageData) {
+	<div class="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
+		<span class="text-muted-faint inline-flex items-center gap-1.5 text-xs">
+			@ui.IconSpan(documentSortDirectionIcon(data), "size-3.5 shrink-0")
+			{ documentsSortLabel(data) }
+		</span>
+		<div id="documents-load-more">
+			if data.HasMore {
+				@documentsLoadMoreButton(data)
+			}
+		</div>
+	</div>
+}
+
+// documentsLoadMoreButton is the cursor-pagination trigger. It targets the table
+// body; the partial also appends the same rows to the mobile card list out of
+// band, because the table is hidden on small screens.
+templ documentsLoadMoreButton(data documentPageData) {
+	@ui.Button(ui.ButtonProps{
+		Type:       ui.ButtonTypeButton,
+		Variant:    ui.ButtonOutline,
+		Size:       ui.ButtonSM,
+		Icon:       "lucide--chevron-down",
+		ExtraClass: "gap-2 px-5",
+		Attrs: templ.Attributes{
+			"hx-get":      documentsPartialURL(data),
+			"hx-target":   "#documents-list",
+			"hx-swap":     "beforeend",
+			"data-testid": "documents-load-more",
+		},
+	}) {
+		Load more
+	}
+}
+
+// documentsRowsPartial is the HTMX fragment returned by /documents/partial: the
+// next page's rows (appended to #documents-list), the same rows as mobile cards
+// (appended to #documents-mobile-list), and a replacement load-more slot that
+// disappears on the last page.
+templ documentsRowsPartial(data documentPageData) {
+	for _, r := range data.Rows {
+		@documentTableRow(r)
+	}
+	<div id="documents-mobile-list" class="md:hidden" hx-swap-oob="beforeend">
+		@cardList("", cardListProps{}) {
+			for _, r := range data.Rows {
+				@documentMobileCard(r)
+			}
+		}
+	</div>
+	<div id="documents-load-more" hx-swap-oob="true">
+		if data.HasMore {
+			@documentsLoadMoreButton(data)
+		}
+	</div>
+}
+
+// documentsEmpty is the "nothing stored yet" state: no filters, no documents.
+templ documentsEmpty() {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--file-text",
+		Title:       "No documents yet",
+		Description: "Upload a document and it will be chunked and ready to extract here.",
+		Bordered:    true,
+		Class:       "py-12",
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--upload",
+			Attrs: templ.Attributes{
+				"data-dialog-open": "document-upload-modal",
+				"data-testid":      "documents-empty-upload",
+			},
+		}) {
+			Upload a document
+		}
+	}
+}
+
+// documentsNoMatches is the filtered empty state. It never claims there are no
+// documents: it reports what the active search/filters excluded and offers the
+// way back to the whole list. The header's Upload button stays usable.
+templ documentsNoMatches(data documentPageData) {
+	@ui.EmptyState(ui.EmptyStateProps{
+		Icon:        "lucide--search-x",
+		Title:       "No documents match",
+		Description: "Nothing stored matches the active search and filters. Clear them to see the full list.",
+		Bordered:    true,
+		Class:       "py-12",
+		Attrs:       templ.Attributes{"data-testid": "documents-no-matches"},
+	}) {
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    "/documents",
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--x",
+		}) {
+			Clear filters
+		}
+	}
+}
+
+// documentVersionLabel renders a document's version count, with a dash for a
+// missing value (an older API response, or a document the listing did not
+// populate).
+func documentVersionLabel(versions int) string {
+	if versions <= 0 {
+		return "—"
+	}
+	return strconv.Itoa(versions)
+}
+
+// documentDeleteForm is the per-row delete affordance on the documents list:
+// a small danger ghost submit that hx-confirms before the POST to
+// /documents/:id/delete.
+templ documentDeleteForm(id, name string) {
+	<form method="post" action={ templ.URL("/documents/" + url.PathEscape(id) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeSubmit,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			Icon:       "lucide--trash-2",
+			ExtraClass: "text-error hover:text-error",
+			AriaLabel:  "Delete " + name,
+		})
+	</form>
+}
+
+// documentStatusBadge renders a document's derived processing status as a
+// badge. Extraction status is folded into it (the API derives one from the
+// other), so a row never shows two competing status chips.
+templ documentStatusBadge(status string) {
+	if status == "" {
+		@components.EmptyDash()
+	} else {
+		@components.StatusBadge(documentProcessingLabel(status), documentProcessingIntent(status), "", components.StatusBadgeOpts{
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
+			Attrs: templ.Attributes{"data-status": status},
+		})
+	}
+}
+
+// --- Document detail ---
+
+// DocumentDetailPage renders a document's Overview sub-page: metadata, an
+// extraction trigger, and a preview of the original file. A failed document
+// fetch renders the whole-page error state; a failed preview fetch degrades
+// only the preview card.
+templ DocumentDetailPage(doc *Document, preview documentPreview, loadErr error, flashMsg string, flashErr error, extractionBlocked bool) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Document unavailable", loadErr)
+		} else {
+			@documentDetailHeader(doc, "overview")
+			@layout.Rail(documentSubNav(doc.ID, "overview"), nil) {
+				@extractionCard(doc, flashMsg, flashErr, extractionBlocked)
+				@documentPreviewCard(doc, preview)
+			}
+		}
+	}
+}
+
+// documentSubNav is the vertical sub-navigation rail shared by the document
+// Overview, Chunks, and Extraction history views, mirroring agentSubNav.
+templ documentSubNav(documentID, active string) {
+	{{ base := "/documents/" + url.PathEscape(documentID) }}
+	@components.SettingsRail("Document sections", active, []components.RailItem{
+		{Key: "overview", Href: base, Icon: "lucide--file-text", Label: "Overview"},
+		{Key: "chunks", Href: base + "/chunks", Icon: "lucide--braces", Label: "Chunks"},
+		{Key: "extractions", Href: base + "/extractions", Icon: "lucide--history", Label: "Extraction history"},
+		{Key: "versions", Href: base + "/versions", Icon: "lucide--layers", Label: "Versions"},
+	})
+}
+
+// documentPreviewCard previews a document's original content by media type:
+// PDFs and images inline through the gateway file proxy, text/markdown as a
+// capped escaped text preview, anything else as a download link.
+templ documentPreviewCard(doc *Document, preview documentPreview) {
+	<div class="mt-6">
+		@components.PanelCard("", nil) {
+			<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+				<div class="flex items-center gap-3">
+					@ui.IconTile("lucide--eye", ui.IconTileProps{Tone: "info"})
+					<div>
+						<h2 class="text-base font-semibold">Preview</h2>
+						@ui.EmptyNote() { The original file as stored in memory. }
+					</div>
+				</div>
+				@ui.Button(ui.ButtonProps{
+					Type:       ui.ButtonTypeLink,
+					Href:       documentFilePath(doc.ID),
+					Variant:    ui.ButtonGhost,
+					Size:       ui.ButtonSM,
+					ExtraClass: "gap-1",
+					Attrs:      templ.Attributes{"data-testid": "document-download-link"},
+				}) {
+					@ui.IconSpan("lucide--download", "size-4")
+					Download
+				}
+			</div>
+			switch preview.Mode {
+				case previewModePDF:
+					<embed
+						data-testid="document-preview-pdf"
+						src={ templ.URL(documentFilePath(doc.ID)) }
+						type="application/pdf"
+						class="h-[36rem] w-full rounded-box border border-base-content/10"
+					/>
+				case previewModeImage:
+					<img
+						data-testid="document-preview-image"
+						src={ templ.URL(documentFilePath(doc.ID)) }
+						alt={ documentName(*doc) }
+						class="mx-auto max-h-[36rem] rounded-box border border-base-content/10"
+					/>
+				case previewModeText:
+					if preview.Err != nil {
+						@documentPreviewUnavailable(doc)
+					} else {
+						<pre data-testid="document-preview-text" class="max-h-[36rem] overflow-auto rounded-box bg-base-200/50 p-4 text-xs whitespace-pre-wrap">{ preview.Text }</pre>
+						if preview.Truncated {
+							@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2", Attrs: templ.Attributes{"data-testid": "document-preview-truncated"}}) {
+								Preview truncated to { strconv.Itoa(maxTextPreviewChars) } characters — open the Chunks view for the full text.
+							}
+						}
+					}
+				default:
+					@documentPreviewDownload(doc)
+			}
+		}
+	</div>
+}
+
+// documentPreviewUnavailable degrades a failed server-side text fetch to a note
+// with a link into the Chunks view, never a broken section.
+templ documentPreviewUnavailable(doc *Document) {
+	<div class="rounded-box border border-base-content/10 p-4" data-testid="document-preview-unavailable">
+		<p class="text-sm text-muted-bright">The original file could not be loaded for preview.</p>
+		<a class="link link-primary text-sm" href={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/chunks") }>Open the Chunks view</a>
+	</div>
+}
+
+// documentPreviewDownload is the fallback preview for media types the gateway
+// cannot render inline: a download link to the original file.
+templ documentPreviewDownload(doc *Document) {
+	<div class="rounded-box border border-base-content/10 p-4" data-testid="document-preview-download">
+		<p class="text-sm text-muted-bright">This file type cannot be previewed inline.</p>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeLink,
+			Href:       documentFilePath(doc.ID),
+			Variant:    ui.ButtonOutline,
+			Size:       ui.ButtonSM,
+			ExtraClass: "gap-1 mt-2",
+		}) {
+			@ui.IconSpan("lucide--download", "size-4")
+			Download file
+		}
+	</div>
+}
+
+// documentSectionCrumbs builds the breadcrumb trail for a document view: the
+// documents list, the document itself, and — for a sub-page — the section. The
+// overview stops at the document. The document crumb always links to the
+// overview so a sub-page can walk back up the trail.
+func documentSectionCrumbs(doc *Document, section string) []nav.BreadcrumbItem {
+	base := "/documents/" + url.PathEscape(doc.ID)
+	switch section {
+	case "chunks":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Chunks")
+	case "extractions":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Extraction history")
+	case "versions":
+		return nav.Crumbs("Documents", "/documents", documentName(*doc), base, "Versions")
+	default:
+		return nav.Crumbs("Documents", "/documents", documentName(*doc))
+	}
+}
+
+// documentDetailHeader renders the shared header for every document view. The
+// section names the active sub-page ("chunks", "extractions", "versions"); any
+// other value renders the overview trail. A single extraction run is a child of
+// Extraction history: its own identity (short id, status) lives in the run
+// header below, so the trail stops at the section.
+templ documentDetailHeader(doc *Document, section string) {
+	@detailHeader(crumbsActive(documentSectionCrumbs(doc, section)), "", documentName(*doc), "", detailHeaderOpts{Margin: "mb-6"}) {
+		<div class="flex flex-wrap items-center gap-2">
+			@countBadgeLabel(strconv.Itoa(doc.Chunks)+" chunk"+plural(doc.Chunks), "lucide--braces")
+			@documentStatusBadge(documentHeaderStatus(doc))
+			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/delete") } hx-confirm="Delete this document? This cannot be undone.">
+				@ui.Button(ui.ButtonProps{
+					Type:      ui.ButtonTypeSubmit,
+					Variant:   ui.ButtonError,
+					Style:     ui.ButtonStyleOutline,
+					Size:      ui.ButtonSM,
+					Icon:      "lucide--trash-2",
+					AriaLabel: "Delete " + documentName(*doc),
+				}) {
+					Delete
+				}
+			</form>
+		</div>
+	}
+}
+
+templ extractionCard(doc *Document, flashMsg string, flashErr error, blocked bool) {
+	{{ extractAttrs := templ.Attributes{} }}
+	{{ if blocked { extractAttrs = templ.Attributes{"disabled": true, "title": "Configure a provider and set a default generative model to run extraction."} } }}
+	@components.PanelCard("", nil) {
+		<div class="flex flex-wrap items-center justify-between gap-3">
+		<div class="flex items-center gap-3">
+			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
+			<div>
+				<h2 class="text-base font-semibold">Extraction</h2>
+					@ui.EmptyNote() {
+						if blocked {
+							Extraction needs a generative model.
+						} else if doc.ObjectsCreated > 0 {
+							{ strconv.Itoa(doc.ObjectsCreated) } objects extracted
+						} else {
+							Run extraction to pull structured entities out of this document.
+						}
+					}
+				</div>
+			</div>
+			<form method="post" action={ templ.URL("/documents/" + url.PathEscape(doc.ID) + "/extract") }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonAccent,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--sparkles",
+					Attrs:   extractAttrs,
+				}) {
+					Extract data
+				}
+			</form>
+		</div>
+		if blocked {
+			<div class="mt-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertWarning,
+					Style:   ui.AlertStyleSoft,
+					Icon:    "lucide--alert-triangle",
+					Message: "No generative model is configured. Add a provider and set a default model before running extraction.",
+				})
+				<a href="/settings/providers" class="link link-primary text-sm">Configure a model</a>
+			</div>
+		}
+		@flashToasts(flashMsg, flashErr)
+	}
+}
+
+// --- document sub-pages ---
+
+// DocumentChunksPage renders the document Chunks sub-page: the shared detail
+// header, the sub-navigation rail, and the document's chunks.
+templ DocumentChunksPage(doc *Document, chunks []Chunk, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Document unavailable", loadErr)
+		} else {
+			@documentDetailHeader(doc, "chunks")
+			@layout.Rail(documentSubNav(doc.ID, "chunks"), nil) {
+				@chunksSection(chunks)
+				@chunkRollbackDialog()
+			}
+		}
+	}
+}
+
+// DocumentExtractionsPage renders the Extraction history sub-page: every
+// extraction job for the document, newest first. A failed job-list fetch
+// degrades the whole page to the error state. warnMsg surfaces a partial-merge
+// warning (e.g. "M left for review"); hint carries the merged job's leftover
+// count so its action row can render the review badge.
+templ DocumentExtractionsPage(doc *Document, jobs []ExtractionJob, loadErr error, flashMsg string, warnMsg string, flashErr error, hint *mergeReviewHint) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Failed to load extraction history", loadErr)
+		} else {
+			@documentDetailHeader(doc, "extractions")
+			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
+				@flashToastsWarn(flashMsg, warnMsg, flashErr)
+				@extractionHistory(doc.ID, jobs, hint)
+			}
+		}
+	}
+}
+
+// DocumentExtractionPage renders the dedicated extraction-run sub-page: the
+// shared detail header, the sub-navigation rail, and — in order — the run
+// header, summary strip, trace waterfall, error details, and the objects/
+// relationships/branch/merge block. A failed document or job fetch degrades
+// the whole page to the error state.
+templ DocumentExtractionPage(doc *Document, d extractionJobDetail, loadErr error) {
+	@layout.Container(layout.ContainerLG, nil) {
+		if loadErr != nil {
+			@pageError("Extraction run unavailable", loadErr)
+		} else {
+			@documentDetailHeader(doc, "extractions")
+			@layout.Rail(documentSubNav(doc.ID, "extractions"), nil) {
+				@extractionRunHeader(doc, d)
+				@components.PanelCard("", nil) {
+					@extractionRunBody(doc.ID, d.Job.ID, d, extractionJobActive(d.Job.Status), false)
+				}
+				@extractionErrorBlock(d)
+				@components.PanelCard("", nil) {
+					@ExtractionJobDetail(doc.ID, d)
+				}
+			}
+		}
+	}
+}
+
+// extractionRunHeader renders the sub-page's run identity block: a back link to
+// the extraction history, the run's creation time + short id, its status badge,
+// and a "Live" indicator while the job is still running.
+templ extractionRunHeader(doc *Document, d extractionJobDetail) {
+	{{ job := d.Job }}
+	<div class="mb-4 flex flex-wrap items-center gap-3" data-testid="extraction-run-header">
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeLink,
+			Href:    documentExtractionsPath(doc.ID),
+			Variant: ui.ButtonGhost,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--arrow-left",
+		}) {
+			All extractions
+		}
+		<div class="min-w-0 grow">
+			<p class="text-sm font-medium">{ relTime(job.CreatedAt) }</p>
+			<p class="text-muted-faint font-mono text-xs">{ shortID(job.ID) }</p>
+		</div>
+		@extractionRunStatus(d, false)
+	</div>
+}
+
+// extractionRunStatus renders the run's status badge and — while the job is
+// still running — its "Live" indicator. The group carries a stable id so the
+// polling fragment can refresh it out-of-band (`oob` adds hx-swap-oob), letting
+// the terminal status land without a full page reload.
+templ extractionRunStatus(d extractionJobDetail, oob bool) {
+	{{ job := d.Job
+	attrs := templ.Attributes{"id": "extraction-run-status", "data-testid": "extraction-run-status", "class": "flex items-center gap-2"}
+	if oob {
+		attrs["hx-swap-oob"] = "true"
+	} }}
+	<div { attrs... }>
+		@extractionJobStatusBadge(job.Status, job.DeadLettered)
+		if extractionJobActive(job.Status) {
+			@ui.Badge(ui.BadgeProps{Label: "Live", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--radio", Animate: true, Attrs: templ.Attributes{"data-testid": "extraction-live"}})
+		}
+	</div>
+}
+
+// extractionSummaryStrip renders the run's at-a-glance summary as a wrapping
+// row of ghost badges: start/finish times, duration, progress counters
+// (processed/total and failed), objects and relationships, model, token
+// counts, estimated cost, and retry count. Every element hides when its data is
+// absent.
+templ extractionSummaryStrip(d extractionJobDetail) {
+	{{ job := d.Job
+	model, inTok, outTok := extractionTraceMeta(job.Spans) }}
+	<div class="flex flex-wrap items-center gap-2" data-testid="extraction-summary-strip">
+		<h3 class="sr-only">Run summary</h3>
+		@ui.Badge(ui.BadgeProps{Label: "started " + relTime(job.StartedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--clock"})
+		if job.CompletedAt != "" {
+			@ui.Badge(ui.BadgeProps{Label: "finished " + relTime(job.CompletedAt), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--flag"})
+			@ui.Badge(ui.BadgeProps{Label: formatRunDuration(extractionDurationSeconds(job.StartedAt, job.CompletedAt)), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--timer"})
+		}
+		if job.TotalItems > 0 {
+			@ui.Badge(ui.BadgeProps{Label: fmt.Sprintf("%d/%d processed", job.ProcessedItems, job.TotalItems), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--loader"})
+		}
+		if job.FailedItems > 0 {
+			@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(job.FailedItems) + " failed", Variant: ui.BadgeError, Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS, Icon: "lucide--triangle-alert"})
+		}
+		@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(len(d.Objects)) + " object" + plural(len(d.Objects)), Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS, Icon: "lucide--box"})
+		@ui.Badge(ui.BadgeProps{Label: strconv.Itoa(len(d.Relationships)) + " relationship" + plural(len(d.Relationships)), Variant: ui.BadgeAccent, Size: ui.BadgeSizeXS, Icon: "lucide--link"})
+		if model != "" {
+			@ui.Badge(ui.BadgeProps{Label: model, Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--cpu"})
+		}
+		if inTok+outTok > 0 {
+			@ui.Badge(ui.BadgeProps{Label: fmt.Sprintf("%d in · %d out", inTok, outTok), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--gauge"})
+		}
+		if job.TraceCostUSD != nil {
+			@ui.Badge(ui.BadgeProps{Label: "$" + formatTraceCostUSD(*job.TraceCostUSD), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--circle-dollar-sign"})
+		}
+		if job.RetryCount > 0 {
+			@ui.Badge(ui.BadgeProps{Label: countLabel(job.RetryCount, "retry", "retries"), Variant: ui.BadgeGhost, Size: ui.BadgeSizeXS, Icon: "lucide--rotate-cw"})
+		}
+	</div>
+}
+
+// extractionRunBody is the polling root of the extraction-run sub-page: it
+// bundles the summary strip and the trace panel so a running job's final
+// duration, tokens, estimated cost, and object counts all land when the run
+// finishes — the strip lives inside the swapped element, not beside it. While
+// `poll` is true the root carries the HTMX interval; once the job is terminal
+// the root renders with no hx attributes so the interval self-terminates (see
+// projectsPendingRefreshNote in org_context.templ). `oobStatus` additionally
+// renders the header status group with hx-swap-oob so the badge and its "Live"
+// indicator update in the same swap.
+templ extractionRunBody(documentID, jobID string, d extractionJobDetail, poll, oobStatus bool) {
+	{{ attrs := templ.Attributes{"id": "extraction-run-body", "data-testid": "extraction-run-body"}
+	if poll {
+		attrs["hx-get"] = "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/trace"
+		attrs["hx-trigger"] = "every 3s"
+		attrs["hx-swap"] = "outerHTML"
+		// The page shell's <main> carries hx-target="#main-content" and htmx's
+		// implicit attribute inheritance would otherwise apply it here, so the
+		// swap target is pinned to this element.
+		attrs["hx-target"] = "this"
+	} }}
+	<div { attrs... }>
+		@extractionSummaryStrip(d)
+		@extractionTracePanel(d)
+	</div>
+	if oobStatus {
+		@extractionRunStatus(d, true)
+	}
+}
+
+// extractionTracePanel renders the run's OpenTelemetry trace: the span
+// waterfall when spans exist, a "waiting for the first spans" note while the
+// run is still active with no spans yet, and a "no trace recorded" note for
+// terminal runs with no trace. The polling attributes live on the enclosing
+// extractionRunBody root, not here.
+templ extractionTracePanel(d extractionJobDetail) {
+	{{ job := d.Job
+	running := extractionJobActive(job.Status) }}
+	<div id="extraction-trace" data-testid="extraction-trace">
+		<h3 class="sr-only">Trace</h3>
+		if len(job.Spans) > 0 {
+			@TraceWaterfall(job.Spans)
+		} else if running {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "mt-3 flex items-center gap-2"}) {
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { Waiting for the first spans… }
+			}
+		} else {
+			@ui.SoftBox(ui.SoftBoxProps{Class: "mt-3"}) {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS}) { No trace recorded for this run. }
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) { Tracing is recorded only when the server has OTEL enabled. }
+			}
+		}
+	</div>
+}
+
+// extractionErrorBlock renders the run's failure: the error alert plus, when
+// the server recorded structured error details, a collapsible pretty-JSON dump.
+// Rendered only when the job carries an error message.
+templ extractionErrorBlock(d extractionJobDetail) {
+	{{ job := d.Job }}
+	if job.ErrorMessage != nil && *job.ErrorMessage != "" {
+		<div class="mb-4" data-testid="extraction-error-block">
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--circle-x",
+				Message: *job.ErrorMessage,
+			})
+			if len(job.ErrorDetails) > 0 {
+				<details class="mt-2 rounded-box border border-base-content/10">
+					<summary class="flex cursor-pointer items-center gap-2 list-none select-none px-3 py-2 [&::-webkit-details-marker]:hidden">
+						<span class="iconify lucide--braces size-3.5 shrink-0 text-muted-faint" aria-hidden="true"></span>
+						<span class="text-xs font-medium">Error details</span>
+					</summary>
+					<div class="border-t border-base-content/10 p-3">
+						<pre class="overflow-x-auto text-xs whitespace-pre-wrap">{ prettyJSON(job.ErrorDetails) }</pre>
+					</div>
+				</details>
+			}
+		</div>
+	}
+}
+
+// extractionHistory lists a document's extraction jobs newest-first. Each row
+// carries the run's summary and lazily loads its detail (objects,
+// relationships, branch, and merge action) over HTMX, avoiding N+1 requests on
+// page load. hint threads the partial-merge leftover count into the merged
+// job's lazy-detail URL.
+templ extractionHistory(documentID string, jobs []ExtractionJob, hint *mergeReviewHint) {
+	if len(jobs) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--history",
+			Title:       "No extractions yet",
+			Description: "Run extraction on this document to build its extraction history.",
+			Bordered:    true,
+			Class:       "py-12",
+		})
+	} else {
+		<div class="flex flex-col gap-3" data-testid="extraction-history">
+			for _, job := range jobs {
+				@extractionJobRow(documentID, job, hint)
+			}
+		</div>
+	}
+}
+
+templ extractionJobRow(documentID string, job ExtractionJob, hint *mergeReviewHint) {
+	{{ detailHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) + "/detail" }}
+	{{ traceHref := "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) }}
+	{{ if hint != nil && hint.JobID == job.ID && hint.Left > 0 { detailHref = detailHref + "?review=" + strconv.Itoa(hint.Left) } }}
+	<div class="border border-line overflow-hidden" data-testid="extraction-job-row">
+		<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+			@ui.IconTile("lucide--sparkles", ui.IconTileProps{Tone: "accent"})
+			<div class="min-w-0 grow">
+				<p class="text-sm font-medium">{ relTime(job.CreatedAt) }</p>
+				<p class="text-muted-faint font-mono text-xs">{ shortID(job.ID) }</p>
+			</div>
+			@extractionJobStatusBadge(job.Status, job.DeadLettered)
+			@ui.Badge(ui.BadgeProps{
+				Label:   strconv.Itoa(job.ObjectCount()) + " object" + plural(job.ObjectCount()),
+				Variant: ui.BadgeInfo,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--box",
+			})
+			for _, t := range job.DiscoveredTypes {
+				@ui.Badge(ui.BadgeProps{
+					Label:   t,
+					Variant: ui.BadgeNeutral,
+					Style:   ui.BadgeStyleSoft,
+					Size:    ui.BadgeSizeXS,
+				})
+			}
+			<a class="link link-primary text-xs" href={ templ.URL(traceHref) } data-testid="extraction-view-trace">View trace →</a>
+			if job.Status == "failed" {
+				<form method="post" action={ templ.URL("/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(job.ID) + "/retry") }>
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonSecondary,
+						Style:   ui.ButtonStyleOutline,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--rotate-ccw",
+					}) {
+						Retry
+					}
+				</form>
+			}
+		</div>
+		if job.ErrorMessage != nil && *job.ErrorMessage != "" {
+			<div class="px-4 pb-3">
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: *job.ErrorMessage,
+				})
+			</div>
+		}
+		<div
+			id={ "extraction-detail-" + job.ID }
+			data-testid="extraction-detail-target"
+			hx-get={ templ.URL(detailHref) }
+			hx-trigger="load"
+			hx-target="this"
+			hx-swap="outerHTML"
+		>
+			<div class="flex items-center gap-2 border-t border-base-content/10 px-4 py-3">
+				<span class="htmx-indicator loading loading-spinner loading-xs" aria-hidden="true"></span>
+				<span class="text-muted text-xs">Loading extraction detail…</span>
+			</div>
+		</div>
+	</div>
+}
+
+// ExtractionJobDetail is the HTMX partial for one extraction job. It resolves
+// the job's staging branch and shows the objects and relationships that run
+// produced, the branch name and merge readiness, and — only for an unmerged
+// branch — the merge action. Every failure degrades to a section-level
+// message, never a broken page.
+templ ExtractionJobDetail(documentID string, d extractionJobDetail) {
+	<div id={ "extraction-detail-" + d.Job.ID } data-testid="extraction-job-detail" class="border-t border-base-content/10 px-4 py-3">
+		if d.Err != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "Failed to load this extraction's detail.",
+			})
+		} else {
+			<div class="mb-3 flex flex-wrap items-center gap-2">
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(len(d.Objects)) + " object" + plural(len(d.Objects)),
+					Variant: ui.BadgeInfo,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--box",
+				})
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(len(d.Relationships)) + " relationship" + plural(len(d.Relationships)),
+					Variant: ui.BadgeAccent,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--link",
+				})
+				if d.Branch != nil {
+					@ui.Badge(ui.BadgeProps{
+						Label:   d.Branch.Name,
+						Variant: ui.BadgeGhost,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--git-branch",
+					})
+					@extractionReadiness(d.Readiness)
+				}
+				if d.BranchID != "" {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    "/objects?branch=" + url.QueryEscape(d.BranchID),
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--external-link",
+						Attrs:   templ.Attributes{"data-testid": "extraction-open-browser"},
+					}) {
+						Open in object browser
+					}
+				}
+			</div>
+			if d.NoBranch {
+				if len(d.Objects) == 0 {
+					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run has no staging branch — it produced no objects, or they are no longer available. }
+				} else {
+					@ui.EmptyNote(ui.EmptyNoteProps{Attrs: templ.Attributes{"data-testid": "extraction-detail-nobranch"}}) { This run's staging branch is no longer available — showing the objects on the main graph. }
+					@extractedObjects(documentID, d.Job.ID, d.Objects)
+					@extractedRelationships(d.Objects, d.Relationships)
+				}
+			} else {
+				@extractedObjects(documentID, d.Job.ID, d.Objects)
+				@extractedRelationships(d.Objects, d.Relationships)
+			}
+			if d.Branch != nil {
+				if d.Branch.MergedAt == "" {
+					@extractionMergeAction(documentID, d.Job.ID, d.LeftForReview)
+				} else {
+					@components.StatusBadge("Merged into main", ui.BadgeSuccess, "lucide--check", components.StatusBadgeOpts{Style: ui.BadgeStyleSoft, Size: ui.BadgeSizeXS})
+				}
+			}
+		}
+	</div>
+}
+
+templ extractionReadiness(r *MergeReadiness) {
+	if r != nil {
+		if r.Ready {
+			@ui.Badge(ui.BadgeProps{
+				Label:   "Ready to merge",
+				Variant: ui.BadgeSuccess,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--check",
+			})
+		} else {
+			@ui.Badge(ui.BadgeProps{
+				Label:   strconv.Itoa(r.PendingEmbeddings) + " embedding" + plural(r.PendingEmbeddings) + " pending",
+				Variant: ui.BadgeWarning,
+				Style:   ui.BadgeStyleSoft,
+				Size:    ui.BadgeSizeXS,
+				Icon:    "lucide--loader",
+			})
+		}
+	}
+}
+
+// extractionMergeAction offers merging the job's staging branch into main. The
+// merge opens a preview modal (fetched lazily) so the user sees the predicted
+// split before confirming. It is rendered only when the branch exists and is
+// not already merged (hide, don't disable). leftForReview is the count of
+// objects a prior partial merge left on the branch; when non-zero it renders a
+// "N left for review" badge.
+templ extractionMergeAction(documentID, jobID string, leftForReview int) {
+	<div class="mt-4 flex flex-row flex-wrap items-center justify-between gap-3 rounded-box bg-base-200/50 p-3 sm:flex-nowrap" data-testid="extraction-merge">
+		<div class="flex flex-wrap items-center gap-2">
+			@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "text-right"}) { Merge applies clean additions and fast-forwards into the main graph; conflicts and similar objects stay on this branch for review. }
+			if leftForReview > 0 {
+				@ui.Badge(ui.BadgeProps{
+					Label:   strconv.Itoa(leftForReview) + " left for review",
+					Variant: ui.BadgeWarning,
+					Size:    ui.BadgeSizeXS,
+					Icon:    "lucide--git-branch",
+					Attrs:   templ.Attributes{"data-testid": "extraction-merge-left"},
+				})
+			}
+		</div>
+		@ui.Button(ui.ButtonProps{
+			Type:    ui.ButtonTypeButton,
+			Variant: ui.ButtonPrimary,
+			Size:    ui.ButtonSM,
+			Icon:    "lucide--git-merge",
+			Attrs: templ.Attributes{
+				"data-testid": "extraction-merge-button",
+				"hx-get":      "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID) + "/merge-preview",
+				"hx-target":   "#merge-preview-target-" + jobID,
+				"hx-swap":     "innerHTML",
+			},
+		}) {
+			Merge into main
+		}
+	</div>
+	<div id={ "merge-preview-target-" + jobID }></div>
+}
+
+// mergePreviewModal is the confirm-before-merge dialog. actionURL is the POST
+// target for the confirm button (the document merge route or the inbox merge
+// route). preview is the server's predicted split; previewErr renders the modal
+// in its error state. The dialog auto-opens once the HTMX swap inserts it.
+templ mergePreviewModal(actionURL string, preview *BranchMergeResult, previewErr error) {
+	@ui.Dialog(ui.DialogProps{ID: "merge-preview-modal", BoxClass: "max-w-md", Attrs: templ.Attributes{"data-dialog-autoopen": "true", "data-testid": "merge-preview-modal"}}) {
+		@ui.DialogTitle() { Review merge }
+		@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
+			Clean additions and fast-forwards merge into the main graph. Anything left over stays on this branch for review.
+		}
+		if previewErr != nil {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertError,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: previewErr.Error(),
+			})
+		} else {
+			@mergePreviewSummary(preview)
+		}
+		<form method="post" action={ templ.URL(actionURL) }>
+			<div class="mt-4 flex justify-end gap-2">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				if previewErr != nil {
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Attrs:   templ.Attributes{"formmethod": "dialog"},
+					}) {
+						Close
+					}
+				} else {
+					{{ confirmAttrs := templ.Attributes{"data-testid": "merge-preview-confirm"} }}
+					{{ if mergePreviewDisabled(preview) { confirmAttrs["disabled"] = true } }}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--git-merge",
+						Attrs:   confirmAttrs,
+					}) {
+						{ mergePreviewConfirmLabel(preview) }
+					}
+				}
+			</div>
+		</form>
+	}
+}
+
+// mergePreviewSummary renders the predicted merge split as a short list of
+// labeled counts: new objects, existing objects updated (fast-forwards — the
+// only existing objects "partial" writes), conflicts, left for review, and the
+// branch total. Similarity matches belong to "left for review" only: "partial"
+// suggests them for review instead of applying them. Conflicts and
+// left-for-review rows carry warning styling when non-zero.
+templ mergePreviewSummary(preview *BranchMergeResult) {
+	@mergePreviewRow("lucide--plus", "New objects", strconv.Itoa(mergePreviewAdded(preview)), false)
+	@mergePreviewRow("lucide--refresh-cw", "Existing objects updated", strconv.Itoa(mergePreviewUpdated(preview)), false)
+	@mergePreviewRow("lucide--triangle-alert", "Conflicts", strconv.Itoa(mergePreviewConflicts(preview)), mergePreviewConflicts(preview) > 0)
+	@mergePreviewRow("lucide--git-branch", "Left for review", strconv.Itoa(mergePreviewLeft(preview)), mergePreviewLeft(preview) > 0)
+	@mergePreviewRow("lucide--box", "Total", mergePreviewTotal(preview), false)
+}
+
+templ mergePreviewRow(icon, label, value string, warn bool) {
+	<div class="flex items-center gap-2 py-1">
+		@ui.IconSpan(icon, "size-4 shrink-0 text-muted-subtle")
+		<span class={ "grow text-sm", templ.KV("text-muted", !warn), templ.KV("text-warning font-medium", warn) }>{ label }</span>
+		<span class={ "text-sm tabular-nums", templ.KV("font-medium", warn) }>{ value }</span>
+	</div>
+}
+
+// --- extraction results ---
+
+// extractedObjectOrigin is the ?from= breadcrumb trail an extracted object links
+// back through: the document and the run it came from. The object detail view
+// resolves it into Documents > Document > Extraction history; the run's short id
+// is already shown in the object's Source card, so it is not a crumb. It is
+// built from the page's own identifiers, so the object view can present that
+// document trail instead of a bare Objects trail.
+func extractedObjectOrigin(documentID, jobID string) string {
+	return "/documents/" + url.PathEscape(documentID) + "/extractions/" + url.PathEscape(jobID)
+}
+
+templ extractedObjects(documentID, jobID string, objects []GraphObject) {
+	if len(objects) == 0 {
+		@ui.EmptyState(ui.EmptyStateProps{
+			Icon:        "lucide--boxes",
+			Title:       "No objects extracted",
+			Description: "Extraction has not produced any entities yet.",
+			Bordered:    true,
+		})
+	} else {
+		{{ origin := extractedObjectOrigin(documentID, jobID) }}
+		@cardList("", cardListProps{}) {
+			for _, o := range objects {
+				@extractedObjectRow(o, origin)
+			}
+		}
+	}
+}
+
+templ extractedObjectRow(o GraphObject, origin string) {
+	<a
+		class="flex items-center gap-2 px-4 py-3 transition-colors hover:bg-base-200/40"
+		href={ templ.URL("/objects/" + url.PathEscape(o.ID) + "?from=" + url.QueryEscape(origin)) }
+	>
+		@ui.Badge(ui.BadgeProps{
+			Label:   o.Type,
+			Variant: ui.BadgePrimary,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--box",
+		})
+		<span class="truncate text-sm font-medium">{ graphObjectLabel(o) }</span>
+		@monoMeta(shortID(o.ID), "text-muted-faint")
+		@ui.IconSpan("lucide--chevron-right", "size-4 ml-auto shrink-0 text-muted-subtle")
+	</a>
+}
+
+templ extractedRelationships(objects []GraphObject, relationships []GraphRelationship) {
+	if len(relationships) > 0 {
+		<div class="mt-4">
+			@cardList("", cardListProps{}) {
+				for _, r := range relationships {
+					@extractedRelationshipRow(objects, r)
+				}
+			}
+		</div>
+	}
+}
+
+templ extractedRelationshipRow(objects []GraphObject, r GraphRelationship) {
+	<div class="flex flex-wrap items-center gap-2 px-4 py-3">
+		@ui.Badge(ui.BadgeProps{
+			Label:   relationshipTypeLabel(r.Type),
+			Variant: ui.BadgeSecondary,
+			Size:    ui.BadgeSizeXS,
+			Icon:    "lucide--link",
+		})
+		<span class="truncate text-sm">{ graphObjectLabelByID(objects, r.SrcID) }</span>
+		@ui.IconSpan("lucide--arrow-right", "size-4 shrink-0 text-muted-subtle")
+		<span class="truncate text-sm">{ graphObjectLabelByID(objects, r.DstID) }</span>
+	</div>
+}

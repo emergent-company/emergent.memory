@@ -1,0 +1,250 @@
+package main
+
+import (
+	"net/url"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	ui "github.com/emergent-company/go-daisy/components/ui"
+)
+
+// mcpNodesList lists every known node — live first, then offline registry
+// entries — as the "MCP nodes" section of the Connected devices page. Each row
+// links to ?node=<instance_id>, which selects the node and shows its tools in
+// the tools panel below. Live nodes render with a green dot + "Connected" state
+// and a "connected <relative>" line, then offline registry entries (last seen
+// desc) with muted styling, a gray dot + "Disconnected" state and a "last seen
+// <relative>" line. A failed live fetch renders the registry behind an error
+// banner and a failed per-node tools fetch degrades only the tools panel; both
+// are rendered by ConnectedDevicesPage around this list.
+templ mcpNodesList(data connectedDevicesPageData) {
+	@ui.Section("MCP nodes", ui.SectionProps{
+		BodyClass: "flex flex-col gap-2 memory-density-comfortable",
+	}) {
+		for _, node := range data.Nodes {
+			@mcpNodeRow(node, data.Selected != nil && data.Selected.Session.InstanceID == node.InstanceID)
+		}
+	}
+}
+
+// mcpNodeRow is one known node: a link to ?node=<instance_id> carrying the
+// status dot + Connected/Disconnected badge, the instance id (mono), version,
+// tool count and the connection / last-seen time, plus a sibling compact
+// destructive Remove button backed by a confirm dialog. The link, the button
+// and the dialog are siblings (never nested interactive elements). The row of
+// the currently-selected node is highlighted; offline rows are muted.
+templ mcpNodeRow(node mcpNodeView, selected bool) {
+	<div class={ "flex items-center gap-2 rounded-box border py-1.5 pr-2 pl-4 transition-colors", templ.KV("border-primary/40 bg-primary/[0.04]", selected), templ.KV("border-base-content/10 bg-base-200/40 hover:bg-base-200/70", !selected) }>
+		<a
+			href={ templ.URL("/settings/devices?node=" + url.QueryEscape(node.InstanceID)) }
+			class={ "flex min-w-0 grow items-center gap-3 py-1.5", templ.KV("text-muted-strong", !node.Live) }
+			if selected {
+				aria-current="page"
+			}
+		>
+			@mcpNodeStateBadge(node.Live)
+			<div class="min-w-0 grow">
+				<p class="truncate font-mono text-sm font-medium">{ node.InstanceID }</p>
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-0.5"}) {
+					{ mcpNodeMetaLine(node) }
+				}
+			</div>
+			@ui.IconSpan("lucide--chevron-right", "size-4 shrink-0 text-muted-subtle")
+		</a>
+		@ui.Button(ui.ButtonProps{
+			Type:       ui.ButtonTypeButton,
+			Variant:    ui.ButtonGhost,
+			Size:       ui.ButtonSM,
+			Shape:      ui.ButtonShapeSquare,
+			Icon:       "lucide--trash-2",
+			ExtraClass: "text-error hover:text-error",
+			AriaLabel:  "Remove node " + node.InstanceID,
+			OnClick:    templ.JSFuncCall("openDialogByID", "mcp-node-remove-"+node.InstanceID),
+		})
+		@mcpNodeRemoveDialog(node)
+	</div>
+}
+
+// mcpNodeStateBadge renders a node's connection state as a badge with a
+// leading status dot: soft green "Connected" for a live session, solid neutral
+// "Disconnected" for a registry entry that is no longer connected. The offline
+// badge is solid (not soft) because badge-soft + badge-neutral resolves to
+// near-black text on the near-black dark surface.
+templ mcpNodeStateBadge(live bool) {
+	if live {
+		@components.StatusBadge("Connected", ui.BadgeSuccess, "", components.StatusBadgeOpts{
+			Style: ui.BadgeStyleSoft,
+			Size:  ui.BadgeSizeXS,
+			Dot:   true,
+		})
+	} else {
+		@components.StatusBadge("Disconnected", ui.BadgeNeutral, "", components.StatusBadgeOpts{
+			Size: ui.BadgeSizeXS,
+			Dot:  true,
+		})
+	}
+}
+
+// mcpNodeRemoveDialog confirms removal before the POST to
+// /settings/mcp-nodes/remove. One dialog per row (its action is fixed to that
+// node via the hidden instance_id field). Removal only drops the registry
+// entry — a still-connected host is re-added on the next page load — hence
+// "Remove" rather than "Delete".
+templ mcpNodeRemoveDialog(node mcpNodeView) {
+	@ui.Dialog(ui.DialogProps{ID: "mcp-node-remove-" + node.InstanceID, BoxClass: "max-w-sm"}) {
+		<div class="mb-4 flex items-start gap-3">
+			@components.ConfirmIcon("")
+			<div>
+				@ui.DialogTitle() {
+					Remove node <span class="font-mono">{ node.InstanceID }</span>?
+				}
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-1"}) {
+					This removes it from the list; a still-connected host will reappear on refresh.
+				}
+			</div>
+		</div>
+		<form method="post" action="/settings/mcp-nodes/remove">
+			<input type="hidden" name="instance_id" value={ node.InstanceID }/>
+			<div class="modal-action">
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonGhost,
+					Size:    ui.ButtonSM,
+					Attrs:   templ.Attributes{"formmethod": "dialog"},
+				}) {
+					Cancel
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonError,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--trash-2",
+				}) {
+					Remove node
+				}
+			</div>
+		</form>
+	}
+}
+
+// mcpNodeByID looks up a node's rendered row view by instance id, letting the
+// tools panel read back an offline node's last-seen time for the snapshot note
+// without widening the selected-node payload.
+func mcpNodeByID(nodes []mcpNodeView, instanceID string) (mcpNodeView, bool) {
+	i := slices.IndexFunc(nodes, func(n mcpNodeView) bool { return n.InstanceID == instanceID })
+	if i < 0 {
+		return mcpNodeView{}, false
+	}
+	return nodes[i], true
+}
+
+// mcpNodeMetaLine composes a node row's secondary line. Live:
+// "v<version> · N tools · connected <relative>". Offline:
+// "v<version> · N tools · last seen <relative>" (or "last seen unknown").
+func mcpNodeMetaLine(node mcpNodeView) string {
+	parts := []string{}
+	if node.Version != "" {
+		parts = append(parts, "v"+node.Version)
+	}
+	parts = append(parts, strconv.Itoa(node.ToolCount)+" tool"+plural(node.ToolCount))
+	if node.Live {
+		parts = append(parts, "connected "+relTime(node.ConnectedAt.Format(time.RFC3339)))
+	} else if node.LastSeen.IsZero() {
+		parts = append(parts, "last seen unknown")
+	} else {
+		parts = append(parts, "last seen "+relTime(node.LastSeen.UTC().Format(time.RFC3339)))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// mcpNodeToolsPanel shows the selected node's tools under their agent-facing
+// <instance>_<tool> names (with descriptions where the node provides them).
+// Live nodes read the tool list from the backend; offline nodes read the cached
+// snapshot (empty → a clear "no tools recorded" state). It renders the state
+// hints when nothing is selected, the selected node is neither connected nor in
+// the registry, or the tools fetch failed.
+templ mcpNodeToolsPanel(data connectedDevicesPageData) {
+	@ui.Section("Tools", ui.SectionProps{
+		BodyClass: "memory-density-comfortable",
+	}) {
+		{{ sel := data.Selected }}
+		if sel != nil {
+			<div class="mb-3 flex flex-wrap items-center gap-2">
+				if data.SelectedLive {
+					@ui.Badge(ui.BadgeProps{
+						Label:   "remote",
+						Variant: ui.BadgeWarning,
+						Style:   ui.BadgeStyleSoft,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--radio",
+					})
+				} else {
+					@ui.Badge(ui.BadgeProps{
+						Label:   "offline snapshot",
+						Variant: ui.BadgeNeutral,
+						Size:    ui.BadgeSizeXS,
+						Icon:    "lucide--wifi-off",
+					})
+				}
+				<span class="truncate font-mono text-sm font-medium">{ sel.Session.InstanceID }</span>
+			</div>
+			if !data.SelectedLive {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
+					if node, ok := mcpNodeByID(data.Nodes, sel.Session.InstanceID); ok && !node.LastSeen.IsZero() {
+						Snapshot recorded when this node was last seen { relTime(node.LastSeen.UTC().Format(time.RFC3339)) }.
+					} else {
+						Snapshot from this node's last connection.
+					}
+				}
+			}
+			if data.ToolsErr != nil {
+				@ui.Alert(ui.AlertProps{
+					Type:    ui.AlertError,
+					Style:   ui.AlertStyleOutline,
+					Icon:    "lucide--alert-triangle",
+					Message: "Couldn't load this node's tools: " + data.ToolsErr.Error(),
+				})
+			} else if len(sel.Tools) == 0 {
+				if data.SelectedLive {
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+						This node is connected but serves no tools.
+					}
+				} else {
+					@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+						No tools recorded for this node.
+					}
+				}
+			} else {
+				@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mb-3"}) {
+					Agent-facing names — whitelist these exact names on an agent (or check them in the agent Settings → Tools picker).
+				}
+				<div class="flex flex-col divide-y divide-base-content/10 rounded-box border border-base-content/10">
+					for _, t := range sel.Tools {
+						<div class="flex items-center gap-2.5 px-3 py-2.5">
+							<span class="min-w-0">
+								<span class="block font-mono text-[13px] font-medium">{ relayAgentToolName(sel.Session.InstanceID, t.Name) }</span>
+								if t.Description != "" {
+									<span class="text-muted block text-xs">{ t.Description }</span>
+								}
+							</span>
+						</div>
+					}
+				</div>
+			}
+		} else if data.NodeNotFound {
+			@ui.Alert(ui.AlertProps{
+				Type:    ui.AlertWarning,
+				Style:   ui.AlertStyleOutline,
+				Icon:    "lucide--alert-triangle",
+				Message: "That node is neither connected nor in the registry — it may have been removed. Refresh to see the current state.",
+			})
+		} else {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet}) {
+				Select a node above to inspect the tools it serves.
+			}
+		}
+	}
+}

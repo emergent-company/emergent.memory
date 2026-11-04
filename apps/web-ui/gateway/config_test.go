@@ -1,0 +1,228 @@
+package main
+
+import (
+	"testing"
+	"time"
+)
+
+// TestLoadConfigAuthDefaults asserts the auth-related env vars parse from the
+// environment with the documented defaults when unset.
+func TestLoadConfigAuthDefaults(t *testing.T) {
+	// Isolate from any env a developer may have set: empty the auth vars so
+	// the "defaults" assertions are deterministic.
+	for _, k := range []string{
+		"ZITADEL_ISSUER", "ZITADEL_CLIENT_ID",
+		"ZITADEL_REDIRECT_URI", "AUTH_MODE", "SESSION_SECRET", "SESSION_MAX_AGE",
+	} {
+		t.Setenv(k, "")
+	}
+
+	cfg := LoadConfig()
+	if cfg.ZitadelIssuer != "" {
+		t.Errorf("ZitadelIssuer = %q, want empty default", cfg.ZitadelIssuer)
+	}
+	if cfg.ZitadelClientID != "" {
+		t.Errorf("ZitadelClientID = %q, want empty default", cfg.ZitadelClientID)
+	}
+	if cfg.ZitadelRedirectURI != "" {
+		t.Errorf("ZitadelRedirectURI = %q, want empty default", cfg.ZitadelRedirectURI)
+	}
+	if cfg.AuthMode != "session" {
+		t.Errorf("AuthMode = %q, want default %q", cfg.AuthMode, "session")
+	}
+	if cfg.SessionSecret != "" {
+		t.Errorf("SessionSecret = %q, want empty default", cfg.SessionSecret)
+	}
+	if cfg.SessionMaxAge != 30*24*time.Hour {
+		t.Errorf("SessionMaxAge = %v, want default 30 days", cfg.SessionMaxAge)
+	}
+}
+
+// TestLoadConfigAuthEnv asserts the auth vars are read from the environment
+// when set.
+func TestLoadConfigAuthEnv(t *testing.T) {
+	t.Setenv("ZITADEL_ISSUER", "https://zitadel.example.com")
+	t.Setenv("ZITADEL_CLIENT_ID", "client-123")
+	t.Setenv("ZITADEL_REDIRECT_URI", "https://gw.example.com/auth/callback")
+	t.Setenv("AUTH_MODE", "session")
+	t.Setenv("SESSION_SECRET", "cookie-signing-key")
+	t.Setenv("SESSION_MAX_AGE", "24h")
+
+	cfg := LoadConfig()
+	if cfg.ZitadelIssuer != "https://zitadel.example.com" {
+		t.Errorf("ZitadelIssuer = %q", cfg.ZitadelIssuer)
+	}
+	if cfg.ZitadelClientID != "client-123" {
+		t.Errorf("ZitadelClientID = %q", cfg.ZitadelClientID)
+	}
+	if cfg.ZitadelRedirectURI != "https://gw.example.com/auth/callback" {
+		t.Errorf("ZitadelRedirectURI = %q", cfg.ZitadelRedirectURI)
+	}
+	if cfg.AuthMode != "session" {
+		t.Errorf("AuthMode = %q", cfg.AuthMode)
+	}
+	if cfg.SessionSecret != "cookie-signing-key" {
+		t.Errorf("SessionSecret = %q", cfg.SessionSecret)
+	}
+	if cfg.SessionMaxAge != 24*time.Hour {
+		t.Errorf("SessionMaxAge = %v, want 24h", cfg.SessionMaxAge)
+	}
+}
+
+// TestLoadConfigFeedbackOverlay asserts the overlay URL defaults to empty
+// (disabled) and is read from the environment when set.
+func TestLoadConfigFeedbackOverlay(t *testing.T) {
+	t.Setenv("FEEDBACK_OVERLAY_URL", "")
+	if got := LoadConfig().FeedbackOverlayURL; got != "" {
+		t.Errorf("FeedbackOverlayURL = %q, want empty default", got)
+	}
+
+	t.Setenv("FEEDBACK_OVERLAY_URL", "https://feedback.emergent-company.ai")
+	if got := LoadConfig().FeedbackOverlayURL; got != "https://feedback.emergent-company.ai" {
+		t.Errorf("FeedbackOverlayURL = %q, want env value", got)
+	}
+}
+
+// TestLoadConfigMemoryPublicURL asserts the memory-server public origin defaults
+// to MEMORY_URL and is overridable via MEMORY_PUBLIC_URL (trailing slash
+// trimmed).
+func TestLoadConfigMemoryPublicURL(t *testing.T) {
+	t.Setenv("MEMORY_URL", "https://memory.example.com")
+	t.Setenv("MEMORY_PUBLIC_URL", "")
+	if got := LoadConfig().MemoryPublicURL; got != "https://memory.example.com" {
+		t.Errorf("MemoryPublicURL = %q, want default to MEMORY_URL", got)
+	}
+
+	t.Setenv("MEMORY_PUBLIC_URL", "https://mcp.example.com/")
+	if got := LoadConfig().MemoryPublicURL; got != "https://mcp.example.com" {
+		t.Errorf("MemoryPublicURL = %q, want env value with trailing slash trimmed", got)
+	}
+}
+
+// TestLoadConfigComponentGallery asserts the gallery flag defaults off in every
+// mode and is enabled by an explicit MEMORY_COMPONENT_GALLERY value.
+func TestLoadConfigComponentGallery(t *testing.T) {
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "")
+	if got := LoadConfig().ComponentGallery; got {
+		t.Error("ComponentGallery = true, want default-off")
+	}
+
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "on")
+	if got := LoadConfig().ComponentGallery; !got {
+		t.Error("ComponentGallery = false, want on when MEMORY_COMPONENT_GALLERY=on")
+	}
+
+	t.Setenv("MEMORY_COMPONENT_GALLERY", "false")
+	if got := LoadConfig().ComponentGallery; got {
+		t.Error("ComponentGallery = true, want false when MEMORY_COMPONENT_GALLERY=false")
+	}
+}
+
+// TestSplitCSVDedupes asserts the comma-separated splitter trims whitespace,
+// drops empty entries, and collapses duplicates while preserving order.
+func TestSplitCSVDedupes(t *testing.T) {
+	got := splitCSV(" a , b ,a, ,b ,c ")
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
+		t.Fatalf("splitCSV = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("splitCSV = %v, want %v", got, want)
+		}
+	}
+	if out := splitCSV("  "); out != nil {
+		t.Errorf("splitCSV(blank) = %v, want nil", out)
+	}
+}
+
+// TestConfigValidate covers the fail-closed auth posture check: session mode
+// requires a full Zitadel + cookie config, while dev is an explicit opt-in.
+func TestConfigValidate(t *testing.T) {
+	full := Config{
+		AuthMode:           "session",
+		SessionSecret:      "0123456789abcdef0123456789abcdef",
+		ZitadelIssuer:      "https://zitadel.example.com",
+		ZitadelClientID:    "client-123",
+		ZitadelRedirectURI: "https://gw.example.com/auth/callback",
+		PublicBaseURL:      "https://gw.example.com",
+		MemoryURL:          "https://memory.example.com",
+	}
+
+	tests := []struct {
+		name    string
+		cfg     Config
+		wantErr bool
+	}{
+		{
+			name:    "session fully configured",
+			cfg:     full,
+			wantErr: false,
+		},
+		{
+			name:    "session missing everything",
+			cfg:     Config{AuthMode: "session"},
+			wantErr: true,
+		},
+		{
+			name: "session http base url in development",
+			cfg: Config{
+				AuthMode:           "session",
+				SessionSecret:      "0123456789abcdef0123456789abcdef",
+				ZitadelIssuer:      "https://zitadel.example.com",
+				ZitadelClientID:    "client-123",
+				ZitadelRedirectURI: "http://gw.example.com/auth/callback",
+				PublicBaseURL:      "http://gw.example.com",
+				MemoryURL:          "https://memory.example.com",
+				SentryEnvironment:  "development",
+			},
+			wantErr: false,
+		},
+		{
+			name: "session http base url in production",
+			cfg: Config{
+				AuthMode:           "session",
+				SessionSecret:      "0123456789abcdef0123456789abcdef",
+				ZitadelIssuer:      "https://zitadel.example.com",
+				ZitadelClientID:    "client-123",
+				ZitadelRedirectURI: "http://gw.example.com/auth/callback",
+				PublicBaseURL:      "http://gw.example.com",
+				MemoryURL:          "https://memory.example.com",
+				SentryEnvironment:  "production",
+			},
+			wantErr: true,
+		},
+		{
+			name:    "dev opt-in",
+			cfg:     Config{AuthMode: "dev"},
+			wantErr: false,
+		},
+		{
+			name:    "webhook secret without trigger token",
+			cfg:     Config{AuthMode: "dev", GitHubWebhookSecret: "s3cret"},
+			wantErr: true,
+		},
+		{
+			name:    "webhook secret with trigger token",
+			cfg:     Config{AuthMode: "dev", GitHubWebhookSecret: "s3cret", AgentTriggerToken: "emt_x"},
+			wantErr: false,
+		},
+		{
+			name:    "unknown mode",
+			cfg:     Config{AuthMode: "bogus"},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.cfg.Validate()
+			if tc.wantErr && err == nil {
+				t.Fatalf("Validate() = nil, want error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+}

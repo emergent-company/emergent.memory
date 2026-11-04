@@ -1,0 +1,44 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-11-03T00:00:00Z",
+  "categories": [
+    {
+      "id": "guides",
+      "name": "Guides",
+      "description": "How-to guides and tutorials for using Memory features",
+      "count": 2
+    },
+    {
+      "id": "api-reference",
+      "name": "API Reference",
+      "description": "API and MCP references",
+      "count": 0
+    }
+  ],
+  "documents": [
+    {
+      "id": "schema-creation",
+      "slug": "schema-creation",
+      "title": "Schema Creation Guide",
+      "category": "guides",
+      "path": "docs/public/guides/schema-creation.md",
+      "description": "Create and manage schemas through MCP and the REST API",
+      "tags": ["schemas", "mcp", "api"],
+      "lastUpdated": "2026-03-22",
+      "readTime": 15,
+      "related": ["blueprint-authoring"]
+    },
+    {
+      "id": "blueprint-authoring",
+      "slug": "blueprint-authoring",
+      "title": "Blueprint Authoring Guide",
+      "category": "guides",
+      "path": "docs/public/guides/blueprint-authoring.md",
+      "description": "Create, publish, apply, and version blueprints over MCP, the REST API, or a directory",
+      "tags": ["blueprints", "schemas", "mcp", "api", "cli"],
+      "lastUpdated": "2026-11-03",
+      "readTime": 12,
+      "related": ["schema-creation"]
+    }
+  ]
+}
