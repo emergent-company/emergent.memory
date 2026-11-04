@@ -65,6 +65,10 @@ func normalizeDocumentOrder(raw string) string {
 	return documentOrderDesc
 }
 
+// documentSourceNone is the source-filter value for documents with no data
+// source (direct uploads). Source ids are UUIDs, so it cannot collide.
+const documentSourceNone = "none"
+
 // documentSourceTypeLabel is the human label for a document source type. The
 // source-type vocabulary is small and stable ("upload", "drive", "repo",
 // "email"); anything else is prettified rather than shown raw.
@@ -160,7 +164,7 @@ type documentRow struct {
 
 // documentSourceOption is one selectable value in the source filter.
 type documentSourceOption struct {
-	Value string // the `sourceType` API value
+	Value string // the `sourceId` API value, or documentSourceNone for uploads
 	Label string
 	Count int
 }
@@ -169,12 +173,12 @@ type documentSourceOption struct {
 // query/filter/sort state (so controls and links can echo it), the page's rows,
 // and the counts.
 type documentPageData struct {
-	Query      string
-	Status     string
-	SourceType string
-	Sort       string
-	Order      string
-	Cursor     string
+	Query    string
+	Status   string
+	SourceID string
+	Sort     string
+	Order    string
+	Cursor   string
 	// Attention is the one needs-attention area whose problems are shown in
 	// full, instead of the panel's clipped eight. Empty means clipped.
 	Attention string
@@ -202,19 +206,19 @@ type documentPageData struct {
 // filtered reports whether any narrowing control is active. It selects the
 // empty state: "no documents yet" is a lie when a filter hid them.
 func (d documentPageData) filtered() bool {
-	return d.Query != "" || d.Status != documentStatusAll || d.SourceType != ""
+	return d.Query != "" || d.Status != documentStatusAll || d.SourceID != ""
 }
 
 // listParams builds the API request for this page at one cursor position.
 func (d documentPageData) listParams(cursor string) DocumentListParams {
 	return DocumentListParams{
-		Query:      d.Query,
-		Status:     d.Status,
-		SourceType: d.SourceType,
-		Sort:       d.Sort,
-		Order:      d.Order,
-		Cursor:     cursor,
-		Limit:      documentPageSize,
+		Query:    d.Query,
+		Status:   d.Status,
+		SourceID: d.SourceID,
+		Sort:     d.Sort,
+		Order:    d.Order,
+		Cursor:   cursor,
+		Limit:    documentPageSize,
 	}
 }
 
@@ -230,8 +234,8 @@ func (d documentPageData) requestURL(overrides map[string]string) string {
 	if d.Status != documentStatusAll {
 		q.Set("status", d.Status)
 	}
-	if d.SourceType != "" {
-		q.Set("sourceType", d.SourceType)
+	if d.SourceID != "" {
+		q.Set("sourceId", d.SourceID)
 	}
 	if d.Attention != "" {
 		q.Set("attention", d.Attention)
@@ -274,8 +278,8 @@ func documentsPartialURL(d documentPageData) string {
 	if d.Status != documentStatusAll {
 		q.Set("status", d.Status)
 	}
-	if d.SourceType != "" {
-		q.Set("sourceType", d.SourceType)
+	if d.SourceID != "" {
+		q.Set("sourceId", d.SourceID)
 	}
 	if d.Sort != "" {
 		q.Set("sort", d.Sort)
@@ -463,42 +467,75 @@ func (s *Server) documentSourceNames(ctx context.Context) map[string]string {
 	return names
 }
 
-// loadDocumentSourceOptions populates the source filter. The options are the
-// source types the project's documents actually use (from the dedicated
-// endpoint, which counts the same population as the listing), not the full
-// provider catalog: a filter that returns nothing is noise. A failed fetch
-// leaves the filter empty rather than failing the page; an active filter is
-// still shown so the user can clear it.
+// loadDocumentSourceOptions populates the source filter with the connected data
+// sources that actually own documents, plus one "Uploaded" bucket for files
+// with no source. Counts come from the dedicated endpoint and use the same
+// population as the listing. A failed count fetch leaves the filter empty
+// rather than failing the page; an active filter is still shown so the user can
+// clear it.
 func (s *Server) loadDocumentSourceOptions(ctx context.Context, data *documentPageData) {
 	ctx, cancel := context.WithTimeout(ctx, optionalFetchTimeout)
 	defer cancel()
-	types, err := s.memory.ListDocumentSourceTypes(ctx)
-	if err != nil {
-		data.Sources = nil
-		return
+	counts, err := s.memory.ListDocumentSourceCounts(ctx)
+	names := s.documentSourceNames(ctx)
+	namesLoaded := names != nil
+
+	type aggregate struct {
+		label string
+		count int
 	}
-	seen := make(map[string]bool, len(types))
-	options := make([]documentSourceOption, 0, len(types))
-	for _, t := range types {
-		if t.SourceType == "" {
-			continue
+	byValue := make(map[string]*aggregate, len(counts))
+	order := make([]string, 0, len(counts))
+	if err == nil {
+		for _, c := range counts {
+			value := c.SourceID
+			label := ""
+			switch {
+			case value == "":
+				value = documentSourceNone
+				label = "Uploaded"
+			case names[value] != "":
+				label = names[value]
+			case namesLoaded:
+				label = documentRemovedSourceLabel(c.SourceType)
+			default:
+				label = documentSourceTypeLabel(c.SourceType)
+			}
+			if agg, ok := byValue[value]; ok {
+				agg.count += c.Count
+				continue
+			}
+			byValue[value] = &aggregate{label: label, count: c.Count}
+			order = append(order, value)
 		}
-		seen[t.SourceType] = true
-		options = append(options, documentSourceOption{
-			Value: t.SourceType,
-			Label: documentSourceTypeLabel(t.SourceType),
-			Count: t.Count,
-		})
+	}
+	options := make([]documentSourceOption, 0, len(order)+1)
+	for _, value := range order {
+		agg := byValue[value]
+		options = append(options, documentSourceOption{Value: value, Label: agg.label, Count: agg.count})
 	}
 	// Keep an active filter selectable even when its documents are gone (the
 	// user still needs a way to clear it).
-	if data.SourceType != "" && !seen[data.SourceType] {
-		options = append([]documentSourceOption{{
-			Value: data.SourceType,
-			Label: documentSourceTypeLabel(data.SourceType),
-		}}, options...)
+	if data.SourceID != "" && byValue[data.SourceID] == nil {
+		label := "Unknown source"
+		switch {
+		case data.SourceID == documentSourceNone:
+			label = "Uploaded"
+		case names[data.SourceID] != "":
+			label = names[data.SourceID]
+		}
+		options = append([]documentSourceOption{{Value: data.SourceID, Label: label}}, options...)
 	}
 	data.Sources = options
+}
+
+// documentRemovedSourceLabel names a documents bucket whose data source no
+// longer exists, without inventing a name for it.
+func documentRemovedSourceLabel(sourceType string) string {
+	if label := documentSourceTypeLabel(sourceType); label != "" {
+		return label + " (removed source)"
+	}
+	return "Removed source"
 }
 
 // uiDocuments renders the documents page: stats, filters, and one page of the
@@ -506,13 +543,13 @@ func (s *Server) loadDocumentSourceOptions(ctx context.Context, data *documentPa
 // ?err=1 an upload failure.
 func (s *Server) uiDocuments(c echo.Context) error {
 	data := documentPageData{
-		Query:      strings.TrimSpace(c.QueryParam("q")),
-		Status:     normalizeDocumentStatus(c.QueryParam("status")),
-		SourceType: strings.TrimSpace(c.QueryParam("sourceType")),
-		Sort:       normalizeDocumentSort(c.QueryParam("sort")),
-		Order:      normalizeDocumentOrder(c.QueryParam("order")),
-		Cursor:     c.QueryParam("cursor"),
-		Attention:  normalizeAttentionArea(c.QueryParam("attention")),
+		Query:     strings.TrimSpace(c.QueryParam("q")),
+		Status:    normalizeDocumentStatus(c.QueryParam("status")),
+		SourceID:  strings.TrimSpace(c.QueryParam("sourceId")),
+		Sort:      normalizeDocumentSort(c.QueryParam("sort")),
+		Order:     normalizeDocumentOrder(c.QueryParam("order")),
+		Cursor:    c.QueryParam("cursor"),
+		Attention: normalizeAttentionArea(c.QueryParam("attention")),
 		FlashMsg: flashFromQuery(c, []flashParam{
 			{key: "uploaded", msg: "Document uploaded."},
 			{key: "duplicate", msg: "Document already exists (identical content)."},
@@ -549,11 +586,11 @@ func (s *Server) uiDocuments(c echo.Context) error {
 // active view.
 func (s *Server) uiDocumentsPartial(c echo.Context) error {
 	data := documentPageData{
-		Query:      strings.TrimSpace(c.QueryParam("q")),
-		Status:     normalizeDocumentStatus(c.QueryParam("status")),
-		SourceType: strings.TrimSpace(c.QueryParam("sourceType")),
-		Sort:       normalizeDocumentSort(c.QueryParam("sort")),
-		Order:      normalizeDocumentOrder(c.QueryParam("order")),
+		Query:    strings.TrimSpace(c.QueryParam("q")),
+		Status:   normalizeDocumentStatus(c.QueryParam("status")),
+		SourceID: strings.TrimSpace(c.QueryParam("sourceId")),
+		Sort:     normalizeDocumentSort(c.QueryParam("sort")),
+		Order:    normalizeDocumentOrder(c.QueryParam("order")),
 	}
 	if err := s.loadDocumentsPage(c.Request().Context(), &data, c.QueryParam("cursor")); err != nil {
 		captureError(err)

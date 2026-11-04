@@ -3946,6 +3946,12 @@ const docTemplate = `{
                         "in": "query"
                     },
                     {
+                        "type": "string",
+                        "description": "Filter by connected data source UUID, or 'none' for documents with no source",
+                        "name": "sourceId",
+                        "in": "query"
+                    },
+                    {
                         "enum": [
                             "processing",
                             "ready",
@@ -4185,6 +4191,46 @@ const docTemplate = `{
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/documents/source-counts": {
+            "get": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Returns document counts grouped by connected data source (empty sourceId for direct uploads), for the documents source filter.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "documents"
+                ],
+                "summary": "Get document counts by data source",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "array",
+                                "items": {
+                                    "$ref": "#/definitions/domain_documents.SourceCount"
+                                }
+                            }
                         }
                     },
                     "401": {
@@ -31803,6 +31849,20 @@ const docTemplate = `{
                 "total": {
                     "description": "Total is the number of documents matching every filter, including the\nstatus filter.",
                     "type": "integer"
+                }
+            }
+        },
+        "domain_documents.SourceCount": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "sourceId": {
+                    "type": "string"
+                },
+                "sourceType": {
+                    "type": "string"
                 }
             }
         },
