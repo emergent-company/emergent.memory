@@ -223,6 +223,7 @@ type MemoryBackend interface {
 	StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error)
 	StartDocumentDiscovery(ctx context.Context, documentID string) (*DiscoveryStartResult, error)
 	RetryDiscoveryJob(ctx context.Context, jobID string) (*DiscoveryStartResult, error)
+	CancelDiscoveryJob(ctx context.Context, jobID string) error
 	ListAllSchemas(ctx context.Context) ([]SchemaInfo, error)
 	GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error)
 	CreateSchemaPack(ctx context.Context, req *SchemaPackWriteRequest) (*BlueprintSchema, error)

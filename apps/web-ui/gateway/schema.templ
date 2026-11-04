@@ -67,14 +67,20 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 // anchor id="discovery" is what /schema#discovery links to from the Documents
 // "Needs attention" panel and from the document page.
 templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
-	{{ var latest *discoveryJob
-var docCount int
-var loadErr error }}
-	{{ if view != nil {
-	latest = view.Latest
-	docCount = view.DocumentCount
-	loadErr = view.Err
-} }}
+	{{
+		var latest *discoveryJob
+		var docCount int
+		var countErr error
+		var loadErr error
+	}}
+	{{
+		if view != nil {
+			latest = view.Latest
+			docCount = view.DocumentCount
+			countErr = view.CountErr
+			loadErr = view.Err
+		}
+	}}
 	<div id="discovery" class="mb-8" data-testid="schema-discovery-card">
 		@components.PanelCard("", nil) {
 			<div class="flex flex-wrap items-start justify-between gap-3">
@@ -118,9 +124,19 @@ var loadErr error }}
 					No discovery run yet.
 				}
 			}
-			if docCount > 0 {
+			if docCount > 0 && countErr == nil {
 				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
 					{ strconv.Itoa(docCount) } documents in this project. A run analyses the newest documents up to the server's per-run cap.
+				}
+			}
+			if docCount == 0 && countErr == nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
+					No documents in this project yet. Sync a source or add a document, then run discovery.
+				}
+			}
+			if countErr != nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
+					The project's document count is unavailable right now ({ countErr.Error() }). Discovery still uses whatever the server finds.
 				}
 			}
 		}
@@ -154,6 +170,19 @@ templ schemaDiscoveryJobState(job *discoveryJob) {
 			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
 				Covered { strconv.Itoa(job.DocumentCount) } of { strconv.Itoa(job.TotalDocuments) } documents (per-run cap); run it again to cover the rest.
 			}
+		}
+		if job.isRunning() {
+			<form class="mt-2" method="post" action={ templ.URL("/schema/discovery/cancel/" + url.PathEscape(job.ID)) }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--square",
+					Attrs:   templ.Attributes{"data-testid": "schema-discovery-cancel"},
+				}) {
+					Cancel run
+				}
+			</form>
 		}
 		if job.Status == "failed" {
 			if job.ErrorMessage != "" {

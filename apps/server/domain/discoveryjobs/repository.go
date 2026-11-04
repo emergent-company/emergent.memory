@@ -169,6 +169,35 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	return nil
 }
 
+// CancelStalledJob cancels a job that has stopped reporting progress because
+// the process running it went away (restart, deploy, crash). It covers every
+// non-terminal status — including creating_pack, which a user-initiated cancel
+// treats as too late — and records why, so the run is diagnosable and no longer
+// holds the project's one-run slot.
+func (r *Repository) CancelStalledJob(ctx context.Context, jobID uuid.UUID) error {
+	reason := "cancelled as stalled: no progress reported inside the stale window (the process running it stopped, e.g. a restart or deploy)"
+	result, err := r.db.NewUpdate().
+		Model((*DiscoveryJob)(nil)).
+		Set("status = ?", StatusCancelled).
+		Set("error_message = ?", reason).
+		Set("completed_at = now()").
+		Set("updated_at = now()").
+		Where("id = ?", jobID).
+		Where("status NOT IN (?)", bun.In([]string{StatusCompleted, StatusFailed, StatusCancelled})).
+		Exec(ctx)
+	if err != nil {
+		r.log.Error("failed to cancel stalled job", logger.Error(err))
+		return apperror.ErrInternal.WithInternal(err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		// Someone else finished or cancelled it between the read and this
+		// update: the slot is already free, so the caller can proceed.
+		r.log.Info("stalled job was already terminal", slog.String("job_id", jobID.String()))
+	}
+	return nil
+}
+
 // GetProjectOrgID returns the organization_id for the given project.
 func (r *Repository) GetProjectOrgID(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
 	var orgID uuid.UUID

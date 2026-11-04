@@ -105,3 +105,10 @@ func (m *MemoryClient) RetryDiscoveryJob(ctx context.Context, jobID string) (*Di
 	}
 	return &out, nil
 }
+
+// CancelDiscoveryJob stops a run that is in flight. The server treats a
+// terminal job as a state conflict (409), which the caller surfaces as a
+// message rather than retrying.
+func (m *MemoryClient) CancelDiscoveryJob(ctx context.Context, jobID string) error {
+	return m.doH(ctx, http.MethodDelete, "/api/discovery-jobs/"+jobID, nil, sessionHeaders(ctx), nil)
+}

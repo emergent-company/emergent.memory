@@ -1,6 +1,8 @@
 package discoveryjobs
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -80,9 +82,11 @@ func (h *Handler) RetryDiscovery(c echo.Context) error {
 	}
 
 	var req RetryDiscoveryRequest
-	// An absent body is valid: the stored job config supplies everything.
-	if c.Request().ContentLength != 0 {
-		if err := c.Bind(&req); err != nil {
+	// An absent body is valid: the stored job config supplies everything. A
+	// chunked request reports ContentLength -1, so EOF is tolerated as "no
+	// body" instead of being reported as malformed.
+	if c.Request().Body != nil && c.Request().ContentLength != 0 {
+		if err := c.Bind(&req); err != nil && !errors.Is(err, io.EOF) {
 			return apperror.ErrBadRequest.WithMessage("invalid request body")
 		}
 	}

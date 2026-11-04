@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -198,7 +199,11 @@ func TestUISchemaPackDetailRoute(t *testing.T) {
 }
 
 func TestUISchemaPackDetailNotFound(t *testing.T) {
-	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: packDetailFake()}
+	f := packDetailFake()
+	// The catalog holds no pack by this id, so GetSchema fails and the page must
+	// render the not-found state (not a pending-pack page with a blank name).
+	f.schemasByID = map[string]*BlueprintSchema{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
 	e.GET("/schema/packs/:id", s.uiSchemaPack)
 
@@ -350,5 +355,112 @@ func TestBuildSchemaPackSummariesProvenanceUsesDenormalisedIdentity(t *testing.T
 	}
 	if packs[0].Provenance.BlueprintID != "bp1" {
 		t.Errorf("provenance = %+v", packs[0].Provenance)
+	}
+}
+
+// TestUISchemaPackDetailPendingReview pins the state a discovery run leaves
+// behind: the pack exists but is not installed, so it contributes no compiled
+// types. The Schema page links to it as "Review pack" — that link must render
+// what the run proposed and the install action, never a not-found page.
+func TestUISchemaPackDetailPendingReview(t *testing.T) {
+	f := &fakeMemory{
+		schemasByID: map[string]*BlueprintSchema{
+			"discovered-1": {
+				ID:                      "discovered-1",
+				Name:                    "Discovered Types - 2026-11-04",
+				Version:                 "1.0.0",
+				Description:             "Auto-discovered types from 4 entities",
+				Author:                  "Auto-Discovery System",
+				Source:                  "discovered",
+				ObjectTypeSchemas:       json.RawMessage(`{"Customer":{"type":"object"},"Order":{"type":"object"}}`),
+				RelationshipTypeSchemas: json.RawMessage(`{"places":{"sourceTypes":["Customer"],"targetTypes":["Order"]}}`),
+			},
+		},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/schema/packs/:id", s.uiSchemaPack)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/packs/discovered-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Discovered Types - 2026-11-04",
+		"Pending review",
+		"not installed",
+		"Customer", "Order",
+		"places (Customer → Order)",
+		`action="/schema/packs/discovered-1/install"`,
+		"Install pack",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pending pack page missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Schema pack not found") {
+		t.Error("a pending pack must not render the not-found state")
+	}
+}
+
+// TestUISchemaPackInstall pins that installing a reviewed pack is what takes a
+// discovery result live, and that it lands back on the pack.
+func TestUISchemaPackInstall(t *testing.T) {
+	f := &fakeMemory{}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/schema/packs/:id/install", s.uiSchemaPackInstall)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/packs/discovered-1/install", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("install status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/schema/packs/discovered-1?installed=1" {
+		t.Errorf("install location = %q", loc)
+	}
+	if len(f.assignedSchemaPacks) != 1 || f.assignedSchemaPacks[0] != "discovered-1" {
+		t.Fatalf("assigned packs = %v, want [discovered-1]", f.assignedSchemaPacks)
+	}
+}
+
+// TestUISchemaPackInstallFailureStaysOnThePack pins the error path: a refused
+// install (no write permission, pack vanished) reports on the pack page.
+func TestUISchemaPackInstallFailureStaysOnThePack(t *testing.T) {
+	f := &fakeMemory{schemaPackErr: errors.New("permission denied")}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.POST("/schema/packs/:id/install", s.uiSchemaPackInstall)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/packs/discovered-1/install", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("install status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema/packs/discovered-1?err=") {
+		t.Errorf("install location = %q, want the pack page with ?err=", loc)
+	}
+	if len(f.assignedSchemaPacks) != 0 {
+		t.Fatalf("assigned packs = %v, want none", f.assignedSchemaPacks)
+	}
+}
+
+// TestPendingPackFromSchema pins the parse: type maps are keyed by name, and a
+// relationship shows its endpoints so the review is meaningful.
+func TestPendingPackFromSchema(t *testing.T) {
+	pack := pendingPackFromSchema(&BlueprintSchema{
+		ID:                      "p1",
+		Name:                    "discovered",
+		Version:                 "1.0.0",
+		ObjectTypeSchemas:       json.RawMessage(`{"Zebra":{"type":"object"},"Alpha":{"type":"object"}}`),
+		RelationshipTypeSchemas: json.RawMessage(`{"owns":{"sourceTypes":["Alpha"],"targetTypes":["Zebra"]},"links":{}}`),
+	})
+	if got, want := strings.Join(pack.ObjectTypes, ","), "Alpha,Zebra"; got != want {
+		t.Errorf("object types = %q, want %q (sorted)", got, want)
+	}
+	if got, want := strings.Join(pack.RelationTypes, ","), "links,owns (Alpha → Zebra)"; got != want {
+		t.Errorf("relationship types = %q, want %q", got, want)
 	}
 }

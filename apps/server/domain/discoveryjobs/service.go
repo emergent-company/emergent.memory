@@ -21,6 +21,7 @@ import (
 	"github.com/emergent-company/emergent.memory/pkg/auth"
 	"github.com/emergent-company/emergent.memory/pkg/llmjson"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
+	"github.com/emergent-company/emergent.memory/pkg/pgutils"
 	"github.com/emergent-company/emergent.memory/pkg/tracing"
 )
 
@@ -45,6 +46,14 @@ const (
 // starts another run for the rest. DISCOVERY_MAX_DOCUMENTS overrides it.
 const DefaultDiscoveryMaxDocuments = 500
 
+// DefaultStaleJobAfter is how long a non-terminal discovery job may report no
+// progress before a new start supersedes it. A run is a goroutine, so a
+// restart, deploy or crash leaves its row non-terminal forever; without a
+// takeover the one-run-per-project guard would refuse every later start and the
+// project could never discover again. Thirty minutes is far longer than a
+// healthy run takes to report its next progress update.
+const DefaultStaleJobAfter = 30 * time.Minute
+
 // ErrOutputTruncated reports that the model stopped at the output-token limit.
 // Callers can retry with a smaller document batch instead of treating it as a
 // malformed response.
@@ -66,6 +75,10 @@ type Service struct {
 	// maxDocuments caps a project-wide run. Zero falls back to
 	// DefaultDiscoveryMaxDocuments (tests build a Service literal).
 	maxDocuments int
+	// staleAfter is how long a non-terminal job may report no progress before a
+	// new start supersedes it. Zero disables takeover (every active job holds
+	// its claim); the module wires DefaultStaleJobAfter.
+	staleAfter time.Duration
 }
 
 // documentCap is the effective per-run document cap.
@@ -212,14 +225,31 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 
 	// One run per project at a time: a second job would double the model spend
 	// and race this one to finalise a pack over the same documents.
+	//
+	// A run is a goroutine, so a restart, deploy or crash mid-run leaves a
+	// non-terminal row that nothing will ever advance. Refusing forever on that
+	// row would dead-end the project (the exact class of bug this feature
+	// removes), so a run that has reported no progress inside the stale window
+	// is cancelled here and superseded. Progress updates touch updated_at, so a
+	// live run keeps its claim.
 	active, err := s.repo.ActiveJobForProject(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	if active != nil {
-		return nil, apperror.New(409, "discovery-in-progress", fmt.Sprintf("discovery job %s is already running for this project", active.ID)).WithDetails(map[string]any{
-			"job_id": active.ID.String(),
-		})
+		if s.staleAfter <= 0 || time.Since(active.UpdatedAt) <= s.staleAfter {
+			return nil, apperror.New(409, "discovery-in-progress", fmt.Sprintf("discovery job %s is already running for this project", active.ID)).WithDetails(map[string]any{
+				"job_id": active.ID.String(),
+			})
+		}
+		s.log.Warn("superseding a stalled discovery job",
+			slog.String("stalled_job_id", active.ID.String()),
+			slog.String("project_id", projectID.String()),
+			slog.Time("last_progress", active.UpdatedAt),
+			slog.Duration("stale_after", s.staleAfter))
+		if err := s.repo.CancelStalledJob(ctx, active.ID); err != nil {
+			return nil, err
+		}
 	}
 
 	// Resolve org from project.
@@ -274,6 +304,18 @@ func (s *Service) StartDiscovery(ctx context.Context, projectID uuid.UUID, req *
 	}
 
 	if err := s.repo.Create(ctx, job); err != nil {
+		// The pre-check above cannot stop two concurrent starts (an HTTP start
+		// racing a sync delegation, or a double-submitted form): the database
+		// enforces one non-terminal job per project with
+		// uq_discovery_jobs_one_active, so a lost race surfaces here as a
+		// unique violation and is reported exactly like the pre-check.
+		if pgutils.IsUniqueViolation(err) {
+			details := map[string]any{}
+			if winner, activeErr := s.repo.ActiveJobForProject(ctx, projectID); activeErr == nil && winner != nil {
+				details["job_id"] = winner.ID.String()
+			}
+			return nil, apperror.New(409, "discovery-in-progress", "another discovery job started for this project at the same time").WithDetails(details)
+		}
 		return nil, err
 	}
 
@@ -1206,17 +1248,13 @@ func (s *Service) decideDiscoveryBatch(response string, callErr error, docCount 
 	return discoveryBatchOutcome{Types: types}
 }
 
-// extractTypesFromBatch extracts types from a batch of documents using LLM.
+// extractTypesFromBatch extracts types from a batch of documents using LLM and
+// stores them as candidates.
 //
 // typeBudget is the number of types the prompt asks for (zero means the
 // default). It is carried through the split so a batch that had to be split
 // keeps the budget its caller chose, and the caller may lower it on a retry.
 func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, documentIDs []uuid.UUID, batchNum int, kbPurpose string, typeBudget int) error {
-	s.log.Info("extracting types from batch",
-		slog.Int("batch", batchNum),
-		slog.Int("doc_count", len(documentIDs)),
-		slog.Int("type_budget", typeBudget))
-
 	// Get document contents
 	docs, err := s.repo.GetDocumentContents(ctx, documentIDs)
 	if err != nil {
@@ -1228,54 +1266,10 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		return nil
 	}
 
-	// Build prompt
-	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
-
-	// Call LLM
-	response, callErr := s.completeWithLLM(ctx, prompt)
-	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
-		return fmt.Errorf("LLM call failed: %w", callErr)
+	types, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
+	if err != nil {
+		return err
 	}
-
-	// Decide what to do with the batch: store, split, retry with fewer types, or
-	// fail. A complete response that found no types is not a failure; a
-	// truncated one is.
-	outcome := s.decideDiscoveryBatch(response, callErr, len(documentIDs))
-	if outcome.RetryReducedTypes {
-		budget := s.effectiveTypeBudget(typeBudget)
-		if budget <= discoveryReducedMaxTypes {
-			return outcome.Err
-		}
-		s.log.Warn("discovery response truncated on a single document; retrying with a smaller type budget",
-			slog.Int("batch", batchNum),
-			slog.Int("type_budget", budget),
-			slog.Int("reduced_budget", discoveryReducedMaxTypes))
-		return s.extractTypesFromBatch(ctx, jobID, documentIDs, batchNum, kbPurpose, discoveryReducedMaxTypes)
-	}
-	if outcome.RetrySmaller {
-		mid := len(documentIDs) / 2
-		s.log.Warn("discovery response truncated; retrying with smaller document batches",
-			slog.Int("batch", batchNum),
-			slog.Int("documents", len(documentIDs)),
-			slog.Int("half", mid))
-		if err := s.extractTypesFromBatch(ctx, jobID, documentIDs[:mid], batchNum, kbPurpose, typeBudget); err != nil {
-			return err
-		}
-		return s.extractTypesFromBatch(ctx, jobID, documentIDs[mid:], batchNum, kbPurpose, typeBudget)
-	}
-	if outcome.Err != nil {
-		return outcome.Err
-	}
-	types := outcome.Types
-	if errors.Is(callErr, ErrOutputTruncated) {
-		s.log.Warn("discovery response was truncated but recovered after JSON repair",
-			slog.Int("batch", batchNum),
-			slog.Int("type_count", len(types)))
-	}
-
-	s.log.Info("LLM discovered types",
-		slog.Int("batch", batchNum),
-		slog.Int("type_count", len(types)))
 
 	// Store candidates
 	for _, t := range types {
@@ -1302,6 +1296,73 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 	}
 
 	return nil
+}
+
+// discoverBatchTypes asks the model which types the already-loaded documents
+// describe and returns them for storage.
+//
+// A response cut off at the model's output limit is retried in a smaller shape
+// rather than failed: a multi-document batch is split in half, and a
+// single-document batch — which cannot be split — is retried once asking for
+// the reduced number of types, then fails with the output-limit message. A
+// complete answer that legitimately found no types is a valid batch, not a
+// failure. Taking loaded documents (rather than ids) keeps the retry
+// decision-testable without a database.
+func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]DiscoveredType, error) {
+	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
+
+	response, callErr := s.completeWithLLM(ctx, prompt)
+	if callErr != nil && !errors.Is(callErr, ErrOutputTruncated) {
+		return nil, fmt.Errorf("LLM call failed: %w", callErr)
+	}
+
+	// Decide what to do with the batch: store, split, retry with fewer types, or
+	// fail. A complete response that found no types is not a failure; a
+	// truncated one is.
+	outcome := s.decideDiscoveryBatch(response, callErr, len(docs))
+	if outcome.RetryReducedTypes {
+		budget := s.effectiveTypeBudget(typeBudget)
+		if budget <= discoveryReducedMaxTypes {
+			return nil, outcome.Err
+		}
+		s.log.Warn("discovery response truncated on a single document; retrying with a smaller type budget",
+			slog.Int("batch", batchNum),
+			slog.Int("type_budget", budget),
+			slog.Int("reduced_budget", discoveryReducedMaxTypes))
+		return s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, discoveryReducedMaxTypes)
+	}
+	if outcome.RetrySmaller {
+		mid := len(docs) / 2
+		s.log.Warn("discovery response truncated; retrying with smaller document batches",
+			slog.Int("batch", batchNum),
+			slog.Int("documents", len(docs)),
+			slog.Int("half", mid))
+		left, err := s.discoverBatchTypes(ctx, docs[:mid], batchNum, kbPurpose, typeBudget)
+		if err != nil {
+			return nil, err
+		}
+		right, err := s.discoverBatchTypes(ctx, docs[mid:], batchNum, kbPurpose, typeBudget)
+		if err != nil {
+			return nil, err
+		}
+		return append(left, right...), nil
+	}
+	if outcome.Err != nil {
+		return nil, outcome.Err
+	}
+
+	types := outcome.Types
+	if errors.Is(callErr, ErrOutputTruncated) {
+		s.log.Warn("discovery response was truncated but recovered after JSON repair",
+			slog.Int("batch", batchNum),
+			slog.Int("type_count", len(types)))
+	}
+
+	s.log.Info("LLM discovered types",
+		slog.Int("batch", batchNum),
+		slog.Int("type_count", len(types)))
+
+	return types, nil
 }
 
 // effectiveTypeBudget resolves a prompt type budget (0 = default).

@@ -64,6 +64,16 @@ func (s *DiscoveryJobsTestSuite) jobStatusRow(jobID string) string {
 // need a terminal/non-terminal job whose state cannot race the assertion.
 func (s *DiscoveryJobsTestSuite) insertJobWithConfig(status string, cfg map[string]any) string {
 	s.T().Helper()
+	return s.insertJobWithStatusAndAge(status, cfg, 0)
+}
+
+// insertJobWithStatusAndAge inserts a job whose updated_at is age old, which is
+// how a run whose process died looks: the row is non-terminal but has not
+// reported progress since.
+func (s *DiscoveryJobsTestSuite) insertJobWithStatusAndAge(status string, cfg map[string]any, age time.Duration) string {
+	s.T().Helper()
+	now := time.Now()
+	updated := now.Add(-age)
 	job := &discoveryjobs.DiscoveryJob{
 		ID:                      uuid.New(),
 		OrganizationID:          uuid.MustParse(s.orgID),
@@ -74,8 +84,8 @@ func (s *DiscoveryJobsTestSuite) insertJobWithConfig(status string, cfg map[stri
 		KBPurpose:               "test",
 		DiscoveredTypes:         discoveryjobs.JSONArray{},
 		DiscoveredRelationships: discoveryjobs.JSONArray{},
-		CreatedAt:               time.Now(),
-		UpdatedAt:               time.Now(),
+		CreatedAt:               updated,
+		UpdatedAt:               updated,
 	}
 	if status == discoveryjobs.StatusFailed {
 		msg := "All 1 batches failed. Errors: Batch 1: failed to parse LLM response: unexpected EOF"
@@ -289,33 +299,123 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_ListReportsTriggerAndCoverage() {
 	s.Contains(items[0]["error_message"], "unexpected EOF")
 }
 
-// TestProject_AutoDiscoveryDefaultsOnAndRoundTrips pins the setting end to end:
-// a project defaults to automatic discovery on, and PATCH persists a change so
-// the sync worker's gate reads what the settings toggle wrote.
+// TestProject_AutoDiscoveryDefaultsOnAndRoundTrips pins the setting end to end
+// through the API the settings form uses: a newly created project reports and
+// persists automatic discovery on, and PATCH persists a change so the sync
+// worker's gate reads what the settings toggle wrote.
 func (s *DiscoveryJobsTestSuite) TestProject_AutoDiscoveryDefaultsOnAndRoundTrips() {
-	// A project created by the fixture defaults to on.
-	var enabled bool
-	err := s.testDB.DB.NewSelect().
-		Table("kb.projects").
-		Column("auto_discovery_enabled").
-		Where("id = ?", uuid.MustParse(s.projectID)).
-		Scan(s.T().Context(), &enabled)
-	s.Require().NoError(err, "read default")
-	s.True(enabled, "auto_discovery_enabled should default to true")
+	name := "auto-discovery-" + uuid.New().String()[:8]
+	create := s.client.POST(
+		"/api/projects",
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{"name": name, "orgId": s.orgID}),
+	)
+	s.Require().Equal(http.StatusCreated, create.StatusCode, "create project: %s", create.Body)
+
+	var created struct {
+		ID                   string `json:"id"`
+		AutoDiscoveryEnabled *bool  `json:"auto_discovery_enabled"`
+	}
+	s.Require().NoError(json.Unmarshal(create.Body, &created))
+	s.Require().NotEmpty(created.ID)
+	s.Require().NotNil(created.AutoDiscoveryEnabled, "the create response must carry auto_discovery_enabled")
+	s.True(*created.AutoDiscoveryEnabled, "a new project must default to automatic discovery on")
 
 	resp := s.client.PATCH(
-		"/api/projects/"+s.projectID,
+		"/api/projects/"+created.ID,
 		testutil.WithAuth(s.authToken),
 		testutil.WithJSONBody(map[string]any{"auto_discovery_enabled": false}),
 	)
 	s.Require().Equal(http.StatusOK, resp.StatusCode, "patch auto_discovery_enabled: %s", resp.Body)
 
+	// Read the column the sync worker reads, on the project the API created.
 	var got bool
-	err = s.testDB.DB.NewSelect().
+	err := s.testDB.DB.NewSelect().
 		Table("kb.projects").
 		Column("auto_discovery_enabled").
-		Where("id = ?", uuid.MustParse(s.projectID)).
+		Where("id = ?", uuid.MustParse(created.ID)).
 		Scan(s.T().Context(), &got)
 	s.Require().NoError(err, "read after patch")
 	s.False(got, "auto_discovery_enabled should be false after patching false")
+}
+
+// TestDiscovery_StaleJobIsSuperseded pins the recovery path for a run whose
+// process died: the row is non-terminal but has reported no progress for longer
+// than the stale window, so refusing every later start would dead-end the
+// project. The stalled job is cancelled and the new run proceeds.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_StaleJobIsSuperseded() {
+	stalled := s.insertJobWithStatusAndAge(discoveryjobs.StatusExtractingTypes, map[string]any{
+		"document_ids": []string{s.docID},
+	}, 2*time.Hour)
+
+	resp := s.client.POST(
+		s.startURL(),
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{"document_ids": []string{s.docID}}),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "start over a stalled job: %s", resp.Body)
+
+	var body discoveryjobs.StartDiscoveryResponse
+	s.Require().NoError(json.Unmarshal(resp.Body, &body))
+	s.Require().NotEqual(stalled, body.JobID.String(), "the new run must be a new job")
+
+	var status, reason string
+	err := s.testDB.DB.NewSelect().
+		Table("kb.discovery_jobs").
+		Column("status", "error_message").
+		Where("id = ?", uuid.MustParse(stalled)).
+		Scan(s.T().Context(), &status, &reason)
+	s.Require().NoError(err)
+	s.Require().Equal(discoveryjobs.StatusCancelled, status, "the stalled run must be cancelled")
+	s.Require().Contains(reason, "stalled", "the cancellation reason must say why")
+}
+
+// TestDiscovery_FreshJobStillRefuses pins the other side of the takeover: a run
+// that reported progress inside the stale window keeps its claim.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_FreshJobStillRefuses() {
+	s.insertJobWithStatusAndAge(discoveryjobs.StatusExtractingTypes, map[string]any{
+		"document_ids": []string{s.docID},
+	}, time.Minute)
+
+	resp := s.client.POST(
+		s.startURL(),
+		testutil.WithAuth(s.authToken),
+		testutil.WithJSONBody(map[string]any{"document_ids": []string{s.docID}}),
+	)
+	s.Equal(http.StatusConflict, resp.StatusCode, "a fresh in-flight run must keep its claim: %s", resp.Body)
+}
+
+// TestDiscovery_OneActiveJobConstraintExists pins the database-level guard that
+// holds when two starts race: the service pre-check cannot, so a direct second
+// insert of a non-terminal job for the same project must be refused.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_OneActiveJobConstraintExists() {
+	first := s.insertPendingJob()
+
+	job := &discoveryjobs.DiscoveryJob{
+		ID:                      uuid.New(),
+		OrganizationID:          uuid.MustParse(s.orgID),
+		ProjectID:               uuid.MustParse(s.projectID),
+		Status:                  discoveryjobs.StatusPending,
+		Progress:                discoveryjobs.JSONMap{},
+		Config:                  discoveryjobs.JSONMap{},
+		KBPurpose:               "test",
+		DiscoveredTypes:         discoveryjobs.JSONArray{},
+		DiscoveredRelationships: discoveryjobs.JSONArray{},
+		CreatedAt:               time.Now(),
+		UpdatedAt:               time.Now(),
+	}
+	_, err := s.testDB.DB.NewInsert().Model(job).Exec(s.T().Context())
+	s.Require().Error(err, "a second non-terminal job for one project must be refused by the database")
+
+	// The claim is released when the first run reaches a terminal state, so a
+	// retry/start afterwards is allowed.
+	_, err = s.testDB.DB.NewUpdate().
+		Table("kb.discovery_jobs").
+		Set("status = ?", discoveryjobs.StatusFailed).
+		Where("id = ?", uuid.MustParse(first)).
+		Exec(s.T().Context())
+	s.Require().NoError(err)
+	job.ID = uuid.New()
+	_, err = s.testDB.DB.NewInsert().Model(job).Exec(s.T().Context())
+	s.Require().NoError(err, "a terminal job must not hold the project's one-run slot")
 }

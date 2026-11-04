@@ -18,6 +18,7 @@ func newSchemaDiscoveryServer(f *fakeMemory) (*Server, *echo.Echo) {
 	e := echo.New()
 	e.POST("/schema/discovery/start", s.uiSchemaDiscoveryStart)
 	e.POST("/schema/discovery/retry/:jobID", s.uiSchemaDiscoveryRetry)
+	e.POST("/schema/discovery/cancel/:jobID", s.uiSchemaDiscoveryCancel)
 	e.POST("/documents/:id/discover", s.uiDocumentDiscover)
 	return s, e
 }
@@ -102,7 +103,7 @@ func TestSchemaDiscoveryRetryEmptyJobIDRedirectsWithError(t *testing.T) {
 // TestDocumentDiscoverStartsOneDocumentRun pins the per-document trigger: it
 // posts the document id and returns to the document page with the flash.
 func TestDocumentDiscoverStartsOneDocumentRun(t *testing.T) {
-	f := &fakeMemory{}
+	f := &fakeMemory{documents: []Document{{ID: "d1", Filename: "doc.md"}}}
 	_, e := newSchemaDiscoveryServer(f)
 
 	rec := httptest.NewRecorder()
@@ -118,11 +119,34 @@ func TestDocumentDiscoverStartsOneDocumentRun(t *testing.T) {
 	}
 }
 
+// TestDocumentDiscoverRefusesADocumentOutsideTheProject pins the pre-check: the
+// document is read first (project-scoped), so an id the current project cannot
+// see is refused here instead of being forwarded to the run endpoint.
+func TestDocumentDiscoverRefusesADocumentOutsideTheProject(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newSchemaDiscoveryServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/documents/other-project-doc/discover", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("discover status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/documents/other-project-doc?err=") {
+		t.Errorf("discover location = %q, want the document page with ?err=", loc)
+	}
+	if len(f.discoveryDocStarts) != 0 {
+		t.Fatalf("document runs started = %v, want none", f.discoveryDocStarts)
+	}
+}
+
 // TestDocumentDiscoverFailureStaysOnTheDocument pins that a refused
 // per-document run (e.g. a run is already in progress) reports the error on the
 // document page instead of navigating away.
 func TestDocumentDiscoverFailureStaysOnTheDocument(t *testing.T) {
-	f := &fakeMemory{discoveryStartErr: errors.New("discovery job 7 is already running for this project")}
+	f := &fakeMemory{
+		documents:         []Document{{ID: "d1", Filename: "doc.md"}},
+		discoveryStartErr: errors.New("discovery job 7 is already running for this project"),
+	}
 	_, e := newSchemaDiscoveryServer(f)
 
 	rec := httptest.NewRecorder()
@@ -167,6 +191,9 @@ func TestSchemaDiscoveryCardRendersStates(t *testing.T) {
 	}
 	if strings.Contains(running, "Retry discovery") {
 		t.Error("a running job must not offer Retry")
+	}
+	if !strings.Contains(running, `action="/schema/discovery/cancel/j-running"`) {
+		t.Error("a running job must offer Cancel: the run holds the project's one-run slot")
 	}
 
 	failed := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
@@ -262,5 +289,73 @@ func TestProcessingProblemRetryDiscovery(t *testing.T) {
 	// A row without a job id has nothing to re-run and keeps navigation only.
 	if _, ok := processingProblemRetry(ProcessingProblem{Queue: "discovery"}); ok {
 		t.Error("a discovery row without a job id must not offer a retry")
+	}
+}
+
+// TestSchemaDiscoveryCancelStopsTheRun pins the cancel action: a run that is in
+// flight holds the project's one-run slot, so the user must be able to free it
+// without waiting for the process.
+func TestSchemaDiscoveryCancelStopsTheRun(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newSchemaDiscoveryServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/discovery/cancel/job-9", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("cancel status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/schema?cancelled=1#discovery" {
+		t.Errorf("cancel location = %q", loc)
+	}
+	if len(f.discoveryCancels) != 1 || f.discoveryCancels[0] != "job-9" {
+		t.Fatalf("cancelled jobs = %v, want [job-9]", f.discoveryCancels)
+	}
+}
+
+// TestSchemaDiscoveryCancelFailureSurfacesTheMessage pins that a refused cancel
+// (already terminal, or a permission problem) reaches the card.
+func TestSchemaDiscoveryCancelFailureSurfacesTheMessage(t *testing.T) {
+	f := &fakeMemory{discoveryStartErr: errors.New("job cannot be cancelled (already completed)")}
+	_, e := newSchemaDiscoveryServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/discovery/cancel/job-9", nil))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("cancel status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") {
+		t.Errorf("cancel location = %q, want /schema?err=…", loc)
+	}
+	if len(f.discoveryCancels) != 0 {
+		t.Fatalf("cancelled jobs = %v, want none", f.discoveryCancels)
+	}
+}
+
+// TestSchemaDiscoveryCardExplainsAnEmptyProject pins that a project with no
+// documents says so: the start action would 400, so the card must not leave the
+// user without an explanation.
+func TestSchemaDiscoveryCardExplainsAnEmptyProject(t *testing.T) {
+	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{DocumentCount: 0}))
+	if !strings.Contains(html, "No documents in this project yet") {
+		t.Error("an empty project must explain why there is nothing to discover")
+	}
+	if !strings.Contains(html, `action="/schema/discovery/start"`) {
+		t.Error("the start action must still render for an empty project")
+	}
+}
+
+// TestSchemaDiscoveryCardReportsAnUnreadableCount pins the degraded count: the
+// card says the number is unavailable rather than silently omitting it (which
+// would read as zero documents).
+func TestSchemaDiscoveryCardReportsAnUnreadableCount(t *testing.T) {
+	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest:   &discoveryJob{ID: "j-1", Status: "completed"},
+		CountErr: errors.New("documents unavailable"),
+	}))
+	if !strings.Contains(html, "document count is unavailable") {
+		t.Error("an unreadable count must be reported")
+	}
+	if strings.Contains(html, "No documents in this project yet") {
+		t.Error("an unreadable count must not be rendered as an empty project")
 	}
 }

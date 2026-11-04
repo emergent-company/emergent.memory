@@ -21,7 +21,11 @@ import (
 type SchemaDiscoveryView struct {
 	Latest        *discoveryJob
 	DocumentCount int
-	Err           error
+	// CountErr reports that the document count could not be read. It is
+	// separate from Err so the reason names the part that failed instead of
+	// leaving the card claiming a state it could not verify.
+	CountErr error
+	Err      error
 }
 
 // loadSchemaDiscovery reads the newest job and the project's document count.
@@ -35,7 +39,10 @@ func (s *Server) loadSchemaDiscovery(ctx context.Context) *SchemaDiscoveryView {
 	} else if len(jobs) > 0 {
 		view.Latest = &jobs[0]
 	}
-	if page, err := s.memory.ListDocuments(ctx, DocumentListParams{Limit: 1}); err == nil {
+	page, countErr := s.memory.ListDocuments(ctx, DocumentListParams{Limit: 1})
+	if countErr != nil {
+		view.CountErr = userFacingError(countErr)
+	} else {
 		view.DocumentCount = page.Total
 	}
 	return view
@@ -69,9 +76,29 @@ func (s *Server) uiSchemaDiscoveryRetry(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, "/schema?discovered=1#discovery")
 }
 
+// uiSchemaDiscoveryCancel handles POST /schema/discovery/cancel/:jobID: it
+// stops a run that is in flight. A run is a server goroutine, so this is the
+// only way a user can free the project's one-run slot without waiting for it to
+// finish; the start path also supersedes a job that stopped reporting progress.
+func (s *Server) uiSchemaDiscoveryCancel(c echo.Context) error {
+	ctx := c.Request().Context()
+	jobID := strings.TrimSpace(c.Param("jobID"))
+	if jobID == "" {
+		return redirectWithError(c, "/schema", errDiscoveryJobIDRequired)
+	}
+	if err := s.memory.CancelDiscoveryJob(ctx, jobID); err != nil {
+		return redirectWithError(c, "/schema", err)
+	}
+	s.invalidateProcessingProblems(ctx)
+	return c.Redirect(http.StatusSeeOther, "/schema?cancelled=1#discovery")
+}
+
 // uiDocumentDiscover handles POST /documents/:id/discover: run discovery over
 // one document and return to it. Open to any project member, like the
-// extraction trigger next to it.
+// extraction trigger next to it. The document is read first so an id from
+// another project (or a deleted one) is refused here rather than forwarded:
+// the document read is project-scoped, and the run endpoint only checks that
+// the ids exist.
 func (s *Server) uiDocumentDiscover(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := strings.TrimSpace(c.Param("id"))
@@ -79,6 +106,9 @@ func (s *Server) uiDocumentDiscover(c echo.Context) error {
 		return redirectWithError(c, "/documents", errDocumentIDRequired)
 	}
 	back := "/documents/" + url.PathEscape(id)
+	if _, err := s.memory.GetDocument(ctx, id); err != nil {
+		return redirectWithError(c, back, err)
+	}
 	if _, err := s.memory.StartDocumentDiscovery(ctx, id); err != nil {
 		return redirectWithError(c, back, err)
 	}

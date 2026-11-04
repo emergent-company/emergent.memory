@@ -998,6 +998,7 @@ Table "kb"."discovery_jobs" {
   Indexes {
     (project_id) [name: "idx_discovery_jobs_project_id"]
     (status) [name: "idx_discovery_jobs_status"]
+    (project_id) [name: "uq_discovery_jobs_one_active", unique]
   }
 }
 
@@ -2163,6 +2164,7 @@ Table "kb"."projects" {
   "budget_alert_threshold" numeric(3,2) [not null, default: 0.80]
   "auto_merge_extraction_branches" boolean [not null, default: false]
   "deletion_scheduled_for" timestamptz
+  "auto_discovery_enabled" boolean [not null, default: true]
 
   Indexes {
     (deleted_at) [name: "idx_projects_deleted_at"]

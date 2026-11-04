@@ -177,6 +177,7 @@ type fakeMemory struct {
 	discoveryStarted   int      // project-wide starts
 	discoveryDocStarts []string // document ids passed to StartDocumentDiscovery
 	discoveryRetries   []string // job ids passed to RetryDiscoveryJob
+	discoveryCancels   []string // job ids passed to CancelDiscoveryJob
 	discoveryStartErr  error
 	extractErr         error               // CreateExtractionJob failure
 	uploaded           []string            // filenames received via UploadDocument
@@ -408,6 +409,10 @@ type fakeMemory struct {
 
 	schemas []SchemaInfo
 	schema  *BlueprintSchema
+	// schemasByID, when non-nil, is the schema catalog: a lookup for an id it
+	// does not hold fails, which is how the in-memory API answers for a pack the
+	// project does not have.
+	schemasByID map[string]*BlueprintSchema
 
 	// schema pack mutations (design D1).
 	createdSchemaPack     *SchemaPackWriteRequest // last CreateSchemaPack req
@@ -1291,6 +1296,14 @@ func (f *fakeMemory) RetryDiscoveryJob(ctx context.Context, jobID string) (*Disc
 	return &DiscoveryStartResult{JobID: "job-retry"}, nil
 }
 
+func (f *fakeMemory) CancelDiscoveryJob(ctx context.Context, jobID string) error {
+	if f.discoveryStartErr != nil {
+		return f.discoveryStartErr
+	}
+	f.discoveryCancels = append(f.discoveryCancels, jobID)
+	return nil
+}
+
 func (f *fakeMemory) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
 	f.recordCatalog("ListDocumentSourceTypes")
 	if f.docSourceTypesErr != nil {
@@ -1977,6 +1990,12 @@ func (f *fakeMemory) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {
 func (f *fakeMemory) GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error) {
 	if f.blueprintErr != nil {
 		return nil, f.blueprintErr
+	}
+	if f.schemasByID != nil {
+		if s, ok := f.schemasByID[packID]; ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("schema %s not found", packID)
 	}
 	if f.schema != nil {
 		return f.schema, nil

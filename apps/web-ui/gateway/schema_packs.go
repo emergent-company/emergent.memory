@@ -1,6 +1,10 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -177,8 +181,11 @@ func (s *Server) uiSchemaPacks(c echo.Context) error {
 }
 
 // uiSchemaPack renders one active pack's read-only detail: metadata plus the
-// object and relationship types it contributes. An unknown or absent pack id
-// renders the not-found state (no panic).
+// object and relationship types it contributes. A pack that exists but is not
+// installed — the state a discovery run leaves its result in — renders the
+// pending-review page instead, because it contributes no compiled types and is
+// therefore absent from the packs derivation. Anything else renders the
+// not-found state (no panic).
 func (s *Server) uiSchemaPack(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := pathUnescape(c.Param("id"))
@@ -194,5 +201,95 @@ func (s *Server) uiSchemaPack(c echo.Context) error {
 			return s.page(c, pageTitle(packs[i].Name), SchemaPackPage(&packs[i], nil))
 		}
 	}
+
+	if id != "" {
+		if pack, packErr := s.memory.GetSchema(ctx, id); packErr == nil && pack != nil && pack.ID != "" {
+			return s.page(c, pageTitle(pack.Name), SchemaPackPendingPage(pendingPackFromSchema(pack), flashError(c)))
+		}
+	}
 	return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, nil))
+}
+
+// uiSchemaPackInstall handles POST /schema/packs/:id/install: it installs a
+// reviewed pack, which is what turns a discovery result into compiled types.
+// Installing is a deliberate, separate step from discovering — the run never
+// installs anything by itself.
+func (s *Server) uiSchemaPackInstall(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := pathUnescape(c.Param("id"))
+	back := "/schema/packs"
+	if id != "" {
+		back = "/schema/packs/" + url.PathEscape(id)
+	}
+	if id == "" {
+		return redirectWithError(c, back, errors.New("schema pack id is required"))
+	}
+	if err := s.memory.AssignSchemaPack(ctx, id); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?installed=1")
+}
+
+// pendingPack is a pack that exists in the project's catalog but is not
+// installed yet: an un-reviewed discovery result, or a pack whose assignment
+// was removed. It contributes no compiled types, so it cannot be rendered by
+// the pack-summary path; it is read through GetSchema and installed through the
+// assign endpoint.
+type pendingPack struct {
+	ID          string
+	Name        string
+	Version     string
+	Description string
+	Author      string
+	Source      string
+
+	ObjectTypes   []string
+	RelationTypes []string
+}
+
+// pendingPackFromSchema turns a schema definition into the review view model.
+// Both type maps are keyed by name; a relationship also names its endpoints, so
+// the reviewer can see which pairs it proposes.
+func pendingPackFromSchema(schema *BlueprintSchema) *pendingPack {
+	pack := &pendingPack{
+		ID:          schema.ID,
+		Name:        schema.Name,
+		Version:     schema.Version,
+		Description: schema.Description,
+		Author:      schema.Author,
+		Source:      schema.Source,
+	}
+
+	var objects map[string]struct {
+		Description string `json:"description"`
+	}
+	if len(schema.ObjectTypeSchemas) > 0 && json.Unmarshal(schema.ObjectTypeSchemas, &objects) == nil {
+		for name := range objects {
+			pack.ObjectTypes = append(pack.ObjectTypes, name)
+		}
+		sort.Strings(pack.ObjectTypes)
+	}
+
+	var relations map[string]struct {
+		SourceTypes []string `json:"sourceTypes"`
+		TargetTypes []string `json:"targetTypes"`
+	}
+	if len(schema.RelationshipTypeSchemas) > 0 && json.Unmarshal(schema.RelationshipTypeSchemas, &relations) == nil {
+		names := make([]string, 0, len(relations))
+		for name := range relations {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			r := relations[name]
+			switch {
+			case len(r.SourceTypes) > 0 && len(r.TargetTypes) > 0:
+				pack.RelationTypes = append(pack.RelationTypes, name+" ("+r.SourceTypes[0]+" → "+r.TargetTypes[0]+")")
+			default:
+				pack.RelationTypes = append(pack.RelationTypes, name)
+			}
+		}
+	}
+
+	return pack
 }

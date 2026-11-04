@@ -2,11 +2,13 @@ package discoveryjobs
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"google.golang.org/adk/v2/model"
 	"google.golang.org/genai"
 )
@@ -442,5 +444,193 @@ func TestDocumentCap_DefaultsAndOverride(t *testing.T) {
 	t.Setenv("DISCOVERY_MAX_DOCUMENTS", "not-a-number")
 	if got := maxDocumentsFromEnv(); got != DefaultDiscoveryMaxDocuments {
 		t.Fatalf("invalid env cap = %d, want default", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Batch retry wiring: truncation -> split or reduced budget
+// ---------------------------------------------------------------------------
+
+// seqResponse is one scripted model answer.
+type seqResponse struct {
+	text   string
+	finish genai.FinishReason
+	err    error
+}
+
+// sequenceLLM answers with a scripted response per call and records each
+// prompt, so a test can assert how many calls a retry took and what the retry
+// actually asked for (the budget lives in the prompt text).
+type sequenceLLM struct {
+	responses []seqResponse
+	prompts   []string
+	calls     int
+}
+
+func (m *sequenceLLM) Name() string { return "sequence" }
+
+func (m *sequenceLLM) GenerateContent(ctx context.Context, req *model.LLMRequest, streaming bool) iter.Seq2[*model.LLMResponse, error] {
+	return func(yield func(*model.LLMResponse, error) bool) {
+		if req != nil && len(req.Contents) > 0 && req.Contents[0] != nil && len(req.Contents[0].Parts) > 0 {
+			m.prompts = append(m.prompts, req.Contents[0].Parts[0].Text)
+		}
+		idx := m.calls
+		m.calls++
+		if idx >= len(m.responses) {
+			yield(nil, fmt.Errorf("unexpected model call %d", idx+1))
+			return
+		}
+		next := m.responses[idx]
+		if next.err != nil {
+			yield(nil, next.err)
+			return
+		}
+		resp := &model.LLMResponse{Content: genai.NewContentFromText(next.text, "model")}
+		if next.finish != "" {
+			resp.FinishReason = next.finish
+		}
+		yield(resp, nil)
+	}
+}
+
+// truncatedPartial is what a response cut off mid-object looks like.
+const truncatedPartial = `{"discovered_types":[{"type_name":"Cust`
+
+// completeAnswer is a parseable answer proposing a single type.
+const completeAnswer = `{"discovered_types":[{"type_name":"Customer","description":"A buyer","inferred_schema":{},"example_instances":["Acme"],"confidence":0.9,"occurrences":2}]}`
+
+func newBatchTestService(llm model.LLM) *Service {
+	return &Service{
+		modelFactory: &testModelFactory{model: llm},
+		log:          slog.Default(),
+	}
+}
+
+func testDocs(n int) []DocumentContent {
+	docs := make([]DocumentContent, n)
+	for i := range docs {
+		docs[i] = DocumentContent{
+			ID:       uuid.New(),
+			Filename: fmt.Sprintf("doc-%d.txt", i+1),
+			Content:  fmt.Sprintf("document %d content", i+1),
+		}
+	}
+	return docs
+}
+
+// TestDiscoverBatchTypes_ReducedBudgetRetry pins the wiring, not just the
+// decision: a one-document truncation makes exactly one more call, and that
+// call asks for the reduced type budget.
+func TestDiscoverBatchTypes_ReducedBudgetRetry(t *testing.T) {
+	llm := &sequenceLLM{responses: []seqResponse{
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+		{text: completeAnswer},
+	}}
+	svc := newBatchTestService(llm)
+
+	types, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(types) != 1 || types[0].TypeName != "Customer" {
+		t.Fatalf("types = %+v, want one Customer", types)
+	}
+	if llm.calls != 2 {
+		t.Fatalf("model calls = %d, want 2 (default budget, then reduced)", llm.calls)
+	}
+	if !strings.Contains(llm.prompts[0], fmt.Sprintf("up to %d important entity types", discoveryDefaultMaxTypes)) {
+		t.Fatalf("first prompt should ask for the default budget:\n%s", llm.prompts[0])
+	}
+	if !strings.Contains(llm.prompts[1], fmt.Sprintf("up to %d important entity types", discoveryReducedMaxTypes)) {
+		t.Fatalf("retry prompt should ask for the reduced budget:\n%s", llm.prompts[1])
+	}
+}
+
+// TestDiscoverBatchTypes_ReducedBudgetStops pins the stop guard: a reduced
+// attempt that is still truncated fails, and it does not loop a third time.
+func TestDiscoverBatchTypes_ReducedBudgetStops(t *testing.T) {
+	llm := &sequenceLLM{responses: []seqResponse{
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+	}}
+	svc := newBatchTestService(llm)
+
+	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", discoveryReducedMaxTypes)
+	if err == nil {
+		t.Fatal("expected an error for a still-truncated reduced attempt")
+	}
+	if !strings.Contains(err.Error(), "output limit") {
+		t.Fatalf("error = %v, want it to name the output limit", err)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("model calls = %d, want 1: a retry already at the reduced budget must not retry again", llm.calls)
+	}
+}
+
+// TestDiscoverBatchTypes_ReducedBudgetStopsAfterSecondTruncation pins the
+// two-call ceiling when the caller started at the default budget.
+func TestDiscoverBatchTypes_ReducedBudgetStopsAfterSecondTruncation(t *testing.T) {
+	llm := &sequenceLLM{responses: []seqResponse{
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+	}}
+	svc := newBatchTestService(llm)
+
+	_, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	if err == nil {
+		t.Fatal("expected an error when both attempts truncate")
+	}
+	if llm.calls != 2 {
+		t.Fatalf("model calls = %d, want exactly 2", llm.calls)
+	}
+	if !strings.Contains(err.Error(), "output limit") {
+		t.Fatalf("error = %v, want it to name the output limit", err)
+	}
+}
+
+// TestDiscoverBatchTypes_MultiDocumentSplitKeepsBudget pins the other retry
+// shape: a truncated multi-document batch is split, and the halves keep the
+// caller's budget (splitting is the fix there, not a smaller ask).
+func TestDiscoverBatchTypes_MultiDocumentSplitKeepsBudget(t *testing.T) {
+	llm := &sequenceLLM{responses: []seqResponse{
+		{text: truncatedPartial, finish: genai.FinishReasonMaxTokens},
+		{text: completeAnswer},
+		{text: completeAnswer},
+	}}
+	svc := newBatchTestService(llm)
+
+	types, err := svc.discoverBatchTypes(context.Background(), testDocs(2), 1, "test purpose", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(types) != 2 {
+		t.Fatalf("types = %d, want 2 (one per half)", len(types))
+	}
+	if llm.calls != 3 {
+		t.Fatalf("model calls = %d, want 3 (original + two halves)", llm.calls)
+	}
+	for _, prompt := range llm.prompts[1:] {
+		if strings.Contains(prompt, fmt.Sprintf("up to %d important entity types", discoveryReducedMaxTypes)) {
+			t.Fatalf("a split retry must not lower the type budget:\n%s", prompt)
+		}
+	}
+}
+
+// TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure pins the distinction
+// the retry logic depends on: a complete answer that found no types is stored
+// as zero types, not retried and not failed.
+func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
+	llm := &sequenceLLM{responses: []seqResponse{{text: `{"discovered_types":[]}`}}}
+	svc := newBatchTestService(llm)
+
+	types, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(types) != 0 {
+		t.Fatalf("types = %+v, want none", types)
+	}
+	if llm.calls != 1 {
+		t.Fatalf("model calls = %d, want 1", llm.calls)
 	}
 }
