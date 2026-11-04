@@ -169,8 +169,8 @@ type fakeMemory struct {
 	documentStatusCounts   DocumentStatusCounts
 	documentsNextCursor    string
 	lastDocumentListParams DocumentListParams // params of the last ListDocuments call
-	docSourceTypes         []DocumentSourceType
-	docSourceTypesErr      error
+	docSourceCounts        []DocumentSourceCount
+	docSourceCountsErr     error
 	extractErr             error               // CreateExtractionJob failure
 	uploaded               []string            // filenames received via UploadDocument
 	uploadResult           *UploadResult       // non-nil overrides the UploadDocument result
@@ -1253,12 +1253,12 @@ func (f *fakeMemory) ListDocuments(ctx context.Context, params DocumentListParam
 	}, nil
 }
 
-func (f *fakeMemory) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
-	f.recordCatalog("ListDocumentSourceTypes")
-	if f.docSourceTypesErr != nil {
-		return nil, f.docSourceTypesErr
+func (f *fakeMemory) ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error) {
+	f.recordCatalog("ListDocumentSourceCounts")
+	if f.docSourceCountsErr != nil {
+		return nil, f.docSourceCountsErr
 	}
-	return f.docSourceTypes, nil
+	return f.docSourceCounts, nil
 }
 
 func (f *fakeMemory) GetDocument(ctx context.Context, id string) (*Document, error) {
