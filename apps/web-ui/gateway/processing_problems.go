@@ -478,6 +478,24 @@ func processingProblemModelLabel(p ProcessingProblem) string {
 	return p.Failure.Model
 }
 
+// processingProblemTestModelType is the model family a row's live test must
+// exercise. The embedding queues resolve their own model, so testing one through
+// the generative field would test something the failure is not about.
+func processingProblemTestModelType(p ProcessingProblem) string {
+	switch p.Queue {
+	case "chunk_embedding", "graph_embedding", "graph_relationship_embedding":
+		return "embedding"
+	default:
+		return "generative"
+	}
+}
+
+// processingProblemTestModelField is the form field the providers test endpoint
+// reads for that type, so the row posts the value the endpoint expects.
+func processingProblemTestModelField(p ProcessingProblem) string {
+	return defaultModelTestFields[processingProblemTestModelType(p)]
+}
+
 // processingAreaHasFixableFailures reports whether an area holds a terminal
 // failure whose cause the user can fix but that the classifier marks
 // non-retryable. It gates the explicit "retry all after fixing the cause"

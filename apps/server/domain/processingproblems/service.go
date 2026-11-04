@@ -113,14 +113,9 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 	// anyway". Resolve the model state once per report and rewrite those
 	// failures. When the state cannot be read the fallback copy stays, and it
 	// does not assert a cause it has not checked.
-	if hasConfigurationProblem(byArea) {
+	if needsModelState(byArea) {
 		if state, ok := s.modelState(ctx, projectID); ok {
-			for area, problems := range byArea {
-				for i := range problems {
-					problems[i].Failure = resolveConfiguration(problems[i].Failure, state)
-				}
-				byArea[area] = problems
-			}
+			applyModelState(byArea, state)
 		}
 	}
 
@@ -170,12 +165,16 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 	return report, nil
 }
 
-// hasConfigurationProblem reports whether any row needs its copy resolved
-// against the project's model state.
-func hasConfigurationProblem(byArea map[Area][]Problem) bool {
+// needsModelState reports whether any row depends on the project's model state:
+// a configuration failure's copy, or a permission failure on a queue that needs
+// a model (so the row can name it and offer a live test).
+func needsModelState(byArea map[Area][]Problem) bool {
 	for _, problems := range byArea {
 		for _, p := range problems {
 			if p.Failure.Class == ClassConfiguration {
+				return true
+			}
+			if p.Failure.Class == ClassPermission && isModelQueue(p.Queue) {
 				return true
 			}
 		}

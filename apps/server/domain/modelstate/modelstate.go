@@ -10,8 +10,21 @@ package modelstate
 
 import "context"
 
-// SourceNone is the GenerativeSource value that means nothing resolved.
+// SourceNone is the source value that means nothing resolved.
 const SourceNone = "none"
+
+// Kind selects which model family a failure is about. Generative and embedding
+// models resolve through different chains (a project can have a generative
+// model selected and no embedding model at all), so copy that says "no default
+// model is selected" has to know which one it is talking about.
+type Kind string
+
+const (
+	// KindGenerative is the chat/completion model an extraction or agent run uses.
+	KindGenerative Kind = "generative"
+	// KindEmbedding is the vector model chunk and graph embeddings use.
+	KindEmbedding Kind = "embedding"
+)
 
 // State is a project's model configuration as a run would resolve it.
 type State struct {
@@ -21,13 +34,39 @@ type State struct {
 	// GenerativeSource is where that model came from: "project", "provider" or
 	// "none".
 	GenerativeSource string
+	// EmbeddingModel is the routed "instance/model" embedding name a run would
+	// use. Empty when nothing resolves.
+	EmbeddingModel string
+	// EmbeddingSource is where that model came from.
+	EmbeddingSource string
 	// ProviderCount is how many provider instances the project has configured.
 	// Metadata only: no credential is decrypted.
 	ProviderCount int
 }
 
-// Configured reports whether a run would find a generative model.
-func (s State) Configured() bool { return s.GenerativeModel != "" }
+// Model returns the routed model name for the kind, or "" when nothing
+// resolves for it.
+func (s State) Model(kind Kind) string {
+	if kind == KindEmbedding {
+		return s.EmbeddingModel
+	}
+	return s.GenerativeModel
+}
+
+// Source returns where the kind's model came from, or SourceNone.
+func (s State) Source(kind Kind) string {
+	source := s.GenerativeSource
+	if kind == KindEmbedding {
+		source = s.EmbeddingSource
+	}
+	if source == "" {
+		return SourceNone
+	}
+	return source
+}
+
+// Configured reports whether a run of the kind would find a model.
+func (s State) Configured(kind Kind) bool { return s.Model(kind) != "" }
 
 // Reader resolves a project's model state.
 type Reader interface {

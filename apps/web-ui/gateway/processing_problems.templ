@@ -254,8 +254,8 @@ templ processingProblemRow(p ProcessingProblem, canManage bool) {
 				// page that already looks correct. The outcome arrives as an alert
 				// modal via HX-Trigger.
 				<form hx-post="/settings/providers/model-config/test" hx-swap="none">
-					<input type="hidden" name="model_type" value="generative"/>
-					<input type="hidden" name="generative_model" value={ p.Failure.Model }/>
+					<input type="hidden" name="model_type" value={ processingProblemTestModelType(p) }/>
+					<input type="hidden" name={ processingProblemTestModelField(p) } value={ p.Failure.Model }/>
 					@ui.Button(ui.ButtonProps{
 						Type:    ui.ButtonTypeSubmit,
 						Variant: ui.ButtonSecondary,

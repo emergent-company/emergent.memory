@@ -29,8 +29,11 @@ func NewModelStateReader(models *Service, creds *provider.CredentialService) *Mo
 	return &ModelStateReader{models: models, creds: creds}
 }
 
-// State resolves the project's effective generative model and the number of
-// provider instances configured for it.
+// State resolves the project's effective generative and embedding models plus
+// the number of provider instances configured for it. Both families are
+// resolved because they are separate chains: a project can have a generative
+// model and no embedding model, and copy that confused the two would repeat the
+// mistake this adapter exists to remove.
 //
 // A failure to count providers is reported as an error so the caller can fall
 // back to neutral copy: claiming "no provider is connected" because a metadata
@@ -49,9 +52,14 @@ func (r *ModelStateReader) State(ctx context.Context, projectID string) (modelst
 	state := modelstate.State{
 		GenerativeModel:  effective.GenerativeModel,
 		GenerativeSource: string(effective.GenerativeModelSource),
+		EmbeddingModel:   effective.EmbeddingModel,
+		EmbeddingSource:  string(effective.EmbeddingModelSource),
 	}
 	if state.GenerativeSource == "" {
 		state.GenerativeSource = modelstate.SourceNone
+	}
+	if state.EmbeddingSource == "" {
+		state.EmbeddingSource = modelstate.SourceNone
 	}
 
 	if r.creds != nil {

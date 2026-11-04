@@ -91,7 +91,7 @@ func TestResolveConfigurationCopy(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := resolveConfiguration(fallback, tc.state)
+			got := resolveConfiguration(fallback, tc.state, modelstate.KindGenerative)
 			if got.Cause != tc.wantCause {
 				t.Fatalf("cause = %q, want %q", got.Cause, tc.wantCause)
 			}
@@ -121,7 +121,7 @@ func TestResolveConfigurationKeepsModelUnavailable(t *testing.T) {
 		GenerativeModel:  "openai/gpt-5-not-real",
 		GenerativeSource: "project",
 		ProviderCount:    1,
-	})
+	}, modelstate.KindGenerative)
 	if got.Cause != CauseModelUnavailable {
 		t.Fatalf("cause = %q, want %q", got.Cause, CauseModelUnavailable)
 	}
@@ -136,7 +136,7 @@ func TestResolveConfigurationKeepsModelUnavailable(t *testing.T) {
 // The resolver must not touch classes that describe the error itself.
 func TestResolveConfigurationLeavesOtherClassesAlone(t *testing.T) {
 	in := Classify(QueueObjectExtraction, "429 rate limit exceeded")
-	got := resolveConfiguration(in, modelstate.State{GenerativeModel: "openai/gpt-4o"})
+	got := resolveConfiguration(in, modelstate.State{GenerativeModel: "openai/gpt-4o"}, modelstate.KindGenerative)
 	if got.Class != ClassProvider || got.Verified || got.Model != "" {
 		t.Fatalf("failure = %+v, want the provider failure untouched", got)
 	}
@@ -149,8 +149,114 @@ func TestResolveConfigurationNamesTheModel(t *testing.T) {
 		GenerativeModel:  "google-vertex/projects/p/locations/l/publishers/google/models/gemini-2.5-flash",
 		GenerativeSource: "provider",
 		ProviderCount:    1,
-	})
+	}, modelstate.KindGenerative)
 	if got.Model == "" {
 		t.Fatal("model = empty, want the configured model")
+	}
+}
+
+// Embedding models resolve through their own chain, so an embedding failure must
+// be written from the embedding state — not told to select a generative model
+// the project may already have.
+func TestResolveConfigurationUsesTheEmbeddingModelFamily(t *testing.T) {
+	state := modelstate.State{
+		GenerativeModel:  "openai/deepseek-v4-flash",
+		GenerativeSource: "project",
+		ProviderCount:    1,
+	}
+	fallback := Classify(QueueChunkEmbedding, "no embedding model configured for project 0b1e")
+
+	got := resolveConfiguration(fallback, state, modelKindOfQueue(QueueChunkEmbedding))
+	if got.Cause != CauseNoDefaultModel {
+		t.Fatalf("cause = %q, want %q", got.Cause, CauseNoDefaultModel)
+	}
+	if strings.Contains(got.Summary, "generative") {
+		t.Fatalf("summary = %q, want the embedding family", got.Summary)
+	}
+	if !strings.Contains(got.Summary, "embedding") {
+		t.Fatalf("summary = %q, want it to name the embedding model", got.Summary)
+	}
+	if got.Fix == nil || got.Fix.Label != "Select an embedding model" {
+		t.Fatalf("fix = %+v, want the embedding selection", got.Fix)
+	}
+	if got.Model != "" {
+		t.Fatalf("model = %q, want empty: no embedding model resolves", got.Model)
+	}
+
+	// With an embedding model resolved, the run failed anyway — and the row
+	// names the embedding model, not the generative one.
+	state.EmbeddingModel = "openai/text-embedding-3-small"
+	state.EmbeddingSource = "project"
+	got = resolveConfiguration(fallback, state, modelKindOfQueue(QueueChunkEmbedding))
+	if got.Cause != CauseModelUnusable {
+		t.Fatalf("cause = %q, want %q", got.Cause, CauseModelUnusable)
+	}
+	if !strings.Contains(got.Summary, "openai/text-embedding-3-small") {
+		t.Fatalf("summary = %q, want it to name the embedding model", got.Summary)
+	}
+	if got.Model != "openai/text-embedding-3-small" {
+		t.Fatalf("model = %q, want the embedding model", got.Model)
+	}
+}
+
+// The rewrite picks the model family from the queue, applies it only to the
+// classes that depend on state, and gives a permission failure the model it is
+// about without touching the classifier's copy.
+func TestApplyModelStateSelectsTheRightFamily(t *testing.T) {
+	state := modelstate.State{
+		GenerativeModel:  "openai/deepseek-v4-flash",
+		GenerativeSource: "project",
+		EmbeddingModel:   "openai/text-embedding-3-small",
+		EmbeddingSource:  "project",
+		ProviderCount:    1,
+	}
+
+	config := Problem{Queue: QueueDiscovery, Failure: Classify(QueueDiscovery, "no model configured")}
+	embed := Problem{Queue: QueueChunkEmbedding, Failure: Classify(QueueChunkEmbedding, "no embedding model configured")}
+	perm := Problem{Queue: QueueObjectExtraction, Failure: Classify(QueueObjectExtraction, "provider rejected the request: invalid api key")}
+	sourcePerm := Problem{Queue: QueueSourceSync, Failure: Classify(QueueSourceSync, "permission denied reading source")}
+	limit := Problem{Queue: QueueObjectExtraction, Failure: Classify(QueueObjectExtraction, "429 rate limit exceeded")}
+
+	byArea := map[Area][]Problem{
+		AreaDocuments: {embed, limit},
+		AreaSchema:    {config},
+		AreaSources:   {sourcePerm, perm},
+	}
+	applyModelState(byArea, state)
+
+	if got := byArea[AreaSchema][0]; got.Failure.Model != state.GenerativeModel || !got.Failure.Verified {
+		t.Fatalf("discovery failure = %+v, want the generative model and verified copy", got.Failure)
+	}
+	if got := byArea[AreaDocuments][0]; got.Failure.Model != state.EmbeddingModel {
+		t.Fatalf("embedding failure = %+v, want the embedding model", got.Failure)
+	}
+	if got := byArea[AreaSources][0]; got.Failure.Model != "" || got.Failure.Verified {
+		t.Fatalf("source permission failure = %+v, want no model: it is about the source", got.Failure)
+	}
+	if got := byArea[AreaSources][1]; got.Failure.Model != state.GenerativeModel {
+		t.Fatalf("model permission failure = %+v, want the generative model so the row can test it", got.Failure)
+	}
+	if got := byArea[AreaDocuments][1]; got.Failure.Model != "" || got.Failure.Verified {
+		t.Fatalf("limit failure = %+v, want it untouched", got.Failure)
+	}
+}
+
+// needsModelState decides whether the state read happens at all: a report with
+// no model-dependent row must not pay for (or fail on) it.
+func TestNeedsModelState(t *testing.T) {
+	if needsModelState(map[Area][]Problem{
+		AreaDocuments: {{Queue: QueueDocumentParsing, Failure: Classify(QueueDocumentParsing, "unsupported file type")}},
+	}) {
+		t.Fatal("needsModelState = true for a report with no model-dependent failure")
+	}
+	if !needsModelState(map[Area][]Problem{
+		AreaDocuments: {{Queue: QueueObjectExtraction, Failure: Classify(QueueObjectExtraction, "provider rejected the request: invalid api key")}},
+	}) {
+		t.Fatal("needsModelState = false for a permission failure on a model queue")
+	}
+	if needsModelState(map[Area][]Problem{
+		AreaSources: {{Queue: QueueSourceSync, Failure: Classify(QueueSourceSync, "permission denied")}},
+	}) {
+		t.Fatal("needsModelState = true for a source permission failure, which is about the source")
 	}
 }
