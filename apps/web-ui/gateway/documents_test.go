@@ -39,12 +39,12 @@ func TestListDocuments(t *testing.T) {
 
 	m := NewMemoryClient(srv.URL, "proj-1")
 	page, err := m.ListDocuments(context.Background(), DocumentListParams{
-		Query:      "spec",
-		Status:     "extracted",
-		SourceType: "upload",
-		Sort:       "updated",
-		Order:      "asc",
-		Cursor:     "abc123",
+		Query:    "spec",
+		Status:   "extracted",
+		SourceID: "none",
+		Sort:     "updated",
+		Order:    "asc",
+		Cursor:   "abc123",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestListDocuments(t *testing.T) {
 	if gotCursor != "abc123" {
 		t.Errorf("cursor = %q, want abc123", gotCursor)
 	}
-	if gotQuery.Get("q") != "spec" || gotQuery.Get("status") != "extracted" || gotQuery.Get("sourceType") != "upload" {
+	if gotQuery.Get("q") != "spec" || gotQuery.Get("status") != "extracted" || gotQuery.Get("sourceId") != "none" {
 		t.Errorf("filter params = %v", gotQuery)
 	}
 	if gotQuery.Get("sort") != "updated" || gotQuery.Get("order") != "asc" {
@@ -99,25 +99,25 @@ func TestListDocumentsError(t *testing.T) {
 	}
 }
 
-func TestListDocumentSourceTypes(t *testing.T) {
+func TestListDocumentSourceCounts(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"sourceTypes":[{"sourceType":"upload","count":12},{"sourceType":"drive","count":3}]}`)
+		_, _ = io.WriteString(w, `{"sources":[{"sourceType":"upload","count":12},{"sourceId":"ds-1","sourceType":"drive","count":3}]}`)
 	}))
 	defer srv.Close()
 
 	m := NewMemoryClient(srv.URL, "proj")
-	types, err := m.ListDocumentSourceTypes(context.Background())
+	sources, err := m.ListDocumentSourceCounts(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/api/documents/source-types" {
+	if gotPath != "/api/documents/source-counts" {
 		t.Errorf("path = %q", gotPath)
 	}
-	if len(types) != 2 || types[0].SourceType != "upload" || types[0].Count != 12 || types[1].SourceType != "drive" {
-		t.Errorf("source types = %+v", types)
+	if len(sources) != 2 || sources[0].SourceType != "upload" || sources[0].Count != 12 || sources[1].SourceID != "ds-1" || sources[1].Count != 3 {
+		t.Errorf("source counts = %+v", sources)
 	}
 }
 
@@ -547,8 +547,8 @@ func documentsTestPage() documentPageData {
 		NextCursor: "abc123",
 		HasMore:    true,
 		Sources: []documentSourceOption{
-			{Value: "upload", Label: "Uploaded", Count: 34},
-			{Value: "drive", Label: "Google Drive", Count: 3},
+			{Value: documentSourceNone, Label: "Uploaded", Count: 34},
+			{Value: "ds-2", Label: "Product Drive", Count: 3},
 		},
 		Rows: []documentRow{
 			{ID: "d1", Name: "Spec.md", Chunks: 12, Status: "completed", Versions: 2, Source: "Uploaded", CreatedAt: "2026-08-26T10:00:00Z", UpdatedAt: "2026-08-27T10:00:00Z"},
@@ -600,13 +600,12 @@ func TestRenderDocumentsBrowser(t *testing.T) {
 		`id="documents-mobile-list"`,
 		// columns from the API that the old row hid
 		"Versions", "Source", "Updated",
-		// the filter lists the source type ...
-		"Google Drive",
-		// ... while a row from a connected source names it and links to it
-		"Product Drive",
+		// the filter names the connected source ...
+		`<option value="ds-2">Product Drive (3)</option>`,
+		// ... and a row from it names it and links to it
+		`title="From Product Drive"`,
 		`href="/data-sources/ds-2"`,
 		`data-testid="documents-source-link"`,
-		`title="From Product Drive"`,
 		`data-status="completed"`,
 		// status filter is a select owning the same state
 		`name="status"`,
@@ -660,7 +659,7 @@ func TestRenderDocumentsFilterState(t *testing.T) {
 	data := documentsTestPage()
 	data.Query = "spec"
 	data.Status = documentStatusFailed
-	data.SourceType = "drive"
+	data.SourceID = "ds-2"
 	data.Sort = documentSortUpdated
 	data.Order = documentOrderAsc
 
@@ -675,8 +674,8 @@ func TestRenderDocumentsFilterState(t *testing.T) {
 			t.Errorf("filter state missing %q", want)
 		}
 	}
-	// The source filter's options come from the project's own source types.
-	if !strings.Contains(html, `value="drive" selected`) {
+	// The source filter's options come from the project's connected sources.
+	if !strings.Contains(html, `value="ds-2" selected`) {
 		t.Error("active source not selected in the source filter")
 	}
 }

@@ -13,7 +13,7 @@ func TestDocumentsStatusFilterIsSelect(t *testing.T) {
 	data := documentsTestPage()
 	data.Query = "spec"
 	data.Status = documentStatusFailed
-	data.SourceType = "drive"
+	data.SourceID = "ds-1"
 	data.Sort = documentSortUpdated
 	data.Order = documentOrderAsc
 
@@ -53,7 +53,7 @@ func TestDocumentsStatusFilterIsSelect(t *testing.T) {
 	// Every other narrowing control travels in the same GET submission.
 	for _, want := range []string{
 		`name="q" value="spec"`,
-		`name="sourceType"`,
+		`name="sourceId"`,
 		`name="sort"`,
 		`name="order"`,
 	} {

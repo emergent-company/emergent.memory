@@ -95,6 +95,7 @@ cursor of the next page:
 | `cursor` | opaque string | Next-page cursor from the previous response. Must be used with the same `sort` |
 | `status` | `processing` · `ready` · `extracted` · `failed` | One status bucket (omit for all) |
 | `sourceType` | `upload`, `drive`, `repo`, `email`, `meeting`, `web` | Only documents from that source kind; `upload` means files uploaded directly |
+| `sourceId` | a connected data source id, or `none` | Only documents from that data source; `none` means files uploaded directly with no data source |
 | `q` | text (≤ 200 characters) | Case-insensitive match over the file name and the source URL; `%` and `_` are matched literally. Document *content* is not searched — use [Search](knowledge-graph.md) for that |
 | `sort` | `created` (default) · `updated` | Timestamp to order by |
 | `order` | `desc` (default) · `asc` | Direction |
@@ -105,8 +106,8 @@ added: pass `next_cursor` back as `cursor` until it comes back empty. Changing
 `400`).
 
 `total` counts every document the filters match, the status filter included.
-`statusCounts` deliberately ignores `status` while honouring `q` and
-`sourceType`, so a UI can render the tabs and their counts without the active
+`statusCounts` deliberately ignores `status` while honouring `q`, `sourceType`
+and `sourceId`, so a UI can render the tabs and their counts without the active
 tab changing the other numbers. Its `all` entry is therefore the same as `total`
 only when no status filter is set.
 
@@ -136,7 +137,7 @@ does not have to combine the two raw statuses:
 - an **Upload** button in the page header that opens the upload form in a dialog,
 - a **stats strip** with the project's document total and the per-status counts,
 - a **status filter** (All, Processing, Ready, Extracted, Failed) in a dropdown that keeps the active search, source and sort,
-- a **source filter** listing the source kinds the project actually has,
+- a **source filter** listing the connected data sources that own documents by name, plus an **Uploaded** bucket for files with no source,
 - **search** over file names and source URLs,
 - **sorting** on the Created and Updated column headers (click again to flip),
 - a **Load more** button that appends the next page without losing the filters.
