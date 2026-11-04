@@ -8,6 +8,7 @@ import (
 	"go.uber.org/fx"
 
 	"github.com/emergent-company/emergent.memory/domain/agents"
+	"github.com/emergent-company/emergent.memory/domain/modelstate"
 	"github.com/emergent-company/emergent.memory/domain/provider"
 	"github.com/emergent-company/emergent.memory/pkg/adk"
 	"github.com/emergent-company/emergent.memory/pkg/auth"
@@ -21,6 +22,7 @@ var Module = fx.Module("modelconfig",
 		provideService,
 		provideADKModelResolverAdapter,
 		provideEmbeddingResolverAdapter,
+		fx.Annotate(NewModelStateReader, fx.As(new(modelstate.Reader))),
 		NewHandler,
 	),
 	fx.Invoke(

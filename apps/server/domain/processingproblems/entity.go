@@ -105,6 +105,48 @@ type Failure struct {
 	// failure (missing model, unreadable document) stays false until the user
 	// fixes the cause; the UI still shows the remediation.
 	Retryable bool `json:"retryable"`
+	// Cause narrows a class to the element that failed, when the classifier can
+	// tell. It is empty for classes the copy already describes exactly.
+	Cause FailureCause `json:"cause,omitempty"`
+	// Model is the model this project resolves to for the failure's family
+	// (routed "instance/model"): the generative model, or the embedding model
+	// for an embedding queue. Empty when nothing resolves or the class is
+	// unrelated.
+	Model string `json:"model,omitempty"`
+	// Verified reports whether the copy was checked against the project's
+	// effective model configuration before being written. A configuration
+	// failure with Verified=false is a guess and must read as one.
+	Verified bool `json:"verified"`
+	// Fix is the page where the recorded cause is fixed, when the product knows
+	// one. It is nil for causes with no single destination.
+	Fix *FixTarget `json:"fix,omitempty"`
+}
+
+// FailureCause is the element a failure class points at. A configuration class
+// without a cause is an unverified guess; the UI must not present it as fact.
+type FailureCause string
+
+const (
+	// CauseNoProvider means no provider instance is configured for the project.
+	CauseNoProvider FailureCause = "no_provider"
+	// CauseNoDefaultModel means a provider is connected but no generative model
+	// is selected for the project.
+	CauseNoDefaultModel FailureCause = "no_default_model"
+	// CauseModelUnusable means a generative model resolves, but the run could
+	// not use it. This is the state a "configure a model" message gets wrong
+	// most damagingly: the user's provider page already looks correct.
+	CauseModelUnusable FailureCause = "model_unusable"
+	// CauseModelUnavailable means the provider does not offer the configured
+	// model name.
+	CauseModelUnavailable FailureCause = "model_unavailable"
+	// CauseBaseURL means the configured provider endpoint is not usable.
+	CauseBaseURL FailureCause = "base_url"
+)
+
+// FixTarget is a page that fixes one recorded cause, plus the link text.
+type FixTarget struct {
+	Href  string `json:"href"`
+	Label string `json:"label"`
 }
 
 // ActionKind describes the operation behind an action button. Only kinds a

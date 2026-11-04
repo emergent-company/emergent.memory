@@ -39,3 +39,29 @@ func TestActionForDocumentParsingIsARetry(t *testing.T) {
 		t.Fatalf("href = %q, want %q", action.Href, want)
 	}
 }
+
+// TestActionForDiscoveryStaysAnOpenUntilItsControlsLand pins main's behaviour for
+// a failing discovery run: the panel navigates to the schema area, which is where
+// add-schema-discovery-controls puts the retry and the controls (issue #52, #53).
+//
+// This yielded change deliberately dropped its own discovery retry, which moved
+// the queue out of its own action case; losing it from the shared case as well
+// would be silent — the row renders Drilldown, so a fall-through to
+// {open, "Open", ""} only shows up as an empty action payload. Hence the pin.
+func TestActionForDiscoveryStaysAnOpenUntilItsControlsLand(t *testing.T) {
+	row := problemRow{Queue: QueueDiscovery, JobID: "job-1"}
+
+	action := actionFor(QueueDiscovery, row)
+	if action.Kind != ActionOpen {
+		t.Fatalf("kind = %q, want %q", action.Kind, ActionOpen)
+	}
+	if want := "/schema"; action.Href != want {
+		t.Fatalf("href = %q, want %q", action.Href, want)
+	}
+	if want := "Open schema"; action.Label != want {
+		t.Fatalf("label = %q, want %q", action.Label, want)
+	}
+	if got := drilldownFor(QueueDiscovery, row); got != "/schema" {
+		t.Fatalf("drilldown = %q, want /schema", got)
+	}
+}
