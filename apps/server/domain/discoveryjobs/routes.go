@@ -23,7 +23,6 @@ func RegisterRoutes(e *echo.Echo, h *Handler, authMiddleware *auth.Middleware) {
 	writeGroup := g.Group("")
 	writeGroup.Use(authMiddleware.RequireAPITokenScopes("discovery:write"))
 	writeGroup.POST("/projects/:projectId/start", h.StartDiscovery)
-	writeGroup.POST("/:jobId/retry", h.RetryJob)
 	writeGroup.DELETE("/:jobId", h.CancelJob)
 	writeGroup.POST("/:jobId/finalize", h.FinalizeDiscovery)
 }

@@ -25961,73 +25961,6 @@ const docTemplate = `{
                 }
             }
         },
-        "/discovery-jobs/{jobId}/retry": {
-            "post": {
-                "security": [
-                    {
-                        "bearerAuth": []
-                    }
-                ],
-                "description": "Starts a new discovery job from the failed job's recorded configuration. The failed attempt is kept as history; nothing is reset.",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "discovery-jobs"
-                ],
-                "summary": "Retry a failed discovery job",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Job ID (UUID)",
-                        "name": "jobId",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "New discovery job started",
-                        "schema": {
-                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryResponse"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad request (job is not failed or cancelled)",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "401": {
-                        "description": "Unauthorized",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "404": {
-                        "description": "Job not found",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "409": {
-                        "description": "Another discovery job is already running",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal server error",
-                        "schema": {
-                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
-                        }
-                    }
-                }
-            }
-        },
         "/docs": {
             "get": {
                 "description": "Returns the Swagger UI HTML page for browsing API documentation",
@@ -31412,10 +31345,6 @@ const docTemplate = `{
                     "type": "array",
                     "items": {}
                 },
-                "error_message": {
-                    "description": "ErrorMessage carries a terminal failure's reason, so a job list can\nexplain a failed run without a second fetch per row.",
-                    "type": "string"
-                },
                 "id": {
                     "type": "string"
                 },
@@ -36771,14 +36700,12 @@ const docTemplate = `{
                 "retry_extraction",
                 "retry_conversion",
                 "retry_embeddings",
-                "retry_discovery",
                 "open"
             ],
             "x-enum-varnames": [
                 "ActionRetryExtraction",
                 "ActionRetryConversion",
                 "ActionRetryEmbeddings",
-                "ActionRetryDiscovery",
                 "ActionOpen"
             ]
         },
@@ -36870,7 +36797,7 @@ const docTemplate = `{
                     ]
                 },
                 "model": {
-                    "description": "Model is the generative model this project resolves to (routed\n\"instance/model\"), when the failure is a model-provider problem. Empty\nwhen nothing resolves or the class is unrelated.",
+                    "description": "Model is the model this project resolves to for the failure's family\n(routed \"instance/model\"): the generative model, or the embedding model\nfor an embedding queue. Empty when nothing resolves or the class is\nunrelated.",
                     "type": "string"
                 },
                 "remediation": {

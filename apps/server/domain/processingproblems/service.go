@@ -285,13 +285,6 @@ func actionFor(queue string, row problemRow) Action {
 	case QueueBlueprintUpdate:
 		return Action{Kind: ActionOpen, Label: "Open blueprints", Href: "/blueprints"}
 
-	case QueueDiscovery:
-		// A failed run stores its own configuration, so the panel can start a
-		// fresh one from it. Before this, the only action was "Open schema",
-		// which lands on a page that knows nothing about discovery: the user had
-		// no way to re-run the work at all.
-		return Action{Kind: ActionRetryDiscovery, Label: "Retry discovery", Href: "/schema/discovery"}
-
 	case QueueSchemaMigration:
 		return Action{Kind: ActionOpen, Label: "Open schema", Href: "/schema"}
 
@@ -329,8 +322,6 @@ func drilldownFor(queue string, row problemRow) string {
 		return "/sessions"
 	case QueueBlueprintUpdate:
 		return "/blueprints"
-	case QueueDiscovery:
-		return "/schema/discovery"
 	default:
 		return "/schema"
 	}

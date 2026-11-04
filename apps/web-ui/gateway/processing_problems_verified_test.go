@@ -1,10 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -19,7 +15,7 @@ func configurationProblem() ProcessingProblem {
 		JobID:        "job-9",
 		Label:        "Schema discovery",
 		ErrorMessage: "All 2 batches failed. Errors: Batch 1: LLM call failed: model \"qwen3:8b\" not found",
-		Drilldown:    "/schema/discovery",
+		Drilldown:    "/schema",
 		Failure: ProcessingProblemFailure{
 			Class:       "configuration",
 			Cause:       "model_unusable",
@@ -30,7 +26,6 @@ func configurationProblem() ProcessingProblem {
 			Model:       "openai/deepseek-v4-flash",
 			Fix:         &ProcessingProblemFix{Href: "/settings/providers", Label: "Review model settings"},
 		},
-		Action: ProcessingProblemAction{Kind: "retry_discovery", Label: "Retry discovery", Href: "/schema/discovery"},
 	}
 }
 
@@ -61,8 +56,6 @@ func TestPanelNamesTheModelAndOpensTheEvidence(t *testing.T) {
 		"Test model",
 		"Review model settings",
 		`href="/settings/providers"`,
-		"/schema/discovery/job-9/retry",
-		"Retry discovery",
 		"Technical detail",
 		"model &#34;qwen3:8b&#34; not found",
 	} {
@@ -107,8 +100,10 @@ func TestPanelSaysWhenTheCauseWasNotVerified(t *testing.T) {
 	if strings.Contains(html, "Test model") {
 		t.Errorf("unverified copy offered a model test with no resolved model:\n%s", html)
 	}
-	if !strings.Contains(html, "Retry anyway?") {
-		t.Errorf("non-retryable failure did not ask for confirmation:\n%s", html)
+	// Discovery has no per-unit retry in this change (the controls live in the
+	// schema page's own work), so the row must not promise one it cannot run.
+	if strings.Contains(html, "Retry anyway?") {
+		t.Errorf("unverified discovery row offered a retry it cannot run:\n%s", html)
 	}
 }
 
@@ -121,142 +116,5 @@ func TestPanelHidesModelTestFromMembers(t *testing.T) {
 	}
 	if !strings.Contains(html, "Review model settings") {
 		t.Errorf("member-level panel lost the fix link:\n%s", html)
-	}
-}
-
-// --- schema discovery page ---
-
-func TestSchemaDiscoveryPageListsRunsAndOffersRetry(t *testing.T) {
-	errText := "model \"qwen3:8b\" not found"
-	jobs := []DiscoveryJob{
-		{ID: "job-1", Status: "failed", CreatedAt: "2026-11-01T10:00:00Z", ErrorMessage: &errText},
-		{ID: "job-2", Status: "completed", CreatedAt: "2026-11-01T09:00:00Z", DiscoveredTypes: []any{"Person", "Company"}},
-	}
-
-	var buf bytes.Buffer
-	if err := SchemaDiscoveryPage(jobs, nil).Render(context.Background(), &buf); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	html := buf.String()
-
-	for _, want := range []string{
-		"Schema discovery",
-		"Failed",
-		"Completed",
-		"model &#34;qwen3:8b&#34; not found",
-		"/schema/discovery/job-1/retry",
-		"Retry discovery",
-		"2 types proposed",
-		`href="/schema/discovery"`,
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("page missing %q\n%s", want, html)
-		}
-	}
-	// The completed run has nothing to retry.
-	if strings.Contains(html, "/schema/discovery/job-2/retry") {
-		t.Errorf("completed run rendered a retry action:\n%s", html)
-	}
-}
-
-func TestSchemaDiscoveryPageEmptyState(t *testing.T) {
-	var buf bytes.Buffer
-	if err := SchemaDiscoveryPage(nil, nil).Render(context.Background(), &buf); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if !strings.Contains(buf.String(), "No discovery runs yet") {
-		t.Errorf("empty page missing its empty state:\n%s", buf.String())
-	}
-}
-
-func TestSchemaDiscoveryPageLoadError(t *testing.T) {
-	var buf bytes.Buffer
-	if err := SchemaDiscoveryPage(nil, context.DeadlineExceeded).Render(context.Background(), &buf); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-	if !strings.Contains(buf.String(), "Failed to load discovery runs") {
-		t.Errorf("load error not rendered:\n%s", buf.String())
-	}
-}
-
-func TestRetryDiscoveryRoute(t *testing.T) {
-	f := &fakeMemory{}
-	s, e := newClientEcho(f, Config{})
-	e.POST("/schema/discovery/:jobId/retry", s.uiRetryDiscovery)
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/schema/discovery/job-1/retry", nil)
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
-	}
-	if loc := rec.Header().Get("Location"); loc != "/schema/discovery" {
-		t.Fatalf("location = %q, want /schema/discovery", loc)
-	}
-	if len(f.retriedDiscoveryIDs) != 1 || f.retriedDiscoveryIDs[0] != "job-1" {
-		t.Fatalf("retried discovery ids = %v", f.retriedDiscoveryIDs)
-	}
-}
-
-// An embedding failure resolves through its own model chain, so the row's live
-// test must exercise the embedding field — posting the generative field would
-// test something the failure is not about.
-func TestPanelTestsTheEmbeddingModelForAnEmbeddingFailure(t *testing.T) {
-	p := configurationProblem()
-	p.Queue = "chunk_embedding"
-	p.Area = "documents"
-	p.Label = "Chunk embedding"
-	p.Failure.Model = "openai/text-embedding-3-small"
-	p.Failure.Cause = "model_unusable"
-	p.Failure.Summary = "An embedding model is configured (openai/text-embedding-3-small), but this run could not use it."
-
-	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
-
-	for _, want := range []string{
-		`name="model_type" value="embedding"`,
-		`name="embedding_model" value="openai/text-embedding-3-small"`,
-		"Test model",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("panel missing %q\n%s", want, html)
-		}
-	}
-	if strings.Contains(html, `name="generative_model"`) {
-		t.Errorf("embedding row posted a generative model test:\n%s", html)
-	}
-}
-
-// A rejected credential now carries the model it is about, so the row can name
-// it and offer the live test — but the copy and the disclosure stay the
-// classifier's, because the cause was read from the error, not checked.
-func TestPanelNamesTheModelOnARejectedKey(t *testing.T) {
-	p := configurationProblem()
-	p.Failure = ProcessingProblemFailure{
-		Class:       "permission",
-		Summary:     "The provider rejected this project",
-		Remediation: "Update the provider's API key in Project settings → Providers, then retry.",
-		Retryable:   false,
-		Model:       "openai/deepseek-v4-flash",
-		Fix:         &ProcessingProblemFix{Href: "/settings/providers", Label: "Reconnect provider"},
-	}
-
-	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
-
-	for _, want := range []string{
-		"The provider rejected this project",
-		`data-testid="processing-problem-model"`,
-		"openai/deepseek-v4-flash",
-		"Test model",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("panel missing %q\n%s", want, html)
-		}
-	}
-	if strings.Contains(html, `data-testid="processing-problem-unverified"`) {
-		t.Errorf("permission row rendered the configuration-only unverified note:\n%s", html)
-	}
-	if strings.Contains(html, "<details class=\"mt-1\" open") {
-		t.Errorf("permission row forced its technical detail open:\n%s", html)
 	}
 }

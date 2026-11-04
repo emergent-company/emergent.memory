@@ -16,18 +16,6 @@ func (f *fakeMemory) RetryExtractionJob(_ context.Context, jobID string) error {
 	return nil
 }
 
-func (f *fakeMemory) ListDiscoveryJobs(context.Context) ([]DiscoveryJob, error) {
-	return f.discoveryJobs, f.discoveryJobsErr
-}
-
-func (f *fakeMemory) RetryDiscoveryJob(_ context.Context, jobID string) (string, error) {
-	if f.retryDiscoveryErr != nil {
-		return "", f.retryDiscoveryErr
-	}
-	f.retriedDiscoveryIDs = append(f.retriedDiscoveryIDs, jobID)
-	return "new-" + jobID, nil
-}
-
 func (f *fakeMemory) RetryParsingJob(_ context.Context, jobID string) error {
 	if f.retryJobErr != nil {
 		return f.retryJobErr

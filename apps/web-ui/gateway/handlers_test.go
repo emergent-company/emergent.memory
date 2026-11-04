@@ -93,12 +93,7 @@ type fakeMemory struct {
 	// so a handler that drops this flag makes the panel's after-fixing action a
 	// no-op on the configuration-only project it exists for.
 	embeddingIncludeNonRetryable []bool
-	// schema discovery (needs-attention panel retry + the history page)
-	discoveryJobs       []DiscoveryJob
-	discoveryJobsErr    error
-	retriedDiscoveryIDs []string
-	retryDiscoveryErr   error
-	convs               []Conversation
+	convs                        []Conversation
 	// session lifecycle (chat-conversation-lifecycle).
 	convIncludeArchived bool     // last includeArchived flag received by ListConversations
 	archivedConvs       []string // conversation ids passed to ArchiveConversation, in order

@@ -2857,11 +2857,6 @@ definitions:
       discovered_types:
         items: {}
         type: array
-      error_message:
-        description: |-
-          ErrorMessage carries a terminal failure's reason, so a job list can
-          explain a failed run without a second fetch per row.
-        type: string
       id:
         type: string
       progress:
@@ -6608,14 +6603,12 @@ definitions:
     - retry_extraction
     - retry_conversion
     - retry_embeddings
-    - retry_discovery
     - open
     type: string
     x-enum-varnames:
     - ActionRetryExtraction
     - ActionRetryConversion
     - ActionRetryEmbeddings
-    - ActionRetryDiscovery
     - ActionOpen
   domain_processingproblems.Area:
     enum:
@@ -6690,9 +6683,10 @@ definitions:
           one. It is nil for causes with no single destination.
       model:
         description: |-
-          Model is the generative model this project resolves to (routed
-          "instance/model"), when the failure is a model-provider problem. Empty
-          when nothing resolves or the class is unrelated.
+          Model is the model this project resolves to for the failure's family
+          (routed "instance/model"): the generative model, or the embedding model
+          for an embedding queue. Empty when nothing resolves or the class is
+          unrelated.
         type: string
       remediation:
         type: string
@@ -27948,50 +27942,6 @@ paths:
       security:
       - bearerAuth: []
       summary: Finalize discovery job
-      tags:
-      - discovery-jobs
-  /discovery-jobs/{jobId}/retry:
-    post:
-      consumes:
-      - application/json
-      description: Starts a new discovery job from the failed job's recorded configuration.
-        The failed attempt is kept as history; nothing is reset.
-      parameters:
-      - description: Job ID (UUID)
-        in: path
-        name: jobId
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: New discovery job started
-          schema:
-            $ref: '#/definitions/domain_discoveryjobs.StartDiscoveryResponse'
-        "400":
-          description: Bad request (job is not failed or cancelled)
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "401":
-          description: Unauthorized
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "404":
-          description: Job not found
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "409":
-          description: Another discovery job is already running
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-        "500":
-          description: Internal server error
-          schema:
-            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
-      security:
-      - bearerAuth: []
-      summary: Retry a failed discovery job
       tags:
       - discovery-jobs
   /discovery-jobs/projects/{projectId}:

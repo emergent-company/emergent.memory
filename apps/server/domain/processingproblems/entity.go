@@ -108,9 +108,10 @@ type Failure struct {
 	// Cause narrows a class to the element that failed, when the classifier can
 	// tell. It is empty for classes the copy already describes exactly.
 	Cause FailureCause `json:"cause,omitempty"`
-	// Model is the generative model this project resolves to (routed
-	// "instance/model"), when the failure is a model-provider problem. Empty
-	// when nothing resolves or the class is unrelated.
+	// Model is the model this project resolves to for the failure's family
+	// (routed "instance/model"): the generative model, or the embedding model
+	// for an embedding queue. Empty when nothing resolves or the class is
+	// unrelated.
 	Model string `json:"model,omitempty"`
 	// Verified reports whether the copy was checked against the project's
 	// effective model configuration before being written. A configuration
@@ -161,11 +162,7 @@ const (
 	// starts a new linked run).
 	ActionRetryConversion ActionKind = "retry_conversion"
 	ActionRetryEmbeddings ActionKind = "retry_embeddings"
-	// ActionRetryDiscovery starts a new schema-discovery run from a failed
-	// job's recorded configuration. The failed attempt stays as history, the
-	// same contract as an extraction retry.
-	ActionRetryDiscovery ActionKind = "retry_discovery"
-	ActionOpen           ActionKind = "open"
+	ActionOpen            ActionKind = "open"
 )
 
 // Action is a server-described next step. The gateway decides whether the

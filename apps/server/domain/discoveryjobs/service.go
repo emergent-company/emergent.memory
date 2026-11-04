@@ -230,9 +230,6 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			DiscoveredTypes:         job.DiscoveredTypes,
 			DiscoveredRelationships: job.DiscoveredRelationships,
 			SchemaID:                job.SchemaID,
-			// A failed run's error is the whole reason the list is useful: it is
-			// what the attention panel links to when discovery stops.
-			ErrorMessage: job.ErrorMessage,
 		}
 	}
 	return result, nil
@@ -244,120 +241,6 @@ func (s *Service) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 		return err
 	}
 	return s.repo.CancelJob(ctx, jobID)
-}
-
-// RetryJob starts a new discovery job with the failed job's recorded
-// configuration.
-//
-// The failed attempt is never rewritten: it stays in history with its error, the
-// same contract as an extraction retry ("retrying starts a new linked run"). The
-// configuration is read from kb.discovery_jobs, not from the client, so a retry
-// cannot smuggle a different document set past the job's own record.
-func (s *Service) RetryJob(ctx context.Context, jobID uuid.UUID) (*StartDiscoveryResponse, error) {
-	job, err := s.requireJobAccess(ctx, jobID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Only a terminal failure is retryable: re-running a live job would double
-	// the work and race the schema creation step. A completed job has already
-	// produced its result and must be started deliberately, not "retried".
-	switch job.Status {
-	case StatusFailed, StatusCancelled:
-	default:
-		return nil, apperror.NewBadRequest(fmt.Sprintf("only a failed or cancelled discovery job can be retried (status is %q)", job.Status))
-	}
-
-	latest, err := s.repo.ListByProject(ctx, job.ProjectID, 1)
-	if err != nil {
-		return nil, err
-	}
-	if len(latest) > 0 && !latest[0].IsTerminal() {
-		return nil, apperror.NewConflict("another discovery job is already running for this project")
-	}
-
-	req, err := startRequestFromConfig(job.Config)
-	if err != nil {
-		return nil, fmt.Errorf("retry: read the failed job's configuration: %w", err)
-	}
-
-	s.log.Info("retrying discovery job",
-		slog.String("failed_job_id", job.ID.String()),
-		slog.String("project_id", job.ProjectID.String()),
-		slog.Int("document_count", len(req.DocumentIDs)))
-
-	return s.StartDiscovery(ctx, job.ProjectID, req)
-}
-
-// startRequestFromConfig rebuilds the start request a job was created with. The
-// stored config is authoritative: these are the documents and batch settings the
-// failed run used.
-func startRequestFromConfig(config JSONMap) (*StartDiscoveryRequest, error) {
-	req := &StartDiscoveryRequest{}
-
-	rawIDs, ok := config["document_ids"]
-	if !ok {
-		return nil, fmt.Errorf("job config has no document_ids")
-	}
-	ids, ok := rawIDs.([]any)
-	if !ok {
-		if list, isList := rawIDs.([]string); isList {
-			for _, s := range list {
-				id, err := uuid.Parse(s)
-				if err != nil {
-					return nil, fmt.Errorf("invalid document id %q: %w", s, err)
-				}
-				req.DocumentIDs = append(req.DocumentIDs, id)
-			}
-			return finishStartRequest(req, config)
-		}
-		return nil, fmt.Errorf("document_ids is not a list")
-	}
-	for _, raw := range ids {
-		str, isStr := raw.(string)
-		if !isStr {
-			return nil, fmt.Errorf("document_ids holds a non-string value")
-		}
-		id, err := uuid.Parse(str)
-		if err != nil {
-			return nil, fmt.Errorf("invalid document id %q: %w", str, err)
-		}
-		req.DocumentIDs = append(req.DocumentIDs, id)
-	}
-	return finishStartRequest(req, config)
-}
-
-// finishStartRequest reads the remaining (optional) settings, whose JSON numbers
-// decode as float64.
-func finishStartRequest(req *StartDiscoveryRequest, config JSONMap) (*StartDiscoveryRequest, error) {
-	if len(req.DocumentIDs) == 0 {
-		return nil, fmt.Errorf("job config has no document ids")
-	}
-	if v, ok := numberSetting(config, "batch_size"); ok {
-		req.BatchSize = int(v)
-	}
-	if v, ok := numberSetting(config, "min_confidence"); ok {
-		req.MinConfidence = float32(v)
-	}
-	if v, ok := config["include_relationships"].(bool); ok {
-		req.IncludeRelationships = v
-	}
-	if v, ok := numberSetting(config, "max_iterations"); ok {
-		req.MaxIterations = int(v)
-	}
-	return req, nil
-}
-
-func numberSetting(config JSONMap, key string) (float64, bool) {
-	switch v := config[key].(type) {
-	case float64:
-		return v, true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	}
-	return 0, false
 }
 
 // requireJobAccess fetches the job and asserts the authenticated caller is a

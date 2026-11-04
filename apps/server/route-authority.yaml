@@ -521,10 +521,6 @@ routes:
       path: /api/discovery-jobs/:jobId/finalize
       level: project-member
       note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(discovery:write)
-    - method: POST
-      path: /api/discovery-jobs/:jobId/retry
-      level: project-member
-      note: RequireAuth, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(discovery:write)
     - method: GET
       path: /api/discovery-jobs/projects/:projectId
       level: project-member

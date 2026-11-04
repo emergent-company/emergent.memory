@@ -412,17 +412,6 @@ func processingProblemRetry(p ProcessingProblem) (processingRetryAction, bool) {
 				Confirm: confirm,
 			}, true
 		}
-	case "discovery":
-		// A failed discovery run stores its own configuration, so the panel can
-		// start a fresh one from it. Without this the row was a dead end: no
-		// queue-level retry, and "View" landed on the schema browser.
-		if p.JobID != "" {
-			return processingRetryAction{
-				Href:    "/schema/discovery/" + url.PathEscape(p.JobID) + "/retry",
-				Label:   "Retry discovery",
-				Confirm: confirm,
-			}, true
-		}
 	}
 	return processingRetryAction{}, false
 }

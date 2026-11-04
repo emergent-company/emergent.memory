@@ -149,37 +149,6 @@ func (h *Handler) CancelJob(c echo.Context) error {
 	})
 }
 
-// RetryJob handles POST /discovery-jobs/:jobId/retry
-// @Summary      Retry a failed discovery job
-// @Description  Starts a new discovery job from the failed job's recorded configuration. The failed attempt is kept as history; nothing is reset.
-// @Tags         discovery-jobs
-// @Accept       json
-// @Produce      json
-// @Param        jobId path string true "Job ID (UUID)"
-// @Success      200 {object} StartDiscoveryResponse "New discovery job started"
-// @Failure      400 {object} apperror.Error "Bad request (job is not failed or cancelled)"
-// @Failure      401 {object} apperror.Error "Unauthorized"
-// @Failure      404 {object} apperror.Error "Job not found"
-// @Failure      409 {object} apperror.Error "Another discovery job is already running"
-// @Failure      500 {object} apperror.Error "Internal server error"
-// @Router       /discovery-jobs/{jobId}/retry [post]
-// @Security     bearerAuth
-func (h *Handler) RetryJob(c echo.Context) error {
-
-	jobIDStr := c.Param("jobId")
-	jobID, err := uuid.Parse(jobIDStr)
-	if err != nil {
-		return apperror.NewBadRequest("invalid job ID")
-	}
-
-	result, err := h.svc.RetryJob(c.Request().Context(), jobID)
-	if err != nil {
-		return err
-	}
-
-	return c.JSON(http.StatusOK, result)
-}
-
 // FinalizeDiscovery handles POST /discovery-jobs/:jobId/finalize
 // @Summary      Finalize discovery job
 // @Description  Creates or extends a schema from discovered types and relationships
