@@ -4493,9 +4493,16 @@ func (s *Service) executeUpdateEntity(ctx context.Context, projectID string, arg
 	}
 
 	scope := TypeScopeFromContext(ctx)
+	writeRules := AgentWriteRulesFromContext(ctx)
 	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
 		if !scope.AllowsObject(typ) {
 			return nil, fmt.Errorf("update entity: object type is not allowed for this agent's scope")
+		}
+		if !writeRules.UpdateAllowed(typ) {
+			return nil, fmt.Errorf("update entity: updating objects of type %q is not allowed for this agent", typ)
+		}
+		if err := writeRules.CheckFields(typ, req.Properties); err != nil {
+			return nil, fmt.Errorf("update entity: %w", err)
 		}
 	}
 
@@ -4535,6 +4542,17 @@ func (s *Service) executeDeleteEntity(ctx context.Context, projectID string, arg
 	var reason *string
 	if r, ok := args["reason"].(string); ok && r != "" {
 		reason = &r
+	}
+
+	writeRules := AgentWriteRulesFromContext(ctx)
+	scope := TypeScopeFromContext(ctx)
+	if typ, lerr := s.lookupObjectType(ctx, projectID, entityID); lerr == nil {
+		if !scope.AllowsObject(typ) {
+			return nil, fmt.Errorf("delete entity: object type is not allowed for this agent's scope")
+		}
+		if !writeRules.DeleteAllowed(typ) {
+			return nil, fmt.Errorf("delete entity: deleting objects of type %q is not allowed for this agent", typ)
+		}
 	}
 
 	if err := s.graphService.Delete(ctx, projectUUID, entityID, nil, nil, reason); err != nil {
@@ -5159,6 +5177,16 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			failedCount++
 			continue
 		}
+		writeRules := AgentWriteRulesFromContext(ctx)
+		if !writeRules.CreateAllowed(typeName) {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: "creating objects of this type is not allowed for this agent",
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
 
 		var key *string
 		if k, ok := entityMap["key"].(string); ok && k != "" {
@@ -5220,6 +5248,15 @@ func (s *Service) executeBatchCreateEntities(ctx context.Context, projectID stri
 			status = &st
 		}
 
+		if err := writeRules.CheckFields(typeName, properties); err != nil {
+			results = append(results, batchResult{
+				Ok:    false,
+				Error: err.Error(),
+				Index: i,
+			})
+			failedCount++
+			continue
+		}
 		var labels []string
 		if l, ok := entityMap["labels"].([]any); ok {
 			for _, v := range l {

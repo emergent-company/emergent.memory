@@ -28441,6 +28441,53 @@ const docTemplate = `{
                 "ExecutionModeHybrid"
             ]
         },
+        "domain_agents.AgentObjectRule": {
+            "type": "object",
+            "properties": {
+                "canCreate": {
+                    "description": "CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an\nexplicit false denies the action for this type.",
+                    "type": "boolean"
+                },
+                "canDelete": {
+                    "type": "boolean"
+                },
+                "canUpdate": {
+                    "type": "boolean"
+                },
+                "fields": {
+                    "description": "Fields is the writable-property allowlist for this type. Empty means all\ndeclared properties are writable.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "objectType": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status overrides the agent-level phase map for this type. Nil inherits\nthe agent-level map.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
+                        }
+                    ]
+                },
+                "transitions": {
+                    "description": "Transitions are the status edges this agent may perform for this type.\nEmpty means only the standard terminator edges are allowed.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentTransition"
+                    }
+                },
+                "triggers": {
+                    "description": "Triggers are the (status, prompt) pickup rows for this type.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentWorkTrigger"
+                    }
+                }
+            }
+        },
         "domain_agents.AgentQuestionDTO": {
             "type": "object",
             "properties": {
@@ -28790,6 +28837,17 @@ const docTemplate = `{
                 }
             }
         },
+        "domain_agents.AgentTransition": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "string"
+                },
+                "to": {
+                    "type": "string"
+                }
+            }
+        },
         "domain_agents.AgentTriggerType": {
             "type": "string",
             "enum": [
@@ -28834,6 +28892,13 @@ const docTemplate = `{
                 "failureLimit": {
                     "type": "integer"
                 },
+                "objectRules": {
+                    "description": "ObjectRules carries the per-object-type rules: phase map, write actions,\nwritable fields, pickup triggers with prompts, and the transition matrix.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/domain_agents.AgentObjectRule"
+                    }
+                },
                 "requiresReview": {
                     "type": "boolean"
                 },
@@ -28853,7 +28918,7 @@ const docTemplate = `{
                     "$ref": "#/definitions/domain_agents.AgentWorkStatusConfig"
                 },
                 "triggerStatuses": {
-                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the ` + "`" + `status_changed` + "`" + ` signal). Defaults\nto the built-in \"ready\" status when unset.",
+                    "description": "TriggerStatuses lists the status values that, when an object transitions\ninto one of them, wake this agent (the ` + "`" + `status_changed` + "`" + ` signal). Defaults\nto the built-in \"ready\" status when unset. Legacy: used only when\nObjectRules declares no trigger rows.",
                     "type": "array",
                     "items": {
                         "type": "string"
@@ -28904,6 +28969,20 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "revision": {
+                    "type": "string"
+                }
+            }
+        },
+        "domain_agents.AgentWorkTrigger": {
+            "type": "object",
+            "properties": {
+                "objectType": {
+                    "type": "string"
+                },
+                "prompt": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }

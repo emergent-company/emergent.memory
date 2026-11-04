@@ -735,6 +735,45 @@ definitions:
     - ExecutionModeSuggest
     - ExecutionModeExecute
     - ExecutionModeHybrid
+  domain_agents.AgentObjectRule:
+    properties:
+      canCreate:
+        description: |-
+          CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an
+          explicit false denies the action for this type.
+        type: boolean
+      canDelete:
+        type: boolean
+      canUpdate:
+        type: boolean
+      fields:
+        description: |-
+          Fields is the writable-property allowlist for this type. Empty means all
+          declared properties are writable.
+        items:
+          type: string
+        type: array
+      objectType:
+        type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/domain_agents.AgentWorkStatusConfig'
+        description: |-
+          Status overrides the agent-level phase map for this type. Nil inherits
+          the agent-level map.
+      transitions:
+        description: |-
+          Transitions are the status edges this agent may perform for this type.
+          Empty means only the standard terminator edges are allowed.
+        items:
+          $ref: '#/definitions/domain_agents.AgentTransition'
+        type: array
+      triggers:
+        description: Triggers are the (status, prompt) pickup rows for this type.
+        items:
+          $ref: '#/definitions/domain_agents.AgentWorkTrigger'
+        type: array
+    type: object
   domain_agents.AgentQuestionDTO:
     properties:
       agentId:
@@ -993,6 +1032,13 @@ definitions:
       toolName:
         type: string
     type: object
+  domain_agents.AgentTransition:
+    properties:
+      from:
+        type: string
+      to:
+        type: string
+    type: object
   domain_agents.AgentTriggerType:
     enum:
     - schedule
@@ -1029,6 +1075,13 @@ definitions:
     properties:
       failureLimit:
         type: integer
+      objectRules:
+        description: |-
+          ObjectRules carries the per-object-type rules: phase map, write actions,
+          writable fields, pickup triggers with prompts, and the transition matrix.
+        items:
+          $ref: '#/definitions/domain_agents.AgentObjectRule'
+        type: array
       requiresReview:
         type: boolean
       retryPolicy:
@@ -1046,7 +1099,8 @@ definitions:
         description: |-
           TriggerStatuses lists the status values that, when an object transitions
           into one of them, wake this agent (the `status_changed` signal). Defaults
-          to the built-in "ready" status when unset.
+          to the built-in "ready" status when unset. Legacy: used only when
+          ObjectRules declares no trigger rows.
         items:
           type: string
         type: array
@@ -1089,6 +1143,15 @@ definitions:
       review:
         type: string
       revision:
+        type: string
+    type: object
+  domain_agents.AgentWorkTrigger:
+    properties:
+      objectType:
+        type: string
+      prompt:
+        type: string
+      status:
         type: string
     type: object
   domain_agents.BatchTriggerDTO:

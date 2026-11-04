@@ -195,12 +195,10 @@ func (s *Server) boardStatusMap(ctx context.Context) boardStatusMap {
 	return boardStatusMapFromDefinitions(defs)
 }
 
-// boardStatusesFromCompiled derives the board lane order from the compiled
-// schema's board-enabled object types, in declaration order, de-duplicated
-// first-seen. Shadowed (losing) duplicates are skipped — same as every other
-// compiled-type consumer (visibleCompiledTypes) — so an overridden board type
-// cannot leak stale lane statuses. Non-board types and empty entries are
-// skipped. Returns nil when no board-enabled type declares any statuses.
+// boardStatusesFromCompiled derives the canonical global board lane order from
+// the compiled schema's board-enabled object types (union, declaration order,
+// de-duplicated first-seen). The agent-scoped Work board uses per-type lanes via
+// boardLanesForType instead.
 func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
 	if compiled == nil {
 		return nil
@@ -220,6 +218,187 @@ func boardStatusesFromCompiled(compiled *CompiledSchemaTypes) []string {
 			}
 			seen[s] = struct{}{}
 			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// boardTypesFromCompiled returns the visible board-enabled object types in
+// deterministic (alphabetical) order.
+func boardTypesFromCompiled(compiled *CompiledSchemaTypes) []CompiledType {
+	if compiled == nil {
+		return nil
+	}
+	var out []CompiledType
+	for _, t := range visibleCompiledTypes(compiled.ObjectTypes) {
+		if t.BoardEnabled {
+			out = append(out, t)
+		}
+	}
+	sortCompiledTypesByName(out)
+	return out
+}
+
+// boardLanesForType returns one type's lane order: its declared allowedStatuses
+// (declaration order, de-duplicated), falling back to the canonical order.
+func boardLanesForType(t CompiledType) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, s := range t.AllowedStatuses {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return append([]string(nil), boardStatusOrder...)
+	}
+	return out
+}
+
+// boardSwimlane is one object type's stacked row: its lanes plus the item count.
+type boardSwimlane struct {
+	Type  string
+	Lanes []boardLane
+	Count int
+}
+
+// buildBoardSwimlanes groups items into one stacked swimlane per object type.
+// Types are alphabetical; a type with no items is omitted. Item-only statuses
+// stay as extra lanes within their own type.
+func buildBoardSwimlanes(items []WorkItem, compiled *CompiledSchemaTypes) []boardSwimlane {
+	byType := make(map[string][]WorkItem)
+	for _, it := range items {
+		byType[it.Type] = append(byType[it.Type], it)
+	}
+	var out []boardSwimlane
+	seen := make(map[string]bool)
+	for _, t := range boardTypesFromCompiled(compiled) {
+		seen[t.Name] = true
+		its := byType[t.Name]
+		if len(its) == 0 {
+			continue
+		}
+		out = append(out, boardSwimlane{Type: t.Name, Lanes: buildBoardColumns(its, boardLanesForType(t)), Count: len(its)})
+	}
+	var extra []string
+	for typ := range byType {
+		if !seen[typ] {
+			extra = append(extra, typ)
+		}
+	}
+	sort.Strings(extra)
+	for _, typ := range extra {
+		out = append(out, boardSwimlane{Type: typ, Lanes: buildBoardColumns(byType[typ], nil), Count: len(byType[typ])})
+	}
+	return out
+}
+
+// boardStatusMapForType resolves the phase map for one object type from the
+// per-type rules, falling back to the legacy agent-level map and then built-ins.
+func boardStatusMapForType(defs []AgentDefinitionSummary, typeName string) boardStatusMap {
+	ready := map[string]struct{}{}
+	inProgress := map[string]struct{}{}
+	review := map[string]struct{}{}
+	revision := map[string]struct{}{}
+	blocked := map[string]struct{}{}
+	done := map[string]struct{}{}
+	add := func(set map[string]struct{}, v string) {
+		if v != "" {
+			set[v] = struct{}{}
+		}
+	}
+	for _, d := range defs {
+		if d.WorkConfig == nil {
+			continue
+		}
+		if r := d.WorkConfig.RuleFor(typeName); r != nil && r.Status != nil {
+			add(ready, r.Status.Ready)
+			add(inProgress, r.Status.InProgress)
+			add(review, r.Status.Review)
+			add(revision, r.Status.Revision)
+			add(blocked, r.Status.Blocked)
+			add(done, r.Status.Done)
+			continue
+		}
+		if len(d.WorkConfig.ObjectRules) == 0 {
+			s := d.WorkConfig.Status
+			add(ready, s.Ready)
+			add(inProgress, s.InProgress)
+			add(review, s.Review)
+			add(revision, s.Revision)
+			add(blocked, s.Blocked)
+			add(done, s.Done)
+		}
+	}
+	m := defaultBoardStatusMap()
+	if v, ok := soleValue(ready); ok {
+		m.Ready = v
+	}
+	if v, ok := soleValue(inProgress); ok {
+		m.InProgress = v
+	}
+	if v, ok := soleValue(review); ok {
+		m.Review = v
+	}
+	if v, ok := soleValue(revision); ok {
+		m.Revision = v
+	}
+	if v, ok := soleValue(blocked); ok {
+		m.Blocked = v
+	}
+	if v, ok := soleValue(done); ok {
+		m.Done = v
+	}
+	return m
+}
+
+// RuleFor returns the definition's rule for an object type, or nil.
+func (w *AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
+	if w == nil {
+		return nil
+	}
+	for i := range w.ObjectRules {
+		if w.ObjectRules[i].ObjectType == objectType {
+			return &w.ObjectRules[i]
+		}
+	}
+	return nil
+}
+
+// boardView is the rendered board's data: one swimlane per type plus the
+// resolved phase map for each.
+type boardView struct {
+	Swimlanes  []boardSwimlane
+	StatusMaps map[string]boardStatusMap
+}
+
+// buildBoardView assembles the swimlanes and per-type phase maps.
+func buildBoardView(items []WorkItem, compiled *CompiledSchemaTypes, defs []AgentDefinitionSummary) boardView {
+	v := boardView{Swimlanes: buildBoardSwimlanes(items, compiled), StatusMaps: map[string]boardStatusMap{}}
+	for _, sl := range v.Swimlanes {
+		v.StatusMaps[sl.Type] = boardStatusMapForType(defs, sl.Type)
+	}
+	return v
+}
+
+// filterWorkItemsForAgent keeps items assigned to the agent, plus unassigned
+// items whose type the agent declares a rule/trigger for.
+func filterWorkItemsForAgent(items []WorkItem, def *AgentDefinition) []WorkItem {
+	if def == nil {
+		return items
+	}
+	types := map[string]bool{}
+	if def.WorkConfig != nil {
+		for _, r := range def.WorkConfig.ObjectRules {
+			types[r.ObjectType] = true
+		}
+	}
+	out := make([]WorkItem, 0, len(items))
+	for _, it := range items {
+		if it.Assignee == def.Name || (it.Assignee == "" && types[it.Type]) {
+			out = append(out, it)
 		}
 	}
 	return out

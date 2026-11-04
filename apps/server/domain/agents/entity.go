@@ -451,6 +451,142 @@ func (c AgentWorkContract) IsZero() bool {
 	return !c.RequireArtifacts && len(c.RequiredDeliverableTypes) == 0
 }
 
+// AgentWorkTrigger is one pickup rule: wake the agent when an object of
+// ObjectType enters Status. Prompt, when non-empty, is injected as the run's
+// user message so each trigger can carry its own work instruction.
+type AgentWorkTrigger struct {
+	ObjectType string `json:"objectType"`
+	Status     string `json:"status"`
+	Prompt     string `json:"prompt,omitempty"`
+}
+
+// AgentTransition is one agent-permitted status edge (from -> to).
+type AgentTransition struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// AgentObjectRule carries the per-object-type work rules for an agent. A rule
+// row exists only when the operator wants to restrict or describe that type;
+// an absent row leaves the type unrestricted (backwards compatible).
+type AgentObjectRule struct {
+	ObjectType string `json:"objectType"`
+	// Status overrides the agent-level phase map for this type. Nil inherits
+	// the agent-level map.
+	Status *AgentWorkStatusConfig `json:"status,omitempty"`
+	// CanCreate/CanUpdate/CanDelete are tri-state: nil means unrestricted, an
+	// explicit false denies the action for this type.
+	CanCreate *bool `json:"canCreate,omitempty"`
+	CanUpdate *bool `json:"canUpdate,omitempty"`
+	CanDelete *bool `json:"canDelete,omitempty"`
+	// Fields is the writable-property allowlist for this type. Empty means all
+	// declared properties are writable.
+	Fields []string `json:"fields,omitempty"`
+	// Triggers are the (status, prompt) pickup rows for this type.
+	Triggers []AgentWorkTrigger `json:"triggers,omitempty"`
+	// Transitions are the status edges this agent may perform for this type.
+	// Empty means only the standard terminator edges are allowed.
+	Transitions []AgentTransition `json:"transitions,omitempty"`
+}
+
+// AllowsCreate/AllowsUpdate/AllowsDelete resolve the tri-state action flags:
+// an absent rule or nil flag means unrestricted.
+func (r *AgentObjectRule) AllowsCreate() bool {
+	return r == nil || r.CanCreate == nil || *r.CanCreate
+}
+
+func (r *AgentObjectRule) AllowsUpdate() bool {
+	return r == nil || r.CanUpdate == nil || *r.CanUpdate
+}
+
+func (r *AgentObjectRule) AllowsDelete() bool {
+	return r == nil || r.CanDelete == nil || *r.CanDelete
+}
+
+// MatchTrigger returns the trigger row matching status, or nil.
+func (r *AgentObjectRule) MatchTrigger(status string) *AgentWorkTrigger {
+	if r == nil || status == "" {
+		return nil
+	}
+	for i := range r.Triggers {
+		if r.Triggers[i].Status == status {
+			return &r.Triggers[i]
+		}
+	}
+	return nil
+}
+
+// PermitsTransition reports whether the rule allows from -> to. An empty matrix
+// allows only the standard terminator edges out of the in-progress status.
+func (r *AgentObjectRule) PermitsTransition(from, to string, s AgentWorkStatusConfig) bool {
+	if to == "" || from == to {
+		return false
+	}
+	if r == nil || len(r.Transitions) == 0 {
+		if from != s.InProgress {
+			return false
+		}
+		return to == s.Done || to == s.Review || to == s.Blocked
+	}
+	for _, t := range r.Transitions {
+		if t.From == from && t.To == to {
+			return true
+		}
+	}
+	return false
+}
+
+// withDefaults fills empty phase values with the built-in defaults.
+func (s AgentWorkStatusConfig) withDefaults() AgentWorkStatusConfig {
+	out := s
+	if out.Ready == "" {
+		out.Ready = "ready"
+	}
+	if out.InProgress == "" {
+		out.InProgress = "in_progress"
+	}
+	if out.Review == "" {
+		out.Review = "review"
+	}
+	if out.Revision == "" {
+		out.Revision = "revision"
+	}
+	if out.Blocked == "" {
+		out.Blocked = "blocked"
+	}
+	if out.Done == "" {
+		out.Done = "done"
+	}
+	return out
+}
+
+// RuleFor returns the object type's rule, or nil when unrestricted.
+func (w AgentWorkConfig) RuleFor(objectType string) *AgentObjectRule {
+	for i := range w.ObjectRules {
+		if w.ObjectRules[i].ObjectType == objectType {
+			return &w.ObjectRules[i]
+		}
+	}
+	return nil
+}
+
+// EffectiveStatus resolves the phase map for an object type: per-type rule,
+// then the agent-level map, then the built-in defaults.
+func (w AgentWorkConfig) EffectiveStatus(objectType string) AgentWorkStatusConfig {
+	if r := w.RuleFor(objectType); r != nil && r.Status != nil {
+		return r.Status.withDefaults()
+	}
+	return w.Status.withDefaults()
+}
+
+// MatchWorkTrigger returns the trigger row for (objectType, status), or nil.
+func (w AgentWorkConfig) MatchWorkTrigger(objectType, status string) *AgentWorkTrigger {
+	if r := w.RuleFor(objectType); r != nil {
+		return r.MatchTrigger(status)
+	}
+	return nil
+}
+
 // AgentWorkConfig is the object-driven work configuration on an agent
 // definition. A zero value means "use defaults".
 type AgentWorkConfig struct {
@@ -470,8 +606,12 @@ type AgentWorkConfig struct {
 	WorkContract AgentWorkContract `json:"workContract"`
 	// TriggerStatuses lists the status values that, when an object transitions
 	// into one of them, wake this agent (the `status_changed` signal). Defaults
-	// to the built-in "ready" status when unset.
+	// to the built-in "ready" status when unset. Legacy: used only when
+	// ObjectRules declares no trigger rows.
 	TriggerStatuses []string `json:"triggerStatuses,omitempty"`
+	// ObjectRules carries the per-object-type rules: phase map, write actions,
+	// writable fields, pickup triggers with prompts, and the transition matrix.
+	ObjectRules []AgentObjectRule `json:"objectRules,omitempty"`
 }
 
 // IsZero reports whether the work config carries no explicit configuration, i.e.
@@ -485,7 +625,8 @@ func (w AgentWorkConfig) IsZero() bool {
 		w.RevisionLimit == 0 &&
 		w.RetryPolicy == (AgentRetryPolicy{}) &&
 		w.WorkContract.IsZero() &&
-		len(w.TriggerStatuses) == 0
+		len(w.TriggerStatuses) == 0 &&
+		len(w.ObjectRules) == 0
 }
 
 // TriggerStatusValues returns the configured status values that wake this agent
@@ -567,6 +708,54 @@ func (w AgentWorkConfig) RevisionLimitValue() int {
 		return w.RevisionLimit
 	}
 	return defaultWorkRevisionLimit
+}
+
+// WorkRuleForType returns the definition's rule for an object type, or nil.
+func (d *AgentDefinition) WorkRuleForType(objectType string) *AgentObjectRule {
+	if d == nil {
+		return nil
+	}
+	return d.WorkConfig.RuleFor(objectType)
+}
+
+// EffectiveWorkStatus returns the phase map the work engine must use for an
+// object type: per-type rule, agent-level map, built-in defaults.
+func (d *AgentDefinition) EffectiveWorkStatus(objectType string) AgentWorkStatusConfig {
+	if d == nil {
+		return AgentWorkStatusConfig{}.withDefaults()
+	}
+	return d.WorkConfig.EffectiveStatus(objectType)
+}
+
+// MatchWorkTrigger returns the trigger row for (objectType, status), or nil.
+func (d *AgentDefinition) MatchWorkTrigger(objectType, status string) *AgentWorkTrigger {
+	if d == nil {
+		return nil
+	}
+	return d.WorkConfig.MatchWorkTrigger(objectType, status)
+}
+
+// TriggerAllowsStatus reports whether the agent picks up an object of the type
+// in the given status. Legacy agents use triggerStatuses (ready always allowed);
+// rules-based agents require an explicit trigger row for the type+status.
+func (d *AgentDefinition) TriggerAllowsStatus(objectType, status string) bool {
+	if d == nil {
+		return true
+	}
+	wc := d.WorkConfig
+	if len(wc.ObjectRules) == 0 {
+		if status == wc.ReadyStatus() {
+			return true
+		}
+		for _, s := range wc.TriggerStatusValues() {
+			if s == status {
+				return true
+			}
+		}
+		return false
+	}
+	r := wc.RuleFor(objectType)
+	return r != nil && r.MatchTrigger(status) != nil
 }
 
 type AgentDefinition struct {

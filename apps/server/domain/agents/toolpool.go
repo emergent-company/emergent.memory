@@ -33,6 +33,9 @@ const (
 const (
 	ToolNameWorkComplete = "work_complete"
 	ToolNameWorkBlock    = "work_block"
+	// ToolNameWorkTransition moves the subject object along a rule-allowed edge
+	// (from -> to) and ends the run.
+	ToolNameWorkTransition = "work_transition"
 	// ToolNameWorkComment is the per-run comment tool: it appends a durable note
 	// to the subject work object but does NOT end the run.
 	ToolNameWorkComment = "comment"

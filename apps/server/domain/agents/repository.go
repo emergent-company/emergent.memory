@@ -751,6 +751,19 @@ func (r *Repository) DeleteAgentsBySourceBlueprint(ctx context.Context, projectI
 
 // --- Agent Definitions ---
 
+// FindAgentsByDefinitionID returns the runtime agents bound to a definition.
+// Definition-save trigger resync uses it to re-derive their reaction config.
+func (r *Repository) FindAgentsByDefinitionID(ctx context.Context, definitionID string) ([]*Agent, error) {
+	var agents []*Agent
+	if definitionID == "" {
+		return nil, nil
+	}
+	if err := r.db.NewSelect().Model(&agents).Where("agent_definition_id = ?", definitionID).Scan(ctx); err != nil {
+		return nil, err
+	}
+	return agents, nil
+}
+
 // FindAllDefinitions returns all agent definitions for a project.
 // If includeInternal is false, definitions with visibility='internal' are excluded.
 func (r *Repository) FindAllDefinitions(ctx context.Context, projectID string, includeInternal bool) ([]*AgentDefinition, error) {
