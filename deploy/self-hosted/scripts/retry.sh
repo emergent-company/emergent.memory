@@ -5,9 +5,11 @@
 #
 #   go.opentelemetry.io/otel@v1.46.0: stream error: stream ID 3; INTERNAL_ERROR
 #
-# a transport fault with nothing wrong in this tree. A module fetch is the step
-# that can fail for reasons unrelated to the commit, so it gets a few attempts;
-# a compilation or a test failure is not, and gets none.
+# a transport fault with nothing wrong in this tree. Only the steps that resolve
+# modules over the network use this: `go mod download`, `go mod tidy -diff` (it
+# resolves the test dependencies of dependencies) and `go install <tool>@<ver>`.
+# A plain compile or a test does not fetch, so it is left to fail on its own
+# rather than retried into a slower failure.
 #
 # Usage:
 #   retry.sh <attempts> <delay-seconds> <label> -- <command> [args...]
@@ -40,6 +42,14 @@ shift 3
   exit 2
 }
 shift
+
+# A missing command would otherwise "succeed" instantly, which turns a Dockerfile
+# typo into a silently skipped build step -- the opposite of what this helper is
+# for.
+[ "$#" -ge 1 ] || {
+  echo "retry.sh: no command after --" >&2
+  exit 2
+}
 
 case $attempts in
   '' | *[!0-9]*) echo "retry.sh: attempts must be a positive integer, got '$attempts'" >&2; exit 2 ;;
