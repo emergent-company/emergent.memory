@@ -93,6 +93,24 @@ enum ChatStreamFrameDecoder {
             return nil
         }
         switch envelope.type {
+        case "meta", "token", "html", "thinking":
+            return contentEvent(envelope)
+        case "mcp_tool", "approval", "question":
+            return interactionEvent(envelope, fallbackToolID: fallbackToolID)
+        case "ui", "citations", "error", "done":
+            return surfaceEvent(envelope)
+        case "live_replay":
+            return replay(data: data, fallbackToolID: fallbackToolID)
+        default:
+            // Unknown frame kind — ignored so the stream keeps working when the
+            // server adds new ones.
+            return nil
+        }
+    }
+
+    /// The session envelope, markdown deltas and thinking segments.
+    private static func contentEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        switch envelope.type {
         case "meta":
             return .meta(
                 conversationID: envelope.conversationId?.nonEmpty,
@@ -106,33 +124,23 @@ enum ChatStreamFrameDecoder {
             // `token` deltas instead; the snapshot exists for hosts that render
             // server-side HTML.
             return nil
-        case "thinking":
+        default:
             guard let text = envelope.text, !text.isEmpty, envelope.done != true else {
                 // A segment-closing `done: true` carries no new text.
                 return nil
             }
             return .activity(.thinking(delta: text))
+        }
+    }
+
+    /// The cards a turn can pause on: tool activity, approvals and questions.
+    private static func interactionEvent(
+        _ envelope: ChatStreamEnvelope,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        switch envelope.type {
         case "mcp_tool":
-            guard let tool = envelope.tool, !tool.isEmpty else { return nil }
-            let id = envelope.id?.nonEmpty ?? fallbackToolID()
-            if envelope.status == "started" {
-                return .activity(.toolCall(ChatToolCallEvent(
-                    id: id,
-                    tool: tool,
-                    arguments: envelope.result?.displayText ?? ""
-                )))
-            }
-            let failed = envelope.status == "error" || envelope.status == "failed"
-            let output = envelope.error?.nonEmpty
-                ?? envelope.result?.displayText
-                ?? envelope.status
-                ?? ""
-            return .activity(.toolResult(ChatToolResultEvent(
-                id: id,
-                tool: tool,
-                result: output,
-                isError: failed
-            )))
+            return toolEvent(envelope, fallbackToolID: fallbackToolID)
         case "approval":
             guard let questionID = envelope.questionId?.nonEmpty else { return nil }
             return .activity(.approval(ChatApprovalEvent(
@@ -140,23 +148,59 @@ enum ChatStreamFrameDecoder {
                 tool: envelope.tool ?? "",
                 arguments: envelope.input?.displayText ?? ""
             )))
-        case "question":
-            guard let questionID = envelope.questionId?.nonEmpty else { return nil }
-            let options = (envelope.options ?? []).map { option in
-                ChatQuestionOption(
-                    label: option.label,
-                    value: option.value,
-                    description: option.description
-                )
-            }
-            return .activity(.question(ChatQuestionEvent(
-                questionId: questionID,
-                question: envelope.question ?? "",
-                interactionType: Self.interactionType(envelope.interactionType),
-                options: options,
-                placeholder: envelope.placeholder?.nonEmpty,
-                maxLength: envelope.maxLength
+        default:
+            return questionEvent(envelope)
+        }
+    }
+
+    private static func toolEvent(
+        _ envelope: ChatStreamEnvelope,
+        fallbackToolID: () -> String
+    ) -> ChatStreamEvent? {
+        guard let tool = envelope.tool, !tool.isEmpty else { return nil }
+        let id = envelope.id?.nonEmpty ?? fallbackToolID()
+        if envelope.status == "started" {
+            return .activity(.toolCall(ChatToolCallEvent(
+                id: id,
+                tool: tool,
+                arguments: envelope.result?.displayText ?? ""
             )))
+        }
+        let failed = envelope.status == "error" || envelope.status == "failed"
+        let output = envelope.error?.nonEmpty
+            ?? envelope.result?.displayText
+            ?? envelope.status
+            ?? ""
+        return .activity(.toolResult(ChatToolResultEvent(
+            id: id,
+            tool: tool,
+            result: output,
+            isError: failed
+        )))
+    }
+
+    private static func questionEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        guard let questionID = envelope.questionId?.nonEmpty else { return nil }
+        let options = (envelope.options ?? []).map { option in
+            ChatQuestionOption(
+                label: option.label,
+                value: option.value,
+                description: option.description
+            )
+        }
+        return .activity(.question(ChatQuestionEvent(
+            questionId: questionID,
+            question: envelope.question ?? "",
+            interactionType: Self.interactionType(envelope.interactionType),
+            options: options,
+            placeholder: envelope.placeholder?.nonEmpty,
+            maxLength: envelope.maxLength
+        )))
+    }
+
+    /// Rendered surfaces and the turn's terminal frames.
+    private static func surfaceEvent(_ envelope: ChatStreamEnvelope) -> ChatStreamEvent? {
+        switch envelope.type {
         case "ui":
             guard let surfaceID = envelope.surfaceId?.nonEmpty,
                   let messages = envelope.messages
@@ -169,14 +213,8 @@ enum ChatStreamFrameDecoder {
             return .citations(count: envelope.citations?.count ?? 0)
         case "error":
             return .failure(envelope.error?.nonEmpty ?? "The agent hit an error.")
-        case "done":
-            return .done
-        case "live_replay":
-            return replay(data: data, fallbackToolID: fallbackToolID)
         default:
-            // Unknown frame kind — ignored so the stream keeps working when the
-            // server adds new ones.
-            return nil
+            return .done
         }
     }
 

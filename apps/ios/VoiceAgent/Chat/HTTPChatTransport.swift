@@ -82,11 +82,18 @@ struct HTTPChatStreamClient: ChatStreaming {
             )
         }
         let url = base.appending(path: "api").appending(path: "chat")
-        let body = try JSONEncoder().encode(ChatBody(
-            agentDefinitionId: agentDefinitionID,
-            conversationId: conversationID,
-            message: message
-        ))
+        // Absent fields stay absent: the server creates a conversation when
+        // `conversationId` is missing, and the project default agent is used when
+        // `agentDefinitionId` is. A dictionary keeps that true without a
+        // hand-rolled `CodingKeys` (which would nest a type two levels deep).
+        var fields = ["message": message]
+        if let agentDefinitionID {
+            fields["agentDefinitionId"] = agentDefinitionID
+        }
+        if let conversationID {
+            fields["conversationId"] = conversationID
+        }
+        let body = try JSONEncoder().encode(fields)
         return GatewayHTTP.makeRequest(
             method: "POST",
             url: url,
@@ -109,25 +116,6 @@ struct HTTPChatStreamClient: ChatStreaming {
             return "Chat returned HTTP \(status): \(message)"
         }
         return "Chat returned HTTP \(status): \(HTTPURLResponse.localizedString(forStatusCode: status))"
-    }
-
-    private struct ChatBody: Encodable {
-        let agentDefinitionId: String?
-        let conversationId: String?
-        let message: String
-
-        enum CodingKeys: String, CodingKey {
-            case agentDefinitionId
-            case conversationId
-            case message
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            try container.encodeIfPresent(agentDefinitionId, forKey: .agentDefinitionId)
-            try container.encodeIfPresent(conversationId, forKey: .conversationId)
-            try container.encode(message, forKey: .message)
-        }
     }
 }
 
@@ -214,8 +202,7 @@ final class HTTPChatTransport {
                 message: message,
                 agentName: agentName,
                 transcript: transcript,
-                activity: activity,
-                assistantMessageID: "http-assistant-\(UUID().uuidString)"
+                activity: activity
             )
         }
         turnTask = task
@@ -249,15 +236,20 @@ final class HTTPChatTransport {
 
     // MARK: - Streaming
 
+    /// What one turn accumulates while its frames stream in.
+    private struct TurnState {
+        let assistantMessageID: String
+        var text = ""
+        var started = false
+    }
+
     private func runTurn(
         message: String,
         agentName: String,
         transcript: ChatSessionTranscriptStore,
-        activity: ChatActivityStore,
-        assistantMessageID: String
+        activity: ChatActivityStore
     ) async {
-        var assistantText = ""
-        var assistantStarted = false
+        var state = TurnState(assistantMessageID: "http-assistant-\(UUID().uuidString)")
 
         do {
             let agentID = await resolveAgentDefinitionID(name: agentName)
@@ -278,14 +270,7 @@ final class HTTPChatTransport {
                         return "http-tool-\(fallbackToolCounter)"
                     }
                 ) else { continue }
-                apply(
-                    event,
-                    assistantMessageID: assistantMessageID,
-                    assistantText: &assistantText,
-                    assistantStarted: &assistantStarted,
-                    transcript: transcript,
-                    activity: activity
-                )
+                apply(event, state: &state, transcript: transcript, activity: activity)
             }
             if !Task.isCancelled {
                 activity.markReplyFinished()
@@ -302,9 +287,7 @@ final class HTTPChatTransport {
 
     private func apply(
         _ event: ChatStreamEvent,
-        assistantMessageID: String,
-        assistantText: inout String,
-        assistantStarted: inout Bool,
+        state: inout TurnState,
         transcript: ChatSessionTranscriptStore,
         activity: ChatActivityStore
     ) {
@@ -314,12 +297,12 @@ final class HTTPChatTransport {
             conversationID = learnedConversationID
             onConversationLearned?(learnedConversationID)
         case let .text(delta):
-            if !assistantStarted {
-                assistantStarted = true
+            if !state.started {
+                state.started = true
                 activity.agentReplyStarted()
             }
-            assistantText += delta
-            upsertAssistant(assistantMessageID, text: assistantText, transcript: transcript)
+            state.text += delta
+            upsertAssistant(state.assistantMessageID, text: state.text, transcript: transcript)
         case let .activity(chatEvent):
             activity.apply(chatEvent)
         case .citations:
@@ -331,14 +314,7 @@ final class HTTPChatTransport {
             activity.markReplyFinished()
         case let .replay(events):
             for event in events {
-                apply(
-                    event,
-                    assistantMessageID: assistantMessageID,
-                    assistantText: &assistantText,
-                    assistantStarted: &assistantStarted,
-                    transcript: transcript,
-                    activity: activity
-                )
+                apply(event, state: &state, transcript: transcript, activity: activity)
             }
         }
     }
