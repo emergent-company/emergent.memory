@@ -3947,7 +3947,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Filter by connected data source UUID, or \\",
+                        "description": "Filter by connected data source UUID, or 'none' for documents with no source",
                         "name": "sourceId",
                         "in": "query"
                     },

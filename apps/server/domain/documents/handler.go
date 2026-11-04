@@ -92,7 +92,7 @@ func NewHandler(
 // @Param        limit query int false "Maximum number of results (1-500)" minimum(1) maximum(500)
 // @Param        cursor query string false "Pagination cursor (opaque, from previous response; must match the requested sort)"
 // @Param        sourceType query string false "Filter by source type"
-// @Param        sourceId query string false "Filter by connected data source UUID, or \"none\" for documents with no source"
+// @Param        sourceId query string false "Filter by connected data source UUID, or 'none' for documents with no source"
 // @Param        status query string false "Filter by derived status bucket" Enums(processing, ready, extracted, failed)
 // @Param        q query string false "Case-insensitive substring match over filename and source URL"
 // @Param        sort query string false "Sort key" Enums(created, updated) default(created)
