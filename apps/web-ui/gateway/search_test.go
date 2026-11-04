@@ -183,8 +183,10 @@ func TestUISearchUnknownTypeNormalizes(t *testing.T) {
 	if f.lastSearchUnified.ResultTypes != "both" {
 		t.Errorf("resultTypes = %q, want both", f.lastSearchUnified.ResultTypes)
 	}
-	if !strings.Contains(body, "Everything") {
-		t.Error("unknown type did not render the normalized 'Everything' label")
+	// The select must re-render with "all" selected, so the control the reader
+	// sees matches the search that ran.
+	if !strings.Contains(body, `value="all" selected`) {
+		t.Error("unknown type did not render the normalized 'all' selection")
 	}
 }
 

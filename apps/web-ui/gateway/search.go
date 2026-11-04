@@ -255,8 +255,7 @@ func searchResultTypes(searchType string) string {
 	}
 }
 
-// searchTypeOptions returns the filter options in display order (widest first),
-// each with the one-line description the select renders under its label.
+// searchTypeOptions returns the filter options in display order (widest first).
 func searchTypeOptions() []searchTypeOption {
 	return []searchTypeOption{
 		{Value: searchTypeAll, Label: "Everything"},
