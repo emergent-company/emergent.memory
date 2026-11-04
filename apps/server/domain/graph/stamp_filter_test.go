@@ -96,11 +96,86 @@ func TestWriteStampFilterRendersSQL(t *testing.T) {
 			RunID:        &runID,
 			CredentialID: &credID,
 			DataClass:    &class, // rejected at the HTTP boundary; ignored here
-		})
+		}, ProvenanceUpdated, pid, nil)
 		sql := q.String()
 		require.Contains(t, sql, "(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
 		require.Contains(t, sql, "credential_id = '"+credID.String()+"'")
 		require.NotContains(t, whereClause(sql), "data_class")
+	})
+
+	t.Run("the default scope matches the current version only", func(t *testing.T) {
+		for _, mode := range []string{"", ProvenanceUpdated} {
+			q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+				ProjectID:  pid,
+				Stamp:      WriteStampFilters{RunID: &runID},
+				Provenance: mode,
+			})
+			sql := q.String()
+			require.Contains(t, sql, "(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
+			require.NotContains(t, sql, "version = 1", "mode %q must not widen to the creator version", mode)
+		}
+	})
+
+	t.Run("created scope requires the root version to carry the stamp", func(t *testing.T) {
+		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+			ProjectID:  pid,
+			Stamp:      WriteStampFilters{RunID: &runID},
+			Provenance: ProvenanceCreated,
+		})
+		sql := q.String()
+		require.Contains(t, sql, "canonical_id IN (SELECT canonical_id FROM kb.graph_objects WHERE")
+		require.Contains(t, sql, "(run_id = '"+runID.String()+"' OR root_run_id = '"+runID.String()+"')")
+		require.Contains(t, sql, "version = 1")
+		require.Contains(t, sql, "deleted_at IS NULL")
+		// The inner scan is scoped to the caller's project and branch, or a run
+		// filter would match another project's version rows.
+		require.Contains(t, sql, "project_id = '"+pid.String()+"' AND branch_id IS NULL")
+	})
+
+	t.Run("any scope unions the current version and the creator version", func(t *testing.T) {
+		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+			ProjectID:  pid,
+			Stamp:      WriteStampFilters{CredentialID: &credID},
+			Provenance: ProvenanceAny,
+		})
+		sql := q.String()
+		require.Contains(t, sql, "credential_id = '"+credID.String()+"') OR canonical_id IN (SELECT canonical_id FROM kb.graph_objects")
+		require.Contains(t, sql, "version = 1")
+	})
+
+	t.Run("created scope is scoped to the caller's branch", func(t *testing.T) {
+		branchID := uuid.New()
+		q := repo.buildObjectBaseQueryWith(repo.db, ListParams{
+			ProjectID:  pid,
+			BranchID:   &branchID,
+			Stamp:      WriteStampFilters{RunID: &runID},
+			Provenance: ProvenanceCreated,
+		})
+		sql := q.String()
+		require.Contains(t, sql, "project_id = '"+pid.String()+"' AND branch_id = '"+branchID.String()+"'")
+		require.NotContains(t, sql, "branch_id IS NULL")
+	})
+
+	t.Run("relationship scopes select from the relationship table", func(t *testing.T) {
+		for _, tc := range []struct {
+			mode     string
+			wantRoot bool
+		}{
+			{ProvenanceCreated, true},
+			{ProvenanceAny, true},
+			{ProvenanceUpdated, false},
+			{"", false},
+		} {
+			q := repo.db.NewSelect().Model((*GraphRelationship)(nil))
+			q = applyRelationshipWriteStampFilters(q, WriteStampFilters{RunID: &runID}, tc.mode, pid, nil)
+			sql := q.String()
+			require.Equal(t, tc.wantRoot, strings.Contains(sql, "FROM kb.graph_relationships WHERE"),
+				"mode %q", tc.mode)
+			if tc.wantRoot {
+				require.Contains(t, sql, "version = 1")
+				require.NotContains(t, sql, "FROM kb.graph_objects")
+			}
+		}
 	})
 }
 
@@ -184,5 +259,69 @@ func TestParseWriteStampFilters(t *testing.T) {
 		require.NotNil(t, f.RunID)
 		require.Equal(t, auth.CredentialSession, *f.CredentialKind)
 		require.Nil(t, f.DataClass)
+	})
+}
+
+// TestParseProvenanceScope locks the boundary rules for the version-scope
+// selector. `provenance` now narrows either an actor filter or a write-stamp
+// filter, so the "requires actor_type" rule became "requires something to
+// narrow"; "any" stays accepted on its own because clients send it
+// unconditionally and it removes nothing.
+func TestParseProvenanceScope(t *testing.T) {
+	newCtx := func(target string) echo.Context {
+		e := echo.New()
+		req := httptest.NewRequest(http.MethodGet, target, nil)
+		return e.NewContext(req, httptest.NewRecorder())
+	}
+	runID := uuid.New()
+
+	t.Run("objects accept a narrowing mode with a stamp filter", func(t *testing.T) {
+		params := ListParams{Stamp: WriteStampFilters{RunID: &runID}}
+		require.NoError(t, parseActorProvenance(newCtx("/?provenance=created"), &params))
+		require.Equal(t, ProvenanceCreated, params.Provenance)
+	})
+
+	t.Run("objects reject a narrowing mode with nothing to narrow", func(t *testing.T) {
+		params := ListParams{}
+		err := parseActorProvenance(newCtx("/?provenance=created"), &params)
+		require.Error(t, err)
+		require.IsType(t, &apperror.Error{}, err)
+		require.Contains(t, err.Error(), "provenance requires actor_type or a write-stamp filter")
+	})
+
+	t.Run("objects keep the actor path working", func(t *testing.T) {
+		params := ListParams{}
+		require.NoError(t, parseActorProvenance(newCtx("/?actor_type=agent&provenance=updated"), &params))
+		require.Equal(t, ProvenanceUpdated, params.Provenance)
+	})
+
+	t.Run("any is accepted alone and survives into the params", func(t *testing.T) {
+		params := ListParams{}
+		require.NoError(t, parseActorProvenance(newCtx("/?provenance=any"), &params))
+		require.Equal(t, ProvenanceAny, params.Provenance)
+	})
+
+	t.Run("unknown modes are rejected", func(t *testing.T) {
+		params := ListParams{Stamp: WriteStampFilters{RunID: &runID}}
+		err := parseActorProvenance(newCtx("/?provenance=whenever"), &params)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid provenance")
+	})
+
+	t.Run("relationships need a stamp filter for a narrowing mode", func(t *testing.T) {
+		params := RelationshipListParams{}
+		err := parseRelationshipProvenance(newCtx("/?provenance=created"), &params)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "provenance requires a write-stamp filter")
+
+		params.Stamp = WriteStampFilters{RunID: &runID}
+		require.NoError(t, parseRelationshipProvenance(newCtx("/?provenance=created"), &params))
+		require.Equal(t, ProvenanceCreated, params.Provenance)
+	})
+
+	t.Run("relationships accept any on its own", func(t *testing.T) {
+		params := RelationshipListParams{}
+		require.NoError(t, parseRelationshipProvenance(newCtx("/?provenance=any"), &params))
+		require.Equal(t, ProvenanceAny, params.Provenance)
 	})
 }

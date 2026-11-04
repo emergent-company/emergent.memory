@@ -532,8 +532,9 @@ func (r *Repository) buildObjectBaseQueryWith(db bun.IDB, params ListParams) *bu
 
 	// Write-stamp filter (#2468). Plain equality on the stamp columns (plus the
 	// run_id/root_run_id pair), so it composes with the keyset cursor and with
-	// property ordering without a pagination guard.
-	q = applyWriteStampFilters(q, params.Stamp)
+	// property ordering without a pagination guard. `provenance` selects which
+	// version row must carry the stamp (created|updated|any, default updated).
+	q = applyWriteStampFilters(q, params.Stamp, params.Provenance, params.ProjectID, params.BranchID)
 
 	return q
 }
@@ -1728,6 +1729,9 @@ type RelationshipListParams struct {
 	// DataClass filter is rejected at the HTTP boundary — relationships record no
 	// data class.
 	Stamp WriteStampFilters
+	// Provenance selects which version row must carry the stamp predicates:
+	// created|updated|any. Empty means "updated" (the current version).
+	Provenance string
 }
 
 // CountRelationships returns the total count of relationships matching the given parameters.
@@ -1759,7 +1763,7 @@ func (r *Repository) CountRelationships(ctx context.Context, params Relationship
 		q = q.Where("dst_id = ?", *params.DstID)
 	}
 
-	q = applyRelationshipWriteStampFilters(q, params.Stamp)
+	q = applyRelationshipWriteStampFilters(q, params.Stamp, params.Provenance, params.ProjectID, params.BranchID)
 
 	if !params.IncludeDeleted {
 		q = q.Where("deleted_at IS NULL")
@@ -1814,7 +1818,7 @@ func (r *Repository) ListRelationships(ctx context.Context, params RelationshipL
 		q = q.Where("dst_id = ?", *params.DstID)
 	}
 
-	q = applyRelationshipWriteStampFilters(q, params.Stamp)
+	q = applyRelationshipWriteStampFilters(q, params.Stamp, params.Provenance, params.ProjectID, params.BranchID)
 
 	if !params.IncludeDeleted {
 		q = q.Where("deleted_at IS NULL")

@@ -12,6 +12,7 @@ package graph
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -60,41 +61,121 @@ func validCredentialKind(k string) bool { return slices.Contains(CredentialKinds
 // validDataClass reports whether c is a recorded data class.
 func validDataClass(c string) bool { return slices.Contains(DataClasses, c) }
 
+// IsZero reports whether the filter narrows nothing. The HTTP boundary uses it
+// to decide whether `provenance` has a predicate to narrow.
+func (f WriteStampFilters) IsZero() bool {
+	return f.RunID == nil && f.CredentialID == nil && f.CredentialKind == nil && f.DataClass == nil
+}
+
+// resolveStampScope maps a requested provenance mode onto the version row the
+// stamp predicates apply to. The empty mode — and anything unrecognised, which
+// the HTTP boundary has already rejected — resolves to "updated": a client that
+// only sends a stamp filter keeps matching the current version, which is the
+// behaviour before the scope selector existed.
+func resolveStampScope(mode string) string {
+	switch mode {
+	case ProvenanceCreated, ProvenanceAny:
+		return mode
+	default:
+		return ProvenanceUpdated
+	}
+}
+
+// stampPredicate renders the set filters as one AND-ed predicate plus its
+// arguments. It returns an empty predicate when nothing is set. includeDataClass
+// is false for relationships, which have no such column.
+func stampPredicate(f WriteStampFilters, includeDataClass bool) (string, []any) {
+	conds := make([]string, 0, 4)
+	args := make([]any, 0, 4)
+	if f.RunID != nil {
+		conds = append(conds, "(run_id = ? OR root_run_id = ?)")
+		args = append(args, *f.RunID, *f.RunID)
+	}
+	if f.CredentialID != nil {
+		conds = append(conds, "credential_id = ?")
+		args = append(args, *f.CredentialID)
+	}
+	if f.CredentialKind != nil {
+		conds = append(conds, "credential_kind = ?")
+		args = append(args, *f.CredentialKind)
+	}
+	if includeDataClass && f.DataClass != nil {
+		conds = append(conds, "data_class = ?")
+		args = append(args, *f.DataClass)
+	}
+	return strings.Join(conds, " AND "), args
+}
+
+// stampBranchScope renders the project/branch predicate the `created` subquery
+// must carry, so a run filter cannot match a version in another project (or in
+// the main branch when the caller asked for a named one). It mirrors the actor
+// provenance filter's scoping.
+func stampBranchScope(projectID uuid.UUID, branchID *uuid.UUID) (string, []any) {
+	if branchID != nil {
+		return "project_id = ? AND branch_id = ?", []any{projectID, *branchID}
+	}
+	return "project_id = ? AND branch_id IS NULL", []any{projectID}
+}
+
+// stampCreatedSubquery renders the "written at some point" arm: the object's
+// root (version = 1) row must carry the predicate. Written as IN (SELECT …)
+// rather than a correlated EXISTS so kb.idx_graph_objects_project_run /
+// …_project_credential drive the inner scan — the same shape the actor
+// provenance filter uses.
+func stampCreatedSubquery(table, predicate string, projectID uuid.UUID, branchID *uuid.UUID) (string, []any) {
+	scope, scopeArgs := stampBranchScope(projectID, branchID)
+	return "SELECT canonical_id FROM " + table + " WHERE " + predicate +
+		" AND version = 1 AND deleted_at IS NULL AND " + scope, scopeArgs
+}
+
 // applyWriteStampFilters adds the write-stamp predicates to an object query.
 //
 // The run filter is an OR over two columns, so it cannot use either partial
 // index on its own; the project/branch predicates the caller has already applied
 // bound the scan, and the planner can still use idx_graph_objects_project_run
 // for the run_id arm.
-func applyWriteStampFilters(q *bun.SelectQuery, f WriteStampFilters) *bun.SelectQuery {
-	if f.RunID != nil {
-		q = q.Where("(run_id = ? OR root_run_id = ?)", *f.RunID, *f.RunID)
+//
+// mode selects which version row must carry the stamp: "updated" (the default)
+// checks the HEAD row, "created" the root version = 1 row, and "any" accepts
+// either. See resolveStampScope.
+func applyWriteStampFilters(q *bun.SelectQuery, f WriteStampFilters, mode string, projectID uuid.UUID, branchID *uuid.UUID) *bun.SelectQuery {
+	predicate, args := stampPredicate(f, true)
+	if predicate == "" {
+		return q
 	}
-	if f.CredentialID != nil {
-		q = q.Where("credential_id = ?", *f.CredentialID)
+	switch resolveStampScope(mode) {
+	case ProvenanceCreated:
+		sub, scopeArgs := stampCreatedSubquery("kb.graph_objects", predicate, projectID, branchID)
+		return q.Where("canonical_id IN ("+sub+")", append(args, scopeArgs...)...)
+	case ProvenanceAny:
+		sub, scopeArgs := stampCreatedSubquery("kb.graph_objects", predicate, projectID, branchID)
+		anyArgs := append(append([]any{}, args...), args...)
+		anyArgs = append(anyArgs, scopeArgs...)
+		return q.Where("("+predicate+") OR canonical_id IN ("+sub+")", anyArgs...)
+	default:
+		return q.Where(predicate, args...)
 	}
-	if f.CredentialKind != nil {
-		q = q.Where("credential_kind = ?", *f.CredentialKind)
-	}
-	if f.DataClass != nil {
-		q = q.Where("data_class = ?", *f.DataClass)
-	}
-	return q
 }
 
 // applyRelationshipWriteStampFilters is the relationship counterpart of
 // applyWriteStampFilters. Relationships carry credential and run fields but no
 // data class, so a DataClass filter is ignored here rather than mapped onto a
 // column that does not exist; the HTTP boundary rejects it for callers.
-func applyRelationshipWriteStampFilters(q *bun.SelectQuery, f WriteStampFilters) *bun.SelectQuery {
-	if f.RunID != nil {
-		q = q.Where("(run_id = ? OR root_run_id = ?)", *f.RunID, *f.RunID)
+func applyRelationshipWriteStampFilters(q *bun.SelectQuery, f WriteStampFilters, mode string, projectID uuid.UUID, branchID *uuid.UUID) *bun.SelectQuery {
+	predicate, args := stampPredicate(f, false)
+	if predicate == "" {
+		return q
 	}
-	if f.CredentialID != nil {
-		q = q.Where("credential_id = ?", *f.CredentialID)
+	switch resolveStampScope(mode) {
+	case ProvenanceCreated:
+		sub, scopeArgs := stampCreatedSubquery("kb.graph_relationships", predicate, projectID, branchID)
+		return q.Where("canonical_id IN ("+sub+")", append(args, scopeArgs...)...)
+	case ProvenanceAny:
+		sub, scopeArgs := stampCreatedSubquery("kb.graph_relationships", predicate, projectID, branchID)
+		anyArgs := append(append([]any{}, args...), args...)
+		anyArgs = append(anyArgs, scopeArgs...)
+		return q.Where("("+predicate+") OR canonical_id IN ("+sub+")", anyArgs...)
+	default:
+		return q.Where(predicate, args...)
 	}
-	if f.CredentialKind != nil {
-		q = q.Where("credential_kind = ?", *f.CredentialKind)
-	}
-	return q
 }

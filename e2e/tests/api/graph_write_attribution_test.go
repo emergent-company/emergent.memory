@@ -46,8 +46,9 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 	var tokenObj map[string]any
 	parseBodyJSON(t, tokenBody, &tokenObj)
 	tokenObjectID, _ := tokenObj["id"].(string)
-	if tokenObjectID == "" {
-		t.Fatalf("created object has no id: %s", tokenBody)
+	tokenObjectCanonicalID, _ := tokenObj["canonical_id"].(string)
+	if tokenObjectID == "" || tokenObjectCanonicalID == "" {
+		t.Fatalf("created object has no id/canonical_id: %s", tokenBody)
 	}
 	t.Cleanup(func() { deleteGraphObject(t, projectID, tokenObjectID) })
 
@@ -227,5 +228,67 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 		t.Errorf("expected the 400 to name data_class, got %s", relBadBody)
 	}
 
-	rl.Printf("stamp disclosed and filtered over HTTP; invalid enums and malformed ids rejected with 400")
+	// ── 9. The version-scope selector: a creator stays findable after an edit ─
+	// The object written by the first token is edited by a second token, so its
+	// HEAD row carries the second credential while version 1 still carries the
+	// first. A head-only filter would therefore answer "nothing" for the token
+	// that created it.
+	rl.Section("Edit the first token's object with a second token")
+	_, rawTokenB := createToken(t, projectID, "e2e-stamp-api-token-b", []string{"data:read", "data:write"})
+	patchResp := doAPILogged(t, rl, "PATCH", "/api/graph/objects/"+tokenObjectID, rawTokenB, projectID, jsonBody(map[string]any{
+		"properties": map[string]any{"title": "edited by the second token"},
+	}))
+	mustStatus(t, patchResp, http.StatusOK)
+
+	countFor := func(query string) int {
+		t.Helper()
+		resp := doAPILogged(t, rl, "GET",
+			"/api/graph/objects/count?type=StampE2EObject&"+query, e2eTestToken(), projectID, nil)
+		body := mustStatus(t, resp, http.StatusOK)
+		var payload map[string]any
+		parseBodyJSON(t, body, &payload)
+		n, _ := payload["count"].(float64)
+		return int(n)
+	}
+
+	rl.Section("The creator is visible only through the created/any scope")
+	if got := countFor("credential_id=" + tokenID); got != 0 {
+		t.Errorf("expected 0 objects for the creator credential in the default scope after an edit, got %d", got)
+	}
+	if got := countFor("credential_id=" + tokenID + "&provenance=created"); got != 1 {
+		t.Errorf("expected 1 object for credential_id=%s&provenance=created, got %d", tokenID, got)
+	}
+	if got := countFor("credential_id=" + tokenID + "&provenance=any"); got != 1 {
+		t.Errorf("expected 1 object for credential_id=%s&provenance=any, got %d", tokenID, got)
+	}
+
+	scopedResp := doAPILogged(t, rl, "GET",
+		"/api/graph/objects/search?type=StampE2EObject&credential_id="+tokenID+"&provenance=created",
+		e2eTestToken(), projectID, nil)
+	scopedBody := mustStatus(t, scopedResp, http.StatusOK)
+	var scoped map[string]any
+	parseBodyJSON(t, scopedBody, &scoped)
+	scopedItems, _ := scoped["items"].([]any)
+	if len(scopedItems) != 1 {
+		t.Fatalf("expected exactly 1 object for the creator under provenance=created, got %d: %s", len(scopedItems), scopedBody)
+	}
+	// `id` is the version row's physical id, and the PATCH above superseded the
+	// first version — so the stable identity to compare is canonical_id, not id.
+	if got, _ := scopedItems[0].(map[string]any)["canonical_id"]; got != tokenObjectCanonicalID {
+		t.Errorf("expected the scoped page to return canonical_id %s, got %v", tokenObjectCanonicalID, got)
+	}
+	if total, ok := scoped["total"].(float64); !ok || int(total) != len(scopedItems) {
+		t.Errorf("expected total=%d to match the scoped page, got %v", len(scopedItems), scoped["total"])
+	}
+
+	// A narrowing mode with nothing to narrow is a client error, not an empty
+	// page, so a caller cannot mistake a typo for "no writes".
+	bareScopeResp := doAPILogged(t, rl, "GET",
+		"/api/graph/objects/search?provenance=created", e2eTestToken(), projectID, nil)
+	bareScopeBody := mustStatus(t, bareScopeResp, http.StatusBadRequest)
+	if !strings.Contains(bareScopeBody, "provenance requires") {
+		t.Errorf("expected the 400 to explain the missing predicate, got %s", bareScopeBody)
+	}
+
+	rl.Printf("version scope proven: the creator of an edited object is found with provenance=created/any, not by default")
 }
