@@ -361,10 +361,13 @@ jobs:
     #
     # It is NOT in `server-ci` / `server-ci-status`'s `needs`, so a red Docker
     # Build fails this run only and both aggregates still report "Server CI
-    # passed". That is pre-existing and left alone here, deliberately: the image
-    # build is the one server job exposed to the anonymous Docker Hub pull quota
-    # (#793), and wiring it into the aggregate would import that flakiness into
-    # the suite's verdict. Read the `Docker Build` check itself.
+    # passed". That is pre-existing and left alone here, deliberately: this job
+    # builds the shipped image and pulls its base layers on every run, and it is
+    # where the documented #793 rate-limit failures landed — wiring it into the
+    # aggregate adds a second quota-dependent surface to the suite verdict on top
+    # of `test-db`, which already pulls `pgvector/pgvector:pg18-trixie` from the
+    # same anonymous quota. Read the `Docker Build` check itself; the merge
+    # wrapper fails a merge on any real red regardless of what the aggregate says.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
