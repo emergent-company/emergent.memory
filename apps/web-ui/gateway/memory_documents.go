@@ -81,6 +81,7 @@ type DocumentListParams struct {
 	Query      string // case-insensitive match over filename and source URL
 	Status     string // processing|ready|extracted|failed, "" for all
 	SourceType string // "upload", a data-source type, or "" for all
+	SourceID   string // connected data-source id, "none" for uploads, or "" for all
 	Sort       string // created|updated
 	Order      string // asc|desc
 	Cursor     string
@@ -123,6 +124,9 @@ func (m *MemoryClient) ListDocuments(ctx context.Context, params DocumentListPar
 	if params.SourceType != "" {
 		q.Set("sourceType", params.SourceType)
 	}
+	if params.SourceID != "" {
+		q.Set("sourceId", params.SourceID)
+	}
 	if params.Sort != "" {
 		q.Set("sort", params.Sort)
 	}
@@ -149,23 +153,24 @@ func (m *MemoryClient) ListDocuments(ctx context.Context, params DocumentListPar
 	}, nil
 }
 
-// DocumentSourceType is one provenance value present in the project, with the
-// number of documents behind it. It backs the source filter's options.
-type DocumentSourceType struct {
+// DocumentSourceCount is one provenance bucket for the source filter: a
+// connected data source (empty id for direct uploads) and its document count.
+type DocumentSourceCount struct {
+	SourceID   string `json:"sourceId"`
 	SourceType string `json:"sourceType"`
 	Count      int    `json:"count"`
 }
 
-// ListDocumentSourceTypes lists the document source types present in the
-// project with their counts (GET /api/documents/source-types).
-func (m *MemoryClient) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
+// ListDocumentSourceCounts lists document counts grouped by connected data
+// source (GET /api/documents/source-counts). It backs the source filter.
+func (m *MemoryClient) ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error) {
 	var out struct {
-		SourceTypes []DocumentSourceType `json:"sourceTypes"`
+		Sources []DocumentSourceCount `json:"sources"`
 	}
-	if err := m.doH(ctx, http.MethodGet, "/api/documents/source-types", nil, m.documentHeaders(ctx), &out); err != nil {
+	if err := m.doH(ctx, http.MethodGet, "/api/documents/source-counts", nil, m.documentHeaders(ctx), &out); err != nil {
 		return nil, err
 	}
-	return out.SourceTypes, nil
+	return out.Sources, nil
 }
 
 // GetDocument fetches a single document by id.

@@ -52,6 +52,7 @@ type docSpec struct {
 	filename         *string
 	sourceURL        *string
 	sourceType       string
+	sourceID         *string
 	conversionStatus string
 	createdAt        time.Time
 	updatedAt        time.Time
@@ -75,11 +76,15 @@ func (s *DocumentListFiltersSuite) insertDocument(spec docSpec) string {
 		conversionStatus = "not_required"
 	}
 
+	var sourceID any
+	if spec.sourceID != nil {
+		sourceID = *spec.sourceID
+	}
 	_, err := s.DB().NewRaw(`
 		INSERT INTO kb.documents
-			(id, project_id, filename, source_url, source_type, conversion_status, created_at, updated_at)
-		VALUES (uuid(?), uuid(?), ?, ?, ?, ?, ?, ?)
-	`, id, s.ProjectID, spec.filename, spec.sourceURL, sourceType, conversionStatus, spec.createdAt, spec.updatedAt).Exec(s.Ctx)
+			(id, project_id, filename, source_url, source_type, source_id, conversion_status, created_at, updated_at)
+		VALUES (uuid(?), uuid(?), ?, ?, ?, ?::uuid, ?, ?, ?)
+	`, id, s.ProjectID, spec.filename, spec.sourceURL, sourceType, sourceID, conversionStatus, spec.createdAt, spec.updatedAt).Exec(s.Ctx)
 	s.Require().NoError(err, "insert document")
 
 	if spec.parsingStatus != "" {
@@ -96,6 +101,18 @@ func (s *DocumentListFiltersSuite) insertDocument(spec docSpec) string {
 		`, uuid.New().String(), s.ProjectID, id, spec.extractionStatus, spec.createdAt, spec.createdAt).Exec(s.Ctx)
 		s.Require().NoError(err, "insert extraction job")
 	}
+	return id
+}
+
+// insertSource creates a kb.sources row and returns its id.
+func (s *DocumentListFiltersSuite) insertSource(provider string) string {
+	s.T().Helper()
+	id := uuid.New().String()
+	_, err := s.DB().NewRaw(`
+		INSERT INTO kb.sources (id, project_id, provider)
+		VALUES (uuid(?), uuid(?), ?)
+	`, id, s.ProjectID, provider).Exec(s.Ctx)
+	s.Require().NoError(err, "insert source")
 	return id
 }
 
@@ -281,6 +298,79 @@ func reversed(ids []string) []string {
 	return out
 }
 
+// TestFilterBySourceID pins the per-data-source filter: a connected source id
+// narrows to its documents, and "no source" narrows to direct uploads.
+func (s *DocumentListFiltersSuite) TestFilterBySourceID() {
+	now := time.Now().UTC()
+	drive := s.insertSource("google_drive")
+	web := s.insertSource("web")
+	driveDoc := s.insertDocument(docSpec{filename: testutil.StringPtr("drive.md"), sourceType: "drive", sourceID: &drive, createdAt: now, updatedAt: now})
+	webDoc := s.insertDocument(docSpec{filename: testutil.StringPtr("web.md"), sourceType: "web", sourceID: &web, createdAt: now.Add(-time.Minute), updatedAt: now})
+	upload := s.insertDocument(docSpec{filename: testutil.StringPtr("upload.md"), sourceType: "upload", createdAt: now.Add(-2 * time.Minute), updatedAt: now})
+
+	res := s.list(documents.ListParams{SourceID: &drive})
+	s.ElementsMatch([]string{driveDoc}, idsOf(res))
+
+	res = s.list(documents.ListParams{SourceUnassigned: true})
+	s.ElementsMatch([]string{upload}, idsOf(res))
+
+	res = s.list(documents.ListParams{SourceID: &web})
+	s.ElementsMatch([]string{webDoc}, idsOf(res))
+
+	// The status breakdown follows the source filter.
+	res = s.list(documents.ListParams{SourceID: &drive})
+	s.Equal(1, res.StatusCounts.All)
+}
+
+// TestSourceCountsEndpoint pins the source filter's counts: grouped by connected
+// source id (empty for uploads), over the same HEAD-only population as a listing.
+func (s *DocumentListFiltersSuite) TestSourceCountsEndpoint() {
+	now := time.Now().UTC()
+	drive := s.insertSource("google_drive")
+	web := s.insertSource("web")
+	s.insertDocument(docSpec{filename: testutil.StringPtr("drive-1.md"), sourceType: "drive", sourceID: &drive, createdAt: now, updatedAt: now})
+	s.insertDocument(docSpec{filename: testutil.StringPtr("drive-2.md"), sourceType: "drive", sourceID: &drive, createdAt: now.Add(-time.Minute), updatedAt: now})
+	s.insertDocument(docSpec{filename: testutil.StringPtr("web-1.md"), sourceType: "web", sourceID: &web, createdAt: now.Add(-2 * time.Minute), updatedAt: now})
+	s.insertDocument(docSpec{filename: testutil.StringPtr("upload.md"), sourceType: "upload", createdAt: now.Add(-3 * time.Minute), updatedAt: now})
+	head := s.insertDocument(docSpec{filename: testutil.StringPtr("head.md"), sourceType: "drive", sourceID: &drive, createdAt: now.Add(-4 * time.Minute), updatedAt: now})
+	superseded := s.insertDocument(docSpec{filename: testutil.StringPtr("old.md"), sourceType: "drive", sourceID: &drive, createdAt: now.Add(-5 * time.Minute), updatedAt: now})
+	removed := s.insertDocument(docSpec{filename: testutil.StringPtr("removed.md"), sourceType: "drive", sourceID: &drive, createdAt: now.Add(-6 * time.Minute), updatedAt: now})
+	_, err := s.DB().NewRaw(`UPDATE kb.documents SET supersedes_id = uuid(?) WHERE id = uuid(?)`, head, superseded).Exec(s.Ctx)
+	s.Require().NoError(err)
+	_, err = s.DB().NewRaw(`UPDATE kb.documents SET source_status = 'deleted_from_source' WHERE id = uuid(?)`, head).Exec(s.Ctx)
+	s.Require().NoError(err)
+	_, err = s.DB().NewRaw(`UPDATE kb.documents SET source_status = 'deleted_from_source' WHERE id = uuid(?)`, removed).Exec(s.Ctx)
+	s.Require().NoError(err)
+
+	resp := s.Client.GET("/api/documents/source-counts",
+		testutil.WithAuth("e2e-test-user"),
+		testutil.WithOrgID(s.OrgID),
+		testutil.WithProjectID(s.ProjectID),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "source counts: %s", resp.Body)
+	var body struct {
+		Sources []struct {
+			SourceID   string `json:"sourceId"`
+			SourceType string `json:"sourceType"`
+			Count      int    `json:"count"`
+		} `json:"sources"`
+	}
+	s.Require().NoError(json.Unmarshal(resp.Body, &body), "decode source counts: %s", resp.Body)
+
+	got := map[string]int{}
+	for _, src := range body.Sources {
+		got[src.SourceID] = src.Count
+	}
+	s.Equal(2, got[drive], "drive docs")
+	s.Equal(1, got[web], "web docs")
+	s.Equal(1, got[""], "uploads have no source id")
+	for _, src := range body.Sources {
+		if src.SourceID == "" && src.SourceType != "upload" {
+			s.T().Errorf("unassigned bucket type = %q, want upload", src.SourceType)
+		}
+	}
+}
+
 // TestListingExcludesSupersededAndDeletedFromSource keeps the new filters inside
 // the population contract the listing already had.
 func (s *DocumentListFiltersSuite) TestListingExcludesSupersededAndDeletedFromSource() {
@@ -370,6 +460,7 @@ func (s *DocumentListFiltersSuite) TestListEndpointContract() {
 		{"unknown status", "?status=done"},
 		{"unknown sort", "?sort=filename"},
 		{"unknown order", "?order=sideways"},
+		{"invalid source id", "?sourceId=not-a-uuid"},
 		{"limit below range", "?limit=0"},
 		{"limit above range", "?limit=501"},
 		{"unparseable cursor", "?cursor=not-a-cursor"},

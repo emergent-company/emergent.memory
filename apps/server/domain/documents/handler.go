@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/emergent-company/emergent.memory/internal/storage"
@@ -90,6 +92,7 @@ func NewHandler(
 // @Param        limit query int false "Maximum number of results (1-500)" minimum(1) maximum(500)
 // @Param        cursor query string false "Pagination cursor (opaque, from previous response; must match the requested sort)"
 // @Param        sourceType query string false "Filter by source type"
+// @Param        sourceId query string false "Filter by connected data source UUID, or \"none\" for documents with no source"
 // @Param        status query string false "Filter by derived status bucket" Enums(processing, ready, extracted, failed)
 // @Param        q query string false "Case-insensitive substring match over filename and source URL"
 // @Param        sort query string false "Sort key" Enums(created, updated) default(created)
@@ -162,6 +165,16 @@ func (h *Handler) List(c echo.Context) error {
 	// Filters
 	if sourceType := c.QueryParam("sourceType"); sourceType != "" {
 		params.SourceType = &sourceType
+	}
+	if sourceID := strings.TrimSpace(c.QueryParam("sourceId")); sourceID != "" {
+		if sourceID == sourceNoneFilter {
+			params.SourceUnassigned = true
+		} else {
+			if _, err := uuid.Parse(sourceID); err != nil {
+				return apperror.ErrBadRequest.WithMessage("sourceId must be a source UUID or \"none\"")
+			}
+			params.SourceID = &sourceID
+		}
 	}
 	if rootOnly := c.QueryParam("rootOnly"); rootOnly == "true" {
 		params.RootOnly = true
@@ -440,6 +453,33 @@ func (h *Handler) GetSourceTypes(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string][]SourceTypeWithCount{
 		"sourceTypes": sourceTypes,
+	})
+}
+
+// GetSourceCounts handles GET /api/documents/source-counts
+// @Summary      Get document counts by data source
+// @Description  Returns document counts grouped by connected data source (empty sourceId for direct uploads), for the documents source filter.
+// @Tags         documents
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} map[string][]SourceCount
+// @Failure      401 {object} apperror.Error
+// @Router       /api/documents/source-counts [get]
+// @Security     bearerAuth
+func (h *Handler) GetSourceCounts(c echo.Context) error {
+	user := auth.MustGetUser(c)
+
+	if user.ProjectID == "" {
+		return apperror.ErrBadRequest.WithMessage("project ID is required")
+	}
+
+	sources, err := h.svc.GetSourceCounts(c.Request().Context(), user.ProjectID)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string][]SourceCount{
+		"sources": sources,
 	})
 }
 

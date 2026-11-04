@@ -118,9 +118,9 @@ test.describe('Documents browser', () => {
     await expect(page.locator(DOCUMENTS_UPLOAD_MODAL)).toBeHidden();
 
     // --- Source filter: uploads only ---
-    await page.locator('#documents-filter-source').selectOption('upload');
-    await expect(page).toHaveURL(/sourceType=upload/);
-    await expect(page.locator('#documents-filter-source')).toHaveValue('upload');
+    await page.locator('#documents-filter-source').selectOption('none');
+    await expect(page).toHaveURL(/sourceId=none/);
+    await expect(page.locator('#documents-filter-source')).toHaveValue('none');
   });
 
   test('renders cards instead of the table on a phone viewport', async ({ page }) => {
