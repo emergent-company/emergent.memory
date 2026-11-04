@@ -357,7 +357,14 @@ jobs:
     # the back of a ~10-minute chain, so it was still IN_PROGRESS at every merge
     # decision — and `merge-reviewed-pr.sh` blocks a merge on ANY started check,
     # advisory or not. Started immediately it finishes (98 s measured) while the
-    # review is still being read. Its own failure still fails the aggregate.
+    # review is still being read.
+    #
+    # It is NOT in `server-ci` / `server-ci-status`'s `needs`, so a red Docker
+    # Build fails this run only and both aggregates still report "Server CI
+    # passed". That is pre-existing and left alone here, deliberately: the image
+    # build is the one server job exposed to the anonymous Docker Hub pull quota
+    # (#793), and wiring it into the aggregate would import that flakiness into
+    # the suite's verdict. Read the `Docker Build` check itself.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
