@@ -1035,6 +1035,77 @@
     return badge.root;
   }
 
+  /* ---------- recorded pipeline stage input ---------- */
+
+  // A recorded pipeline transcript (an extraction run) stores on each message the
+  // stage that produced it and what the text is: content.stage names the stage,
+  // content.stage_kind says which side of the stage the text belongs to. The
+  // label is metadata, never markup inside the text — the recorder used to write
+  // "**EntityProcessor** · stage output" into the message, which rendered
+  // literally on plain-text surfaces and which the history renderer's
+  // chain-of-thought heuristic then mistook for reasoning.
+  var STAGE_KIND_LABELS = {
+    prompt: "prompt",
+    output: "output",
+    error: "error",
+    header: "run",
+  };
+
+  function stageKindLabel(kind) {
+    if (!kind) return "";
+    return STAGE_KIND_LABELS[kind] || String(kind);
+  }
+
+  // stageInputCard renders a stage's INPUT (the run header, or the prompt the
+  // stage was asked) as a collapsed card rather than a "You" bubble: the
+  // operator never typed it, and a stage prompt embeds the document — tens of
+  // kilobytes that must stay inspectable without dominating the transcript.
+  // History-only: the live stream never carries a recorded stage prompt.
+  function stageInputCard(ctx, stage, kind, text, meta) {
+    ctx = ctx || {};
+    var messages = ctx.messages;
+    if (!messages || !text) return null;
+
+    var isHeader = kind === "header";
+    var icon = isHeader ? "lucide--flag" : "lucide--arrow-down-to-line";
+    var wrap = document.createElement("div");
+    wrap.className = "chat chat-start memory-rise memory-aux";
+    wrap.innerHTML =
+      '<div class="chat-image invisible bg-primary/5 text-primary border-primary/10 flex items-center justify-center rounded-full border p-2">' +
+      '<span class="iconify ' + icon + ' size-5" aria-hidden="true"></span></div>';
+    messages.appendChild(wrap);
+
+    var kindLabel = stageKindLabel(kind);
+    var badge = expandableBadge({
+      className: "memory-stage-input col-start-2 row-start-2 w-full",
+      icon: icon,
+      label: stage || "Stage",
+      afterLabel: kindLabel
+        ? '<span class="badge badge-ghost badge-xs font-normal">' + escapeHTML(kindLabel) + "</span>"
+        : "",
+      container: wrap,
+      renderDetails: function (detailEl) {
+        var heading = document.createElement("p");
+        heading.className = "mb-1.5 text-xs font-semibold tracking-wider uppercase text-muted";
+        heading.textContent = isHeader ? "Run" : "Stage prompt";
+        var pre = document.createElement("pre");
+        pre.className = "memory-scroll max-h-72 overflow-auto rounded-box border border-base-content/10 bg-base-200/50 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words";
+        pre.textContent = text;
+        detailEl.appendChild(heading);
+        detailEl.appendChild(pre);
+      },
+    }, ctx);
+    if (!badge) return null;
+    // Same step/relative-time annotation the bubbles carry (run pages only).
+    if (meta) {
+      var footer = document.createElement("div");
+      footer.className = "chat-footer mt-1 text-[11px] text-muted-faint font-mono";
+      footer.textContent = meta;
+      wrap.appendChild(footer);
+    }
+    return badge.root;
+  }
+
   /* ---------- run-control surfaces (copy, footer, typed run markers) ---------- */
 
   // Single implementation: MemoryChatHost.copyText (chat-host.js) owns the
@@ -2361,6 +2432,10 @@
           var content = item.content || {};
           var text = content.text || "";
           var html = content.html || "";
+          // Recorded pipeline provenance (see stageInputCard): the stage that
+          // produced the message and which side of the stage the text is.
+          var stage = typeof content.stage === "string" ? content.stage : "";
+          var stageKind = typeof content.stage_kind === "string" ? content.stage_kind : "";
           if (item.role === "system") {
             // The composed system instruction — already rendered once as the
             // agent-prompt card above; never a chat bubble.
@@ -2368,13 +2443,20 @@
           }
           if (item.role === "user") {
             if (text && !CS.isResumePrompt(text)) {
-              var userText = ctx.stripContextPreamble ? ctx.stripContextPreamble(text) : text;
-              ctx.addUserMessage(userText, silent, meta);
+              if (stage) {
+                // A recorded stage prompt (or the run header) is not something
+                // the operator typed: it renders as a collapsed, stage-labelled
+                // card instead of a "You" bubble carrying the whole document.
+                stageInputCard(ctx.badgeCtx, stage, stageKind, text, meta);
+              } else {
+                var userText = ctx.stripContextPreamble ? ctx.stripContextPreamble(text) : text;
+                ctx.addUserMessage(userText, silent, meta);
+              }
             }
           } else if (item.role === "tool") {
             // Tool result — already shown by the preceding tool_call chip.
             break;
-          } else if (ctx.isThinkingItem ? ctx.isThinkingItem(item, content) : CS.isThinkingMessage(content)) {
+          } else if (!stage && (ctx.isThinkingItem ? ctx.isThinkingItem(item, content) : CS.isThinkingMessage(content))) {
             // Planning/thinking monologue (carries function_calls): a collapsed
             // Thinking block on every surface, exactly like the live stream. A
             // tool-calling step with no text has nothing to show, so it is
@@ -2394,7 +2476,16 @@
             if (content.reasoning && ctx.renderThinkingBlock) {
               ctx.renderThinkingBlock(content.reasoning, null, "reasoning");
             }
-            var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), name, silent, meta);
+            // A recorded stage message is authored by its stage (the model that
+            // answered, or the processor that emitted the status line), which is
+            // more specific than the run's agent; the bubble says who produced it.
+            // A non-answer kind (an error) is stated in the header rather than as
+            // markup inside the text.
+            var authoredBy = stage || name;
+            if (stage && stageKind && stageKind !== "output" && stageKind !== "header") {
+              authoredBy = stage + " · " + stageKindLabel(stageKind);
+            }
+            var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), authoredBy, silent, meta);
             if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
             // Grounded citations ride on the history item; render the Sources
             // block beneath the answer (idempotent, no-op when empty).

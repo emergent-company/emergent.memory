@@ -408,8 +408,13 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 				// A high step keeps the reason last even when the message shares a
 				// timestamp with the last recorded stage (the timeline sorts by
 				// time, then step).
-				if recErr := w.runRecorder.RecordMessage(finishCtx, runID, "assistant", failureMessageStep,
-					"**Extraction failed**\n\n"+err.Error()); recErr != nil {
+				if recErr := w.runRecorder.RecordMessage(finishCtx, runID, RunMessage{
+					Role:      "assistant",
+					Step:      failureMessageStep,
+					Text:      err.Error(),
+					Stage:     extractionRunAgentName,
+					StageKind: stageKindError,
+				}); recErr != nil {
 					w.log.Warn("failed to record extraction failure message",
 						slog.String("run_id", runID),
 						logger.Error(recErr))
@@ -533,7 +538,8 @@ func (w *ObjectExtractionWorker) processJob(ctx context.Context, job *ObjectExtr
 	}
 	// Bridge the pipeline's stage callbacks to the job's run so the prompts and
 	// model responses render as a chat transcript. The file logger above stays
-	// the full-fidelity record (the transcript truncates long text).
+	// the full-fidelity record; the transcript stores the prompt and answer
+	// whole (only a runaway-output guard cuts one).
 	if runID != "" {
 		traceLogger = newRunTraceLogger(w.runRecorder, runID, traceLogger, transcriptHeader, w.log)
 	}
