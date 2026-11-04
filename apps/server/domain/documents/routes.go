@@ -14,6 +14,7 @@ func RegisterRoutes(e *echo.Echo, h *Handler, uploadHandler *UploadHandler, auth
 	sourceTypesGroup.Use(authMiddleware.RequireProjectTokenScope())
 	sourceTypesGroup.Use(authMiddleware.RequireProjectMember())
 	sourceTypesGroup.GET("/source-types", h.GetSourceTypes)
+	sourceTypesGroup.GET("/source-counts", h.GetSourceCounts)
 
 	g := e.Group("/api/documents")
 	g.Use(authMiddleware.RequireAuth())

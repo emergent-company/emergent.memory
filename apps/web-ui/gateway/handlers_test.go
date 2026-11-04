@@ -169,8 +169,9 @@ type fakeMemory struct {
 	documentStatusCounts   DocumentStatusCounts
 	documentsNextCursor    string
 	lastDocumentListParams DocumentListParams // params of the last ListDocuments call
-	docSourceTypes         []DocumentSourceType
-	docSourceTypesErr      error
+	docSourceCounts        []DocumentSourceCount
+	docSourceCountsErr     error
+
 	// schema discovery (Schema page card + per-document trigger)
 	discoveryJobs      []discoveryJob
 	discoveryErr       error
@@ -1308,12 +1309,12 @@ func (f *fakeMemory) CancelDiscoveryJob(ctx context.Context, jobID string) error
 	return nil
 }
 
-func (f *fakeMemory) ListDocumentSourceTypes(ctx context.Context) ([]DocumentSourceType, error) {
-	f.recordCatalog("ListDocumentSourceTypes")
-	if f.docSourceTypesErr != nil {
-		return nil, f.docSourceTypesErr
+func (f *fakeMemory) ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error) {
+	f.recordCatalog("ListDocumentSourceCounts")
+	if f.docSourceCountsErr != nil {
+		return nil, f.docSourceCountsErr
 	}
-	return f.docSourceTypes, nil
+	return f.docSourceCounts, nil
 }
 
 func (f *fakeMemory) GetDocument(ctx context.Context, id string) (*Document, error) {

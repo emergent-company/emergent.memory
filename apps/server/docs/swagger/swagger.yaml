@@ -3266,6 +3266,15 @@ definitions:
           status filter.
         type: integer
     type: object
+  domain_documents.SourceCount:
+    properties:
+      count:
+        type: integer
+      sourceId:
+        type: string
+      sourceType:
+        type: string
+    type: object
   domain_documents.SourceTypeWithCount:
     properties:
       count:
@@ -13554,6 +13563,11 @@ paths:
         in: query
         name: sourceType
         type: string
+      - description: Filter by connected data source UUID, or 'none' for documents
+          with no source
+        in: query
+        name: sourceId
+        type: string
       - description: Filter by derived status bucket
         enum:
         - processing
@@ -14064,6 +14078,32 @@ paths:
       security:
       - bearerAuth: []
       summary: Get bulk deletion impact
+      tags:
+      - documents
+  /api/documents/source-counts:
+    get:
+      consumes:
+      - application/json
+      description: Returns document counts grouped by connected data source (empty
+        sourceId for direct uploads), for the documents source filter.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/domain_documents.SourceCount'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get document counts by data source
       tags:
       - documents
   /api/documents/source-types:

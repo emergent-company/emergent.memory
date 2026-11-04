@@ -102,6 +102,11 @@ const (
 	SourceStatusDeletedFromSource = "deleted_from_source"
 )
 
+// sourceNoneFilter is the sourceId value that selects documents with no
+// connected data source (direct uploads). A real source id is a UUID, so the
+// sentinel cannot collide with one.
+const sourceNoneFilter = "none"
+
 // Document status filter buckets. The derived processing status has six states;
 // clients filter on four, each a group of those states. The groups are disjoint
 // because they are defined as a partition of the CASE that produces the status
@@ -173,10 +178,18 @@ func NormalizeOrder(raw string) (string, error) {
 
 // ListParams contains parameters for listing documents
 type ListParams struct {
-	ProjectID        string
-	Limit            int
-	Cursor           *Cursor
-	SourceType       *string
+	ProjectID string
+	Limit     int
+	Cursor    *Cursor
+	// SourceType filters on the source-kind category stamped on the document
+	// ("upload", "drive", "repo", ...). Deprecated for UI filtering in favour of
+	// SourceID; kept because it is part of the public listing API.
+	SourceType *string
+	// SourceID filters on one connected data source. SourceUnassigned selects
+	// documents with no data source (direct uploads) and is mutually exclusive
+	// with SourceID.
+	SourceID         *string
+	SourceUnassigned bool
 	RootOnly         bool
 	ParentDocumentID *string
 	// Status filters on the derived processing status, using a bucket from
@@ -498,6 +511,15 @@ type CancelConversionResponse struct {
 type SourceTypeWithCount struct {
 	SourceType string `bun:"source_type" json:"sourceType"`
 	Count      int    `bun:"count" json:"count"`
+}
+
+// SourceCount is one provenance bucket for the documents source filter: the
+// connected data source (empty for documents with no source) and the source
+// kind, with the number of HEAD documents behind it.
+type SourceCount struct {
+	SourceID   *string `bun:"source_id" json:"sourceId,omitempty"`
+	SourceType *string `bun:"source_type" json:"sourceType,omitempty"`
+	Count      int     `bun:"count" json:"count"`
 }
 
 // ExtractionSummary is the response for GET /:id/extraction-summary

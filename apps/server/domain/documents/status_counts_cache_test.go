@@ -47,10 +47,17 @@ func TestStatusCountsKeyScope(t *testing.T) {
 	rootOnly.RootOnly = true
 	includeDeleted := base
 	includeDeleted.IncludeDeletedFromSource = true
+	sourceID := "0190f2b0-0000-7000-8000-000000000001"
+	withSourceID := base
+	withSourceID.SourceID = &sourceID
+	withUnassigned := base
+	withUnassigned.SourceUnassigned = true
 
 	keys := []statusCountsKey{
 		newStatusCountsKey(base),
 		newStatusCountsKey(withSource),
+		newStatusCountsKey(withSourceID),
+		newStatusCountsKey(withUnassigned),
 		newStatusCountsKey(withParent),
 		newStatusCountsKey(otherProject),
 		newStatusCountsKey(otherQuery),

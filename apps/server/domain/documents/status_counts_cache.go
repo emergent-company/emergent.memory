@@ -22,6 +22,8 @@ const defaultStatusCountsMaxEntries = 1024
 type statusCountsKey struct {
 	ProjectID                string
 	SourceType               string
+	SourceID                 string
+	SourceUnassigned         bool
 	ParentDocumentID         string
 	Query                    string
 	RootOnly                 bool
@@ -63,6 +65,10 @@ func newStatusCountsKey(params ListParams) statusCountsKey {
 	if params.SourceType != nil {
 		key.SourceType = *params.SourceType
 	}
+	if params.SourceID != nil {
+		key.SourceID = *params.SourceID
+	}
+	key.SourceUnassigned = params.SourceUnassigned
 	if params.ParentDocumentID != nil {
 		key.ParentDocumentID = *params.ParentDocumentID
 	}

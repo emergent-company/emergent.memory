@@ -148,8 +148,8 @@ templ documentsToolbar(data documentPageData) {
 					if data.Status != "" {
 						<input type="hidden" name="status" value={ data.Status }/>
 					}
-					if data.SourceType != "" {
-						<input type="hidden" name="sourceType" value={ data.SourceType }/>
+					if data.SourceID != "" {
+						<input type="hidden" name="sourceId" value={ data.SourceID }/>
 					}
 					if data.Attention != "" {
 						<input type="hidden" name="attention" value={ data.Attention }/>
@@ -190,9 +190,9 @@ templ documentsToolbar(data documentPageData) {
 						</select>
 					}
 					@fm.FormControl("documents-filter-source", "Source", fm.LabelAbove, "", "", nil) {
-						<select id="documents-filter-source" name="sourceType" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
+						<select id="documents-filter-source" name="sourceId" class="select select-sm" aria-label="Source" onchange="this.form.submit()">
 							for _, opt := range documentSourceSelectOptions(data) {
-								<option value={ opt.Value } selected?={ opt.Value == data.SourceType }>{ opt.Label }</option>
+								<option value={ opt.Value } selected?={ opt.Value == data.SourceID }>{ opt.Label }</option>
 							}
 						</select>
 					}

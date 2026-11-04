@@ -170,6 +170,11 @@ func applyListFilters(query *bun.SelectQuery, params ListParams) *bun.SelectQuer
 	if params.SourceType != nil {
 		query = query.Where("d.source_type = ?", *params.SourceType)
 	}
+	if params.SourceUnassigned {
+		query = query.Where("d.source_id IS NULL")
+	} else if params.SourceID != nil {
+		query = query.Where("d.source_id = ?", *params.SourceID)
+	}
 	if params.RootOnly {
 		query = query.Where("d.parent_document_id IS NULL")
 	}
@@ -386,6 +391,28 @@ func (r *Repository) GetDistinctSourceTypes(ctx context.Context, projectID strin
 		results = []SourceTypeWithCount{}
 	}
 
+	return results, nil
+}
+
+// GetDistinctSourceIDs returns the documents' provenance buckets by connected
+// data source (empty id for direct uploads) with their counts. The population is
+// the same as a default listing, so the source-filter counts line up with the
+// rows.
+func (r *Repository) GetDistinctSourceIDs(ctx context.Context, projectID string) ([]SourceCount, error) {
+	var results []SourceCount
+	query := applyListFilters(r.db.NewSelect().TableExpr("kb.documents AS d"), ListParams{ProjectID: projectID}).
+		ColumnExpr("d.source_id").
+		ColumnExpr("d.source_type").
+		ColumnExpr("COUNT(*)::int AS count").
+		GroupExpr("d.source_id, d.source_type").
+		OrderExpr("count DESC")
+	if err := query.Scan(ctx, &results); err != nil {
+		r.log.Error("failed to get source counts", logger.Error(err))
+		return nil, apperror.NewDatabase("failed to get source counts", err)
+	}
+	if results == nil {
+		results = []SourceCount{}
+	}
 	return results, nil
 }
 
