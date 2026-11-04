@@ -138,7 +138,9 @@
       path + "?scope=" + encodeURIComponent(scope) + "&tab=" + encodeURIComponent(tab);
     if (project) url += "&project=" + encodeURIComponent(project);
     if (window.htmx && window.htmx.ajax) {
-      window.htmx.ajax("GET", url, { target: "#inbox-list", swap: "innerHTML" });
+      // outerHTML: the response's root IS #inbox-list, so innerHTML would nest a
+      // second #inbox-list inside the target (duplicate id) on the first swap.
+      window.htmx.ajax("GET", url, { target: "#inbox-list", swap: "outerHTML" });
     } else {
       window.location.reload();
     }

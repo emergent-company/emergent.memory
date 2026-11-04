@@ -100,14 +100,23 @@ async function boot(page: Page, body: string): Promise<Harness> {
     };
 
     // htmx stand-in: refreshList must swap the list fragment, never reload the
-    // page and never target the page shell.
+    // page and never target the page shell. The swap mode is recorded because
+    // innerHTML would nest a second #inbox-list inside the target.
     w.htmx = {
       ajax: function (
         method: string,
         url: string,
         opts?: { target?: string; swap?: string },
       ) {
-        w.__refreshCalls.push(method + ' ' + url + ' -> ' + ((opts && opts.target) || ''));
+        w.__refreshCalls.push(
+          method +
+            ' ' +
+            url +
+            ' -> ' +
+            ((opts && opts.target) || '') +
+            ' ' +
+            ((opts && opts.swap) || ''),
+        );
       },
     };
 
@@ -216,7 +225,9 @@ test('a notification entity frame refreshes the bell and the list', async ({ pag
   expect(after.count.length).toBeGreaterThan(before.count.length);
   expect(
     after.refresh.some(
-      (r) => r.startsWith('GET /partial/inbox-list') && r.endsWith('-> #inbox-list'),
+      (r) =>
+        r.startsWith('GET /partial/inbox-list') &&
+        r.includes('-> #inbox-list outerHTML'),
     ),
   ).toBe(true);
   expect(after.refresh.some((r) => r.includes('#main-content'))).toBe(false);

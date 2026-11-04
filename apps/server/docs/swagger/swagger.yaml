@@ -6226,10 +6226,8 @@ definitions:
         type: integer
       requiresAction:
         description: |-
-          RequiresAction counts the rows the "Action required" tab lists: not
-          cleared, not snoozed, requires_action = true. The web inbox has no other
-          way to size that badge, so omitting it renders a permanent 0 over a
-          non-empty tab.
+          RequiresAction counts the action-required notifications in the current
+          scope: not cleared, not snoozed, requires_action = true.
         type: integer
       snoozed:
         type: integer
