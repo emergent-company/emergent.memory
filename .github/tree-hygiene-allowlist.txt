@@ -8,10 +8,3 @@
 # Same dispatch contract for the durable dev-deploy trigger: fires on every
 # product `main` push and must name the private infra repo in the API call.
 .github/workflows/dispatch-dev-deploy.yml
-
-# Session-mode Playwright lanes must name the deployed dev stack: the
-# self-hosted `memory` runners are not the gateway host, so no localhost default
-# can work there. These are public DNS names (not private infrastructure) and
-# scrubbing them would make the scheduled lanes unrunnable (#1901).
-.github/workflows/web-ui-mutations.yml
-.github/workflows/web-ui-llm-scenarios.yml
