@@ -621,11 +621,13 @@ configured through the settings UI.
 
 The `scenarios` + `chat` projects (live-LLM, env-gated on
 `E2E_SCENARIO_LLM_API_KEY`) are **not** part of any PR CI gate: they need the
-running dev installation plus a real provider key, so they run on the
-self-hosted `memory` runner via a separate scheduled + manually-dispatchable
-workflow (`.github/workflows/web-ui-llm-scenarios.yml`). That workflow has no
-`pull_request` trigger, so it can never block a PR — it fires on a daily cron
-and on manual `workflow_dispatch`.
+running dev installation plus a real provider key, so they run on a separate
+scheduled + manually-dispatchable workflow. That workflow lives in the
+infrastructure repository, not here — it targets a deployed environment, so its
+configuration (stack URLs, test-user credentials) is infrastructure, and keeping
+it out of this repository is what lets the product tree stay free of deployment
+details. It has no `pull_request` trigger, so it can never block a PR; it fires
+on a daily cron and on manual `workflow_dispatch`.
 
 ### Mutations (scheduled, not PR-gated)
 
@@ -633,11 +635,11 @@ The `mutations` project — every `*-ui.spec.ts` (org/project/provider/agent/
 skill/schedule/token/object/board/document/backup UI mutations) — is likewise
 **not** part of any PR CI gate. It needs the running session-mode gateway plus a
 Zitadel test user (the same `E2E_TEST_USER_*` credentials as the live-LLM suite),
-so it runs on the self-hosted `memory` runner via a scheduled + manually
-dispatchable workflow (`.github/workflows/web-ui-mutations.yml`) with no
-`pull_request` trigger. It shares a concurrency group with the live-LLM workflow
-because both reuse the stable `E2E Main` tenant. (Before #1857 this project had
-no CI lane at all — the `*-ui.spec.ts` files were authored but never executed.)
+so it runs on a scheduled + manually dispatchable workflow that lives in the
+infrastructure repository alongside the live-LLM lane, with no `pull_request`
+trigger. It shares a concurrency group with the live-LLM workflow because both
+reuse the stable `E2E Main` tenant. (Before #1857 this project had no CI lane at
+all — the `*-ui.spec.ts` files were authored but never executed.)
 
 ## Notes
 
