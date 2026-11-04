@@ -48,6 +48,16 @@ func (s *Server) loadSchemaDiscovery(ctx context.Context) *SchemaDiscoveryView {
 	return view
 }
 
+// uiSchemaDiscoveryCard answers the card's own polling interval (see the
+// hx-trigger in schemaDiscoveryCard) with just the card. Polling GET /schema
+// would work — htmx could select the fragment out of the full page — but it
+// re-reads the compiled type browser and its provenance index every interval
+// for a fragment the user is not looking at.
+func (s *Server) uiSchemaDiscoveryCard(c echo.Context) error {
+	renderPartial(c.Response(), c.Request(), schemaDiscoveryCard(s.loadSchemaDiscovery(c.Request().Context())))
+	return nil
+}
+
 // uiSchemaDiscoveryStart handles POST /schema/discovery/start: the Schema
 // page's "all documents" action. The server resolves the document set
 // (scope=project), so the form carries no document ids.
@@ -57,7 +67,12 @@ func (s *Server) uiSchemaDiscoveryStart(c echo.Context) error {
 		return redirectWithError(c, "/schema", err)
 	}
 	s.invalidateProcessingProblems(ctx)
-	return c.Redirect(http.StatusSeeOther, "/schema?discovered=1#discovery")
+	// redirectAfterMutation, not c.Redirect: a boosted form (the card's own
+	// buttons and the panel row) swallows a 303 into an XHR, and htmx then
+	// pushes the followed URL — which has no fragment — so the reader landed at
+	// the top of the schema page instead of on the card they just acted on.
+	redirectAfterMutation(c, "/schema?discovered=1#discovery")
+	return nil
 }
 
 // uiSchemaDiscoveryRetry handles POST /schema/discovery/retry/:jobID. It backs
@@ -73,7 +88,8 @@ func (s *Server) uiSchemaDiscoveryRetry(c echo.Context) error {
 		return redirectWithError(c, "/schema", err)
 	}
 	s.invalidateProcessingProblems(ctx)
-	return c.Redirect(http.StatusSeeOther, "/schema?discovered=1#discovery")
+	redirectAfterMutation(c, "/schema?discovered=1#discovery")
+	return nil
 }
 
 // uiSchemaDiscoveryCancel handles POST /schema/discovery/cancel/:jobID: it
@@ -90,7 +106,8 @@ func (s *Server) uiSchemaDiscoveryCancel(c echo.Context) error {
 		return redirectWithError(c, "/schema", err)
 	}
 	s.invalidateProcessingProblems(ctx)
-	return c.Redirect(http.StatusSeeOther, "/schema?cancelled=1#discovery")
+	redirectAfterMutation(c, "/schema?cancelled=1#discovery")
+	return nil
 }
 
 // uiDocumentDiscover handles POST /documents/:id/discover: run discovery over

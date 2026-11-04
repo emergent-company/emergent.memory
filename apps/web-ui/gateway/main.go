@@ -463,6 +463,7 @@ func main() {
 	e.GET("/embeddings", s.uiEmbeddings)
 	e.POST("/embeddings/retrigger", s.uiRetriggerEmbeddings)
 	e.GET("/schema", s.uiSchema)
+	e.GET("/schema/discovery/card", s.uiSchemaDiscoveryCard)
 	e.POST("/schema/discovery/start", s.uiSchemaDiscoveryStart, s.requireSchemaWrite)
 	e.POST("/schema/discovery/retry/:jobID", s.uiSchemaDiscoveryRetry, s.requireSchemaWrite)
 	e.POST("/schema/discovery/cancel/:jobID", s.uiSchemaDiscoveryCancel, s.requireSchemaWrite)
