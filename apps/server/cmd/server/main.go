@@ -560,4 +560,7 @@ func (a *superadminToolHandlerAdapter) RetryDocumentParsingJobs(ctx context.Cont
 }
 
 // serviceTokenScopes mirrors the superadmin HTTP service-token mint.
-var serviceTokenScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}
+var serviceTokenScopes = []string{
+	"documents:read", "search", "graph:read", "journal:read",
+	"schema:read", "agents:read", "projects:read",
+}

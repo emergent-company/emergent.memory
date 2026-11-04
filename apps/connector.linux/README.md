@@ -447,8 +447,11 @@ access token and marks the active project. `projects use` resolves the project
 project token exists, and materializes the engine config at the `--config` path
 so `relay` can use it.
 
-The connector mints its own least-privilege project token with scopes
-`["data:read"]` (matching the macOS app), named `connector-<hostname>`. A token
+The connector mints its own least-privilege project token with the fine-grained
+read scopes `["documents:read", "search", "graph:read", "journal:read",
+"schema:read"]`, named `connector-<hostname>`. (The coarse `data:read` umbrella
+it used to request is retired from token creation and is now rejected by the
+API; the macOS app bundles this same CLI, so it mints the same set.) A token
 is **reused** from the local store when one already exists for that
 project/server and is only minted when missing; it is stored `0600` under
 `~/.config/memory-connector/tokens/`. `auth logout` clears that account's
@@ -594,9 +597,10 @@ the app opens the **hosted web login** in the browser and returns via the custom
 scheme `com.emergent.memory.connector://callback` (Authorization Code + PKCE,
 no client secret). The signed-in user session is used for identity and project
 listing; on project selection the app **mints a project-scoped `emt_*` token**
-(name `Memory Connector (macOS)`, least-privilege `data:read`) and stores it in
-the Keychain, so the headless engine relays independently of the browser
-session. A manually pasted token keeps working (Connection → Advanced — API
+through the bundled connector CLI (name `connector-<hostname>`, the fine-grained
+read set `documents:read`, `search`, `graph:read`, `journal:read`, `schema:read`)
+and stores it in the Keychain, so the headless engine relays independently of
+the browser session. A manually pasted token keeps working (Connection → Advanced — API
 token fallback).
 
 ### Operator setup (Zitadel console, one-time)

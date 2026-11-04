@@ -30,7 +30,7 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 
 	// ── 1. Two writers: a project token (api_key) and the session token ──────
 	rl.Section("Create a project token")
-	tokenID, rawToken := createToken(t, projectID, "e2e-stamp-api-token", []string{"data:read", "data:write"})
+	tokenID, rawToken := createToken(t, projectID, "e2e-stamp-api-token", []string{"documents:read", "documents:write"})
 	if tokenID == "" || rawToken == "" {
 		t.Fatalf("createToken returned an incomplete token: id=%q token=%q", tokenID, rawToken)
 	}
@@ -234,7 +234,7 @@ func TestGraphWriteAttribution_HTTP(t *testing.T) {
 	// first. A head-only filter would therefore answer "nothing" for the token
 	// that created it.
 	rl.Section("Edit the first token's object with a second token")
-	_, rawTokenB := createToken(t, projectID, "e2e-stamp-api-token-b", []string{"data:read", "data:write"})
+	_, rawTokenB := createToken(t, projectID, "e2e-stamp-api-token-b", []string{"documents:read", "documents:write"})
 	patchResp := doAPILogged(t, rl, "PATCH", "/api/graph/objects/"+tokenObjectID, rawTokenB, projectID, jsonBody(map[string]any{
 		"properties": map[string]any{"title": "edited by the second token"},
 	}))

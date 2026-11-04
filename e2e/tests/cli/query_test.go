@@ -176,7 +176,7 @@ func TestCLIInstalled_QueryWithProjectToken(t *testing.T) {
 	rl.Describe("Verify memory query works with a project-scoped token and org-level provider",
 		"Create ephemeral project",
 		"Configure LLM provider at org level (from env vars)",
-		"Create project-scoped token with data:read,agents:read,projects:read scopes",
+		"Create project-scoped token with the read and write presets",
 		"Run `memory query` authenticated only via the project token",
 		"Assert exit 0 and non-empty LLM response",
 	)
@@ -211,7 +211,7 @@ func TestCLIInstalled_QueryWithProjectToken(t *testing.T) {
 		"tokens", "create",
 		"--name", tokenName,
 		"--project", projectID,
-		"--scopes", "data:read,data:write,schema:read,projects:read,agents:read",
+		"--scopes", "read,write",
 	)
 	rl.CLI("memory tokens create --name "+tokenName+" --project "+projectID, tokenOut)
 

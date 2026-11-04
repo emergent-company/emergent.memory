@@ -494,7 +494,7 @@ func initPersistProject(cmd *cobra.Command, c *client.Client, projectID, project
 	// 4.2  Create a new token if none available.
 	if tokenValue == "" {
 		tokenName := cliTokenName()
-		defaultScopes := []string{"data:read", "data:write", "schema:read", "projects:read", "agents:read"}
+		defaultScopes := presetScopes("read", "write")
 		createResp, err := c.SDK.APITokens.Create(context.Background(), projectID, &apitokens.CreateTokenRequest{
 			Name:   tokenName,
 			Scopes: defaultScopes,
