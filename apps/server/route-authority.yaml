@@ -598,6 +598,10 @@ routes:
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember, RequireAPITokenScopes(documents:delete)
     - method: GET
+      path: /api/documents/source-counts
+      level: project-member
+      note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember
+    - method: GET
       path: /api/documents/source-types
       level: project-member
       note: RequireAuth, RequireProjectID, RequireProjectTokenScope, RequireProjectMember
