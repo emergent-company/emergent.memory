@@ -123,6 +123,10 @@ type MemoryBackend interface {
 	// Processing problems: one project-level read model behind the
 	// needs-attention panel and the Documents badge.
 	GetProcessingProblems(ctx context.Context) (*ProcessingProblemsReport, error)
+	// Schema discovery runs: the panel's schema area links to the history page,
+	// and a failed run is retried from its recorded configuration.
+	ListDiscoveryJobs(ctx context.Context) ([]DiscoveryJob, error)
+	RetryDiscoveryJob(ctx context.Context, jobID string) (string, error)
 	RetryExtractionJob(ctx context.Context, jobID string) error
 	// RetryParsingJob resets one failed document conversion in place; the
 	// per-unit counterpart of RetryAllParsingJobs.

@@ -1,6 +1,9 @@
 package processingproblems
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Classify turns a raw terminal error into a stable failure class plus
 // user-facing copy. It is intentionally heuristic: queues store provider error
@@ -50,17 +53,49 @@ func Classify(queue, message string) Failure {
 		}
 
 	case containsAny(msg, "no generative model", "no model configured", "model not configured", "no embedding model",
-		"not configured", "missing api key", "api key is not", "no credentials", "credential", "model not found",
-		"unknown model", "base url"):
+		"embedding model not configured"):
+		// The error text says a model is missing, but not which element is
+		// missing. The service resolves the project's effective model state and
+		// replaces this fallback copy with the real one (no provider, no default
+		// model, or a configured model the run could not use). Until then this
+		// copy must not assert a cause it has not checked.
 		return Failure{
 			Class:       ClassConfiguration,
-			Summary:     "The model or provider is not configured correctly.",
-			Remediation: "Configure a model in Project settings → Providers, then use Retry on the failed run.",
+			Summary:     configurationFallbackSummary,
+			Remediation: configurationFallbackRemediation,
+			Fix:         providerFix("Review model settings"),
+			Retryable:   false,
+		}
+
+	// A model name the provider does not serve is its own failure: the provider
+	// is configured and reachable, so "not configured" would send the user to a
+	// page that already looks correct.
+	case modelNotFound(msg):
+		return Failure{
+			Class:       ClassConfiguration,
+			Cause:       CauseModelUnavailable,
+			Summary:     "The provider does not offer the configured model.",
+			Remediation: "Pick a model the provider serves (Project settings → Providers → model catalog), then retry.",
+			Fix:         providerFix("Choose a model"),
+			Retryable:   false,
+		}
+
+	case containsAny(msg, "base url", "baseurl", "invalid url", "unsupported protocol scheme"):
+		return Failure{
+			Class:       ClassConfiguration,
+			Cause:       CauseBaseURL,
+			Summary:     "The provider endpoint (base URL) is not usable.",
+			Remediation: "Fix the provider's base URL in Project settings → Providers, then retry.",
+			Fix:         providerFix("Fix base URL"),
 			Retryable:   false,
 		}
 
 	case containsAny(msg, "401", "403", "unauthorized", "forbidden", "permission denied", "invalid_grant",
-		"invalid grant", "token expired", "access denied", "not authorized"):
+		"invalid grant", "token expired", "access denied", "not authorized",
+		"credential", "api key is not", "invalid api key", "incorrect api key", "authentication fails",
+		"unauthenticated"):
+		// A rejected or missing credential is a permission problem, not a model
+		// selection one: the provider is configured, and the fix is its key.
 		return Failure{
 			Class:       ClassPermission,
 			Summary:     permissionSummary(queue),
@@ -178,6 +213,22 @@ func containsAny(msg string, needles ...string) bool {
 		}
 	}
 	return false
+}
+
+// modelNotFoundRe catches the vendor phrasings that put words between "model"
+// and the failure: `model "qwen3:8b" not found`, `the model 'gpt-5' does not
+// exist or you do not have access to it`, `model is not available`. A plain
+// substring list cannot express that, and "not found" on its own would also
+// swallow missing documents and data sources.
+var modelNotFoundRe = regexp.MustCompile(`\bmodel\b[^.\n]{0,80}\b(not found|not available|does not exist|is not supported|unknown)\b`)
+
+// modelNotFound reports whether the error says the provider does not serve the
+// requested model.
+func modelNotFound(msg string) bool {
+	if containsAny(msg, "no such model", "invalid model name", "unknown model", "model not found") {
+		return true
+	}
+	return modelNotFoundRe.MatchString(msg)
 }
 
 func emptyFailure(queue string) Failure {

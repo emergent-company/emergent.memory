@@ -463,6 +463,8 @@ func main() {
 	e.POST("/schema/add", s.uiSchemaInstall, s.requireSchemaWrite)
 	e.GET("/schema/packs", s.uiSchemaPacks)
 	e.GET("/schema/packs/:id", s.uiSchemaPack)
+	e.GET("/schema/discovery", s.uiSchemaDiscovery)
+	e.POST("/schema/discovery/:jobId/retry", s.uiRetryDiscovery)
 	e.GET("/schema/object-types/:name", s.uiSchemaObjectType)
 	e.GET("/schema/object-types/:name/edit", s.uiSchemaObjectTypeEdit)
 	e.POST("/schema/object-types/:name", s.uiSchemaObjectTypeUpdate, s.requireSchemaWrite)

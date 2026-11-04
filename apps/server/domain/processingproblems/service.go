@@ -11,6 +11,7 @@ import (
 	"github.com/uptrace/bun"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/emergent-company/emergent.memory/domain/modelstate"
 	"github.com/emergent-company/emergent.memory/pkg/logger"
 )
 
@@ -27,13 +28,16 @@ var areaOrder = []Area{
 
 // Service assembles the project's processing-problem report.
 type Service struct {
-	repo *Repository
-	log  *slog.Logger
+	repo  *Repository
+	model modelstate.Reader
+	log   *slog.Logger
 }
 
-// NewService creates the read-model service.
-func NewService(repo *Repository, log *slog.Logger) *Service {
-	return &Service{repo: repo, log: log.With(logger.Scope("processingproblems"))}
+// NewService creates the read-model service. model resolves the project's
+// effective model configuration so a configuration failure can name the element
+// that is missing; it may be nil in tests, which leaves the copy unverified.
+func NewService(repo *Repository, model modelstate.Reader, log *slog.Logger) *Service {
+	return &Service{repo: repo, model: model, log: log.With(logger.Scope("processingproblems"))}
 }
 
 // DB exposes the database handle for handler-level membership checks.
@@ -103,6 +107,23 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 		}
 	}
 
+	// A configuration failure's copy depends on what the project actually has
+	// configured, not on the error text: the same message means "connect a
+	// provider", "select a default model" or "your model is fine, the run failed
+	// anyway". Resolve the model state once per report and rewrite those
+	// failures. When the state cannot be read the fallback copy stays, and it
+	// does not assert a cause it has not checked.
+	if hasConfigurationProblem(byArea) {
+		if state, ok := s.modelState(ctx, projectID); ok {
+			for area, problems := range byArea {
+				for i := range problems {
+					problems[i].Failure = resolveConfiguration(problems[i].Failure, state)
+				}
+				byArea[area] = problems
+			}
+		}
+	}
+
 	report := &Report{
 		ProjectID:   projectID,
 		Areas:       make([]AreaSummary, 0, len(areaOrder)),
@@ -147,6 +168,36 @@ func (s *Service) List(ctx context.Context, projectID string) (*Report, error) {
 	}
 
 	return report, nil
+}
+
+// hasConfigurationProblem reports whether any row needs its copy resolved
+// against the project's model state.
+func hasConfigurationProblem(byArea map[Area][]Problem) bool {
+	for _, problems := range byArea {
+		for _, p := range problems {
+			if p.Failure.Class == ClassConfiguration {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// modelState resolves the project's effective model configuration. A failure is
+// logged and reported as unresolved so the report still renders: a metadata
+// read error must not turn into a false claim about the user's configuration.
+func (s *Service) modelState(ctx context.Context, projectID string) (modelstate.State, bool) {
+	if s.model == nil {
+		return modelstate.State{}, false
+	}
+	state, err := s.model.State(ctx, projectID)
+	if err != nil {
+		s.log.Warn("failed to resolve model state for configuration failure copy",
+			slog.String("project_id", projectID),
+			logger.Error(err))
+		return modelstate.State{}, false
+	}
+	return state, true
 }
 
 // queueResult is one queue's rows plus the exact number of matching units the
@@ -235,7 +286,14 @@ func actionFor(queue string, row problemRow) Action {
 	case QueueBlueprintUpdate:
 		return Action{Kind: ActionOpen, Label: "Open blueprints", Href: "/blueprints"}
 
-	case QueueDiscovery, QueueSchemaMigration:
+	case QueueDiscovery:
+		// A failed run stores its own configuration, so the panel can start a
+		// fresh one from it. Before this, the only action was "Open schema",
+		// which lands on a page that knows nothing about discovery: the user had
+		// no way to re-run the work at all.
+		return Action{Kind: ActionRetryDiscovery, Label: "Retry discovery", Href: "/schema/discovery"}
+
+	case QueueSchemaMigration:
 		return Action{Kind: ActionOpen, Label: "Open schema", Href: "/schema"}
 
 	default:
@@ -272,6 +330,8 @@ func drilldownFor(queue string, row problemRow) string {
 		return "/sessions"
 	case QueueBlueprintUpdate:
 		return "/blueprints"
+	case QueueDiscovery:
+		return "/schema/discovery"
 	default:
 		return "/schema"
 	}

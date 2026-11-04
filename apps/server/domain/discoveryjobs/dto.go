@@ -44,6 +44,9 @@ type JobListItem struct {
 	DiscoveredTypes         JSONArray  `json:"discovered_types"`
 	DiscoveredRelationships JSONArray  `json:"discovered_relationships"`
 	SchemaID                *uuid.UUID `json:"schema_id,omitempty"`
+	// ErrorMessage carries a terminal failure's reason, so a job list can
+	// explain a failed run without a second fetch per row.
+	ErrorMessage *string `json:"error_message,omitempty"`
 }
 
 // CancelJobResponse is the response for cancelling a job

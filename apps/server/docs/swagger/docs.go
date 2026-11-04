@@ -25961,6 +25961,73 @@ const docTemplate = `{
                 }
             }
         },
+        "/discovery-jobs/{jobId}/retry": {
+            "post": {
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "description": "Starts a new discovery job from the failed job's recorded configuration. The failed attempt is kept as history; nothing is reset.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "discovery-jobs"
+                ],
+                "summary": "Retry a failed discovery job",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Job ID (UUID)",
+                        "name": "jobId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "New discovery job started",
+                        "schema": {
+                            "$ref": "#/definitions/domain_discoveryjobs.StartDiscoveryResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request (job is not failed or cancelled)",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "404": {
+                        "description": "Job not found",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "409": {
+                        "description": "Another discovery job is already running",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error"
+                        }
+                    }
+                }
+            }
+        },
         "/docs": {
             "get": {
                 "description": "Returns the Swagger UI HTML page for browsing API documentation",
@@ -31345,6 +31412,10 @@ const docTemplate = `{
                     "type": "array",
                     "items": {}
                 },
+                "error_message": {
+                    "description": "ErrorMessage carries a terminal failure's reason, so a job list can\nexplain a failed run without a second fetch per row.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -36700,12 +36771,14 @@ const docTemplate = `{
                 "retry_extraction",
                 "retry_conversion",
                 "retry_embeddings",
+                "retry_discovery",
                 "open"
             ],
             "x-enum-varnames": [
                 "ActionRetryExtraction",
                 "ActionRetryConversion",
                 "ActionRetryEmbeddings",
+                "ActionRetryDiscovery",
                 "ActionOpen"
             ]
         },
@@ -36777,8 +36850,28 @@ const docTemplate = `{
         "domain_processingproblems.Failure": {
             "type": "object",
             "properties": {
+                "cause": {
+                    "description": "Cause narrows a class to the element that failed, when the classifier can\ntell. It is empty for classes the copy already describes exactly.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FailureCause"
+                        }
+                    ]
+                },
                 "class": {
                     "$ref": "#/definitions/domain_processingproblems.FailureClass"
+                },
+                "fix": {
+                    "description": "Fix is the page where the recorded cause is fixed, when the product knows\none. It is nil for causes with no single destination.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/domain_processingproblems.FixTarget"
+                        }
+                    ]
+                },
+                "model": {
+                    "description": "Model is the generative model this project resolves to (routed\n\"instance/model\"), when the failure is a model-provider problem. Empty\nwhen nothing resolves or the class is unrelated.",
+                    "type": "string"
                 },
                 "remediation": {
                     "type": "string"
@@ -36789,8 +36882,29 @@ const docTemplate = `{
                 },
                 "summary": {
                     "type": "string"
+                },
+                "verified": {
+                    "description": "Verified reports whether the copy was checked against the project's\neffective model configuration before being written. A configuration\nfailure with Verified=false is a guess and must read as one.",
+                    "type": "boolean"
                 }
             }
+        },
+        "domain_processingproblems.FailureCause": {
+            "type": "string",
+            "enum": [
+                "no_provider",
+                "no_default_model",
+                "model_unusable",
+                "model_unavailable",
+                "base_url"
+            ],
+            "x-enum-varnames": [
+                "CauseNoProvider",
+                "CauseNoDefaultModel",
+                "CauseModelUnusable",
+                "CauseModelUnavailable",
+                "CauseBaseURL"
+            ]
         },
         "domain_processingproblems.FailureClass": {
             "type": "string",
@@ -36816,6 +36930,17 @@ const docTemplate = `{
                 "ClassInternal",
                 "ClassUnknown"
             ]
+        },
+        "domain_processingproblems.FixTarget": {
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                }
+            }
         },
         "domain_processingproblems.Problem": {
             "type": "object",
