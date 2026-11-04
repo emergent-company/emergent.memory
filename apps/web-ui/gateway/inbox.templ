@@ -28,21 +28,43 @@ templ InboxPage(d inboxView) {
 			data-project-filter={ d.ProjectFilter }
 		>
 			@inboxScopeSwitch(d)
-			if d.Scope == "project" && !d.ProjectSelected {
-				@inboxNoProject()
-			} else if d.LoadErr != nil {
-				@pageError("Inbox unavailable", d.LoadErr)
-			} else {
+			if inboxShowsTabs(d) {
 				@inboxProjectFilterControl(d)
 				@inboxTabs(d)
-				if len(d.Notifications) == 0 {
-					@inboxEmpty(d)
-				} else {
-					@inboxList(d)
-				}
 			}
+			@inboxListRegion(d)
 		</div>
 	}
+}
+
+// inboxListRegion is the #inbox-list swap target: the notification list, or the
+// empty/error/no-project state that stands in for it. It is deliberately one
+// stable element so /partial/inbox-list can replace its contents without
+// touching the scope switch, filter, or tab strip around it.
+templ inboxListRegion(d inboxView) {
+	<div id="inbox-list">
+		if d.Scope == inboxScopeProject && !d.ProjectSelected {
+			@inboxNoProject()
+		} else if d.LoadErr != nil {
+			@pageError("Inbox unavailable", d.LoadErr)
+		} else if len(d.Notifications) == 0 {
+			@inboxEmpty(d)
+		} else {
+			@inboxRows(d)
+		}
+	</div>
+}
+
+// inboxListPartial is the /partial/inbox-list fragment: the list region plus an
+// out-of-band refresh of the tab strip, so per-tab counts stay live in the same
+// round trip. The strip is omitted when the page would not render one.
+templ inboxListPartial(d inboxView) {
+	if inboxShowsTabs(d) {
+		<div id="inbox-tabs" hx-swap-oob="innerHTML">
+			@inboxTabStrip(d)
+		</div>
+	}
+	@inboxListRegion(d)
 }
 
 // inboxHeader is the page header with the scope-wide "Mark all read" action.
@@ -122,13 +144,20 @@ templ inboxScopeLink(d inboxView, scope, label, icon string) {
 	}
 }
 
-// inboxTabs is the tab strip with per-tab counts.
+// inboxTabs is the tab strip with per-tab counts. The id is the out-of-band
+// swap target /partial/inbox-list refreshes counts into.
 templ inboxTabs(d inboxView) {
-	<div class="border-base-content/10 mb-4 flex flex-wrap items-center gap-1 border-b" role="tablist" data-inbox-tabs>
-		for _, t := range inboxTabDefs {
-			@inboxTab(d, t)
-		}
+	<div id="inbox-tabs" class="border-base-content/10 mb-4 flex flex-wrap items-center gap-1 border-b" role="tablist" data-inbox-tabs>
+		@inboxTabStrip(d)
 	</div>
+}
+
+// inboxTabStrip is the strip's contents, shared by the page and the partial's
+// out-of-band refresh (which swaps innerHTML of #inbox-tabs).
+templ inboxTabStrip(d inboxView) {
+	for _, t := range inboxTabDefs {
+		@inboxTab(d, t)
+	}
 }
 
 templ inboxTab(d inboxView, t inboxTabDef) {
@@ -149,8 +178,8 @@ templ inboxTab(d inboxView, t inboxTabDef) {
 	</a>
 }
 
-// inboxList is the notification list container the client refreshes in place.
-templ inboxList(d inboxView) {
+// inboxRows is the notification list container inside #inbox-list.
+templ inboxRows(d inboxView) {
 	<div class="rounded-box border-base-content/10 bg-base-100 divide-base-content/5 overflow-hidden border divide-y" data-inbox-list>
 		for _, n := range d.Notifications {
 			@inboxRow(d, n)
@@ -166,6 +195,7 @@ templ inboxList(d inboxView) {
 // pending question/approval and marks it read (issue #1362).
 templ inboxRow(d inboxView, n Notification) {
 	<div
+		id={ "notification-" + n.ID }
 		class={ "flex items-start gap-3 px-4 py-3 transition-colors hover:bg-base-200/40", templ.KV("bg-primary/5", !n.Read) }
 		data-notification-id={ n.ID }
 		data-notification-unread={ strconv.FormatBool(!n.Read) }

@@ -228,6 +228,20 @@ func (r *Repository) GetCounts(ctx context.Context, userID string, params CountP
 	}
 	counts.Unread = int64(unread)
 
+	// Count action-required (not cleared, not snoozed, requires_action = true) —
+	// the "Action required" tab's badge. It mirrors that tab's list filter, so
+	// the badge and the rows it labels can never disagree.
+	actionRequired, err := r.countBase(userID, params).
+		Where("cleared_at IS NULL").
+		Where("(snoozed_until IS NULL OR snoozed_until <= ?)", now).
+		Where("requires_action = true").
+		Count(ctx)
+	if err != nil {
+		r.log.Error("failed to count action-required notifications", logger.Error(err))
+		return nil, apperror.NewDatabase("Database operation failed", err)
+	}
+	counts.RequiresAction = int64(actionRequired)
+
 	// Count important (not cleared, not snoozed, importance = 'important')
 	important, err := r.countBase(userID, params).
 		Where("cleared_at IS NULL").

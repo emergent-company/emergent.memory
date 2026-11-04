@@ -99,10 +99,15 @@ async function boot(page: Page, body: string): Promise<Harness> {
       });
     };
 
-    // htmx stand-in: refreshList must swap the partial, never reload the page.
+    // htmx stand-in: refreshList must swap the list fragment, never reload the
+    // page and never target the page shell.
     w.htmx = {
-      ajax: function (method: string, url: string) {
-        w.__refreshCalls.push(method + ' ' + url);
+      ajax: function (
+        method: string,
+        url: string,
+        opts?: { target?: string; swap?: string },
+      ) {
+        w.__refreshCalls.push(method + ' ' + url + ' -> ' + ((opts && opts.target) || ''));
       },
     };
 
@@ -209,7 +214,12 @@ test('a notification entity frame refreshes the bell and the list', async ({ pag
   await expect(page.locator('[data-notifications-badge]')).toHaveText('7');
   const after = await calls(page);
   expect(after.count.length).toBeGreaterThan(before.count.length);
-  expect(after.refresh.some((r) => r.startsWith('GET /inbox'))).toBe(true);
+  expect(
+    after.refresh.some(
+      (r) => r.startsWith('GET /partial/inbox-list') && r.endsWith('-> #inbox-list'),
+    ),
+  ).toBe(true);
+  expect(after.refresh.some((r) => r.includes('#main-content'))).toBe(false);
   expect(h.errors).toEqual([]);
 });
 

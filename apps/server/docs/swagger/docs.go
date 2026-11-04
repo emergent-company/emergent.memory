@@ -36080,6 +36080,10 @@ const docTemplate = `{
                 "other": {
                     "type": "integer"
                 },
+                "requiresAction": {
+                    "description": "RequiresAction counts the rows the \"Action required\" tab lists: not\ncleared, not snoozed, requires_action = true. The web inbox has no other\nway to size that badge, so omitting it renders a permanent 0 over a\nnon-empty tab.",
+                    "type": "integer"
+                },
                 "snoozed": {
                     "type": "integer"
                 },

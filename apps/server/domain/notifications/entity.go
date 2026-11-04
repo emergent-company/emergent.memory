@@ -104,6 +104,11 @@ type NotificationCounts struct {
 	Other     int64 `json:"other"`
 	Snoozed   int64 `json:"snoozed"`
 	Cleared   int64 `json:"cleared"`
+	// RequiresAction counts the rows the "Action required" tab lists: not
+	// cleared, not snoozed, requires_action = true. The web inbox has no other
+	// way to size that badge, so omitting it renders a permanent 0 over a
+	// non-empty tab.
+	RequiresAction int64 `json:"requiresAction"`
 }
 
 // NotificationTab represents the notification tab filter

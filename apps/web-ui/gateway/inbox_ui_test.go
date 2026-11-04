@@ -754,3 +754,116 @@ func TestNotificationWhen(t *testing.T) {
 		t.Errorf("empty timestamp = %q", got)
 	}
 }
+
+// TestInboxListPartialRendersRegionAndTabs pins the fragment's contract: it
+// carries the #inbox-list swap target, the rows, and an out-of-band refresh of
+// #inbox-tabs — and none of the page chrome around them.
+func TestInboxListPartialRendersRegionAndTabs(t *testing.T) {
+	d := inboxView{
+		Scope:         inboxScopeAll,
+		Tab:           inboxTabAll,
+		Counts:        &NotificationCounts{All: 2, Unread: 1, RequiresAction: 1},
+		Notifications: []Notification{{ID: "n1", Title: "Review the extraction", RequiresAction: true}},
+	}
+	html := renderHTML(t, inboxListPartial(d))
+
+	for _, want := range []string{
+		`id="inbox-list"`,
+		`id="inbox-tabs"`,
+		`hx-swap-oob="innerHTML"`,
+		`data-inbox-tab="action"`,
+		`id="notification-n1"`,
+		`data-notification-id="n1"`,
+		"Review the extraction",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("inbox list partial missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"data-inbox-page",
+		"data-inbox-scope-switch",
+		"Mark all read",
+		"<html",
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("inbox list partial must not render page chrome %q", unwanted)
+		}
+	}
+}
+
+// TestInboxListPartialFlipsEmptyState asserts the fragment can replace rows with
+// the empty state — the swap target must wrap both, not only the rows.
+func TestInboxListPartialFlipsEmptyState(t *testing.T) {
+	html := renderHTML(t, inboxListPartial(inboxView{Scope: inboxScopeAll, Tab: inboxTabAll, Counts: &NotificationCounts{}}))
+	if !strings.Contains(html, `id="inbox-list"`) {
+		t.Error("empty fragment must still carry the swap target")
+	}
+	if !strings.Contains(html, "All caught up") {
+		t.Error("empty fragment must render the empty state inside the swap target")
+	}
+	if strings.Contains(html, "data-inbox-list") {
+		t.Error("empty fragment must not render a list container")
+	}
+}
+
+// TestInboxListPartialProjectWithoutProject asserts a Project scope with no
+// active project renders the select-a-project state and no tab strip (which the
+// page does not render either), so the out-of-band swap has no missing target.
+func TestInboxListPartialProjectWithoutProject(t *testing.T) {
+	html := renderHTML(t, inboxListPartial(inboxView{Scope: inboxScopeProject, Tab: inboxTabAll}))
+	if !strings.Contains(html, `id="inbox-list"`) || !strings.Contains(html, "No project selected") {
+		t.Error("project fragment without a project must render the select-a-project state in the swap target")
+	}
+	if strings.Contains(html, "hx-swap-oob") {
+		t.Error("no tab strip is rendered without a project, so the fragment must not emit an out-of-band swap")
+	}
+}
+
+// TestUIInboxListPartial drives the real fragment handler: it must serve only
+// the region, never the shell, and forward exactly the filters the page would.
+func TestUIInboxListPartial(t *testing.T) {
+	f := &fakeMemory{
+		project:            &Project{ID: "active-project", Name: "Active"},
+		projects:           []ProjectRef{{ID: "p1", Name: "Acme"}},
+		notificationCounts: &NotificationCounts{All: 1, Unread: 1, RequiresAction: 1},
+		notifications:      []Notification{{ID: "n1", ProjectID: "p1", Title: "New document uploaded", Category: "documents"}},
+	}
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// No Sub: page() would skip its own bell counts call; the fragment
+			// path records exactly the counts inboxViewFor forwarded.
+			ctx := withSessionContext(c.Request().Context(), &sessionContext{Token: "tok"})
+			c.SetRequest(c.Request().WithContext(ctx))
+			return next(c)
+		}
+	})
+	e.GET("/partial/inbox-list", s.uiInboxList)
+
+	req := httptest.NewRequest(http.MethodGet, "/partial/inbox-list?scope=account&tab=all&project=p1", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET partial: status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if f.lastListParams.Scope != "account" || f.lastListParams.ProjectID != "p1" {
+		t.Errorf("partial list forwarded scope/project = %q/%q, want account/p1", f.lastListParams.Scope, f.lastListParams.ProjectID)
+	}
+	if f.lastCountsScope != "account" || f.lastCountsProject != "p1" {
+		t.Errorf("partial counts forwarded scope/project = %q/%q, want account/p1", f.lastCountsScope, f.lastCountsProject)
+	}
+	for _, want := range []string{`id="inbox-list"`, `id="notification-n1"`, "New document uploaded", "hx-swap-oob"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("partial response missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"data-inbox-page", "data-inbox-scope-switch", "Mark all read"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("partial response must not render page chrome %q", unwanted)
+		}
+	}
+}

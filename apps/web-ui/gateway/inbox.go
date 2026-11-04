@@ -139,13 +139,30 @@ func inboxListParams(scope, projectID, tab string) NotificationListParams {
 
 // uiInbox renders the inbox page: scope switch, tabs, list, and empty states.
 func (s *Server) uiInbox(c echo.Context) error {
+	return s.page(c, pageTitle("Inbox"), InboxPage(s.inboxViewFor(c)))
+}
+
+// uiInboxList renders /partial/inbox-list: the fragment the inbox JS swaps into
+// #inbox-list on a live event or after an inline action, plus an out-of-band tab
+// strip so per-tab counts stay current without replacing the page around them.
+//
+// It renders from inboxViewFor — the same builder the page uses — so the
+// fragment can never disagree with the page it patches.
+func (s *Server) uiInboxList(c echo.Context) error {
+	renderPartial(c.Response().Writer, c.Request(), inboxListPartial(s.inboxViewFor(c)))
+	return nil
+}
+
+// inboxViewFor builds the render state for one inbox request (page or list
+// fragment): scope, tab, active project, project attribution/filter, the
+// filtered list, and per-tab counts. Both render paths share it.
+func (s *Server) inboxViewFor(c echo.Context) inboxView {
 	ctx := c.Request().Context()
 	scope := notificationScope(c.QueryParam("scope"))
-	tab := inboxTabFor(c.QueryParam("tab"))
 	flashMsg, warnMsg, _ := mergeFlashFromQuery(c)
 	view := inboxView{
 		Scope:    scope,
-		Tab:      tab,
+		Tab:      inboxTabFor(c.QueryParam("tab")),
 		FlashMsg: flashMsg,
 		WarnMsg:  warnMsg,
 		FlashErr: flashError(c),
@@ -157,9 +174,10 @@ func (s *Server) uiInbox(c echo.Context) error {
 	}
 	if scope == inboxScopeProject {
 		if view.Project == nil {
-			// No active project: the Project inbox cannot list anything. Render
-			// the "select a project" empty state without a list call.
-			return s.page(c, pageTitle("Inbox"), InboxPage(view))
+			// No active project: the Project inbox cannot list anything. The
+			// view carries ProjectSelected=false so both the page and the list
+			// fragment render the "select a project" state without a list call.
+			return view
 		}
 		view.ProjectSelected = true
 	}
@@ -190,10 +208,10 @@ func (s *Server) uiInbox(c echo.Context) error {
 	}
 
 	projectID := inboxProjectFilter(scope, view.Project, view.ProjectFilter)
-	items, err := s.memory.ListNotifications(ctx, inboxListParams(notificationUpstreamScope(scope), projectID, tab))
+	items, err := s.memory.ListNotifications(ctx, inboxListParams(notificationUpstreamScope(scope), projectID, view.Tab))
 	if err != nil {
 		view.LoadErr = userFacingError(err)
-		return s.page(c, pageTitle("Inbox"), InboxPage(view))
+		return view
 	}
 	if items == nil {
 		items = []Notification{}
@@ -206,7 +224,7 @@ func (s *Server) uiInbox(c echo.Context) error {
 	} else {
 		view.Counts = counts
 	}
-	return s.page(c, pageTitle("Inbox"), InboxPage(view))
+	return view
 }
 
 // inboxBellScope resolves the inbox scope a request is displaying, so the bell

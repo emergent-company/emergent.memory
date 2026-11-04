@@ -680,7 +680,11 @@ func main() {
 	e.POST("/board/items/:canonicalId/cancel", s.uiBoardCancel)
 
 	// Inbox page + project-event notification preferences (inbox subsystem).
+	// /partial/inbox-list is the server-rendered fragment the page's JS swaps in
+	// on a live event or an inline action, so a triage click never re-renders
+	// the page around it (see inbox.js).
 	e.GET("/inbox", s.uiInbox)
+	e.GET("/partial/inbox-list", s.uiInboxList)
 	e.GET("/inbox/preferences", s.uiNotificationPreferences)
 	e.POST("/inbox/preferences", s.uiNotificationPreferencesSave)
 	e.GET("/inbox/merge-preview", s.uiInboxMergePreview)
