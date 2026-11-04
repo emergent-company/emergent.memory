@@ -91,6 +91,10 @@ type JobListItem struct {
 	Trigger        string `json:"trigger,omitempty"`
 	DocumentCount  int    `json:"document_count,omitempty"`
 	TotalDocuments int    `json:"total_documents,omitempty"`
+	// Cancellable is the server's answer to "may this job be cancelled now?".
+	// A client renders the cancel action from it instead of re-deriving the
+	// status set, so the card and the API cannot drift apart.
+	Cancellable bool `json:"cancellable"`
 }
 
 // CancelJobResponse is the response for cancelling a job

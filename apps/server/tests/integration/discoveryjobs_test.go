@@ -386,6 +386,29 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_FinalizeRefusesCancelledJob() {
 	s.Equal(discoveryjobs.StatusCancelled, s.jobStatusRow(jobID))
 }
 
+// TestDiscovery_FinalizeAcceptsCompletedJob pins the other half of the finalize
+// fence: a completed job can still be finalised. The MCP finalize path relies on
+// it (it creates a pre-completed stub job for a `document_id` and links the pack
+// through it), and re-finalising a completed run is not a state conflict.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_FinalizeAcceptsCompletedJob() {
+	jobID := s.insertJobWithConfig(discoveryjobs.StatusCompleted, map[string]any{
+		"document_ids": []string{s.docID},
+	})
+
+	resp := s.client.POST(
+		s.finalizeURL(jobID),
+		testutil.WithAuth(s.authToken),
+		testutil.WithHeader("X-Project-ID", s.projectID),
+		testutil.WithJSONBody(map[string]any{
+			"packName":      "finalize-from-completed",
+			"mode":          "create",
+			"includedTypes": []map[string]any{{"type_name": "Person"}},
+		}),
+	)
+	s.Require().Equal(http.StatusOK, resp.StatusCode, "finalize completed job: %s", resp.Body)
+	s.Equal(discoveryjobs.StatusCompleted, s.jobStatusRow(jobID))
+}
+
 // TestDiscovery_ListJobs verifies the list endpoint returns the started job.
 func (s *DiscoveryJobsTestSuite) TestDiscovery_ListJobs() {
 	jobID := s.startDiscoveryJob([]string{s.docID})
@@ -400,6 +423,13 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_ListJobs() {
 	s.Require().NoError(json.Unmarshal(resp.Body, &items))
 	s.Require().Len(items, 1, "expected exactly one job")
 	s.Equal(jobID, items[0]["id"])
+
+	// The card renders Cancel from this flag instead of re-deriving the
+	// status set, so it has to be present and correct on the payload.
+	cancellable, ok := items[0]["cancellable"].(bool)
+	s.Require().True(ok, "the list payload must carry cancellable: %v", items[0])
+	s.Equal(discoveryjobs.IsCancellableStatus(items[0]["status"].(string)), cancellable,
+		"cancellable must agree with the status")
 }
 
 // TestDiscovery_AssertNoReifiedTypes_HelperWorks confirms that the

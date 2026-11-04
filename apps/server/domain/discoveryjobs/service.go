@@ -434,6 +434,7 @@ func (s *Service) ListJobsForProject(ctx context.Context, projectID uuid.UUID) (
 			Trigger:                 cfg.Trigger,
 			DocumentCount:           cfg.DocumentCount,
 			TotalDocuments:          cfg.TotalDocuments,
+			Cancellable:             IsCancellableStatus(job.Status),
 		}
 	}
 	return result, nil

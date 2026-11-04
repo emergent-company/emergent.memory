@@ -432,3 +432,34 @@ func TestSchemaPageShowsTheCancelConfirmation(t *testing.T) {
 		t.Error("a plain load must not repeat the cancel confirmation")
 	}
 }
+
+// TestSchemaDiscoveryCardHonoursTheServerCancellableFlag pins that the card
+// renders the server's decision rather than re-deriving it: a status the old
+// local list would call cancellable is not offered when the server says no, and
+// the reverse also holds. The status fallback only covers a server too old to
+// send the field.
+func TestSchemaDiscoveryCardHonoursTheServerCancellableFlag(t *testing.T) {
+	no := false
+	blocked := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest: &discoveryJob{ID: "j1", Status: "extracting_types", CancellableFlag: &no},
+	}))
+	if strings.Contains(blocked, "/schema/discovery/cancel/") {
+		t.Error("the server said the job is not cancellable; the card must not offer it")
+	}
+
+	yes := true
+	allowed := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest: &discoveryJob{ID: "j2", Status: "creating_pack", CancellableFlag: &yes},
+	}))
+	if !strings.Contains(allowed, "/schema/discovery/cancel/") {
+		t.Error("the server said the job is cancellable; the card must offer it")
+	}
+
+	// A server that does not send the field still gets the status behaviour.
+	legacy := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest: &discoveryJob{ID: "j3", Status: "extracting_types"},
+	}))
+	if !strings.Contains(legacy, "/schema/discovery/cancel/") {
+		t.Error("without the field the card falls back to the status list")
+	}
+}

@@ -113,13 +113,3 @@ const (
 	CandidateStatusRejected  = "rejected"
 	CandidateStatusMerged    = "merged"
 )
-
-// IsTerminal reports whether the job has finished running.
-func (j *DiscoveryJob) IsTerminal() bool {
-	return IsTerminalStatus(j.Status)
-}
-
-// IsCancellable reports whether a member may cancel the job.
-func (j *DiscoveryJob) IsCancellable() bool {
-	return IsCancellableStatus(j.Status)
-}

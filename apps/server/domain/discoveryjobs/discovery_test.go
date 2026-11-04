@@ -661,10 +661,6 @@ func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestIsTerminalStatus pins the vocabulary the cancellation fencing depends on:
-// every write the worker makes is refused once the job is terminal, so a status
-// classified wrongly here would either strand a live run or let a cancelled one
-// finish into a second pack.
 // TestStatusPredicatesAreDerived pins the single vocabulary: the fence's
 // non-terminal predicate and the cancellable set are filtered from AllStatuses,
 // so a new status cannot leave one of them disagreeing with
@@ -692,6 +688,24 @@ func TestStatusPredicatesAreDerived(t *testing.T) {
 		}
 	}
 
+	// Finalize may complete from anything except the two statuses that mean the
+	// run ended without a pack; `completed` is finalisable on purpose (the MCP
+	// finalize path links its pack through a pre-completed stub job).
+	for _, status := range all {
+		want := !IsTerminalStatus(status) || status == StatusCompleted
+		if got := contains(finalisableStatuses, status); got != want {
+			t.Errorf("finalisableStatuses contains %q = %v, want %v", status, got, want)
+		}
+	}
+	if !contains(finalisableStatuses, StatusCompleted) {
+		t.Error("a completed job must be finalisable: the MCP finalize path completes one")
+	}
+	for _, ended := range []string{StatusFailed, StatusCancelled} {
+		if contains(finalisableStatuses, ended) {
+			t.Errorf("%q ended without a pack and must not be finalisable", ended)
+		}
+	}
+
 	// The boundary the card and the 409 message rest on.
 	if IsCancellableStatus(StatusCreatingPack) {
 		t.Error("a run that is creating its pack is not cancellable")
@@ -706,6 +720,10 @@ func TestStatusPredicatesAreDerived(t *testing.T) {
 	}
 }
 
+// TestIsTerminalStatus pins the vocabulary the cancellation fencing depends on:
+// every write the worker makes is refused once the job is terminal, so a status
+// classified wrongly here would either strand a live run or let a cancelled one
+// finish into a second pack.
 func TestIsTerminalStatus(t *testing.T) {
 	for _, status := range []string{StatusCompleted, StatusFailed, StatusCancelled} {
 		if !IsTerminalStatus(status) {

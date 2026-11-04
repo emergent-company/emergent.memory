@@ -33,6 +33,10 @@ type discoveryJob struct {
 	Trigger                 string            `json:"trigger,omitempty"`
 	DocumentCount           int               `json:"document_count,omitempty"`
 	TotalDocuments          int               `json:"total_documents,omitempty"`
+	// CancellableFlag is the server's "may this job be cancelled now?" answer.
+	// It is a pointer so an older server (which does not send it) falls back to
+	// the status list below instead of reading every job as uncancellable.
+	CancellableFlag *bool `json:"cancellable,omitempty"`
 }
 
 // isRunning reports whether the job is still advancing. The server's terminal
@@ -48,14 +52,17 @@ func (j *discoveryJob) isRunning() bool {
 	return true
 }
 
-// cancellable mirrors the server's cancellable statuses (its
-// discoveryjobs.IsCancellableStatus): a run can be stopped while it is still
-// analysing, but not once it is creating its pack, which is the run's last step
-// and writes the pack. Offering an action the API refuses would turn a state
-// detail into a 409.
+// cancellable reports whether the card may offer Cancel. The server answers it
+// (`cancellable` on the job), so the card renders the API's decision instead of
+// re-deriving it; a run can be stopped while it is still analysing, but not once
+// it is creating its pack, which is the run's last step and writes the pack. The
+// status fallback exists only for a server old enough not to send the field.
 func (j *discoveryJob) cancellable() bool {
 	if j == nil {
 		return false
+	}
+	if j.CancellableFlag != nil {
+		return *j.CancellableFlag
 	}
 	switch j.Status {
 	case "pending", "analyzing_documents", "extracting_types", "refining_schemas":

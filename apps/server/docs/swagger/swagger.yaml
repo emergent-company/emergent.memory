@@ -2847,6 +2847,12 @@ definitions:
     type: object
   domain_discoveryjobs.JobListItem:
     properties:
+      cancellable:
+        description: |-
+          Cancellable is the server's answer to "may this job be cancelled now?".
+          A client renders the cancel action from it instead of re-deriving the
+          status set, so the card and the API cannot drift apart.
+        type: boolean
       completed_at:
         type: string
       created_at:

@@ -87,6 +87,16 @@ var nonTerminalStatuses = statusesMatching(func(status string) bool { return !Is
 // the same predicate the job entity uses (IsCancellableStatus).
 var cancellableStatuses = statusesMatching(IsCancellableStatus)
 
+// finalisableStatuses are the statuses the manual finalize path may complete a
+// job from: everything except the two that mean the run ended without reaching a
+// pack. `completed` is included on purpose — finalizing an already-completed job
+// is how the MCP finalize path links a pack it built from a `document_id` (it
+// creates a pre-completed stub job), and re-finalizing a completed run is not a
+// state conflict.
+var finalisableStatuses = statusesMatching(func(status string) bool {
+	return !IsTerminalStatus(status) || status == StatusCompleted
+})
+
 // statusesMatching filters the canonical status list with keep, preserving
 // lifecycle order.
 func statusesMatching(keep func(string) bool) []string {
@@ -581,11 +591,11 @@ func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, o
 	return nil
 }
 
-// SetJobMemorySchema sets the memory schema ID on a job and marks it completed
 // SetJobMemorySchema completes a job from the manual finalize path. It is the
-// second writer of `status = completed`, so it carries the same non-terminal
-// predicate as the worker's completion: finalizing a job a cancel already ended
-// must not flip it back to completed and present its pack as the run's result.
+// second writer of `status = completed`, so it is fenced too: a job a cancel or
+// a failure already ended cannot be flipped back to completed with its pack
+// presented as the run's result. It accepts `completed` as a source status
+// because that is what re-finalizing (and the MCP stub) do.
 func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uuid.UUID) error {
 	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
@@ -594,7 +604,7 @@ func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uui
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
-		Where("status IN (?)", bun.In(nonTerminalStatuses)).
+		Where("status IN (?)", bun.In(finalisableStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to set job memory schema", logger.Error(err))
