@@ -35,6 +35,31 @@ func renderPageShellWithOverlay(t *testing.T, overlayURL string, content templ.C
 	))
 }
 
+// TestPageHeadStylesheetIsRenderBlocking pins the fix for the unstyled flash on
+// project switch: the compiled stylesheet must sit inside <head>, where it is
+// render-blocking, so a navigation keeps painting the old document until the new
+// one is styled. It used to be emitted at the very end of <body>, after the
+// scripts, and the first paint could win the race on any cache miss (fresh
+// deploy, changed ?v= hash, cold tab) — that was the "moment without styles".
+func TestPageHeadStylesheetIsRenderBlocking(t *testing.T) {
+	body := templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
+		_, err := w.Write([]byte("<p>hi</p>"))
+		return err
+	})
+	html := renderPageShell(t, body)
+
+	headEnd := strings.Index(html, "</head>")
+	if headEnd < 0 {
+		t.Fatal("shell has no </head>")
+	}
+	if !strings.Contains(html[:headEnd], "/assets/css/app.css") {
+		t.Error("the app stylesheet must be inside <head> (render-blocking) — a stylesheet at the end of <body> lets the first paint beat it")
+	}
+	if n := strings.Count(html, "/assets/css/app.css"); n != 1 {
+		t.Errorf("want exactly 1 stylesheet reference, got %d", n)
+	}
+}
+
 // TestPageHeadOmitsMonolithicGoDaisyCSS (change spec 4.1): the gateway no
 // longer references go-daisy's pre-compiled /static/css/app.css; its own
 // combined /assets/css/app.css is the only stylesheet.
