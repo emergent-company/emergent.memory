@@ -455,11 +455,14 @@ func TestTokenCreateScopesParam_AdvertisesAllScopes(t *testing.T) {
 	}
 	require.NotEmpty(t, scopesDesc, "token-create scopes param description not found")
 
-	// Drift guard: the advertised list must mirror the server's authoritative
-	// scope set (e.g. chat:use must not be missing again).
-	want := "Comma-separated list of scopes. Valid values: " + strings.Join(apitoken.ValidApiTokenScopes, ", ")
+	// Drift guard: the advertised list must mirror the server's user-mintable
+	// scope set (e.g. chat:use must not be missing again), and must not offer
+	// the retired data:read/data:write umbrellas.
+	want := "Comma-separated list of scopes. Valid values: " + strings.Join(apitoken.UserMintableScopes, ", ")
 	assert.Equal(t, want, scopesDesc)
 	assert.Contains(t, scopesDesc, "chat:use")
+	assert.NotContains(t, scopesDesc, "data:read")
+	assert.NotContains(t, scopesDesc, "data:write")
 }
 
 // =============================================================================

@@ -24,7 +24,8 @@ var mcpShareCmd = &cobra.Command{
 	Long: `Generate a read-only API token for your project and print ready-to-use
 MCP config snippets for Claude Desktop, Cursor, and OpenCode.
 
-The token is scoped to data:read, schema:read, agents:read, and projects:read.
+The token is scoped to documents:read, search, graph:read, journal:read,
+schema:read, agents:read, projects:read, and chat:use.
 Write operations will be rejected. The token can be revoked at any time with:
 
   memory tokens revoke <token-id> --project <project>
@@ -76,7 +77,7 @@ func runMCPShare(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  To:        %s\n", strings.Join(mcpShareEmails, ", "))
 		fmt.Printf("  Project:   %s\n", result.ProjectID)
 		fmt.Printf("  MCP URL:   %s\n", result.MCPURL)
-		fmt.Printf("  Scopes:    data:read, schema:read, agents:read, projects:read\n")
+		fmt.Printf("  Scopes:    documents:read, search, graph:read, journal:read, schema:read, agents:read, projects:read, chat:use\n")
 		fmt.Printf("  Token:     %s\n", result.Token)
 		fmt.Printf("  Generated: %s\n", now)
 		fmt.Printf("  Email sent: %s\n", now)
