@@ -52,7 +52,14 @@ type ShareMCPAccessResponse struct {
 }
 
 // readOnlyMCPScopes are the scopes granted to a read-only MCP share token.
-var readOnlyMCPScopes = []string{"data:read", "schema:read", "agents:read", "projects:read", "chat:use"}
+// data:read/data:write are retired from user-facing minting, so the legacy
+// read-only umbrella is spelled out as the fine-grained scopes it covered.
+// These tokens are minted through Service.Create (a user-facing path), so
+// listing data:read here would now be rejected.
+var readOnlyMCPScopes = []string{
+	"documents:read", "search", "graph:read", "journal:read",
+	"schema:read", "agents:read", "projects:read", "chat:use",
+}
 
 // emailRegexp is a simple RFC 5322-ish email validator.
 var emailRegexp = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)

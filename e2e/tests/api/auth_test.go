@@ -57,7 +57,7 @@ func TestAuth_APIToken_ValidAuthenticates(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, rawToken := createToken(t, projectID, uniqueName("auth-test"), []string{"data:read"})
+	_, rawToken := createToken(t, projectID, uniqueName("auth-test"), []string{"documents:read"})
 
 	resp := doAPILogged(t, rl, "GET", "/api/auth/me", rawToken, "", nil)
 	body := mustStatus(t, resp, http.StatusOK)
@@ -88,7 +88,7 @@ func TestAuth_APIToken_RevokedReturns401(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "POST", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", jsonBody(map[string]any{
-		"name": uniqueName("revoke-auth"), "scopes": []string{"data:read"},
+		"name": uniqueName("revoke-auth"), "scopes": []string{"documents:read"},
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
 	var created map[string]any
@@ -174,7 +174,7 @@ func TestAuth_CachedIntrospection(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, rawToken := createToken(t, projectID, uniqueName("cache-test"), []string{"data:read"})
+	_, rawToken := createToken(t, projectID, uniqueName("cache-test"), []string{"documents:read"})
 
 	rl.Section("repeated requests with same token")
 	for i := 0; i < 3; i++ {

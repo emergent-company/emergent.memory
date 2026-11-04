@@ -87,7 +87,7 @@ func setupProjectTokenEnv(t *testing.T, rl *framework.RunLog) *projectTokenEnv {
 		"tokens", "create",
 		"--name", tokenName,
 		"--project", env.projectID,
-		"--scopes", "data:read,data:write,schema:read,projects:read,agents:read",
+		"--scopes", "read,write",
 	)
 	rl.CLI("memory tokens create --name "+tokenName+" --project "+env.projectID, tokenOut)
 
@@ -484,8 +484,8 @@ func TestCLIInstalled_ProjectToken_TokensList(t *testing.T) {
 	rl.CLIErr("memory tokens list --project "+env.projectID, listOut, listErr, 0)
 
 	if listErr != nil {
-		// The default project token scopes (data:read,data:write,schema:read,
-		// projects:read,agents:read) do NOT include the scope required for listing
+		// The read,write preset scopes (documents:*, graph:*, schema:*, projects:*,
+		// agents:*, search, journal:read) do NOT include the scope required for listing
 		// tokens (likely project:read or tokens:read). A 403 here is expected
 		// behaviour documenting this scope limitation.
 		if strings.Contains(listOut, "403") || strings.Contains(listOut, "insufficient") || strings.Contains(listOut, "forbidden") {

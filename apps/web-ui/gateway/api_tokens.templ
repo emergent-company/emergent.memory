@@ -424,9 +424,15 @@ templ AccountTokenEditPage(data apiTokenEditPageData) {
 // apiTokenEditBody is the shared edit-scopes card: the token identity line
 // (name, prefix, created) above the scope picker pre-checked with the token's
 // current scopes, saving to actionBase + "/:id/scopes".
+//
+// A token holding a retired scope (data:read/data:write, or an internal marker
+// such as device:api) cannot be edited in place: the picker no longer offers
+// that scope, so saving would silently drop it. The card blocks the form and
+// points at token replacement instead.
 templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerConfig) {
 	@components.PanelCard("", nil) {
-		<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
+		{{ retired := retiredTokenScopes(t.Scopes) }}
+		<div class="flex flex-col gap-4">
 			@ui.SoftBox(ui.SoftBoxProps{Padding: "px-3 py-2.5", Class: "flex items-center gap-2.5"}) {
 				@ui.IconTile("lucide--key-round", ui.IconTileProps{Tone: "primary", Size: "size-9"})
 				<div class="min-w-0 leading-tight">
@@ -438,27 +444,63 @@ templ apiTokenEditBody(actionBase string, t APIToken, cfg apiTokenScopePickerCon
 					}
 				</div>
 			}
-			@apiTokenScopePickerContent(t.Scopes, cfg)
-			<div class="flex flex-wrap items-center justify-end gap-2">
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeLink,
-					Href:    actionBase,
-					Variant: ui.ButtonGhost,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--x",
-				}) {
-					Cancel
-				}
-				@ui.Button(ui.ButtonProps{
-					Type:    ui.ButtonTypeSubmit,
-					Variant: ui.ButtonPrimary,
-					Size:    ui.ButtonSM,
-					Icon:    "lucide--save",
-				}) {
-					Save scopes
-				}
-			</div>
-		</form>
+			if len(retired) > 0 {
+				<div class="flex items-start gap-3" data-testid="retired-scopes-notice">
+					<div class="bg-warning/10 text-warning grid size-10 shrink-0 place-items-center rounded-full">
+						@ui.IconSpan("lucide--alert-triangle", "size-5")
+					</div>
+					<div class="min-w-0">
+						<p class="text-sm font-semibold">This token's scopes can no longer be edited</p>
+						@ui.EmptyNote(ui.EmptyNoteProps{Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+							It holds <span class="font-mono">{ strings.Join(retired, ", ") }</span>, which { "is" } retired from token creation and would be silently dropped by a save. Create a replacement token with the scopes you need, then revoke this one.
+						}
+					</div>
+				</div>
+				<div class="flex flex-wrap items-center justify-end gap-2">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    actionBase,
+						Variant: ui.ButtonGhost,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--x",
+					}) {
+						Back to tokens
+					}
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeLink,
+						Href:    actionBase + "/new",
+						Variant: ui.ButtonPrimary,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--key-round",
+					}) {
+						Create replacement token
+					}
+				</div>
+			} else {
+				<form method="post" action={ templ.URL(actionBase + "/" + url.PathEscape(t.ID) + "/scopes") } class="flex flex-col gap-4">
+					@apiTokenScopePickerContent(t.Scopes, cfg)
+					<div class="flex flex-wrap items-center justify-end gap-2">
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeLink,
+							Href:    actionBase,
+							Variant: ui.ButtonGhost,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--x",
+						}) {
+							Cancel
+						}
+						@ui.Button(ui.ButtonProps{
+							Type:    ui.ButtonTypeSubmit,
+							Variant: ui.ButtonPrimary,
+							Size:    ui.ButtonSM,
+							Icon:    "lucide--save",
+						}) {
+							Save scopes
+						}
+					</div>
+				</form>
+			}
+		</div>
 	}
 }
 

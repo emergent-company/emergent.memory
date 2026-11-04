@@ -610,7 +610,13 @@ func TestCreateShareInstanceNoTools(t *testing.T) {
 // forcing a deliberate spec + code update (see the mcp-readonly-access-sharing
 // change).
 func TestReadOnlyMCPScopesPinned(t *testing.T) {
-	want := []string{"data:read", "schema:read", "agents:read", "projects:read", "chat:use"}
+	// The retired data:read umbrella is spelled out as its fine-grained
+	// equivalents: the share token is minted through Service.Create, which no
+	// longer accepts data:read.
+	want := []string{
+		"documents:read", "search", "graph:read", "journal:read",
+		"schema:read", "agents:read", "projects:read", "chat:use",
+	}
 	assert.Equal(t, want, readOnlyMCPScopes)
 }
 

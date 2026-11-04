@@ -31,8 +31,12 @@ const (
 // data/schema/agent scope, so it can never widen the project tier (§4.4).
 var orgAdminScopes = []string{"org:read", "org:invite:create", "org:project:create", "org:project:delete"}
 
-// viewerReadOnlyScopes mirrors projects.ViewerReadOnlyScopes — the read-only
-// baseline shared by every canonical project role.
+// viewerReadOnlyScopes is the read-only baseline shared by every canonical
+// project role. This is the session grant resolved from a project membership —
+// it is NOT the token-mint rule (that lives in domain/apitoken and uses the
+// fine-grained scopes, since data:read is retired from user-facing minting).
+// Keeping the umbrella here is deliberate: ScopeImplies is unchanged, so an
+// existing role-derived session keeps exactly the access it had.
 var viewerReadOnlyScopes = []string{"data:read", "schema:read", "agents:read", "projects:read"}
 
 // Canonical role → scope sets (#736, operator decision A: conservative

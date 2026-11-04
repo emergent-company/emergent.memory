@@ -65,16 +65,45 @@ func getTokenPrefix(token string) string {
 	return token[:12]
 }
 
-// viewerReadOnlyScopes lists the only scopes a project_viewer may include in a token.
+// viewerReadOnlyScopes lists the only scopes a project_viewer may include in a
+// token. data:read is retired from user-facing minting, so the fine-grained
+// read scopes it used to cover are listed explicitly — a viewer can still mint
+// a token that reads documents, search and the graph, but nothing wider.
 var viewerReadOnlyScopes = map[string]bool{
-	"data:read":     true,
-	"schema:read":   true,
-	"agents:read":   true,
-	"projects:read": true,
+	"documents:read": true,
+	"search":         true,
+	"graph:read":     true,
+	"journal:read":   true,
+	"schema:read":    true,
+	"agents:read":    true,
+	"projects:read":  true,
 	// The device marker is reserved to CreateDeviceToken, whose hardcoded
 	// ceiling is read-only. Allowing it here lets a project_viewer provision
 	// their phone without granting anything beyond that ceiling.
 	"device:api": true,
+}
+
+// viewerReadOnlyScopeList is viewerReadOnlyScopes without the internal device
+// marker, for the denial message.
+const viewerReadOnlyScopeList = "documents:read, search, graph:read, journal:read, schema:read, agents:read, projects:read"
+
+// validateTokenScopes returns an error naming the first requested scope that is
+// absent from allowed. allowed is ValidApiTokenScopes for internal mint paths
+// and UserMintableScopes for every user-facing create/update surface.
+func validateTokenScopes(scopes, allowed []string) error {
+	for _, scope := range scopes {
+		valid := false
+		for _, validScope := range allowed {
+			if scope == validScope {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
+		}
+	}
+	return nil
 }
 
 // platformScopes are the platform-tier scopes whose minting requires the
@@ -236,21 +265,21 @@ var ephemeralScopes = []string{
 // marker scope; the internal per-agent share mint path uses
 // CreateAgentShareToken instead.
 func (s *Service) Create(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, false, false, false, false, nil)
+	return s.create(ctx, projectID, &userID, name, scopes, false, false, false, false, false, nil)
 }
 
 // CreateAgentShareToken mints a token that may carry the reserved
 // mcp:agent-call marker. It must only be called by the per-agent MCP share
 // lifecycle (domain/mcp/agent_mcp_share.go); all user-facing paths call Create.
 func (s *Service) CreateAgentShareToken(ctx context.Context, projectID, userID, name string, scopes []string) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, false, nil)
+	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, false, true, nil)
 }
 
 // CreateAgentShareTokenWithExpiry is CreateAgentShareToken with an optional
 // token expiry. It backs the per-endpoint labeled keys, whose optional
 // expiresAt maps straight onto core.api_tokens.expires_at.
 func (s *Service) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID, userID, name string, scopes []string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, false, expiresAt)
+	return s.create(ctx, projectID, &userID, name, scopes, true, false, false, false, true, expiresAt)
 }
 
 // CreateAgentChatShareToken mints a public agent-share link key carrying the
@@ -259,7 +288,7 @@ func (s *Service) CreateAgentShareTokenWithExpiry(ctx context.Context, projectID
 // endpoints. It must only be called by the agent-share link lifecycle
 // (domain/agents); all user-facing paths call Create.
 func (s *Service) CreateAgentChatShareToken(ctx context.Context, projectID, name string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, nil, name, shareChatScopes, false, true, false, false, expiresAt)
+	return s.create(ctx, projectID, nil, name, shareChatScopes, false, true, false, false, false, expiresAt)
 }
 
 // CreateDeviceToken mints a scoped per-device credential carrying the reserved
@@ -272,7 +301,7 @@ func (s *Service) CreateAgentChatShareToken(ctx context.Context, projectID, name
 // session-authenticated setup flow); all user-facing paths call Create.
 func (s *Service) CreateDeviceToken(ctx context.Context, projectID, ownerUserID, name string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
 	owner := ownerUserID
-	return s.create(ctx, projectID, &owner, name, deviceAPIScopes, false, false, true, false, expiresAt)
+	return s.create(ctx, projectID, &owner, name, deviceAPIScopes, false, false, true, false, true, expiresAt)
 }
 
 // CreateWebhookTriggerToken mints a scoped per-integration webhook trigger
@@ -284,7 +313,7 @@ func (s *Service) CreateDeviceToken(ctx context.Context, projectID, ownerUserID,
 // the webhook-trigger credential lifecycle (operator/admin mint); all
 // user-facing paths call Create and reject the marker.
 func (s *Service) CreateWebhookTriggerToken(ctx context.Context, projectID, name string, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
-	return s.create(ctx, projectID, nil, name, webhookTriggerScopes, false, false, false, true, expiresAt)
+	return s.create(ctx, projectID, nil, name, webhookTriggerScopes, false, false, false, true, true, expiresAt)
 }
 
 // rejectReservedScopes returns an error when scopes carries a reserved marker
@@ -318,22 +347,19 @@ func rejectReservedScopes(scopes []string, allowAgentCall, allowShareChat, allow
 // such tokens get user_id = NULL and skip the user-scoped checks. Device
 // credentials pass the provisioning user so they inherit that user's private
 // conversation access.
-func (s *Service) create(ctx context.Context, projectID string, userID *string, name string, scopes []string, allowAgentCallScope, allowShareChatScope, allowDeviceAPIScope, allowWebhookTrigger bool, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
+func (s *Service) create(ctx context.Context, projectID string, userID *string, name string, scopes []string, allowAgentCallScope, allowShareChatScope, allowDeviceAPIScope, allowWebhookTrigger, allowLegacyScopes bool, expiresAt *time.Time) (*CreateApiTokenResponseDTO, error) {
 	if err := rejectReservedScopes(scopes, allowAgentCallScope, allowShareChatScope, allowDeviceAPIScope, allowWebhookTrigger); err != nil {
 		return nil, err
 	}
-	// Validate scopes
-	for _, scope := range scopes {
-		valid := false
-		for _, validScope := range ValidApiTokenScopes {
-			if scope == validScope {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
-		}
+	// Validate scopes. User-facing paths (allowLegacyScopes=false) may not
+	// request the retired data:read/data:write umbrellas; internal mint paths
+	// keep the full validity list so their hardcoded ceilings still mint.
+	allowed := ValidApiTokenScopes
+	if !allowLegacyScopes {
+		allowed = UserMintableScopes
+	}
+	if err := validateTokenScopes(scopes, allowed); err != nil {
+		return nil, err
 	}
 
 	uid := ""
@@ -361,7 +387,7 @@ func (s *Service) create(ctx context.Context, projectID string, userID *string, 
 			for _, scope := range scopes {
 				if !viewerReadOnlyScopes[scope] {
 					return nil, apperror.New(403, "viewer-write-scope-denied",
-						"project_viewer may only request read-only scopes (data:read, schema:read, agents:read, projects:read)")
+						"project_viewer may only request read-only scopes ("+viewerReadOnlyScopeList+")")
 				}
 			}
 		}
@@ -518,18 +544,9 @@ func (s *Service) CreateAccountToken(ctx context.Context, userID, name string, s
 	if err := rejectReservedScopes(scopes, false, false, false, false); err != nil {
 		return nil, err
 	}
-	// Validate scopes
-	for _, scope := range scopes {
-		valid := false
-		for _, validScope := range ValidApiTokenScopes {
-			if scope == validScope {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
-		}
+	// Validate scopes against the user-mintable subset.
+	if err := validateTokenScopes(scopes, UserMintableScopes); err != nil {
+		return nil, err
 	}
 
 	// admin / admin:all require superadmin_full privileges
@@ -715,18 +732,9 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 	if err := rejectReservedScopes(scopes, false, false, false, false); err != nil {
 		return nil, err
 	}
-	// Validate scopes
-	for _, scope := range scopes {
-		valid := false
-		for _, validScope := range ValidApiTokenScopes {
-			if scope == validScope {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
-		}
+	// Validate scopes against the user-mintable subset.
+	if err := validateTokenScopes(scopes, UserMintableScopes); err != nil {
+		return nil, err
 	}
 
 	// admin / admin:all require superadmin_full privileges
@@ -749,7 +757,7 @@ func (s *Service) UpdateScopes(ctx context.Context, tokenID, projectID, userID s
 			for _, scope := range scopes {
 				if !viewerReadOnlyScopes[scope] {
 					return nil, apperror.New(403, "viewer-write-scope-denied",
-						"project_viewer may only request read-only scopes (data:read, schema:read, agents:read, projects:read)")
+						"project_viewer may only request read-only scopes ("+viewerReadOnlyScopeList+")")
 				}
 			}
 		}
@@ -783,18 +791,9 @@ func (s *Service) UpdateAccountTokenScopes(ctx context.Context, tokenID, userID 
 	if err := rejectReservedScopes(scopes, false, false, false, false); err != nil {
 		return nil, err
 	}
-	// Validate scopes
-	for _, scope := range scopes {
-		valid := false
-		for _, validScope := range ValidApiTokenScopes {
-			if scope == validScope {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return nil, apperror.ErrBadRequest.WithMessage("invalid scope: " + scope)
-		}
+	// Validate scopes against the user-mintable subset.
+	if err := validateTokenScopes(scopes, UserMintableScopes); err != nil {
+		return nil, err
 	}
 
 	// admin / admin:all require superadmin_full privileges
