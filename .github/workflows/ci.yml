@@ -37,9 +37,18 @@ name: Meta CI
 # could merge, on a 7-slot pool where the same runs were queueing 3-9 minutes
 # each. `ci` deliberately keeps running on drafts — it is the cheap, always
 # applicable guard and the author needs its feedback before requesting review.
-# The `whatever-ci` / `*-ci-status` aggregates report success on a draft because
-# every dependency is skipped, which is the documented "a skipped job satisfies
-# its check" rule (see above), not a hole.
+#
+# Two of the gated jobs are MATRIX jobs (`cli.yml`'s `Build (${{ matrix.label }})`
+# and `python-sdk.yml`'s `Test (Python ${{ matrix.python-version }})`), which the
+# docs-only classifier above deliberately does not do. The rule there is about
+# *required* contexts: a skipped matrix job reports one check run under the
+# unexpanded name, so a required per-leg context would never be reported and the
+# PR would block forever (#797). The required contexts on `main` are exactly
+# `ci` and `merge-guard` — verified against branch protection on 2026-11-04 —
+# so no per-leg name is required, and on an un-drafted PR (`ready_for_review` or
+# any `synchronize`) the legs report normally. Gating a matrix job is safe only
+# while that stays true: if a per-leg context is ever made required, un-gate it
+# in the same change.
 #
 # There is no review bot: a maintainer posts the review verdict before a merge.
 # That verdict is process, not a check — the required `ci` check does not read it.
