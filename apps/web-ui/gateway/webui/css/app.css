@@ -309,6 +309,28 @@ main#main-content {
   padding-top: env(safe-area-inset-top, 0px);
 }
 
+/* Mobile project picker (auth_ui.templ projectPickerDialog) is a full-screen
+   sheet, so daisyUI's entry transition buys nothing — and it actively breaks
+   the dialog. `.modal` transitions `visibility` with allow-discrete, so the
+   computed value is still `hidden` at the moment showModal() runs its focusing
+   step: focus stays on <body> and a screen reader never announces the picker.
+   With no transition here showModal() focuses the dialog synchronously (it
+   carries aria-labelledby, so the title is announced). */
+#project-picker-modal {
+  transition: none;
+}
+
+/* The sheet has its own footer, which owns the gap under the action row
+   (pt-2 / pb-[max(0.5rem,env(safe-area-inset-bottom))]). The generic
+   .modal-box rule above adds padding-bottom: calc(1.5rem + env(...)) for
+   dialogs whose last child is content, and it is unlayered, so it beats the
+   box's `p-0` utility and left a 22.5px dead band under "New project / New
+   org" — the exact asymmetry the footer was meant to remove. Zero it here
+   (same unlayered-override pattern as #object-preview-modal-box). */
+#project-picker-modal .modal-box {
+  padding: 0;
+}
+
 /* Left drawer (#_layout-sidebar, sidebar_user.templ): fixed full-height on
    <lg, in-flow sibling on lg+. It spans the screen's top and left edges, so
    its header must clear the status bar/notch and (in notched landscape) the

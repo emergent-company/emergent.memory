@@ -76,6 +76,14 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 			</script>
 			}
 			@foucBackgroundGuard()
+			<!-- The stylesheet MUST be in <head>: it is render-blocking there, so a
+			     full navigation (every project switch, every hard reload) keeps
+			     painting the old document until the CSS is ready. Emitted at the
+			     end of <body> instead — where this used to sit — the first paint
+			     wins the race and the user sees the shell unstyled for a moment
+			     on any cache miss (fresh deploy, changed ?v= hash, cold tab).
+			     Nothing htmx-swaps it: it lives outside #main-content either way. -->
+			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<meta name="view-transition" content="same-origin"/>
 		</head>
 		<body class="bg-base-200 min-h-screen" data-active-project-id={ currentProjectID(currentProject) } data-project-id={ currentProjectID(currentProject) } data-org-id={ currentOrgID(currentProject, activeOrg) }>
@@ -101,7 +109,12 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 					@appSidebar(groups, providersMissing)
 				}
 				<div class="flex min-w-0 grow flex-col overflow-hidden">
-					<div id="_layout-topbar-wrap" class="bg-base-100 z-10 shrink-0">
+					<!-- Pinned on purpose: on mobile the topbar must not travel with
+					     the content. It is a non-scrolling flex child of the app
+					     shell today, so sticky is belt-and-braces — it keeps the bar
+					     put if a page ever scrolls the shell/document instead of
+					     main#main-content, and it must stay above page chrome. -->
+					<div id="_layout-topbar-wrap" class="bg-base-100 sticky top-0 z-20 shrink-0">
 						@layout.Navbar(appBrand, ui.CommandPaletteButton("spotlight", "Search…")) {
 							@projectSwitcher(currentProject, currentOrgName, activeOrg, projectGroups, orgs, recentProjects, showRecent)
 							if assistantAgent != "" {
@@ -149,7 +162,6 @@ templ appShell(title string, groups []layout.SidebarGroup, providersMissing bool
 				     HTMX navigation never destroys it. -->
 				@objectPreviewDrawer()
 			</div>
-			<link rel="stylesheet" href={ templ.SafeURL(webui.AssetPath("/css/app.css")) } data-asset-track="reload"/>
 			<!-- Compiled type name → {label,icon,color}. The chat client reads this
 			     to render human type labels on citation sources (with a humanized-
 			     name fallback when a type is absent). Server-derived schema metadata,
