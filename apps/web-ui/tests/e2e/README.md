@@ -398,8 +398,8 @@ unguarded (e.g. #1216: `a2uiButton` referenced an undefined `surfaceId`, so
 every A2UI card-button click threw and never dispatched; #1201).
 
 The CI gate is therefore a **hermetic DOM-level Playwright run**, added as the
-`js` job in `.github/workflows/web-ui.yml` and folded into the required `ci`
-aggregate:
+`js` step of the single `web-ui` job in `.github/workflows/web-ui.yml` and
+folded into the advisory `web-ui-ci` aggregate:
 
 ```bash
 cd tests/e2e
@@ -455,18 +455,19 @@ note below); the remaining surfaces are still tracked as follow-up.
 The agent public-share suite — `specs/share/*` under `share.config.ts` — is
 credential-free and deterministic: it drives the anonymous `/share/agent`
 surface against the dev-mode mock harness (`mock-memory.mjs`), with no OIDC
-session and no live memory backend. It runs in CI as the `share` job in
-`web-ui.yml`, folded into the advisory `web-ui-ci` aggregate. It boots
-`bash run-e2e.sh` exactly like `datasources.config.ts`, so its CI job provisions
-the same Go + templ + `task` prerequisites; the suite is excluded from the live
-session-mode suite via `testIgnore` (`specs/share/**`).
+session and no live memory backend. It runs in CI as the `share` step of the
+single `web-ui` job in `web-ui.yml` (#825), folded into the advisory `web-ui-ci`
+aggregate. It boots `bash run-e2e.sh` exactly like `datasources.config.ts`, and
+that job provisions the Go + templ + `task` prerequisites once for every suite;
+the suite is excluded from the live session-mode suite via `testIgnore`
+(`specs/share/**`).
 
-Because the `share` and `datasources` jobs can be live on the same self-hosted
-runner at once, each pins its own gateway + mock ports via job-level
-`MEMORY_PORT`/`MOCK_PORT` (`share`: 8098/5302, `datasources`: 8097/5301).
-`run-e2e.sh` reads those variables (default 8097/5301, so local runs are
-unchanged) and now fails fast if either port is already served, instead of
-silently attaching to a sibling job's gateway + stateful mock.
+The suites in that job run one at a time, so each keeps its own default gateway +
+mock ports (`${MEMORY_PORT:-8097}` / `${MOCK_PORT:-5301}` here, 8096/5304 for
+`gateway-smoke`) rather than a job-level pin: only one stack is ever up, so
+nothing can collide with itself. `run-e2e.sh` still reads those variables and
+fails fast if either port is already served, instead of silently attaching to a
+sibling's gateway + stateful mock.
 
 ```bash
 cd tests/e2e
@@ -478,9 +479,10 @@ npx playwright test --config=share.config.ts
 The Data Sources (Google Drive) suite — `specs/datasources/*` under
 `datasources.config.ts` — is likewise credential-free and deterministic: it
 drives the gateway against the dev-mode mock harness (`mock-memory.mjs`), with
-no live Drive and no OIDC session. It runs in CI as the `datasources` job in
-the same `web-ui.yml` workflow, and is folded into the advisory `web-ui-ci`
-aggregate alongside `gateway` and `js`.
+no live Drive and no OIDC session. It runs in CI as the `datasources` step of the
+single `web-ui` job in the same `web-ui.yml` workflow (which also runs the
+gateway build/vet/test/lint steps and the `js` suite), and is folded into the
+advisory `web-ui-ci` aggregate.
 
 Unlike the `js` gate it does need the gateway binary:
 `datasources.config.ts` boots `bash run-e2e.sh` as its Playwright `webServer`,
@@ -507,8 +509,9 @@ excluded from the live session-mode `playwright.config.ts` via `testIgnore`
 `specs/gateway-smoke/*` under `gateway-smoke.config.ts` is the per-PR browser
 gate (#564): the highest-risk UI contracts run on every PR without credentials.
 It boots the same `run-e2e.sh` mock harness (`AUTH_MODE=dev`) on
-`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`), disjoint
-from the `datasources` (`8097/5301`) and `share` (`8098/5302`) lanes.
+`http://localhost:${MEMORY_PORT:-8096}` (mock on `${MOCK_PORT:-5304}`), its own
+pair because each suite boots its own stack; the suites in the single CI job run
+sequentially, so the three pairs never overlap.
 
 It covers the documents upload dialog (the #2287 regression class — opener,
 modal dialog, file input and submit must stay together), the mobile shell
