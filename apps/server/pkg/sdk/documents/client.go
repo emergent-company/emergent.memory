@@ -90,9 +90,12 @@ type Document struct {
 
 // ListOptions holds options for listing documents.
 type ListOptions struct {
-	Limit            int
-	Cursor           string
-	SourceType       string
+	Limit      int
+	Cursor     string
+	SourceType string
+	// SourceID filters on one connected data source id. Use "none" for documents
+	// with no source (direct uploads). Empty means no source filter.
+	SourceID         string
 	RootOnly         bool
 	ParentDocumentID string
 	// Status selects one derived pipeline bucket: processing, ready,
@@ -238,6 +241,14 @@ type SourceTypeWithCount struct {
 	Count      int    `json:"count"`
 }
 
+// SourceCount represents a connected data source with its document count.
+// SourceID is empty for documents with no source (direct uploads).
+type SourceCount struct {
+	SourceID   string `json:"sourceId,omitempty"`
+	SourceType string `json:"sourceType,omitempty"`
+	Count      int    `json:"count"`
+}
+
 // UploadFileInput represents a file to upload.
 type UploadFileInput struct {
 	// Filename is the name of the file.
@@ -313,6 +324,9 @@ func (c *Client) List(ctx context.Context, opts *ListOptions) (*ListResult, erro
 		}
 		if opts.SourceType != "" {
 			q.Set("sourceType", opts.SourceType)
+		}
+		if opts.SourceID != "" {
+			q.Set("sourceId", opts.SourceID)
 		}
 		if opts.RootOnly {
 			q.Set("rootOnly", "true")
@@ -618,6 +632,44 @@ func (c *Client) GetSourceTypes(ctx context.Context) ([]SourceTypeWithCount, err
 	}
 
 	return result.SourceTypes, nil
+}
+
+// GetSourceCounts returns document counts grouped by connected data source for
+// the current project.
+//
+// Example:
+//
+//	counts, err := client.Documents.GetSourceCounts(ctx)
+//	for _, src := range counts {
+//	    fmt.Printf("%s: %d\n", src.SourceID, src.Count)
+//	}
+func (c *Client) GetSourceCounts(ctx context.Context) ([]SourceCount, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.base+"/api/documents/source-counts", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	if err := c.setHeaders(req); err != nil {
+		return nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return nil, sdkerrors.ParseErrorResponse(resp)
+	}
+
+	var result struct {
+		Sources []SourceCount `json:"sources"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return result.Sources, nil
 }
 
 // GetDeletionImpact previews the impact of deleting a document.
