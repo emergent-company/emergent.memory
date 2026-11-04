@@ -333,11 +333,15 @@
 
     // meta behaves as in addUserMessage: appended under the bubble only when set.
     // Returns the message wrapper so the host can attach a turn footer.
-    function addAssistantMessage(html, name, silent, meta) {
+    function addAssistantMessage(html, name, silent, meta, opts) {
       ctx.hideEmpty();
+      var header = opts && opts.header
+        ? '<div class="chat-header text-xs text-muted">' + escapeHTML(opts.header) + "</div>"
+        : "";
       var wrap = document.createElement("div");
       wrap.className = "chat chat-start memory-rise memory-assistant";
       wrap.innerHTML =
+        header +
         '<div class="memory-md break-words"></div>' +
         '<div class="memory-assistant-actions flex items-center gap-2 text-xs text-muted-faint"></div>' +
         (meta

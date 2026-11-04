@@ -2580,7 +2580,16 @@
             if (stage && stageKind && stageKind !== "output" && stageKind !== "header") {
               authoredBy = stage + " · " + stageKindLabel(stageKind);
             }
-            var turnEl = ctx.addAssistantMessage(html || escapeHTML(text), authoredBy, silent, meta);
+            // Paseo-style assistant turns have no header, except recorded
+            // pipeline stages where the stage name is provenance the operator
+            // needs to see.
+            var turnEl = ctx.addAssistantMessage(
+              html || escapeHTML(text),
+              authoredBy,
+              silent,
+              meta,
+              stage ? { header: authoredBy } : null
+            );
             if (turnEl && runCtx) turnFooters.push({ el: turnEl, ctx: runCtx });
             // Grounded citations ride on the history item; render the Sources
             // block beneath the answer (idempotent, no-op when empty).
