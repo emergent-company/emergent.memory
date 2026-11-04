@@ -1,13 +1,13 @@
 import { Page, expect } from '@playwright/test';
 import { goto } from './page';
 
-// Assistant reply bubbles stream into #chat-messages as
-// .chat.chat-start > .chat-bubble.chat-bubble-neutral > .memory-md
-// (chat-stream.js addAssistantMessage / openAssistantBubble). While waiting
+// Assistant replies stream into #chat-messages as
+// .chat.chat-start.memory-assistant > .memory-md (plain full-width markdown,
+// chat-stream.js addAssistantMessage / openAssistantBubble). While waiting
 // for the first token the bubble shows a .memory-typing indicator; while
 // tokens stream a .memory-caret is appended; a stream failure injects
 // <span class="text-error"> into .memory-md.
-const ASSISTANT_MD = '#chat-messages .chat.chat-start .chat-bubble .memory-md';
+const ASSISTANT_MD = '#chat-messages .memory-assistant > .memory-md';
 
 /**
  * From an object detail page: click "Chat about object" and wait for the deep
@@ -78,7 +78,7 @@ export async function sendChatMessage(page: Page, message: string): Promise<stri
     >(
       ({ baseline: b }: { baseline: number }) => {
         const nodes = document.querySelectorAll(
-          '#chat-messages .chat.chat-start .chat-bubble .memory-md',
+          '#chat-messages .memory-assistant > .memory-md',
         );
         if (nodes.length <= b) return null; // this send's bubble isn't appended yet
         const el = nodes[b] as HTMLElement;
@@ -86,7 +86,7 @@ export async function sendChatMessage(page: Page, message: string): Promise<stri
         if (el.querySelector('span.text-error') || /error|failed/i.test(text)) {
           return { state: 'error', text };
         }
-        const wrap = el.closest('.chat-bubble');
+        const wrap = el.closest('.memory-assistant');
         const typing = wrap ? wrap.querySelector('.memory-typing') : null;
         const caret = wrap ? wrap.querySelector('.memory-caret') : null;
         const send = document.getElementById('chat-send');

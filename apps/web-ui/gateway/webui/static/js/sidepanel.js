@@ -112,6 +112,13 @@
   var clearThinking = thinking.clear;
   var finalizeThinking = thinking.finalize;
 
+  // Any non-thinking activity ends a contiguous Thinking block; anything but a
+  // tool call also closes the live tool group.
+  function activityBoundary(type) {
+    if (type !== "thinking" && thinking && thinking.break) thinking.break();
+    if (type !== "tool" && stream && stream.breakToolGroup) stream.breakToolGroup();
+  }
+
   // SSE dispatcher from the shared MemoryChatHost module. The meta frame is
   // page-local (persist + session picker refresh); frames from an aborted
   // stream are dropped via isAborted (newSession()/loadSession() abort the
@@ -138,6 +145,7 @@
     failStream: function (msg) { failStream(msg); },
     onToken: function (evt) { appendToken(evt.token); },
     onThinking: handleThinkingEvent,
+    onActivity: function (type) { activityBoundary(type); },
     isAborted: function () { return !!(aborter && aborter.signal.aborted); },
     onMeta: function (evt) {
       if (evt.conversationId) {

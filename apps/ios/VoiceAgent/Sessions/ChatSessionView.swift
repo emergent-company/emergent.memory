@@ -246,6 +246,8 @@ extension ChatSessionView {
 
     private var bottomBar: some View {
         VStack(spacing: 0) {
+            // Live child/subagent runs stay visible across text and voice modes.
+            SubagentTrackView()
             // Hang-up belongs to a call, not to a chat: a text session has no
             // room to leave.
             if activeSession.mode == .voice, session.isConnected {

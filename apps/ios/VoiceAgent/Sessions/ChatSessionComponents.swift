@@ -180,47 +180,39 @@ struct ChatTranscriptView: View {
 
 // MARK: - Bubbles and live activity
 
-/// One chat bubble, shared by recorded and live messages. Agent replies render
-/// markdown; user messages stay plain text.
+/// One chat message, shared by recorded and live messages. User messages stay
+/// right-aligned bubbles; assistant replies are plain leading Markdown, matching
+/// the Paseo-style live chat.
 struct ChatMessageBubble: View {
     let message: ChatMessage
 
     var body: some View {
-        let role: ConversationRole = message.role == .user ? .user : .assistant
-        let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !text.isEmpty {
-            HStack {
-                if role.isUser {
-                    Spacer(minLength: 4 * .grid)
-                }
-                VStack(alignment: role.horizontalAlignment, spacing: 1 * .grid) {
-                    Text(role.labelKey)
-                        .font(MemoryFont.meta)
-                        .foregroundStyle(.fg3)
-                        .padding(.horizontal, 1 * .grid)
-                    Group {
-                        if role.isUser {
-                            Text(text)
-                                .font(MemoryFont.conversationBody)
-                                .foregroundStyle(.fg1)
-                        } else {
-                            MarkdownRenderer(text: text)
-                        }
+        let trimmed = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            Group {
+                if message.role == .user {
+                    HStack {
+                        Spacer(minLength: 4 * .grid)
+                        Text(trimmed)
+                            .font(MemoryFont.conversationBody)
+                            .foregroundStyle(.fg1)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 3 * .grid)
+                            .padding(.vertical, 2 * .grid)
+                            .bubbleBackground(.user, cornerRadius: .cornerRadiusMedium)
+                            .containerRelativeFrame(
+                                .horizontal,
+                                count: 5,
+                                span: 4,
+                                spacing: 0,
+                                alignment: .trailing
+                            )
+                            .accessibilityLabel(Text(ConversationRole.user.labelKey) + Text(": ") + Text(trimmed))
                     }
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 3 * .grid)
-                    .padding(.vertical, 2 * .grid)
-                    .bubbleBackground(role, cornerRadius: .cornerRadiusMedium)
-                }
-                .containerRelativeFrame(
-                    .horizontal,
-                    count: 5,
-                    span: 4,
-                    spacing: 0,
-                    alignment: role.frameAlignment
-                )
-                if !role.isUser {
-                    Spacer(minLength: 4 * .grid)
+                } else {
+                    MarkdownRenderer(text: trimmed)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .id(message.id)
@@ -236,11 +228,17 @@ struct ChatTurnActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1 * .grid) {
-            if !turn.thinkingText.isEmpty {
-                ThinkingBlockView(text: turn.thinkingText, isLive: !turn.didReplyStart)
+            ForEach(turn.thinkingBlocks) { block in
+                ThinkingBlockView(text: block.text, isLive: block.isLive)
             }
-            ForEach(turn.tools) { tool in
-                LiveToolChip(tool: tool)
+            ForEach(turn.toolGroups) { group in
+                if ToolActivityGrouping.isGrouped(group.tools) {
+                    ToolCallGroupView(group: group)
+                } else {
+                    ForEach(group.tools) { tool in
+                        LiveToolChip(tool: tool)
+                    }
+                }
             }
             if let approval = turn.approval {
                 ApprovalCardView(request: approval) { decision in
