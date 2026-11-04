@@ -83,3 +83,5 @@ Requirements: **Go 1.26+**, **Docker with Compose v2**, **Task**, **Node 20+**
 
 This project is licensed under the [MIT License](LICENSE) (© 2024-2026 Emergent
 Company). Third-party components are attributed in [NOTICE](NOTICE).
+
+<!-- fork dry-run probe: gate 9 (remove) -->
