@@ -12,8 +12,7 @@ These tests run inside a Docker container where the `memory` binary is built fro
 |---|---|---|
 | `MEMORY_TEST_SERVER` | `http://test-emergent-server:3002` | URL of the Memory API server the tests run against. In Docker Compose the compose-internal hostname is used automatically; override to point at a different server. |
 | `MEMORY_SERVER_IMAGE` | `ghcr.io/emergent-company/memory-server:latest` | Docker image used for the test server in the full-stack Docker Compose run. |
-| `MEMORY_PROD_TEST_TOKEN` | _(none)_ | Pre-issued API token for production smoke tests. Must be set as a repository secret in CI. When absent all `TestProduction_*` tests are skipped. |
-| `TEST_RUN` | _(none)_ | Optional `-run` filter passed to `go test`. Example: `TEST_RUN=TestCLIInstalled_Version`. Unset means "run everything" **only** when you invoke `go test` directly: the container entrypoint substitutes the CI allowlist, so a test that is not in it does not run there unless `TEST_RUN` selects it (see [CI](#ci)). |
+| `TEST_RUN` | _(none)_ | Optional `-run` filter passed to `go test`. Example: `TEST_RUN=TestCLIInstalled_Version`. Unset means "run everything" **only** when you invoke `go test` directly: the container entrypoint — reached through `run_tests.sh` as well as through CI — substitutes the CI allowlist, so a test that is not in it does not run there unless `TEST_RUN` selects it (see [CI](#ci)). |
 | `MEMORY_TEST_BLUEPRINTS_DIR` | _(none)_ | Directory holding the blueprint fixture corpora that `tests/blueprints` and `tests/tools` apply (one subdirectory per blueprint, e.g. `workspace-memory-blueprint`). The corpora are not part of this repo; when the variable is unset — or names a directory without the fixture — those suites skip instead of failing. |
 | `E2E_LITELLM_API_KEY` | `sk-test-reextraction-fixture` | Key the reextraction integration test passes when configuring a LiteLLM-backed provider. Override it when the target stack validates real virtual keys. |
 
@@ -141,21 +140,29 @@ reviewable, and faithful to how a real user drives the platform.
 
 ## CI
 
-Three jobs run when a change touches `apps/server/**`, `apps/cli/**`,
+Three test jobs run when a change touches `apps/server/**`, `apps/cli/**`,
 `deploy/**`, `e2e/**`, `go.work`, `VERSION`, this workflow or `.dockerignore` —
-on pushes to `main` and on same-repo pull requests (a fork PR is skipped, because
-it must not execute on the self-hosted runner):
+on pushes to `main` and on same-repo pull requests (a fork PR skips them, because
+they must not execute on the self-hosted runner). A fourth job, **Reap e2e
+stacks**, runs afterwards regardless of the outcome and stops the compose project.
 
 | Job | Description |
 |---|---|
-| **CLI Install Tests** | Full Docker Compose stack. Builds the `memory` CLI from the checked-out source inside the image and installs it in the container, then runs the **allowlisted** CLI tests: `TestCLIInstalled_(Version\|Help\|SetToken\|StatusAuthenticated\|ConfigShowAndSet)` and `TestOpencode*` — five of the 149 `TestCLIInstalled_*` tests. Everything else runs on demand through `runlog test` (see [Local usage](#local-usage)). |
+| **CLI Install Tests** | Full Docker Compose stack. Builds the `memory` CLI from the checked-out source inside the image and installs it in the container, then runs the **allowlisted** CLI tests (below): five of the 149 `TestCLIInstalled_*` tests plus the `TestOpencode` matches. Everything else runs on demand through `runlog test` (see [Local usage](#local-usage)). |
 | **API Tests** | Full Docker Compose stack with a server built from the checked-out source, then `go test ./tests/api/...` — the whole package, with no `-run` allowlist, so a new API test runs automatically. |
-| **Production Smoke Tests** | Runs `TestProduction_*` against the live production server using `MEMORY_PROD_TEST_TOKEN`. Skipped when the secret is absent (e.g. on forks). |
+| **Mailgun Transport Test** | The same stack with the email transport switched from SMTP/Mailpit to a local Mailgun stub, so the Mailgun path runs without real credentials or egress. |
 
-The CLI allowlist is the default value of `TEST_RUN` in `entrypoint.sh` and
-exists because the full suite does not fit the job's time budget. The
-consequence is worth stating plainly: **a green CLI Install Tests check does not
-mean an arbitrary `TestCLIInstalled_*` test ran.** When a change adds one,
+The CLI allowlist is the default value of `TEST_RUN` in `entrypoint.sh`:
+
+```
+TestCLIInstalled_(Version|Help|SetToken|StatusAuthenticated|ConfigShowAndSet)|TestOpencode
+```
+
+`TestOpencode` is an unanchored pattern, so it also selects
+`TestOpencodeInstalled` and `TestOpencodeSeesInstalledSkills`.
+
+The consequence is worth stating plainly: **a green CLI Install Tests check does
+not mean an arbitrary `TestCLIInstalled_*` test ran.** When a change adds one,
 either link a `runlog test` run against a build that carries the change, or
 select it with the `TEST_RUN` input of a manual `workflow_dispatch` on this
 workflow.
