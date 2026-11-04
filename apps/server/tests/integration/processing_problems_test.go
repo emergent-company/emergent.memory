@@ -38,7 +38,10 @@ func (s *ProcessingProblemsTestSuite) SetupSuite() {
 	s.Require().NoError(err, "Failed to setup test database")
 	s.testDB = testDB
 
-	s.svc = processingproblems.NewService(processingproblems.NewRepository(testDB.DB), s.log)
+	// nil model-state reader: this suite exercises the report's assembly and
+	// counting, and an unresolved state is a supported path (the copy stays
+	// unverified). The copy matrix is unit-tested in the domain package.
+	s.svc = processingproblems.NewService(processingproblems.NewRepository(testDB.DB), nil, s.log)
 }
 
 func (s *ProcessingProblemsTestSuite) TearDownSuite() {
