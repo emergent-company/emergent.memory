@@ -44,6 +44,26 @@ removing it. The deprecated `ZITADEL_OIDC_DEFAULT_SCOPES` and
 
 ### Added
 
+**Project search page** (2026-11-04)
+
+The web UI gains a top-level **Search** page (`/search`, sidebar: *Search*) that runs
+one unified query over everything a project knows: the text of ingested documents
+(full-text and, when an embedding model is configured, vector similarity — fused
+server-side) and knowledge-graph objects. This closes a real gap: the documents list
+only matched filenames, and the objects browser's search asked for graph results
+only, so a project with ingested documents but no extracted graph had no content
+search at all.
+
+- Results are split into Documents (matched passage, how it matched, score) and
+  Objects sections. The *Search in* filter narrows the request to documents or
+  objects; *Results* caps it at 10, 25 (default) or 50.
+- Degrades honestly: a chunk matched by keyword only is badged as such, and a
+  zero-hit search in a project with no embedding model says so and links to the
+  embeddings page.
+- Document names are resolved gateway-side (the search response carries only a
+  document id), at most eight lookups in flight; a failed lookup falls back to
+  `Document <id>`.
+
 **MCP branch tool parity** (2026-10-27)
 
 The MCP tool surface now covers the branch operations the REST API already
