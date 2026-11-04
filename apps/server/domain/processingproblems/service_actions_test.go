@@ -40,14 +40,21 @@ func TestActionForDocumentParsingIsARetry(t *testing.T) {
 	}
 }
 
-// TestActionForDiscoveryStaysAnOpenUntilItsControlsLand pins main's behaviour for
-// a failing discovery run: the panel navigates to the schema area, which is where
-// add-schema-discovery-controls puts the retry and the controls (issue #52, #53).
+// TestActionForDiscoveryStaysAnOpenUntilItsControlsLand pins the row's shape for
+// a failing discovery run: the panel navigates to the schema area instead of
+// re-running the run itself, because the run's progress, the pack it produced
+// and the retry control all live there (add-schema-discovery-controls, #52/#53).
 //
-// This yielded change deliberately dropped its own discovery retry, which moved
-// the queue out of its own action case; losing it from the shared case as well
-// would be silent — the row renders Drilldown, so a fall-through to
-// {open, "Open", ""} only shows up as an empty action payload. Hence the pin.
+// The retry the row offers is the panel's per-row action (the gateway renders it
+// from processingProblemRetry against the same endpoint the card posts to), so
+// this action case has to stay an open link rather than become a second retry.
+// It is pinned because dropping the case would be silent — the row renders
+// Drilldown, so a fall-through to {open, "Open", ""} only shows up as an empty
+// action payload.
+//
+// add-schema-discovery-controls deep-links the anchor: the schema page as a
+// whole is the compiled type browser, so landing at the top left the user
+// hunting for the run the row is about.
 func TestActionForDiscoveryStaysAnOpenUntilItsControlsLand(t *testing.T) {
 	row := problemRow{Queue: QueueDiscovery, JobID: "job-1"}
 
@@ -55,13 +62,13 @@ func TestActionForDiscoveryStaysAnOpenUntilItsControlsLand(t *testing.T) {
 	if action.Kind != ActionOpen {
 		t.Fatalf("kind = %q, want %q", action.Kind, ActionOpen)
 	}
-	if want := "/schema"; action.Href != want {
+	if want := "/schema#discovery"; action.Href != want {
 		t.Fatalf("href = %q, want %q", action.Href, want)
 	}
-	if want := "Open schema"; action.Label != want {
+	if want := "Open discovery"; action.Label != want {
 		t.Fatalf("label = %q, want %q", action.Label, want)
 	}
-	if got := drilldownFor(QueueDiscovery, row); got != "/schema" {
-		t.Fatalf("drilldown = %q, want /schema", got)
+	if want := "/schema#discovery"; drilldownFor(QueueDiscovery, row) != want {
+		t.Fatalf("drilldown = %q, want %s", drilldownFor(QueueDiscovery, row), want)
 	}
 }
