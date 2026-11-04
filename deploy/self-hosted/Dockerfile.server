@@ -30,6 +30,9 @@ ARG BUILD_TIME
 
 # Install build dependencies (git needed for swag)
 RUN apk add --no-cache git ca-certificates tzdata
+# One bounded-retry helper for the steps whose failure mode is the network; its
+# header explains why a fetch and a compile are not treated alike.
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
 
 WORKDIR /build/server
 
@@ -44,16 +47,20 @@ COPY apps/server/pkg/sdk/go.mod apps/server/pkg/sdk/go.sum ./pkg/sdk/
 # error failed a whole image build. Bounded retry: a module fetch is the step
 # that can fail for reasons unrelated to this tree.
 RUN --mount=type=cache,target=/go/pkg/mod \
-    sh -c 'for attempt in 1 2 3; do if go mod download; then exit 0; fi; echo "go mod download failed (attempt $attempt/3)" >&2; [ "$attempt" = 3 ] && break; sleep 10; done; exit 1'
+    sh /usr/local/bin/retry 3 10 "go mod download (server)" -- go mod download
 
 # Install swag at the version go.mod requires, so the generator can never
 # disagree with the compiled github.com/swaggo/swag library. The layer caches on
 # go.mod/go.sum (the COPY above), not on source. It mounts the module and build
-# caches too: `go install x@version` resolves outside this module, so without
-# them it re-downloads and re-compiles its own graph on every cold builder.
+# caches too: `go install x@version` resolves outside this module, so without them
+# it re-downloads and re-compiles its own graph on every cold builder. That also
+# means `go mod download` does not cover it -- on a cold builder it is a fetch
+# like the others (18 modules measured, #68), so it is retried like the others.
+# The version comes from go.mod in the outer shell, evaluated once, so a retry
+# cannot install a different one than the one that was resolved.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
+    sh /usr/local/bin/retry 3 10 "go install swag" -- go install "github.com/swaggo/swag/cmd/swag@$(go list -m -f '{{.Version}}' github.com/swaggo/swag)"
 
 # Copy source code (cache invalidation point for source changes)
 COPY apps/server/ ./
@@ -76,7 +83,13 @@ COPY apps/server/ ./
 # what was wrong, so a transient retry does not bury the reason.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    sh -c 'attempt=1; while :; do if out=$(go mod tidy -diff 2>&1); then exit 0; fi; if [ "$attempt" = 3 ]; then printf "%s\n\nERROR: apps/server/go.mod or go.sum is not tidy in this tree.\n       Run go mod tidy in apps/server, commit go.mod+go.sum, cut a new tag.\n       No diff above means the module graph or an import failed to load.\n" "$out" >&2; exit 1; fi; echo "go mod tidy -diff failed (attempt $attempt/3); retrying in 10s" >&2; attempt=$((attempt+1)); sleep 10; done'
+    sh /usr/local/bin/retry 3 10 "go mod tidy -diff (server)" -- go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/server/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/server, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
 
 # Generate swagger docs (runs on build platform, not target)
 # Note: apps/server/docs may be a symlink on the host — remove it entirely first
@@ -131,6 +144,9 @@ ARG BUILD_TIME
 
 WORKDIR /build/cli
 
+# Separate stage, so the retry helper is copied again (a COPY is stage-scoped).
+COPY deploy/self-hosted/scripts/retry.sh /usr/local/bin/retry
+
 # Copy SDK first (needed for go.mod replace directive)
 COPY apps/server/pkg/sdk/ /apps/server/pkg/sdk/
 
@@ -140,7 +156,7 @@ COPY apps/cli/go.mod apps/cli/go.sum ./
 # download layer would be thrown away and re-fetched during `go build`.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    sh -c 'for attempt in 1 2 3; do if go mod download; then exit 0; fi; echo "go mod download failed (attempt $attempt/3)" >&2; [ "$attempt" = 3 ] && break; sleep 10; done; exit 1'
+    sh /usr/local/bin/retry 3 10 "go mod download (cli)" -- go mod download
 
 # Copy CLI source
 COPY apps/cli/ ./
@@ -152,7 +168,13 @@ COPY apps/cli/ ./
 # dependencies the download step does not fetch.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    sh -c 'attempt=1; while :; do if out=$(go mod tidy -diff 2>&1); then exit 0; fi; if [ "$attempt" = 3 ]; then printf "%s\n\nERROR: apps/cli/go.mod or go.sum is not tidy in this tree.\n       Run go mod tidy in apps/cli, commit go.mod+go.sum, cut a new tag.\n       No diff above means the module graph or an import failed to load.\n" "$out" >&2; exit 1; fi; echo "go mod tidy -diff failed (attempt $attempt/3); retrying in 10s" >&2; attempt=$((attempt+1)); sleep 10; done'
+    sh /usr/local/bin/retry 3 10 "go mod tidy -diff (cli)" -- go mod tidy -diff || { \
+      echo "" >&2; \
+      echo "ERROR: apps/cli/go.mod or go.sum is not tidy in this tree." >&2; \
+      echo "       Run 'go mod tidy' in apps/cli, commit go.mod+go.sum, cut a new tag." >&2; \
+      echo "       No diff above means the module graph or an import failed to load." >&2; \
+      exit 1; \
+    }
 
 # Cross-compile CLI binary
 # Re-declare version args to bust cache when version changes.
