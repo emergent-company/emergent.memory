@@ -70,7 +70,7 @@ func scopeGroupToggleTag(block string) string {
 func TestRenderScopePickerTwoColumnGroups(t *testing.T) {
 	cfg := apiTokenScopePickerConfig{}
 	groups := scopePickerGroupsFor(cfg)
-	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read"}, cfg))
+	html := renderHTML(t, apiTokenScopePickerContent([]string{"documents:read"}, cfg))
 
 	if got := strings.Count(html, `data-testid="scope-group"`); got != len(groups) {
 		t.Errorf("scope-group blocks = %d, want %d", got, len(groups))
@@ -128,7 +128,7 @@ func TestRenderScopePickerTwoColumnGroups(t *testing.T) {
 // pre-checked only when every scope in its area is selected; a partially
 // selected group leaves it unchecked (the client scripts set indeterminate).
 func TestRenderScopePickerGroupToggleState(t *testing.T) {
-	all := []string{"schema:read", "schema:write", "schema:migrate", "data:read"}
+	all := []string{"schema:read", "schema:write", "schema:migrate", "documents:read"}
 	html := renderHTML(t, apiTokenScopePickerContent(all, apiTokenScopePickerConfig{}))
 
 	schemas := scopeGroupToggleTag(scopeGroupBlock(html, apiTokenAreaSchemas))
@@ -139,12 +139,12 @@ func TestRenderScopePickerGroupToggleState(t *testing.T) {
 		t.Errorf("fully selected group's header toggle should be pre-checked, got %q", schemas)
 	}
 
-	data := scopeGroupToggleTag(scopeGroupBlock(html, apiTokenAreaData))
-	if data == "" {
-		t.Fatal("Data group header toggle missing")
+	docs := scopeGroupToggleTag(scopeGroupBlock(html, apiTokenAreaDocuments))
+	if docs == "" {
+		t.Fatal("Documents group header toggle missing")
 	}
-	if strings.Contains(data, "checked") {
-		t.Errorf("partially selected group's header toggle must not be pre-checked, got %q", data)
+	if strings.Contains(docs, "checked") {
+		t.Errorf("partially selected group's header toggle must not be pre-checked, got %q", docs)
 	}
 }
 

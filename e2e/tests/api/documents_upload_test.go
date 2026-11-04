@@ -33,7 +33,7 @@ func TestDocumentsUpload_RequiresDocumentsWriteScope(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, readOnlyToken := createToken(t, projectID, uniqueName("upload-read-only"), []string{"data:read"})
+	_, readOnlyToken := createToken(t, projectID, uniqueName("upload-read-only"), []string{"documents:read"})
 
 	resp := doMultipartWithFile(t, "/api/documents/upload", readOnlyToken, projectID, "file", "test.txt", []byte("test content"))
 	body := mustStatus(t, resp, http.StatusForbidden)
@@ -119,7 +119,7 @@ func TestDocumentsBatchUpload_RequiresDocumentsWriteScope(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, readOnlyToken := createToken(t, projectID, uniqueName("batch-upload-read-only"), []string{"data:read"})
+	_, readOnlyToken := createToken(t, projectID, uniqueName("batch-upload-read-only"), []string{"documents:read"})
 
 	resp := doMultipartWithFiles(t, "/api/documents/upload/batch", readOnlyToken, projectID, "files", map[string][]byte{
 		"test1.txt": []byte("test content 1"),

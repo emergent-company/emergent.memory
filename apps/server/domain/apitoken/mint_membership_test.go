@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"github.com/uptrace/bun"
 
 	"github.com/emergent-company/emergent.memory/internal/testdb"
 	"github.com/emergent-company/emergent.memory/pkg/apperror"
@@ -33,6 +34,7 @@ const (
 type mintFixture struct {
 	e          *echo.Echo
 	svc        *Service
+	db         *bun.DB
 	memberID   string
 	strangerID string
 	projectA   string
@@ -93,6 +95,7 @@ func newMintFixture(t *testing.T) *mintFixture {
 	return &mintFixture{
 		e:          e,
 		svc:        svc,
+		db:         db,
 		memberID:   memberID,
 		strangerID: strangerID,
 		projectA:   projectA,
@@ -118,7 +121,7 @@ func (f *mintFixture) mint(t *testing.T, path, token, body string) *httptest.Res
 func (f *mintFixture) mintBoundToken(t *testing.T, projectID string) string {
 	t.Helper()
 	dto, err := f.svc.Create(context.Background(), projectID, f.memberID,
-		"bound-"+uuid.NewString(), []string{"data:read"})
+		"bound-"+uuid.NewString(), []string{"documents:read"})
 	require.NoError(t, err)
 	return dto.Token
 }
@@ -207,4 +210,58 @@ func TestAccountTokenMintRequiresMembership(t *testing.T) {
 	// project (project B, owned by an org the member does not belong to).
 	rec := f.mint(t, "/api/projects/"+f.projectB+"/tokens", memberAccount, `{"name":"foreign","scopes":["agents:write"]}`)
 	require.Equal(t, http.StatusForbidden, rec.Code, "account token minting for a foreign project must be 403")
+}
+
+// TestCreate_ViewerCeilingUsesFineGrainedReads pins the project_viewer token
+// ceiling to the fine-grained read scopes: data:read is retired from minting, so
+// a viewer must be able to ask for documents:read / search / graph:read /
+// journal:read explicitly, and must still be refused any write scope.
+func TestCreate_ViewerCeilingUsesFineGrainedReads(t *testing.T) {
+	f := newMintFixture(t)
+	ctx := context.Background()
+
+	viewerID := uuid.NewString()
+	_, err := f.db.ExecContext(ctx,
+		`INSERT INTO core.user_profiles (id, zitadel_user_id, display_name) VALUES (?, ?, ?)`,
+		viewerID, "viewer-"+viewerID, "Viewer")
+	require.NoError(t, err)
+	_, err = f.db.ExecContext(ctx,
+		`INSERT INTO kb.project_memberships (project_id, user_id, role) VALUES (?, ?, 'project_viewer')`,
+		f.projectA, viewerID)
+	require.NoError(t, err)
+
+	// The fine-grained reads a viewer may request.
+	_, err = f.svc.Create(ctx, f.projectA, viewerID, "viewer-read",
+		[]string{"documents:read", "search", "graph:read", "journal:read"})
+	require.NoError(t, err)
+
+	// Write scopes are still refused.
+	_, err = f.svc.Create(ctx, f.projectA, viewerID, "viewer-write", []string{"graph:write"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "viewer-write-scope-denied")
+
+	// The retired umbrella is rejected as an invalid scope before the ceiling.
+	_, err = f.svc.Create(ctx, f.projectA, viewerID, "viewer-legacy", []string{"data:read"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid scope: data:read")
+
+	// A viewer can still provision a device credential: its ceiling is the
+	// hardcoded deviceAPIScopes set (which carries the retired data:read
+	// umbrella), not a set the viewer composed, so the stored read ceiling
+	// admits it.
+	_, err = f.svc.CreateDeviceToken(ctx, f.projectA, viewerID, "viewer-device", nil)
+	require.NoError(t, err, "a project_viewer must still be able to provision a device credential")
+
+	// A viewer's legacy token (minted before the umbrellas were retired) must
+	// still rotate: Regenerate copies the stored set, and the stored read
+	// ceiling admits data:read so the only remaining path is not
+	// create-replacement.
+	legacy, err := f.svc.Create(ctx, f.projectA, viewerID, "viewer-legacy-token",
+		[]string{"documents:read"})
+	require.NoError(t, err)
+	_, err = f.db.ExecContext(ctx,
+		`UPDATE core.api_tokens SET scopes = '{"data:read"}'::text[] WHERE id = ?`, legacy.ID)
+	require.NoError(t, err)
+	_, err = f.svc.Regenerate(ctx, legacy.ID, f.projectA, viewerID)
+	require.NoError(t, err, "a project_viewer must still be able to rotate a read-only legacy token")
 }

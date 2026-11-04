@@ -609,6 +609,7 @@ type fakeMemory struct {
 	apiTokens               []APIToken        // project-scoped store
 	apiTokenSecrets         map[string]string // plaintext per token id
 	apiTokenErr             error             // failure for any project api-token method
+	apiTokenScopesErr       error             // failure for UpdateAPITokenScopes only
 	apiTokenRevealPlaintext bool              // GetAPIToken returns plaintext when true (encryption configured)
 	lastAPITokenID          string            // last project token id passed to any api-token op
 	lastAPITokenScopes      []string          // scopes of the last create/update/regenerate
@@ -4089,6 +4090,9 @@ func (f *fakeMemory) GetAPIToken(ctx context.Context, tokenID string) (*APIToken
 func (f *fakeMemory) UpdateAPITokenScopes(ctx context.Context, tokenID string, scopes []string) (*APIToken, error) {
 	if f.apiTokenErr != nil {
 		return nil, f.apiTokenErr
+	}
+	if f.apiTokenScopesErr != nil {
+		return nil, f.apiTokenScopesErr
 	}
 	i := fakeAPITokenFind(f.apiTokens, tokenID)
 	if i < 0 {

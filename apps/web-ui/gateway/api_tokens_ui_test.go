@@ -16,7 +16,7 @@ func apiTokenRenderFixture() []APIToken {
 	return []APIToken{
 		{
 			ID: "t1", Name: "CI deploy", TokenPrefix: "emt_cideployx",
-			Scopes:     []string{"data:read", "data:write"},
+			Scopes:     []string{"documents:read", "documents:write", "graph:read"},
 			CreatedAt:  "2026-09-01T10:00:00Z",
 			LastUsedAt: timePtr(time.Date(2026, 9, 2, 11, 0, 0, 0, time.UTC)),
 		},
@@ -51,10 +51,10 @@ func TestRenderAPITokensPage(t *testing.T) {
 		"API Tokens", "CI deploy", "old token", "emt_cideployx", "emt_oldtoken",
 		// one composed AREA badge per area, with the granted scopes in the title
 		// and the same detail exposed as an accessible name (role=img + aria-label)
-		`data-testid="token-scope-area"`, ">Data<", ">Schemas<",
-		`title="data:read, data:write"`, `title="schema:read"`,
+		`data-testid="token-scope-area"`, ">Documents<", ">Graph<", ">Schemas<",
+		`title="documents:read, documents:write"`, `title="graph:read"`, `title="schema:read"`,
 		`role="img"`,
-		`aria-label="Data: data:read, data:write"`, `aria-label="Schemas: schema:read"`,
+		`aria-label="Documents: documents:read, documents:write"`, `aria-label="Graph: graph:read"`, `aria-label="Schemas: schema:read"`,
 		"Revoked", "1 token",
 		"New token", `href="/settings/tokens/new"`,
 		// revoked tokens live in a collapsed disclosure with its own count
@@ -242,6 +242,45 @@ func TestAPITokenScopeMutates(t *testing.T) {
 	}
 }
 
+// TestAPITokenScopesPinned pins the picker's scope list literally. The picker
+// tests elsewhere iterate apiTokenScopes itself, so a scope silently dropped
+// from the list would fail nothing — yet this list is what the scope-save route
+// validates submitted scopes against and what decides the blocked-edit page.
+// Keep it in step with the server's UserMintableScopes.
+func TestAPITokenScopesPinned(t *testing.T) {
+	want := []string{
+		// coarse-grained
+		"schema:read", "schema:write",
+		"agents:read", "agents:write", "projects:read", "projects:write", "chat:use",
+		// fine-grained
+		"graph:read", "graph:write", "schema:migrate",
+		"branches:read", "branches:write", "search",
+		"journal:read", "journal:write",
+		"skills:read", "skills:write",
+		"documents:read", "documents:write",
+		// admin
+		"admin", "admin:all",
+		// project-scoped admin
+		"project:admin",
+	}
+	if len(apiTokenScopes) != len(want) {
+		t.Fatalf("apiTokenScopes has %d entries, want %d: %v", len(apiTokenScopes), len(want), apiTokenScopes)
+	}
+	for i, scope := range want {
+		if apiTokenScopes[i] != scope {
+			t.Errorf("apiTokenScopes[%d] = %q, want %q", i, apiTokenScopes[i], scope)
+		}
+	}
+	// The retired umbrellas and the reserved marker scopes are never offered.
+	// A token that still holds one is handled by retiredTokenScopes (blocked
+	// edit page), not by the picker.
+	for _, notOffered := range []string{"data:read", "data:write", "device:api", "webhook:trigger", "mcp:agent-call", "share:agent-chat"} {
+		if validAPITokenScope(notOffered) {
+			t.Errorf("apiTokenScopes must not offer %q", notOffered)
+		}
+	}
+}
+
 // TestRenderAPITokensPageEmpty asserts the empty state with its New token CTA.
 func TestRenderAPITokensPageEmpty(t *testing.T) {
 	html := renderHTML(t, APITokensPage(apiTokensPageData{}))
@@ -314,8 +353,8 @@ func TestRenderAPITokenCreatePage(t *testing.T) {
 		"New token", `action="/settings/tokens/new"`, `name="name"`,
 		"Create token", `href="/settings/tokens"`, "Cancel",
 		// picker scopes grouped by area
-		`name="scopes"`, `value="data:read"`, `value="schema:write"`, `value="chat:use"`,
-		"Schemas", "Data", "Graph", "Agents",
+		`name="scopes"`, `value="documents:read"`, `value="schema:write"`, `value="chat:use"`,
+		"Schemas", "Documents", "Graph", "Agents",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("create page missing %q", want)
@@ -371,8 +410,8 @@ func TestRenderAPITokenEditPage(t *testing.T) {
 		"Edit scopes", "CI deploy", `action="/settings/tokens/t1/scopes"`,
 		"Save scopes", `href="/settings/tokens"`, "Cancel",
 		// current scopes pre-checked
-		`value="data:read" class="checkbox checkbox-sm mt-0.5" checked`,
-		`value="data:write" class="checkbox checkbox-sm mt-0.5" checked`,
+		`value="documents:read" class="checkbox checkbox-sm mt-0.5" checked`,
+		`value="graph:read" class="checkbox checkbox-sm mt-0.5" checked`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("edit page missing %q", want)
@@ -416,17 +455,23 @@ func TestRenderAccountTokenEditPage(t *testing.T) {
 // TestRenderScopePickerOmitsAdminAll asserts the picker offers every area group
 // except Admin and never offers the platform admin scopes (admin, admin:all).
 func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
-	html := renderHTML(t, apiTokenScopePickerContent([]string{"data:read"}, apiTokenScopePickerConfig{}))
+	html := renderHTML(t, apiTokenScopePickerContent([]string{"documents:read"}, apiTokenScopePickerConfig{}))
 	for _, want := range []string{
-		"Schemas", "Data", "Documents", "Graph", "Branches",
+		"Schemas", "Documents", "Graph", "Branches",
 		"Agents", "Projects", "Journal", "Skills",
 		`name="scopes"`, `value="schema:read"`, `value="schema:write"`,
-		`value="data:read"`, `value="data:write"`, `value="agents:read"`,
+		`value="agents:read"`,
 		`value="chat:use"`, `value="graph:read"`, `value="schema:migrate"`,
 		`value="search"`, `value="documents:read"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("scope picker missing %q", want)
+		}
+	}
+	// the retired data:read/data:write umbrellas are not offered at all
+	for _, retired := range []string{`value="data:read"`, `value="data:write"`, ">Data<"} {
+		if strings.Contains(html, retired) {
+			t.Errorf("picker must not offer the retired scope/area %q", retired)
 		}
 	}
 	if strings.Contains(html, `value="admin"`) || strings.Contains(html, `value="admin:all"`) {
@@ -439,7 +484,7 @@ func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
 		t.Error("the picker must no longer bucket scopes as coarse/fine-grained")
 	}
 	// preselected scopes render checked
-	if !strings.Contains(html, `value="data:read" class="checkbox checkbox-sm mt-0.5" checked`) {
+	if !strings.Contains(html, `value="documents:read" class="checkbox checkbox-sm mt-0.5" checked`) {
 		t.Error("a granted scope should render checked")
 	}
 }
@@ -449,18 +494,31 @@ func TestRenderScopePickerOmitsAdminAll(t *testing.T) {
 // exactly once except the platform admin scopes (admin, admin:all) and the
 // gated project:admin.
 func TestScopePickerGroupsCoverTaxonomy(t *testing.T) {
-	if len(scopePickerGroups) != len(apiTokenAreas)-1 {
-		t.Fatalf("picker groups = %d, want %d (one per non-admin area)", len(scopePickerGroups), len(apiTokenAreas)-1)
+	// The picker offers one group per canonical area except Admin (platform
+	// scopes are not selectable) and Data (data:read/data:write are retired
+	// from user-facing minting).
+	wantAreas := make([]string, 0, len(apiTokenAreas))
+	for _, area := range apiTokenAreas {
+		if area == apiTokenAreaAdmin || area == apiTokenAreaData {
+			continue
+		}
+		wantAreas = append(wantAreas, area)
+	}
+	if len(scopePickerGroups) != len(wantAreas) {
+		t.Fatalf("picker groups = %d, want %d (one per mintable area)", len(scopePickerGroups), len(wantAreas))
 	}
 	for _, g := range scopePickerGroups {
 		if g.Label == apiTokenAreaAdmin {
 			t.Fatalf("picker must not offer the Admin area (platform admin scopes are not selectable)")
 		}
+		if g.Label == apiTokenAreaData {
+			t.Fatalf("picker must not offer the Data area (data:read/data:write are retired from minting)")
+		}
 	}
 	seen := map[string]int{}
 	for i, g := range scopePickerGroups {
-		if g.Label != apiTokenAreas[i] {
-			t.Errorf("group[%d].Label = %q, want %q (canonical order)", i, g.Label, apiTokenAreas[i])
+		if g.Label != wantAreas[i] {
+			t.Errorf("group[%d].Label = %q, want %q (canonical order)", i, g.Label, wantAreas[i])
 		}
 		if g.Hint == "" {
 			t.Errorf("group[%d] (%s) needs a hint", i, g.Label)

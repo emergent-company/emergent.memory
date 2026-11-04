@@ -40,7 +40,7 @@ func tokenToolDefinitions() []ToolDefinition {
 					},
 					"scopes": {
 						Type:        "string",
-						Description: "Comma-separated list of scopes. Valid values: " + strings.Join(apitoken.ValidApiTokenScopes, ", "),
+						Description: "Comma-separated list of scopes. Valid values: " + strings.Join(apitoken.UserMintableScopes, ", "),
 					},
 				},
 				Required: []string{"name", "scopes"},

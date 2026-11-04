@@ -83,14 +83,6 @@ const (
 	RoleProjectViewer = "project_viewer"
 )
 
-// ViewerReadOnlyScopes are the only scopes a project_viewer may request on a token
-var ViewerReadOnlyScopes = map[string]bool{
-	"data:read":     true,
-	"schema:read":   true,
-	"agents:read":   true,
-	"projects:read": true,
-}
-
 // InstalledSchema represents an installed schema for a project
 type InstalledSchema struct {
 	Name              string   `json:"name"`
