@@ -3364,7 +3364,8 @@ Use --branch to scope key resolution to a specific branch — accepts either
 a branch UUID or a human-readable branch name.
 
 Prints Entity ID, Version ID, Type, Version number, Key (if set), Status (if
-set), Labels (if any), Created timestamp, and Properties as formatted JSON.
+set), Labels (if any), Created timestamp, the write stamp (actor, credential,
+run and data class, when recorded), and Properties as formatted JSON.
 Use --output json to receive the full object as JSON instead.
 
 Examples:
@@ -3404,6 +3405,14 @@ Use --filter key=value to filter by object properties (repeatable). All filters
 are combined with AND. The --filter-op flag sets the comparison operator for
 every --filter in the same invocation (default: eq).
 
+Use --run-id, --credential-id, --credential-kind and --data-class to filter by
+the write stamp every version row records: which agent run produced the row
+(a root run matches the runs it delegated to), which credential wrote it, and
+what class of data it is. This answers "what did this session write" and "what
+did this key write" directly. Filters match the object's current version, so an
+object created by one run and later edited by another is returned for the writer
+of the current version only.
+
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
 Examples:
@@ -3413,6 +3422,8 @@ Examples:
   memory graph objects list --type Feature --filter status=active --filter inertia_tier=1
   memory graph objects list --filter status=active,draft --filter-op in
   memory graph objects list --filter status --filter-op exists
+  memory graph objects list --run-id <run-uuid>
+  memory graph objects list --credential-id <token-uuid> --data-class source
 
 ```
 memory graph objects list [flags]
@@ -3421,19 +3432,23 @@ memory graph objects list [flags]
 ### Options
 
 ```
-      --actor-id string      Filter by actor ID (UUID; requires --actor-type)
-      --actor-type string    Filter by actor type: user, agent, or system
-      --branch string        Branch ID to scope results to (omit for main branch)
-      --cursor string        Pagination cursor from a previous response (next_cursor field)
-      --filter stringArray   Property filter as key=value (repeatable); see --filter-op
-      --filter-op string     Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
-  -h, --help                 help for list
-      --ids string           Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
-      --key string           Filter by object key (direct key-based lookup)
-      --limit int            Maximum number of results (server default: 1000) (default 1000)
-      --provenance string    Provenance filter mode: created, updated, or any (default: any)
-      --status string        Filter by object status
-      --type string          Filter by object type
+      --actor-id string          Filter by actor ID (UUID; requires --actor-type)
+      --actor-type string        Filter by actor type: user, agent, or system
+      --branch string            Branch ID to scope results to (omit for main branch)
+      --credential-id string     Filter by the credential (API token) that wrote the rows
+      --credential-kind string   Filter by credential kind: api_key, mcp_link, session, none
+      --cursor string            Pagination cursor from a previous response (next_cursor field)
+      --data-class string        Filter by data class: source, synthesized, adopted
+      --filter stringArray       Property filter as key=value (repeatable); see --filter-op
+      --filter-op string         Operator for --filter: eq, neq, gt, gte, lt, lte, contains, in, exists (default "eq")
+  -h, --help                     help for list
+      --ids string               Fetch specific objects by ID (comma-separated: --ids id1,id2,id3)
+      --key string               Filter by object key (direct key-based lookup)
+      --limit int                Maximum number of results (server default: 1000) (default 1000)
+      --provenance string        Provenance filter mode: created, updated, or any (default: any)
+      --run-id string            Filter by write-stamp run ID (matches the run or any run it delegated to)
+      --status string            Filter by object status
+      --type string              Filter by object type
 ```
 
 ## memory graph objects move
@@ -3698,6 +3713,10 @@ type, --from/--to to filter by endpoint, --limit to control result count,
 --cursor to paginate through large result sets, and --output json to receive
 the full list as JSON.
 
+Use --run-id, --credential-id and --credential-kind to filter by the write stamp
+every version row records (a root run matches the runs it delegated to).
+Relationships record no data class, so there is no --data-class here.
+
 ```
 memory graph relationships list [flags]
 ```
@@ -3705,13 +3724,16 @@ memory graph relationships list [flags]
 ### Options
 
 ```
-      --branch string   Branch ID to scope results to (omit for main branch)
-      --cursor string   Pagination cursor from a previous response (next_cursor field)
-      --from string     Filter by source object ID
-  -h, --help            help for list
-      --limit int       Maximum number of results (server default: 1000) (default 1000)
-      --to string       Filter by destination object ID
-      --type string     Filter by relationship type
+      --branch string            Branch ID to scope results to (omit for main branch)
+      --credential-id string     Filter by the credential (API token) that wrote the rows
+      --credential-kind string   Filter by credential kind: api_key, mcp_link, session, none
+      --cursor string            Pagination cursor from a previous response (next_cursor field)
+      --from string              Filter by source object ID
+  -h, --help                     help for list
+      --limit int                Maximum number of results (server default: 1000) (default 1000)
+      --run-id string            Filter by write-stamp run ID (matches the run or any run it delegated to)
+      --to string                Filter by destination object ID
+      --type string              Filter by relationship type
 ```
 
 ## memory init
