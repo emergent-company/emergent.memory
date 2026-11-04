@@ -117,7 +117,8 @@ which is what makes subsequent CLI commands in that directory pick it up
 automatically. Writing a live credential to a file is opt-in: the current
 working directory is often a checkout, where a stray .env.local is a leak risk.
 
-Scopes default to: data:read data:write schema:read agents:read agents:write
+Scopes default to the read and write presets (documents:*, graph:*, schema:*,
+agents:*, projects:*, search, journal:read).
 
 Example:
   memory projects create-token my-project --name onboard-token
@@ -175,7 +176,7 @@ func runProjectsCreateToken(cmd *cobra.Command, args []string) error {
 
 	scopes := createTokenScopes
 	if len(scopes) == 0 {
-		scopes = []string{"data:read", "data:write", "schema:read", "agents:read", "agents:write"}
+		scopes = presetScopes("read", "write")
 	}
 
 	name := createTokenName
@@ -908,7 +909,7 @@ func runSetProject(cmd *cobra.Command, args []string) error {
 		// Generate a new one
 		fmt.Println("No existing viewable token found. Generating a new one...")
 		tokenName := cliTokenName()
-		defaultScopes := []string{"data:read", "data:write", "schema:read", "projects:read", "agents:read"}
+		defaultScopes := presetScopes("read", "write")
 		req := &apitokens.CreateTokenRequest{
 			Name:   tokenName,
 			Scopes: defaultScopes,
@@ -1299,7 +1300,7 @@ func init() {
 	setProjectProviderCmd.Flags().StringVar(&setProviderName, "name", "", "Provider instance name (slug); defaults to the provider name. Use a distinct name to add a second instance of the same provider type")
 
 	projectsCreateTokenCmd.Flags().StringVar(&createTokenName, "name", "cli-token", "Token name")
-	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes (default: data:read,data:write,schema:read,agents:read,agents:write)")
+	projectsCreateTokenCmd.Flags().StringSliceVar(&createTokenScopes, "scopes", nil, "Token scopes or presets (read, write; e.g. --scopes read,write). Default: read,write")
 	projectsCreateTokenCmd.Flags().BoolVar(&createTokenWriteEnv, "write-env", false, "Also write the token to .env.local in the current directory (mode 0600); off by default")
 	projectsCreateTokenCmd.Flags().BoolVar(&createTokenNoEnv, "no-env", false, "Deprecated: writing to .env.local is off by default")
 	_ = projectsCreateTokenCmd.Flags().MarkDeprecated("no-env", "writing to .env.local is now opt-in via --write-env")

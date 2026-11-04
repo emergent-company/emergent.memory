@@ -150,7 +150,7 @@ var tokenCRUDRoutes = []struct {
 }{
 	{"List", http.MethodGet, func(p, _ string) string { return "/api/projects/" + p + "/tokens" }, ""},
 	{"Get", http.MethodGet, func(p, t string) string { return "/api/projects/" + p + "/tokens/" + t }, ""},
-	{"UpdateScopes", http.MethodPatch, func(p, t string) string { return "/api/projects/" + p + "/tokens/" + t }, `{"scopes":["data:read"]}`},
+	{"UpdateScopes", http.MethodPatch, func(p, t string) string { return "/api/projects/" + p + "/tokens/" + t }, `{"scopes":["documents:read"]}`},
 	{"Revoke", http.MethodDelete, func(p, t string) string { return "/api/projects/" + p + "/tokens/" + t }, ""},
 	{"Regenerate", http.MethodPost, func(p, t string) string { return "/api/projects/" + p + "/tokens/" + t + "/regenerate" }, ""},
 }
@@ -165,7 +165,7 @@ func TestTokenCRUDEnforcesMembership(t *testing.T) {
 
 	for _, r := range tokenCRUDRoutes {
 		t.Run(r.name, func(t *testing.T) {
-			tokenID := f.seedProjectToken(t, f.projectA, f.memberID, []string{"data:read"})
+			tokenID := f.seedProjectToken(t, f.projectA, f.memberID, []string{"documents:read"})
 			path := r.path(f.projectA, tokenID)
 
 			rec := f.request(t, r.method, path, mintMemberToken, r.body)
@@ -188,12 +188,12 @@ func TestTokenCRUDEnforcesMembership(t *testing.T) {
 func TestTokenCRUDAccountTokenBoundedByMembership(t *testing.T) {
 	f := newCrudFixture(t)
 
-	memberAccount := f.mintAccountTokenWithScopes(t, f.memberID, []string{"data:read"})
-	strangerAccount := f.mintAccountTokenWithScopes(t, f.strangerID, []string{"data:read"})
+	memberAccount := f.mintAccountTokenWithScopes(t, f.memberID, []string{"documents:read"})
+	strangerAccount := f.mintAccountTokenWithScopes(t, f.strangerID, []string{"documents:read"})
 
 	for _, r := range tokenCRUDRoutes {
 		t.Run(r.name, func(t *testing.T) {
-			tokenID := f.seedProjectToken(t, f.projectA, f.memberID, []string{"data:read"})
+			tokenID := f.seedProjectToken(t, f.projectA, f.memberID, []string{"documents:read"})
 			path := r.path(f.projectA, tokenID)
 
 			rec := f.request(t, r.method, path, memberAccount, r.body)
@@ -219,13 +219,13 @@ func TestTokenCRUDProjectBoundTokenUnchanged(t *testing.T) {
 	f := newCrudFixture(t)
 
 	// A project-A-bound token reaches project A's CRUD surface.
-	boundA := f.seedBoundToken(t, f.projectA, []string{"data:read"})
+	boundA := f.seedBoundToken(t, f.projectA, []string{"documents:read"})
 
 	rec := f.request(t, http.MethodGet, "/api/projects/"+f.projectA+"/tokens", boundA, "")
 	require.Equal(t, http.StatusOK, rec.Code, "project-A-bound token listing project A must succeed")
 
 	// A project-B-bound token is refused for project A (binding mismatch).
-	boundB := f.seedBoundToken(t, f.projectB, []string{"data:read"})
+	boundB := f.seedBoundToken(t, f.projectB, []string{"documents:read"})
 	rec = f.request(t, http.MethodGet, "/api/projects/"+f.projectA+"/tokens", boundB, "")
 	require.Equal(t, http.StatusForbidden, rec.Code, "cross-project emt_* token must be 403")
 

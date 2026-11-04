@@ -203,12 +203,6 @@ var scopePickerGroups = []apiTokenScopeGroup{
 		},
 	},
 	{
-		Label: apiTokenAreaData, Hint: "Stored data records.",
-		Options: []apiTokenScopeOption{
-			{"data:read", "Read data"}, {"data:write", "Write data"},
-		},
-	},
-	{
 		Label: apiTokenAreaDocuments, Hint: "Documents and their content.",
 		Options: []apiTokenScopeOption{
 			{"documents:read", "Read documents"}, {"documents:write", "Write documents"},
@@ -536,6 +530,24 @@ func (s *Server) uiTokenScopes(c echo.Context, account bool) error {
 	tokenID, err := apiTokenID(c)
 	if err != nil {
 		return redirectWithError(c, base, err)
+	}
+	// A token holding a retired scope cannot be re-scoped in place: the picker
+	// no longer offers that scope, so a save would silently drop it. Refuse and
+	// point at replacement, matching the blocked edit page.
+	var tokens []APIToken
+	if account {
+		tokens, err = s.memory.ListAccountAPITokens(ctx)
+	} else {
+		tokens, err = s.memory.ListAPITokens(ctx)
+	}
+	if err != nil {
+		return redirectWithError(c, base+"/"+url.PathEscape(tokenID)+"/edit", userFacingError(err))
+	}
+	if tok := findTokenByID(tokens, tokenID); tok != nil {
+		if retired := retiredTokenScopes(tok.Scopes); len(retired) > 0 {
+			return redirectWithError(c, base+"/"+url.PathEscape(tokenID)+"/edit",
+				fmt.Errorf("this token holds retired scopes (%s); create a replacement token instead", strings.Join(retired, ", ")))
+		}
 	}
 	scopes, err := apiTokenFormScopes(c)
 	if err != nil {

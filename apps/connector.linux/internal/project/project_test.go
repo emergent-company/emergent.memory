@@ -216,8 +216,19 @@ func TestEnsureTokenUsesLeastPrivilegeScopesAndName(t *testing.T) {
 	if _, err := m.EnsureToken(context.Background(), "https://srv.test", "p1"); err != nil {
 		t.Fatalf("EnsureToken: %v", err)
 	}
-	if !reflect.DeepEqual(fd.lastScopes, []string{"data:read"}) {
-		t.Errorf("scopes = %v, want [data:read]", fd.lastScopes)
+	want := []string{"documents:read", "search", "graph:read", "journal:read", "schema:read"}
+	if !reflect.DeepEqual(fd.lastScopes, want) {
+		t.Errorf("scopes = %v, want %v", fd.lastScopes, want)
+	}
+	// The retired data:read / data:write umbrellas are no longer accepted by the
+	// token API, so requesting one would make `projects use` fail on a fresh
+	// project (and after `auth logout`). Pin their absence.
+	for _, retired := range []string{"data:read", "data:write"} {
+		for _, scope := range fd.lastScopes {
+			if scope == retired {
+				t.Errorf("connector token requests retired scope %q", retired)
+			}
+		}
 	}
 	if fd.lastName != m.TokenName("p1") || !strings.HasPrefix(fd.lastName, "connector-") {
 		t.Errorf("token name = %q, want %q", fd.lastName, m.TokenName("p1"))
