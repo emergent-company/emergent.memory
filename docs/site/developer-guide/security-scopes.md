@@ -139,6 +139,9 @@ These scopes implicitly grant all listed fine-grained scopes.
 |---|---|
 | `data:read` | `documents:read`, `chunks:read`, `search:read`, `graph:read`, `graph:search:read`, `extraction:read`, `schema:read`, `tasks:read`, `user-activity:read`, `notifications:read` |
 | `data:write` | `documents:write`, `documents:delete`, `chunks:write`, `graph:write`, `ingest:write`, `extraction:write`, `tasks:write`, `user-activity:write`, `notifications:write` |
+| `agents:read` | includes `chat:use` |
+| `agents:write` | includes `chat:admin` |
+| `projects:write` | includes `projects:read` |
 
 !!! warning "What a fine-grained replacement does not cover"
     A token created now can only carry scopes from the mintable catalogue below.
@@ -153,9 +156,6 @@ These scopes implicitly grant all listed fine-grained scopes.
     `notifications:write` are reachable only through `data:write`. The MCP tools
     are not affected: they are gated on `documents:read`, `search`, `graph:read`
     and `journal:read`, which the mintable catalogue does provide.
-| `agents:read` | includes `chat:use` |
-| `agents:write` | includes `chat:admin` |
-| `projects:write` | includes `projects:read` |
 
 ---
 

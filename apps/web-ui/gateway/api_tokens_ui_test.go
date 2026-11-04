@@ -242,6 +242,45 @@ func TestAPITokenScopeMutates(t *testing.T) {
 	}
 }
 
+// TestAPITokenScopesPinned pins the picker's scope list literally. The picker
+// tests elsewhere iterate apiTokenScopes itself, so a scope silently dropped
+// from the list would fail nothing — yet this list is what the scope-save route
+// validates submitted scopes against and what decides the blocked-edit page.
+// Keep it in step with the server's UserMintableScopes.
+func TestAPITokenScopesPinned(t *testing.T) {
+	want := []string{
+		// coarse-grained
+		"schema:read", "schema:write",
+		"agents:read", "agents:write", "projects:read", "projects:write", "chat:use",
+		// fine-grained
+		"graph:read", "graph:write", "schema:migrate",
+		"branches:read", "branches:write", "search",
+		"journal:read", "journal:write",
+		"skills:read", "skills:write",
+		"documents:read", "documents:write",
+		// admin
+		"admin", "admin:all",
+		// project-scoped admin
+		"project:admin",
+	}
+	if len(apiTokenScopes) != len(want) {
+		t.Fatalf("apiTokenScopes has %d entries, want %d: %v", len(apiTokenScopes), len(want), apiTokenScopes)
+	}
+	for i, scope := range want {
+		if apiTokenScopes[i] != scope {
+			t.Errorf("apiTokenScopes[%d] = %q, want %q", i, apiTokenScopes[i], scope)
+		}
+	}
+	// The retired umbrellas and the reserved marker scopes are never offered.
+	// A token that still holds one is handled by retiredTokenScopes (blocked
+	// edit page), not by the picker.
+	for _, notOffered := range []string{"data:read", "data:write", "device:api", "webhook:trigger", "mcp:agent-call", "share:agent-chat"} {
+		if validAPITokenScope(notOffered) {
+			t.Errorf("apiTokenScopes must not offer %q", notOffered)
+		}
+	}
+}
+
 // TestRenderAPITokensPageEmpty asserts the empty state with its New token CTA.
 func TestRenderAPITokensPageEmpty(t *testing.T) {
 	html := renderHTML(t, APITokensPage(apiTokensPageData{}))
