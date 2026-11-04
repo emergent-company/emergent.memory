@@ -81,7 +81,21 @@ templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
 			loadErr = view.Err
 		}
 	}}
-	<div id="discovery" class="mb-8" data-testid="schema-discovery-card">
+	{{ cardAttrs := templ.Attributes{"id": "discovery", "class": "mb-8", "data-testid": "schema-discovery-card"}
+	if latest != nil && latest.isRunning() {
+		// A run is a server-side goroutine and this card is the only place it
+		// reports progress, so without an interval it reads as frozen until the
+		// page is reloaded. A terminal job renders no attributes at all, which
+		// is what stops the interval (same pattern as extractionRunBody).
+		cardAttrs["hx-get"] = "/schema/discovery/card"
+		cardAttrs["hx-trigger"] = "every 5s"
+		cardAttrs["hx-swap"] = "outerHTML"
+		// The page shell's <main> carries hx-target="#main-content" and htmx's
+		// implicit attribute inheritance would otherwise apply it here, so the
+		// swap target is pinned to this element.
+		cardAttrs["hx-target"] = "this"
+	} }}
+	<div { cardAttrs... }>
 		@components.PanelCard("", nil) {
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div class="flex items-center gap-3">

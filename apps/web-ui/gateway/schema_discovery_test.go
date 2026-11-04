@@ -16,11 +16,80 @@ import (
 func newSchemaDiscoveryServer(f *fakeMemory) (*Server, *echo.Echo) {
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
+	e.GET("/schema/discovery/card", s.uiSchemaDiscoveryCard)
 	e.POST("/schema/discovery/start", s.uiSchemaDiscoveryStart)
 	e.POST("/schema/discovery/retry/:jobID", s.uiSchemaDiscoveryRetry)
 	e.POST("/schema/discovery/cancel/:jobID", s.uiSchemaDiscoveryCancel)
 	e.POST("/documents/:id/discover", s.uiDocumentDiscover)
 	return s, e
+}
+
+// TestSchemaDiscoveryCardPollsWhileRunning pins that a run in flight refreshes
+// its own progress. The card was static: the one surface that reports a
+// project-wide run only moved when the page was reloaded, so a long run looked
+// frozen. The interval must be on the card itself and target the card, not the
+// page shell's #main-content (htmx inherits hx-target from <main>).
+func TestSchemaDiscoveryCardPollsWhileRunning(t *testing.T) {
+	html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest:        &discoveryJob{ID: "job-1", Status: "running"},
+		DocumentCount: 8,
+	}))
+
+	for _, want := range []string{
+		`hx-get="/schema/discovery/card"`,
+		`hx-trigger="every 5s"`,
+		`hx-swap="outerHTML"`,
+		`hx-target="this"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("running card missing %q\n%s", want, html)
+		}
+	}
+}
+
+// TestSchemaDiscoveryCardStopsPollingWhenTerminal is the other half of the
+// interval's contract: the swapped-in card must not carry hx-trigger, or the
+// browser polls a finished run forever. Each terminal status is checked so a
+// new one cannot be added without landing on the right side of isRunning.
+func TestSchemaDiscoveryCardStopsPollingWhenTerminal(t *testing.T) {
+	for _, status := range []string{"completed", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			html := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+				Latest:        &discoveryJob{ID: "job-1", Status: status},
+				DocumentCount: 8,
+			}))
+			if strings.Contains(html, "hx-trigger") {
+				t.Errorf("%s card still polls\n%s", status, html)
+			}
+			if !strings.Contains(html, `id="discovery"`) {
+				t.Errorf("%s card lost its anchor id\n%s", status, html)
+			}
+		})
+	}
+}
+
+// TestSchemaDiscoveryCardEndpointRendersTheFragment pins the poll endpoint: it
+// answers with the card alone (no page shell, no compiled type browser) and
+// carries the interval that keeps it alive while the run is in flight.
+func TestSchemaDiscoveryCardEndpointRendersTheFragment(t *testing.T) {
+	f := &fakeMemory{discoveryJobs: []discoveryJob{{ID: "job-1", Status: "running"}}, documentsTotal: 8}
+	_, e := newSchemaDiscoveryServer(f)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/discovery/card", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("card status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="schema-discovery-card"`) || !strings.Contains(body, `hx-trigger="every 5s"`) {
+		t.Fatalf("card fragment missing the polling card:\n%s", body)
+	}
+	if strings.Contains(body, "<html") || strings.Contains(body, "compiled-type") {
+		t.Errorf("poll endpoint rendered more than the card:\n%s", body)
+	}
+	if f.lastDocumentListParams.Limit != 1 {
+		t.Errorf("document count used limit %d, want 1", f.lastDocumentListParams.Limit)
+	}
 }
 
 // TestSchemaDiscoveryStartStartsProjectRun pins that the card's action asks for
@@ -79,6 +148,33 @@ func TestSchemaDiscoveryRetryUsesTheRowJobID(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/schema?discovered=1#discovery" {
 		t.Errorf("retry location = %q", loc)
+	}
+	if len(f.discoveryRetries) != 1 || f.discoveryRetries[0] != "job-1" {
+		t.Fatalf("retried job ids = %v, want [job-1]", f.discoveryRetries)
+	}
+}
+
+// TestSchemaDiscoveryRetryRedirectsBoostedFormsToTheCard pins the htmx half of
+// the retry's PRG. The panel row and the card's own buttons are inside the
+// shell's hx-boosted <main>, so their submits arrive as XHR: a plain 303 is
+// followed inside the XHR and htmx pushes the *followed* URL, which has no
+// fragment — the reader landed at the top of the compiled type browser instead
+// of on the card they just acted on. An HX-Redirect makes the browser navigate,
+// fragment included.
+func TestSchemaDiscoveryRetryRedirectsBoostedFormsToTheCard(t *testing.T) {
+	f := &fakeMemory{}
+	_, e := newSchemaDiscoveryServer(f)
+
+	req := httptest.NewRequest(http.MethodPost, "/schema/discovery/retry/job-1", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("HX-Redirect"); got != "/schema?discovered=1#discovery" {
+		t.Fatalf("HX-Redirect = %q, want the card's fragment", got)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("boosted retry sent Location %q as well", loc)
 	}
 	if len(f.discoveryRetries) != 1 || f.discoveryRetries[0] != "job-1" {
 		t.Fatalf("retried job ids = %v, want [job-1]", f.discoveryRetries)
