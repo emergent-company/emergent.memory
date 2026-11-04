@@ -81,6 +81,28 @@ jobs:
           else
             BASE="${BEFORE}"
           fi
+          # A push that creates a ref has no `before` commit — GitHub sends the
+          # null SHA — and `workflow_dispatch` has none at all, so "new issues"
+          # has no meaning there: every pre-existing finding would be counted and
+          # the ratchet would fail on debt it exists to preserve. Skip only that
+          # case. The next push uses this commit as its base, so the baseline is
+          # kept, not reset.
+          #
+          # Any *other* unresolvable base is an error, not a skip: on a PR the
+          # base is `origin/${GITHUB_BASE_REF}`, which exists only because of the
+          # `git fetch ... || true` above — treating a failed fetch as "no base"
+          # would turn a red lint into a green one, and a finding skipped at PR
+          # time becomes baseline debt after merge.
+          case "$BASE" in
+            "" | 0000000000000000000000000000000000000000)
+              echo "::warning::no base commit (ref created by this push) — skipping the new-issues ratchet"
+              exit 0
+              ;;
+          esac
+          if ! git rev-parse --verify --quiet "${BASE}^{commit}" >/dev/null; then
+            echo "::error::base '${BASE}' does not resolve, so the new-issues ratchet cannot run"
+            exit 1
+          fi
           golangci-lint run --new-from-rev="$BASE" ./...
 
       # pin_matches <pin> <file> succeeds only when <file> has an `image:` entry
