@@ -53,6 +53,27 @@
 # Raw tailnet IPs are not hostnames, so they need their own alternatives. The
 # 100.64.0.0/10 range appears legitimately in SSRF guards and their tests, so
 # match the specific leaked hosts, not the whole range.
+#
+# The old repository slug and its Pages URL get their own alternatives, and their
+# boundary is the fiddly part. `emergent-company/emergent` must not match the
+# CURRENT name, which appears three ways: as the module path in every Go import
+# (`emergent-company/emergent.memory`), regex-escaped in the shell that greps for
+# those imports (`emergent\.memory`), and in the Pages URL.
+# `emergent-company/emergent-foo` is a different repository and must not match
+# either. So the tail is `(\.git)?([^.[:alnum:]_\\-]|$)`: an optional `.git` so
+# clone URLs are caught (they were the one real spelling the first version
+# missed), then a character that is neither a dot, a backslash, a word character
+# nor a hyphen. A plain `([^.]|$)` is not enough -- it matches the escaped form --
+# and an unbounded prefix match flags the whole tree.
+#
+# This file and its test spell the identifiers they block on purpose -- a probe
+# literal is the material these files are made of -- so they would fail the gate
+# they implement, and in doing so they also read as a list of what this
+# organisation considers internal. That is accepted deliberately: a gate that
+# cannot name what it forbids cannot forbid it, and an encoded list is a
+# maintenance trap in the one file everything else depends on. Keep any exemption
+# from a publication scan to exactly the paths the gate itself owns; anything else
+# that quotes an internal coordinate is a leak the gate should catch.
 set -euo pipefail
 
 # Fixed locations inside the repository. The allowlist and the baseline stay
@@ -154,7 +175,7 @@ base_file=$BASELINE
 # verbatim; the backticks in the OpenSpec alternatives are regex literals, not
 # command substitution.
 # shellcheck disable=SC2016
-PATTERN='\.ts\.net\b|emergent-dev|10\.10\.10\.|100\.69\.175\.118|100\.91\.139\.28|emergent\.memory\.infra|emergent-infra|b4ng-link|\.dev\.emergent-company\.ai|memory-home|memory-hetzner|\bmemory-dev\b|\bmemory-prod\b|\bmcj\b|/Users/mcj|\bmcj@|Mac\.banglab|\bbanglab\b|100\.118\.32\.29|100\.119\.120\.71|100\.121\.213\.124|100\.84\.125\.23|100\.67\.61\.62|95\.216\.38\.217|195\.201\.196\.144|46\.4\.253\.156|emergent\.memory\.mac|emergent\.memory\.website|emergent\.memory-archive|/root/(emergent|blueprints|workspace-memory|doc-processing|files-memory)|/opt/emergent-dev|\.paseo/|legalplant|infra([[:space:]]*:[[:space:]]*|[[:space:]]+)?(issue[[:space:]]+|tracking[[:space:]]+issue[[:space:]]+)?[[:space:]]*#[0-9]+|\bopenspec/|`openspec`|openspec.*`[a-z][a-z0-9]*(-[a-z0-9]+)+`|`[a-z][a-z0-9]*(-[a-z0-9]+)+`.*openspec'
+PATTERN='\.ts\.net\b|emergent-dev|10\.10\.10\.|100\.69\.175\.118|100\.91\.139\.28|emergent\.memory\.infra|emergent-infra|b4ng-link|\.dev\.emergent-company\.ai|memory-home|memory-hetzner|\bmemory-dev\b|\bmemory-prod\b|\bmcj\b|/Users/mcj|\bmcj@|Mac\.banglab|\bbanglab\b|100\.118\.32\.29|100\.119\.120\.71|100\.121\.213\.124|100\.84\.125\.23|100\.67\.61\.62|95\.216\.38\.217|195\.201\.196\.144|46\.4\.253\.156|emergent\.memory\.mac|emergent\.memory\.website|emergent\.memory-archive|emergent-company/emergent(\.git)?([^.[:alnum:]_\\-]|$)|emergent-company\.github\.io/emergent([^.[:alnum:]_\\-]|$)|/root/(emergent|blueprints|workspace-memory|doc-processing|files-memory)|/opt/emergent-dev|\.paseo/|legalplant|infra([[:space:]]*:[[:space:]]*|[[:space:]]+)?(issue[[:space:]]+|tracking[[:space:]]+issue[[:space:]]+)?[[:space:]]*#[0-9]+|\bopenspec/|`openspec`|openspec.*`[a-z][a-z0-9]*(-[a-z0-9]+)+`|`[a-z][a-z0-9]*(-[a-z0-9]+)+`.*openspec'
 
 # canon_path <path> -- the path with its directory resolved to the physical
 # spelling, with the basename joined back so the file itself need not exist (the

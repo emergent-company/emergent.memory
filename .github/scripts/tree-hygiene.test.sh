@@ -103,6 +103,13 @@ pos rig-root       'checkout at /root/emergent/'
 pos tailnet-ip     'host is 100.118.32.29'
 pos tenant         'tenant legalplant'
 pos mac-site       'docs at emergent.memory.mac'
+pos old-repo-slug  'cloned emergent-company/emergent yesterday'
+pos old-pages-url  'docs at emergent-company.github.io/emergent/latest/'
+pos old-repo-eol   'the repo was emergent-company/emergent'
+# The clone-URL spellings are the ones this repository actually uses in its
+# own docs, and a boundary that only excludes `.` lets both through.
+pos old-repo-git   'git clone https://github.com/emergent-company/emergent.git'
+pos old-repo-ssh   'git clone git@github.com:emergent-company/emergent.git'
 # Private OpenSpec-process pointers (#2443). The slug case is the literal line
 # #2249 reintroduced and the issue was filed about; the other two are the forms
 # the publication checklist names. The slug alternative has to work in either
@@ -121,6 +128,7 @@ esac
 for name in prose upper colon colon-tight double-space tab-issue tight \
   issue-word tracking-issue memory-hetzner uppercase-host tailnet users-mcj \
   mcj-family mcj-bare paseo infra-repo fleet-repo rig-root tailnet-ip tenant mac-site \
+  old-repo-slug old-pages-url old-repo-eol old-repo-git old-repo-ssh \
   openspec-path openspec-span openspec-slug openspec-slug-first; do
   if grep -q "^${name}\.md:" <<<"$out"; then
     ok "caught: $name"
@@ -144,6 +152,17 @@ write "$tree" plain-infra.md 'the infra team owns this service'
 write "$tree" mcjones-word.md 'the mcjones machine is not ours'
 write "$tree" ssrf-range.md 'the guard rejects 100.64.0.0/10'
 write "$tree" docker-ip.md 'bind 10.0.0.5 on the bridge'
+# The old-slug alternatives are bounded, so the CURRENT names must stay clean:
+# the module path is in every Go import, and the current Pages URL is linked from
+# the docs. An unbounded `emergent-company/emergent` would flag the whole tree.
+write "$tree" current-module.md 'module github.com/emergent-company/emergent.memory'
+write "$tree" current-pages.md 'docs at emergent-company.github.io/emergent.memory/latest/'
+# The current module path also appears regex-ESCAPED (every `.` written `\.`) in
+# shell and yaml that grep for imports. The boundary has to exclude the backslash
+# too, or the gate reds the repo on its own module path.
+write "$tree" escaped-module.md 'grep -oh "github\.com/emergent-company/emergent\.memory/[^"]*"'
+# A hyphen makes it a different repository, not the old slug.
+write "$tree" old-slug-hyphen.md 'see emergent-company/emergent-foo for the fork'
 # The OpenSpec alternatives must not flag ordinary prose (#2443): the word
 # "specification", a bare openspec mention with no slug, a backticked kebab
 # token that is not near an openspec mention, and a backticked CLI flag next to
