@@ -71,7 +71,7 @@ func TestNotifications_GetCounts_ReturnsStructure(t *testing.T) {
 	if !ok {
 		t.Fatalf("counts data is not a map: %T", result["data"])
 	}
-	for _, field := range []string{"all", "important", "other", "snoozed", "cleared"} {
+	for _, field := range []string{"all", "unread", "important", "other", "snoozed", "cleared", "requiresAction"} {
 		if _, ok := data[field]; !ok {
 			t.Errorf("counts data missing field %q", field)
 		}

@@ -112,6 +112,17 @@ func notificationActionClass(a NotificationAction) string {
 	}
 }
 
+// inboxShowsTabs reports whether the tab strip (and the project filter above it)
+// renders for this view. The Project scope without a resolvable project, and a
+// failed list load, render only the list region's own state — the page and the
+// list fragment both branch on this so a swap cannot add or drop the strip.
+func inboxShowsTabs(d inboxView) bool {
+	if d.LoadErr != nil {
+		return false
+	}
+	return d.Scope != inboxScopeProject || d.ProjectSelected
+}
+
 // inboxTabCount returns the badge count for one tab and whether it should be
 // shown. The action-required count is optional (the counts endpoint may omit
 // it), so it only shows when non-zero; all other tabs show whenever counts are
