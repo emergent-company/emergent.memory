@@ -6668,7 +6668,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Provenance filter mode: created|updated|any (default: any)",
+                        "description": "Which version row must carry the provenance filter: created|updated|any (default: any for actor filters, updated for write-stamp filters)",
                         "name": "provenance",
                         "in": "query"
                     },
@@ -6967,7 +6967,7 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
-                        "description": "Provenance filter mode: created|updated|any (default: any)",
+                        "description": "Which version row must carry the provenance filter: created|updated|any (default: any for actor filters, updated for write-stamp filters)",
                         "name": "provenance",
                         "in": "query"
                     },
@@ -8141,6 +8141,12 @@ const docTemplate = `{
                     },
                     {
                         "type": "string",
+                        "description": "Which version row must carry the write-stamp filter: created|updated|any (default: updated)",
+                        "name": "provenance",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Project ID",
                         "name": "X-Project-ID",
                         "in": "header",
@@ -8252,6 +8258,12 @@ const docTemplate = `{
                         "type": "string",
                         "description": "Filter by credential kind (api_key|mcp_link|session|none)",
                         "name": "credential_kind",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Which version row must carry the write-stamp filter: created|updated|any (default: updated)",
+                        "name": "provenance",
                         "in": "query"
                     },
                     {

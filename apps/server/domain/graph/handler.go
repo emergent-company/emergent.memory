@@ -116,9 +116,14 @@ func skipTotalFromQuery(v string) bool {
 // parseActorProvenance parses actor_type, actor_id, and provenance query params
 // into the ListParams actor filter (issue #1193). Returns a 400 error on invalid
 // input. The (actor_type, actor_id) pair rule is enforced here: actor_id without
-// actor_type is rejected. Provenance semantics: the narrowing modes
-// (created/updated) require actor_type; the no-op value "any" is accepted
-// without an actor and leaves the filter unset (it narrows nothing).
+// actor_type is rejected.
+//
+// `provenance` is shared with the write-stamp filters (#2468 follow-up): it says
+// which version row must carry a provenance predicate, so it is accepted when
+// either an actor filter or a write-stamp filter is present. The narrowing modes
+// (created|updated) require one of them. "any" is accepted alone because it is
+// the actor filter's default no-op value and clients send it unconditionally;
+// the stamp filters treat an absent provenance as "updated".
 func parseActorProvenance(c echo.Context, params *ListParams) error {
 	if actorType := c.QueryParam("actor_type"); actorType != "" {
 		if !validActorType(actorType) {
@@ -136,22 +141,36 @@ func parseActorProvenance(c echo.Context, params *ListParams) error {
 	if params.ActorID != nil && params.ActorType == nil {
 		return apperror.NewBadRequest("actor_id requires actor_type")
 	}
-	if provenance := c.QueryParam("provenance"); provenance != "" {
-		if !validProvenance(provenance) {
-			return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
-		}
-		// "any" is the no-op / default mode: it narrows nothing, so it is
-		// accepted without actor_type and leaves params.Provenance unset (an
-		// empty provenance already behaves like "any" in the query builder).
-		// Only the narrowing modes (created/updated) require an actor.
-		if provenance == ProvenanceAny {
-			return nil
-		}
-		if params.ActorType == nil {
-			return apperror.NewBadRequest("provenance requires actor_type")
-		}
-		params.Provenance = provenance
+	provenance := c.QueryParam("provenance")
+	if provenance == "" {
+		return nil
 	}
+	if !validProvenance(provenance) {
+		return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
+	}
+	if provenance != ProvenanceAny && params.ActorType == nil && params.Stamp.IsZero() {
+		return apperror.NewBadRequest("provenance requires actor_type or a write-stamp filter")
+	}
+	params.Provenance = provenance
+	return nil
+}
+
+// parseRelationshipProvenance parses `provenance` for the relationship list and
+// count endpoints. Relationships have no actor filter, so the narrowing modes
+// require a write-stamp filter to act on; "any" alone is a no-op there, matching
+// the object endpoints.
+func parseRelationshipProvenance(c echo.Context, params *RelationshipListParams) error {
+	provenance := c.QueryParam("provenance")
+	if provenance == "" {
+		return nil
+	}
+	if !validProvenance(provenance) {
+		return apperror.NewBadRequest("invalid provenance: must be one of 'created', 'updated', 'any'")
+	}
+	if provenance != ProvenanceAny && params.Stamp.IsZero() {
+		return apperror.NewBadRequest("provenance requires a write-stamp filter")
+	}
+	params.Provenance = provenance
 	return nil
 }
 
@@ -224,7 +243,7 @@ func parseWriteStampFilters(c echo.Context, allowDataClass bool) (WriteStampFilt
 // @Param        exclude_fields query string false "Comma-separated property fields to exclude from the response (applied after include)"
 // @Param        actor_type query string false "Filter by actor type (user|agent|system)"
 // @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
-// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
+// @Param        provenance query string false "Which version row must carry the provenance filter: created|updated|any (default: any for actor filters, updated for write-stamp filters)"
 // @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
 // @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
 // @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
@@ -390,13 +409,15 @@ func (h *Handler) ListObjects(c echo.Context) error {
 		params.ExcludeFields = splitCommaSeparated([]string{excludeParam})
 	}
 
-	// Parse actor provenance filter (issue #1193)
-	if err := parseActorProvenance(c, &params); err != nil {
+	// Parse the write-stamp filter first (#2468): `provenance` may narrow it on
+	// its own, without an actor filter, and parseActorProvenance has to know
+	// whether a stamp predicate is present before it accepts a narrowing mode.
+	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
 		return err
 	}
 
-	// Parse write-stamp filter (#2468)
-	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
 		return err
 	}
 
@@ -426,7 +447,7 @@ func (h *Handler) ListObjects(c echo.Context) error {
 // @Param        branch_id query string false "Branch ID filter"
 // @Param        actor_type query string false "Filter by actor type (user|agent|system)"
 // @Param        actor_id query string false "Filter by actor id (UUID; requires actor_type)"
-// @Param        provenance query string false "Provenance filter mode: created|updated|any (default: any)"
+// @Param        provenance query string false "Which version row must carry the provenance filter: created|updated|any (default: any for actor filters, updated for write-stamp filters)"
 // @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
 // @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
 // @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
@@ -528,13 +549,15 @@ func (h *Handler) CountObjects(c echo.Context) error {
 		}
 	}
 
-	// Parse actor provenance filter (issue #1193)
-	if err := parseActorProvenance(c, &params); err != nil {
+	// Parse the write-stamp filter first (#2468): `provenance` may narrow it on
+	// its own, without an actor filter, and parseActorProvenance has to know
+	// whether a stamp predicate is present before it accepts a narrowing mode.
+	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
 		return err
 	}
 
-	// Parse write-stamp filter (#2468)
-	if params.Stamp, err = parseWriteStampFilters(c, true); err != nil {
+	// Parse actor provenance filter (issue #1193)
+	if err := parseActorProvenance(c, &params); err != nil {
 		return err
 	}
 
@@ -976,6 +999,7 @@ func (h *Handler) GetObjectEdges(c echo.Context) error {
 // @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
 // @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
 // @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        provenance query string false "Which version row must carry the write-stamp filter: created|updated|any (default: updated)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]int "Count result"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
@@ -1027,6 +1051,11 @@ func (h *Handler) CountRelationships(c echo.Context) error {
 		return err
 	}
 
+	// Parse the version-scope selector, which needs the stamp filter to exist.
+	if err := parseRelationshipProvenance(c, &params); err != nil {
+		return err
+	}
+
 	count, err := h.svc.CountRelationships(c.Request().Context(), params)
 	if err != nil {
 		return err
@@ -1051,6 +1080,7 @@ func (h *Handler) CountRelationships(c echo.Context) error {
 // @Param        run_id query string false "Filter by write-stamp run id (UUID; matches run_id or root_run_id)"
 // @Param        credential_id query string false "Filter by write-stamp credential id (UUID)"
 // @Param        credential_kind query string false "Filter by credential kind (api_key|mcp_link|session|none)"
+// @Param        provenance query string false "Which version row must carry the write-stamp filter: created|updated|any (default: updated)"
 // @Param        X-Project-ID header string true "Project ID"
 // @Success      200 {object} map[string]interface{} "Paginated list with cursor"
 // @Failure      400 {object} apperror.Error "Invalid parameters"
@@ -1117,6 +1147,11 @@ func (h *Handler) ListRelationships(c echo.Context) error {
 	// Parse write-stamp filter (#2468). Relationships record no data class, so
 	// a data_class filter is rejected rather than silently ignored.
 	if params.Stamp, err = parseWriteStampFilters(c, false); err != nil {
+		return err
+	}
+
+	// Parse the version-scope selector, which needs the stamp filter to exist.
+	if err := parseRelationshipProvenance(c, &params); err != nil {
 		return err
 	}
 

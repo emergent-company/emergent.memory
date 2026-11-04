@@ -13,10 +13,12 @@ import (
 
 // recordedMessage is one transcript write captured by recordingSink.
 type recordedMessage struct {
-	runID string
-	role  string
-	step  int
-	text  string
+	runID     string
+	role      string
+	step      int
+	text      string
+	stage     string
+	stageKind string
 }
 
 // recordingSink is the runMessageRecorder seam without a database, so the
@@ -26,10 +28,17 @@ type recordingSink struct {
 	msgs []recordedMessage
 }
 
-func (s *recordingSink) RecordMessage(_ context.Context, runID, role string, step int, text string) error {
+func (s *recordingSink) RecordMessage(_ context.Context, runID string, msg RunMessage) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.msgs = append(s.msgs, recordedMessage{runID: runID, role: role, step: step, text: text})
+	s.msgs = append(s.msgs, recordedMessage{
+		runID:     runID,
+		role:      msg.Role,
+		step:      msg.Step,
+		text:      msg.Text,
+		stage:     msg.Stage,
+		stageKind: msg.StageKind,
+	})
 	return nil
 }
 
@@ -71,20 +80,23 @@ func TestRunTraceLoggerRecordsPromptAndResponse(t *testing.T) {
 		t.Fatalf("recorded %d messages, want 4 (header, prompt, response, error): %+v", len(msgs), msgs)
 	}
 	// The header opens the transcript: an opened run must say what was extracted.
-	if msgs[0].role != "user" || !strings.Contains(msgs[0].text, "job `job-1`") {
+	if msgs[0].role != "user" || msgs[0].stageKind != stageKindHeader || !strings.Contains(msgs[0].text, "job `job-1`") {
 		t.Errorf("first message = %+v, want the user-role header naming the job", msgs[0])
 	}
-	if msgs[1].role != "user" || !strings.Contains(msgs[1].text, "extract entities from this text") {
-		t.Errorf("prompt message = %+v, want a user message carrying the prompt", msgs[1])
+	if msgs[1].role != "user" || msgs[1].stage != "EntityExtractor" || msgs[1].stageKind != stageKindPrompt {
+		t.Errorf("prompt message = %+v, want a user message authored by EntityExtractor", msgs[1])
+	}
+	if !strings.Contains(msgs[1].text, "extract entities from this text") {
+		t.Errorf("prompt message text = %q, want the bare prompt (no embedded label markup)", msgs[1].text)
 	}
 	// runrole:allow — this asserts what the recorder WRITES (the bridge's fixed
 	// speaker roles for the chat timeline), not a classification of persisted
 	// agent-authored roles, so the literal is the contract under test.
-	if msgs[2].role != "assistant" || !strings.Contains(msgs[2].text, `{"entities":[]}`) {
+	if msgs[2].role != "assistant" || msgs[2].stageKind != stageKindOutput || !strings.Contains(msgs[2].text, `{"entities":[]}`) {
 		t.Errorf("response message = %+v, want an assistant message carrying the response", msgs[2])
 	}
 	// runrole:allow — same as above: the written role, not a read-side classifier.
-	if msgs[3].role != "assistant" || !strings.Contains(msgs[3].text, "model overloaded") {
+	if msgs[3].role != "assistant" || msgs[3].stage != "RELATIONSHIP EXTRACTION" || msgs[3].stageKind != stageKindError || !strings.Contains(msgs[3].text, "model overloaded") {
 		t.Errorf("error message = %+v, want an assistant message carrying the error", msgs[3])
 	}
 	for i, m := range msgs {
@@ -146,10 +158,12 @@ func TestRunTraceLoggerWithoutSinkIsSafe(t *testing.T) {
 	}
 }
 
-// TestTruncateForRunBoundsTranscriptText keeps one oversized prompt (a document
-// batch) from copying the document into kb.agent_run_messages, and marks the cut
-// so the reader knows where the rest lives.
-func TestTruncateForRunBoundsTranscriptText(t *testing.T) {
+// TestTruncateForRunHardLimit pins the runaway-output guard: text is stored
+// whole up to the bound, and a message past it is cut on a rune boundary and
+// marks exactly where the rest lives. The bound is a safety valve, not the
+// readability policy — the transcript is meant to show the whole prompt and
+// answer (see runMessageHardLimitChars).
+func TestTruncateForRunHardLimit(t *testing.T) {
 	if got := truncateForRun("short", 100); got != "short" {
 		t.Errorf("short text = %q, want it unchanged", got)
 	}
@@ -159,8 +173,8 @@ func TestTruncateForRunBoundsTranscriptText(t *testing.T) {
 	if n := utf8.RuneCountInString(got); n != 100 {
 		t.Errorf("truncated length = %d runes, want exactly 100", n)
 	}
-	if !strings.Contains(got, "truncated") || !strings.Contains(got, "trace log") {
-		t.Errorf("truncated text %q must mark the cut and say where the full text is", got)
+	if !strings.Contains(got, "truncated at 100 characters") || !strings.Contains(got, "trace log") {
+		t.Errorf("truncated text %q must name the bound and say where the full text is", got)
 	}
 
 	// Multi-byte text must be cut on a rune boundary, never mid-character.
@@ -207,8 +221,11 @@ func TestRunTraceLoggerRecordsModelResponsesFromEvents(t *testing.T) {
 	if msgs[1].role != "assistant" {
 		t.Errorf("answer message role = %q, want assistant", msgs[1].role)
 	}
-	if !strings.Contains(msgs[1].text, "EntityExtractor") || !strings.Contains(msgs[1].text, "stage output") || !strings.Contains(msgs[1].text, `{"entities":[{"name":"A"}]}`) {
-		t.Errorf("answer message = %q, want the stage name and the model's text", msgs[1].text)
+	if msgs[1].stage != "EntityExtractor" || msgs[1].stageKind != stageKindOutput {
+		t.Errorf("answer message = %+v, want it authored by EntityExtractor as stage output", msgs[1])
+	}
+	if msgs[1].text != `{"entities":[{"name":"A"}]}` {
+		t.Errorf("answer message text = %q, want the model's text alone (the stage lives in metadata)", msgs[1].text)
 	}
 	if msgs[1].step <= msgs[0].step {
 		t.Errorf("answer step %d must follow the header step %d", msgs[1].step, msgs[0].step)
@@ -235,10 +252,10 @@ func TestRunTraceLoggerDedupesOnlyWithinATurn(t *testing.T) {
 	lg.LogPrompt("EntityExtractor", "batch two")
 	lg.LogEvent("ADK_EVENT", "EntityExtractor", `{"entities":[]}`)
 
-	var answers []string
+	var answers []recordedMessage
 	for _, m := range sink.messages() {
-		if strings.Contains(m.text, "stage output") {
-			answers = append(answers, m.text)
+		if m.stageKind == stageKindOutput {
+			answers = append(answers, m)
 		}
 	}
 	if len(answers) != 3 {
@@ -246,8 +263,8 @@ func TestRunTraceLoggerDedupesOnlyWithinATurn(t *testing.T) {
 	}
 	wantAuthors := []string{"EntityExtractor", "RelationshipBuilder", "EntityExtractor"}
 	for i, want := range wantAuthors {
-		if !strings.Contains(answers[i], want) {
-			t.Errorf("answer %d = %q, want it authored by %s", i, answers[i], want)
+		if answers[i].stage != want {
+			t.Errorf("answer %d = %+v, want it authored by %s", i, answers[i], want)
 		}
 	}
 }

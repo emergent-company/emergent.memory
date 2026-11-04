@@ -1360,6 +1360,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 			"credential_id":   credID,
 			"credential_kind": "api_key",
 			"data_class":      "source",
+			"provenance":      "created",
 		})
 		testutil.JSONResponse(t, w, map[string]interface{}{
 			"items": []interface{}{objectItem},
@@ -1367,7 +1368,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 		})
 	})
 	mock.On("GET", "/api/graph/objects/count", func(w http.ResponseWriter, r *http.Request) {
-		assertQuery(t, r, map[string]string{"run_id": runID, "credential_kind": "none"})
+		assertQuery(t, r, map[string]string{"run_id": runID, "credential_kind": "none", "provenance": "any"})
 		testutil.JSONResponse(t, w, map[string]interface{}{"count": 0})
 	})
 	mock.On("GET", "/api/graph/relationships/search", func(w http.ResponseWriter, r *http.Request) {
@@ -1375,6 +1376,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 			"run_id":          runID,
 			"credential_id":   credID,
 			"credential_kind": "mcp_link",
+			"provenance":      "updated",
 		})
 		if got := r.URL.Query().Get("data_class"); got != "" {
 			t.Errorf("relationship list must not send data_class, got %q", got)
@@ -1412,6 +1414,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 		CredentialID:   credID,
 		CredentialKind: "api_key",
 		DataClass:      "source",
+		Provenance:     "created",
 	})
 	if err != nil {
 		t.Fatalf("ListObjects() error = %v", err)
@@ -1448,7 +1451,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 		t.Errorf("expected input_hash to decode, got %v", obj.InputHash)
 	}
 
-	count, err := client.Graph.CountObjects(ctx, &graph.CountObjectsOptions{RunID: runID, CredentialKind: "none"})
+	count, err := client.Graph.CountObjects(ctx, &graph.CountObjectsOptions{RunID: runID, CredentialKind: "none", Provenance: "any"})
 	if err != nil {
 		t.Fatalf("CountObjects() error = %v", err)
 	}
@@ -1460,6 +1463,7 @@ func TestGraphWriteStampFilters(t *testing.T) {
 		RunID:          runID,
 		CredentialID:   credID,
 		CredentialKind: "mcp_link",
+		Provenance:     "updated",
 	})
 	if err != nil {
 		t.Fatalf("ListRelationships() error = %v", err)

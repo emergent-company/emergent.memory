@@ -142,7 +142,9 @@ func TestGraphObjectsListCmd_ProvenanceFlagsRegistered(t *testing.T) {
 }
 
 // TestParseProvenanceFilter_Defaults verifies absent flags resolve to an empty
-// actor filter with provenance defaulting to "any".
+// actor filter and an empty provenance: nothing is sent, so the server applies
+// its own defaults ("any" for the actor filter, "updated" for the write-stamp
+// filters).
 func TestParseProvenanceFilter_Defaults(t *testing.T) {
 	graphActorTypeFlag = ""
 	graphActorIDFlag = ""
@@ -153,11 +155,11 @@ func TestParseProvenanceFilter_Defaults(t *testing.T) {
 		graphProvenanceFlag = ""
 	})
 
-	actorType, actorID, provenance, err := parseProvenanceFilter()
+	actorType, actorID, provenance, err := parseProvenanceFilter(false)
 	require.NoError(t, err)
 	assert.Equal(t, "", actorType)
 	assert.Equal(t, "", actorID)
-	assert.Equal(t, "any", provenance)
+	assert.Equal(t, "", provenance)
 }
 
 // TestParseProvenanceFilter_AgentScoped verifies the agent-scoped case
@@ -174,11 +176,11 @@ func TestParseProvenanceFilter_AgentScoped(t *testing.T) {
 		graphProvenanceFlag = ""
 	})
 
-	actorType, actorID, provenance, err := parseProvenanceFilter()
+	actorType, actorID, provenance, err := parseProvenanceFilter(false)
 	require.NoError(t, err)
 	assert.Equal(t, "agent", actorType)
 	assert.Equal(t, agentID, actorID)
-	assert.Equal(t, "any", provenance)
+	assert.Equal(t, "", provenance)
 }
 
 // TestParseProvenanceFilter_ExplicitProvenance verifies an explicit valid value
@@ -193,7 +195,7 @@ func TestParseProvenanceFilter_ExplicitProvenance(t *testing.T) {
 		graphProvenanceFlag = ""
 	})
 
-	_, _, provenance, err := parseProvenanceFilter()
+	_, _, provenance, err := parseProvenanceFilter(false)
 	require.NoError(t, err)
 	assert.Equal(t, "created", provenance)
 }
@@ -210,7 +212,7 @@ func TestParseProvenanceFilter_InvalidProvenance(t *testing.T) {
 		graphProvenanceFlag = ""
 	})
 
-	_, _, _, err := parseProvenanceFilter()
+	_, _, _, err := parseProvenanceFilter(true)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--provenance")
 	assert.Contains(t, err.Error(), "bogus")
@@ -228,7 +230,7 @@ func TestParseProvenanceFilter_ActorIDWithoutActorType(t *testing.T) {
 		graphProvenanceFlag = ""
 	})
 
-	_, _, _, err := parseProvenanceFilter()
+	_, _, _, err := parseProvenanceFilter(false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--actor-id requires --actor-type")
 }
@@ -240,7 +242,7 @@ func TestGraphStampFilterFlagsRegistered(t *testing.T) {
 	for _, f := range []string{"run-id", "credential-id", "credential-kind", "data-class"} {
 		assert.NotNil(t, graphObjectsListCmd.Flags().Lookup(f), "graph objects list flag --%s should be registered", f)
 	}
-	for _, f := range []string{"run-id", "credential-id", "credential-kind"} {
+	for _, f := range []string{"run-id", "credential-id", "credential-kind", "provenance"} {
 		assert.NotNil(t, graphRelationshipsListCmd.Flags().Lookup(f), "graph relationships list flag --%s should be registered", f)
 	}
 	assert.Nil(t, graphRelationshipsListCmd.Flags().Lookup("data-class"),
@@ -306,4 +308,49 @@ func TestParseWriteStampFlags(t *testing.T) {
 		require.NoError(t, err)
 		assert.Empty(t, class)
 	})
+}
+
+// TestParseProvenanceFilter_StampScoped verifies --provenance may narrow the
+// write-stamp filters on their own, without an actor.
+func TestParseProvenanceFilter_StampScoped(t *testing.T) {
+	graphActorTypeFlag = ""
+	graphActorIDFlag = ""
+	graphProvenanceFlag = "created"
+	t.Cleanup(func() {
+		graphProvenanceFlag = ""
+	})
+
+	actorType, actorID, provenance, err := parseProvenanceFilter(true)
+	require.NoError(t, err)
+	assert.Equal(t, "", actorType)
+	assert.Equal(t, "", actorID)
+	assert.Equal(t, "created", provenance)
+}
+
+// TestParseProvenanceFilter_NarrowingNeedsPredicate verifies a narrowing mode
+// with neither an actor nor a write-stamp filter is rejected before any network
+// call, mirroring the server's 400.
+func TestParseProvenanceFilter_NarrowingNeedsPredicate(t *testing.T) {
+	for _, mode := range []string{"created", "updated"} {
+		graphActorTypeFlag = ""
+		graphActorIDFlag = ""
+		graphProvenanceFlag = mode
+		t.Cleanup(func() { graphProvenanceFlag = "" })
+
+		_, _, _, err := parseProvenanceFilter(false)
+		require.Error(t, err, "mode %q", mode)
+		assert.Contains(t, err.Error(), "requires --actor-type or a write-stamp filter")
+	}
+}
+
+// TestParseProvenanceFlag_RelationshipWording verifies the relationship list
+// (which has no actor flags) does not point the user at a flag it does not have.
+func TestParseProvenanceFlag_RelationshipWording(t *testing.T) {
+	graphProvenanceFlag = "created"
+	t.Cleanup(func() { graphProvenanceFlag = "" })
+
+	_, err := parseProvenanceFlag(false, "a write-stamp filter")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--provenance created requires a write-stamp filter")
+	assert.NotContains(t, err.Error(), "--actor-type")
 }
