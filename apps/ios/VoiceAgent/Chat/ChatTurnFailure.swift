@@ -1,27 +1,10 @@
 import Foundation
 
-/// Reading a failed chat turn: what to tell the user, and whether the run may
-/// still have written a reply worth reloading.
+/// Reading a failed chat turn: what to tell the user.
 ///
-/// Pure functions over `Error` so ``HTTPChatTransport`` stays a transport and
-/// both rules are testable without opening a stream.
+/// A pure function over `Error` so ``HTTPChatTransport`` stays a transport and
+/// the wording is testable without opening a stream.
 enum ChatTurnFailure {
-    /// True when the failure happened after the gateway accepted the request,
-    /// i.e. the stream died mid-turn rather than the turn being refused.
-    ///
-    /// `httpStatus` and `invalidConfiguration` both fail before anything runs, so
-    /// there is no record to reload; a connection that drops while frames are
-    /// arriving (or a decode failure on one) leaves a run that may still write.
-    static func droppedMidTurn(_ error: Error) -> Bool {
-        guard let gateway = error as? GatewayError else { return true }
-        switch gateway {
-        case .httpStatus, .invalidConfiguration:
-            return false
-        case .transport, .decode:
-            return true
-        }
-    }
-
     /// Message for a failed turn. A misconfigured deployment is reported as
     /// configuration, never as an unreachable server.
     static func message(for error: Error) -> String {

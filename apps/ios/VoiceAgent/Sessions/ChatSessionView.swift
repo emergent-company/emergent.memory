@@ -60,9 +60,9 @@ struct ChatSessionView: View {
                     setMode(.text)
                 }
             }
-            .onChange(of: transport.droppedStreamCount) { _, _ in
-                // The run survived the dropped stream: reload what it recorded.
-                Task { await loadHistoryIfNeeded(force: true) }
+            .onChange(of: transport.interruptedTurn) { _, turn in
+                guard turn != nil else { return }
+                Task { await recoverInterruptedTurn() }
             }
             .onReceive(session.objectWillChange) { _ in
                 // Only the voice room feeds the transcript from LiveKit; a text

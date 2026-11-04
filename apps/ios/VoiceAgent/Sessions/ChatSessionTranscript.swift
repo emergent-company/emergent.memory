@@ -169,6 +169,23 @@ final class ChatSessionTranscriptStore {
         }
     }
 
+    /// Whether a fetched detail holds the finished version of a reply this client
+    /// saw cut off — the signal that a dropped run has been recorded.
+    ///
+    /// Three conditions, each earning its place:
+    /// - the record grew past `baseline`, so an older reply cannot pass for this
+    ///   one just because it starts the same way;
+    /// - its newest `turn` is an assistant turn, because a run still executing
+    ///   leaves step records after its last turn;
+    /// - that turn opens with what the client already saw and carries more.
+    static func recordedReply(extending partial: String, in detail: SessionDetail, since baseline: Int) -> Bool {
+        let opening = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !opening.isEmpty, detail.records.count > baseline else { return false }
+        guard let latest = detail.records.last(where: { $0.kind == "turn" }) else { return false }
+        guard latest.role != "user", let text = latest.text else { return false }
+        return text.count > opening.count && text.hasPrefix(opening)
+    }
+
     /// Marks the start of a history fetch (the previous result stays visible
     /// while the request runs).
     func beginHistoryLoad() {
