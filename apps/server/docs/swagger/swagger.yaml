@@ -8567,6 +8567,12 @@ definitions:
         items:
           type: integer
         type: array
+      pendingReview:
+        description: |-
+          PendingReview marks discovery output that is awaiting an explicit
+          install. It is false for a pack created or imported any other way, so a
+          client can tell "proposed by a run" from "unassigned".
+        type: boolean
       projectId:
         type: string
       publishedAt:

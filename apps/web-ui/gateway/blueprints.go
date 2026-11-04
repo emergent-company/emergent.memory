@@ -620,6 +620,9 @@ func propertiesFromMap(v any) []PropertyDetail {
 	return out
 }
 
+// relationshipTypesFromMaps reads both endpoint shapes the catalog uses: the
+// blueprint registry's scalar sourceType/targetType and a discovered pack's
+// sourceTypes/targetTypes arrays (a relationship type may declare several).
 func relationshipTypesFromMaps(types []map[string]any) []RelationshipTypeDetail {
 	out := make([]RelationshipTypeDetail, 0, len(types))
 	for _, t := range types {
@@ -627,11 +630,24 @@ func relationshipTypesFromMaps(types []map[string]any) []RelationshipTypeDetail 
 			Name:        strAny(t["name"]),
 			Label:       strAny(t["label"]),
 			Description: strAny(t["description"]),
-			SourceType:  strAny(t["sourceType"]),
-			TargetType:  strAny(t["targetType"]),
+			SourceType:  firstEndpoint(t["sourceType"], t["sourceTypes"]),
+			TargetType:  firstEndpoint(t["targetType"], t["targetTypes"]),
 		})
 	}
 	return out
+}
+
+// firstEndpoint prefers the scalar form and falls back to the first entry of an
+// array form.
+func firstEndpoint(scalar, list any) string {
+	if s := strAny(scalar); s != "" {
+		return s
+	}
+	arr, _ := list.([]any)
+	if len(arr) == 0 {
+		return ""
+	}
+	return strAny(arr[0])
 }
 
 // objectTypesFromRaw parses the raw objectTypeSchemas jsonb (array form, with a

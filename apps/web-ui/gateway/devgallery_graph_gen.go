@@ -107,7 +107,7 @@ var graphUses = map[string][]string{
 	"SchemaAddPage":                   []string{"Alert", "Button", "Container", "EmptyState", "Rail"},
 	"SchemaObjectTypeEditPage":        []string{"Alert", "Container", "EmptyState", "Rail"},
 	"SchemaObjectTypePage":            []string{"Container", "EmptyNote", "Rail"},
-	"SchemaPackPage":                  []string{"Container", "EmptyState", "Rail"},
+	"SchemaPackPage":                  []string{"Alert", "Container", "EmptyState", "Rail"},
 	"SchemaPackPendingPage":           []string{"Alert", "Badge", "Button", "Container", "EmptyNote", "MetaGrid", "Rail", "Section"},
 	"SchemaPacksPage":                 []string{"Button", "Container", "EmptyState", "Rail"},
 	"SchemaPage":                      []string{"Container", "EmptyState", "Rail"},
@@ -700,7 +700,7 @@ var graphUses = map[string][]string{
 }
 
 var graphUsedBy = map[string][]string{
-	"Alert":                  []string{"AgentSharePage", "BlueprintImportModelMapPage", "BoardColumns", "BoardDrawerError", "ConnectedAppsPage", "ConnectedDevicesPage", "CredentialsPage", "DSTestResultPartial", "DataSourceNewPage", "DataSourceResourceList", "ExtractionJobDetail", "MCPServerEditPage", "MigrationsPage", "OAuthConsentPage", "OrgMembersPage", "SchemaAddPage", "SchemaObjectTypeEditPage", "SchemaPackPendingPage", "SecretRevealModal", "ShareLinkCreatePanel", "ShareLinksListPanel", "agentChatsList", "agentGeneralSettingsForm", "agentMCPKeysBlock", "agentMCPSection", "agentMCPSessionsBody", "agentModelWarningBox", "agentWorkPickupNote", "apiTokenListState", "backupDetailIntegrity", "blueprintModelMapNoModels", "blueprintModelMapRow", "boardHealth", "coverageSectionError", "dsCredentialInheritanceNote", "dsCredentialPickerPanel", "dsOAuthClientMissingAlert", "dsPickerBlockedNotice", "dsResourceNeededBanner", "dsSavedCredentialsSection", "dsSyncJobRow", "embeddingProviderWarning", "embeddingsModelWarning", "extractionCard", "extractionErrorBlock", "extractionJobRow", "mcpNodeToolsPanel", "mcpServerFormBody", "mcpServerRow", "mcpServerTransportFields", "mcpShareFormBody", "membersBody", "mergePreviewModal", "objectHistoryPage", "objectPreviewContent", "objectRelationshipsPage", "pageError", "previewSection", "providersPanel", "runMetaHeader", "sandboxProviderAvailability", "schemaDiscoveryCard", "schemaDiscoveryJobState", "validationSection", "workerStateError"},
+	"Alert":                  []string{"AgentSharePage", "BlueprintImportModelMapPage", "BoardColumns", "BoardDrawerError", "ConnectedAppsPage", "ConnectedDevicesPage", "CredentialsPage", "DSTestResultPartial", "DataSourceNewPage", "DataSourceResourceList", "ExtractionJobDetail", "MCPServerEditPage", "MigrationsPage", "OAuthConsentPage", "OrgMembersPage", "SchemaAddPage", "SchemaObjectTypeEditPage", "SchemaPackPage", "SchemaPackPendingPage", "SecretRevealModal", "ShareLinkCreatePanel", "ShareLinksListPanel", "agentChatsList", "agentGeneralSettingsForm", "agentMCPKeysBlock", "agentMCPSection", "agentMCPSessionsBody", "agentModelWarningBox", "agentWorkPickupNote", "apiTokenListState", "backupDetailIntegrity", "blueprintModelMapNoModels", "blueprintModelMapRow", "boardHealth", "coverageSectionError", "dsCredentialInheritanceNote", "dsCredentialPickerPanel", "dsOAuthClientMissingAlert", "dsPickerBlockedNotice", "dsResourceNeededBanner", "dsSavedCredentialsSection", "dsSyncJobRow", "embeddingProviderWarning", "embeddingsModelWarning", "extractionCard", "extractionErrorBlock", "extractionJobRow", "mcpNodeToolsPanel", "mcpServerFormBody", "mcpServerRow", "mcpServerTransportFields", "mcpShareFormBody", "membersBody", "mergePreviewModal", "objectHistoryPage", "objectPreviewContent", "objectRelationshipsPage", "pageError", "previewSection", "providersPanel", "runMetaHeader", "sandboxProviderAvailability", "schemaDiscoveryCard", "schemaDiscoveryJobState", "validationSection", "workerStateError"},
 	"AlertModal":             []string{"appShell"},
 	"ApprovalCard":           []string{"DockPanel", "approvalRow"},
 	"AvatarFull":             []string{"accountAvatar", "boardAssigneePicker", "memberAvatar", "objectAssigneeControl", "objectsActorAvatar", "orgMemberRow", "profileAvatar"},
@@ -883,7 +883,7 @@ var graphDaisyComponents = map[string][]string{
 	"SchemaAddPage":                   []string{"Alert", "Button", "Container", "EmptyState", "Rail"},
 	"SchemaObjectTypeEditPage":        []string{"Alert", "Container", "EmptyState", "Rail"},
 	"SchemaObjectTypePage":            []string{"Container", "EmptyNote", "Rail"},
-	"SchemaPackPage":                  []string{"Container", "EmptyState", "Rail"},
+	"SchemaPackPage":                  []string{"Alert", "Container", "EmptyState", "Rail"},
 	"SchemaPackPendingPage":           []string{"Alert", "Badge", "Button", "Container", "EmptyNote", "Rail", "Section"},
 	"SchemaPacksPage":                 []string{"Button", "Container", "EmptyState", "Rail"},
 	"SchemaPage":                      []string{"Container", "EmptyState", "Rail"},

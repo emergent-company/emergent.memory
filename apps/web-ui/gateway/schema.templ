@@ -171,7 +171,7 @@ templ schemaDiscoveryJobState(job *discoveryJob) {
 				Covered { strconv.Itoa(job.DocumentCount) } of { strconv.Itoa(job.TotalDocuments) } documents (per-run cap); run it again to cover the rest.
 			}
 		}
-		if job.isRunning() {
+		if job.cancellable() {
 			<form class="mt-2" method="post" action={ templ.URL("/schema/discovery/cancel/" + url.PathEscape(job.ID)) }>
 				@ui.Button(ui.ButtonProps{
 					Type:    ui.ButtonTypeSubmit,

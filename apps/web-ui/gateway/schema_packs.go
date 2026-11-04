@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -191,14 +190,15 @@ func (s *Server) uiSchemaPack(c echo.Context) error {
 	id := pathUnescape(c.Param("id"))
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, userFacingError(err)))
+		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, userFacingError(err), ""))
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)
 	packs := buildSchemaPackSummaries(compiled, metas, s.buildProvenanceIndex(ctx))
 	for i := range packs {
 		if packs[i].ID == id {
-			return s.page(c, pageTitle(packs[i].Name), SchemaPackPage(&packs[i], nil))
+			notice := flashFromQuery(c, []flashParam{{key: "installed", msg: packInstalledNotice}})
+			return s.page(c, pageTitle(packs[i].Name), SchemaPackPage(&packs[i], nil, notice))
 		}
 	}
 
@@ -207,7 +207,7 @@ func (s *Server) uiSchemaPack(c echo.Context) error {
 			return s.page(c, pageTitle(pack.Name), SchemaPackPendingPage(pendingPackFromSchema(pack), flashError(c)))
 		}
 	}
-	return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, nil))
+	return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, nil, ""))
 }
 
 // uiSchemaPackInstall handles POST /schema/packs/:id/install: it installs a
@@ -230,6 +230,11 @@ func (s *Server) uiSchemaPackInstall(c echo.Context) error {
 	return c.Redirect(http.StatusSeeOther, back+"?installed=1")
 }
 
+// packInstalledNotice is the confirmation shown after installing a reviewed
+// pack. Reading it from a query flag rather than a cookie keeps the redirect
+// stateless and means a reload does not repeat it.
+const packInstalledNotice = "Pack installed. Its object and relationship types are now part of this project's compiled types."
+
 // pendingPack is a pack that exists in the project's catalog but is not
 // installed yet: an un-reviewed discovery result, or a pack whose assignment
 // was removed. It contributes no compiled types, so it cannot be rendered by
@@ -245,50 +250,49 @@ type pendingPack struct {
 
 	ObjectTypes   []string
 	RelationTypes []string
+
+	// PendingReview distinguishes a pack a discovery run proposed (the flag the
+	// server sets) from a pack that is merely unassigned.
+	PendingReview bool
 }
 
 // pendingPackFromSchema turns a schema definition into the review view model.
-// Both type maps are keyed by name; a relationship also names its endpoints, so
-// the reviewer can see which pairs it proposes.
+// Both type lists are read through the catalog parsers, so the keyed-map form a
+// discovered pack uses and the registry's array form both render; a relationship
+// also names its endpoints, so the reviewer can see which pairs it proposes.
 func pendingPackFromSchema(schema *BlueprintSchema) *pendingPack {
 	pack := &pendingPack{
-		ID:          schema.ID,
-		Name:        schema.Name,
-		Version:     schema.Version,
-		Description: schema.Description,
-		Author:      schema.Author,
-		Source:      schema.Source,
+		ID:            schema.ID,
+		Name:          schema.Name,
+		Version:       schema.Version,
+		Description:   schema.Description,
+		Author:        schema.Author,
+		Source:        schema.Source,
+		PendingReview: schema.PendingReview,
 	}
 
-	var objects map[string]struct {
-		Description string `json:"description"`
-	}
-	if len(schema.ObjectTypeSchemas) > 0 && json.Unmarshal(schema.ObjectTypeSchemas, &objects) == nil {
-		for name := range objects {
-			pack.ObjectTypes = append(pack.ObjectTypes, name)
+	// Reuse the catalog's parsers so both stored shapes render: the registry's
+	// array form and the keyed-map form a discovered pack uses. A pack that
+	// parsed as empty would show a review page with nothing to review and an
+	// install button that installs nothing visible.
+	for _, t := range objectTypesFromRaw(schema.ObjectTypeSchemas) {
+		if t.Name != "" {
+			pack.ObjectTypes = append(pack.ObjectTypes, t.Name)
 		}
-		sort.Strings(pack.ObjectTypes)
 	}
+	sort.Strings(pack.ObjectTypes)
 
-	var relations map[string]struct {
-		SourceTypes []string `json:"sourceTypes"`
-		TargetTypes []string `json:"targetTypes"`
-	}
-	if len(schema.RelationshipTypeSchemas) > 0 && json.Unmarshal(schema.RelationshipTypeSchemas, &relations) == nil {
-		names := make([]string, 0, len(relations))
-		for name := range relations {
-			names = append(names, name)
+	relations := relationshipTypesFromRaw(schema.RelationshipTypeSchemas)
+	sort.SliceStable(relations, func(i, j int) bool { return relations[i].Name < relations[j].Name })
+	for _, r := range relations {
+		if r.Name == "" {
+			continue
 		}
-		sort.Strings(names)
-		for _, name := range names {
-			r := relations[name]
-			switch {
-			case len(r.SourceTypes) > 0 && len(r.TargetTypes) > 0:
-				pack.RelationTypes = append(pack.RelationTypes, name+" ("+r.SourceTypes[0]+" → "+r.TargetTypes[0]+")")
-			default:
-				pack.RelationTypes = append(pack.RelationTypes, name)
-			}
+		if r.SourceType != "" && r.TargetType != "" {
+			pack.RelationTypes = append(pack.RelationTypes, r.Name+" ("+r.SourceType+" \u2192 "+r.TargetType+")")
+			continue
 		}
+		pack.RelationTypes = append(pack.RelationTypes, r.Name)
 	}
 
 	return pack

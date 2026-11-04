@@ -59,7 +59,7 @@ func TestRenderSchemaRailOnEverySchemaPage(t *testing.T) {
 		},
 		{
 			name:   "schema pack detail",
-			page:   func(t *testing.T) string { return renderHTML(t, SchemaPackPage(nil, nil)) },
+			page:   func(t *testing.T) string { return renderHTML(t, SchemaPackPage(nil, nil, "")) },
 			active: packsActive,
 		},
 	}
@@ -372,6 +372,7 @@ func TestUISchemaPackDetailPendingReview(t *testing.T) {
 				Description:             "Auto-discovered types from 4 entities",
 				Author:                  "Auto-Discovery System",
 				Source:                  "discovered",
+				PendingReview:           true,
 				ObjectTypeSchemas:       json.RawMessage(`{"Customer":{"type":"object"},"Order":{"type":"object"}}`),
 				RelationshipTypeSchemas: json.RawMessage(`{"places":{"sourceTypes":["Customer"],"targetTypes":["Order"]}}`),
 			},
@@ -405,24 +406,67 @@ func TestUISchemaPackDetailPendingReview(t *testing.T) {
 	}
 }
 
-// TestUISchemaPackInstall pins that installing a reviewed pack is what takes a
-// discovery result live, and that it lands back on the pack.
-func TestUISchemaPackInstall(t *testing.T) {
-	f := &fakeMemory{}
+// TestUISchemaPackDetailNotInstalled pins the other half of the badge: a pack
+// that exists but was not proposed by a run reads as "Not installed", not as
+// "Pending review" — the flag the server sets is what distinguishes them.
+func TestUISchemaPackDetailNotInstalled(t *testing.T) {
+	f := &fakeMemory{
+		schemasByID: map[string]*BlueprintSchema{
+			"orphan-1": {
+				ID:                "orphan-1",
+				Name:              "Orphan pack",
+				Version:           "1.0.0",
+				ObjectTypeSchemas: json.RawMessage(`{"Customer":{"type":"object"}}`),
+			},
+		},
+	}
 	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
 	e := echo.New()
+	e.GET("/schema/packs/:id", s.uiSchemaPack)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/packs/orphan-1", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "Not installed") {
+		t.Error("an unassigned pack that is not awaiting review must say so")
+	}
+	if strings.Contains(body, "Pending review") {
+		t.Error("a pack with pending_review=false must not claim to be pending review")
+	}
+}
+
+// TestUISchemaPackInstall pins that installing a reviewed pack is what takes a
+// discovery result live, that it lands back on the pack, and that the landing
+// page confirms it — a redirect that says nothing would read as a no-op.
+func TestUISchemaPackInstall(t *testing.T) {
+	f := packDetailFake()
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: f}
+	e := echo.New()
+	e.GET("/schema/packs/:id", s.uiSchemaPack)
 	e.POST("/schema/packs/:id/install", s.uiSchemaPackInstall)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/packs/discovered-1/install", nil))
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/packs/pack-1/install", nil))
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("install status = %d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/schema/packs/discovered-1?installed=1" {
+	if loc := rec.Header().Get("Location"); loc != "/schema/packs/pack-1?installed=1" {
 		t.Errorf("install location = %q", loc)
 	}
-	if len(f.assignedSchemaPacks) != 1 || f.assignedSchemaPacks[0] != "discovered-1" {
-		t.Fatalf("assigned packs = %v, want [discovered-1]", f.assignedSchemaPacks)
+	if len(f.assignedSchemaPacks) != 1 || f.assignedSchemaPacks[0] != "pack-1" {
+		t.Fatalf("assigned packs = %v, want [pack-1]", f.assignedSchemaPacks)
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/packs/pack-1?installed=1", nil))
+	if !strings.Contains(rec.Body.String(), "Pack installed") {
+		t.Error("the landing page must confirm the install")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema/packs/pack-1", nil))
+	if strings.Contains(rec.Body.String(), "Pack installed") {
+		t.Error("a plain page load must not repeat the install confirmation")
 	}
 }
 
@@ -462,5 +506,24 @@ func TestPendingPackFromSchema(t *testing.T) {
 	}
 	if got, want := strings.Join(pack.RelationTypes, ","), "links,owns (Alpha → Zebra)"; got != want {
 		t.Errorf("relationship types = %q, want %q", got, want)
+	}
+	if pack.PendingReview {
+		t.Error("pending_review must come from the schema, not be assumed")
+	}
+
+	// The registry's array form (and a scalar endpoint pair) must render too:
+	// a pack stored the other way round used to review as an empty page with an
+	// install button.
+	registry := pendingPackFromSchema(&BlueprintSchema{
+		ID:                      "p2",
+		Name:                    "registry",
+		ObjectTypeSchemas:       json.RawMessage(`[{"name":"Widgit","description":"thing"},{"name":"Gadget"}]`),
+		RelationshipTypeSchemas: json.RawMessage(`[{"name":"fits","sourceType":"Widgit","targetType":"Gadget"},{"name":"loose"}]`),
+	})
+	if got, want := strings.Join(registry.ObjectTypes, ","), "Gadget,Widgit"; got != want {
+		t.Errorf("array-form object types = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(registry.RelationTypes, ","), "fits (Widgit → Gadget),loose"; got != want {
+		t.Errorf("array-form relationship types = %q, want %q", got, want)
 	}
 }

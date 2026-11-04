@@ -3,6 +3,8 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -418,4 +420,49 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_OneActiveJobConstraintExists() {
 	job.ID = uuid.New()
 	_, err = s.testDB.DB.NewInsert().Model(job).Exec(s.T().Context())
 	s.Require().NoError(err, "a terminal job must not hold the project's one-run slot")
+}
+
+// TestDiscovery_CancelledJobRefusesLateWrites pins the fencing around a
+// cancelled run. Cancelling frees the project's slot immediately, so the
+// pipeline that is still working must not be able to advance its job or to
+// present itself as completed after that point — otherwise a cancelled run and
+// the run that replaced it could both create packs.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelledJobRefusesLateWrites() {
+	ctx := s.T().Context()
+	jobID := uuid.MustParse(s.insertJobWithConfig(discoveryjobs.StatusPending, map[string]any{
+		"document_ids": []string{s.docID},
+		"batch_size":   10,
+	}))
+	repo := discoveryjobs.NewRepository(s.testDB.DB, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	s.Require().NoError(repo.CancelJob(ctx, jobID))
+	s.Require().Equal(discoveryjobs.StatusCancelled, s.jobStatusRow(jobID.String()))
+
+	// Progress from the cancelled run is dropped, not an error the run has to
+	// handle: the status column is the record of what happened.
+	s.Require().NoError(repo.UpdateProgress(ctx, jobID, discoveryjobs.JSONMap{"message": "late progress"}))
+
+	// Advancing, failing and completing are all refused once the job is terminal.
+	s.Require().ErrorIs(
+		repo.UpdateStatus(ctx, jobID, discoveryjobs.StatusExtractingTypes, nil),
+		discoveryjobs.ErrJobNoLongerActive,
+		"a cancelled job must not be advanced",
+	)
+	lateFailure := "late failure from the cancelled run"
+	s.Require().ErrorIs(
+		repo.UpdateStatus(ctx, jobID, discoveryjobs.StatusFailed, &lateFailure),
+		discoveryjobs.ErrJobNoLongerActive,
+		"a cancelled job must not be overwritten with a failure",
+	)
+	s.Require().ErrorIs(
+		repo.MarkCompleted(ctx, jobID, nil, discoveryjobs.JSONArray{}, discoveryjobs.JSONArray{}),
+		discoveryjobs.ErrJobNoLongerActive,
+		"a cancelled job must not be marked completed",
+	)
+	s.Require().Equal(discoveryjobs.StatusCancelled, s.jobStatusRow(jobID.String()),
+		"the job must stay cancelled after the late writes")
+
+	status, err := repo.JobStatus(ctx, jobID)
+	s.Require().NoError(err)
+	s.Require().Equal(discoveryjobs.StatusCancelled, status)
 }

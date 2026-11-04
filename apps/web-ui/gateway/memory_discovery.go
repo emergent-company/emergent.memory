@@ -48,6 +48,20 @@ func (j *discoveryJob) isRunning() bool {
 	return true
 }
 
+// cancellable mirrors the server's cancellable statuses: a run can be stopped
+// while it is still analysing, but not once it is writing the pack. Offering an
+// action the API refuses would turn a state detail into a 409.
+func (j *discoveryJob) cancellable() bool {
+	if j == nil {
+		return false
+	}
+	switch j.Status {
+	case "pending", "analyzing_documents", "extracting_types", "refining_schemas":
+		return true
+	}
+	return false
+}
+
 // capped reports whether the run covered fewer documents than the project has,
 // which is how the card tells the user a project-wide run was limited.
 func (j *discoveryJob) capped() bool {

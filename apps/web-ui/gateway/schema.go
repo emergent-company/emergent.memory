@@ -92,6 +92,7 @@ func (s *Server) uiSchema(c echo.Context) error {
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "installed", msg: "Schema installed."},
 		{key: "discovered", msg: "Schema discovery started."},
+		{key: "cancelled", msg: "Discovery run cancelled. Its results were discarded."},
 	})
 	return s.page(c, pageTitle("Schema"), SchemaPage(&SchemaListView{
 		Compiled:   visible,

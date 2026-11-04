@@ -39461,6 +39461,10 @@ const docTemplate = `{
                         "type": "integer"
                     }
                 },
+                "pendingReview": {
+                    "description": "PendingReview marks discovery output that is awaiting an explicit\ninstall. It is false for a pack created or imported any other way, so a\nclient can tell \"proposed by a run\" from \"unassigned\".",
+                    "type": "boolean"
+                },
                 "projectId": {
                     "type": "string"
                 },

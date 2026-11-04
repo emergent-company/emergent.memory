@@ -145,3 +145,18 @@ func TestRenderRefs(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexSetting(t *testing.T) {
+	if got, want := indexSetting(index{name: "idx_plain", cols: []string{"a"}}), `[name: "idx_plain"]`; got != want {
+		t.Errorf("plain index = %s, want %s", got, want)
+	}
+	got := indexSetting(index{
+		name:      "uq_discovery_jobs_one_active",
+		unique:    true,
+		predicate: "status <> 'cancelled'::text",
+	})
+	want := `[name: "uq_discovery_jobs_one_active", unique, note: 'status <> \'cancelled\'::text']`
+	if got != want {
+		t.Errorf("partial index = %s, want %s", got, want)
+	}
+}

@@ -88,8 +88,9 @@ templ schemaPackRow(p schemaPackSummary) {
 // SchemaPackPage renders one active pack's read-only detail: a metadata header
 // and two type tables (object types / relationship types). pack == nil with a
 // nil loadErr is the not-found state (unknown or absent pack id); a non-nil
-// loadErr is the whole-page error state. Neither panics.
-templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
+// loadErr is the whole-page error state. notice is the install confirmation, so
+// installing a pending pack lands somewhere that says it worked. Neither panics.
+templ SchemaPackPage(pack *schemaPackSummary, loadErr error, notice string) {
 	@layout.Container(layout.ContainerLG, nil) {
 		if pack == nil {
 			@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", "Schema pack")), "", "Schema pack", "")
@@ -110,6 +111,16 @@ templ SchemaPackPage(pack *schemaPackSummary, loadErr error) {
 					ActionIcon:  "lucide--arrow-left",
 				})
 			} else {
+				if notice != "" {
+					<div class="mb-4">
+						@ui.Alert(ui.AlertProps{
+							Type:    ui.AlertSuccess,
+							Style:   ui.AlertStyleSoft,
+							Icon:    "lucide--check-circle",
+							Message: notice,
+						})
+					</div>
+				}
 				@schemaPackMeta(pack)
 				{{
 					prov := map[string]*ProvenanceInfo{}
@@ -147,7 +158,11 @@ templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
 		@detailHeader(crumbsActive(nav.Crumbs("Schema", "/schema", "Schema packs", "/schema/packs", pack.Name)), "Schema pack", pack.Name, pack.Description, detailHeaderOpts{Margin: "mb-6"}) {
 			<div class="flex flex-wrap items-center gap-2">
 				@ui.Badge(ui.BadgeProps{Label: "v" + pack.Version, Variant: ui.BadgeGhost, Size: ui.BadgeSizeSM})
-				@ui.Badge(ui.BadgeProps{Label: "Pending review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeSM, Dot: true})
+				if pack.PendingReview {
+					@ui.Badge(ui.BadgeProps{Label: "Pending review", Variant: ui.BadgeInfo, Size: ui.BadgeSizeSM, Dot: true})
+				} else {
+					@ui.Badge(ui.BadgeProps{Label: "Not installed", Variant: ui.BadgeNeutral, Size: ui.BadgeSizeSM})
+				}
 			</div>
 		}
 		@layout.Rail(schemaSubNav("packs"), nil) {
@@ -162,7 +177,11 @@ templ SchemaPackPendingPage(pack *pendingPack, flashErr error) {
 				</div>
 			}
 			@ui.EmptyNote(ui.EmptyNoteProps{Class: "mb-4"}) {
-				This pack was proposed by a discovery run and is not installed. Its types are not used for extraction until you install it, and installing is the only step that takes them live.
+				if pack.PendingReview {
+					This pack was proposed by a discovery run and is not installed. Its types are not used for extraction until you install it, and installing is the only step that takes them live.
+				} else {
+					This pack is listed for this project but is not installed. Its types are not used for extraction until you install it.
+				}
 			}
 			@ui.Section("Pack details", ui.SectionProps{Margin: "mb-6", BodyClass: "memory-density-comfortable"}) {
 				@components.MetaGrid() {

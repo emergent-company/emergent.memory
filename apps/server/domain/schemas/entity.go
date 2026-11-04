@@ -201,11 +201,15 @@ type GraphMemorySchema struct {
 	Migrations              *SchemaMigrationHints `bun:"migrations,type:jsonb" json:"migrations,omitempty"`
 	Checksum                *string               `bun:"checksum" json:"checksum,omitempty"`
 	ProjectID               *string               `bun:"project_id,type:uuid" json:"projectId,omitempty"`
-	Draft                   bool                  `bun:"draft,default:false" json:"draft"`
-	PublishedAt             *time.Time            `bun:"published_at" json:"publishedAt,omitempty"`
-	DeprecatedAt            *time.Time            `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
-	CreatedAt               time.Time             `bun:"created_at" json:"createdAt"`
-	UpdatedAt               time.Time             `bun:"updated_at" json:"updatedAt"`
+	// PendingReview marks discovery output that is awaiting an explicit
+	// install. It is false for a pack created or imported any other way, so a
+	// client can tell "proposed by a run" from "unassigned".
+	PendingReview bool       `bun:"pending_review,default:false" json:"pendingReview"`
+	Draft         bool       `bun:"draft,default:false" json:"draft"`
+	PublishedAt   *time.Time `bun:"published_at" json:"publishedAt,omitempty"`
+	DeprecatedAt  *time.Time `bun:"deprecated_at" json:"deprecatedAt,omitempty"`
+	CreatedAt     time.Time  `bun:"created_at" json:"createdAt"`
+	UpdatedAt     time.Time  `bun:"updated_at" json:"updatedAt"`
 }
 
 // ProjectMemorySchema represents a project's installed memory schema

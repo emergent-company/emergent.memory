@@ -318,6 +318,17 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelJob() {
 	s.Require().NoError(json.Unmarshal(statusResp.Body, &pendingStatus))
 	s.Equal("cancelled", pendingStatus["status"], "cancelled job status should be 'cancelled'")
 
+	// A cancelled job records when it stopped: completed_at is the timestamp
+	// the list and the card sort by, and leaving it NULL made a cancel look
+	// like a job that never ran.
+	var completedAt *time.Time
+	s.Require().NoError(s.testDB.DB.NewSelect().
+		Table("kb.discovery_jobs").
+		Column("completed_at").
+		Where("id = ?", uuid.MustParse(pendingID)).
+		Scan(s.T().Context(), &completedAt))
+	s.NotNil(completedAt, "a cancelled job must record its end")
+
 	// 409 path: cancel an already-terminal job. With no LLM provider the
 	// StartDiscovery goroutine fails the job almost immediately, so we wait
 	// for the terminal state before deleting — controlled, not lucky.
@@ -328,6 +339,23 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelJob() {
 		testutil.WithAuth(s.authToken),
 	)
 	s.Equal(http.StatusConflict, resp.StatusCode, "cancel terminal: %s", resp.Body)
+}
+
+// TestDiscovery_CancelRefusesCreatingPack pins the boundary of the cancellable
+// set: once a run is writing its pack, cancelling would leave an inert pack and
+// a cancelled job, so the API refuses it and says which state it saw — the card
+// hides the action for the same reason.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelRefusesCreatingPack() {
+	jobID := s.insertJobWithConfig(discoveryjobs.StatusCreatingPack, map[string]any{
+		"document_ids": []string{s.docID},
+	})
+	resp := s.client.DELETE(
+		fmt.Sprintf("/api/discovery-jobs/%s", jobID),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Require().Equal(http.StatusConflict, resp.StatusCode, "cancel creating_pack: %s", resp.Body)
+	s.Contains(string(resp.Body), "creating its pack")
+	s.Equal(discoveryjobs.StatusCreatingPack, s.jobStatusRow(jobID))
 }
 
 // TestDiscovery_ListJobs verifies the list endpoint returns the started job.

@@ -687,8 +687,11 @@ func (w *SyncWorker) delegateDiscovery(ctx context.Context, projectID uuid.UUID,
 		return
 	}
 	if startErr := w.discovery.StartDiscovery(ctx, projectID, ids); startErr != nil {
-		// Includes the 409 a run in flight returns: the next sync (or a manual
-		// run) covers these documents, and this line is the operator trace.
+		// Includes the 409 a run in flight returns. Those documents are not
+		// analysed by that run, and a later sync only delegates its own new
+		// documents, so nothing picks them up automatically: the manual run on
+		// the Schema page (or a retry) is the way to cover them. This line is
+		// the operator trace.
 		log.Warn("discovery delegation failed", "error", startErr)
 	}
 }

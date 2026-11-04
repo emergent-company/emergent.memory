@@ -518,6 +518,16 @@ func testDocs(n int) []DocumentContent {
 	return docs
 }
 
+// allGroupTypes flattens the per-answer groups into one list, for assertions
+// that care about the types rather than which answer produced them.
+func allGroupTypes(groups []discoveredGroup) []DiscoveredType {
+	var out []DiscoveredType
+	for _, g := range groups {
+		out = append(out, g.Types...)
+	}
+	return out
+}
+
 // TestDiscoverBatchTypes_ReducedBudgetRetry pins the wiring, not just the
 // decision: a one-document truncation makes exactly one more call, and that
 // call asks for the reduced type budget.
@@ -528,12 +538,16 @@ func TestDiscoverBatchTypes_ReducedBudgetRetry(t *testing.T) {
 	}}
 	svc := newBatchTestService(llm)
 
-	types, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	types := allGroupTypes(groups)
 	if len(types) != 1 || types[0].TypeName != "Customer" {
 		t.Fatalf("types = %+v, want one Customer", types)
+	}
+	if len(groups) != 1 || len(groups[0].DocumentIDs) != 1 {
+		t.Fatalf("groups = %+v, want one group over the single document", groups)
 	}
 	if llm.calls != 2 {
 		t.Fatalf("model calls = %d, want 2 (default budget, then reduced)", llm.calls)
@@ -599,12 +613,24 @@ func TestDiscoverBatchTypes_MultiDocumentSplitKeepsBudget(t *testing.T) {
 	}}
 	svc := newBatchTestService(llm)
 
-	types, err := svc.discoverBatchTypes(context.Background(), testDocs(2), 1, "test purpose", 0)
+	docs := testDocs(2)
+	groups, err := svc.discoverBatchTypes(context.Background(), docs, 1, "test purpose", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	types := allGroupTypes(groups)
 	if len(types) != 2 {
 		t.Fatalf("types = %d, want 2 (one per half)", len(types))
+	}
+	// Provenance must not be the whole original batch: each half's answer is
+	// attributed to the half's own document.
+	if len(groups) != 2 {
+		t.Fatalf("groups = %d, want 2 (one per answered half)", len(groups))
+	}
+	for i, g := range groups {
+		if len(g.DocumentIDs) != 1 || g.DocumentIDs[0] != docs[i].ID {
+			t.Fatalf("group %d documents = %v, want [%s]", i, g.DocumentIDs, docs[i].ID)
+		}
 	}
 	if llm.calls != 3 {
 		t.Fatalf("model calls = %d, want 3 (original + two halves)", llm.calls)
@@ -623,14 +649,31 @@ func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
 	llm := &sequenceLLM{responses: []seqResponse{{text: `{"discovered_types":[]}`}}}
 	svc := newBatchTestService(llm)
 
-	types, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
+	groups, err := svc.discoverBatchTypes(context.Background(), testDocs(1), 1, "test purpose", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(types) != 0 {
+	if types := allGroupTypes(groups); len(types) != 0 {
 		t.Fatalf("types = %+v, want none", types)
 	}
 	if llm.calls != 1 {
 		t.Fatalf("model calls = %d, want 1", llm.calls)
+	}
+}
+
+// TestIsTerminalStatus pins the vocabulary the cancellation fencing depends on:
+// every write the worker makes is refused once the job is terminal, so a status
+// classified wrongly here would either strand a live run or let a cancelled one
+// finish into a second pack.
+func TestIsTerminalStatus(t *testing.T) {
+	for _, status := range []string{StatusCompleted, StatusFailed, StatusCancelled} {
+		if !IsTerminalStatus(status) {
+			t.Errorf("IsTerminalStatus(%q) = false, want true", status)
+		}
+	}
+	for _, status := range []string{StatusPending, StatusAnalyzingDocuments, StatusExtractingTypes, StatusRefiningSchemas, StatusCreatingPack} {
+		if IsTerminalStatus(status) {
+			t.Errorf("IsTerminalStatus(%q) = true, want false", status)
+		}
 	}
 }

@@ -86,17 +86,53 @@ func TestSchemaDiscoveryRetryUsesTheRowJobID(t *testing.T) {
 }
 
 // TestSchemaDiscoveryRetryEmptyJobIDRedirectsWithError pins the path guard: an
-// empty id must not become a request to the jobs root.
+// empty id must not become a request to the jobs root. The handler is called
+// directly, because the route pattern rejects an empty segment before the guard
+// runs — a request through the router would prove the router's behaviour, not
+// this guard's.
 func TestSchemaDiscoveryRetryEmptyJobIDRedirectsWithError(t *testing.T) {
 	f := &fakeMemory{}
-	_, e := newSchemaDiscoveryServer(f)
+	s, _ := newSchemaDiscoveryServer(f)
 
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/schema/discovery/retry/", nil))
-	// The route pattern does not match an empty segment; the important part is
-	// that no retry was issued either way.
+	c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/schema/discovery/retry/", nil), rec)
+	c.SetParamNames("jobID")
+	c.SetParamValues("")
+	if err := s.uiSchemaDiscoveryRetry(c); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") {
+		t.Errorf("location = %q, want the card with ?err=", loc)
+	}
 	if len(f.discoveryRetries) != 0 {
 		t.Fatalf("retried job ids = %v, want none", f.discoveryRetries)
+	}
+}
+
+// TestSchemaDiscoveryCancelEmptyJobIDRedirectsWithError is the same guard on
+// the cancel route: an empty id must not reach the jobs root either.
+func TestSchemaDiscoveryCancelEmptyJobIDRedirectsWithError(t *testing.T) {
+	f := &fakeMemory{}
+	s, _ := newSchemaDiscoveryServer(f)
+
+	rec := httptest.NewRecorder()
+	c := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/schema/discovery/cancel/", nil), rec)
+	c.SetParamNames("jobID")
+	c.SetParamValues("")
+	if err := s.uiSchemaDiscoveryCancel(c); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.HasPrefix(loc, "/schema?err=") {
+		t.Errorf("location = %q, want the card with ?err=", loc)
+	}
+	if len(f.discoveryCancels) != 0 {
+		t.Fatalf("cancelled jobs = %v, want none", f.discoveryCancels)
 	}
 }
 
@@ -357,5 +393,42 @@ func TestSchemaDiscoveryCardReportsAnUnreadableCount(t *testing.T) {
 	}
 	if strings.Contains(html, "No documents in this project yet") {
 		t.Error("an unreadable count must not be rendered as an empty project")
+	}
+}
+
+// TestSchemaDiscoveryCardDoesNotOfferCancelWhileCreatingThePack pins the card
+// against the server's cancellable set: a run that is writing its pack finishes
+// in seconds, the API refuses a cancel then, and offering the action would turn
+// that refusal into a flash error for a normal state.
+func TestSchemaDiscoveryCardDoesNotOfferCancelWhileCreatingThePack(t *testing.T) {
+	creating := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
+		Latest: &discoveryJob{ID: "j-pack", Status: "creating_pack", Trigger: "manual"},
+	}))
+	if !strings.Contains(creating, "Running") {
+		t.Error("a run creating its pack is still running")
+	}
+	if strings.Contains(creating, "/schema/discovery/cancel/") {
+		t.Error("a run creating its pack must not offer Cancel: the API refuses it")
+	}
+}
+
+// TestSchemaPageShowsTheCancelConfirmation pins the other half of the cancel
+// flow: the redirect lands on /schema?cancelled=1, and a page that ignored it
+// would look as though the button did nothing.
+func TestSchemaPageShowsTheCancelConfirmation(t *testing.T) {
+	s := &Server{cfg: Config{DefaultAgent: "memory"}, memory: &fakeMemory{compiled: &CompiledSchemaTypes{}}}
+	e := echo.New()
+	e.GET("/schema", s.uiSchema)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema?cancelled=1", nil))
+	if !strings.Contains(rec.Body.String(), "Discovery run cancelled") {
+		t.Error("the cancel redirect must confirm the run was cancelled")
+	}
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/schema", nil))
+	if strings.Contains(rec.Body.String(), "Discovery run cancelled") {
+		t.Error("a plain load must not repeat the cancel confirmation")
 	}
 }

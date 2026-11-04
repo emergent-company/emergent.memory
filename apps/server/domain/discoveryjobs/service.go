@@ -59,6 +59,13 @@ const DefaultStaleJobAfter = 30 * time.Minute
 // malformed response.
 var ErrOutputTruncated = errors.New("model output truncated at the output token limit")
 
+// ErrJobNoLongerActive reports that a running job reached a terminal status
+// while it was still executing — cancelled by a member, or cancelled and
+// superseded by the stale-job takeover. The worker stops at the next boundary
+// and every write it makes is conditional on the job still being non-terminal,
+// so a superseded run can neither advance its job nor create a second pack.
+var ErrJobNoLongerActive = errors.New("discovery job is no longer active")
+
 // modelFactory is the interface for creating LLM models.
 // Implemented by *adk.ModelFactory in production; mocked in tests.
 type modelFactory interface {
@@ -991,9 +998,10 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid.UUID) {
 	s.log.Info("starting discovery job", slog.String("job_id", jobID.String()), slog.String("project_id", projectID.String()))
 
-	// Update status to analyzing
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusAnalyzingDocuments, nil); err != nil {
-		s.log.Error("failed to update job status", logger.Error(err))
+	// Update status to analyzing. A job cancelled between the start request and
+	// this goroutine running is already terminal, so the transition refuses and
+	// the run stops without spending a model call.
+	if !s.transitionStatus(ctx, jobID, StatusAnalyzingDocuments) {
 		return
 	}
 	if err := s.repo.MarkStarted(ctx, jobID); err != nil {
@@ -1032,8 +1040,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	s.log.Info("processing batches", slog.Int("batch_count", len(batches)))
 
 	// Step 2: Extract types from each batch
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusExtractingTypes, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	if !s.transitionStatus(ctx, jobID, StatusExtractingTypes) {
 		return
 	}
 
@@ -1042,6 +1049,12 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	var batchErrors []string
 
 	for i, batch := range batches {
+		// A cancel (or a takeover after the process stalled) is only visible
+		// between batches; stopping here is what makes the card's Cancel action
+		// end the run instead of just freeing the slot.
+		if !s.runIsActive(ctx, jobID) {
+			return
+		}
 		batchNum := i + 1
 		s.updateProgress(ctx, jobID, batchNum, len(batches)+2, fmt.Sprintf("Analyzing batch %d/%d...", batchNum, len(batches)))
 
@@ -1063,8 +1076,7 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 	}
 
 	// Step 3: Refine and merge types
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusRefiningSchemas, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	if !s.transitionStatus(ctx, jobID, StatusRefiningSchemas) {
 		return
 	}
 	s.updateProgress(ctx, jobID, len(batches)+1, len(batches)+2, "Refining discovered types and merging duplicates...")
@@ -1091,8 +1103,10 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		return
 	}
 
-	if err := s.repo.UpdateStatus(ctx, jobID, StatusCreatingPack, nil); err != nil {
-		s.handleJobError(ctx, jobID, err)
+	// Entering creating_pack is the pack-creation gate: the transition is fenced
+	// by the job's status, so a run that was cancelled or superseded can no
+	// longer create a pack another run would then duplicate.
+	if !s.transitionStatus(ctx, jobID, StatusCreatingPack) {
 		return
 	}
 	s.updateProgress(ctx, jobID, len(batches)+2, len(batches)+2, "Creating memory schema from discovered types...")
@@ -1156,8 +1170,16 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		}
 	}
 
-	// Step 6: Complete
+	// Step 6: Complete. This write is fenced too: if the job was cancelled while
+	// the pack was being created, it stays cancelled and the pack stays in
+	// pending review (inert — it grants no compiled types until installed).
 	if err := s.repo.MarkCompleted(ctx, jobID, &schemaID, typesArray, relsArray); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			s.log.Warn("discovery job was cancelled while creating its pack; leaving the pack pending review",
+				slog.String("job_id", jobID.String()),
+				slog.String("pack_id", schemaID.String()))
+			return
+		}
 		s.handleJobError(ctx, jobID, err)
 		return
 	}
@@ -1266,36 +1288,58 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 		return nil
 	}
 
-	types, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
+	groups, err := s.discoverBatchTypes(ctx, docs, batchNum, kbPurpose, typeBudget)
 	if err != nil {
 		return err
 	}
 
-	// Store candidates
-	for _, t := range types {
-		candidate := &DiscoveryTypeCandidate{
-			ID:                uuid.New(),
-			JobID:             jobID,
-			BatchNumber:       batchNum,
-			TypeName:          t.TypeName,
-			Description:       &t.Description,
-			Confidence:        t.Confidence,
-			InferredSchema:    t.Properties,
-			ExampleInstances:  toJSONArray(t.ExampleInstances),
-			Frequency:         len(t.ExampleInstances),
-			SourceDocumentIDs: documentIDs,
-			ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(docs))),
-			Status:            CandidateStatusCandidate,
-			CreatedAt:         time.Now(),
-			UpdatedAt:         time.Now(),
-		}
-		if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
-			s.log.Error("failed to store type candidate", logger.Error(err))
-			// Continue with other candidates
+	// Store candidates, attributed to the documents the answer actually covered:
+	// a batch split on truncation is answered twice, and each half's types come
+	// from its own documents.
+	for _, group := range groups {
+		for _, t := range group.Types {
+			candidate := &DiscoveryTypeCandidate{
+				ID:                uuid.New(),
+				JobID:             jobID,
+				BatchNumber:       batchNum,
+				TypeName:          t.TypeName,
+				Description:       &t.Description,
+				Confidence:        t.Confidence,
+				InferredSchema:    t.Properties,
+				ExampleInstances:  toJSONArray(t.ExampleInstances),
+				Frequency:         len(t.ExampleInstances),
+				SourceDocumentIDs: group.DocumentIDs,
+				ExtractionContext: strPtr(fmt.Sprintf("Batch %d: Discovered from %d documents", batchNum, len(group.DocumentIDs))),
+				Status:            CandidateStatusCandidate,
+				CreatedAt:         time.Now(),
+				UpdatedAt:         time.Now(),
+			}
+			if err := s.repo.CreateTypeCandidate(ctx, candidate); err != nil {
+				s.log.Error("failed to store type candidate", logger.Error(err))
+				// Continue with other candidates
+			}
 		}
 	}
 
 	return nil
+}
+
+// discoveredGroup is the types one model answer produced, together with the
+// documents that answer covered. A batch split on truncation yields one group
+// per half, so a stored candidate's provenance names the documents it came
+// from rather than the whole original batch.
+type discoveredGroup struct {
+	Types       []DiscoveredType
+	DocumentIDs []uuid.UUID
+}
+
+// documentIDs returns the ids of the documents a group covers.
+func documentIDs(docs []DocumentContent) []uuid.UUID {
+	ids := make([]uuid.UUID, len(docs))
+	for i, doc := range docs {
+		ids[i] = doc.ID
+	}
+	return ids
 }
 
 // discoverBatchTypes asks the model which types the already-loaded documents
@@ -1308,7 +1352,7 @@ func (s *Service) extractTypesFromBatch(ctx context.Context, jobID uuid.UUID, do
 // complete answer that legitimately found no types is a valid batch, not a
 // failure. Taking loaded documents (rather than ids) keeps the retry
 // decision-testable without a database.
-func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]DiscoveredType, error) {
+func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent, batchNum int, kbPurpose string, typeBudget int) ([]discoveredGroup, error) {
 	prompt := s.buildTypeDiscoveryPrompt(docs, kbPurpose, typeBudget)
 
 	response, callErr := s.completeWithLLM(ctx, prompt)
@@ -1362,7 +1406,7 @@ func (s *Service) discoverBatchTypes(ctx context.Context, docs []DocumentContent
 		slog.Int("batch", batchNum),
 		slog.Int("type_count", len(types)))
 
-	return types, nil
+	return []discoveredGroup{{Types: types, DocumentIDs: documentIDs(docs)}}, nil
 }
 
 // effectiveTypeBudget resolves a prompt type budget (0 = default).
@@ -1877,6 +1921,45 @@ func (s *Service) parseRelationshipDiscoveryResponse(response string) ([]Discove
 }
 
 // Helper functions
+
+// transitionStatus applies a pipeline status change and reports whether the run
+// may continue. A job that reached a terminal status while the run was working
+// (cancelled by a member, or superseded by the stale-job takeover) is no longer
+// ours to advance: the run stops instead of finishing into a second pack.
+func (s *Service) transitionStatus(ctx context.Context, jobID uuid.UUID, status string) bool {
+	err := s.repo.UpdateStatus(ctx, jobID, status, nil)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, ErrJobNoLongerActive):
+		s.log.Info("discovery job is no longer active; stopping the run",
+			slog.String("job_id", jobID.String()),
+			slog.String("next_status", status))
+		return false
+	default:
+		s.handleJobError(ctx, jobID, err)
+		return false
+	}
+}
+
+// runIsActive reports whether the job can still be advanced. The worker calls
+// it between batches so a cancel does not pay for the rest of the run. A read
+// failure is not treated as a cancel — the next write is fenced by the same
+// status predicate, so a stale read cannot resurrect a finished job.
+func (s *Service) runIsActive(ctx context.Context, jobID uuid.UUID) bool {
+	status, err := s.repo.JobStatus(ctx, jobID)
+	if err != nil {
+		s.log.Warn("could not read discovery job status; continuing to the next fenced write",
+			slog.String("job_id", jobID.String()), logger.Error(err))
+		return true
+	}
+	if IsTerminalStatus(status) {
+		s.log.Info("discovery job is no longer active; stopping the run",
+			slog.String("job_id", jobID.String()), slog.String("status", status))
+		return false
+	}
+	return true
+}
 
 func (s *Service) handleJobError(ctx context.Context, jobID uuid.UUID, err error) {
 	errMsg := err.Error()

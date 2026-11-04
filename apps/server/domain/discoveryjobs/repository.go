@@ -75,39 +75,72 @@ func (r *Repository) ListByProject(ctx context.Context, projectID uuid.UUID, lim
 	return jobs, nil
 }
 
-// UpdateStatus updates the status and optional error message
+// nonTerminalStatuses are the statuses a run can be advanced from. Every write
+// the worker makes carries this predicate, so a job that was cancelled while a
+// batch was running (a member's cancel, or the stale-job takeover) cannot be
+// moved on or "completed" afterwards by a run that is still in flight.
+var nonTerminalStatuses = []string{
+	StatusPending,
+	StatusAnalyzingDocuments,
+	StatusExtractingTypes,
+	StatusRefiningSchemas,
+	StatusCreatingPack,
+}
+
+// UpdateStatus updates the status and optional error message. It reports
+// ErrJobNoLongerActive instead of writing when the job already reached a
+// terminal status, which is how a cancelled run is stopped from overwriting it.
 func (r *Repository) UpdateStatus(ctx context.Context, jobID uuid.UUID, status string, errorMessage *string) error {
 	q := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", status).
 		Set("updated_at = now()").
-		Where("id = ?", jobID)
+		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses))
 
 	if errorMessage != nil {
 		q = q.Set("error_message = ?", *errorMessage)
 	}
 
-	_, err := q.Exec(ctx)
+	result, err := q.Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to update job status", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
+	}
 	return nil
 }
 
-// UpdateProgress updates the job progress
+// UpdateProgress updates the job progress. A terminal job is left untouched:
+// progress from a cancelled run is noise, and the job's own status is the
+// record of what happened.
 func (r *Repository) UpdateProgress(ctx context.Context, jobID uuid.UUID, progress JSONMap) error {
 	_, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("progress = ?", progress).
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to update job progress", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
 	return nil
+}
+
+// JobStatus reads just the status column. The worker calls it between batches
+// so a run that was cancelled mid-flight stops instead of spending more model
+// calls on documents nobody is waiting for. It reuses GetByID so the "not
+// found" mapping stays in one place.
+func (r *Repository) JobStatus(ctx context.Context, jobID uuid.UUID) (string, error) {
+	job, err := r.GetByID(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	return job.Status, nil
 }
 
 // MarkStarted marks the job as started
@@ -125,9 +158,11 @@ func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
 	return nil
 }
 
-// MarkCompleted marks the job as completed with results
+// MarkCompleted marks the job as completed with results. It reports
+// ErrJobNoLongerActive instead of writing when the job was cancelled while the
+// pack was being created, so a cancelled run cannot present itself as finished.
 func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaID *uuid.UUID, discoveredTypes, discoveredRelationships JSONArray) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCompleted).
 		Set("schema_id = ?", schemaID).
@@ -136,22 +171,46 @@ func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaI
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to mark job completed", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
+	}
 	return nil
 }
 
-// CancelJob cancels a job if it's in a cancellable state
+// cancellableStatuses are the statuses a member may cancel from. Once a run
+// enters creating_pack it is writing the pack and finishes in seconds; the card
+// does not offer cancel there, and this set keeps the API honest about it.
+var cancellableStatuses = []string{
+	StatusPending,
+	StatusAnalyzingDocuments,
+	StatusExtractingTypes,
+	StatusRefiningSchemas,
+}
+
+// CancellableStatuses reports the statuses CancelJob accepts, so a caller can
+// avoid offering an action the server will refuse.
+func CancellableStatuses() []string {
+	out := make([]string, len(cancellableStatuses))
+	copy(out, cancellableStatuses)
+	return out
+}
+
+// CancelJob cancels a job if it's in a cancellable state. The cancelled job's
+// run is fenced (see ErrJobNoLongerActive), so it stops instead of finishing.
 func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("status = ?", StatusCancelled).
+		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
-		Where("status IN (?)", bun.In([]string{StatusPending, StatusAnalyzingDocuments, StatusExtractingTypes, StatusRefiningSchemas})).
+		Where("status IN (?)", bun.In(cancellableStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to cancel job", logger.Error(err))
@@ -160,11 +219,11 @@ func (r *Repository) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 
 	rows, _ := result.RowsAffected()
 	if rows == 0 {
-		// The job is not in a cancellable state (it is terminal — completed,
-		// failed, or already cancelled — or does not exist). Return 409 Conflict
-		// per the cancellation contract (issue #1003): cancelling an already-terminal
-		// job is a state conflict, not a malformed request.
-		return apperror.ErrConflict.WithMessage("job cannot be cancelled (already completed, failed, or cancelled)")
+		// Not cancellable: the job is already terminal (completed, failed or
+		// cancelled), is creating its pack, or does not exist. 409 per the
+		// cancellation contract (issue #1003) — cancelling a job that can no
+		// longer be cancelled is a state conflict, not a malformed request.
+		return apperror.ErrConflict.WithMessage("job cannot be cancelled (it already finished, was cancelled, or is creating its pack)")
 	}
 	return nil
 }
