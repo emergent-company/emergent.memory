@@ -600,6 +600,10 @@ func main() {
 	e.GET("/orgs/new", s.uiOrgCreatePage)
 	e.POST("/orgs", s.uiCreateOrg)
 	e.GET("/orgs/:id", s.uiOrg)
+	// Org-scoped inbox entry point: the topbar bell on an org page links to
+	// /o/{org}/inbox, which carries no project ref. It resolves the org's
+	// default project and redirects into that project's inbox (see uiOrgInbox).
+	e.GET("/orgs/:id/inbox", s.uiOrgInbox)
 	e.GET("/orgs/:id/members", s.uiOrgMembers)
 	e.GET("/orgs/:id/members/add", s.uiOrgMemberAddPage)
 	e.POST("/orgs/:id/members", s.uiOrgAddMember)
