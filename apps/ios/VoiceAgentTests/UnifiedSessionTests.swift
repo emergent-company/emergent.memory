@@ -234,6 +234,34 @@ struct ChatSessionTranscriptStoreTests {
         #expect(store.liveMessages.isEmpty)
         #expect(store.pendingApprovals.isEmpty)
     }
+
+    /// A text turn is persisted server-side, so a reload must not leave its live
+    /// copy stacked on the recorded one — the text→voice→text case.
+    @Test func reloadingHistoryDropsTheLiveCopiesItRecords() {
+        let store = ChatSessionTranscriptStore()
+        store.syncLive([
+            LiveTranscriptMessage(id: "u1", role: .user, text: "hello"),
+            LiveTranscriptMessage(id: "u2", role: .user, text: "again"),
+            LiveTranscriptMessage(id: "a1", role: .assistant, text: "hi there"),
+            LiveTranscriptMessage(id: "a2", role: .assistant, text: "not saved yet"),
+        ])
+
+        store.loadHistory(from: detail())
+
+        // "hello" and "again" are the two lines of the recorded merged turn.
+        #expect(store.liveMessages.map(\.id) == ["a2"])
+    }
+
+    /// The match is line-bounded, not "contains": a short new reply must not be
+    /// hidden by a longer recorded message that happens to include it.
+    @Test func aShortLiveReplyIsNotHiddenByALongerRecordedOne() {
+        let store = ChatSessionTranscriptStore()
+        store.loadHistory(from: detail())
+
+        store.syncLive([LiveTranscriptMessage(id: "a9", role: .assistant, text: "hi")])
+
+        #expect(store.liveMessages.map(\.id) == ["a9"])
+    }
 }
 
 // MARK: - Session date formatting

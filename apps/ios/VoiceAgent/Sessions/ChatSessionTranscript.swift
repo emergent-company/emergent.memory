@@ -93,6 +93,9 @@ final class ChatSessionTranscriptStore {
         }
 
         history = entries
+        // A turn streamed over HTTP is persisted server-side, so a reload must
+        // not leave its live copy on top of the recorded one.
+        liveMessages.removeAll { historyCovers(role: $0.role, text: $0.text) }
         lastRecordCount = detail.records.count
         pendingApprovals = detail.pendingApprovals.map {
             ApprovalRequest(questionId: $0.questionID, tool: $0.tool, arguments: $0.arguments)
@@ -126,11 +129,6 @@ final class ChatSessionTranscriptStore {
 
     /// Applies already-mapped live transcripts (see ``syncLive(messages:)``).
     func syncLive(_ messages: [LiveTranscriptMessage]) {
-        let historyKeys = Set(history.compactMap { entry -> String? in
-            guard case let .message(message) = entry else { return nil }
-            return Self.key(role: message.role, text: message.text)
-        })
-
         var live: [ChatMessage] = []
         for message in messages {
             guard !message.text.isEmpty else { continue }
@@ -142,7 +140,33 @@ final class ChatSessionTranscriptStore {
             }
         }
 
-        liveMessages = live.filter { !historyKeys.contains(Self.key(role: $0.role, text: $0.text)) }
+        liveMessages = live.filter { !historyCovers(role: $0.role, text: $0.text) }
+    }
+
+    /// Whether the recorded transcript already contains this live message.
+    ///
+    /// Exact text first, then line-bounded containment: `loadHistory` merges
+    /// consecutive turns of the same role with a newline, so the live halves of a
+    /// resumed run only match that merged record line by line. Line-bounded (not
+    /// any substring) so a short reply cannot be hidden by a longer older one.
+    private func historyCovers(role: ChatRole, text: String) -> Bool {
+        let recorded = history.compactMap { entry -> String? in
+            guard case let .message(message) = entry, message.role == role else { return nil }
+            return message.text
+        }
+        if recorded.contains(text) {
+            return true
+        }
+        let needle = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        guard !needle.isEmpty else { return true }
+        return recorded.contains { candidate in
+            let lines = candidate.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            guard lines.count >= needle.count else { return false }
+            for start in 0 ... (lines.count - needle.count) where Array(lines[start ..< start + needle.count]) == needle {
+                return true
+            }
+            return false
+        }
     }
 
     /// Marks the start of a history fetch (the previous result stays visible
@@ -172,9 +196,5 @@ final class ChatSessionTranscriptStore {
         historyError = nil
         isLoadingHistory = false
         lastRecordCount = 0
-    }
-
-    private static func key(role: ChatRole, text: String) -> String {
-        "\(role.rawValue)\u{0}\(text)"
     }
 }
