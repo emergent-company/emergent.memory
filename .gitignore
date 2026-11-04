@@ -122,17 +122,21 @@ apps/server/tmp/
 /seed-imdb
 /imdb-benchmark-runner
 
-# Temporary Go scripts and patches
-fix_*.go
-patch*.go
-test_*.go
-setup_*.go
+# Temporary Go scripts and patches.
+# Anchored to the repo root: temp scripts are written at the root, and an
+# unanchored pattern silently ignores real sources at any depth (e.g.
+# `run_*.go` once swallowed apps/server/domain/agents/run_full_agent_name_db_test.go).
+# The setup_executor waiver stays for a nested `setup_*.go` that is real code.
+/fix_*.go
+/patch*.go
+/test_*.go
+/setup_*.go
 !**/setup_executor.go
-run_*.go
-new_*.go
-old_*.go
-create_project.go
-clean_syntax.go
+/run_*.go
+/new_*.go
+/old_*.go
+/create_project.go
+/clean_syntax.go
 
 # Temporary shell scripts
 *.sh.tmp

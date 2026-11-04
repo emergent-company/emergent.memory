@@ -19,9 +19,13 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
     ```bash
     memory tokens create \
       --name "CI/CD Pipeline" \
-      --scopes "data:read,agents:write" \
+      --scopes "documents:read,search,agents:write" \
       --project my-project
     ```
+
+    The CLI also accepts presets: `--scopes read` (the read-only set),
+    `--scopes write` (the write set, which also implies the matching reads) or
+    `--scopes read,write` for both.
 
 === "API"
     ```http
@@ -30,7 +34,7 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
 
     {
       "name": "CI/CD Pipeline",
-      "scopes": ["data:read", "agents:write"]
+      "scopes": ["documents:read", "search", "agents:write"]
     }
     ```
 
@@ -40,7 +44,7 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
       "id": "tok_abc123",
       "name": "CI/CD Pipeline",
       "token": "emt_abc123...",
-      "scopes": ["data:read", "agents:write"],
+      "scopes": ["documents:read", "search", "agents:write"],
       "tokenPrefix": "emt_abc",
       "createdAt": "2026-03-08T10:00:00Z"
     }
@@ -55,15 +59,42 @@ All tokens use the prefix `emt_` (e.g. `emt_abc123...`). Tokens are:
 
 | Scope | Access |
 |---|---|
+| `documents:read` | Read documents |
+| `documents:write` | Create and update documents |
+| `graph:read` | Read graph objects |
+| `graph:write` | Create and update graph objects |
+| `search` | Run hybrid and semantic search |
+| `journal:read` | Read the project journal |
 | `schema:read` | Read type definitions and template packs |
-| `data:read` | Read graph objects, documents, chunks, search |
-| `data:write` | Create and update graph objects, documents |
+| `schema:write` | Install and modify schemas |
 | `agents:read` | Read agents, runs, definitions, questions |
 | `agents:write` | Trigger agents, respond to questions, manage hooks |
 | `projects:read` | Read project metadata and members |
 | `projects:write` | Update project settings and members |
 
-Assign only the scopes your integration needs.
+Assign only the scopes your integration needs. The full list, including
+branch, skill and admin scopes, is in
+[Security and Scopes](../developer-guide/security-scopes.md).
+
+The CLI also accepts two presets: `--scopes read` (documents, graph, search,
+journal, schema, agents and project metadata, read-only) and `--scopes write`
+(documents, graph, schema, agents and project writes). Combine them with
+`--scopes read,write`.
+
+!!! note "`data:read` and `data:write` are retired"
+    The coarse `data:read` / `data:write` umbrellas can no longer be requested
+    when creating or editing a token — the CLI, web UI, API and connectors all
+    reject them. Use the fine-grained scopes above instead. Tokens minted before
+    the change keep exactly the access they had; a token that still holds one
+    cannot be re-scoped in the web UI, so create a replacement and revoke it (or
+    update its scopes through the API, which accepts a set that drops the
+    umbrella).
+
+    A new token is also **narrower** than the umbrella it replaces: the reads
+    `data:read` granted for chunks, the unified search endpoint, extraction and
+    tasks are not in the mintable catalogue, so a token created now cannot call
+    those REST endpoints. MCP tools are unaffected. See
+    [Security and Scopes](../developer-guide/security-scopes.md#umbrella-scopes).
 
 ---
 

@@ -45,8 +45,10 @@ final class ActiveSessionStore {
         open(agentName: agentName, conversationID: nil, startsMuted: startsMuted)
     }
 
-    /// Records the conversation id the worker reported. Never changes the
-    /// launch id: the room was minted for the original request.
+    /// Records the conversation id the server reported — from the worker for a
+    /// voice session, or from the HTTP chat stream's `meta` frame for a text
+    /// one. Never changes the launch id: the room (or the request) was already
+    /// made for the original.
     func learnConversationID(_ conversationID: String) {
         guard liveConversationID != conversationID else { return }
         liveConversationID = conversationID

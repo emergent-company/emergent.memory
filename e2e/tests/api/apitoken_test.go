@@ -50,7 +50,7 @@ func TestApiToken_CreateSuccess(t *testing.T) {
 	rl.Section("POST /api/projects/:id/tokens")
 	resp := doAPILogged(t, rl, "POST", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", jsonBody(map[string]any{
 		"name":   "Test Token",
-		"scopes": []string{"schema:read", "data:read"},
+		"scopes": []string{"schema:read", "documents:read"},
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
 
@@ -181,7 +181,7 @@ func TestApiToken_ListReturnsTokens(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	createToken(t, projectID, uniqueName("tok1"), []string{"schema:read"})
-	createToken(t, projectID, uniqueName("tok2"), []string{"data:read"})
+	createToken(t, projectID, uniqueName("tok2"), []string{"documents:read"})
 
 	rl.Section("GET /api/projects/:id/tokens")
 	resp := doAPILogged(t, rl, "GET", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", nil)
@@ -242,7 +242,7 @@ func TestApiToken_GetSuccess(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	tokenID, _ := createToken(t, projectID, uniqueName("get-tok"), []string{"schema:read", "data:write"})
+	tokenID, _ := createToken(t, projectID, uniqueName("get-tok"), []string{"schema:read", "documents:write"})
 
 	rl.Section("GET /api/projects/:id/tokens/:tokenId")
 	resp := doAPILogged(t, rl, "GET", "/api/projects/"+projectID+"/tokens/"+tokenID, e2eTestToken(), "", nil)
@@ -371,7 +371,7 @@ func TestApiToken_DuplicateNameNotAllowedAfterRevoke(t *testing.T) {
 	doAPILogged(t, rl, "DELETE", "/api/projects/"+projectID+"/tokens/"+tokenID, e2eTestToken(), "", nil)
 
 	resp2 := doAPILogged(t, rl, "POST", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", jsonBody(map[string]any{
-		"name": name, "scopes": []string{"data:read"},
+		"name": name, "scopes": []string{"documents:read"},
 	}))
 	// Server allows re-using a name after revoke (soft-delete behavior).
 	mustStatus(t, resp2, http.StatusCreated)
@@ -386,7 +386,7 @@ func TestApiToken_ValidTokenAuthenticates(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, rawToken := createToken(t, projectID, uniqueName("auth-tok"), []string{"data:read"})
+	_, rawToken := createToken(t, projectID, uniqueName("auth-tok"), []string{"documents:read"})
 
 	// Use the emt_ token against the auth/me endpoint.
 	resp := doAPILogged(t, rl, "GET", "/api/auth/me", rawToken, "", nil)
@@ -407,7 +407,7 @@ func TestApiToken_RevokedTokenReturns401(t *testing.T) {
 
 	projectID, _ := setupProjectLogged(t, rl)
 	resp := doAPILogged(t, rl, "POST", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", jsonBody(map[string]any{
-		"name": uniqueName("revoke-auth"), "scopes": []string{"data:read"},
+		"name": uniqueName("revoke-auth"), "scopes": []string{"documents:read"},
 	}))
 	body := mustStatus(t, resp, http.StatusCreated)
 	var created map[string]any

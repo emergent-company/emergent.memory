@@ -9,6 +9,7 @@ package api_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -150,37 +151,70 @@ func TestSecurityScopes_Documents_DeniesTokenWithoutDocumentsRead(t *testing.T) 
 	rl.AssertionStep("schema:read forbidden from documents:read", http.StatusForbidden, resp.StatusCode, nil)
 }
 
-// TestSecurityScopes_Documents_AllowsTokenWithDataRead verifies that a token
-// with data:read can list documents.
-func TestSecurityScopes_Documents_AllowsTokenWithDataRead(t *testing.T) {
+// TestSecurityScopes_Documents_AllowsTokenWithDocumentsRead verifies that a
+// token with documents:read can list documents. documents:read replaces the
+// retired data:read umbrella.
+func TestSecurityScopes_Documents_AllowsTokenWithDocumentsRead(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, readToken := createToken(t, projectID, uniqueName("data-read"), []string{"data:read"})
+	_, readToken := createToken(t, projectID, uniqueName("documents-read"), []string{"documents:read"})
 
 	resp := doAPILogged(t, rl, "GET", "/api/documents", readToken, projectID, nil)
 	mustStatus(t, resp, http.StatusOK)
-	rl.AssertionStep("data:read allowed on documents", http.StatusOK, resp.StatusCode, nil)
+	rl.AssertionStep("documents:read allowed on documents", http.StatusOK, resp.StatusCode, nil)
 }
 
-// TestSecurityScopes_Documents_DeniesTokenWithoutDataWrite verifies that a
+// TestSecurityScopes_Documents_DeniesTokenWithoutDocumentsWrite verifies that a
 // read-only token is rejected with 403 on POST /api/documents.
-func TestSecurityScopes_Documents_DeniesTokenWithoutDataWrite(t *testing.T) {
+func TestSecurityScopes_Documents_DeniesTokenWithoutDocumentsWrite(t *testing.T) {
 	rl := newRunLog(t)
 	defer rl.Close()
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, readToken := createToken(t, projectID, uniqueName("data-read-only"), []string{"data:read"})
+	_, readToken := createToken(t, projectID, uniqueName("documents-read-only"), []string{"documents:read"})
 
 	resp := doAPILogged(t, rl, "POST", "/api/documents", readToken, projectID, jsonBody(map[string]any{
 		"filename": "test.txt",
 		"content":  "test content",
 	}))
 	mustStatus(t, resp, http.StatusForbidden)
-	rl.AssertionStep("data:read-only forbidden from documents write", http.StatusForbidden, resp.StatusCode, nil)
+	rl.AssertionStep("documents:read-only forbidden from documents write", http.StatusForbidden, resp.StatusCode, nil)
+}
+
+// TestSecurityScopes_RetiredDataScopes_RejectedAtMint pins the retirement of the
+// coarse data:read / data:write umbrellas on the user-facing token API: creating
+// a token that requests either is a 400, and an update may not reintroduce them.
+// Existing tokens that already hold one keep working (ScopeImplies unchanged) —
+// that is covered by the read/write behaviour above.
+func TestSecurityScopes_RetiredDataScopes_RejectedAtMint(t *testing.T) {
+	rl := newRunLog(t)
+	defer rl.Close()
+	skipIfServerDown(t, rl)
+
+	projectID, _ := setupProjectLogged(t, rl)
+
+	for _, retired := range []string{"data:read", "data:write"} {
+		resp := doAPILogged(t, rl, "POST", "/api/projects/"+projectID+"/tokens", e2eTestToken(), "", jsonBody(map[string]any{
+			"name":   uniqueName("retired-" + strings.ReplaceAll(retired, ":", "-")),
+			"scopes": []string{retired},
+		}))
+		mustStatus(t, resp, http.StatusBadRequest)
+		rl.AssertionStep("create token with "+retired+" rejected", http.StatusBadRequest, resp.StatusCode, nil)
+	}
+
+	// A token can still be created with the fine-grained replacement...
+	tokenID, _ := createToken(t, projectID, uniqueName("fine-grained"), []string{"documents:read"})
+
+	// ...and an update that reintroduces a retired umbrella is rejected.
+	resp := doAPILogged(t, rl, "PATCH", "/api/projects/"+projectID+"/tokens/"+tokenID, e2eTestToken(), "", jsonBody(map[string]any{
+		"scopes": []string{"documents:read", "data:write"},
+	}))
+	mustStatus(t, resp, http.StatusBadRequest)
+	rl.AssertionStep("update token with data:write rejected", http.StatusBadRequest, resp.StatusCode, nil)
 }
 
 // TestSecurityScopes_Chunks_DeniesTokenWithoutChunksRead verifies chunks endpoint
@@ -206,9 +240,9 @@ func TestSecurityScopes_Chat_DeniesTokenWithoutChatScope(t *testing.T) {
 	skipIfServerDown(t, rl)
 
 	projectID, _ := setupProjectLogged(t, rl)
-	_, dataToken := createToken(t, projectID, uniqueName("data-only"), []string{"data:read"})
+	_, documentsToken := createToken(t, projectID, uniqueName("documents-only"), []string{"documents:read"})
 
-	resp := doAPILogged(t, rl, "GET", "/api/chat/conversations", dataToken, projectID, nil)
+	resp := doAPILogged(t, rl, "GET", "/api/chat/conversations", documentsToken, projectID, nil)
 	mustStatus(t, resp, http.StatusForbidden)
-	rl.AssertionStep("data:read forbidden from chat", http.StatusForbidden, resp.StatusCode, nil)
+	rl.AssertionStep("documents:read forbidden from chat", http.StatusForbidden, resp.StatusCode, nil)
 }
