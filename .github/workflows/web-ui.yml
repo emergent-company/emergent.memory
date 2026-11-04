@@ -19,6 +19,9 @@ on:
       - '.github/workflows/web-ui.yml'
   pull_request:
     branches: [main]
+    # `ready_for_review` is NOT a default type: the heavy jobs below skip drafts,
+    # so the suites must be triggered when the draft is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/web-ui/**'
       - '.github/workflows/web-ui.yml'
@@ -52,7 +55,7 @@ jobs:
     # (#2300).
     env:
       GOWORK: "off"
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -129,7 +132,7 @@ jobs:
   js:
     name: JS wiring (Playwright DOM)
     # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 10
     defaults:
@@ -195,7 +198,7 @@ jobs:
   datasources:
     name: Data sources e2e (Playwright)
     # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 20
     # Pinned gateway + mock ports, disjoint from the `share` job below. The
@@ -281,7 +284,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────────────────
   gateway-smoke:
     name: Gateway UI smoke (Playwright)
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 20
     # Same module-mode posture as `datasources`/`share`: this lane boots the
@@ -344,7 +347,7 @@ jobs:
   share:
     name: Agent public share e2e (Playwright)
     # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     timeout-minutes: 20
     # Disjoint from `datasources`: this lane's own gateway + mock, so neither job
@@ -412,7 +415,7 @@ jobs:
     # `ci` context (that is Meta CI's `ci` in ci.yml). Renamed from `ci` to
     # `web-ui-ci` so it no longer collides with the required context.
     # Fork PRs must not run on the self-hosted runner.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, linux, x64, memory]
     needs: [gateway, js, datasources, share, gateway-smoke]
     steps:
