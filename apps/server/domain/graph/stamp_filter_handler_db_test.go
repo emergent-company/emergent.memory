@@ -28,17 +28,18 @@ func TestWriteStampFilterHandlers(t *testing.T) {
 	credA, credB := uuid.New(), uuid.New()
 	runA, runB := uuid.New(), uuid.New()
 
-	create := func(key string, credential, runID uuid.UUID) {
+	create := func(key string, credential, runID uuid.UUID) *graph.GraphObjectResponse {
 		sctx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &credential)
 		sctx = auth.ContextWithRunIDs(sctx, &runID, &runID)
-		_, err := svc.Create(sctx, projectID, &graph.CreateGraphObjectRequest{
+		obj, err := svc.Create(sctx, projectID, &graph.CreateGraphObjectRequest{
 			Type:       "StampFilterHTTP",
 			Key:        strPtr(key),
 			Properties: map[string]any{"title": key},
 		}, nil)
 		require.NoError(t, err)
+		return obj
 	}
-	create("stamphttp/a", credA, runA)
+	objA := create("stamphttp/a", credA, runA)
 	create("stamphttp/b", credB, runB)
 
 	// get issues a request against the handler with an authenticated user for the
@@ -154,5 +155,86 @@ func TestWriteStampFilterHandlers(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		require.Empty(t, body.Items)
 		require.Zero(t, body.Total)
+	})
+
+	// Everything below is the version-scope selector: patch `a` as run B so its
+	// HEAD row carries a stamp that differs from the one that created it.
+	bctx := auth.ContextWithCredential(ctx, auth.CredentialAPIKey, &credB)
+	bctx = auth.ContextWithRunIDs(bctx, &runB, &runB)
+	_, err := svc.Patch(bctx, projectID, objA.CanonicalID, &graph.PatchGraphObjectRequest{
+		Properties: map[string]any{"title": "edited by B"},
+	}, nil)
+	require.NoError(t, err)
+
+	t.Run("the default stamp scope answers for the current version", func(t *testing.T) {
+		rec := get(t, "/api/graph/objects/search?type=StampFilterHTTP&run_id="+runA.String(), h.ListObjects)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Empty(t, objectKeys(t, rec))
+	})
+
+	t.Run("provenance=created finds the creator of an edited object", func(t *testing.T) {
+		rec := get(t, "/api/graph/objects/search?type=StampFilterHTTP&run_id="+runA.String()+"&provenance=created", h.ListObjects)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Equal(t, []string{"stamphttp/a"}, objectKeys(t, rec))
+	})
+
+	t.Run("provenance=any unions the creators and the current writers", func(t *testing.T) {
+		rec := get(t, "/api/graph/objects/search?type=StampFilterHTTP&run_id="+runA.String()+"&provenance=any", h.ListObjects)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Equal(t, []string{"stamphttp/a"}, objectKeys(t, rec))
+	})
+
+	t.Run("count agrees with the page under a scope", func(t *testing.T) {
+		paths := map[string]int{
+			"/api/graph/objects/count?type=StampFilterHTTP&run_id=" + runA.String():                         0,
+			"/api/graph/objects/count?type=StampFilterHTTP&run_id=" + runA.String() + "&provenance=created": 1,
+			"/api/graph/objects/count?type=StampFilterHTTP&run_id=" + runA.String() + "&provenance=any":     1,
+		}
+		for path, want := range paths {
+			rec := get(t, path, h.CountObjects)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			var body map[string]int
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), "body: %s", rec.Body.String())
+			require.Equal(t, want, body["count"], "%s", path)
+		}
+	})
+
+	t.Run("a narrowing provenance needs a predicate", func(t *testing.T) {
+		rec := get(t, "/api/graph/objects/search?provenance=created", h.ListObjects)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+		require.Contains(t, rec.Body.String(), "provenance requires actor_type or a write-stamp filter")
+	})
+
+	// The actor filter keeps working, and `any` alone stays a no-op for clients
+	// that send it unconditionally.
+	t.Run("provenance=any alone is accepted", func(t *testing.T) {
+		rec := get(t, "/api/graph/objects/search?type=StampFilterHTTP&provenance=any", h.ListObjects)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Len(t, objectKeys(t, rec), 2)
+	})
+
+	t.Run("relationships accept the scope with a stamp filter", func(t *testing.T) {
+		rec := get(t, "/api/graph/relationships/search?run_id="+runA.String()+"&provenance=created", h.ListRelationships)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var body struct {
+			Total int `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		require.Zero(t, body.Total)
+	})
+
+	t.Run("relationships reject the scope without a stamp filter", func(t *testing.T) {
+		cases := []struct {
+			path    string
+			handler echo.HandlerFunc
+		}{
+			{"/api/graph/relationships/search?provenance=created", h.ListRelationships},
+			{"/api/graph/relationships/count?provenance=updated", h.CountRelationships},
+		}
+		for _, tc := range cases {
+			rec := get(t, tc.path, tc.handler)
+			require.Equal(t, http.StatusBadRequest, rec.Code, tc.path)
+			require.Contains(t, rec.Body.String(), "provenance requires a write-stamp filter", tc.path)
+		}
 	})
 }

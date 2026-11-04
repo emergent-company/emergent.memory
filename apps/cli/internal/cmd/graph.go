@@ -207,27 +207,44 @@ func getGraphClient(cmd *cobra.Command) (*sdkgraph.Client, error) {
 	return getProjectScopedGraphClient(cmd, graphProjectFlag)
 }
 
+// parseProvenanceFlag validates --provenance and returns the resolved
+// version-scope mode. It is shared by the actor filter (objects) and the
+// write-stamp filters (objects and relationships).
+//
+// An empty flag sends nothing: the server then treats the actor filter as "any"
+// and the write-stamp filters as "updated" (the current version). The narrowing
+// modes are rejected eagerly when there is nothing to narrow, so a typo fails
+// locally instead of round-tripping to the server's 400.
+func parseProvenanceFlag(hasActor, hasStamp bool) (string, error) {
+	provenance := graphProvenanceFlag
+	switch provenance {
+	case "", "any", "created", "updated":
+		// valid
+	default:
+		return "", fmt.Errorf("invalid --provenance %q: must be one of created, updated, any", provenance)
+	}
+	if (provenance == "created" || provenance == "updated") && !hasActor && !hasStamp {
+		return "", fmt.Errorf("--provenance %s requires --actor-type or a write-stamp filter", provenance)
+	}
+	return provenance, nil
+}
+
 // parseProvenanceFilter validates the actor provenance flags (--actor-type,
 // --actor-id, --provenance) and returns the resolved (actorType, actorID,
-// provenance) triple. An absent/empty --provenance defaults to "any" (matching
-// the server), an invalid --provenance is rejected eagerly, and --actor-id
-// without --actor-type is rejected (mirroring the server's pair rule).
-func parseProvenanceFilter() (actorType, actorID, provenance string, err error) {
+// provenance) triple. --actor-id without --actor-type is rejected (mirroring the
+// server's pair rule); hasStamp tells parseProvenanceFlag whether a write-stamp
+// filter is present, because --provenance may narrow that instead of an actor.
+func parseProvenanceFilter(hasStamp bool) (actorType, actorID, provenance string, err error) {
 	actorType = graphActorTypeFlag
 	actorID = graphActorIDFlag
-	provenance = graphProvenanceFlag
 
 	if actorID != "" && actorType == "" {
 		return "", "", "", fmt.Errorf("--actor-id requires --actor-type")
 	}
 
-	switch provenance {
-	case "":
-		provenance = "any"
-	case "created", "updated", "any":
-		// valid
-	default:
-		return "", "", "", fmt.Errorf("invalid --provenance %q: must be one of created, updated, any", provenance)
+	provenance, err = parseProvenanceFlag(actorType != "" || actorID != "", hasStamp)
+	if err != nil {
+		return "", "", "", err
 	}
 
 	return actorType, actorID, provenance, nil
@@ -416,9 +433,14 @@ Use --run-id, --credential-id, --credential-kind and --data-class to filter by
 the write stamp every version row records: which agent run produced the row
 (a root run matches the runs it delegated to), which credential wrote it, and
 what class of data it is. This answers "what did this session write" and "what
-did this key write" directly. Filters match the object's current version, so an
-object created by one run and later edited by another is returned for the writer
-of the current version only.
+did this key write" directly.
+
+By default the filters match the object's current version. Use --provenance to
+choose which version row must carry the stamp: updated (default) matches the
+current version, created matches the version that created the object, and any
+matches either — so a run that created an object which someone later edited is
+still found with --provenance created (or any). --provenance also applies to the
+--actor-type/--actor-id filter, which shares the selector.
 
   --filter-op operators: eq, neq, gt, gte, lt, lte, contains, in, exists
 
@@ -432,15 +454,17 @@ Examples:
   memory graph objects list --run-id <run-uuid>
   memory graph objects list --credential-id <token-uuid> --data-class source`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// Validate the actor provenance flags before any network call, so an
-		// invalid --provenance or --actor-id without --actor-type fails fast
-		// rather than relying on the server's 400.
-		actorType, actorID, provenance, err := parseProvenanceFilter()
+		// Validate the write-stamp and actor provenance flags before any network
+		// call, so an invalid enum or an unsatisfiable --provenance fails fast
+		// rather than relying on the server's 400. The stamp flags are parsed
+		// first because --provenance may narrow them on their own.
+		runID, credentialID, credentialKind, dataClass, err := parseWriteStampFlags(true)
 		if err != nil {
 			return err
 		}
 
-		runID, credentialID, credentialKind, dataClass, err := parseWriteStampFlags(true)
+		hasStamp := runID != "" || credentialID != "" || credentialKind != "" || dataClass != ""
+		actorType, actorID, provenance, err := parseProvenanceFilter(hasStamp)
 		if err != nil {
 			return err
 		}
@@ -1363,9 +1387,20 @@ the full list as JSON.
 
 Use --run-id, --credential-id and --credential-kind to filter by the write stamp
 every version row records (a root run matches the runs it delegated to).
-Relationships record no data class, so there is no --data-class here.`,
+Relationships record no data class, so there is no --data-class here.
+
+By default those filters match the relationship's current version. Use
+--provenance to choose which version row must carry the stamp: updated
+(default) matches the current version, created matches the version that created
+the relationship, and any matches either.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		runID, credentialID, credentialKind, _, err := parseWriteStampFlags(false)
+		if err != nil {
+			return err
+		}
+
+		hasStamp := runID != "" || credentialID != "" || credentialKind != ""
+		provenance, err := parseProvenanceFlag(false, hasStamp)
 		if err != nil {
 			return err
 		}
@@ -1379,6 +1414,7 @@ Relationships record no data class, so there is no --data-class here.`,
 			RunID:          runID,
 			CredentialID:   credentialID,
 			CredentialKind: credentialKind,
+			Provenance:     provenance,
 		}
 		if graphRelTypeFlag != "" {
 			opts.Type = graphRelTypeFlag
@@ -2163,7 +2199,7 @@ func init() {
 	graphObjectsListCmd.Flags().StringVar(&graphKeyFlag, "key", "", "Filter by object key (direct key-based lookup)")
 	graphObjectsListCmd.Flags().StringVar(&graphActorTypeFlag, "actor-type", "", "Filter by actor type: user, agent, or system")
 	graphObjectsListCmd.Flags().StringVar(&graphActorIDFlag, "actor-id", "", "Filter by actor ID (UUID; requires --actor-type)")
-	graphObjectsListCmd.Flags().StringVar(&graphProvenanceFlag, "provenance", "", "Provenance filter mode: created, updated, or any (default: any)")
+	graphObjectsListCmd.Flags().StringVar(&graphProvenanceFlag, "provenance", "", "Which version row must carry the actor/write-stamp filter: updated (current version, default for write stamps), created, or any")
 	graphObjectsListCmd.Flags().StringVar(&graphRunIDFlag, "run-id", "", "Filter by write-stamp run ID (matches the run or any run it delegated to)")
 	graphObjectsListCmd.Flags().StringVar(&graphCredentialIDFlag, "credential-id", "", "Filter by the credential (API token) that wrote the rows")
 	graphObjectsListCmd.Flags().StringVar(&graphCredentialKindFlag, "credential-kind", "", "Filter by credential kind: api_key, mcp_link, session, none")
@@ -2200,6 +2236,7 @@ func init() {
 	graphRelationshipsListCmd.Flags().StringVar(&graphRunIDFlag, "run-id", "", "Filter by write-stamp run ID (matches the run or any run it delegated to)")
 	graphRelationshipsListCmd.Flags().StringVar(&graphCredentialIDFlag, "credential-id", "", "Filter by the credential (API token) that wrote the rows")
 	graphRelationshipsListCmd.Flags().StringVar(&graphCredentialKindFlag, "credential-kind", "", "Filter by credential kind: api_key, mcp_link, session, none")
+	graphRelationshipsListCmd.Flags().StringVar(&graphProvenanceFlag, "provenance", "", "Which version row must carry the write-stamp filter: updated (current version, default), created, or any")
 
 	graphRelationshipsDeleteCmd.Flags().StringVar(&graphBranchFlag, "branch", "", "Branch name or ID to scope deletion to (omit for main branch)")
 
