@@ -3700,7 +3700,16 @@
 </table>
 <hr />
 <h2 id="umbrella-scopes">Umbrella scopes<a class="headerlink" href="#umbrella-scopes" title="Permanent link">&para;</a></h2>
-<p>These scopes implicitly grant all listed fine-grained scopes. Use umbrella scopes for broad access (e.g. when creating an API token for an agent).</p>
+<p>These scopes implicitly grant all listed fine-grained scopes.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>data:read</code> / <code>data:write</code> are retired from token creation</p>
+<p>Both umbrellas remain valid <strong>stored</strong> scopes: a token, device credential or
+agent share minted before the change keeps exactly the access below, and the
+server still resolves them. They are no longer <strong>mintable</strong> — the create/edit
+APIs, the web UI picker and the CLI reject <code>data:read</code> and <code>data:write</code> on any
+user-facing token. Request the fine-grained scopes instead; the CLI presets
+<code>--scopes read</code> and <code>--scopes write</code> expand to them.</p>
+</div>
 <table>
 <thead>
 <tr>
@@ -3731,9 +3740,24 @@
 </tr>
 </tbody>
 </table>
+<div class="admonition warning">
+<p class="admonition-title">What a fine-grained replacement does not cover</p>
+<p>A token created now can only carry scopes from the mintable catalogue below.
+Seven of the reads <code>data:read</code> implied are <strong>not</strong> in it — <code>chunks:read</code>,
+<code>search:read</code>, <code>graph:search:read</code>, <code>extraction:read</code>, <code>tasks:read</code>,
+<code>user-activity:read</code>, <code>notifications:read</code> — so a new token cannot call the
+REST endpoints those scopes guard (<code>GET /api/chunks</code>, <code>POST
+/api/search/unified</code>, <code>GET /api/search/trace/:id</code>, extraction and task
+listings). Only a token minted before the retirement, which still holds the
+umbrella, can. Likewise <code>documents:delete</code>, <code>chunks:write</code>, <code>ingest:write</code>,
+<code>extraction:write</code>, <code>tasks:write</code>, <code>user-activity:write</code> and
+<code>notifications:write</code> are reachable only through <code>data:write</code>. The MCP tools
+are not affected: they are gated on <code>documents:read</code>, <code>search</code>, <code>graph:read</code>
+and <code>journal:read</code>, which the mintable catalogue does provide.</p>
+</div>
 <hr />
 <h2 id="api-token-scopes">API token scopes<a class="headerlink" href="#api-token-scopes" title="Permanent link">&para;</a></h2>
-<p>When creating API tokens via the admin UI or API, only the following scopes can be assigned:</p>
+<p>When creating API tokens via the web UI, CLI or API, only the following scopes can be assigned:</p>
 <table>
 <thead>
 <tr>
@@ -3743,16 +3767,48 @@
 </thead>
 <tbody>
 <tr>
+<td><code>documents:read</code></td>
+<td>Read documents and their content</td>
+</tr>
+<tr>
+<td><code>documents:write</code></td>
+<td>Create and update documents</td>
+</tr>
+<tr>
+<td><code>graph:read</code></td>
+<td>Read graph objects</td>
+</tr>
+<tr>
+<td><code>graph:write</code></td>
+<td>Create and update graph objects</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>Run hybrid and semantic search</td>
+</tr>
+<tr>
+<td><code>journal:read</code></td>
+<td>Read the project journal</td>
+</tr>
+<tr>
+<td><code>journal:write</code></td>
+<td>Append to the project journal</td>
+</tr>
+<tr>
 <td><code>schema:read</code></td>
 <td>Read-only access to type registry and template packs</td>
 </tr>
 <tr>
-<td><code>data:read</code></td>
-<td>Read all knowledge, documents, search, and graph data</td>
+<td><code>schema:write</code></td>
+<td>Install and modify schemas (also grants <code>schema:migrate</code>)</td>
 </tr>
 <tr>
-<td><code>data:write</code></td>
-<td>Write documents, graph objects, trigger extraction</td>
+<td><code>branches:read</code></td>
+<td>List and inspect graph branches</td>
+</tr>
+<tr>
+<td><code>branches:write</code></td>
+<td>Create, merge and delete graph branches</td>
 </tr>
 <tr>
 <td><code>agents:read</code></td>
@@ -3763,6 +3819,14 @@
 <td>Create and manage agents, trigger runs</td>
 </tr>
 <tr>
+<td><code>skills:read</code></td>
+<td>Read project skills</td>
+</tr>
+<tr>
+<td><code>skills:write</code></td>
+<td>Create and manage project skills</td>
+</tr>
+<tr>
 <td><code>projects:read</code></td>
 <td>List and read projects</td>
 </tr>
@@ -3770,9 +3834,17 @@
 <td><code>projects:write</code></td>
 <td>Create and manage projects</td>
 </tr>
+<tr>
+<td><code>project:admin</code></td>
+<td>Full project admin for one project (project-bound tokens only, minted by a project admin)</td>
+</tr>
+<tr>
+<td><code>admin</code>, <code>admin:all</code></td>
+<td>Platform admin (requires an active <code>superadmin_full</code>)</td>
+</tr>
 </tbody>
 </table>
-<p>Fine-grained internal scopes (e.g. <code>org:read</code>, <code>admin:write</code>) cannot be assigned to user-created API tokens.</p>
+<p>The retired <code>data:read</code> / <code>data:write</code> umbrellas are <strong>not</strong> assignable. Fine-grained internal scopes (e.g. <code>org:read</code>, <code>admin:write</code>) and the reserved marker scopes (<code>device:api</code>, <code>webhook:trigger</code>, <code>mcp:agent-call</code>, <code>share:agent-chat</code>) cannot be assigned to user-created API tokens either.</p>
 <hr />
 <h2 id="scope-enforcement-by-feature-area">Scope enforcement by feature area<a class="headerlink" href="#scope-enforcement-by-feature-area" title="Permanent link">&para;</a></h2>
 <table>

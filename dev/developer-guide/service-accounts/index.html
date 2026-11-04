@@ -3297,7 +3297,7 @@
 </tr>
 </tbody>
 </table>
-<p>Service accounts are granted <code>superadmin_readonly</code>. Their <code>emt_</code> API token is an <strong>account-level</strong> token carrying read-only data scopes (<code>data:read</code>, <code>schema:read</code>, <code>agents:read</code>, <code>projects:read</code>).</p>
+<p>Service accounts are granted <code>superadmin_readonly</code>. Their <code>emt_</code> API token is an <strong>account-level</strong> token carrying the fine-grained read-only scopes <code>documents:read</code>, <code>search</code>, <code>graph:read</code>, <code>journal:read</code>, <code>schema:read</code>, <code>agents:read</code> and <code>projects:read</code> (the coarse <code>data:read</code> umbrella is retired from token creation).</p>
 <p>Two different checks apply, and they are not interchangeable:</p>
 <table>
 <thead>
@@ -3386,8 +3386,20 @@
 </thead>
 <tbody>
 <tr>
-<td><code>data:read</code></td>
-<td>Documents, chunks, search, graph, extraction, schema, tasks</td>
+<td><code>documents:read</code></td>
+<td>Documents and their content</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>Hybrid and semantic search</td>
+</tr>
+<tr>
+<td><code>graph:read</code></td>
+<td>Graph objects</td>
+</tr>
+<tr>
+<td><code>journal:read</code></td>
+<td>Project journal entries</td>
 </tr>
 <tr>
 <td><code>schema:read</code></td>

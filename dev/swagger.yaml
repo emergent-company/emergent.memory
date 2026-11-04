@@ -3218,6 +3218,15 @@ definitions:
           status filter.
         type: integer
     type: object
+  domain_documents.SourceCount:
+    properties:
+      count:
+        type: integer
+      sourceId:
+        type: string
+      sourceType:
+        type: string
+    type: object
   domain_documents.SourceTypeWithCount:
     properties:
       count:
@@ -6223,6 +6232,11 @@ definitions:
       important:
         type: integer
       other:
+        type: integer
+      requiresAction:
+        description: |-
+          RequiresAction counts the action-required notifications in the current
+          scope: not cleared, not snoozed, requires_action = true.
         type: integer
       snoozed:
         type: integer
@@ -10871,7 +10885,7 @@ info:
     name: MIT
     url: https://opensource.org/licenses/MIT
   title: Memory API
-  version: 0.88.9
+  version: 0.89.0
 paths:
   /.well-known/oauth-authorization-server:
     get:
@@ -13480,6 +13494,11 @@ paths:
         in: query
         name: sourceType
         type: string
+      - description: Filter by connected data source UUID, or 'none' for documents
+          with no source
+        in: query
+        name: sourceId
+        type: string
       - description: Filter by derived status bucket
         enum:
         - processing
@@ -13990,6 +14009,32 @@ paths:
       security:
       - bearerAuth: []
       summary: Get bulk deletion impact
+      tags:
+      - documents
+  /api/documents/source-counts:
+    get:
+      consumes:
+      - application/json
+      description: Returns document counts grouped by connected data source (empty
+        sourceId for direct uploads), for the documents source filter.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              items:
+                $ref: '#/definitions/domain_documents.SourceCount'
+              type: array
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/github_com_emergent-company_emergent_memory_pkg_apperror.Error'
+      security:
+      - bearerAuth: []
+      summary: Get document counts by data source
       tags:
       - documents
   /api/documents/source-types:
@@ -15592,7 +15637,8 @@ paths:
         in: query
         name: actor_id
         type: string
-      - description: 'Provenance filter mode: created|updated|any (default: any)'
+      - description: 'Which version row must carry the provenance filter: created|updated|any
+          (default: any for actor filters, updated for write-stamp filters)'
         in: query
         name: provenance
         type: string
@@ -15793,7 +15839,8 @@ paths:
         in: query
         name: actor_id
         type: string
-      - description: 'Provenance filter mode: created|updated|any (default: any)'
+      - description: 'Which version row must carry the provenance filter: created|updated|any
+          (default: any for actor filters, updated for write-stamp filters)'
         in: query
         name: provenance
         type: string
@@ -16390,6 +16437,11 @@ paths:
         in: query
         name: credential_kind
         type: string
+      - description: 'Which version row must carry the write-stamp filter: created|updated|any
+          (default: updated)'
+        in: query
+        name: provenance
+        type: string
       - description: Project ID
         in: header
         name: X-Project-ID
@@ -16465,6 +16517,11 @@ paths:
       - description: Filter by credential kind (api_key|mcp_link|session|none)
         in: query
         name: credential_kind
+        type: string
+      - description: 'Which version row must carry the write-stamp filter: created|updated|any
+          (default: updated)'
+        in: query
+        name: provenance
         type: string
       - description: Project ID
         in: header

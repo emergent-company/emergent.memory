@@ -3397,6 +3397,11 @@ cursor of the next page:</p>
 <td>Only documents from that source kind; <code>upload</code> means files uploaded directly</td>
 </tr>
 <tr>
+<td><code>sourceId</code></td>
+<td>a connected data source id, or <code>none</code></td>
+<td>Only documents from that data source; <code>none</code> means files uploaded directly with no data source</td>
+</tr>
+<tr>
 <td><code>q</code></td>
 <td>text (≤ 200 characters)</td>
 <td>Case-insensitive match over the file name and the source URL; <code>%</code> and <code>_</code> are matched literally. Document <em>content</em> is not searched — use <a href="../knowledge-graph/">Search</a> for that</td>
@@ -3418,8 +3423,8 @@ added: pass <code>next_cursor</code> back as <code>cursor</code> until it comes 
 <code>sort</code> invalidates a cursor — request the first page again (a mismatch returns
 <code>400</code>).</p>
 <p><code>total</code> counts every document the filters match, the status filter included.
-<code>statusCounts</code> deliberately ignores <code>status</code> while honouring <code>q</code> and
-<code>sourceType</code>, so a UI can render the tabs and their counts without the active
+<code>statusCounts</code> deliberately ignores <code>status</code> while honouring <code>q</code>, <code>sourceType</code>
+and <code>sourceId</code>, so a UI can render the tabs and their counts without the active
 tab changing the other numbers. Its <code>all</code> entry is therefore the same as <code>total</code>
 only when no status filter is set.</p>
 <p>The breakdown is memoised for up to 30 seconds per filter combination (project,
@@ -3476,7 +3481,7 @@ does not have to combine the two raw statuses:</p>
 <li>an <strong>Upload</strong> button in the page header that opens the upload form in a dialog,</li>
 <li>a <strong>stats strip</strong> with the project's document total and the per-status counts,</li>
 <li>a <strong>status filter</strong> (All, Processing, Ready, Extracted, Failed) in a dropdown that keeps the active search, source and sort,</li>
-<li>a <strong>source filter</strong> listing the source kinds the project actually has,</li>
+<li>a <strong>source filter</strong> listing the connected data sources that own documents by name, plus an <strong>Uploaded</strong> bucket for files with no source,</li>
 <li><strong>search</strong> over file names and source URLs,</li>
 <li><strong>sorting</strong> on the Created and Updated column headers (click again to flip),</li>
 <li>a <strong>Load more</strong> button that appends the next page without losing the filters.</li>

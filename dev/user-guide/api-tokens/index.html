@@ -3123,9 +3123,12 @@
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>memory<span class="w"> </span>tokens<span class="w"> </span>create<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--name<span class="w"> </span><span class="s2">"CI/CD Pipeline"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--scopes<span class="w"> </span><span class="s2">"data:read,agents:write"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--scopes<span class="w"> </span><span class="s2">"documents:read,search,agents:write"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--project<span class="w"> </span>my-project
 </code></pre></div>
+<p>The CLI also accepts presets: <code>--scopes read</code> (the read-only set),
+<code>--scopes write</code> (the write set, which also implies the matching reads) or
+<code>--scopes read,write</code> for both.</p>
 </div>
 <div class="tabbed-block">
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="err">POST /api/projects/{projectId}/tokens</span>
@@ -3133,7 +3136,7 @@
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="err">{</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="err">  "name": "CI/CD Pipeline",</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="err">  "scopes": ["data:read", "agents:write"]</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="err">  "scopes": ["documents:read", "search", "agents:write"]</span>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="err">}</span>
 </code></pre></div>
 <p>Response (token value shown <strong>once only</strong>):
@@ -3141,7 +3144,7 @@
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tok_abc123"</span><span class="p">,</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"CI/CD Pipeline"</span><span class="p">,</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"token"</span><span class="p">:</span><span class="w"> </span><span class="s2">"emt_abc123..."</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"scopes"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"data:read"</span><span class="p">,</span><span class="w"> </span><span class="s2">"agents:write"</span><span class="p">],</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"scopes"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"documents:read"</span><span class="p">,</span><span class="w"> </span><span class="s2">"search"</span><span class="p">,</span><span class="w"> </span><span class="s2">"agents:write"</span><span class="p">],</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"tokenPrefix"</span><span class="p">:</span><span class="w"> </span><span class="s2">"emt_abc"</span><span class="p">,</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"createdAt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-03-08T10:00:00Z"</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">}</span>
@@ -3164,16 +3167,36 @@
 </thead>
 <tbody>
 <tr>
+<td><code>documents:read</code></td>
+<td>Read documents</td>
+</tr>
+<tr>
+<td><code>documents:write</code></td>
+<td>Create and update documents</td>
+</tr>
+<tr>
+<td><code>graph:read</code></td>
+<td>Read graph objects</td>
+</tr>
+<tr>
+<td><code>graph:write</code></td>
+<td>Create and update graph objects</td>
+</tr>
+<tr>
+<td><code>search</code></td>
+<td>Run hybrid and semantic search</td>
+</tr>
+<tr>
+<td><code>journal:read</code></td>
+<td>Read the project journal</td>
+</tr>
+<tr>
 <td><code>schema:read</code></td>
 <td>Read type definitions and template packs</td>
 </tr>
 <tr>
-<td><code>data:read</code></td>
-<td>Read graph objects, documents, chunks, search</td>
-</tr>
-<tr>
-<td><code>data:write</code></td>
-<td>Create and update graph objects, documents</td>
+<td><code>schema:write</code></td>
+<td>Install and modify schemas</td>
 </tr>
 <tr>
 <td><code>agents:read</code></td>
@@ -3193,7 +3216,28 @@
 </tr>
 </tbody>
 </table>
-<p>Assign only the scopes your integration needs.</p>
+<p>Assign only the scopes your integration needs. The full list, including
+branch, skill and admin scopes, is in
+<a href="../../developer-guide/security-scopes/">Security and Scopes</a>.</p>
+<p>The CLI also accepts two presets: <code>--scopes read</code> (documents, graph, search,
+journal, schema, agents and project metadata, read-only) and <code>--scopes write</code>
+(documents, graph, schema, agents and project writes). Combine them with
+<code>--scopes read,write</code>.</p>
+<div class="admonition note">
+<p class="admonition-title"><code>data:read</code> and <code>data:write</code> are retired</p>
+<p>The coarse <code>data:read</code> / <code>data:write</code> umbrellas can no longer be requested
+when creating or editing a token — the CLI, web UI, API and connectors all
+reject them. Use the fine-grained scopes above instead. Tokens minted before
+the change keep exactly the access they had; a token that still holds one
+cannot be re-scoped in the web UI, so create a replacement and revoke it (or
+update its scopes through the API, which accepts a set that drops the
+umbrella).</p>
+<p>A new token is also <strong>narrower</strong> than the umbrella it replaces: the reads
+<code>data:read</code> granted for chunks, the unified search endpoint, extraction and
+tasks are not in the mintable catalogue, so a token created now cannot call
+those REST endpoints. MCP tools are unaffected. See
+<a href="../../developer-guide/security-scopes/#umbrella-scopes">Security and Scopes</a>.</p>
+</div>
 <hr />
 <h2 id="using-a-token">Using a Token<a class="headerlink" href="#using-a-token" title="Permanent link">&para;</a></h2>
 <div class="tabbed-set tabbed-alternate" data-tabs="2:3"><input checked="checked" id="__tabbed_2_1" name="__tabbed_2" type="radio" /><input id="__tabbed_2_2" name="__tabbed_2" type="radio" /><input id="__tabbed_2_3" name="__tabbed_2" type="radio" /><div class="tabbed-labels"><label for="__tabbed_2_1">CLI</label><label for="__tabbed_2_2">HTTP header</label><label for="__tabbed_2_3">Go SDK</label></div>
