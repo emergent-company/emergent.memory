@@ -23,6 +23,10 @@ import (
 // documents, or a container without the discovery module, skips delegation.
 type DiscoveryStarter interface {
 	StartDiscovery(ctx context.Context, projectID uuid.UUID, documentIDs []uuid.UUID) error
+	// AutoDiscoveryEnabled reports the project's auto-discovery setting. When
+	// it returns false, a sync must not start discovery; an error means the
+	// setting could not be read and delegation is skipped.
+	AutoDiscoveryEnabled(ctx context.Context, projectID uuid.UUID) (bool, error)
 }
 
 // SyncWorker polls for pending sync jobs and drives them through
@@ -635,20 +639,9 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 	// leave a stale actionable item behind (#2414).
 	w.svc.resolveSourceNotification(ctx, job.ProjectID, job.SourceID)
 
-	// Delegate schema discovery with newly ingested documents.
-	if len(createdDocIDs) > 0 && w.discovery != nil {
-		ids := make([]uuid.UUID, 0, len(createdDocIDs))
-		for _, id := range createdDocIDs {
-			if u, err := uuid.Parse(id); err == nil {
-				ids = append(ids, u)
-			}
-		}
-		if len(ids) > 0 {
-			if err := w.discovery.StartDiscovery(ctx, job.ProjectID, ids); err != nil {
-				jobLog.Warn("discovery delegation failed", "error", err)
-			}
-		}
-	}
+	// Delegate schema discovery with newly ingested documents, unless the
+	// project has turned automatic discovery off.
+	w.delegateDiscovery(ctx, job.ProjectID, createdDocIDs, jobLog)
 
 	jobLog.Info("sync completed",
 		slog.Int("processed", processed),
@@ -658,6 +651,49 @@ func (w *SyncWorker) ProcessJob(ctx context.Context, job *SyncJob) error {
 		slog.Int("abandoned", len(decision.abandoned)),
 		slog.Bool("cursor_held", decision.held))
 	return nil
+}
+
+// delegateDiscovery starts schema discovery for the documents a sync ingested,
+// unless the project has turned automatic discovery off.
+//
+// It never fails the sync: ingestion is the sync's job, discovery is a
+// follow-on whose failures are visible on the Schema page and in the
+// Needs-attention panel. The setting is read per sync (not cached) so a change
+// applies to the next one, and a failed lookup skips delegation — fail closed —
+// rather than spending model calls on a guess.
+func (w *SyncWorker) delegateDiscovery(ctx context.Context, projectID uuid.UUID, createdDocIDs []string, log *slog.Logger) {
+	if len(createdDocIDs) == 0 || w.discovery == nil {
+		return
+	}
+
+	enabled, err := w.discovery.AutoDiscoveryEnabled(ctx, projectID)
+	switch {
+	case err != nil:
+		log.Warn("auto-discovery setting lookup failed; skipping discovery delegation", "error", err)
+		return
+	case !enabled:
+		log.Info("auto-discovery disabled for project; skipping discovery delegation",
+			"project_id", projectID.String(), "documents", len(createdDocIDs))
+		return
+	}
+
+	ids := make([]uuid.UUID, 0, len(createdDocIDs))
+	for _, id := range createdDocIDs {
+		if u, parseErr := uuid.Parse(id); parseErr == nil {
+			ids = append(ids, u)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if startErr := w.discovery.StartDiscovery(ctx, projectID, ids); startErr != nil {
+		// Includes the 409 a run in flight returns. Those documents are not
+		// analysed by that run, and a later sync only delegates its own new
+		// documents, so nothing picks them up automatically: the manual run on
+		// the Schema page (or a retry) is the way to cover them. This line is
+		// the operator trace.
+		log.Warn("discovery delegation failed", "error", startErr)
+	}
 }
 
 // planRemovals decides which prior HEAD items to mark deleted after an

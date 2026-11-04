@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -177,22 +180,120 @@ func (s *Server) uiSchemaPacks(c echo.Context) error {
 }
 
 // uiSchemaPack renders one active pack's read-only detail: metadata plus the
-// object and relationship types it contributes. An unknown or absent pack id
-// renders the not-found state (no panic).
+// object and relationship types it contributes. A pack that exists but is not
+// installed — the state a discovery run leaves its result in — renders the
+// pending-review page instead, because it contributes no compiled types and is
+// therefore absent from the packs derivation. Anything else renders the
+// not-found state (no panic).
 func (s *Server) uiSchemaPack(c echo.Context) error {
 	ctx := c.Request().Context()
 	id := pathUnescape(c.Param("id"))
 	compiled, err := s.memory.GetCompiledTypes(ctx)
 	if err != nil {
-		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, userFacingError(err)))
+		return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, userFacingError(err), ""))
 	}
 	metas, merr := s.memory.ListAllSchemas(ctx)
 	captureError(merr)
 	packs := buildSchemaPackSummaries(compiled, metas, s.buildProvenanceIndex(ctx))
 	for i := range packs {
 		if packs[i].ID == id {
-			return s.page(c, pageTitle(packs[i].Name), SchemaPackPage(&packs[i], nil))
+			notice := flashFromQuery(c, []flashParam{{key: "installed", msg: packInstalledNotice}})
+			return s.page(c, pageTitle(packs[i].Name), SchemaPackPage(&packs[i], nil, notice))
 		}
 	}
-	return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, nil))
+
+	if id != "" {
+		if pack, packErr := s.memory.GetSchema(ctx, id); packErr == nil && pack != nil && pack.ID != "" {
+			return s.page(c, pageTitle(pack.Name), SchemaPackPendingPage(pendingPackFromSchema(pack), flashError(c)))
+		}
+	}
+	return s.page(c, pageTitle("Schema pack"), SchemaPackPage(nil, nil, ""))
+}
+
+// uiSchemaPackInstall handles POST /schema/packs/:id/install: it installs a
+// reviewed pack, which is what turns a discovery result into compiled types.
+// Installing is a deliberate, separate step from discovering — the run never
+// installs anything by itself.
+func (s *Server) uiSchemaPackInstall(c echo.Context) error {
+	ctx := c.Request().Context()
+	id := pathUnescape(c.Param("id"))
+	back := "/schema/packs"
+	if id != "" {
+		back = "/schema/packs/" + url.PathEscape(id)
+	}
+	if id == "" {
+		return redirectWithError(c, back, errors.New("schema pack id is required"))
+	}
+	if err := s.memory.AssignSchemaPack(ctx, id); err != nil {
+		return redirectWithError(c, back, err)
+	}
+	return c.Redirect(http.StatusSeeOther, back+"?installed=1")
+}
+
+// packInstalledNotice is the confirmation shown after installing a reviewed
+// pack. Reading it from a query flag rather than a cookie keeps the redirect
+// stateless and means a reload does not repeat it.
+const packInstalledNotice = "Pack installed. Its object and relationship types are now part of this project's compiled types."
+
+// pendingPack is a pack that exists in the project's catalog but is not
+// installed yet: an un-reviewed discovery result, or a pack whose assignment
+// was removed. It contributes no compiled types, so it cannot be rendered by
+// the pack-summary path; it is read through GetSchema and installed through the
+// assign endpoint.
+type pendingPack struct {
+	ID          string
+	Name        string
+	Version     string
+	Description string
+	Author      string
+	Source      string
+
+	ObjectTypes   []string
+	RelationTypes []string
+
+	// PendingReview distinguishes a pack a discovery run proposed (the flag the
+	// server sets) from a pack that is merely unassigned.
+	PendingReview bool
+}
+
+// pendingPackFromSchema turns a schema definition into the review view model.
+// Both type lists are read through the catalog parsers, so the keyed-map form a
+// discovered pack uses and the registry's array form both render; a relationship
+// also names its endpoints, so the reviewer can see which pairs it proposes.
+func pendingPackFromSchema(schema *BlueprintSchema) *pendingPack {
+	pack := &pendingPack{
+		ID:            schema.ID,
+		Name:          schema.Name,
+		Version:       schema.Version,
+		Description:   schema.Description,
+		Author:        schema.Author,
+		Source:        schema.Source,
+		PendingReview: schema.PendingReview,
+	}
+
+	// Reuse the catalog's parsers so both stored shapes render: the registry's
+	// array form and the keyed-map form a discovered pack uses. A pack that
+	// parsed as empty would show a review page with nothing to review and an
+	// install button that installs nothing visible.
+	for _, t := range objectTypesFromRaw(schema.ObjectTypeSchemas) {
+		if t.Name != "" {
+			pack.ObjectTypes = append(pack.ObjectTypes, t.Name)
+		}
+	}
+	sort.Strings(pack.ObjectTypes)
+
+	relations := relationshipTypesFromRaw(schema.RelationshipTypeSchemas)
+	sort.SliceStable(relations, func(i, j int) bool { return relations[i].Name < relations[j].Name })
+	for _, r := range relations {
+		if r.Name == "" {
+			continue
+		}
+		if r.SourceType != "" && r.TargetType != "" {
+			pack.RelationTypes = append(pack.RelationTypes, r.Name+" ("+r.SourceType+" \u2192 "+r.TargetType+")")
+			continue
+		}
+		pack.RelationTypes = append(pack.RelationTypes, r.Name)
+	}
+
+	return pack
 }

@@ -632,6 +632,8 @@ func (s *Server) uiProjectSettingsProjectField(c echo.Context) error {
 		upd.AutoExtractObjects = boolPtr(c.FormValue("auto_extract_objects") == "on")
 	case "auto_merge_extraction_branches":
 		upd.AutoMergeExtractionBranches = boolPtr(c.FormValue("auto_merge_extraction_branches") == "on")
+	case "auto_discovery_enabled":
+		upd.AutoDiscoveryEnabled = boolPtr(c.FormValue("auto_discovery_enabled") == "on")
 	case "budget_usd":
 		v := strings.TrimSpace(c.FormValue("budget_usd"))
 		if v == "" {

@@ -171,27 +171,36 @@ type fakeMemory struct {
 	lastDocumentListParams DocumentListParams // params of the last ListDocuments call
 	docSourceCounts        []DocumentSourceCount
 	docSourceCountsErr     error
-	extractErr             error               // CreateExtractionJob failure
-	uploaded               []string            // filenames received via UploadDocument
-	uploadResult           *UploadResult       // non-nil overrides the UploadDocument result
-	extracted              []string            // document ids passed to CreateExtractionJob
-	deletedDocuments       []string            // document ids passed to DeleteDocument, in order
-	deleteDocErr           error               // DeleteDocument failure
-	summary                *ExtractionSummary  // returned by GetExtractionSummary
-	docContent             *string             // returned by GetDocumentContent (nil → "")
-	objects                []GraphObject       // returned by ListExtractionObjects
-	lookupObjects          []GraphObject       // returned by LookupGraphObjectByKey
-	lookupErr              error               // LookupGraphObjectByKey failure
-	lastLookupType         string              // last typeFilter passed to LookupGraphObjectByKey
-	lastLookupKey          string              // last key passed to LookupGraphObjectByKey
-	relns                  []GraphRelationship // returned by ListRelationships
-	branches               []Branch            // returned by ListBranches
-	extractionJobs         []ExtractionJob     // returned by ListExtractionJobs
-	extractionJobsErr      error               // ListProjectExtractionJobs failure
-	extractionJob          *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
-	downloadDocBody        []byte              // raw bytes returned by DownloadDocument
-	downloadDocCT          string              // Content-Type returned by DownloadDocument
-	downloadDocErr         error               // DownloadDocument failure
+
+	// schema discovery (Schema page card + per-document trigger)
+	discoveryJobs      []discoveryJob
+	discoveryErr       error
+	discoveryStarted   int      // project-wide starts
+	discoveryDocStarts []string // document ids passed to StartDocumentDiscovery
+	discoveryRetries   []string // job ids passed to RetryDiscoveryJob
+	discoveryCancels   []string // job ids passed to CancelDiscoveryJob
+	discoveryStartErr  error
+	extractErr         error               // CreateExtractionJob failure
+	uploaded           []string            // filenames received via UploadDocument
+	uploadResult       *UploadResult       // non-nil overrides the UploadDocument result
+	extracted          []string            // document ids passed to CreateExtractionJob
+	deletedDocuments   []string            // document ids passed to DeleteDocument, in order
+	deleteDocErr       error               // DeleteDocument failure
+	summary            *ExtractionSummary  // returned by GetExtractionSummary
+	docContent         *string             // returned by GetDocumentContent (nil → "")
+	objects            []GraphObject       // returned by ListExtractionObjects
+	lookupObjects      []GraphObject       // returned by LookupGraphObjectByKey
+	lookupErr          error               // LookupGraphObjectByKey failure
+	lastLookupType     string              // last typeFilter passed to LookupGraphObjectByKey
+	lastLookupKey      string              // last key passed to LookupGraphObjectByKey
+	relns              []GraphRelationship // returned by ListRelationships
+	branches           []Branch            // returned by ListBranches
+	extractionJobs     []ExtractionJob     // returned by ListExtractionJobs
+	extractionJobsErr  error               // ListProjectExtractionJobs failure
+	extractionJob      *ExtractionJob      // returned by GetExtractionJob (rich DTO with spans/cost/error details)
+	downloadDocBody    []byte              // raw bytes returned by DownloadDocument
+	downloadDocCT      string              // Content-Type returned by DownloadDocument
+	downloadDocErr     error               // DownloadDocument failure
 	// Document version history (GET /api/documents/:id/versions).
 	documentVersions    []DocumentVersion
 	documentVersionsErr error
@@ -405,6 +414,10 @@ type fakeMemory struct {
 
 	schemas []SchemaInfo
 	schema  *BlueprintSchema
+	// schemasByID, when non-nil, is the schema catalog: a lookup for an id it
+	// does not hold fails, which is how the in-memory API answers for a pack the
+	// project does not have.
+	schemasByID map[string]*BlueprintSchema
 
 	// schema pack mutations (design D1).
 	createdSchemaPack     *SchemaPackWriteRequest // last CreateSchemaPack req
@@ -1254,6 +1267,49 @@ func (f *fakeMemory) ListDocuments(ctx context.Context, params DocumentListParam
 	}, nil
 }
 
+func (f *fakeMemory) ListDiscoveryJobs(ctx context.Context) ([]discoveryJob, error) {
+	if f.discoveryErr != nil {
+		return nil, f.discoveryErr
+	}
+	return f.discoveryJobs, nil
+}
+
+func (f *fakeMemory) StartProjectDiscovery(ctx context.Context) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryStarted++
+	return &DiscoveryStartResult{
+		JobID:          "job-project",
+		DocumentCount:  len(f.documents),
+		TotalDocuments: f.documentsTotal,
+	}, nil
+}
+
+func (f *fakeMemory) StartDocumentDiscovery(ctx context.Context, documentID string) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryDocStarts = append(f.discoveryDocStarts, documentID)
+	return &DiscoveryStartResult{JobID: "job-document", DocumentCount: 1, TotalDocuments: 1}, nil
+}
+
+func (f *fakeMemory) RetryDiscoveryJob(ctx context.Context, jobID string) (*DiscoveryStartResult, error) {
+	if f.discoveryStartErr != nil {
+		return nil, f.discoveryStartErr
+	}
+	f.discoveryRetries = append(f.discoveryRetries, jobID)
+	return &DiscoveryStartResult{JobID: "job-retry"}, nil
+}
+
+func (f *fakeMemory) CancelDiscoveryJob(ctx context.Context, jobID string) error {
+	if f.discoveryStartErr != nil {
+		return f.discoveryStartErr
+	}
+	f.discoveryCancels = append(f.discoveryCancels, jobID)
+	return nil
+}
+
 func (f *fakeMemory) ListDocumentSourceCounts(ctx context.Context) ([]DocumentSourceCount, error) {
 	f.recordCatalog("ListDocumentSourceCounts")
 	if f.docSourceCountsErr != nil {
@@ -1952,6 +2008,12 @@ func (f *fakeMemory) ListAllSchemas(ctx context.Context) ([]SchemaInfo, error) {
 func (f *fakeMemory) GetSchema(ctx context.Context, packID string) (*BlueprintSchema, error) {
 	if f.blueprintErr != nil {
 		return nil, f.blueprintErr
+	}
+	if f.schemasByID != nil {
+		if s, ok := f.schemasByID[packID]; ok {
+			return s, nil
+		}
+		return nil, fmt.Errorf("schema %s not found", packID)
 	}
 	if f.schema != nil {
 		return f.schema, nil

@@ -1387,6 +1387,7 @@ func (s *Server) uiDocument(c echo.Context) error {
 	blocked := s.extractionModelMissing(ctx)
 	flashMsg := flashFromQuery(c, []flashParam{
 		{key: "extracted", msg: "Extraction triggered."},
+		{key: "discovering", msg: "Schema discovery started for this document."},
 	})
 	flashErr := flashError(c)
 	return s.page(c, pageTitle(documentName(*doc)), DocumentDetailPage(doc, preview, nil, flashMsg, flashErr, blocked))

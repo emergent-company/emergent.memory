@@ -91,7 +91,8 @@ select n.nspname, t.relname, ic.relname as index_name, ix.indisunique,
        coalesce((
          select string_agg(pg_get_indexdef(ix.indexrelid, k, true), E'\x1f' order by k)
          from generate_series(1, ix.indnkeyatts) as k
-       ), '') as cols
+       ), '') as cols,
+       coalesce(pg_get_expr(ix.indpred, ix.indrelid), '') as predicate
 from pg_index ix
 join pg_class ic on ic.oid = ix.indexrelid
 join pg_class t on t.oid = ix.indrelid
@@ -134,6 +135,10 @@ type index struct {
 	name   string
 	unique bool
 	cols   []string
+	// predicate is a partial index's WHERE expression. DBML has no predicate
+	// syntax, so it is emitted as a note: without it an index that is unique
+	// only among active rows reads as a plain unique index.
+	predicate string
 }
 
 type foreignKey struct {
@@ -264,11 +269,7 @@ func render(db *sql.DB) (string, int, error) {
 				fmt.Fprintf(&b, "    %s [unique]\n", renderIndexCols(cols))
 			}
 			for _, ix := range idx {
-				parts := []string{"name: " + quote(ix.name)}
-				if ix.unique {
-					parts = append(parts, "unique")
-				}
-				fmt.Fprintf(&b, "    %s [%s]\n", renderIndexCols(ix.cols), strings.Join(parts, ", "))
+				fmt.Fprintf(&b, "    %s %s\n", renderIndexCols(ix.cols), indexSetting(ix))
 			}
 			b.WriteString("  }\n")
 		}
@@ -403,7 +404,7 @@ func readCatalog(db *sql.DB) (*catalog, error) {
 		var key tableKey
 		var ix index
 		var cols string
-		if err := rows.Scan(&key.schema, &key.table, &ix.name, &ix.unique, &cols); err != nil {
+		if err := rows.Scan(&key.schema, &key.table, &ix.name, &ix.unique, &cols, &ix.predicate); err != nil {
 			return err
 		}
 		ix.cols = splitListSep(cols, "\x1f")
@@ -556,6 +557,19 @@ func isIntegerType(colType string) bool {
 		return true
 	}
 	return false
+}
+
+// indexSetting renders one index's DBML settings, including a partial index's
+// predicate as a note.
+func indexSetting(ix index) string {
+	parts := []string{"name: " + quote(ix.name)}
+	if ix.unique {
+		parts = append(parts, "unique")
+	}
+	if ix.predicate != "" {
+		parts = append(parts, "note: '"+escapeString(collapse(ix.predicate))+"'")
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func escapeString(s string) string {

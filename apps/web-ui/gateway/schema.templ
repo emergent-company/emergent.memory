@@ -2,9 +2,10 @@ package main
 
 import (
 	"net/url"
+	"strconv"
 
-	"github.com/emergent-company/go-daisy/components/form"
 	components "github.com/emergent-company/emergent.memory/apps/web-ui/components"
+	"github.com/emergent-company/go-daisy/components/form"
 	"github.com/emergent-company/go-daisy/components/layout"
 	"github.com/emergent-company/go-daisy/components/nav"
 	ui "github.com/emergent-company/go-daisy/components/ui"
@@ -26,11 +27,13 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 			{{
 				var compiled *CompiledSchemaTypes
 				var provenance map[string]*ProvenanceInfo
+				var discovery *SchemaDiscoveryView
 				var flashMsg string
 				var flashErr error
 				if view != nil {
 					compiled = view.Compiled
 					provenance = view.Provenance
+					discovery = view.Discovery
 					flashMsg = view.FlashMsg
 					flashErr = view.FlashErr
 				}
@@ -38,6 +41,7 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 			@schemaHeader(compiled)
 			@flashToasts(flashMsg, flashErr)
 			@layout.Rail(schemaSubNav("compiled"), nil) {
+				@schemaDiscoveryCard(discovery)
 				if compiled == nil || (len(compiled.ObjectTypes) == 0 && len(compiled.RelationshipTypes) == 0) {
 					@ui.EmptyState(ui.EmptyStateProps{
 						Icon:        "lucide--git-branch",
@@ -56,6 +60,158 @@ templ SchemaPage(view *SchemaListView, loadErr error) {
 		}
 	}
 	@deriveBlueprintDialog()
+}
+
+// schemaDiscoveryCard is the Schema page's discovery control: the newest job's
+// state, the project-wide "discover" action, and a retry after a failure. The
+// anchor id="discovery" is what /schema#discovery links to from the Documents
+// "Needs attention" panel and from the document page.
+templ schemaDiscoveryCard(view *SchemaDiscoveryView) {
+	{{
+		var latest *discoveryJob
+		var docCount int
+		var countErr error
+		var loadErr error
+	}}
+	{{
+		if view != nil {
+			latest = view.Latest
+			docCount = view.DocumentCount
+			countErr = view.CountErr
+			loadErr = view.Err
+		}
+	}}
+	<div id="discovery" class="mb-8" data-testid="schema-discovery-card">
+		@components.PanelCard("", nil) {
+			<div class="flex flex-wrap items-start justify-between gap-3">
+				<div class="flex items-center gap-3">
+					@ui.IconTile("lucide--scan-search", ui.IconTileProps{Tone: "accent"})
+					<div>
+						<h2 class="text-base font-semibold">Schema discovery</h2>
+						@ui.EmptyNote() {
+							Reads documents and proposes entity types and relationships for review. Nothing is installed until you review the pack it creates.
+						}
+					</div>
+				</div>
+				<form method="post" action="/schema/discovery/start">
+					@ui.Button(ui.ButtonProps{
+						Type:    ui.ButtonTypeSubmit,
+						Variant: ui.ButtonAccent,
+						Size:    ui.ButtonSM,
+						Icon:    "lucide--scan-search",
+						Attrs:   templ.Attributes{"data-testid": "schema-discovery-start"},
+					}) {
+						Discover entity types
+					}
+				</form>
+			</div>
+			if loadErr != nil {
+				<div class="mt-3">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertWarning,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: "Could not load the latest discovery state: " + loadErr.Error(),
+					})
+				</div>
+			}
+			if latest != nil {
+				<div class="mt-4">
+					@schemaDiscoveryJobState(latest)
+				</div>
+			} else if loadErr == nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-3"}) {
+					No discovery run yet.
+				}
+			}
+			if docCount > 0 && countErr == nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
+					{ strconv.Itoa(docCount) } documents in this project. A run analyses the newest documents up to the server's per-run cap.
+				}
+			}
+			if docCount == 0 && countErr == nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
+					No documents in this project yet. Sync a source or add a document, then run discovery.
+				}
+			}
+			if countErr != nil {
+				@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-3"}) {
+					The project's document count is unavailable right now ({ countErr.Error() }). Discovery still uses whatever the server finds.
+				}
+			}
+		}
+	</div>
+}
+
+// schemaDiscoveryJobState renders the newest job: status, progress, the fact
+// that a project-wide run was capped, the failure (with its retry), and the
+// link to the pack a completed run produced.
+templ schemaDiscoveryJobState(job *discoveryJob) {
+	<div class="rounded border border-line p-3" data-testid="schema-discovery-state">
+		<div class="flex flex-wrap items-center gap-2">
+			if job.isRunning() {
+				@ui.Badge(ui.BadgeProps{Label: "Running", Variant: ui.BadgeInfo, Size: ui.BadgeSizeXS})
+			} else if job.Status == "failed" {
+				@ui.Badge(ui.BadgeProps{Label: "Failed", Variant: ui.BadgeError, Size: ui.BadgeSizeXS})
+			} else if job.Status == "completed" {
+				@ui.Badge(ui.BadgeProps{Label: "Completed", Variant: ui.BadgeSuccess, Size: ui.BadgeSizeXS})
+			} else {
+				@ui.Badge(ui.BadgeProps{Label: job.Status, Variant: ui.BadgeNeutral, Size: ui.BadgeSizeXS})
+			}
+			<span class="text-sm">{ discoveryJobSummary(job) }</span>
+		</div>
+		if job.isRunning() && job.Progress.TotalSteps > 0 {
+			<progress class="progress progress-info mt-2 h-1 w-full" value={ job.Progress.CurrentStep } max={ job.Progress.TotalSteps }></progress>
+		}
+		@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-2"}) {
+			{ discoveryJobTriggerLabel(job) }
+		}
+		if job.capped() {
+			@ui.EmptyNote(ui.EmptyNoteProps{Tone: ui.EmptyNoteToneQuiet, Size: ui.EmptyNoteSizeXS, Class: "mt-1"}) {
+				Covered { strconv.Itoa(job.DocumentCount) } of { strconv.Itoa(job.TotalDocuments) } documents (per-run cap); run it again to cover the rest.
+			}
+		}
+		if job.cancellable() {
+			<form class="mt-2" method="post" action={ templ.URL("/schema/discovery/cancel/" + url.PathEscape(job.ID)) }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonOutline,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--square",
+					Attrs:   templ.Attributes{"data-testid": "schema-discovery-cancel"},
+				}) {
+					Cancel run
+				}
+			</form>
+		}
+		if job.Status == "failed" {
+			if job.ErrorMessage != "" {
+				<div class="mt-2">
+					@ui.Alert(ui.AlertProps{
+						Type:    ui.AlertError,
+						Style:   ui.AlertStyleSoft,
+						Icon:    "lucide--alert-triangle",
+						Message: job.ErrorMessage,
+					})
+				</div>
+			}
+			<form class="mt-2" method="post" action={ templ.URL("/schema/discovery/retry/" + url.PathEscape(job.ID)) }>
+				@ui.Button(ui.ButtonProps{
+					Type:    ui.ButtonTypeSubmit,
+					Variant: ui.ButtonSecondary,
+					Size:    ui.ButtonSM,
+					Icon:    "lucide--rotate-ccw",
+				}) {
+					Retry discovery
+				}
+			</form>
+		}
+		if job.Status == "completed" && job.SchemaID != "" {
+			<a class="link link-primary mt-2 inline-block text-sm" href={ templ.URL("/schema/packs/" + url.PathEscape(job.SchemaID)) }>
+				Review pack
+			</a>
+		}
+	</div>
 }
 
 // schemaHeader is the Schema page header: title, subtitle, and the two primary
@@ -571,7 +727,9 @@ templ deriveWarningDialog(view *SchemaEditView) {
 				@ui.IconSpan("lucide--alert-triangle", "size-5")
 			</div>
 			<div>
-				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-warning-title"}) { Save changes to a blueprint-derived type? }
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-warning-title"}) {
+					Save changes to a blueprint-derived type? 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{ID: "derive-warning-desc", Tone: ui.EmptyNoteToneStrong, Class: "mt-1"}) {
 					<span class="font-mono">{ view.Detail.Name }</span> comes from blueprint <span class="font-medium">{ typeProvenanceLabel(p) }</span>. Saving your edit diverges from that blueprint and may be overwritten when it is updated or reinstalled.
 				}
@@ -613,7 +771,9 @@ templ deriveBlueprintDialog() {
 				@ui.IconSpan("lucide--save", "size-5")
 			</div>
 			<div>
-				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-blueprint-title"}) { Save as blueprint }
+				@ui.DialogTitle(ui.DialogTitleProps{ID: "derive-blueprint-title"}) {
+					Save as blueprint 
+				}
 				@ui.EmptyNote(ui.EmptyNoteProps{Class: "mt-0.5"}) {
 					Create a draft blueprint from the object types currently in this project.
 				}
