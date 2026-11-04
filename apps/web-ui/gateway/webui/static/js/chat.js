@@ -68,6 +68,7 @@
   var bubbleText = "";      // accumulated raw token deltas (pre-snapshot)
   var conversationId = "";  // threaded back into /api/chat turns
   var activeRunId = "";     // scheduled-run transcript open in the pane ("" = conversation/fresh chat)
+  var activeRunAgentName = ""; // the opened run's own agent, from the run history payload
   var transcriptRefreshPending = false; // one history re-render at a time
   var replayFrames = [];    // active run's open thinking + running-tool frames (live_replay)
   var transcriptReady = false; // persisted history rendered at least once for this scope
@@ -353,6 +354,14 @@
 
     // resume target from the server-rendered ?c= param
     conversationId = root.getAttribute("data-conv") || "";
+    // run-transcript deep link (?run=<id>): a run is not a conversation, so the
+    // server has no data-conv for it — the id only ever arrives in the URL.
+    var runParam = "";
+    try {
+      runParam = new URLSearchParams(window.location.search || "").get("run") || "";
+    } catch (e) {
+      /* URLSearchParams unavailable — no run deep link. */
+    }
 
     form.addEventListener("submit", onSend);
 
@@ -507,9 +516,11 @@
       autoGrow();
     });
 
-    // deep link / refresh on an active conversation → load its transcript
+    // deep link / refresh on an active conversation or run → load its transcript
     if (conversationId) {
       resumeConversation(conversationId, "", null);
+    } else if (runParam) {
+      resumeRun(runParam, null);
     }
 
     // merge deep link: ?agent=<id>&prompt=<msg> auto-sends the prompt once
@@ -540,6 +551,15 @@
     return agentSelect && agentSelect.selectedOptions.length
       ? agentSelect.selectedOptions[0].textContent
       : "Memory";
+  }
+
+  // transcriptAgentName is the author the transcript's bubbles belong to: the
+  // opened run's own agent when a run is in the pane, otherwise the selected
+  // chat agent. A run is not a conversation — attributing an extraction run's
+  // bubbles to whichever chat agent the picker happens to show was simply wrong.
+  function transcriptAgentName() {
+    if (currentScopeIsRun() && activeRunAgentName) return activeRunAgentName;
+    return currentAgentName();
   }
 
   // currentAgentUI is the selected agent's declared appearance, read from the
@@ -639,12 +659,39 @@
     }
   }
 
+  // applyRunHeader points the chat pane header at the opened run's own agent.
+  // The server paints the header for the selected chat agent, which is the wrong
+  // owner for a run transcript: an extraction run belongs to "Extraction" (or to
+  // whatever agent owns the run), and leaving the picker's agent there
+  // attributed the whole transcript to an agent that never produced it. A run has
+  // no agent description to show, so the description is hidden. An empty name
+  // (older payloads) keeps the server-rendered header.
+  function applyRunHeader(agentName) {
+    activeRunAgentName = agentName || "";
+    if (!activeRunAgentName) return;
+    var titleEl = document.getElementById("chat-header-title");
+    var descEl = document.getElementById("chat-header-desc");
+    var iconEl = document.getElementById("chat-header-icon");
+    if (titleEl) titleEl.textContent = activeRunAgentName;
+    if (descEl) {
+      descEl.textContent = "";
+      descEl.classList.add("hidden");
+    }
+    if (iconEl) renderHeaderIcon(iconEl, "", "");
+  }
+
   /* ---------- conversation persistence ---------- */
 
   function updateUrl() {
     var url = scopedPath("/chat");
     var qs = [];
-    if (conversationId) qs.push("c=" + encodeURIComponent(conversationId));
+    if (conversationId) {
+      qs.push("c=" + encodeURIComponent(conversationId));
+    } else if (activeRunId) {
+      // A run transcript is deep-linkable too: without this the URL reverted to
+      // a bare /chat, so reloading or sharing an opened run lost it.
+      qs.push("run=" + encodeURIComponent(activeRunId));
+    }
     // Preserve the transient debug switch across URL normalization so the
     // advertised `?debug` link keeps working (and survives a refresh) after a
     // conversation/run resume (#1416). Only re-emitted when the flag came from
@@ -662,6 +709,7 @@
     transcriptReady = false;
     conversationId = "";
     activeRunId = "";
+    activeRunAgentName = "";
     updateUrl();
     clearActiveRailItem();
     if (messages) messages.innerHTML = "";
@@ -672,6 +720,7 @@
     clearRunControlState();
     clearTodos();
     clearHeaderStatus();
+    updateChatHeader(); // a fresh chat belongs to the selected agent, not the run we left
     renderQueue();
   }
 
@@ -1309,6 +1358,7 @@
 
     conversationId = id;
     activeRunId = "";
+    activeRunAgentName = "";
     updateUrl();
     // Conversation-scoped surfaces: show this conversation's parked queue and
     // load its todo card (a rail switch never carries the previous
@@ -1333,9 +1383,10 @@
       }
       if (match) agentSelect.value = agentId;
       updateModelWarning();
-      // the header follows the same hook: reflect the conversation's agent
-      updateChatHeader();
     }
+    // The header follows the same hook: reflect the conversation's agent, and
+    // drop the run-agent override left by a run transcript we switched away from.
+    updateChatHeader();
 
     await refreshTodos();
     await renderHistory(id);
@@ -1364,6 +1415,7 @@
     releaseWorkingState();
     conversationId = ""; // a run is not an /api/chat conversation
     activeRunId = runId;
+    activeRunAgentName = ""; // until the history names the run's agent
     updateUrl();
     openRunStream(runId);
     await renderRunHistory(runId);
@@ -1384,6 +1436,9 @@
     var data = await fetchTimeline("/api/runs/" + encodeURIComponent(runId) + "/history");
     if (!data) return;
     if (!currentScopeIsRun() || !scopeIsCurrent(runId)) return; // scope switched mid-fetch
+    // The run's agent owns this transcript: head the pane and label its bubbles
+    // with it (the server's header is for the selected chat agent).
+    applyRunHeader(data.agent_name || "");
     renderTimelineItems(data.items || [], data.pending_approvals || []);
   }
 
@@ -1497,7 +1552,7 @@
     return {
       container: messages,
       badgeCtx: badgeCtx,
-      getAgentName: currentAgentName,
+      getAgentName: transcriptAgentName,
       // Preserve the mid-run working placeholder across the rebuild so its CSS
       // animation stays continuous. A page opened mid-run re-renders on every
       // persisted step (frequent refresh frames), and recreating the node each
@@ -2001,12 +2056,17 @@
     // /api/chat conversation, so abandon the run scope and clear its bubbles.
     if (activeRunId) {
       activeRunId = "";
+      // The header names the run's agent while a run is open; the fresh chat
+      // belongs to the selected agent again (leaving the run's name there was a
+      // stale attribution — a brand-new chat titled "Extraction").
+      activeRunAgentName = "";
       closeLiveStream(); // drop the abandoned run's push channel
       clearActiveRailItem();
       clearThinking();
       replayFrames = [];
       transcriptReady = false;
       updateUrl();
+      updateChatHeader();
       if (messages) messages.innerHTML = "";
       bubble = null; bubbleHTML = ""; bubbleText = "";
     }
