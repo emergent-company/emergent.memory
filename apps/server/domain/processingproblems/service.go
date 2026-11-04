@@ -285,7 +285,7 @@ func actionFor(queue string, row problemRow) Action {
 	case QueueBlueprintUpdate:
 		return Action{Kind: ActionOpen, Label: "Open blueprints", Href: "/blueprints"}
 
-	case QueueSchemaMigration:
+	case QueueDiscovery, QueueSchemaMigration:
 		return Action{Kind: ActionOpen, Label: "Open schema", Href: "/schema"}
 
 	default:

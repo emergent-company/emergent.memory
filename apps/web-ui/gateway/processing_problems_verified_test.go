@@ -102,8 +102,12 @@ func TestPanelSaysWhenTheCauseWasNotVerified(t *testing.T) {
 	}
 	// Discovery has no per-unit retry in this change (the controls live in the
 	// schema page's own work), so the row must not promise one it cannot run.
-	if strings.Contains(html, "Retry anyway?") {
-		t.Errorf("unverified discovery row offered a retry it cannot run:\n%s", html)
+	// Absence of the confirm prompt is not enough: a retryable row has no prompt
+	// by design, so assert the retry control itself is absent.
+	for _, forbidden := range []string{"/schema/discovery", "Retry discovery"} {
+		if strings.Contains(html, forbidden) {
+			t.Errorf("discovery row offered a retry this change cannot run (%q):\n%s", forbidden, html)
+		}
 	}
 }
 
@@ -116,5 +120,67 @@ func TestPanelHidesModelTestFromMembers(t *testing.T) {
 	}
 	if !strings.Contains(html, "Review model settings") {
 		t.Errorf("member-level panel lost the fix link:\n%s", html)
+	}
+}
+
+// An embedding failure resolves through its own model chain, so the row's live
+// test must exercise the embedding field — posting the generative field would
+// test something the failure is not about.
+func TestPanelTestsTheEmbeddingModelForAnEmbeddingFailure(t *testing.T) {
+	p := configurationProblem()
+	p.Queue = "chunk_embedding"
+	p.Area = "documents"
+	p.Label = "Chunk embedding"
+	p.Failure.Model = "openai/text-embedding-3-small"
+	p.Failure.Cause = "model_unusable"
+	p.Failure.Summary = "An embedding model is configured (openai/text-embedding-3-small), but this run could not use it."
+
+	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
+
+	for _, want := range []string{
+		`name="model_type" value="embedding"`,
+		`name="embedding_model" value="openai/text-embedding-3-small"`,
+		"Test model",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("panel missing %q\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `name="generative_model"`) {
+		t.Errorf("embedding row posted a generative model test:\n%s", html)
+	}
+}
+
+// A rejected credential now carries the model it is about, so the row can name
+// it and offer the live test — but the copy and the disclosure stay the
+// classifier's, because the cause was read from the error, not checked.
+func TestPanelNamesTheModelOnARejectedKey(t *testing.T) {
+	p := configurationProblem()
+	p.Failure = ProcessingProblemFailure{
+		Class:       "permission",
+		Summary:     "The provider rejected this project's credentials.",
+		Remediation: "Update the provider's API key in Project settings → Providers, then retry.",
+		Retryable:   false,
+		Model:       "openai/deepseek-v4-flash",
+		Fix:         &ProcessingProblemFix{Href: "/settings/providers", Label: "Reconnect provider"},
+	}
+
+	html := problemsPanelHTML(t, documentPageData{Problems: configurationReport(p), CanManage: true})
+
+	for _, want := range []string{
+		"The provider rejected this project",
+		`data-testid="processing-problem-model"`,
+		"openai/deepseek-v4-flash",
+		"Test model",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("panel missing %q\n%s", want, html)
+		}
+	}
+	if strings.Contains(html, `data-testid="processing-problem-unverified"`) {
+		t.Errorf("permission row rendered the configuration-only unverified note:\n%s", html)
+	}
+	if strings.Contains(html, "<details class=\"mt-1\" open") {
+		t.Errorf("permission row forced its technical detail open:\n%s", html)
 	}
 }
