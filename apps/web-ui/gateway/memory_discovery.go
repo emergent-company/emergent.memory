@@ -48,9 +48,11 @@ func (j *discoveryJob) isRunning() bool {
 	return true
 }
 
-// cancellable mirrors the server's cancellable statuses: a run can be stopped
-// while it is still analysing, but not once it is writing the pack. Offering an
-// action the API refuses would turn a state detail into a 409.
+// cancellable mirrors the server's cancellable statuses (its
+// discoveryjobs.IsCancellableStatus): a run can be stopped while it is still
+// analysing, but not once it is creating its pack, which is the run's last step
+// and writes the pack. Offering an action the API refuses would turn a state
+// detail into a 409.
 func (j *discoveryJob) cancellable() bool {
 	if j == nil {
 		return false

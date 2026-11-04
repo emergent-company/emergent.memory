@@ -78,13 +78,26 @@ func (r *Repository) ListByProject(ctx context.Context, projectID uuid.UUID, lim
 // nonTerminalStatuses are the statuses a run can be advanced from. Every write
 // the worker makes carries this predicate, so a job that was cancelled while a
 // batch was running (a member's cancel, or the stale-job takeover) cannot be
-// moved on or "completed" afterwards by a run that is still in flight.
-var nonTerminalStatuses = []string{
-	StatusPending,
-	StatusAnalyzingDocuments,
-	StatusExtractingTypes,
-	StatusRefiningSchemas,
-	StatusCreatingPack,
+// moved on or "completed" afterwards by a run that is still in flight. It is
+// derived from the status vocabulary rather than re-listed, so the predicate and
+// IsTerminalStatus cannot drift apart.
+var nonTerminalStatuses = statusesMatching(func(status string) bool { return !IsTerminalStatus(status) })
+
+// cancellableStatuses are the statuses a member may cancel from, derived from
+// the same predicate the job entity uses (IsCancellableStatus).
+var cancellableStatuses = statusesMatching(IsCancellableStatus)
+
+// statusesMatching filters the canonical status list with keep, preserving
+// lifecycle order.
+func statusesMatching(keep func(string) bool) []string {
+	all := AllStatuses()
+	out := make([]string, 0, len(all))
+	for _, status := range all {
+		if keep(status) {
+			out = append(out, status)
+		}
+	}
+	return out
 }
 
 // UpdateStatus updates the status and optional error message. It reports
@@ -143,17 +156,24 @@ func (r *Repository) JobStatus(ctx context.Context, jobID uuid.UUID) (string, er
 	return job.Status, nil
 }
 
-// MarkStarted marks the job as started
+// MarkStarted records that the run began. It carries the same non-terminal
+// predicate as every other worker write, so a job cancelled between the start
+// request and this goroutine cannot have its start time written by a run that is
+// stopping.
 func (r *Repository) MarkStarted(ctx context.Context, jobID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("started_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to mark job started", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
 	}
 	return nil
 }
@@ -181,24 +201,6 @@ func (r *Repository) MarkCompleted(ctx context.Context, jobID uuid.UUID, schemaI
 		return ErrJobNoLongerActive
 	}
 	return nil
-}
-
-// cancellableStatuses are the statuses a member may cancel from. Once a run
-// enters creating_pack it is writing the pack and finishes in seconds; the card
-// does not offer cancel there, and this set keeps the API honest about it.
-var cancellableStatuses = []string{
-	StatusPending,
-	StatusAnalyzingDocuments,
-	StatusExtractingTypes,
-	StatusRefiningSchemas,
-}
-
-// CancellableStatuses reports the statuses CancelJob accepts, so a caller can
-// avoid offering an action the server will refuse.
-func CancellableStatuses() []string {
-	out := make([]string, len(cancellableStatuses))
-	copy(out, cancellableStatuses)
-	return out
 }
 
 // CancelJob cancels a job if it's in a cancellable state. The cancelled job's
@@ -580,18 +582,26 @@ func (r *Repository) UpdateMemorySchema(ctx context.Context, packID uuid.UUID, o
 }
 
 // SetJobMemorySchema sets the memory schema ID on a job and marks it completed
+// SetJobMemorySchema completes a job from the manual finalize path. It is the
+// second writer of `status = completed`, so it carries the same non-terminal
+// predicate as the worker's completion: finalizing a job a cancel already ended
+// must not flip it back to completed and present its pack as the run's result.
 func (r *Repository) SetJobMemorySchema(ctx context.Context, jobID, schemaID uuid.UUID) error {
-	_, err := r.db.NewUpdate().
+	result, err := r.db.NewUpdate().
 		Model((*DiscoveryJob)(nil)).
 		Set("schema_id = ?", schemaID).
 		Set("status = ?", StatusCompleted).
 		Set("completed_at = now()").
 		Set("updated_at = now()").
 		Where("id = ?", jobID).
+		Where("status IN (?)", bun.In(nonTerminalStatuses)).
 		Exec(ctx)
 	if err != nil {
 		r.log.Error("failed to set job memory schema", logger.Error(err))
 		return apperror.ErrInternal.WithInternal(err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrJobNoLongerActive
 	}
 	return nil
 }

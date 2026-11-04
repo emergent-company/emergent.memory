@@ -397,9 +397,9 @@ func TestSchemaDiscoveryCardReportsAnUnreadableCount(t *testing.T) {
 }
 
 // TestSchemaDiscoveryCardDoesNotOfferCancelWhileCreatingThePack pins the card
-// against the server's cancellable set: a run that is writing its pack finishes
-// in seconds, the API refuses a cancel then, and offering the action would turn
-// that refusal into a flash error for a normal state.
+// against the server's cancellable set: creating the pack is the run's last
+// step and the API refuses a cancel once it starts, so offering the action would
+// turn that refusal into a flash error for a normal state.
 func TestSchemaDiscoveryCardDoesNotOfferCancelWhileCreatingThePack(t *testing.T) {
 	creating := renderHTML(t, schemaDiscoveryCard(&SchemaDiscoveryView{
 		Latest: &discoveryJob{ID: "j-pack", Status: "creating_pack", Trigger: "manual"},

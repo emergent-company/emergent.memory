@@ -665,6 +665,47 @@ func TestDiscoverBatchTypes_CompleteEmptyAnswerIsNotAFailure(t *testing.T) {
 // every write the worker makes is refused once the job is terminal, so a status
 // classified wrongly here would either strand a live run or let a cancelled one
 // finish into a second pack.
+// TestStatusPredicatesAreDerived pins the single vocabulary: the fence's
+// non-terminal predicate and the cancellable set are filtered from AllStatuses,
+// so a new status cannot leave one of them disagreeing with
+// IsTerminalStatus/IsCancellableStatus (which the card and the API both mirror).
+func TestStatusPredicatesAreDerived(t *testing.T) {
+	contains := func(list []string, want string) bool {
+		for _, s := range list {
+			if s == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	all := AllStatuses()
+	if len(all) != 8 {
+		t.Fatalf("AllStatuses() = %v, want the 8 lifecycle statuses", all)
+	}
+	for _, status := range all {
+		if got, want := contains(nonTerminalStatuses, status), !IsTerminalStatus(status); got != want {
+			t.Errorf("nonTerminalStatuses contains %q = %v, want %v", status, got, want)
+		}
+		if got, want := contains(cancellableStatuses, status), IsCancellableStatus(status); got != want {
+			t.Errorf("cancellableStatuses contains %q = %v, want %v", status, got, want)
+		}
+	}
+
+	// The boundary the card and the 409 message rest on.
+	if IsCancellableStatus(StatusCreatingPack) {
+		t.Error("a run that is creating its pack is not cancellable")
+	}
+	if !IsCancellableStatus(StatusExtractingTypes) {
+		t.Error("a run that is extracting types is cancellable")
+	}
+	for _, terminal := range []string{StatusCompleted, StatusFailed, StatusCancelled} {
+		if IsCancellableStatus(terminal) {
+			t.Errorf("%q is terminal and must not be cancellable", terminal)
+		}
+	}
+}
+
 func TestIsTerminalStatus(t *testing.T) {
 	for _, status := range []string{StatusCompleted, StatusFailed, StatusCancelled} {
 		if !IsTerminalStatus(status) {

@@ -70,10 +70,40 @@ const (
 	StatusCancelled          = "cancelled"
 )
 
+// AllStatuses lists every status a discovery job can hold, in lifecycle order.
+// The terminal/cancellable predicates and the repository's statement predicates
+// are derived from this list, so a new status cannot leave them disagreeing.
+func AllStatuses() []string {
+	out := make([]string, len(allStatuses))
+	copy(out, allStatuses)
+	return out
+}
+
+var allStatuses = []string{
+	StatusPending,
+	StatusAnalyzingDocuments,
+	StatusExtractingTypes,
+	StatusRefiningSchemas,
+	StatusCreatingPack,
+	StatusCompleted,
+	StatusFailed,
+	StatusCancelled,
+}
+
 // IsTerminalStatus reports whether a discovery job has finished running. A
 // terminal job can be retried (which creates a new job) but never advanced.
 func IsTerminalStatus(status string) bool {
 	return status == StatusCompleted || status == StatusFailed || status == StatusCancelled
+}
+
+// IsCancellableStatus reports whether a member may cancel a job in this status.
+// A run that is creating its pack is excluded: the pack is being written and
+// the run finishes instead, so a cancel cannot orphan a half-written pack.
+func IsCancellableStatus(status string) bool {
+	return status == StatusPending ||
+		status == StatusAnalyzingDocuments ||
+		status == StatusExtractingTypes ||
+		status == StatusRefiningSchemas
 }
 
 // Valid candidate statuses
@@ -84,17 +114,12 @@ const (
 	CandidateStatusMerged    = "merged"
 )
 
-// IsTerminal returns true if the job status is terminal (completed, failed, or cancelled)
+// IsTerminal reports whether the job has finished running.
 func (j *DiscoveryJob) IsTerminal() bool {
-	return j.Status == StatusCompleted || j.Status == StatusFailed || j.Status == StatusCancelled
+	return IsTerminalStatus(j.Status)
 }
 
-// IsCancellable returns true if the job can be cancelled
+// IsCancellable reports whether a member may cancel the job.
 func (j *DiscoveryJob) IsCancellable() bool {
-	switch j.Status {
-	case StatusPending, StatusAnalyzingDocuments, StatusExtractingTypes, StatusRefiningSchemas:
-		return true
-	default:
-		return false
-	}
+	return IsCancellableStatus(j.Status)
 }

@@ -358,6 +358,34 @@ func (s *DiscoveryJobsTestSuite) TestDiscovery_CancelRefusesCreatingPack() {
 	s.Equal(discoveryjobs.StatusCreatingPack, s.jobStatusRow(jobID))
 }
 
+// TestDiscovery_FinalizeRefusesCancelledJob pins the manual finalize fence: the
+// finalize path is the second writer of status=completed, and completing a job a
+// cancel already ended would install the pack it built and present it as the
+// run's result.
+func (s *DiscoveryJobsTestSuite) TestDiscovery_FinalizeRefusesCancelledJob() {
+	jobID := s.insertPendingJob()
+
+	cancelResp := s.client.DELETE(
+		fmt.Sprintf("/api/discovery-jobs/%s", jobID),
+		testutil.WithAuth(s.authToken),
+	)
+	s.Require().Equal(http.StatusOK, cancelResp.StatusCode, "cancel: %s", cancelResp.Body)
+
+	resp := s.client.POST(
+		s.finalizeURL(jobID),
+		testutil.WithAuth(s.authToken),
+		testutil.WithHeader("X-Project-ID", s.projectID),
+		testutil.WithJSONBody(map[string]any{
+			"packName":      "should-not-exist",
+			"mode":          "create",
+			"includedTypes": []map[string]any{{"type_name": "Person"}},
+		}),
+	)
+	s.Require().Equal(http.StatusConflict, resp.StatusCode, "finalize cancelled job: %s", resp.Body)
+	s.Contains(string(resp.Body), "cannot be finalised")
+	s.Equal(discoveryjobs.StatusCancelled, s.jobStatusRow(jobID))
+}
+
 // TestDiscovery_ListJobs verifies the list endpoint returns the started job.
 func (s *DiscoveryJobsTestSuite) TestDiscovery_ListJobs() {
 	jobID := s.startDiscoveryJob([]string{s.docID})

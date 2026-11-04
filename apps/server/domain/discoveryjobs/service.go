@@ -66,6 +66,11 @@ var ErrOutputTruncated = errors.New("model output truncated at the output token 
 // so a superseded run can neither advance its job nor create a second pack.
 var ErrJobNoLongerActive = errors.New("discovery job is no longer active")
 
+// errJobNotFinalisable refuses the manual finalize of a job that a cancel (or a
+// failure) already ended. Completing it would install the pack it just built and
+// present it as the run's result, which the run never reached.
+var errJobNotFinalisable = apperror.ErrConflict.WithMessage("job cannot be finalised (it was cancelled or already failed)")
+
 // modelFactory is the interface for creating LLM models.
 // Implemented by *adk.ModelFactory in production; mocked in tests.
 type modelFactory interface {
@@ -488,6 +493,11 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 	job, err := s.requireJobAccess(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("finalize: fetch job: %w", err)
+	}
+	// A cancelled or failed run has nothing to finalize: a pack built here would
+	// be installed as the run's result, and the job would flip back to completed.
+	if IsTerminalStatus(job.Status) && job.Status != StatusCompleted {
+		return nil, errJobNotFinalisable
 	}
 	if len(job.DiscoveredTypes) > 0 {
 		candidateNames := make(map[string]bool)
@@ -983,8 +993,12 @@ func (s *Service) FinalizeDiscovery(ctx context.Context, jobID, projectID uuid.U
 		return nil, apperror.ErrBadRequest.WithMessage("mode must be one of: create, extend, enrich, create_rich, create_rich_combined, create_rich_sequential")
 	}
 
-	// Update discovery job
+	// Update discovery job. The write is fenced, so a job cancelled while this
+	// call was building its pack keeps its cancelled status.
 	if err := s.repo.SetJobMemorySchema(ctx, jobID, schemaID); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			return nil, errJobNotFinalisable
+		}
 		return nil, err
 	}
 
@@ -1005,6 +1019,11 @@ func (s *Service) processDiscoveryJob(ctx context.Context, jobID, projectID uuid
 		return
 	}
 	if err := s.repo.MarkStarted(ctx, jobID); err != nil {
+		if errors.Is(err, ErrJobNoLongerActive) {
+			s.log.Info("discovery job was cancelled before it started; nothing to do",
+				slog.String("job_id", jobID.String()))
+			return
+		}
 		s.log.Error("failed to mark job started", logger.Error(err))
 		return
 	}
