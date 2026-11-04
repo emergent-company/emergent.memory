@@ -52,7 +52,9 @@ struct HTTPChatStreamClient: ChatStreaming {
 
                     var parser = SSEFrameParser()
                     for try await line in bytes.lines {
-                        if Task.isCancelled { break }
+                        if Task.isCancelled {
+                            break
+                        }
                         if let payload = parser.consume(line) {
                             continuation.yield(payload)
                         }
@@ -136,10 +138,16 @@ struct HTTPChatStreamClient: ChatStreaming {
 ///
 /// Nothing here mints a token, joins a room or needs a worker: text works on a
 /// project with voice disabled and on a deployment with no LiveKit stack.
+///
+/// A turn cannot be interrupted server-side yet: memory runs the agent on a
+/// detached context (`agents.DetachedRunContext`, `chat/handler.go`), so closing
+/// the stream leaves the run going. The composer therefore offers no stop
+/// control in text mode; cancellation from a device credential needs a
+/// device-scoped cancel route on the server and is tracked separately.
 @MainActor
 @Observable
 final class HTTPChatTransport {
-    /// True while a turn is streaming (drives the working line and stop button).
+    /// True while a turn is streaming: gates a second send and the composer.
     private(set) var isStreaming = false
     /// The last turn-level failure, surfaced at the composer.
     private(set) var errorMessage: String?
@@ -177,7 +185,7 @@ final class HTTPChatTransport {
     /// Sends `text` and streams the reply into `transcript`/`activity`.
     ///
     /// Returns immediately with the turn's task (so tests, and anything else
-    /// that needs to, can await it) while ``stop()`` can cancel it. One turn at
+    /// that needs to, can await it) while ``reset()`` can cancel it. One turn at
     /// a time — a second send while streaming is dropped.
     @discardableResult
     func send(
@@ -212,20 +220,6 @@ final class HTTPChatTransport {
         }
         turnTask = task
         return task
-    }
-
-    /// Stops the turn: cancels the stream, marks the reply finished, and asks
-    /// the server to cancel the run (its id comes from the conversation
-    /// timeline — the stream never carries one).
-    func stop(activity: ChatActivityStore) async {
-        turnTask?.cancel()
-        turnTask = nil
-        isStreaming = false
-        activity.stopGenerating()
-
-        guard let conversationID else { return }
-        guard let runID = await activeRunID(conversationID: conversationID) else { return }
-        await cancelRun(runID)
     }
 
     /// Answers a pending approval or question. The gateway resumes the paused
@@ -273,7 +267,9 @@ final class HTTPChatTransport {
                 message: message
             )
             for try await payload in frames {
-                if Task.isCancelled { break }
+                if Task.isCancelled {
+                    break
+                }
                 guard let event = ChatStreamFrameDecoder.decode(
                     payload,
                     fallbackToolID: { [weak self] in
@@ -366,7 +362,9 @@ final class HTTPChatTransport {
     /// needs to talk to the agent the user picked. Best-effort: when the lookup
     /// fails the request omits it and the server uses the project default.
     private func resolveAgentDefinitionID(name: String) async -> String? {
-        if agentDefinitionResolved { return agentDefinitionID }
+        if agentDefinitionResolved {
+            return agentDefinitionID
+        }
         agentDefinitionResolved = true
         guard !name.isEmpty else { return nil }
         do {
@@ -376,61 +374,6 @@ final class HTTPChatTransport {
             agentDefinitionID = nil
         }
         return agentDefinitionID
-    }
-
-    // MARK: - Run cancellation
-
-    /// The newest run id in the conversation, read from the conversation
-    /// timeline (`GET /api/conversations/{id}/history`, whose `run_start` /
-    /// `run_end` items carry `run_id`). Nil when no run has been persisted yet,
-    /// in which case there is nothing to cancel.
-    private func activeRunID(conversationID: String) async -> String? {
-        guard let base = config.gatewayBaseURL else { return nil }
-        let url = base
-            .appending(path: "api")
-            .appending(path: "conversations")
-            .appending(path: conversationID)
-            .appending(path: "history")
-        let request = GatewayHTTP.makeRequest(method: "GET", url: url, apiKey: config.apiKey)
-        guard let data = try? await GatewayHTTP.sendChecked(
-            request,
-            service: GatewayServiceMessages(
-                httpPrefix: "Chat history",
-                noResponsePrefix: "Chat history",
-                reachTarget: "the chat history at \(config.tokenEndpoint)"
-            ),
-            session: urlSession
-        ) else { return nil }
-        guard let response = try? JSONDecoder().decode(ConversationHistory.self, from: data) else {
-            return nil
-        }
-        return response.items.last { $0.runID?.isEmpty == false }?.runID
-    }
-
-    private func cancelRun(_ runID: String) async {
-        guard let base = config.gatewayBaseURL else { return }
-        let url = base
-            .appending(path: "api")
-            .appending(path: "chat")
-            .appending(path: "runs")
-            .appending(path: runID)
-            .appending(path: "cancel")
-        let request = GatewayHTTP.makeRequest(
-            method: "POST",
-            url: url,
-            apiKey: config.apiKey,
-            body: Data("{}".utf8),
-            contentType: "application/json"
-        )
-        _ = try? await GatewayHTTP.sendChecked(
-            request,
-            service: GatewayServiceMessages(
-                httpPrefix: "Stop",
-                noResponsePrefix: "Stop",
-                reachTarget: "the chat at \(config.tokenEndpoint)"
-            ),
-            session: urlSession
-        )
     }
 
     // MARK: - Failure messages
@@ -454,19 +397,5 @@ final class HTTPChatTransport {
         case .invalidConfiguration, .transport, .decode:
             return gateway.localizedDescription
         }
-    }
-
-    private struct ConversationHistory: Decodable {
-        struct Item: Decodable {
-            let kind: String?
-            let runID: String?
-
-            enum CodingKeys: String, CodingKey {
-                case kind
-                case runID = "run_id"
-            }
-        }
-
-        let items: [Item]
     }
 }

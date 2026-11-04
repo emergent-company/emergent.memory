@@ -12,8 +12,8 @@ import (
 
 // TestDeviceSurfacePath pins the gateway device-surface allowlist: room-token
 // mint, agent picker, the per-agent object browser, chat relay, conversation
-// lifecycle (archive/unarchive/delete), session log/records, read-only project
-// config, and run cancellation (stop) only.
+// lifecycle (archive/unarchive/delete), session log/records and memory browsing
+// only.
 func TestDeviceSurfacePath(t *testing.T) {
 	cases := []struct {
 		method, path string
@@ -31,18 +31,6 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"POST", "/api/chat/questions/q1/respond/x", false},
 		{"POST", "/api/chat/questions//respond", false},
 		{"POST", "/api/chat/questions/q1/approve", false},
-		// Stopping a run is the only run-scoped device write: exactly one id
-		// segment followed by /cancel, POST only.
-		{"POST", "/api/chat/runs/r1/cancel", true},
-		{"POST", "/api/chat/runs/r1/cancel/x", false},
-		{"POST", "/api/chat/runs/r1/extra/cancel", false},
-		{"POST", "/api/chat/runs//cancel", false},
-		{"POST", "/api/chat/runs/r1", false},
-		{"POST", "/api/chat/runs/r1/anything", false},
-		{"GET", "/api/chat/runs/r1/cancel", false},
-		{"GET", "/api/chat/runs/r1/history", false},
-		{"GET", "/api/chat/runs/r1/events", false},
-		{"DELETE", "/api/chat/runs/r1/cancel", false},
 		{"POST", "/api/conversations/c1/archive", true},
 		{"POST", "/api/conversations/c1/unarchive", true},
 		{"DELETE", "/api/conversations/c1", true},
@@ -56,13 +44,6 @@ func TestDeviceSurfacePath(t *testing.T) {
 		{"DELETE", "/api/conversations/c1/archive", false},
 		{"GET", "/api/sessions", true},
 		{"GET", "/api/session", true},
-		{"GET", "/api/conversations/c1/history", true},
-		{"GET", "/api/conversations/c1/history/x", false},
-		{"GET", "/api/conversations/c1/nested/history", false},
-		{"GET", "/api/conversations//history", false},
-		{"GET", "/api/conversations/c1/dump", false},
-		{"GET", "/api/conversations/c1/events", false},
-		{"GET", "/api/conversations/c1", false},
 		{"GET", "/api/project/config", true},
 
 		{"GET", "/api/agents/abc/mcp-endpoint", false},

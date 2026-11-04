@@ -17,6 +17,10 @@ import SwiftUI
 /// text turns from ``HTTPChatTransport``, and live voice turns from the room
 /// (`session.messages` plus the rich ``ChatActivityStore``). All of them share
 /// the same bubbles, tool cards and approval cards.
+///
+/// Interrupting is a room feature: text mode has no stop control because a
+/// device credential cannot cancel a run yet (`emergent.memory#81`) and closing
+/// the stream would leave the server-side run going.
 struct ChatSessionView: View {
     let route: ChatRoute
 
@@ -133,17 +137,34 @@ extension ChatSessionView {
                 await applyCaptureForMode()
             case .text:
                 // Leaving voice releases the room; the conversation (and its
-                // transcript) stays open for text.
+                // transcript) stays open for text. The room was the live source
+                // while in voice, so bring this chat's own HTTP turns back and
+                // pick up whatever the call persisted.
                 await endVoiceSession()
+                transport.refreshLiveTranscript(transcript)
+                await loadHistoryIfNeeded(force: true)
             }
         }
     }
 
     /// Connects the voice session for the open conversation if it is not
-    /// already running. A new chat's conversation id is learned by the worker
-    /// (or by the HTTP `meta` frame before the switch).
+    /// already running.
+    ///
+    /// A text-first chat created its conversation over HTTP, and the
+    /// controller's token request was built before that id existed. Point the
+    /// session at it and let the app root rebuild the controller (`install()`
+    /// reacts to `launchKey`), so voice joins the conversation the user was
+    /// already chatting in instead of minting a second, empty one. The view's
+    /// `.task` re-runs for the new controller and takes the adopted-conversation
+    /// branch in ``adoptRoute()``, which starts the room.
     private func connectVoiceIfNeeded() async {
         guard controller.phase == .idle else { return }
+        if let learned = transport.conversationID, learned != activeSession.launchConversationID {
+            activeSession.open(agentName: route.agentName, conversationID: learned)
+            // `open` resets to text; this chat is switching to voice.
+            activeSession.mode = .voice
+            return
+        }
         await controller.start()
     }
 
@@ -371,7 +392,10 @@ extension ChatSessionView {
                     keyboardFocus: $keyboardFocus,
                     text: $messageText,
                     onSend: sendText,
-                    onStop: stopTextTurn
+                    // No run cancellation from a device credential yet, and
+                    // closing the stream leaves the server-side run going, so
+                    // text offers no stop control rather than a fake one.
+                    allowsInterrupt: false
                 )
             }
         }
@@ -391,11 +415,6 @@ extension ChatSessionView {
             transcript: transcript,
             activity: activity
         )
-    }
-
-    /// Stops a text turn: cancels the stream and the server-side run.
-    private func stopTextTurn() async {
-        await transport.stop(activity: activity)
     }
 
     // MARK: - Lifecycle
@@ -440,6 +459,15 @@ extension ChatSessionView {
         let sameLaunch = activeSession.launchConversationID == route.conversationID
 
         guard let conversationID = route.conversationID else {
+            // This "new chat" may have created its conversation over HTTP and
+            // then been re-pointed at it so voice could join. The transport
+            // still holds that id, so adopt the installed controller instead of
+            // starting a second conversation.
+            if sameAgent, activeSession.launchConversationID != nil,
+               activeSession.launchConversationID == transport.conversationID
+            {
+                return .unchanged
+            }
             if sameAgent, sameLaunch {
                 // Re-entering "new chat" after a live id was learned: the same
                 // launch key is still valid, so start a fresh conversation in
@@ -471,9 +499,21 @@ extension ChatSessionView {
         loadedConversationID = nil
     }
 
-    private func loadHistoryIfNeeded() async {
-        guard let conversationID = route.conversationID else { return }
-        guard loadedConversationID != conversationID else { return }
+    /// Loads the recorded transcript. A brand-new chat has no id until its
+    /// first turn, so the conversation the session is pointed at (or the one
+    /// the HTTP transport learned) is used when the route carries none. `force`
+    /// reloads even when this id is already loaded — the call in between may
+    /// have appended records.
+    private func loadHistoryIfNeeded(force: Bool = false) async {
+        guard
+            let conversationID = route.conversationID
+            ?? transport.conversationID
+            ?? activeSession.launchConversationID
+            ?? activeSession.liveConversationID
+        else { return }
+        if !force, loadedConversationID == conversationID {
+            return
+        }
         loadedConversationID = conversationID
         transcript.beginHistoryLoad()
         do {

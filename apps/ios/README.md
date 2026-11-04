@@ -30,8 +30,10 @@ Text turns (`HTTPChatTransport`) POST `{ agentDefinitionId?, conversationId?, me
 to the gateway's `/api/chat` and render the SSE frames (`meta`, `token`,
 `thinking`, `mcp_tool`, `question`, `approval`, `ui`, `citations`, `error`,
 `done`) through the same transcript, activity and A2UI stores voice uses.
-Decisions go to `/api/chat/questions/{id}/respond|cancel`, stop reads the run id
-from the conversation timeline and POSTs `/api/chat/runs/{id}/cancel`.
+Decisions go to `/api/chat/questions/{id}/respond|cancel`. A text turn cannot be
+interrupted server-side yet — memory runs the agent on a detached context, and a
+device credential has no run-cancellation route — so text mode offers no stop
+control rather than one that only closes the stream.
 
 Voice turns:
 

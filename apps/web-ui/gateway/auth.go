@@ -596,13 +596,6 @@ func deviceSurfacePath(method, path string) bool {
 			return ok && id != "" && !strings.Contains(id, "/")
 		case path == "/api/sessions" || path == "/api/session":
 			return true
-		case strings.HasPrefix(path, "/api/conversations/"):
-			// Conversation transcript only: `/api/conversations/{id}/history`,
-			// one non-empty id segment. The device reads it to find the run it
-			// may stop; dump/events and anything deeper stay off-surface.
-			rest := strings.TrimPrefix(path, "/api/conversations/")
-			id, ok := strings.CutSuffix(rest, "/history")
-			return ok && id != "" && !strings.Contains(id, "/")
 		case path == "/api/project/config":
 			// Read-only project configuration the device needs before it can
 			// offer voice (voice enablement only — never secrets).
@@ -618,8 +611,7 @@ func deviceSurfacePath(method, path string) bool {
 			return true
 		}
 		return deviceQuestionActionPath(path, "respond") ||
-			deviceQuestionActionPath(path, "cancel") ||
-			deviceRunCancelPath(path)
+			deviceQuestionActionPath(path, "cancel")
 	case http.MethodDelete:
 		return deviceConversationDeletePath(path)
 	default:
@@ -637,20 +629,6 @@ func deviceQuestionActionPath(path, action string) bool {
 	}
 	parts := strings.Split(rest, "/")
 	return len(parts) == 2 && parts[0] != "" && parts[1] == action
-}
-
-// deviceRunCancelPath reports whether path is exactly
-// `/api/chat/runs/{runId}/cancel` — the stop control a device uses to interrupt
-// a run it started over the HTTP chat stream. The id is one non-empty path
-// segment; extra segments, a nested id and every other run-scoped route (read
-// or write) stay off-surface.
-func deviceRunCancelPath(path string) bool {
-	rest, ok := strings.CutPrefix(path, "/api/chat/runs/")
-	if !ok {
-		return false
-	}
-	id, ok := strings.CutSuffix(rest, "/cancel")
-	return ok && id != "" && !strings.Contains(id, "/")
 }
 
 // deviceConversationLifecyclePath reports whether path is exactly
